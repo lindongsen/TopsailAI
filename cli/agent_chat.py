@@ -20,14 +20,11 @@ sys.path.insert(0, project_root + "/src")
 
 os.chdir(project_root)
 
-from topsailai.logger import logger
-from topsailai.ai_base.llm_base import ContentStdout
 from topsailai.ai_base.agent_base import AgentRun
 from topsailai.ai_base.agent_types import react
-from topsailai.ai_base.prompt_base import PromptBase
 from topsailai.utils import env_tool
-
 from topsailai.context import ctx_manager
+from topsailai.workspace.agent_shell import get_agent_chat
 
 
 def get_message():
@@ -45,27 +42,6 @@ def get_message():
     message = message.strip()
     assert message, "message is null"
     return message
-
-def get_agent(system_prompt="", to_dump_messages=False):
-    """ return a agent object. """
-    disabled_tools = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_CLI_AGENT_CHAT_DISABLED_TOOLS")
-    if disabled_tools is None:
-        disabled_tools = ["agent_tool"]
-    elif not disabled_tools:
-        disabled_tools = []
-
-    agent = AgentRun(
-        react.SYSTEM_PROMPT + "\n====\n" + system_prompt,
-        tools=None,
-        agent_name=react.AGENT_NAME,
-        excluded_tool_kits=disabled_tools,
-    )
-
-    # set flags
-    if to_dump_messages:
-        agent.flag_dump_messages = True
-
-    return agent
 
 def main():
     """ main entry """
@@ -98,7 +74,7 @@ def main():
             sys_prompt_content = fd.read().strip()
 
     # agent
-    agent = get_agent(sys_prompt_content)
+    agent = get_agent_chat(sys_prompt_content, disabled_tools=["agent_tool"])
 
     # llm
     llm_model = agent.llm_model

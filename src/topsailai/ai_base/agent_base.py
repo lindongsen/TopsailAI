@@ -30,7 +30,7 @@ from topsailai.tools import (
 class ToolCallInfo(object):
     """
     Data structure to store tool call information.
-    
+
     This class encapsulates the function name and arguments for a tool call.
     """
     def __init__(self):
@@ -44,7 +44,7 @@ class ToolCallInfo(object):
 class StepCallBase(object):
     """
     Base class for step call return values.
-    
+
     This class defines the data structure for return values of step_call(...) method.
     It provides status codes and result handling for agent execution steps.
     """
@@ -55,7 +55,7 @@ class StepCallBase(object):
     def __init__(self, flag_interactive:bool=False):
         """
         Initialize StepCallBase instance.
-        
+
         Args:
             flag_interactive (bool): Whether this step call is interactive
         """
@@ -78,10 +78,10 @@ class StepCallBase(object):
     def __call__(self, *args, **kwds):
         """
         Make the instance callable.
-        
+
         This method allows the instance to be called like a function.
         It resets the instance and executes the step.
-        
+
         Returns:
             StepCallBase: The instance itself after execution
         """
@@ -93,16 +93,16 @@ class StepCallBase(object):
     def get_tool_call_info(self, step:dict, rsp_msg_obj) -> ToolCallInfo|None:
         """
         Extract tool call information from step and response message.
-        
+
         This method attempts to extract tool call information from multiple sources:
         1. Response message object's tool_calls
         2. Direct step dictionary
         3. Raw text in step dictionary
-        
+
         Args:
             step (dict): Step information from message
             rsp_msg_obj: ChatMessage response object
-            
+
         Returns:
             ToolCallInfo|None: Tool call information if found, None otherwise
         """
@@ -175,17 +175,17 @@ class StepCallBase(object):
         ):
         """
         Execute the step call.
-        
+
         This method must be implemented by subclasses to define specific
         step execution logic.
-        
+
         Args:
             step (dict): Current step information
             tools (dict): Available tools dictionary
             response (list): Full response list
             index (int): Current step index in response
             rsp_msg_obj: Response message object
-            
+
         Raises:
             NotImplementedError: If subclass doesn't implement this method
         """
@@ -194,7 +194,7 @@ class StepCallBase(object):
 class AgentBase(PromptBase):
     """
     Base class for AI agents.
-    
+
     This class provides the foundation for creating AI agents with tool
     capabilities and prompt management.
     """
@@ -209,7 +209,7 @@ class AgentBase(PromptBase):
         ):
         """
         Initialize AgentBase instance.
-        
+
         Args:
             system_prompt (str): System prompt for the agent
             tools (dict): Specific tools for this agent (tool_name: function)
@@ -217,7 +217,7 @@ class AgentBase(PromptBase):
             tool_prompt (str): Additional tool prompt text
             tool_kits (list): List of internal tool kits to use
             excluded_tool_kits (list): List of tool kits to exclude
-            
+
         Raises:
             AssertionError: If system_prompt is empty
         """
@@ -293,7 +293,7 @@ class AgentBase(PromptBase):
     def max_tokens(self) -> int:
         """
         Get the maximum tokens allowed for the LLM model.
-        
+
         Returns:
             int: Maximum tokens value
         """
@@ -303,7 +303,7 @@ class AgentBase(PromptBase):
     def all_tools(self):
         """
         Get all available tools including internal tools.
-        
+
         Returns:
             dict: Dictionary containing all available tools
         """
@@ -321,13 +321,13 @@ class AgentBase(PromptBase):
     def run(self, step_call:StepCallBase, user_input:str):
         """
         Run the agent with the given step call and user input.
-        
+
         This method sets up the agent context and executes the run process.
-        
+
         Args:
             step_call (StepCallBase): Step call instance to use
             user_input (str): User input to process
-            
+
         Returns:
             The result of the agent execution
         """
@@ -344,11 +344,11 @@ class AgentBase(PromptBase):
     def _run(self, step_call:StepCallBase, user_input:str):
         """
         Internal run method to be implemented by subclasses.
-        
+
         Args:
             step_call (StepCallBase): Step call instance to use
             user_input (str): User input to process
-            
+
         Raises:
             NotImplementedError: If subclass doesn't implement this method
         """
@@ -357,21 +357,21 @@ class AgentBase(PromptBase):
 class AgentRun(AgentBase):
     """
     Common agent implementation for running steps.
-    
+
     This class provides a standard implementation for agent execution
     with step-by-step processing.
     """
     def _run(self, step_call:StepCallBase, user_input:str):
         """
         Execute the agent run process with step-by-step processing.
-        
+
         This method handles the main execution loop for the agent,
         processing user input and managing tool calls.
-        
+
         Args:
             step_call (StepCallBase): Step call instance to use
             user_input (str): User input to process
-            
+
         Returns:
             The final result of the task or None if failed
         """

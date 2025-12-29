@@ -22,34 +22,17 @@ from topsailai.utils.print_tool import (
     enable_flag_print_step,
     disable_flag_print_step,
 )
-
-from topsailai.ai_base.agent_base import (
-    AgentRun,
-)
 from topsailai.ai_base.prompt_base import PromptBase
 from topsailai.ai_base.agent_types.react import (
     Step4ReAct,
-    SYSTEM_PROMPT,
 )
+
+from topsailai.workspace.agent_shell import get_agent_chat as get_agent
 
 
 # define global variables
 g_flag_interactive = True
 
-
-def get_agent(user_prompt="", to_dump_messages=False):
-    """ return a agent object. """
-    agent = AgentRun(
-        SYSTEM_PROMPT + "\n====\n" + user_prompt,
-        tools=None,
-        agent_name="AgentReAct",
-    )
-
-    # set flags
-    if to_dump_messages:
-        agent.flag_dump_messages = True
-
-    return agent
 
 def run_once(user_input, to_print_step=None, user_prompt=""):
     """ return final answer, or None if error """

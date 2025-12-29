@@ -22,7 +22,6 @@ sys.path.insert(0, project_root + "/src")
 
 os.chdir(project_root)
 
-from topsailai.ai_base.agent_base import AgentRun
 from topsailai.ai_base.agent_types import react
 from topsailai.context import ctx_manager
 from topsailai.utils import (
@@ -35,33 +34,9 @@ from topsailai.workspace.input_tool import (
     input_yes,
 )
 from topsailai.workspace.hook_instruction import HookInstruction
-from topsailai.workspace.print_tool import ContentDots
+from topsailai.workspace.agent_shell import get_agent_chat
+
 from topsailai.tools.agent_tool import subprocess_agent_memory_as_story
-
-
-def get_agent(system_prompt="", to_dump_messages=False):
-    """ return a agent object. """
-    disabled_tools = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_CLI_AGENT_CHAT_DISABLED_TOOLS")
-    if disabled_tools is None:
-        disabled_tools = ["agent_tool"]
-    elif not disabled_tools:
-        disabled_tools = []
-
-    agent = AgentRun(
-        react.SYSTEM_PROMPT + "\n====\n" + system_prompt,
-        tools=None,
-        agent_name=react.AGENT_NAME,
-        excluded_tool_kits=disabled_tools,
-    )
-
-    if env_tool.EnvReaderInstance.check_bool("LLM_RESPONSE_STREAM"):
-        agent.llm_model.content_senders.append(ContentDots())
-
-    # set flags
-    if to_dump_messages:
-        agent.flag_dump_messages = True
-
-    return agent
 
 
 def main():
@@ -95,7 +70,7 @@ def main():
             sys_prompt_content = fd.read().strip()
 
     # agent
-    agent = get_agent(sys_prompt_content)
+    agent = get_agent_chat(sys_prompt_content, disabled_tools=["agent_tool"])
 
     # llm
     llm_model = agent.llm_model
