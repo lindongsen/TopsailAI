@@ -126,7 +126,7 @@ def main():
             print(f"{message}: Context cannot be clear due to exist session_id({session_id})")
         else:
             # clear context messages
-            messages_from_session = []
+            messages_from_session.clear()
             print("/clear: Context already is clear")
         return
     def _story():
