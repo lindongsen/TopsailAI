@@ -28,7 +28,7 @@ class StepCall4PlanAndExecute(StepCallBase):
         tool_call = step.get("tool_call", "")
         tool_args = step.get("tool_args", {})
 
-        if step_name == "final":
+        if step_name.startswith("final"):
             self.result = raw_text
             self.code = self.CODE_TASK_FINAL
             return
@@ -41,7 +41,7 @@ class StepCall4PlanAndExecute(StepCallBase):
             self.code = self.CODE_STEP_FINAL
             return
 
-        elif step_name == "execute-subtask":
+        elif step_name in ["execute-subtask", "action"]:
             if tool_call in tools:
                 tool_func = tools[tool_call]
                 result = tool_func(**tool_args)

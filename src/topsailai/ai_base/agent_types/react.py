@@ -2,7 +2,7 @@
   Author: DawsonLin
   Email: lin_dongsen@126.com
   Created: 2025-12-05
-  Purpose:
+  Purpose: ReAct (Reasoning and Acting) framework implementation for AI agents
 '''
 
 from topsailai.logger import logger
@@ -28,10 +28,27 @@ AGENT_NAME = "AgentReAct"
 
 
 class Step4ReAct(StepCallBase):
-    """ running on ReAct mode """
+    """Implementation of the ReAct (Reasoning and Acting) framework for AI agents"""
 
     def _execute(self, step:dict, tools:dict, response:list, index:int, rsp_msg_obj=None, **_):
-        """ acting steps """
+        """
+        Execute a single step in the ReAct framework
+
+        This method processes different step types (thought, action, final_answer) and handles
+        tool execution, user interaction, and step transitions.
+
+        Args:
+            step (dict): Current step information containing 'step_name' and other metadata
+            tools (dict): Dictionary of available tools that can be called by the agent
+            response (list): List of all steps in the current response
+            index (int): Current index in the response list
+            rsp_msg_obj: Response message object (optional)
+            **_: Additional keyword arguments (ignored)
+
+        Returns:
+            None: The method sets internal state variables (self.code, self.user_msg, etc.)
+            to control the agent's behavior rather than returning values directly
+        """
         try:
             step_name = step["step_name"]
         except Exception:
@@ -40,6 +57,7 @@ class Step4ReAct(StepCallBase):
             return
 
         if step_name == 'action':
+            # Handle action step - execute tool calls
             tool_call_info = self.get_tool_call_info(step, rsp_msg_obj)
             if tool_call_info is None:
                 # LLM mistake, missing argv
@@ -78,6 +96,7 @@ class Step4ReAct(StepCallBase):
                 self.code = self.CODE_STEP_FINAL
                 return
         elif step_name == "thought":
+            # Handle thought step - process reasoning
             if len(response) == 1:
                 if not self.flag_interactive:
                     # for retry
@@ -101,6 +120,7 @@ class Step4ReAct(StepCallBase):
                 self.code = self.CODE_STEP_FINAL
                 return
         elif step_name.startswith('final'):
+            # Handle final answer step - complete the task
             self.result = step["raw_text"]
             self.code = self.CODE_TASK_FINAL
             return

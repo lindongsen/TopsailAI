@@ -4,6 +4,8 @@ import copy
 import time
 import random
 import simplejson
+import httpx
+import httpcore
 import openai
 from openai.types.chat import (
     ChatCompletionMessage,
@@ -763,6 +765,10 @@ class LLMModel(object):
                     if key in e_str:
                         break
 
+                continue
+            except (httpx.ReadError, httpcore.ReadError) as e:
+                # This problem often occurs with streaming response
+                print_error(f"!!! [{i}] ReadError, {e}")
                 continue
 
         raise Exception("chat to LLM is failed")
