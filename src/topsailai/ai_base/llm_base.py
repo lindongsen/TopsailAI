@@ -5,7 +5,10 @@ import time
 import random
 import simplejson
 import openai
-from openai.types.chat import ChatCompletionMessage
+from openai.types.chat import (
+    ChatCompletionMessage,
+    ChatCompletionMessageToolCall,
+)
 
 from topsailai.logger.log_chat import logger
 from topsailai.utils.print_tool import (
@@ -18,6 +21,10 @@ from topsailai.utils import (
     format_tool,
 )
 from topsailai.context.token import TokenStat
+
+from .constants import (
+    ROLE_ASSISTANT,
+)
 
 
 class JsonError(Exception):
@@ -469,7 +476,45 @@ class LLMModel(object):
                 service_tier=None
             )
         """
+        if isinstance(response, ChatCompletionMessage):
+            return response
         return response.choices[0].message
+
+    def format_null_response_content(self, rsp_obj, rsp_content:str) -> str:
+        if rsp_content:
+            return rsp_content
+
+        ccm = self.get_response_message(rsp_obj)
+        if ccm.tool_calls:
+            print_error("LLM makes a mistake, fix it: missing action")
+            return format_tool.TOPSAILAI_STEP_ACTION
+        return rsp_content
+
+    def fix_response_content(self, rsp_obj, rsp_content:str) -> str:
+        """ return new response content """
+        if not rsp_content:
+            rsp_content = self.format_null_response_content(rsp_obj, rsp_content)
+
+        return rsp_content
+
+    def check_response_content(self, rsp_obj, rsp_content:str):
+        """ if error, raise sth. """
+        # debug only
+        try:
+            self.debug_response(rsp_obj, rsp_content)
+        except Exception as e:
+            print_error(f"[DEBUG] {e}")
+
+        # check content
+        if rsp_content is None:
+            raise TypeError("no response")
+
+        rsp_content = rsp_content.strip()
+
+        if not rsp_content:
+            raise TypeError("null of response")
+
+        return
 
     def call_llm_model(self, messages, tools=None, tool_choice="auto"):
         """
@@ -498,27 +543,22 @@ class LLMModel(object):
         self.tokenStat.output_token_stat()
 
         full_content = response.choices[0].message.content
-        try:
-            self.debug_response(response, full_content)
-        except Exception as e:
-            print_error(f"[DEBUG] {e}")
 
-        if full_content is None:
-            raise TypeError("no response")
-        full_content = full_content.strip()
-        if not full_content:
-            raise TypeError("null of response")
+        self.fix_response_content(rsp_obj=response, rsp_content=full_content)
+        self.check_response_content(rsp_obj=response, rsp_content=full_content)
 
         self.send_content(full_content)
 
         return (response, full_content)
 
-    def call_llm_model_by_stream(self, messages):
+    def call_llm_model_by_stream(self, messages, tools=None, tool_choice="auto"):
         """
         Call the LLM model with streaming response.
 
         Args:
             messages (list): List of message dictionaries
+            tools (list, optional): List of available tools. Defaults to None.
+            tool_choice (str, optional): Tool choice strategy. Defaults to "auto".
 
         Returns:
             tuple: (response object, concatenated content string)
@@ -526,22 +566,80 @@ class LLMModel(object):
         self.tokenStat.add_msgs(messages)
 
         response = self.chat_model.create(
-            **self.build_parameters_for_chat(messages, stream=True)
+            **self.build_parameters_for_chat(
+                messages, stream=True,
+                tools=tools, tool_choice=tool_choice,
+            )
         )
 
         full_content = ""
+        full_tool_calls_dict = {}
         for chunk in response:
-            delta_content = chunk.choices[0].delta.content
+            delta_obj = chunk.choices[0].delta
+
+            # content
+            delta_content = delta_obj.content
             if delta_content:
                 full_content += delta_content
                 self.send_content(delta_content)
+
+            # tool_calls
+            for tool_call in delta_obj.tool_calls or []:
+                # place object
+                _index = tool_call.index
+                if _index not in full_tool_calls_dict:
+                    full_tool_calls_dict[_index] = {
+                        "id": "",
+                        "function": {
+                            "name": "",
+                            "arguments": "",
+                        },
+                    }
+                curr_tool_call = full_tool_calls_dict[_index]
+
+                # pass value
+                if tool_call.id:
+                    curr_tool_call["id"] = tool_call.id
+                if tool_call.function:
+                    if "function" not in curr_tool_call:
+                        curr_tool_call["function"] = {
+                            "name": "",
+                            "arguments": "",
+                        }
+                    if tool_call.function.name:
+                        curr_tool_call["function"]["name"] = tool_call.function.name
+                    if tool_call.function.arguments:
+                        curr_tool_call["function"]["arguments"] += tool_call.function.arguments
+        # enf for chunk
+
+        # generate tool_calls
+        full_tool_calls_list = []
+        if full_tool_calls_dict:
+            for _index in sorted(full_tool_calls_dict.keys()):
+                tool_call = full_tool_calls_dict[_index]
+                tool_call["type"] = "function"
+                full_tool_calls_list.append(
+                    ChatCompletionMessageToolCall(**tool_call)
+                )
 
         if env_tool.is_debug_mode():
             print()
 
         self.tokenStat.output_token_stat()
 
-        return (response, full_content.strip())
+        full_content = full_content.strip()
+
+        # ChatCompletionMessage
+        response_ccm = ChatCompletionMessage(
+            role=ROLE_ASSISTANT,
+            content=full_content,
+            tool_calls=full_tool_calls_list,
+        )
+
+        full_content = self.fix_response_content(rsp_obj=response_ccm, rsp_content=full_content)
+        self.check_response_content(rsp_obj=response_ccm, rsp_content=full_content)
+
+        return (response_ccm, full_content)
 
     def chat(
             self, messages,
@@ -596,7 +694,10 @@ class LLMModel(object):
 
             try:
                 if for_stream:
-                    rsp_obj, rsp_content = self.call_llm_model_by_stream(messages)
+                    rsp_obj, rsp_content = self.call_llm_model_by_stream(
+                        messages,
+                        tools=tools, tool_choice=tool_choice,
+                    )
                 else:
                     rsp_obj, rsp_content = self.call_llm_model(
                         messages,

@@ -79,7 +79,11 @@ class StepCallBase(object):
                 func_name = tool_call.function.name
                 func_args = None
                 if tool_call.function.arguments:
-                    func_args = json_tool.json_load(tool_call.function.arguments)
+                    try:
+                        func_args = json_tool.json_load(tool_call.function.arguments)
+                    except Exception as e:
+                        logger.exception(e)
+                        return None
 
                 if func_name:
                     result = ToolCallInfo()
@@ -260,6 +264,7 @@ class AgentRun(AgentBase):
         while True:
             rsp_obj, response = self.llm_model.chat(
                 self.messages, for_response=True,
+                for_stream=env_tool.EnvReaderInstance.check_bool("LLM_RESPONSE_STREAM"),
                 tools=list(tools_for_chat.values()),
             )
             if not response:

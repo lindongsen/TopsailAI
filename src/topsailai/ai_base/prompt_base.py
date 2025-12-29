@@ -205,6 +205,8 @@ class PromptBase(object):
             return
         content = self.hook_format_content(content)
         print_step(content)
+        if tool_calls:
+            print_step(tool_calls)
         self.append_message({"role": ROLE_ASSISTANT, "content": content, "tool_calls": tool_calls})
 
     def add_tool_message(self, content):

@@ -92,6 +92,10 @@ class EnvironmentReader(object):
         content = self.try_read_file(env_var)
         return content or env_var
 
+    def check_bool(self, name, default=None) -> bool:
+        """ value in [1, true] for True """
+        return str(os.getenv(name, default)).lower() in ["1", "true"]
+
     def get(self, name, default=None):
         """Get environment variable value with default.
 

@@ -13,6 +13,7 @@ from .json_tool import safe_json_dump
 
 
 TOPSAILAI_FORMAT_PREFIX = "topsailai."
+TOPSAILAI_STEP_ACTION = TOPSAILAI_FORMAT_PREFIX + "action"
 
 
 def to_list(v, to_ignore_none=False):
