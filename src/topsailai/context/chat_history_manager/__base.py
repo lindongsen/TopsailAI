@@ -192,6 +192,8 @@ class ContextManager(MessageStorageBase):
             flag_changed = False
             for content_dict in format_tool.to_list(content_obj):
                 new_content_obj.append(content_dict)
+                if "step_name" not in content_dict:
+                    continue
                 if content_dict["step_name"] not in self.attention_step_names:
                     continue
                 if len(str(content_dict)) <= max_size:
