@@ -35,6 +35,7 @@ from topsailai.workspace.input_tool import (
     input_yes,
 )
 from topsailai.workspace.hook_instruction import HookInstruction
+from topsailai.workspace.print_tool import ContentDots
 from topsailai.tools.agent_tool import subprocess_agent_memory_as_story
 
 
@@ -46,6 +47,9 @@ def get_agent(system_prompt="", to_dump_messages=False):
         agent_name=react.AGENT_NAME,
         excluded_tool_kits=["agent_tool"]
     )
+
+    if env_tool.EnvReaderInstance.check_bool("LLM_RESPONSE_STREAM"):
+        agent.llm_model.content_senders.append(ContentDots())
 
     # set flags
     if to_dump_messages:
