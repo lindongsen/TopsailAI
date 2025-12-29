@@ -2,7 +2,7 @@
   Author: DawsonLin
   Email: lin_dongsen@126.com
   Created: 2025-10-22
-  Purpose:
+  Purpose: Token counting and statistics utilities for LLM interactions
 '''
 
 import time
@@ -16,20 +16,24 @@ from topsailai.utils.print_tool import print_step
 
 def count_tokens(text, encoding_name="cl100k_base"):
     """
-    计算文本的token数量
+    Count the number of tokens in the given text using the specified encoding.
 
     Args:
-        text (str): 要计算token的文本
-        encoding_name (str): 编码器名称，默认为cl100k_base
+        text (str): The text to count tokens for
+        encoding_name (str): The encoding name to use, defaults to "cl100k_base"
 
     Returns:
-        int: token数量
+        int: The number of tokens in the text
+
+    Example:
+        >>> count_tokens("Hello world")
+        2
     """
     try:
-        # 获取编码器
+        # Get the encoding
         encoding = tiktoken.get_encoding(encoding_name)
 
-        # 编码文本并计算token数量
+        # Encode the text and count tokens
         tokens = encoding.encode(text)
         return len(tokens)
 
@@ -37,22 +41,27 @@ def count_tokens(text, encoding_name="cl100k_base"):
         logger.warning(f"failed to count tokens: {e}")
         return 0
 
+
 def count_tokens_for_model(text, model_name="gpt-4"):
     """
-    为特定模型计算token数量
+    Count tokens for a specific model using its default encoding.
 
     Args:
-        text (str): 要计算token的文本
-        model_name (str): 模型名称
+        text (str): The text to count tokens for
+        model_name (str): The model name to get encoding for
 
     Returns:
-        int: token数量
+        int: The number of tokens in the text
+
+    Example:
+        >>> count_tokens_for_model("Hello world", "gpt-4")
+        2
     """
     try:
-        # 获取模型的编码器
+        # Get the encoding for the specific model
         encoding = tiktoken.encoding_for_model(model_name)
 
-        # 编码文本并计算token数量
+        # Encode the text and count tokens
         tokens = encoding.encode(text)
         return len(tokens)
 
@@ -62,11 +71,28 @@ def count_tokens_for_model(text, model_name="gpt-4"):
 
 
 class TokenStat(threading.Thread):
-    """ tracking token stat """
-    def __init__(self, llm_id:str, lifetime:int=86400):
-        """ define keys.
+    """
+    Token statistics thread class for tracking token usage in LLM interactions.
 
-        :lifetime: seconds, it <= 0 for forever.
+    This class runs as a background thread to monitor and accumulate token counts
+    and text lengths for messages sent to LLMs.
+
+    Attributes:
+        total_count (int): Total accumulated token count
+        current_count (int): Token count for the current message
+        total_text_len (int): Total accumulated text length
+        current_text_len (int): Text length for the current message
+        msg_count (int): Number of messages processed
+    """
+
+    def __init__(self, llm_id: str, lifetime: int = 86400):
+        """
+        Initialize the TokenStat thread.
+
+        Args:
+            llm_id (str): LLM identifier used for thread naming
+            lifetime (int): Thread lifetime in seconds, <=0 means run forever,
+                           defaults to 86400 seconds (24 hours)
         """
         self._start_time = int(time.time())
         self._end_time = 0
@@ -89,9 +115,16 @@ class TokenStat(threading.Thread):
         self.flag_running = True
         self.start()
 
-
     def output_token_stat(self):
-        """ output stat """
+        """
+        Output current token statistics to the log.
+
+        This method prints the current statistics including total and current
+        token counts, text lengths, and message count.
+
+        Returns:
+            None
+        """
         with self.rlock:
             info = dict(
                 total_count=self.total_count,
@@ -106,7 +139,15 @@ class TokenStat(threading.Thread):
         return
 
     def add_msgs(self, msgs):
-        """ the msgs will be sent to LLM, save it to buffer for token calc """
+        """
+        Add messages to the buffer for token calculation.
+
+        Args:
+            msgs: Messages to be sent to the LLM (list or string)
+
+        Returns:
+            None
+        """
         with self.rlock:
             self.buffer = msgs
 
@@ -117,29 +158,43 @@ class TokenStat(threading.Thread):
             self._last_msg_time = int(time.time())
 
     def run(self):
+        """
+        Main thread loop for processing token statistics.
+
+        This method runs in a separate thread and continuously monitors
+        the buffer for new messages to process. It handles token counting
+        and maintains thread lifecycle management.
+        """
         self.flag_running = True
 
-        # control frequence
+        # Control frequency
         count_freq = 0
         need_freq = False
         if self._end_time:
             need_freq = True
 
-        # idle time
+        # Maximum idle time before considering shutdown
         max_idle_time = 600
 
         def check():
-            """ return bool """
+            """
+            Check if the thread should continue running.
 
-            # check lifetime
+            This internal function checks the thread's lifetime and idle time
+            to determine if it should terminate.
+
+            Returns:
+                bool: True if thread should continue, False if it should stop
+            """
+            # Check lifetime
             if self._end_time:
                 now_ts = int(time.time())
                 if self._end_time < now_ts:
-                    # end life
+                    # Lifetime reached
                     if now_ts - self._last_msg_time > max_idle_time:
                         logger.info("quit due to lifetime is reached")
                         return False
-                    # LLM may be using by some tools.
+                    # LLM might still be in use by some tools
 
             return True
 
@@ -147,7 +202,7 @@ class TokenStat(threading.Thread):
 
             if need_freq:
                 count_freq += 1
-                # interval is 10 second.
+                # Check every 10 seconds (1000 iterations * 0.01 sleep)
                 if count_freq > 1000:
                     count_freq = 0
                     if not check():

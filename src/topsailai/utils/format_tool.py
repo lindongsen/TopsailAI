@@ -119,28 +119,6 @@ def parse_topsailai_format(text: str) -> dict:
 
     return result
 
-def parse_topsailai_format_regex(text: str) -> dict:
-    """Parse text in the topsailai format using regular expressions.
-
-    This function uses regex pattern matching to extract step names and content
-    from topsailai formatted text. It returns an ordered dictionary with step names
-    as keys and their corresponding content as values.
-
-    Args:
-        text (str): Input text in topsailai format.
-
-    Returns:
-        dict: Ordered dictionary where keys are step names and values are content.
-    """
-    pattern = r'topsailai\.(\w+)\n(.*?)(?=\ntopsailai\.|\Z)'
-    matches = re.findall(pattern, text, re.DOTALL)
-
-    result = OrderedDict()
-    for step_name, content in matches:
-        result[step_name] = content.strip()
-
-    return result
-
 def format_dict_to_list(d:dict, key_name:str, value_name:str) -> list[dict]:
     """Convert a dictionary to a list of dictionaries with specified key-value structure.
 
