@@ -2,7 +2,7 @@
   Author: DawsonLin
   Email: lin_dongsen@126.com
   Created: 2025-10-18
-  Purpose:
+  Purpose: Base prompt management class for AI context handling and message management
 '''
 
 import os
@@ -38,7 +38,12 @@ from topsailai.context.prompt_env import generate_prompt_for_env
 
 
 class ThresholdContextHistory(object):
-    """ define threshold  """
+    """
+    Manages context history thresholds for token count and message length
+
+    This class handles the logic for determining when context history exceeds
+    configured thresholds and needs to be slimmed down or managed.
+    """
 
     # variables
     token_max = 1280000
@@ -49,24 +54,54 @@ class ThresholdContextHistory(object):
     SLIM_MIN_LEN = 27
 
     def __init__(self):
+        """
+        Initialize threshold context history with environment variable overrides
+
+        Reads MAX_TOKENS and CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH from environment
+        to override default values if present.
+        """
         self.token_max = int(os.getenv("MAX_TOKENS", self.token_max))
         self.slim_len = int(os.getenv("CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH", self.slim_len))
 
     def exceed_ratio(self, token_count):
-        """ token count is exceeded ratio """
+        """
+        Check if token count exceeds the configured ratio threshold
+
+        Args:
+            token_count (int): Current token count to check
+
+        Returns:
+            bool: True if token count exceeds the ratio threshold, False otherwise
+        """
         curr_ratio = float(token_count) / self.token_max
         if curr_ratio >= self.token_ratio:
             return True
         return False
 
     def exceed_msg_len(self, msg_len):
-        """ message list length is exceeded """
+        """
+        Check if message list length exceeds the configured threshold
+
+        Args:
+            msg_len (int): Current message list length to check
+
+        Returns:
+            bool: True if message length exceeds the threshold, False otherwise
+        """
         if msg_len >= max(self.SLIM_MIN_LEN, self.slim_len):
             return True
         return False
 
     def is_exceeded(self, messages:list):
-        """ return bool. True for exceeded """
+        """
+        Check if context history exceeds any configured thresholds
+
+        Args:
+            messages (list): List of messages to check against thresholds
+
+        Returns:
+            bool: True if either message length or token ratio is exceeded, False otherwise
+        """
         if self.exceed_msg_len(len(messages)):
             return True
         token_count_now = count_tokens(str(messages))
@@ -76,17 +111,23 @@ class ThresholdContextHistory(object):
 
 
 class PromptBase(object):
-    """ prompt base manager """
+    """
+    Base prompt manager for AI context handling
+
+    This class manages the conversation context, message history, and provides
+    hooks for context management and message processing.
+    """
 
     # define flags
     flag_dump_messages = False
 
     def __init__(self, system_prompt:str, tool_prompt:str=""):
         """
+        Initialize the prompt base manager
+
         Args:
-            system_prompt (str):
-            tool_prompt (str, optional): User give it. Defaults to "".
-            tools_name (list, optional): Internal tools. Defaults to None (no need any tools).
+            system_prompt (str): The system prompt to use for the AI
+            tool_prompt (str, optional): Tool prompt provided by user. Defaults to "".
         """
         assert system_prompt, "missing system_prompt"
         self.system_prompt = system_prompt
@@ -111,7 +152,14 @@ class PromptBase(object):
         self.hooks_after_new_session = []
 
     def call_hooks_ctx_history(self):
-        """ let context messages become to history messages. remember these messages. """
+        """
+        Call context history hooks to manage message history
+
+        This method handles:
+        - Recording session messages if session ID exists
+        - Linking messages when thresholds are exceeded
+        - Error handling for hook execution
+        """
         if not self.hooks_ctx_history:
             return
 
@@ -133,7 +181,13 @@ class PromptBase(object):
         return
 
     def append_message(self, msg:dict, to_suppress_log=False):
-        """ append a message to context """
+        """
+        Append a message to the context and call history hooks
+
+        Args:
+            msg (dict): Message dictionary to append
+            to_suppress_log (bool, optional): Whether to suppress logging. Defaults to False.
+        """
         if not to_suppress_log:
             logger.info(msg)
 
@@ -145,7 +199,11 @@ class PromptBase(object):
         self.call_hooks_ctx_history()
 
     def init_prompt(self):
-        """ init sth. """
+        """
+        Initialize the prompt system
+
+        Resets messages and calls after-init-prompt hooks
+        """
         self.reset_messages()
         for hook in self.hooks_after_init_prompt:
             try:
@@ -155,7 +213,12 @@ class PromptBase(object):
         return
 
     def new_session(self, user_message):
-        """ start a new session """
+        """
+        Start a new session with a user message
+
+        Args:
+            user_message: The initial user message for the new session
+        """
         self.init_prompt()
         self.add_user_message(user_message)
         for hook in self.hooks_after_new_session:
@@ -166,16 +229,28 @@ class PromptBase(object):
         return
 
     def hook_format_content(self, content):
-        """ set a hook to format content to text for LLM can to read """
+        """
+        Hook to format content for LLM consumption
+
+        Args:
+            content: Content to format
+
+        Returns:
+            str: Formatted content as JSON string
+        """
         return to_json_str(content)
 
     def reset_messages(self, to_suppress_log=False):
-        """ reset context message. clear all of messages.
+        """
+        Reset context messages to initial state
 
-        index:
-        - system
-        - env, dynamic
-        - tool
+        Clears all messages and re-initializes with:
+        - System prompt
+        - Environment prompt
+        - Tool prompt (if available)
+
+        Args:
+            to_suppress_log (bool, optional): Whether to suppress logging. Defaults to False.
         """
         self.messages = []
         # 1
@@ -187,12 +262,21 @@ class PromptBase(object):
             self.append_message({"role": ROLE_SYSTEM, "content": self.tool_prompt}, to_suppress_log)
 
     def update_message_for_env(self):
-        """ update env info """
+        """
+        Update the environment information message
+
+        Replaces the environment prompt message with current environment data
+        """
         self.messages[1] = {"role": ROLE_SYSTEM, "content": generate_prompt_for_env()}
         return
 
     def add_user_message(self, content):
-        """ the message from human """
+        """
+        Add a user message to the context
+
+        Args:
+            content: The user message content to add
+        """
         if content is None:
             return
         content = self.hook_format_content(content)
@@ -200,7 +284,13 @@ class PromptBase(object):
         self.append_message({"role": ROLE_USER, "content": content})
 
     def add_assistant_message(self, content, tool_calls=None):
-        """ the message from LLM """
+        """
+        Add an assistant message to the context
+
+        Args:
+            content: The assistant message content to add
+            tool_calls: Optional tool calls associated with the message
+        """
         if content is None:
             return
         content = self.hook_format_content(content)
@@ -210,7 +300,12 @@ class PromptBase(object):
         self.append_message({"role": ROLE_ASSISTANT, "content": content, "tool_calls": tool_calls})
 
     def add_tool_message(self, content):
-        """ the message from tool call """
+        """
+        Add a tool message to the context
+
+        Args:
+            content: The tool message content to add
+        """
         if content is None:
             return
         content = self.hook_format_content(content)
@@ -223,7 +318,12 @@ class PromptBase(object):
         return
 
     def get_tool_call_id(self):
-        """ get id from the last message """
+        """
+        Get the tool call ID from the last message
+
+        Returns:
+            str or None: The tool call ID if available, None otherwise
+        """
         last_message = self.messages[-1]
         tool_calls = last_message.get("tool_calls")
         if tool_calls:
@@ -231,9 +331,11 @@ class PromptBase(object):
         return None
 
     def dump_messages(self):
-        """ dump messages to a file.
+        """
+        Dump current messages to a file for debugging
 
-        return file path. None for failed.
+        Returns:
+            str or None: File path if successful, None if failed
         """
         try:
             now_date = time_tool.get_current_date(True)
@@ -248,7 +350,12 @@ class PromptBase(object):
         return None
 
     def load_messages(self, file_path:str):
-        """ read file content as messages """
+        """
+        Load messages from a file
+
+        Args:
+            file_path (str): Path to the file containing messages
+        """
         with open(file_path, encoding='utf-8') as fd:
             content = fd.read()
             self.messages = json_load(content)
