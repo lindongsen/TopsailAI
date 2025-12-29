@@ -48,11 +48,17 @@ def get_message():
 
 def get_agent(system_prompt="", to_dump_messages=False):
     """ return a agent object. """
+    disabled_tools = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_CLI_AGENT_CHAT_DISABLED_TOOLS")
+    if disabled_tools is None:
+        disabled_tools = ["agent_tool"]
+    elif not disabled_tools:
+        disabled_tools = []
+
     agent = AgentRun(
         react.SYSTEM_PROMPT + "\n====\n" + system_prompt,
         tools=None,
         agent_name=react.AGENT_NAME,
-        excluded_tool_kits=["agent_tool"]
+        excluded_tool_kits=disabled_tools,
     )
 
     # set flags

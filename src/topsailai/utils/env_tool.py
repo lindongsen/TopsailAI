@@ -96,6 +96,39 @@ class EnvironmentReader(object):
         """ value in [1, true] for True """
         return str(os.getenv(name, default)).lower() in ["1", "true"]
 
+    def get_list_str(self, name:str, separator:str=';') -> list[str]|None|str:
+        """
+        Args:
+            name (str):
+            separator (str, optional): Defaults to ';'.
+
+        Returns:
+            list[str]|None|str:
+              None for no config;
+              str for null of config;
+        """
+        env_var = os.getenv(name)
+        if env_var is None:
+            # no config
+            return None
+        env_var = env_var.strip()
+        if not env_var:
+            # null of config
+            return env_var
+        result = set()
+        for s in env_var.split(';'):
+            s = s.strip()
+            if not s:
+                continue
+            result.add(s)
+        return list(result)
+
+    def is_not_config(self, name):
+        return name not in os.environ
+
+    def is_null_config(self, name):
+        return self.get(name) == ""
+
     def get(self, name, default=None):
         """Get environment variable value with default.
 

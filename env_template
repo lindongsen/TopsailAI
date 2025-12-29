@@ -166,3 +166,11 @@ PLUGIN_TOOLS=""
 # Supported protocols: ssh, docker
 # Purpose: Enables command execution in isolated environments
 SANDBOX_SETTINGS=""
+
+
+# =============================================================================
+# CLI Configuration
+# =============================================================================
+
+# Format: Tool names separated by semicolons (';')
+# TOPSAILAI_CLI_AGENT_CHAT_DISABLED_TOOLS="agent_tool"
