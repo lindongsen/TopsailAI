@@ -104,6 +104,23 @@ def _format_messages(messages, key_name, value_name):
 
     return messages
 
+def fix_llm_mistakes(response:list):
+    if not response:
+        return response
+
+    # case: only tool_call and tool_args, missing step_name
+    if len(response) == 1:
+        item = response[0]
+        if len(item) == 2:
+            if 'tool_call' in item and 'tool_args' in item:
+                print_error("fix llm mistake: missing step_name")
+                item["step_name"] = "action"
+        elif len(item) == 1:
+            if 'tool_call' in item:
+                print_error("fix llm mistake: missing step_name")
+                item["step_name"] = "action"
+    return response
+
 def _format_response(response):
     """
     Format response to a standardized list format for internal use.
@@ -149,7 +166,9 @@ def _format_response(response):
                     )
 
             response = to_json_str(response)
-            return _to_list(simplejson.loads(response))
+            response = _to_list(simplejson.loads(response))
+            fix_llm_mistakes(response)
+            return response
         except Exception as e:
             print_error(f"parsing response: {e}\n>>>\n{response}\n<<<\nretrying times: {count}")
 
@@ -710,6 +729,9 @@ class LLMModel(object):
                     return rsp_content
 
                 result = _format_response(rsp_content)
+
+                if not result:
+                    raise TypeError("null of response content: [%s]" % rsp_content)
 
                 if for_response:
                     return (rsp_obj, result)

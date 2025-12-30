@@ -147,6 +147,19 @@ def print_error(msg):
     print_with_time(f"Error: {msg}")
     return
 
+def print_critical(msg):
+    """Print an error message to both logger and console.
+
+    This function logs the error using the application's logger
+    and also prints it to the console with a timestamp.
+
+    Args:
+        msg: Error message to log and print
+    """
+    logger.critical(msg)
+    print_with_time(f"Critical: {msg}")
+    return
+
 def format_dict_to_md(d:dict) -> str:
     """Format a dictionary as a markdown document for readability.
 

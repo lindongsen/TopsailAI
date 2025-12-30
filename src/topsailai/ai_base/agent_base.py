@@ -1,6 +1,6 @@
 from topsailai.logger.log_chat import logger
 from topsailai.utils.print_tool import (
-    print_error,
+    print_critical,
     print_step,
 )
 from topsailai.utils.thread_local_tool import (
@@ -398,7 +398,7 @@ class AgentRun(AgentBase):
                 tools=list(tools_for_chat.values()),
             )
             if not response:
-                print_error("No response from LLM.")
+                print_critical("No response from LLM.")
                 return None
             # Response message object
             rsp_msg = self.llm_model.get_response_message(rsp_obj)
@@ -414,7 +414,7 @@ class AgentRun(AgentBase):
                     logger.info(f"final: {ret.result}")
                     return ret.result
                 elif ret.code == ret.CODE_TASK_FAILED:
-                    print_error(f"Task failed: {ret.result}")
+                    print_critical(f"Task failed: {ret.result}")
                     return None
                 elif ret.code == ret.CODE_STEP_FINAL:
                     self.add_user_message(ret.user_msg)
@@ -424,7 +424,7 @@ class AgentRun(AgentBase):
             # end for step in response
 
             if len(self.messages) == ctx_count:
-                print_error("No progress made in this iteration, exiting.")
+                print_critical("No progress made in this iteration, exiting.")
                 return None
 
             # update env
