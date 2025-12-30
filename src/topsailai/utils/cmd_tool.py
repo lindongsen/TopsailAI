@@ -113,7 +113,7 @@ def exec_cmd_in_remote(cmd:str, remote:str, port=22, timeout:int=None):
     if port:
         options += f"-p {port}"
 
-    cmd_ssh = f"cat << EOF | ssh {options} root@{remote} bash -s\n{cmd}\nEOF"
+    cmd_ssh = f"cat << topsailaiEOF | ssh {options} root@{remote} bash -s\n{cmd}\ntopsailaiEOF"
     return exec_cmd(cmd_ssh, timeout=timeout)
 
 def exec_cmd_in_new_process(cmd:str|list, env:dict=None) -> int:
