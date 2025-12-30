@@ -60,12 +60,13 @@ def _parse_sandbox_config(sandbox:str) -> Sandbox:
 
     return sandbox_obj
 
-def call_sandbox(sandbox:str, cmd:str):
+def call_sandbox(sandbox:str, cmd:str, timeout:int=30):
     """ execute command in sandbox
 
     Args:
         sandbox (str): sandbox info, e.g. 'tag=dev,protocol=ssh,node=dev1'
         cmd (str): command
+        timeout (int): default 30 seconds
     """
     sandbox_obj = _parse_sandbox_config(sandbox)
 
@@ -74,7 +75,7 @@ def call_sandbox(sandbox:str, cmd:str):
             cmd,
             remote=sandbox_obj.node,
             port=sandbox_obj.port,
-            timeout=30,
+            timeout=timeout or 30,
         )
     return "unknown sandbox"
 
