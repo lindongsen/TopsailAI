@@ -9,6 +9,7 @@ import os
 
 from topsailai.utils.cmd_tool import (
     exec_cmd_in_remote,
+    exec_cmd,
 )
 
 
@@ -64,7 +65,7 @@ def call_sandbox(sandbox:str, cmd:str, timeout:int=30):
     """ execute command in sandbox
 
     Args:
-        sandbox (str): sandbox info, e.g. 'tag=dev,protocol=ssh,node=dev1'
+        sandbox (str): sandbox info, get it by `list_sandbox`
         cmd (str): command
         timeout (int): default 30 seconds
     """
@@ -78,6 +79,26 @@ def call_sandbox(sandbox:str, cmd:str, timeout:int=30):
             timeout=timeout or 30,
         )
     return "unknown sandbox"
+
+def copy2sandbox(sandbox:str, local_fpath:str, sandbox_fpath:str, timeout:int=60) -> bool:
+    """copy file/folder to sandbox
+
+    Args:
+        sandbox (str): get it by `list_sandbox`
+        local_fpath (str): local path
+        sandbox_fpath (str): a path of sandbox
+        timeout (int, optional): _description_. Defaults to 60.
+
+    Returns:
+        bool: True for ok, False for failed.
+    """
+    sandbox_obj = _parse_sandbox_config(sandbox)
+
+    if sandbox_obj.protocol == "ssh":
+        cmd = f"scp -r '{local_fpath}' '{sandbox_obj.name or "root"}@{sandbox_obj.node}:{sandbox_fpath}'"
+        ret = exec_cmd(cmd, timeout=timeout, need_error_log=True)
+        return ret[0] == 0
+    return False
 
 def list_sandbox(tag:str) -> str:
     """ list all of sandbox by tag
@@ -106,4 +127,5 @@ def list_sandbox(tag:str) -> str:
 TOOLS = dict(
     call_sandbox=call_sandbox,
     list_sandbox=list_sandbox,
+    copy2sandbox=copy2sandbox,
 )

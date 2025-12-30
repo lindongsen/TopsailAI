@@ -9,6 +9,7 @@ import os
 import socket
 import subprocess
 
+from topsailai.logger import logger
 from .text_tool import safe_decode
 
 
@@ -36,7 +37,7 @@ def build_env(d:dict=None):
     return env
 
 
-def exec_cmd(cmd:str|list, no_need_stderr:bool=False, timeout:int=None):
+def exec_cmd(cmd:str|list, no_need_stderr:bool=False, timeout:int=None, need_error_log=False):
     """Execute a shell command and return the result.
 
     This function runs a command using subprocess.run, capturing stdout and stderr.
@@ -72,11 +73,15 @@ def exec_cmd(cmd:str|list, no_need_stderr:bool=False, timeout:int=None):
         text=False,
         timeout=timeout,
     )
-    return (
+    ret = (
         result.returncode,
         safe_decode(result.stdout),
         "" if no_need_stderr else safe_decode(result.stderr),
     )
+    if need_error_log:
+        if result.returncode != 0:
+            logger.error("failed to execute command: cmd=[%s], ret=[%s]", cmd, ret)
+    return ret
 
 def exec_cmd_in_remote(cmd:str, remote:str, port=22, timeout:int=None):
     """Execute a command on a remote host via SSH.

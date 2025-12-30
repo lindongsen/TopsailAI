@@ -72,7 +72,7 @@ def disable_flag_print_step():
     global g_flag_print_step
     g_flag_print_step = False
 
-def print_with_time(msg, need_format=True):
+def print_with_time(msg, need_format=False):
     """Print a message with a timestamp and optional agent name prefix.
 
     Args:
@@ -132,7 +132,7 @@ def print_debug(msg):
         msg: Debug message to print.
     """
     msg = f"[DEBUG] {msg}"
-    print_step(msg)
+    print_step(msg, need_format=False)
 
 def print_error(msg):
     """Print an error message to both logger and console.
@@ -144,7 +144,7 @@ def print_error(msg):
         msg: Error message to log and print
     """
     logger.error(msg)
-    print_with_time(f"Error: {msg}")
+    print_with_time(f"Error: {msg}", need_format=False)
     return
 
 def print_critical(msg):
@@ -157,7 +157,7 @@ def print_critical(msg):
         msg: Error message to log and print
     """
     logger.critical(msg)
-    print_with_time(f"Critical: {msg}")
+    print_with_time(f"Critical: {msg}", need_format=False)
     return
 
 def format_dict_to_md(d:dict) -> str:
