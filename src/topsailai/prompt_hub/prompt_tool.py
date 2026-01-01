@@ -36,16 +36,24 @@ def get_extra_tools():
 ---
 """
 
-def read_prompt(relative_path):
-    """ return string for file content.
-
-    :relative_path: e.g. 'work_mode/format/json.md'
-    """
+def get_prompt_file_path(relative_path):
     file_path = relative_path
     if not os.path.exists(file_path):
         file_path = os.path.join(
             os.path.dirname(__file__), relative_path
         )
+    return file_path
+
+def exists_prompt_file(relative_path) -> bool:
+    fpath = get_prompt_file_path(relative_path)
+    return os.path.exists(fpath)
+
+def read_prompt(relative_path):
+    """ return string for file content.
+
+    :relative_path: e.g. 'work_mode/format/json.md'
+    """
+    file_path = get_prompt_file_path(relative_path)
     with open(file_path) as fd:
         content = fd.read().strip()
         if content:
@@ -194,15 +202,45 @@ def get_tools_by_env(raw_tools:list[str]):
 
     return tools
 
+def get_prompt_from_module(module_name:str, key:str="PROMPT") -> str:
+    """
+    Args:
+        module_name (str): name from tools, e.g. agent_tool, cmd_tool
+        key (str, optional): Defaults to "PROMPT".
+
+    Returns:
+        str: prompt content.
+    """
+    try:
+        m = __import__(f"topsailai.tools.{module_name}", None, None, [module_name])
+        return getattr(m, key)
+    except Exception:
+        pass
+    return ""
+
 def get_prompt_by_tools(tools:list[str]) -> str:
     """ return prompt content from prompt_hub """
     prompt_keys = set()
+    prompt_content = ""
+
+    modules = set()
     for tool_name in tools:
-        if tool_name.startswith("agent_tool"):
-            key = "tools/agent_tool.md"
+        # tool_name: agent_tool.WritingAssistant
+        module_name = tool_name.split('.', 1)[0]
+        modules.add(module_name)
+
+    for module_name in modules:
+        # from prompt_hub
+        key = f"tools/{module_name}.md"
+        if exists_prompt_file(key):
             prompt_keys.add(key)
 
-    prompt_content = ""
+        # from tools.module
+        tool_prompt = get_prompt_from_module(module_name)
+        if tool_prompt:
+            prompt_content += tool_prompt.strip() + "\n\n"
+
     for key in prompt_keys:
         prompt_content += read_prompt(key)
+
     return prompt_content

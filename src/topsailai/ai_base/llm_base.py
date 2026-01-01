@@ -587,6 +587,7 @@ class LLMModel(object):
         self.tokenStat.add_msgs(messages)
 
         response = self.chat_model.create(
+            timeout=(5, 300),
             **self.build_parameters_for_chat(
                 messages, stream=True,
                 tools=tools, tool_choice=tool_choice,
