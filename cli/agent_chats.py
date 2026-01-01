@@ -127,7 +127,7 @@ def main():
         try:
             answer = agent.run(react.Step4ReAct(True), message)
         except KeyboardInterrupt:
-            if not input_yes():
+            if not input_yes("Agent Session Continue [yes/no] "):
                 break
 
         if answer:

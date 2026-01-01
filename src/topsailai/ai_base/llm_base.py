@@ -738,6 +738,12 @@ class LLMModel(object):
                     return (rsp_obj, result)
 
                 return result
+            except KeyboardInterrupt:
+                # The LLM service has been stuck for a long time, we can proactively retry
+                yn = input("LLM Retry [yes/no] ")
+                if yn.strip().lower() == "yes":
+                    continue
+                raise KeyboardInterrupt()
             except JsonError as e:
                 print_error(f"!!! [{i}] JsonError, {e}")
                 continue
