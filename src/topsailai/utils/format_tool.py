@@ -77,6 +77,11 @@ def fix_llm_mistakes(text:str, step_keys=("thought", "action")):
             text = text.replace(step_name, f"{step_name}\n", 1)
             continue
 
+        # case: {step_name}xxx
+        if text.startswith(step_name):
+            text = text.replace(step_name, f"{step_name}\n", 1)
+            continue
+
     return text
 
 def parse_topsailai_format(text: str) -> dict:
