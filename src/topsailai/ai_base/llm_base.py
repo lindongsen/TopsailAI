@@ -67,6 +67,33 @@ def _to_list(obj):
         return list(obj)
     return [obj]
 
+def get_response_message(response) -> ChatCompletionMessage:
+    """
+    Extract the message from the API response.
+
+    Args:
+        response: The API response object
+
+    Returns:
+        ChatCompletionMessage: The assistant's message from the response
+
+    Example:
+        ChatCompletionMessage(
+            content='',
+            refusal=None,
+            role='assistant',
+            annotations=None,
+            audio=None,
+            function_call=None,
+            tool_calls=None),
+            refs=None,
+            service_tier=None
+        )
+    """
+    if isinstance(response, ChatCompletionMessage):
+        return response
+    return response.choices[0].message
+
 def _format_messages(messages, key_name, value_name):
     """
     Format messages to a specific format for the assistant.
@@ -108,7 +135,7 @@ def _format_messages(messages, key_name, value_name):
 
     return messages
 
-def fix_llm_mistakes(response:list):
+def fix_llm_mistakes(response:list, rsp_obj=None):
     if not response:
         return response
 
@@ -123,9 +150,31 @@ def fix_llm_mistakes(response:list):
             if 'tool_call' in item:
                 print_error("fix llm mistake: missing step_name")
                 item["step_name"] = "action"
+
+    # case: tool_calls in rsp_obj
+    if response and isinstance(response, list) and rsp_obj is not None:
+        if len(response) == 1:
+            item0 = response[0]
+            rsp_msg = get_response_message(rsp_obj)
+
+            if rsp_msg is None:
+                return response
+
+            if not isinstance(item0, dict):
+                return response
+
+            # case: missing action
+            if "step_name" in item0 \
+                and item0["step_name"] != "action" \
+                and rsp_msg.tool_calls:
+                    print_error("fix llm mistake: missing step_name=action")
+                    response.append(
+                        {"step_name": "action"}
+                    )
+
     return response
 
-def _format_response(response):
+def _format_response(response, rsp_obj=None):
     """
     Format response to a standardized list format for internal use.
 
@@ -163,11 +212,12 @@ def _format_response(response):
                     if count:
                         # no need retry
                         break
-                    return format_tool.format_dict_to_list(
+                    response = format_tool.format_dict_to_list(
                         format_tool.parse_topsailai_format(response),
                         key_name="step_name",
                         value_name="raw_text",
                     )
+                    return response
 
             response = to_json_str(response)
             response = _to_list(simplejson.loads(response))
@@ -186,6 +236,8 @@ def _format_response(response):
             raise e
         except Exception as e:
             print_error(f"parsing response: {e}\n>>>\n{response}\n<<<\nretrying times: {count}")
+        finally:
+            fix_llm_mistakes(response, rsp_obj)
 
     raise JsonError("invalid json string")
 
@@ -512,9 +564,7 @@ class LLMModel(object):
                 service_tier=None
             )
         """
-        if isinstance(response, ChatCompletionMessage):
-            return response
-        return response.choices[0].message
+        return get_response_message(response)
 
     def format_null_response_content(self, rsp_obj, rsp_content:str) -> str:
         if rsp_content:
@@ -744,7 +794,7 @@ class LLMModel(object):
                 if for_raw:
                     return rsp_content
 
-                result = _format_response(rsp_content)
+                result = _format_response(rsp_content, rsp_obj)
 
                 if not result:
                     raise TypeError("null of response content: [%s]" % rsp_content)
