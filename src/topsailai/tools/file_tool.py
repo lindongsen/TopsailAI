@@ -24,18 +24,99 @@ WHITE_LIST_NO_TRUNCATE_EXT = [
     "py", "go", "c", "c++", "sh", "cmd",
 ]
 
-def write_file(file_path:str, content:str):
-    """ write content to file.
+def write_file(file_path:str, content:str, seek:int=0, to_insert:bool=False):
+    """Write content to a file with flexible positioning options.
+
+    This function allows writing content to a file with various positioning modes:
+    - Standard overwrite mode (to_insert=False)
+    - Insert mode (to_insert=True) where content is inserted at the specified position
+    - Support for positive and negative seek positions
 
     Args:
-        file_path (str)
-        content (str)
+        file_path (str): The path to the file to write to
+        content (str): The content to write to the file
+        seek (int, optional): Position to start writing from. Defaults to 0.
+            - Positive values: seek from start of file, position=min(seek, len(existing_content))
+            - Negative values: seek from end of file
+            - 0: start of file
+            if file no exists, `seek` still is 0, just write content at position 0.
+        to_insert (bool, optional): If True, insert content at seek position without
+                                   overwriting existing content. If False, overwrite
+                                   content starting at seek position. Defaults to False.
 
-    Return (str): null for ok
+    Returns:
+        str: Empty string on success, error message string on failure
+
+    Raises:
+        This function catches all exceptions and returns them as strings rather than raising
+
+    Examples:
+        # Overwrite entire file
+        write_file("test.txt", "new content")
+
+        # Append to end of file
+        write_file("test.txt", "appended", seek=-1, to_insert=True)
+
+        # Insert at position 10
+        write_file("test.txt", "inserted", seek=10, to_insert=True)
+
+        # Overwrite from position 5
+        write_file("test.txt", "overwrite", seek=5, to_insert=False)
     """
     try:
-        with open(file_path, "w+") as fd:
-            fd.write(content)
+        if to_insert:
+            # Insert mode: read existing content, insert at position, then write back
+            if os.path.exists(file_path):
+                with open(file_path, "r") as fd:
+                    existing_content = fd.read()
+
+                # Handle negative seek (from end)
+                if seek < 0:
+                    position = max(0, len(existing_content) + seek + 1)  # +1 to append after last character
+                else:
+                    position = min(seek, len(existing_content))
+
+                # Insert the content
+                new_content = existing_content[:position] + content + existing_content[position:]
+
+                with open(file_path, "w") as fd:
+                    fd.write(new_content)
+            else:
+                # File doesn't exist, create with content
+                with open(file_path, "w") as fd:
+                    fd.write(content)
+        else:
+            # Overwrite mode: simple approach - just write the content
+            # For complex positioning, we'll handle it differently
+            if seek == 0:
+                # Simple overwrite from beginning
+                with open(file_path, "w") as fd:
+                    fd.write(content)
+            else:
+                # For non-zero seek, we need to handle positioning
+                if os.path.exists(file_path):
+                    with open(file_path, "r") as fd:
+                        existing_content = fd.read()
+
+                    # Handle negative seek (from end)
+                    if seek < 0:
+                        position = max(0, len(existing_content) + seek)  # For overwrite mode, no +1 adjustment
+                    else:
+                        position = min(seek, len(existing_content))
+
+                    # Replace content starting at position
+                    if position + len(content) <= len(existing_content):
+                        new_content = existing_content[:position] + content + existing_content[position + len(content):]
+                    else:
+                        # Extend the file with the new content
+                        new_content = existing_content[:position] + content
+
+                    with open(file_path, "w") as fd:
+                        fd.write(new_content)
+                else:
+                    # For overwrite mode on non-existent file, just write content at position 0
+                    with open(file_path, "w") as fd:
+                        fd.write(content)
     except Exception as e:
         return str(e)
     return ""
