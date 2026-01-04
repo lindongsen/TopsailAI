@@ -14,7 +14,7 @@ from topsailai.utils import (
     env_tool,
 )
 
-CONN_CHAR = env_tool.EnvReaderInstance.get("TOPSAILAI_TOOL_CONN_CHAR", "-")
+CONN_CHAR = env_tool.EnvReaderInstance.get("TOPSAILAI_TOOL_CONN_CHAR", "-") or "-"
 
 # key is tool_name, value is function
 TOOLS = module_tool.get_function_map("topsailai.tools", "TOOLS", conn_char=CONN_CHAR)
@@ -49,10 +49,10 @@ TOOLS_INFO = module_tool.get_function_map("topsailai.tools", "TOOLS_INFO", conn_
 TOOL_PROMPT = """
 ---
 # TOOLS
-Attention: You MUST use the tool name (completely), e.g. whole name is 'x_tool.y_func', you cannot use 'y_func'.
+Attention: You MUST use the tool name (completely), e.g. whole name is 'x_tool%sy_func', you cannot use 'y_func'.
 {__TOOLS__}
 ---
-"""
+""" % CONN_CHAR
 
 def get_tool_prompt(tools_name:list=None, tools_map:dict=None):
     """

@@ -71,13 +71,18 @@ def call_sandbox(sandbox:str, cmd:str, timeout:int=30):
     """
     sandbox_obj = _parse_sandbox_config(sandbox)
 
+    result = None
     if sandbox_obj.protocol == "ssh":
-        return exec_cmd_in_remote(
+        result = exec_cmd_in_remote(
             cmd,
             remote=sandbox_obj.node,
             port=sandbox_obj.port,
             timeout=timeout or 30,
         )
+    if result:
+        from .cmd_tool import format_return
+        return format_return(cmd, result)
+
     return "unknown sandbox"
 
 def copy2sandbox(sandbox:str, local_fpath:str, sandbox_fpath:str, timeout:int=60) -> bool:
