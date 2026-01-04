@@ -296,7 +296,7 @@ class PromptBase(object):
         content = self.hook_format_content(content)
         print_step(content)
         if tool_calls:
-            print_step(tool_calls)
+            print_step(tool_calls, need_format=False)
         self.append_message({"role": ROLE_ASSISTANT, "content": content, "tool_calls": tool_calls})
 
     def add_tool_message(self, content):
@@ -343,7 +343,7 @@ class PromptBase(object):
             file_path = file_name
             with open(file_path, 'w', encoding='utf-8') as fd:
                 fd.write(to_json_str(self.messages))
-            print_step(f"dump messages: [{file_path}]")
+            print_step(f"dump messages: [{file_path}]", need_format=False)
             return file_path
         except Exception as e:
             print_error(f"dump messages failed: {e}")
