@@ -21,6 +21,7 @@ from topsailai.utils.json_tool import to_json_str
 from topsailai.utils import (
     env_tool,
     format_tool,
+    thread_tool,
 )
 from topsailai.context.token import TokenStat
 
@@ -31,6 +32,9 @@ from .constants import (
 
 class JsonError(Exception):
     """ invalid json string """
+    pass
+
+class ModelServiceError(Exception):
     pass
 
 
@@ -168,7 +172,18 @@ def _format_response(response):
             response = to_json_str(response)
             response = _to_list(simplejson.loads(response))
             fix_llm_mistakes(response)
+
+            # model service have errors. example: Model tpm limit exceeded
+            if response and len(response) == 1:
+                item0 = response[0]
+                if isinstance(item0, dict):
+                    if 'step_name' not in item0:
+                        if len(item0) == 2 and 'message' in item0 and 'status' in item0:
+                            raise ModelServiceError(f"some errors have occurred in model service: [{item0}]")
+
             return response
+        except ModelServiceError as e:
+            raise e
         except Exception as e:
             print_error(f"parsing response: {e}\n>>>\n{response}\n<<<\nretrying times: {count}")
 
@@ -740,7 +755,7 @@ class LLMModel(object):
                 return result
             except KeyboardInterrupt:
                 # The LLM service has been stuck for a long time, we can proactively retry
-                yn = input("LLM Retry [yes/no] ")
+                yn = input(">>> LLM Retry [yes/no] ")
                 if yn.strip().lower() == "yes":
                     continue
                 raise KeyboardInterrupt()
@@ -799,5 +814,24 @@ class LLMModel(object):
                 # This problem often occurs with streaming response
                 print_error(f"!!! [{i}] ReadError, {e}")
                 continue
+
+            except ModelServiceError as e:
+                sec = 30
+                print_error(f"!!! [{i}] ModelServiceError, {e}")
+                print_error(f"blocking chat {sec}s ...")
+                time.sleep(sec)
+                continue
+
+            # internal error or bug
+            except (
+                KeyError,
+            ) as e:
+                if thread_tool.is_main_thread():
+                    print_error(f"Some errors have occurred: [{e}]")
+                    logger.exception("some errors have occurred: %s", e)
+                    yn = input(">>> LLM Retry [yes/no] ")
+                    if yn.strip().lower() == "yes":
+                        continue
+                raise e
 
         raise Exception("chat to LLM is failed")

@@ -95,6 +95,12 @@ def copy2sandbox(sandbox:str, local_fpath:str, sandbox_fpath:str, timeout:int=60
     sandbox_obj = _parse_sandbox_config(sandbox)
 
     if sandbox_obj.protocol == "ssh":
+        if os.path.isdir(local_fpath):
+            local_fname = os.path.basename(local_fpath)
+            sandbox_fname = os.path.basename(sandbox_fpath)
+            if local_fname == sandbox_fname:
+                sandbox_fpath = os.path.dirname(sandbox_fpath)
+
         cmd = f"scp -r '{local_fpath}' '{sandbox_obj.name or "root"}@{sandbox_obj.node}:{sandbox_fpath}'"
         ret = exec_cmd(cmd, timeout=timeout, need_error_log=True)
         return ret[0] == 0
