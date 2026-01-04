@@ -207,8 +207,11 @@ def _format_response(response, rsp_obj=None):
 
     for count in range(3):
         try:
-            if response.startswith(format_tool.TOPSAILAI_FORMAT_PREFIX) or \
-                f"\n{format_tool.TOPSAILAI_FORMAT_PREFIX}" in response:
+            if response.startswith(format_tool.TOPSAILAI_FORMAT_PREFIX) \
+                or f"\n{format_tool.TOPSAILAI_FORMAT_PREFIX}" in response \
+                or f"{format_tool.TOPSAILAI_STEP_ACTION}\n" in response \
+                or f"{format_tool.TOPSAILAI_STEP_THINK}\n" in response \
+                :
                     if count:
                         # no need retry
                         break
