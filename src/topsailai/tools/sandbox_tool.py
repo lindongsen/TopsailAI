@@ -65,7 +65,7 @@ def call_sandbox(sandbox:str, cmd:str, timeout:int=30):
     """ execute command in sandbox
 
     Args:
-        sandbox (str): sandbox info, get it by `list_sandbox`
+        sandbox (str): sandbox info, get it by `list_sandbox`, format like 'tag=x,protocol=y,node=z'
         cmd (str): command
         timeout (int): default 30 seconds
     """

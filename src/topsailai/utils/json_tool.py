@@ -144,6 +144,9 @@ def to_json_str(content, indent=2):
     """
     if isinstance(content, str):
         content = fix_llm_mistakes_on_json(content)
+        new_content = convert_code_block_to_json_str(content)
+        if new_content:
+            return new_content
         return content
     try:
         return simplejson.dumps(content, indent=indent, ensure_ascii=False, default=str)
