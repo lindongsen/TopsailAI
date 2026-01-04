@@ -154,6 +154,8 @@ EXTRA_TOOLS=""
 # Each plugin is loaded from a separate directory and integrated via the 'TOOLS' variable
 PLUGIN_TOOLS=""
 
+# default char is '.', example file_tool.read_file
+# TOPSAILAI_TOOL_CONN_CHAR=""
 
 # =============================================================================
 # Sandbox Configuration

@@ -11,10 +11,13 @@ from topsailai.utils import (
     module_tool,
     format_tool,
     print_tool,
+    env_tool,
 )
 
+CONN_CHAR = env_tool.EnvReaderInstance.get("TOPSAILAI_TOOL_CONN_CHAR", "-")
+
 # key is tool_name, value is function
-TOOLS = module_tool.get_function_map("topsailai.tools", "TOOLS")
+TOOLS = module_tool.get_function_map("topsailai.tools", "TOOLS", conn_char=CONN_CHAR)
 
 # key is tool_name, value is dict
 # Value Example:
@@ -40,7 +43,7 @@ TOOLS = module_tool.get_function_map("topsailai.tools", "TOOLS")
 #         }
 #     }
 # }
-TOOLS_INFO = module_tool.get_function_map("topsailai.tools", "TOOLS_INFO")
+TOOLS_INFO = module_tool.get_function_map("topsailai.tools", "TOOLS_INFO", conn_char=CONN_CHAR)
 
 
 TOOL_PROMPT = """
@@ -80,11 +83,11 @@ def expand_plugin_tools():
     if not env_plugin_tools:
         return
     for plugin_path in env_plugin_tools.split(';'):
-        _tools = module_tool.get_external_function_map(plugin_path, "TOOLS")
+        _tools = module_tool.get_external_function_map(plugin_path, "TOOLS", conn_char=CONN_CHAR)
         if _tools:
             TOOLS.update(_tools)
 
-        _tools_info = module_tool.get_external_function_map(plugin_path, "TOOLS_INFO")
+        _tools_info = module_tool.get_external_function_map(plugin_path, "TOOLS_INFO", conn_char=CONN_CHAR)
         if _tools_info:
             TOOLS_INFO.update(_tools_info)
 
@@ -103,10 +106,10 @@ def generate_tool_info(tool_name, tool_description):
     }
     return result
 
-def get_tools_for_chat(tools_name:list[str]) -> dict:
+def get_tools_for_chat(tools_map:dict) -> dict:
     """ return tools info """
     result = {}
-    for tool_name in tools_name:
+    for tool_name in list(tools_map.keys()):
         if tool_name in TOOLS_INFO:
             result[tool_name] = TOOLS_INFO[tool_name]
             result[tool_name]["function"]["name"] = tool_name

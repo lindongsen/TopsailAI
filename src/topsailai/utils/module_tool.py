@@ -69,7 +69,7 @@ def list_sub_mods_name(path):
             mod_name_set.append(modname)
     return mod_name_set
 
-def get_function_map(path, key="TOOLS", prefix_name=""):
+def get_function_map(path, key="TOOLS", prefix_name="", conn_char='-'):
     """Create a mapping of function names to functions from modules.
 
     This function scans modules in a package and collects functions
@@ -91,6 +91,10 @@ def get_function_map(path, key="TOOLS", prefix_name=""):
             "cmd_tool.exec_cmd": exec_cmd_function
         }
     """
+    if not conn_char:
+        conn_char = '-'
+    assert len(conn_char) == 1
+
     if prefix_name is None:
         prefix_name = path
 
@@ -112,9 +116,9 @@ def get_function_map(path, key="TOOLS", prefix_name=""):
         for v_name, v_func in iter_values:
             if not isinstance(v_name, str):
                 v_name = v_func.__name__
-            m_key = f"{sub_modname}.{v_name}"
+            m_key = f"{sub_modname}{conn_char}{v_name}"
             if prefix_name:
-                m_key = f"{prefix_name}.{m_key}"
+                m_key = f"{prefix_name}{conn_char}{m_key}"
             modules_map[m_key] = v_func
     return modules_map
 
@@ -201,7 +205,7 @@ def get_path_for_sys_and_package(path:str) -> tuple[str|None, str|None]:
         pass
     return (sys_path, pkg_path)
 
-def get_external_function_map(path:str, key:str="TOOLS", prefix_name:str=""):
+def get_external_function_map(path:str, key:str="TOOLS", prefix_name:str="", conn_char='-'):
     """Create a mapping of function names to functions from modules.
 
     This function scans modules in a package and collects functions
@@ -237,4 +241,4 @@ def get_external_function_map(path:str, key:str="TOOLS", prefix_name:str=""):
         sys.path.append(sys_path)
 
     assert pkg_path, f"no found pkg_path for this path: [{path}]"
-    return get_function_map(pkg_path, key, prefix_name)
+    return get_function_map(pkg_path, key, prefix_name, conn_char=conn_char)
