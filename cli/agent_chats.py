@@ -95,6 +95,11 @@ def main():
     agent.hooks_after_init_prompt.append(hook_after_init_prompt)
     agent.hooks_after_new_session.append(hook_after_new_session)
 
+
+    ##########################################################################################
+    # Hook Instruction
+    ##########################################################################################
+
     hook_instruction = HookInstruction()
     def _clear():
         if session_id:
