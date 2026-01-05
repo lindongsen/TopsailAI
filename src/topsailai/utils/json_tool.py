@@ -54,6 +54,9 @@ def fix_llm_mistakes_on_json(content):
 
     content = content.strip()
 
+    if safe_json_load(content):
+        return content
+
     # LLM can make mistakes
 
     # case: "\n  }\n  }\n"

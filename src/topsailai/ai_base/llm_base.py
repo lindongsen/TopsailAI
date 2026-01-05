@@ -870,7 +870,11 @@ class LLMModel(object):
                         break
 
                 continue
-            except (httpx.ReadError, httpcore.ReadError) as e:
+            except (
+                    httpx.ReadError,
+                    httpcore.ReadError,
+                    httpx.RemoteProtocolError,
+                ) as e:
                 # This problem often occurs with streaming response
                 print_error(f"!!! [{i}] ReadError, {e}")
                 continue
@@ -885,6 +889,7 @@ class LLMModel(object):
             # internal error or bug
             except (
                 KeyError,
+                Exception,
             ) as e:
                 if thread_tool.is_main_thread():
                     print_error(f"Some errors have occurred: [{e}]")

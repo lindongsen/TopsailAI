@@ -150,6 +150,8 @@ class StepCallBase(object):
                 raw_dict = None
                 if raw_text:
                     raw_dict = json_tool.json_load(raw_text)
+                    if isinstance(raw_dict, list):
+                        raw_dict = raw_dict[0]
                 if raw_dict and 'tool_call' in raw_dict:
                     # Function name from raw text
                     func_name = raw_dict['tool_call']
