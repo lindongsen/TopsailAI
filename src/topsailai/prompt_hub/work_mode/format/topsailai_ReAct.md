@@ -12,6 +12,6 @@ I need to know the OS version.
 topsailai.action
 {
   "tool_args": {"cmd": "uname -a" },
-  "tool_call": "cmd_tool.exec_cmd",
+  "tool_call": "cmd_tool-exec_cmd",
 }
 ```
