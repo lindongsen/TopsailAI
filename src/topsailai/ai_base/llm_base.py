@@ -247,7 +247,7 @@ def _format_response(response, rsp_obj=None):
         and response[0] not in "[]{}" \
         and response[-1] not in "[]{}":
             print_error("fix llm mistake: maybe only thought")
-            return _format_response(format_tool.TOPSAILAI_STEP_THINK + "\n" + response)
+            return _format_response(format_tool.TOPSAILAI_STEP_THINK + "\n" + response, rsp_obj=rsp_obj)
 
     raise JsonError("invalid json string")
 
