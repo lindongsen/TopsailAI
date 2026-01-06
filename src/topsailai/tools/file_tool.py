@@ -11,8 +11,11 @@ import os
 import traceback
 
 from topsailai.context import ctx_safe
-from topsailai.utils import text_tool
-from topsailai.utils import print_tool
+from topsailai.utils import (
+    text_tool,
+    print_tool,
+    env_tool,
+)
 
 # lower of letter
 WHITE_LIST_NO_TRUNCATE_EXT = [
@@ -20,9 +23,35 @@ WHITE_LIST_NO_TRUNCATE_EXT = [
     "done", "whole",
     # settings
     "md", "manifest", "conf", "yaml", "config", "cfg", "rc", "cnf", "xml", "pem", "json",
+    "tpl",
     # devlang
     "py", "go", "c", "c++", "sh", "cmd",
-]
+] + (
+        env_tool.EnvReaderInstance.get_list_str(
+            "TOPSAILAI_FILE_WHITE_LIST_NO_TRUNCATE_EXT",
+            to_lower=True,
+        ) or []
+    )
+
+# all of file extentions is white
+if '*' in WHITE_LIST_NO_TRUNCATE_EXT:
+    WHITE_LIST_NO_TRUNCATE_EXT = ['*']
+
+# all of files need truncate
+if '!*' in WHITE_LIST_NO_TRUNCATE_EXT:
+    WHITE_LIST_NO_TRUNCATE_EXT = []
+
+def is_need_truncate(file_ext:str) -> bool:
+    if not WHITE_LIST_NO_TRUNCATE_EXT:
+        return True
+
+    if '*' in WHITE_LIST_NO_TRUNCATE_EXT:
+        return False
+    if file_ext.lower() in WHITE_LIST_NO_TRUNCATE_EXT:
+        return False
+
+    return True
+
 
 def write_file(file_path:str, content:str, seek:int=0, to_insert:bool=False):
     """Write content to a file with flexible positioning options.
@@ -180,7 +209,7 @@ def read_file(file_path:str, seek:int=0, size:int=-1):
             else:
                 fd.seek(seek)
 
-            if file_ext not in WHITE_LIST_NO_TRUNCATE_EXT:
+            if is_need_truncate(file_ext):
                 content = _do_step_read_bytes(fd, size)
                 content = ctx_safe.truncate_message(content)
             else:
@@ -188,9 +217,7 @@ def read_file(file_path:str, seek:int=0, size:int=-1):
             content = text_tool.safe_decode(content)
 
             # context limit
-            if file_ext in WHITE_LIST_NO_TRUNCATE_EXT:
-                pass
-            else:
+            if is_need_truncate(file_ext):
                 content = ctx_safe.truncate_message(content)
 
             return content

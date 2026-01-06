@@ -157,6 +157,9 @@ PLUGIN_TOOLS=""
 # default char is '.', example file_tool.read_file
 # TOPSAILAI_TOOL_CONN_CHAR=""
 
+# White list for file extensions do not truncate, split by ';'
+# TOPSAILAI_FILE_WHITE_LIST_NO_TRUNCATE_EXT=""
+
 # =============================================================================
 # Sandbox Configuration
 # =============================================================================

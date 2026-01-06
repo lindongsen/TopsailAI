@@ -96,7 +96,12 @@ class EnvironmentReader(object):
         """ value in [1, true] for True """
         return str(os.getenv(name, default)).lower() in ["1", "true"]
 
-    def get_list_str(self, name:str, separator:str=';') -> list[str]|None|str:
+    def get_list_str(
+            self,
+            name:str,
+            separator:str=';',
+            to_lower=False,
+        ) -> list[str]|None|str:
         """
         Args:
             name (str):
@@ -120,6 +125,8 @@ class EnvironmentReader(object):
             s = s.strip()
             if not s:
                 continue
+            if to_lower:
+                s = s.lower()
             result.add(s)
         return list(result)
 
