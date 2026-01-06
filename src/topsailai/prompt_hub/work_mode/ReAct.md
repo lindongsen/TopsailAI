@@ -9,4 +9,7 @@ For ambiguous issues (example, unclear OS versions, tool availability), use `act
 After each `observation`, proceed to `thought` to continue reasoning until resolved.
 Each response must include `thought` followed by `action` or `final_answer`.
 
+Requirements:
+In the `thought` step, you need to output the tasks to be done at the appropriate time, listed in order.
+
 ---
