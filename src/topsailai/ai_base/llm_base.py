@@ -880,6 +880,10 @@ class LLMModel(object):
                 continue
 
             except ModelServiceError as e:
+                e_str = str(e)
+                if "token exceeded" in e_str:
+                    raise e
+
                 sec = 30
                 print_error(f"!!! [{i}] ModelServiceError, {e}")
                 print_error(f"blocking chat {sec}s ...")
