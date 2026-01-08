@@ -377,7 +377,7 @@ class LLMModel(object):
         self.models = [] # supported
         self.get_llm_models()
 
-        logger.info(f"model={self.model_name}, max_tokens={max_tokens}")
+        logger.info(f"model={self.model_name}, max_tokens={self.max_tokens}")
 
         self.tokenStat = TokenStat(id(self))
 
