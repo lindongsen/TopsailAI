@@ -47,6 +47,8 @@ def truncate_msg(msg:str|list|dict, key_name="step_name", value_name="raw_text")
 
         if isinstance(msg, (dict, list)):
             for _msg_d in to_list(msg):
+                if not isinstance(_msg_d, dict):
+                    continue
                 _raw_text = _msg_d.get(value_name)
                 if _raw_text and len(_raw_text) > truncation_len:
                     _msg_d[value_name] = _msg_d[value_name][:truncation_len] + f" (truncated) ... total_len={len(_raw_text)} tail_content=[{_raw_text[-30:]}]"
