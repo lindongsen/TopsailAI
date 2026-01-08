@@ -13,6 +13,9 @@ import pkgutil
 from topsailai.logger import logger
 
 
+DEFAULT_CONN_CHAR = "."
+
+
 def get_mod(path):
     """Dynamically import a module by its path.
 
@@ -69,7 +72,7 @@ def list_sub_mods_name(path):
             mod_name_set.append(modname)
     return mod_name_set
 
-def get_function_map(path, key="TOOLS", prefix_name="", conn_char='-'):
+def get_function_map(path, key="TOOLS", prefix_name="", conn_char=DEFAULT_CONN_CHAR):
     """Create a mapping of function names to functions from modules.
 
     This function scans modules in a package and collects functions
@@ -92,7 +95,7 @@ def get_function_map(path, key="TOOLS", prefix_name="", conn_char='-'):
         }
     """
     if not conn_char:
-        conn_char = '-'
+        conn_char = DEFAULT_CONN_CHAR
     assert len(conn_char) == 1
 
     if prefix_name is None:
@@ -205,7 +208,7 @@ def get_path_for_sys_and_package(path:str) -> tuple[str|None, str|None]:
         pass
     return (sys_path, pkg_path)
 
-def get_external_function_map(path:str, key:str="TOOLS", prefix_name:str="", conn_char='-'):
+def get_external_function_map(path:str, key:str="TOOLS", prefix_name:str="", conn_char=DEFAULT_CONN_CHAR):
     """Create a mapping of function names to functions from modules.
 
     This function scans modules in a package and collects functions
