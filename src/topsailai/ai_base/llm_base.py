@@ -867,7 +867,7 @@ class LLMModel(object):
                     "maximum context",
                 ]:
                     if key in e_str:
-                        break
+                        raise e
 
                 continue
             except (
