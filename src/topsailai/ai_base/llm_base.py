@@ -640,7 +640,7 @@ class LLMModel(object):
 
         full_content = response.choices[0].message.content
 
-        self.fix_response_content(rsp_obj=response, rsp_content=full_content)
+        full_content = self.fix_response_content(rsp_obj=response, rsp_content=full_content)
         self.check_response_content(rsp_obj=response, rsp_content=full_content)
 
         self.send_content(full_content)
