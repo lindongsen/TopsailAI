@@ -279,8 +279,13 @@ class PromptBase(object):
         """
         if content is None:
             return
+
+        need_format = False
+        if isinstance(content, (dict, list)):
+            need_format = True
+
         content = self.hook_format_content(content)
-        print_step(content, need_format=False)
+        print_step(content, need_format=need_format)
         self.append_message({"role": ROLE_USER, "content": content})
 
     def add_assistant_message(self, content, tool_calls=None):
