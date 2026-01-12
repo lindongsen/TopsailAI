@@ -96,6 +96,10 @@ def write_file(file_path:str, content:str, seek:int=0, to_insert:bool=False):
         if to_insert:
             # Insert mode: read existing content, insert at position, then write back
             if os.path.exists(file_path):
+
+                if seek == -1:
+                    return append_file(file_path, content)
+
                 with open(file_path, "r") as fd:
                     existing_content = fd.read()
 
