@@ -17,7 +17,7 @@ from topsailai.prompt_hub.prompt_tool import PromptHubExtractor
 from topsailai.ai_base.agent_base import (
     StepCallBase,
 )
-
+from . import exception as agent_exception
 
 # define prompt of ReAct framework
 SYSTEM_PROMPT = PromptHubExtractor.prompt_mode_ReAct_toolPrompt
@@ -85,6 +85,8 @@ class Step4ReAct(StepCallBase):
             else:
                 try:
                     obs = tool_func(**args)
+                except agent_exception.AgentEndProcess as e:
+                    raise e
                 except Exception as e:
                     obs = str(e)
                     logger.exception(e)

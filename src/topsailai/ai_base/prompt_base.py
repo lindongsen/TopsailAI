@@ -166,6 +166,10 @@ class PromptBase(object):
         # record session
         if get_session_id():
             for hook in self.hooks_ctx_history:
+                # last message is not system role
+                if self.messages[-1]["role"] == ROLE_SYSTEM:
+                    break
+
                 try:
                     hook.add_session_message(self.messages[-1])
                 except Exception:

@@ -6,11 +6,13 @@
 '''
 
 import os
+import time
 import fcntl
 from pathlib import Path
 from contextlib import contextmanager
 
 from topsailai.logger import logger
+
 
 ##########################################################
 # Core
@@ -196,6 +198,29 @@ def delete_file(file_path:str):
     return
 
 
+def get_file_content_fuzzy(f:str) -> tuple[str, str]:
+    """
+    Args:
+        f (str): file content or file path
+
+    Returns:
+        tuple[str, str]: (file_path, file_content)
+    """
+    file_path = ""
+    file_content = ""
+
+    if os.path.exists(f):
+        file_path = f
+    else:
+        file_content = f
+
+    if file_path:
+        with open(file_path, encoding="utf-8") as fd:
+            file_content = fd.read()
+
+    return (file_path, file_content)
+
+
 ##########################################################
 # Lock Shell
 ##########################################################
@@ -223,4 +248,30 @@ def ctxm_file_lock(file_path, mode="w"):
             yield file
         finally:
             fcntl.flock(file.fileno(), fcntl.LOCK_UN)
+    return
+
+@contextmanager
+def ctxm_temp_file(file_content, mode="w"):
+    """
+    Args:
+        file_content (str):
+        mode (str, optional): Defaults to "w".
+
+    Yields:
+        tuple(file_path, fd)
+    """
+    file_path = None
+    for _ in range(100):
+        file_path = f"/tmp/{time.time()}"
+        if not os.path.exists(file_path):
+            break
+        file_path = None
+
+    try:
+        with ctxm_file_lock(file_path, mode) as fd:
+            fd.write(file_content)
+            yield (file_path, fd)
+    finally:
+        delete_file(file_path)
+
     return

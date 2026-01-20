@@ -199,7 +199,7 @@ def get_message(hook: HookInstruction = None) -> str:
 
     # message from file
     file_path = message
-    if sys.argv[1] == '-':
+    if len(sys.argv) > 1 and sys.argv[1] == '-':
         file_path = "/dev/stdin"
     if file_path and os.path.exists(file_path):
         with open(file_path) as fd:

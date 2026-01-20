@@ -13,7 +13,7 @@ from topsailai.logger import logger
 from .text_tool import safe_decode
 
 
-def build_env(d:dict=None):
+def build_env(d:dict=None, keys:list=None):
     """Build environment dictionary with essential system variables.
 
     This function creates a dictionary containing commonly used environment
@@ -28,7 +28,7 @@ def build_env(d:dict=None):
               provided additional variables.
     """
     env = {}
-    for k in ["PYTHONPATH", "PATH", "HOSTNAME", "SHELL"]:
+    for k in ["PYTHONPATH", "PATH", "HOSTNAME", "SHELL"] + (keys or []):
         v = os.getenv(k)
         if v:
             env[k] = v
@@ -37,7 +37,14 @@ def build_env(d:dict=None):
     return env
 
 
-def exec_cmd(cmd:str|list, no_need_stderr:bool=False, timeout:int=None, need_error_log=False):
+def exec_cmd(
+        cmd:str|list,
+        no_need_stderr:bool=False,
+        timeout:int=None,
+        need_error_log=False,
+        env_keys:list=None,
+        env_info:dict=None,
+    ):
     """Execute a shell command and return the result.
 
     This function runs a command using subprocess.run, capturing stdout and stderr.
@@ -62,7 +69,7 @@ def exec_cmd(cmd:str|list, no_need_stderr:bool=False, timeout:int=None, need_err
         >>> exec_cmd("ls /nonexistent", no_need_stderr=True)
         (2, "", "")
     """
-    env = build_env()
+    env = build_env(env_info, env_keys)
     result = subprocess.run(
         cmd,
         env=env,

@@ -30,3 +30,30 @@ class ContentDots(ContentSender):
         sys.stdout.write(".")
         sys.stdout.flush()
         return True
+
+def print_context_messages(messages):
+    """
+    Format and print conversation messages for human-readable output
+
+    Args:
+        messages: List of message dictionaries containing 'role' and 'content' fields
+    """
+    for i, msg in enumerate(messages):
+        # Get role and content, with default values in case fields are missing
+        role = msg.get('role', 'unknown')
+        content = msg.get('content', '')
+
+        # Format the output with visual separators
+        print(f"\n{'='*50}")
+        print(f"#{i+1} - Role: {role.upper()}")
+        print(f"{'='*50}")
+
+        # Handle multiline content while preserving formatting
+        if content:
+            lines = content.split('\n')
+            for line in lines:
+                print(f"  {line}")
+        else:
+            print("  [No content]")
+
+    #print(f"\n{'='*50}")
