@@ -293,6 +293,61 @@ def mkdirs(dirs):
         os.makedirs(d, exist_ok=True)
     return True
 
+def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
+    """
+    Replace specific lines in a file based on line numbers.
+
+    Args:
+       file_path (str): Path to the file to modify
+        lines (list[tuple[int, str]]): List of tuples where each tuple contains:
+            - line_number (int): The 1-based line number to replace
+            - content (str): The new content for that line
+
+    Returns:
+        str: "OK" on success, error message on failure
+    """
+    try:
+        # Check if file exists
+        if not os.path.exists(file_path):
+            return f"File not found: {file_path}"
+
+        # Read the entire file content to preserve line endings
+        with open(file_path, 'r', encoding='utf-8') as file:
+            content = file.read()
+
+        # Split content into lines while preserving line endings
+        lines_content = content.splitlines(keepends=True)
+
+        # If the file doesn't end with a newline, the last line won't have line ending
+        # So we need to handle this case
+        if lines_content and not lines_content[-1].endswith(('\n', '\r', '\r\n')):
+            # Last line doesn't have line ending, so we'll add it temporarily
+            lines_content[-1] = lines_content[-1] + '\n'
+            last_line_no_ending = True
+        else:
+            last_line_no_ending = False
+
+        # Replace the specified lines
+        for line_num, new_content in lines:
+            new_content = new_content.rstrip()
+            # Convert to 0-based index
+            index = line_num - 1
+            if 0 <= index < len(lines_content):
+                # Preserve the line ending from the original line
+                original_line_ending = lines_content[index][len(lines_content[index].rstrip()):]
+                lines_content[index] = new_content + original_line_ending
+
+        # If last line originally didn't have ending, remove the temporary one
+        if last_line_no_ending and lines_content:
+            lines_content[-1] = lines_content[-1].rstrip('\n\r')
+
+        # Write the modified content back to the file
+        with open(file_path, 'w', encoding='utf-8') as file:
+            file.write(''.join(lines_content))
+        return "OK"
+    except Exception as e:
+        return str(e)
+
 
 TOOLS = dict(
     write_file=write_file,
@@ -300,6 +355,7 @@ TOOLS = dict(
     append_file=append_file,
     check_files_existing=check_files_existing,
     mkdirs=mkdirs,
+    replace_lines_in_file=replace_lines_in_file,
 )
 
 TOOLS_INFO = dict(

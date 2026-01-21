@@ -21,6 +21,8 @@ USER request: @Jason Check if this file exists /tmp/123
 ASSISTANT final_answer: Jason does not possess the capabilities of an agent (is_able_to_call_agent=false), and it is recommended to seek help from Dawson (is_able_to_call_agent=true).
 ```
 
+[Attention] All members should follow the manager's arrangements and refrain from doing anything beyond what the manager has assigned.
+
 ## Symbol
 
 ### Users can use '@' to designate specific members for chat

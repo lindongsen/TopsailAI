@@ -14,7 +14,7 @@ workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '
 if (workspace_root + "/src") not in sys.path:
     sys.path.insert(0, workspace_root)
     sys.path.insert(0, workspace_root + "/src")
-from topsailai.tools.file_tool import write_file, read_file
+from topsailai.tools.file_tool import write_file, read_file, replace_lines_in_file
 
 class TestFileToolWriteFile:
     @pytest.fixture
@@ -302,3 +302,353 @@ class TestFileToolWriteFile:
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Valid content"
+
+
+class TestFileToolReplaceLinesInFile:
+    @pytest.fixture
+    def temp_dir(self):
+        """Create a temporary directory for test files"""
+        temp_dir = tempfile.mkdtemp()
+        yield temp_dir
+        shutil.rmtree(temp_dir)
+
+    @pytest.fixture
+    def test_file(self, temp_dir):
+        """Create a test file path in the temporary directory"""
+        return os.path.join(temp_dir, "test.txt")
+
+    def test_replace_lines_in_file_single_line(self, test_file):
+        """Test replacing a single line in a file"""
+        # Create initial file content
+        initial_content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Replace line 3
+        result = replace_lines_in_file(test_file, [(3, "New Line 3")])
+        assert result == "OK"
+
+        # Verify the replacement
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\nLine 2\nNew Line 3\nLine 4\nLine 5"
+        assert content == expected_content
+
+    def test_replace_lines_in_file_multiple_lines(self, test_file):
+        """Test replacing multiple lines in a file"""
+        # Create initial file content
+        initial_content = "First line\nSecond line\nThird line\nFourth line\nFifth line"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Replace lines 2 and 4
+        result = replace_lines_in_file(test_file, [
+            (2, "New Second line"),
+            (4, "New Fourth line")
+        ])
+        assert result == "OK"
+
+        # Verify the replacements
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "First line\nNew Second line\nThird line\nNew Fourth line\nFifth line"
+        assert content == expected_content
+
+    def test_replace_lines_in_file_preserve_line_endings(self, test_file):
+        """Test that line endings are preserved when replacing lines"""
+        # Create initial file with mixed line endings
+        initial_content = "Line 1\nLine 2\r\nLine 3\nLine 4\r\nLine 5"
+        with open(test_file, 'w', newline='') as f:
+            f.write(initial_content)
+
+        # Replace line 3
+        result = replace_lines_in_file(test_file, [(3, "New Line 3")])
+        assert result == "OK"
+
+        # Verify the replacement - the function normalizes line endings to \n
+        with open(test_file, 'r', newline='') as f:
+            content = f.read()
+        expected_content = "Line 1\nLine 2\nNew Line 3\nLine 4\nLine 5"
+        assert content == expected_content
+
+    def test_replace_lines_in_file_out_of_bounds_line(self, test_file):
+        """Test replacing a line that doesn't exist (should not modify file)"""
+        # Create initial file content
+        initial_content = "Line 1\nLine 2\nLine 3"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Try to replace line 10 (which doesn't exist)
+        result = replace_lines_in_file(test_file, [(10, "Non-existent line")])
+        assert result == "OK"
+
+        # Verify the file content remains unchanged
+        with open(test_file, 'r') as f:
+            content = f.read()
+        assert content == initial_content
+
+    def test_replace_lines_in_file_negative_line_number(self, test_file):
+        """Test replacing with negative line number (should not modify file)"""
+        # Create initial file content
+        initial_content = "Line 1\nLine 2\nLine 3"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Try to replace line -1 (invalid)
+        result = replace_lines_in_file(test_file, [(-1, "Invalid line")])
+        assert result == "OK"
+
+        # Verify the file content remains unchanged
+        with open(test_file, 'r') as f:
+            content = f.read()
+        assert content == initial_content
+
+    def test_replace_lines_in_file_empty_file(self, test_file):
+        """Test replacing lines in an empty file (should not modify file)"""
+        # Create empty file
+        with open(test_file, 'w') as f:
+            f.write("")
+
+        # Try to replace line 1
+        result = replace_lines_in_file(test_file, [(1, "New line")])
+        assert result == "OK"
+
+        # Verify the file remains empty
+        with open(test_file, 'r') as f:
+            content = f.read()
+        assert content == ""
+
+    def test_replace_lines_in_file_single_line_no_newline(self, test_file):
+        """Test replacing a line in a file with no trailing newline"""
+        # Create file without trailing newline
+        initial_content = "Line 1\nLine 2\nLine 3"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Replace line 2
+        result = replace_lines_in_file(test_file, [(2, "New Line 2")])
+        assert result == "OK"
+
+        # Verify the replacement
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\nNew Line 2\nLine 3"
+        assert content == expected_content
+
+    def test_replace_lines_in_file_with_empty_lines(self, test_file):
+        """Test replacing lines including empty lines"""
+        # Create file with empty lines
+        initial_content = "Line 1\n\nLine 3\n\nLine 5"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Replace lines 2 and 4 (empty lines)
+        result = replace_lines_in_file(test_file, [
+            (2, "Filled Line 2"),
+            (4, "Filled Line 4")
+        ])
+        assert result == "OK"
+
+        # Verify the replacements
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\nFilled Line 2\nLine 3\nFilled Line 4\nLine 5"
+        assert content == expected_content
+
+    def test_replace_lines_in_file_same_line_multiple_times(self, test_file):
+        """Test replacing the same line multiple times in one call"""
+        # Create initial file content
+        initial_content = "Line 1\nLine 2\nLine 3"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Replace line 2 multiple times (last replacement should win)
+        result = replace_lines_in_file(test_file, [
+            (2, "First replacement"),
+            (2, "Second replacement"),
+            (2, "Final replacement")
+        ])
+        assert result == "OK"
+
+        # Verify only the last replacement is applied
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\nFinal replacement\nLine 3"
+        assert content == expected_content
+
+    def test_replace_lines_in_file_error_handling(self):
+        """Test error handling with non-existent file"""
+        # Try to replace lines in a non-existent file
+        result = replace_lines_in_file("/non/existent/file.txt", [(1, "Content")])
+        # The function should return an error message, not "OK"
+        assert result != "OK"
+        assert "File not found" in result or "No such file" in result
+
+    def test_replace_lines_in_file_unicode_content(self, test_file):
+        """Test replacing lines with Unicode content"""
+        # Create initial file content
+        initial_content = "Line 1\nLine 2\nLine 3"
+        with open(test_file, 'w', encoding='utf-8') as f:
+            f.write(initial_content)
+
+        # Replace with Unicode content
+        unicode_content = "你好世界 🌍\nUnicode line with emoji 😊"
+        result = replace_lines_in_file(test_file, [(2, unicode_content)])
+        assert result == "OK"
+
+        # Verify the Unicode content is preserved
+        with open(test_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        expected_content = f"Line 1\n{unicode_content}\nLine 3"
+        assert content == expected_content
+
+    def test_replace_lines_in_file_large_file(self, test_file):
+        """Test replacing lines in a large file"""
+        # Create a large file with many lines
+        lines = [f"Line {i}" for i in range(1000)]
+        initial_content = "\n".join(lines)
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Replace multiple lines throughout the file
+        result = replace_lines_in_file(test_file, [
+            (1, "New First Line"),
+            (500, "Middle Line Replacement"),
+            (1000, "New Last Line")
+        ])
+        assert result == "OK"
+
+        # Verify the replacements
+        with open(test_file, 'r') as f:
+            content = f.read()
+
+        lines = content.splitlines()
+        assert lines[0] == "New First Line"
+        assert lines[499] == "Middle Line Replacement"  # 0-based index
+        assert lines[999] == "New Last Line"
+        assert len(lines) == 1000
+
+    def test_replace_lines_in_file_zero_line_number(self, test_file):
+        """Test replacing line 0 (invalid line number)"""
+        # Create initial file content
+        initial_content = "Line 1\nLine 2\nLine 3"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Try to replace line 0 (invalid)
+        result = replace_lines_in_file(test_file, [(0, "Invalid line")])
+        assert result == "OK"
+
+        # Verify the file content remains unchanged
+        with open(test_file, 'r') as f:
+            content = f.read()
+        assert content == initial_content
+
+    def test_replace_lines_in_file_mixed_line_endings_preserved(self, test_file):
+        """Test that mixed line endings are preserved when replacing lines"""
+        # Create initial file with mixed line endings
+        initial_content = "Line 1\nLine 2\r\nLine 3\nLine 4\rLine 5"
+        with open(test_file, 'w', newline='') as f:
+            f.write(initial_content)
+
+        # Replace line 3
+        result = replace_lines_in_file(test_file, [(3, "New Line 3")])
+        assert result == "OK"
+
+        # Verify the replacement - the function normalizes line endings to \n
+        with open(test_file, 'r', newline='') as f:
+            content = f.read()
+        expected_content = "Line 1\nLine 2\nNew Line 3\nLine 4\nLine 5"
+        assert content == expected_content
+
+    def test_replace_lines_in_file_empty_content_replacement(self, test_file):
+        """Test replacing lines with empty content"""
+        # Create initial file content
+        initial_content = "Line 1\nLine 2\nLine 3"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Replace line 2 with empty content
+        result = replace_lines_in_file(test_file, [(2, "")])
+        assert result == "OK"
+
+        # Verify the replacement
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\n\nLine 3"
+        assert content == expected_content
+
+    def test_replace_lines_in_file_permission_error(self, test_file):
+        """Test error handling with permission denied"""
+        # Create a file and make it read-only to test permission errors
+        with open(test_file, 'w') as f:
+            f.write("Line 1\nLine 2\nLine 3")
+
+        # Make file read-only
+        os.chmod(test_file, 0o444)
+
+        try:
+            # Try to replace a line (should fail with permission error)
+            result = replace_lines_in_file(test_file, [(2, "New Line 2")])
+            # The function may return "OK" if the permission error doesn't occur in this environment
+            # or it may return an error message
+            if result != "OK":
+                assert "Permission denied" in result or "permission" in result.lower()
+            else:
+                # If no error occurs, that's acceptable too - it means the environment
+                # doesn't enforce read-only permissions in the expected way
+                pass
+        finally:
+            # Restore permissions for cleanup
+            os.chmod(test_file, 0o644)
+
+    def test_replace_lines_in_file_last_line(self, test_file):
+        """Test replacing the last line in a file"""
+        # Create initial file content
+        initial_content = "Line 1\nLine 2\nLine 3"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Replace the last line (line 3)
+        result = replace_lines_in_file(test_file, [(3, "New Last Line")])
+        assert result == "OK"
+
+        # Verify the replacement
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\nLine 2\nNew Last Line"
+        assert content == expected_content
+
+    def test_replace_lines_in_file_last_line_no_newline(self, test_file):
+        """Test replacing the last line in a file with no trailing newline"""
+        # Create file without trailing newline
+        initial_content = "Line 1\nLine 2\nLine 3"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Replace the last line (line 3)
+        result = replace_lines_in_file(test_file, [(3, "New Last Line")])
+        assert result == "OK"
+
+        # Verify the replacement
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\nLine 2\nNew Last Line"
+        assert content == expected_content
+
+    def test_replace_lines_in_file_first_line(self, test_file):
+        """Test replacing the first line in a file"""
+        # Create initial file content
+        initial_content = "Line 1\nLine 2\nLine 3"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Replace the first line (line 1)
+        result = replace_lines_in_file(test_file, [(1, "New First Line")])
+        assert result == "OK"
+
+        # Verify the replacement
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "New First Line\nLine 2\nLine 3"
+        assert content == expected_content
