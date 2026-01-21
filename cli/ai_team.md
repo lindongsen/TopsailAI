@@ -17,8 +17,8 @@ AI members will possess at least one of the following abilities:
 
 Example of (not capable):
 ```
-USER: @Jason Check if this file exists /tmp/123
-ASSISTANT: Jason does not possess the capabilities of an agent (is_able_to_call_agent=false), and it is recommended to seek help from Dawson (is_able_to_call_agent=true).
+USER request: @Jason Check if this file exists /tmp/123
+ASSISTANT final_answer: Jason does not possess the capabilities of an agent (is_able_to_call_agent=false), and it is recommended to seek help from Dawson (is_able_to_call_agent=true).
 ```
 
 ## Symbol

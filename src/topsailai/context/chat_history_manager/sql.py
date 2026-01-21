@@ -35,6 +35,7 @@ Function:
 
 from sqlalchemy import create_engine, Column, String, Text, DateTime, Integer, ForeignKey, PrimaryKeyConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy.sql import func as sql_func
 from datetime import datetime, timedelta
 
 from .__base import ChatHistoryBase, ChatHistoryMessageData
@@ -64,7 +65,7 @@ class Message(Base):
 
     msg_id = Column(String(32), primary_key=True)
     message = Column(Text, nullable=False)
-    create_time = Column(DateTime, default=datetime.now())
+    create_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
     msg_size = Column(Integer, nullable=False)
     access_time = Column(DateTime, nullable=True)
     access_count = Column(Integer, default=0, nullable=False)
@@ -89,7 +90,7 @@ class SessionMessage(Base):
 
     msg_id = Column(String(32), ForeignKey('chat_history_messages.msg_id'), nullable=False)
     session_id = Column(String, nullable=False)
-    create_time = Column(DateTime, default=datetime.now())
+    create_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
 
     # Composite primary key: message can appear in multiple sessions
     __table_args__ = (
@@ -153,7 +154,8 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
                     message=msg.message,
                     msg_size=len(msg.message),
                     access_time=None,
-                    access_count=0
+                    access_count=0,
+                    create_time=datetime.now(),
                 )
                 session.add(new_message)
 
@@ -166,7 +168,8 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
                 # Create new session-message mapping
                 new_mapping = SessionMessage(
                     msg_id=msg.msg_id,
-                    session_id=msg.session_id
+                    session_id=msg.session_id,
+                    create_time=datetime.now(),
                 )
                 session.add(new_mapping)
 

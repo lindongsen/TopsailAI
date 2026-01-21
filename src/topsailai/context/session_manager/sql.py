@@ -14,6 +14,7 @@
 
 from sqlalchemy import create_engine, Column, String, Text, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.sql import func as sql_func
 from datetime import datetime, timedelta
 
 from topsailai.context.chat_history_manager.sql import ChatHistorySQLAlchemy
@@ -40,7 +41,7 @@ class Session(Base):
     session_id = Column(String(32), primary_key=True)
     session_name = Column(String, nullable=True)
     task = Column(Text, nullable=False)
-    create_time = Column(DateTime, default=datetime.now())
+    create_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
 
 class SessionSQLAlchemy(SessionStorageBase):
     """
