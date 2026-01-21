@@ -54,6 +54,20 @@ PROMPT_FILE_AI_TEAM = f"{project_root}/cli/ai_team.md"
 g_members = []
 
 def get_team_list() -> list[dict]:
+    """
+    Get a list of team members from the TEAM_PATH directory.
+
+    Returns:
+        list[dict]: A list of dictionaries containing member information, where each dict has:
+            - member_id: The file path of the member file
+            - member_name: The base name of the member file without extension
+            - member_info: The content of the member file
+            - is_able_to_call_chat: Boolean indicating if chat capability exists
+            - is_able_to_call_agent: Boolean indicating if agent capability exists
+
+    Raises:
+        AssertionError: If TEAM_PATH is not set or is not a valid directory
+    """
     team_path = os.getenv("TEAM_PATH")
     assert team_path and os.path.isdir(team_path), f"invalid team path: {team_path}"
 
@@ -91,7 +105,17 @@ def get_team_list() -> list[dict]:
     return team_list
 
 def generate_team_prompt(team_list:list[dict]):
-    """generate prompt for team
+    """
+    Generate a YAML-formatted prompt section for the team members.
+
+    Args:
+        team_list (list[dict]): List of team member dictionaries from get_team_list()
+
+    Returns:
+        str: A formatted string containing team details in YAML format
+
+    Raises:
+        AssertionError: If team_list is empty
     """
     assert team_list
     content = f"""
@@ -104,6 +128,22 @@ def generate_team_prompt(team_list:list[dict]):
     return content
 
 def generate_system_prompt():
+    """
+    Generate the complete system prompt by combining multiple sources.
+
+    Combines:
+    - Team information from get_team_list() and generate_team_prompt()
+    - System prompt from environment variable or file
+    - Team prompt from environment variable or default file
+
+    Returns:
+        str: The complete system prompt content
+
+    Environment Variables Used:
+        SYSTEM_PROMPT: File path or content for system prompt
+        TEAM_PROMPT: File path for team prompt (defaults to PROMPT_FILE_AI_TEAM)
+        TEAM_PATH: Path to team member directory (used by get_team_list())
+    """
     # team info
     team_list = get_team_list()
     team_info = generate_team_prompt(team_list)
@@ -179,15 +219,29 @@ def main():
     ##########################################################################################
 
     def add_session_message():
+        """
+        Add the latest agent message to the session context and local messages list.
+        """
         if session_id:
             ctx_manager.add_session_message(session_id, agent.messages[-1])
         messages_from_session.append(agent.messages[-1])
 
     def hook_after_init_prompt(self):
+        """
+        Hook function called after agent prompt initialization.
+        Adds existing session messages to the agent's message history.
+
+        Args:
+            self: The agent instance
+        """
         if messages_from_session:
             self.messages += messages_from_session
 
     def hook_after_new_session(self):
+        """
+        Hook function called after a new session is created.
+        Adds the initial session message to the context.
+        """
         add_session_message()
 
     agent.hooks_after_init_prompt.append(hook_after_init_prompt)
@@ -199,6 +253,10 @@ def main():
 
     hook_instruction = HookInstruction()
     def _clear():
+        """
+        Clear context messages if no session ID exists.
+        Shows message if session ID prevents clearing.
+        """
         if session_id:
             print(f"{message}: Context cannot be clear due to exist session_id({session_id})")
         else:
@@ -207,18 +265,30 @@ def main():
             print("/clear: Context already is clear")
         return
     def _story():
+        """
+        Save context messages to a new story using subprocess.
+        Only works if there are existing messages in the session.
+        """
         if not messages_from_session:
             return
         pid = subprocess_agent_memory_as_story(messages_from_session)
         print(f"/story: The history messages will be save to a new story, pid=[{pid}]")
         return
     def _history():
+        """
+        Display the history of messages for the current session.
+        Shows separator line and all context messages if available.
+        """
         print(f"\n\n{SPLIT_LINE}")
         print(f"/history: Show history messages {session_id}")
         if messages_from_session:
             print_context_messages(messages_from_session)
         return
     def _member():
+        """
+        Display the list of team members.
+        Shows separator line and all available team members.
+        """
         print(f"\n\n{SPLIT_LINE}")
         print("/member: Show members")
         print(g_members)

@@ -6,7 +6,7 @@
   Created: 2025-10-19
   Purpose:
   Env:
-    @SESSION_ID: string;
+    @SESSION_ID: string; JUST USE history messages, DONOT SAVE any new messages.
     @SYSTEM_PROMPT: file or content;
 '''
 
