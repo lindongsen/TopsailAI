@@ -38,6 +38,7 @@ from topsailai.workspace.input_tool import (
     get_message,
     input_message,
     input_yes,
+    SPLIT_LINE,
 )
 from topsailai.workspace.hook_instruction import HookInstruction
 from topsailai.workspace.agent_shell import get_agent_chat
@@ -49,6 +50,8 @@ from topsailai.tools.agent_tool import subprocess_agent_memory_as_story
 
 
 PROMPT_FILE_AI_TEAM = f"{project_root}/cli/ai_team.md"
+
+g_members = []
 
 def get_team_list() -> list[dict]:
     team_path = os.getenv("TEAM_PATH")
@@ -74,6 +77,9 @@ def get_team_list() -> list[dict]:
         member["member_id"] = f_path
         member["member_name"] = os.path.basename(f_path).rsplit('.', 1)[0]
         member["member_info"] = f_content
+
+        # global vars
+        g_members.append(member["member_name"])
 
         # ability
         for ext in ["chat", "agent"]:
@@ -137,6 +143,7 @@ def main():
     """ main entry """
     load_dotenv()
     message = None
+    messages_from_session = None
 
     # prompt
     sys_prompt_content = generate_system_prompt()
@@ -152,10 +159,12 @@ def main():
 
     # session
     session_id = os.getenv("SESSION_ID") or time_tool.get_current_date(with_t=True)
-    messages_from_session = None
     if session_id:
         os.environ["SESSION_ID"] = session_id
+
+        # basic info
         print(f"session_id: {session_id}")
+        print(f"members: {g_members}")
 
         messages_from_session = ctx_manager.get_messages_by_session(session_id)
         if not messages_from_session:
@@ -204,19 +213,28 @@ def main():
         print(f"/story: The history messages will be save to a new story, pid=[{pid}]")
         return
     def _history():
+        print(f"\n\n{SPLIT_LINE}")
         print(f"/history: Show history messages {session_id}")
         if messages_from_session:
             print_context_messages(messages_from_session)
         return
+    def _member():
+        print(f"\n\n{SPLIT_LINE}")
+        print("/member: Show members")
+        print(g_members)
+        return
     hook_instruction.add_hook("/clear", _clear, "clear context messages")
     hook_instruction.add_hook("/story", _story, "save context messages to a story")
     hook_instruction.add_hook("/history", _history, "show context messages")
+    hook_instruction.add_hook("/member", _member, "show members")
 
     ##########################################################################################
     # main
     ##########################################################################################
     if session_id:
         _history()
+        _member()
+        print(SPLIT_LINE + "\n\n")
 
     if not message:
         message = get_message(hook_instruction)
@@ -237,9 +255,9 @@ def main():
         if answer:
             add_session_message()
 
-        print("\n\n--------------------------------------------------------------------------------\n\n")
         messages_from_session = ctx_manager.get_messages_by_session(session_id)
         _history()
+        _member()
 
         if answer and not env_tool.is_debug_mode():
             print()

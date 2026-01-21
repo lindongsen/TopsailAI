@@ -7,6 +7,9 @@ Purpose:
 
 import sys
 from topsailai.ai_base.llm_base import ContentSender
+from topsailai.utils import (
+    format_tool,
+)
 
 
 class ContentDots(ContentSender):
@@ -49,6 +52,13 @@ def print_context_messages(messages):
         print(f"{'='*50}")
 
         # Handle multiline content while preserving formatting
+        try:
+            content = format_tool.to_topsailai_format(
+                content, key_name="step_name", value_name="raw_text",
+                for_print=True,
+            ).strip()
+        except Exception:
+            pass
         if content:
             lines = content.split('\n')
             for line in lines:

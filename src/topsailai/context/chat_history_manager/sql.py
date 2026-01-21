@@ -48,7 +48,7 @@ Base = declarative_base()
 class Message(Base):
     """
     Represents a chat history message in the database.
-    
+
     This model stores the actual message content and its metadata.
 
     Attributes:
@@ -76,7 +76,7 @@ class Message(Base):
 class SessionMessage(Base):
     """
     Maps messages to sessions in the database.
-    
+
     This model creates a many-to-many relationship between messages and sessions.
 
     Attributes:
@@ -121,13 +121,13 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
         """
         super(ChatHistorySQLAlchemy, self).__init__()
         self.conn = conn
-        
+
         # Create database engine and session factory
         self.engine = create_engine(conn)
-        
+
         # Create all tables if they don't exist
         Base.metadata.create_all(self.engine)
-        
+
         # Configure session factory
         self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
 
@@ -226,7 +226,7 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
 
     def get_messages_by_session(self, session_id) -> list[ChatHistoryMessageData]:
         """
-        Retrieve all messages associated with a specific session, ordered by creation time (descending).
+        Retrieve all messages associated with a specific session, ordered by creation time (asc).
 
         Args:
             session_id (str): The session identifier to filter messages.
@@ -301,7 +301,7 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
         """
         # Validate that at least one identifier is provided
         assert msg_id or session_id
-        
+
         session = self.SessionLocal()
         try:
             # Build query to find session mappings to delete
