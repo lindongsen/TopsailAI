@@ -170,14 +170,16 @@ def generate_system_prompt():
     if team_prompt_content:
         sys_prompt_content += team_prompt_content.strip()
 
+    team_prompt_content += team_info
+
     # team info
     sys_prompt_content += team_info
 
-    os.environ["SYSTEM_PROMPT_CONTENT"] = sys_prompt_content
+    os.environ["TEAM_PROMPT_CONTENT"] = team_prompt_content
 
-    print(sys_prompt_content)
+    print(team_prompt_content)
 
-    return sys_prompt_content
+    return sys_prompt_content + "\nYou Are Manager"
 
 def main():
     """ main entry """
