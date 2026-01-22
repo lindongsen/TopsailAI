@@ -94,7 +94,10 @@ YOU ARE ({env_agent_name})
     if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE"):
         agent.hooks_after_new_session.append(hook_after_new_session)
 
-    answer = agent.run(react.Step4ReAct(), message)
+    try:
+        answer = agent.run(react.Step4ReAct(), message)
+    except (EOFError, KeyboardInterrupt):
+        answer = "failed due to abort"
     if answer:
         symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER")
         if not symbol_start and env_agent_name:
