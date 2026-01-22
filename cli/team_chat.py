@@ -102,7 +102,7 @@ Directly output the content without any formatting.
     answer = llm_model.chat(prompt_ctl.messages, for_raw=True, for_stream=True)
     if answer:
         symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER") or (f"From '{team_member_name}':\n" if team_member_name else "")
-        if symbol_start:
+        if symbol_start and not answer.startswith(symbol_start.strip()):
             answer = symbol_start + answer
         prompt_ctl.add_assistant_message(answer)
 

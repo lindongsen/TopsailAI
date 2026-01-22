@@ -99,7 +99,7 @@ YOU ARE ({env_agent_name})
         symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER")
         if not symbol_start and env_agent_name:
             symbol_start = f"From '{env_agent_name}':\n"
-        if symbol_start:
+        if symbol_start and not answer.startswith(symbol_start.strip()):
             answer = symbol_start + answer
 
         if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE"):
