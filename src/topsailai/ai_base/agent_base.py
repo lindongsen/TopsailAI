@@ -285,7 +285,7 @@ class AgentBase(PromptBase):
         self.tool_prompt = tool_prompt
 
         # debug
-        if self.tool_prompt:
+        if self.tool_prompt and env_tool.EnvReaderInstance.check_bool("TOPSAILAI_PRINT_TOOL_PROMPT"):
             print_step(f"[tool_prompt]:\n{self.tool_prompt}\n", need_format=False)
 
         super(AgentBase, self).__init__(self.system_prompt, self.tool_prompt)

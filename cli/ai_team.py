@@ -10,6 +10,7 @@
     @SYSTEM_PROMPT: file or content;
     @TEAM_PROMPT: required, file or content;
     @TEAM_PATH: required, the team folder;
+    @TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: team_agent can store the first message (task) and the last message (final_answer)
 '''
 
 import os
@@ -320,7 +321,7 @@ def main():
             answer = agent.run(react.Step4ReAct(True), message)
         except agent_exception.AgentEndProcess:
             pass
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
             if not input_yes("Agent Session Continue [yes/no] "):
                 break
 

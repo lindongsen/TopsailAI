@@ -38,6 +38,9 @@ DEBUG=1
 
 DEBUG_PRINT_TRUNCATE_LENGTH=3000
 
+# Print tool prompt content
+TOPSAILAI_PRINT_TOOL_PROMPT=0
+
 # Input Messages
 # CHAT_MULTI_LINE=0
 

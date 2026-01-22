@@ -20,11 +20,13 @@ sys.path.insert(0, project_root + "/src")
 
 os.chdir(project_root)
 
+from topsailai.logger import logger
 from topsailai.ai_base.llm_base import LLMModel, ContentStdout
 from topsailai.ai_base.prompt_base import PromptBase, ROLE_USER
 from topsailai.utils import (
     env_tool,
     json_tool,
+    file_tool,
 )
 from topsailai.utils.thread_local_tool import set_thread_var, KEY_SESSION_ID
 
@@ -56,6 +58,9 @@ def main():
     message = ' '.join(sys.argv[1:]) if len(sys.argv) > 1 else ""
     message = message.strip() or None
 
+    # team
+    team_member_name = os.getenv("TOPSAIL_TEAM_MEMBER_NAME")
+
     # session
     session_id = os.getenv("SESSION_ID")
     messages_from_session = None
@@ -70,27 +75,23 @@ def main():
 
     # system prompt
     env_sys_prompt = os.getenv("SYSTEM_PROMPT")
-    sys_prompt_file = ""
-    sys_prompt_content = ""
-    if env_sys_prompt:
-        if os.path.exists(env_sys_prompt):
-            sys_prompt_file = env_sys_prompt
-        else:
-            sys_prompt_content = env_sys_prompt
+    _, sys_prompt_content = file_tool.get_file_content_fuzzy(env_sys_prompt)
+    if sys_prompt_content:
+        sys_prompt_content += f"""
+YOU ARE ({team_member_name})
 
-    if sys_prompt_file:
-        with open(sys_prompt_file, encoding="utf-8") as fd:
-            sys_prompt_content = fd.read().strip()
+# Output Required
+Directly output the content without any formatting.
+"""
 
     llm_model = LLMModel()
     llm_model.content_senders.append(ContentStdout())
     llm_model.max_tokens = max(1500, llm_model.max_tokens)
     llm_model.temperature = min(0.97, llm_model.temperature)
 
-    if sys_prompt_content:
-        sys_prompt_content = "Directly output the content without any formatting.\n" + sys_prompt_content
-
-    prompt_ctl = PromptBase(sys_prompt_content or "You are a helpful assistant.")
+    # debug
+    # logger.info("XXXXXX: %s", sys_prompt_content)
+    prompt_ctl = PromptBase(sys_prompt_content)
     if messages_from_session:
         prompt_ctl.messages = format_messages(messages_from_session)
         if message:
@@ -100,7 +101,7 @@ def main():
 
     answer = llm_model.chat(prompt_ctl.messages, for_raw=True, for_stream=True)
     if answer:
-        symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER")
+        symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER") or (f"From '{team_member_name}':\n" if team_member_name else "")
         if symbol_start:
             answer = symbol_start + answer
         prompt_ctl.add_assistant_message(answer)

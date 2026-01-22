@@ -8,6 +8,7 @@
   Env:
     @SESSION_ID: string; JUST USE history messages, DONOT SAVE any new messages.
     @SYSTEM_PROMPT: file or content;
+    @TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: 1 is save, 0 is not save. default is 0.
 '''
 
 import sys
@@ -21,6 +22,9 @@ sys.path.insert(0, project_root + "/src")
 os.chdir(project_root)
 
 from topsailai.ai_base.agent_types import react
+from topsailai.ai_base.constants import (
+    ROLE_ASSISTANT,
+)
 from topsailai.utils import env_tool
 from topsailai.context import ctx_manager
 from topsailai.workspace.agent_shell import get_agent_chat
@@ -34,6 +38,7 @@ def main():
     load_dotenv()
 
     message = get_message()
+    env_agent_name = os.getenv("TOPSAILAI_AGENT_NAME") or os.getenv("TOPSAIL_TEAM_MEMBER_NAME")
 
     # session
     session_id = os.getenv("SESSION_ID")
@@ -59,11 +64,19 @@ def main():
         with open(sys_prompt_file, encoding="utf-8") as fd:
             sys_prompt_content = fd.read().strip()
 
+    # team role
+    sys_prompt_content += f"""
+YOU ARE ({env_agent_name})
+"""
+
     # agent
     agent = get_agent_chat(sys_prompt_content, disabled_tools=["agent_tool"])
-    env_agent_name = os.getenv("TOPSAILAI_AGENT_NAME")
     if env_agent_name:
+        # set agent name
         agent.agent_name = env_agent_name
+
+        # team role
+        message = f"@{env_agent_name}: {message}"
 
     # llm
     llm_model = agent.llm_model
@@ -78,13 +91,22 @@ def main():
         ctx_manager.add_session_message(session_id, self.messages[-1])
 
     agent.hooks_after_init_prompt.append(hook_after_init_prompt)
-    #agent.hooks_after_new_session.append(hook_after_new_session)
+    if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE"):
+        agent.hooks_after_new_session.append(hook_after_new_session)
 
     answer = agent.run(react.Step4ReAct(), message)
     if answer:
         symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER")
+        if not symbol_start and env_agent_name:
+            symbol_start = f"From '{env_agent_name}':\n"
         if symbol_start:
             answer = symbol_start + answer
+
+        if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE"):
+            ctx_manager.add_session_message(
+                session_id,
+                {"role": ROLE_ASSISTANT, "content": answer}
+            )
 
         # save answer to file
         file_path_result = os.getenv("TOPSAILAI_SAVE_RESULT_TO_FILE")
