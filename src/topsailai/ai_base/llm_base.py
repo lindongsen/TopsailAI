@@ -197,11 +197,12 @@ def assert_model_service_error(response):
             #       "timestamp": 1769046649634
             #  }
             if 'message' in item0 and 'status' in item0:
-                for key in [
-                    'exceed',
-                ]:
-                    if key in item0["message"]:
-                        raise ModelServiceError(f"some errors have occurred in model service: [{item0}]")
+                raise ModelServiceError(f"some errors have occurred in model service: [{item0}]")
+                # for key in [
+                #     'exceed',
+                # ]:
+                #     if key in item0["message"]:
+                #         raise ModelServiceError(f"some errors have occurred in model service: [{item0}]")
 
     return
 
@@ -915,6 +916,14 @@ class LLMModel(object):
                         raise e
 
                 sec = 30
+                # set seconds to sleep
+                for key in [
+                    "bad_request",
+                    "bad request",
+                ]:
+                    if key in e_str:
+                        sec = 1
+
                 print_error(f"!!! [{i}] ModelServiceError, {e}")
                 print_error(f"blocking chat {sec}s ...")
                 time.sleep(sec)
