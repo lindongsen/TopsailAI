@@ -1,0 +1,25 @@
+@Manager
+```
+Objective: Build unit tests for the `/root/ai/TopsailAI/src/topsailai/utils` directory.
+
+Configuration:
+- Workspace: `/root/ai/TopsailAI`
+- Project folder: Same as workspace
+- Unit test guidelines: `/opt/git/ai/lindongsen/work/src/rules/programmer/python.md`
+
+Execution Steps:
+
+1. File Discovery:
+   Call @km-k2t to list all files in `/root/ai/TopsailAI/src/topsailai/utils`, but do not read file contents.
+
+2. Test Creation and Execution:
+   For each file in the list (excluding `__init__.py`):  
+   a. Call @ds-31t to read and understand the file.  
+   b. Instruct the agent to create corresponding unit tests based on the guidelines in `/opt/git/ai/lindongsen/work/src/rules/programmer/python.md`.  
+   c. Execute the unit tests for validation.
+
+Exclusion: Skip `__init__.py` files during test creation.
+```
+
+[Attention] You cannot output any Chinese! 
+
