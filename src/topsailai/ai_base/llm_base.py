@@ -174,6 +174,38 @@ def fix_llm_mistakes(response:list, rsp_obj=None):
 
     return response
 
+def assert_model_service_error(response):
+    """ raise ModelServiceError if error """
+    if not response:
+        return
+    if len(response) != 1:
+        return
+
+    item0 = response[0]
+    if isinstance(item0, dict):
+        if 'step_name' not in item0:
+
+            # case: only status and message
+            if len(item0) == 2 and 'message' in item0 and 'status' in item0:
+                raise ModelServiceError(f"some errors have occurred in model service: [{item0}]")
+
+            # case
+            #  {
+            #       "status": 20223,
+            #       "message": "Input token exceeded",
+            #       "result": null,
+            #       "timestamp": 1769046649634
+            #  }
+            if 'message' in item0 and 'status' in item0:
+                for key in [
+                    'exceed',
+                ]:
+                    if key in item0["message"]:
+                        raise ModelServiceError(f"some errors have occurred in model service: [{item0}]")
+
+    return
+
+
 def _format_response(response, rsp_obj=None):
     """
     Format response to a standardized list format for internal use.
@@ -227,12 +259,7 @@ def _format_response(response, rsp_obj=None):
             fix_llm_mistakes(response)
 
             # model service have errors. example: Model tpm limit exceeded
-            if response and len(response) == 1:
-                item0 = response[0]
-                if isinstance(item0, dict):
-                    if 'step_name' not in item0:
-                        if len(item0) == 2 and 'message' in item0 and 'status' in item0:
-                            raise ModelServiceError(f"some errors have occurred in model service: [{item0}]")
+            assert_model_service_error(response)
 
             return response
         except ModelServiceError as e:
