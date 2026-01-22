@@ -578,6 +578,23 @@ class TestFileToolReplaceLinesInFile:
         expected_content = "Line 1\n\nLine 3"
         assert content == expected_content
 
+    def test_replace_lines_in_file_null_content_replacement(self, test_file):
+        """Test replacing lines with None content (should be treated as empty string)"""
+        # Create initial file content
+        initial_content = "Line 1\nLine 2\nLine 3"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Replace line 2 with None content
+        result = replace_lines_in_file(test_file, [(2, None)])
+        assert result == "OK"
+
+        # Verify the replacement (None should be treated as empty string)
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\n\nLine 3"
+        assert content == expected_content
+
     def test_replace_lines_in_file_permission_error(self, test_file):
         """Test error handling with permission denied"""
         # Create a file and make it read-only to test permission errors

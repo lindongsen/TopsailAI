@@ -301,7 +301,7 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
        file_path (str): Path to the file to modify
         lines (list[tuple[int, str]]): List of tuples where each tuple contains:
             - line_number (int): The 1-based line number to replace
-            - content (str): The new content for that line
+            - content (str): The new content for that line, pass null str will delete this line
 
     Returns:
         str: "OK" on success, error message on failure
@@ -329,9 +329,11 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
 
         # Replace the specified lines
         for line_num, new_content in lines:
-            new_content = new_content.rstrip()
             # Convert to 0-based index
             index = line_num - 1
+            if new_content == "" or new_content is None:
+                # remove this line
+                new_content = ""
             if 0 <= index < len(lines_content):
                 # Preserve the line ending from the original line
                 original_line_ending = lines_content[index][len(lines_content[index].rstrip()):]

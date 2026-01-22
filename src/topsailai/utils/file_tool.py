@@ -32,12 +32,12 @@ def get_filename(file_path: str) -> str:
 
     Examples:
         "/tmp/123.txt" -> "123"
-        "C:\\data\\report.pdf" -> "report"
         "" -> ""
     """
     if not file_path:
         return ""
-    return Path(file_path).stem
+    filename = os.path.basename(file_path)
+    return os.path.splitext(filename)[0]
 
 def match_file(
         file_path:str,
