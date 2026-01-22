@@ -25,6 +25,10 @@ def get_mod(path):
     Returns:
         module: Imported module object
     """
+    try:
+        return __import__(path, None, None, [path.split('.')[-1]])
+    except ModuleNotFoundError:
+        return None
     return __import__(path, None, None, [path.split('.')[-1]])
 
 def get_var(path:str, name):
@@ -145,7 +149,7 @@ def get_path_for_sys_and_package(path:str) -> tuple[str|None, str|None]:
 
     This function attempts to match the given path against entries in sys.path.
     If a match is found, returns the matched sys.path entry and the remainder
-    as a dot‑separated package path. If no match is found, it walks up the
+    as a dot-separated package path. If no match is found, it walks up the
     directory tree to find the outermost directory that is a Python package.
 
     Args:
@@ -155,7 +159,7 @@ def get_path_for_sys_and_package(path:str) -> tuple[str|None, str|None]:
         tuple[str|None, str|None]:
             - sys_path: The matched sys.path entry (or directory containing the
               outermost package). None if not applicable.
-            - pkg_path: The dot‑separated Python package path relative to
+            - pkg_path: The dot-separated Python package path relative to
               sys_path. If sys_path is None, pkg_path is the original path.
     """
     sys_path = None
@@ -180,7 +184,7 @@ def get_path_for_sys_and_package(path:str) -> tuple[str|None, str|None]:
             # matched
             sys_path = _curr_sys_path
             pkg_path = path.replace(sys_path, "").replace("/", ".")
-            if pkg_path[0] == ".":
+            if pkg_path and pkg_path[0] == ".":
                 pkg_path = pkg_path[1:]
             return (sys_path, pkg_path)
 

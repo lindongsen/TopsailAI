@@ -270,6 +270,7 @@ def ctxm_temp_file(file_content, mode="w"):
     try:
         with ctxm_file_lock(file_path, mode) as fd:
             fd.write(file_content)
+            fd.flush()
             yield (file_path, fd)
     finally:
         delete_file(file_path)
