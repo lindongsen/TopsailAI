@@ -18,6 +18,7 @@ from topsailai.ai_base.agent_base import (
     StepCallBase,
 )
 from . import exception as agent_exception
+from .tool import get_tool_func
 
 # define prompt of ReAct framework
 SYSTEM_PROMPT = PromptHubExtractor.prompt_mode_ReAct_toolPrompt
@@ -72,7 +73,7 @@ class Step4ReAct(StepCallBase):
             tool = tool_call_info.func_name
             args = tool_call_info.func_args or {}
 
-            tool_func = tools.get(tool)
+            tool_func = get_tool_func(tools, tool)
             if tool_func is None:
                 # LLM mistake, no found this tool
                 obs_json = {

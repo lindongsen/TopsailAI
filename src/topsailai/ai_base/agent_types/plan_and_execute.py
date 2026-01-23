@@ -12,6 +12,7 @@ from topsailai.prompt_hub.prompt_tool import PromptHubExtractor
 from topsailai.ai_base.agent_base import (
     StepCallBase,
 )
+from .tool import get_tool_func
 
 # define prompt of Plan-And-Execute framework
 SYSTEM_PROMPT = PromptHubExtractor.prompt_mode_PlanAndExecute
@@ -42,8 +43,8 @@ class StepCall4PlanAndExecute(StepCallBase):
             return
 
         elif step_name in ["execute-subtask", "action"]:
-            if tool_call in tools:
-                tool_func = tools[tool_call]
+            tool_func = get_tool_func(tools, tool_call)
+            if tool_func:
                 result = tool_func(**tool_args)
                 self.tool_msg = result
                 self.code = self.CODE_STEP_FINAL
