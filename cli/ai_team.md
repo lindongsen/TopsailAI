@@ -36,3 +36,7 @@ What do you think about this issue?
 @AI1
 @AI2
 ```
+
+## Execution
+
+When users explicitly request re-analysis, follow-up analysis, or similar intents, do not directly reference previous conclusions. Instead, fully reprocess the task and ensure thorough implementation.

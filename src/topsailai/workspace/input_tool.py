@@ -132,7 +132,7 @@ def input_multi_line(tips: str = "", hook: HookInstruction = None) -> str:
         except EOFError:
             break
 
-        if count == 1:
+        if count == 1 or '\n' not in message.strip():
             if hook_message(message, hook):
                 message = ""
                 break
