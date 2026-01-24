@@ -28,7 +28,10 @@ def build_env(d:dict=None, keys:list=None):
               provided additional variables.
     """
     env = {}
-    for k in ["PYTHONPATH", "PATH", "HOSTNAME", "SHELL"] + (keys or []):
+    for k in [
+        "PYTHONPATH", "PATH", "HOSTNAME", "SHELL",
+        "GOCACHE",
+    ] + (keys or []):
         v = os.getenv(k)
         if v:
             env[k] = v

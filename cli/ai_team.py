@@ -169,7 +169,7 @@ def generate_system_prompt():
     env_team_prompt = os.getenv("TEAM_PROMPT")
     _, team_prompt_content = file_tool.get_file_content_fuzzy(env_team_prompt)
     if team_prompt_content:
-        sys_prompt_content += team_prompt_content.strip()
+        sys_prompt_content += "\n" + team_prompt_content.strip()
 
     team_prompt_content += team_info
 
