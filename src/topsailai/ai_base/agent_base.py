@@ -73,7 +73,7 @@ class StepCallBase(object):
         # Flag indicating if this is an interactive step
         self.flag_interactive = True if flag_interactive else False
 
-        print_step(f"interactive mode: [{self.flag_interactive}]", need_format=False)
+        # print_step(f"interactive mode: [{self.flag_interactive}]", need_format=False)
 
         return
 
