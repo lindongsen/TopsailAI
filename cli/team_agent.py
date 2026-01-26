@@ -95,7 +95,7 @@ YOU ARE ({env_agent_name})
         agent.hooks_after_new_session.append(hook_after_new_session)
 
     try:
-        answer = agent.run(react.Step4ReAct(), message)
+        answer = agent.run(react.Step4ReAct(True), message)
     except (EOFError, KeyboardInterrupt):
         answer = "failed due to abort"
     if answer:

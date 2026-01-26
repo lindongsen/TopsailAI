@@ -73,6 +73,8 @@ class StepCallBase(object):
         # Flag indicating if this is an interactive step
         self.flag_interactive = True if flag_interactive else False
 
+        print_step(f"interactive mode: [{self.flag_interactive}]", need_format=False)
+
         return
 
     def __call__(self, *args, **kwds):
@@ -86,7 +88,9 @@ class StepCallBase(object):
             StepCallBase: The instance itself after execution
         """
         # it must init all of result for each call
-        self.__init__()
+        self.__init__(
+            flag_interactive=self.flag_interactive,
+        )
         self._execute(*args, **kwds)
         return self
 

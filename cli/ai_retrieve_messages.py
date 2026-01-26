@@ -27,6 +27,7 @@ os.chdir(project_root)
 
 from topsailai.context.ctx_manager import get_session_manager
 from topsailai.utils import json_tool
+from topsailai.workspace.print_tool import print_context_messages
 
 
 def format_messages(messages):
@@ -77,8 +78,9 @@ def main():
         messages = manager.retrieve_messages(session_id)
 
         # Display results
-        formatted_output = format_messages(messages)
-        print(formatted_output)
+        print_context_messages(messages)
+        #formatted_output = format_messages(messages)
+        #print(formatted_output)
 
     except Exception as e:
         print(f"Error: {e}")

@@ -12,6 +12,7 @@ from topsailai.utils.thread_tool import (
 )
 from topsailai.utils import (
     env_tool,
+    print_tool,
 )
 from topsailai.prompt_hub.prompt_tool import PromptHubExtractor
 from topsailai.ai_base.agent_base import (
@@ -53,7 +54,7 @@ class Step4ReAct(StepCallBase):
         try:
             step_name = step["step_name"]
         except Exception:
-            self.user_msg = "no found step_name"
+            self.user_msg = "missing step_name"
             self.code = self.CODE_STEP_FINAL
             return
 
@@ -104,7 +105,7 @@ class Step4ReAct(StepCallBase):
                 if not self.flag_interactive:
                     # for retry
                     self.code = self.CODE_STEP_FINAL
-                    self.user_msg = "no found action"
+                    self.user_msg = "missing action"
                     # for failed
                     # self.code = self.CODE_TASK_FAILED
                     # self.result = ("only thought step without action or final_answer in non-interactive mode, exiting.")
