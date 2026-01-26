@@ -106,7 +106,7 @@ def copy2sandbox(sandbox:str, local_fpath:str, sandbox_fpath:str, timeout:int=60
             if local_fname == sandbox_fname:
                 sandbox_fpath = os.path.dirname(sandbox_fpath)
 
-        cmd = f"scp -r '{local_fpath}' '{sandbox_obj.name or "root"}@{sandbox_obj.node}:{sandbox_fpath}'"
+        cmd = f"scp -P {sandbox_obj.port} -r '{local_fpath}' '{sandbox_obj.name or "root"}@{sandbox_obj.node}:{sandbox_fpath}'"
         ret = exec_cmd(cmd, timeout=timeout, need_error_log=True)
         return ret[0] == 0
     return False
