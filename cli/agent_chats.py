@@ -26,12 +26,15 @@ from topsailai.ai_base.agent_types import react
 from topsailai.context import ctx_manager
 from topsailai.utils import (
     env_tool,
-    json_tool,
+)
+from topsailai.workspace.print_tool import (
+    print_context_messages,
 )
 from topsailai.workspace.input_tool import (
     get_message,
     input_message,
     input_yes,
+    SPLIT_LINE,
 )
 from topsailai.workspace.hook_instruction import HookInstruction
 from topsailai.workspace.agent_shell import get_agent_chat
@@ -116,9 +119,14 @@ def main():
         print(f"/story: The history messages will be save to a new story, pid=[{pid}]")
         return
     def _history():
-        print("/history: Show history messages")
+        """
+        Display the history of messages for the current session.
+        Shows separator line and all context messages if available.
+        """
+        print(f"\n\n{SPLIT_LINE}")
+        print(f"/history: Show history messages {session_id}")
         if messages_from_session:
-            print(json_tool.json_dump(messages_from_session, indent=2))
+            print_context_messages(messages_from_session)
         return
     hook_instruction.add_hook("/clear", _clear, "clear context messages")
     hook_instruction.add_hook("/story", _story, "save context messages to a story")

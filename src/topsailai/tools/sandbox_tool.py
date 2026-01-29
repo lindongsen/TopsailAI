@@ -145,3 +145,5 @@ PROMPT = """
 ## sandbox_tool
 When the user mentions accessing the sandbox, you need to first use the `list_sandbox` to decide one target, and then use `call_sandbox` to execute command in it.
 """
+
+FLAG_TOOL_ENABLED = False

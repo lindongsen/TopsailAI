@@ -3,6 +3,10 @@
   Email: lin_dongsen@126.com
   Created: 2025-10-18
   Purpose: import all of tools to support AI-Agent.
+  Keywords:
+  - TOOLS, dict, key is tool name, value is callable func
+  - FLAG_TOOL_ENABLED, bool
+  - TOOLS_INFO, dict, key is tool name, value is dict for spec.
 '''
 
 import os
@@ -15,6 +19,19 @@ from topsailai.utils import (
 )
 
 CONN_CHAR = env_tool.EnvReaderInstance.get("TOPSAILAI_TOOL_CONN_CHAR", "-") or "-"
+
+ENABLED_TOOLS = env_tool.EnvReaderInstance.get_list_str("ENABLED_TOOLS", separator='')
+
+def is_tool_enabled(tool_mod):
+    try:
+        if getattr(tool_mod, "FLAG_TOOL_ENABLED") is False:
+            if not ENABLED_TOOLS:
+                return False
+            tool_name = tool_mod.__name__.split('.')[-1]
+            return tool_name in ENABLED_TOOLS
+    except:
+        pass
+    return True
 
 # key is tool_name, value is function
 TOOLS = module_tool.get_function_map("topsailai.tools", "TOOLS", conn_char=CONN_CHAR)

@@ -76,7 +76,7 @@ def list_sub_mods_name(path):
             mod_name_set.append(modname)
     return mod_name_set
 
-def get_function_map(path, key="TOOLS", prefix_name="", conn_char=DEFAULT_CONN_CHAR):
+def get_function_map(path, key="TOOLS", prefix_name="", conn_char=DEFAULT_CONN_CHAR, hook_check=None):
     """Create a mapping of function names to functions from modules.
 
     This function scans modules in a package and collects functions
@@ -89,6 +89,7 @@ def get_function_map(path, key="TOOLS", prefix_name="", conn_char=DEFAULT_CONN_C
             - If None: uses 'path' as prefix
             - If "": uses module name as prefix
             - Otherwise: uses the specified prefix
+        hook_check: func(module) -> bool.
 
     Returns:
         dict: Mapping of function names (with prefixes) to function objects
@@ -107,7 +108,15 @@ def get_function_map(path, key="TOOLS", prefix_name="", conn_char=DEFAULT_CONN_C
 
     modules_map = {}
     for sub_modname in list_sub_mods_name(path):
-        values = get_var("%s.%s" % (path, sub_modname), key)
+        mod_path = "%s.%s" % (path, sub_modname)
+        mod_obj = get_mod(mod_path)
+        if not mod_obj:
+            continue
+
+        if hook_check and not hook_check(mod_obj):
+            continue
+
+        values = get_var(mod_path, key)
         if not values:
             continue
 

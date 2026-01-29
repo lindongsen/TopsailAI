@@ -121,7 +121,12 @@ class EnvironmentReader(object):
             # null of config
             return env_var
         result = set()
-        for s in env_var.split(separator):
+        env_var_list = []
+        if separator:
+            env_var_list = env_var.split(separator)
+        else:
+            env_var_list = env_var.replace(',', ';').split(';')
+        for s in env_var_list:
             s = s.strip()
             if not s:
                 continue
