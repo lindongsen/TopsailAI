@@ -350,6 +350,13 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
     except Exception as e:
         return str(e)
 
+def read_lines(file_path:str, start_num:int, end_num:int):
+    with open(file_path, encoding='utf-8') as fd:
+        lines = fd.readlines()
+        if not lines:
+            return ""
+        return ''.join(lines[start_num-1:end_num])
+
 
 TOOLS = dict(
     write_file=write_file,
@@ -358,6 +365,7 @@ TOOLS = dict(
     check_files_existing=check_files_existing,
     mkdirs=mkdirs,
     replace_lines_in_file=replace_lines_in_file,
+    read_lines=read_lines,
 )
 
 TOOLS_INFO = dict(

@@ -24,6 +24,7 @@ from topsailai.utils import (
     thread_tool,
 )
 from topsailai.context.token import TokenStat
+from topsailai.ai_base.llm_hooks.executor import hook_execute
 
 from .constants import (
     ROLE_ASSISTANT,
@@ -269,6 +270,13 @@ def _format_response(response, rsp_obj=None):
             print_error(f"parsing response: {e}\n>>>\n{response}\n<<<\nretrying times: {count}")
         finally:
             fix_llm_mistakes(response, rsp_obj)
+
+    # hook after chat
+    new_response = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", response)
+    if new_response:
+        response = new_response
+        if not isinstance(response, str):
+            return response
 
     # only thought
     if response and format_tool.TOPSAILAI_FORMAT_PREFIX not in response \
