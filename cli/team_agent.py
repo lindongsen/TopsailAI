@@ -67,6 +67,8 @@ def main():
     # team role
     sys_prompt_content += f"""
 YOU ARE ({env_agent_name})
+
+If you have final_answer, you should output it with specified format.
 """
 
     # agent

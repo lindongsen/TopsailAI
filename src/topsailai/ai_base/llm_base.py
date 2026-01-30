@@ -271,9 +271,20 @@ def _format_response(response, rsp_obj=None):
         finally:
             fix_llm_mistakes(response, rsp_obj)
 
+            # hook after chat
+            if isinstance(response, list):
+                if len(response) == 1:
+                    item = response[0]
+                    if len(item) == 2 and item.get("step_name") == "action" and item.get("raw_text"):
+                        item_extra = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", item["raw_text"])
+                        if item_extra and isinstance(item_extra, list) and len(item_extra) == 1:
+                            print_error("fix llm mistake: TOPSAILAI_HOOK_AFTER_LLM_CHAT, action content format is unexpected")
+                            item.update(item_extra[0])
+
     # hook after chat
     new_response = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", response)
-    if new_response:
+    if new_response and new_response != response:
+        print_error("fix llm mistake: TOPSAILAI_HOOK_AFTER_LLM_CHAT")
         response = new_response
         if not isinstance(response, str):
             return response
