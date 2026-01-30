@@ -15,6 +15,7 @@ from topsailai.utils import (
     text_tool,
     print_tool,
     env_tool,
+    format_tool,
 )
 
 # lower of letter
@@ -289,7 +290,7 @@ def mkdirs(dirs):
     Returns:
         raise an Error if error, else return true.
     """
-    for d in dirs:
+    for d in format_tool.to_list(dirs):
         os.makedirs(d, exist_ok=True)
     return True
 
