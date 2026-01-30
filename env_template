@@ -182,3 +182,11 @@ SANDBOX_SETTINGS=""
 
 # Format: Tool names separated by semicolons (';')
 # TOPSAILAI_CLI_AGENT_CHAT_DISABLED_TOOLS="agent_tool"
+
+# =============================================================================
+# HOOK Configuration
+# =============================================================================
+
+# Format: Module paths separated by semicolons (';')
+# hook_func(content:str) -> list[dict]|str
+TOPSAILAI_HOOK_AFTER_LLM_CHAT=""

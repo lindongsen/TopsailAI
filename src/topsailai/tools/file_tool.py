@@ -351,11 +351,43 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
         return str(e)
 
 def read_lines(file_path:str, start_num:int, end_num:int):
-    with open(file_path, encoding='utf-8') as fd:
-        lines = fd.readlines()
-        if not lines:
-            return ""
-        return ''.join(lines[start_num-1:end_num])
+    """Read specific lines from a file and return them as a string.
+
+    This function reads a range of lines from a file using 1-based line numbering,
+    consistent with how line numbers are typically displayed in text editors.
+
+    Args:
+        file_path (str): The path to the file to read from
+        start_num (int): The starting line number (1-based). Lines before this number
+                        will be excluded. Must be >= 1.
+        end_num (int): The ending line number (1-based). Lines at and beyond this
+                      number will be excluded.
+
+    Returns:
+        str: The concatenated content of the specified lines as a single string.
+             Returns empty string if the file is empty or line range is invalid.
+
+    Raises:
+        This function catches all exceptions and returns them as strings rather than raising
+
+    Examples:
+        # Read lines 1-10 from a file
+        content = read_lines("example.txt", 1, 10)
+
+        # Read lines 5-15 from a file
+        content = read_lines("example.txt", 5, 15)
+    """
+    try:
+        with open(file_path, encoding='utf-8') as fd:
+            lines = fd.readlines()
+            if not lines:
+                return ""
+            # Convert 1-based line numbers to 0-based indices
+            # start_num-1: convert to 0-based start index
+            # end_num: slice end is exclusive, so end_num gives us correct slice
+            return ''.join(lines[start_num-1:end_num])
+    except Exception as e:
+        return str(e)
 
 
 TOOLS = dict(
