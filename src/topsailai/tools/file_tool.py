@@ -398,6 +398,18 @@ def read_lines(file_path:str, start_num:int, end_num:int):
         return str(e)
 
 
+def list_dir(folder_path:str) -> list[str]:
+    """list folder
+
+    Args:
+        folder_path (str):
+
+    Returns:
+        list[str]:
+    """
+    return os.listdir(folder_path)
+
+
 TOOLS = dict(
     write_file=write_file,
     read_file=read_file,
@@ -406,6 +418,7 @@ TOOLS = dict(
     mkdirs=mkdirs,
     replace_lines_in_file=replace_lines_in_file,
     read_lines=read_lines,
+    list_dir=list_dir,
 )
 
 TOOLS_INFO = dict(

@@ -9,6 +9,7 @@
     @SESSION_ID: string; JUST USE history messages, DONOT SAVE any new messages.
     @SYSTEM_PROMPT: file or content;
     @TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: 1 is save, 0 is not save. default is 0.
+    @TOPSAILAI_TASK: file or content.
 '''
 
 import sys
@@ -37,7 +38,14 @@ def main():
     """ main entry """
     load_dotenv()
 
-    message = get_message()
+    # message
+    message = os.getenv("TOPSAILAI_TASK")
+    if message:
+        message = env_tool.EnvReaderInstance.try_read_file("message") or message
+    if not message:
+        message = get_message()
+
+    # agent name
     env_agent_name = os.getenv("TOPSAILAI_AGENT_NAME") or os.getenv("TOPSAIL_TEAM_MEMBER_NAME")
 
     # session
