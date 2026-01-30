@@ -93,6 +93,7 @@ def write_file(file_path:str, content:str, seek:int=0, to_insert:bool=False):
         # Overwrite from position 5
         write_file("test.txt", "overwrite", seek=5, to_insert=False)
     """
+    seek = int(seek)
     try:
         if to_insert:
             # Insert mode: read existing content, insert at position, then write back
@@ -204,6 +205,9 @@ def read_file(file_path:str, seek:int=0, size:int=-1):
     - When the file extension is not in white list, the file reading process may be (force to truncate).
       - white list: {WHITE_LIST_NO_TRUNCATE_EXT}
     """
+    seek = int(seek)
+    size = int(size)
+
     file_path_lower = file_path.lower()
     file_ext = file_path_lower.rsplit('.', 1)[-1]
 
@@ -330,6 +334,7 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
 
         # Replace the specified lines
         for line_num, new_content in lines:
+            line_num = int(line_num)
             # Convert to 0-based index
             index = line_num - 1
             if new_content == "" or new_content is None:
@@ -379,6 +384,8 @@ def read_lines(file_path:str, start_num:int, end_num:int):
         content = read_lines("example.txt", 5, 15)
     """
     try:
+        start_num = int(start_num)
+        end_num = int(end_num)
         with open(file_path, encoding='utf-8') as fd:
             lines = fd.readlines()
             if not lines:
