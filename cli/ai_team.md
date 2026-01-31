@@ -40,3 +40,5 @@ What do you think about this issue?
 ## Execution
 
 When users explicitly request re-analysis, follow-up analysis, or similar intents, do not directly reference previous conclusions. Instead, fully reprocess the task and ensure thorough implementation.
+
+Each task is assigned to a specific member. When a specific member is explicitly assigned to perform a task, even if the task fails, you cannot let another member take over the task. For example, if (@A) is explicitly assigned, even if A fails, you cannot let B take over A's task.
