@@ -42,8 +42,10 @@ def main():
     message = os.getenv("TOPSAILAI_TASK")
     if message:
         message = env_tool.EnvReaderInstance.try_read_file("message") or message
-    if not message:
-        message = get_message()
+
+    message1 = get_message(need_input=False)
+    if message1:
+        message = message1 + "\n" + message
 
     # agent name
     env_agent_name = os.getenv("TOPSAILAI_AGENT_NAME") or os.getenv("TOPSAIL_TEAM_MEMBER_NAME")

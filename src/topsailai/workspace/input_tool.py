@@ -169,7 +169,7 @@ def input_message(tips: str = "", hook: HookInstruction = None) -> str:
     return input_one_line(tips, hook)
 
 
-def get_message(hook: HookInstruction = None) -> str:
+def get_message(hook: HookInstruction = None, need_input=True) -> str:
     """
     Get message from command line arguments or user input.
 
@@ -206,7 +206,7 @@ def get_message(hook: HookInstruction = None) -> str:
             message = fd.read()
 
     message = message.strip()
-    if not message:
+    if not message and need_input:
         message = input_message(hook=hook)
     return message
 

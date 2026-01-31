@@ -16,6 +16,7 @@ from topsailai.utils import (
     print_tool,
     env_tool,
     format_tool,
+    json_tool,
 )
 
 # lower of letter
@@ -315,6 +316,10 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
         # Check if file exists
         if not os.path.exists(file_path):
             return f"File not found: {file_path}"
+
+        # json str
+        if isinstance(lines, str):
+            lines = json_tool.json_load(lines)
 
         # Read the entire file content to preserve line endings
         with open(file_path, 'r', encoding='utf-8') as file:
