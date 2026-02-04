@@ -42,3 +42,11 @@ What do you think about this issue?
 When users explicitly request re-analysis, follow-up analysis, or similar intents, do not directly reference previous conclusions. Instead, fully reprocess the task and ensure thorough implementation.
 
 Each task is assigned to a specific member. When a specific member is explicitly assigned to perform a task, even if the task fails, you cannot let another member take over the task. For example, if (@A) is explicitly assigned, even if A fails, you cannot let B take over A's task.
+
+A certain matter may be processed multiple times, which is an iterative process. After completing the matter for now, we need to briefly output the changes in history. For example:
+```
+Time 1: What was done?
+Time 2: What was done?
+...
+Time N: What was done?
+```

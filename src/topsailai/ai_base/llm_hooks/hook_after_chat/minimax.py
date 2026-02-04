@@ -91,6 +91,7 @@ def convert_xml_to_list_dict2(raw_content: str) -> List[Dict[str, Any]]:
     """
     Convert XML-like content to a list of dictionaries (version 2)
 
+    ## case
     Example input (raw_content):
     ```
     hello world
@@ -105,6 +106,22 @@ def convert_xml_to_list_dict2(raw_content: str) -> List[Dict[str, Any]]:
     [
         {"step_name":"thought", "raw_text": "hello world"},
         {"step_name":"action", "tool_call":"cmd_tool-exec_cmd","tool_args":{"cmd":"ls -lh /tmp/123"}}
+    ]
+    ```
+
+    ## case
+    Example input (raw_content)
+    ```
+    <invoke name="file_tool-read_file">
+    <parameter name="file_path">/tmp/123.txt</parameter>
+    </invoke>
+    </minimax:tool_call>
+    ```
+
+    Example output:
+    ```
+    [
+        {"step_name": "action", "tool_call": "file_tool-read_file", "tool_args": {"file_path":"/tmp/123.txt"}}
     ]
     ```
 
@@ -134,16 +151,31 @@ def convert_xml_to_list_dict2(raw_content: str) -> List[Dict[str, Any]]:
         name_end = raw_content.find('"', name_start)
         tool_call_name = raw_content[name_start:name_end]
 
-        # Extract parameter content
-        param_start = raw_content.find('<parameter name="cmd">', invoke_start)
-        param_end = raw_content.find('</parameter>', param_start) if param_start != -1 else -1
+        # Extract all parameters
+        tool_args = {}
+        param_pos = invoke_start
 
-        if param_start != -1 and param_end != -1:
-            param_start += len('<parameter name="cmd">')
-            cmd_value = raw_content[param_start:param_end].strip()
-            tool_args = {"cmd": cmd_value}
-        else:
-            tool_args = {}
+        while True:
+            # Find the next parameter tag
+            param_start = raw_content.find('<parameter name="', param_pos)
+            if param_start == -1:
+                break
+
+            # Extract parameter name
+            name_start = param_start + len('<parameter name="')
+            name_end = raw_content.find('"', name_start)
+            param_name = raw_content[name_start:name_end]
+
+            # Extract parameter value
+            value_start = raw_content.find('>', name_end) + 1
+            value_end = raw_content.find('</parameter>', value_start)
+            param_value = raw_content[value_start:value_end].strip()
+
+            # Add to tool_args
+            tool_args[param_name] = param_value
+
+            # Move position for next search
+            param_pos = value_end + len('</parameter>')
 
         # Add action step
         result.append({

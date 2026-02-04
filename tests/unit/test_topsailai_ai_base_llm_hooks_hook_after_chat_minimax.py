@@ -316,3 +316,18 @@ def test_hook_execute_with_parameter_format():
     assert result[1]["step_name"] == "action"
     assert result[1]["tool_call"] == "cmd_tool-exec_cmd"
     assert result[1]["tool_args"] == {"cmd": "ls -lh /tmp/123"}
+
+
+def test_convert_xml_to_list_dict2_file_tool_read_file():
+    """Test conversion with file_tool-read_file using parameter format."""
+    raw_content = '''<invoke name="file_tool-read_file">
+<parameter name="file_path">/tmp/123.txt</parameter>
+</invoke>
+</minimax:tool_call>'''
+
+    result = convert_xml_to_list_dict2(raw_content)
+
+    assert len(result) == 1
+    assert result[0]["step_name"] == "action"
+    assert result[0]["tool_call"] == "file_tool-read_file"
+    assert result[0]["tool_args"] == {"file_path": "/tmp/123.txt"}
