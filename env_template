@@ -71,6 +71,9 @@ TEMPERATURE=0.3
 # Use streaming response
 LLM_RESPONSE_STREAM=1
 
+# Interactive mode in StepCall
+TOPSAILAI_FLAG_INTERACTIVE_MODE=0
+
 # =============================================================================
 # System Prompt
 # =============================================================================

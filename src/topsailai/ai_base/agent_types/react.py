@@ -100,19 +100,20 @@ class Step4ReAct(StepCallBase):
                 self.code = self.CODE_STEP_FINAL
                 return
         elif step_name == "thought":
+            _auto_msg = "If you are sure that user information is required, output `final_answer`. Otherwise, continue executing"
             # Handle thought step - process reasoning
             if len(response) == 1:
                 if not self.flag_interactive:
                     # for retry
                     self.code = self.CODE_STEP_FINAL
-                    self.user_msg = "missing action"
+                    self.user_msg = _auto_msg
                     # for failed
                     # self.code = self.CODE_TASK_FAILED
                     # self.result = ("only thought step without action or final_answer in non-interactive mode, exiting.")
                     return
                 # interactive mode, ask user for more input
                 # only thought, no action or final_answer, ask user for more input
-                user_input = "continue"
+                user_input = _auto_msg
                 while True:
                     if not is_main_thread():
                         break
