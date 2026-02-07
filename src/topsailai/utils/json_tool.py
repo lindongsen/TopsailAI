@@ -57,6 +57,19 @@ def fix_llm_mistakes_on_json(content):
     if safe_json_load(content):
         return content
 
+    # case: startswith '{', endswith '\n}'
+    for _char_start, _char_end in [
+        ("{", "}"),
+        ("[", "]"),
+    ]:
+        if content[0] == _char_start:
+            _end_index = content.find('\n' + _char_end)
+            if _end_index:
+                _new_content = content[:_end_index+2]
+                if safe_json_load(_new_content):
+                    return _new_content
+            break
+
     # LLM can make mistakes
 
     # case: "\n  }\n  }\n"
