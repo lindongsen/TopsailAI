@@ -51,12 +51,26 @@ class Step4ReAct(StepCallBase):
             None: The method sets internal state variables (self.code, self.user_msg, etc.)
             to control the agent's behavior rather than returning values directly
         """
+        step_name = None
         try:
             step_name = step["step_name"]
         except Exception:
             self.user_msg = "missing step_name"
             self.code = self.CODE_STEP_FINAL
             return
+        finally:
+            if self._last_step_name and step_name:
+                if self._last_step_name == "thought" \
+                    and step_name == self._last_step_name \
+                    and len(response) == 1 \
+                    and self._last_step_count == 1:
+                    # only thought, duplicate found
+                    step_name = "final"
+                    print_tool.print_error("LLM mistake: give final due to duplicate to thought only")
+
+
+        self._last_step_name = step_name
+        self._last_step_count = len(response)
 
         if step_name == 'action':
             # Handle action step - execute tool calls

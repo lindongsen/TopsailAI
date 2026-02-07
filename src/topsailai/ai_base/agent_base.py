@@ -59,7 +59,7 @@ class StepCallBase(object):
         Args:
             flag_interactive (bool): Whether this step call is interactive
         """
-        # for result
+        # for result, refer to self.__reset
         # Status code indicating the execution result
         self.code = None
         # User message for the next step
@@ -79,6 +79,24 @@ class StepCallBase(object):
 
         # print_step(f"interactive mode: [{self.flag_interactive}]", need_format=False)
 
+        # internal variables, self._xxx
+        # last step name, string
+        self._last_step_name = None
+        # last count, int
+        self._last_step_count = None
+
+        return
+
+    def __reset(self):
+        # Status code indicating the execution result
+        self.code = None
+        # User message for the next step
+        self.user_msg = None
+        # Tool message containing tool execution results
+        self.tool_msg = None
+        # Final result of the task
+        self.result = None
+
         return
 
     def __call__(self, *args, **kwds):
@@ -92,9 +110,8 @@ class StepCallBase(object):
             StepCallBase: The instance itself after execution
         """
         # it must init all of result for each call
-        self.__init__(
-            flag_interactive=self.flag_interactive,
-        )
+        self.__reset()
+
         self._execute(*args, **kwds)
         return self
 
