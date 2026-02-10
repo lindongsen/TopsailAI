@@ -7,6 +7,18 @@
 
 import os
 
+from topsailai.utils import env_tool
+
+
+def get_extra_prompt() -> str:
+    prompt_files = env_tool.EnvReaderInstance.get_list_str("SYSTEM_PROMPT_EXTRA_FILES")
+    if not prompt_files:
+        return ""
+    prompt_content = ""
+    for prompt_file in prompt_files:
+        prompt_content += read_prompt(prompt_file)
+    return prompt_content
+
 def get_extra_tools():
     """
     return string for prompt content of extra tools
@@ -87,6 +99,9 @@ class PromptHubExtractor(object):
         + read_prompt("task/tracking.md")
     ) if not is_only_pure_system_prompt() else ""
 
+    # extra prompt
+    prompt_extra = get_extra_prompt() or ""
+
     # interactive, json
     prompt_interactive_json = read_prompt("work_mode/format/json.md")
 
@@ -101,6 +116,7 @@ class PromptHubExtractor(object):
         read_prompt("work_mode/ReAct.md")
         + prompt_common
         + prompt_task
+        + prompt_extra
     )
 
     prompt_mode_ReAct_toolCall = (
@@ -124,6 +140,7 @@ class PromptHubExtractor(object):
         read_prompt("work_mode/PlanAndExecute.md")
         + prompt_common
         + prompt_task
+        + prompt_extra
         + read_prompt("work_mode/sop/sub_tasks.md")
 
         # place them to tail

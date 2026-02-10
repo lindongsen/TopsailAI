@@ -81,6 +81,9 @@ TOPSAILAI_FLAG_INTERACTIVE_MODE=0
 # one file or content. Extend system prompts.
 # SYSTEM_PROMPT=""
 
+# multiple files, split by ','
+# SYSTEM_PROMPT_EXTRA_FILES=""
+
 # one file or content. Describe the current environmental information.
 # ENV_PROMPT=""
 

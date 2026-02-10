@@ -37,6 +37,10 @@ from topsailai.workspace.input_tool import (
 
 DEFAULT_HEAD_TAIL_OFFSET = 7
 
+def extend_system_prompt():
+    if not os.getenv("SYSTEM_PROMPT_EXTRA_FILES"):
+        os.environ["SYSTEM_PROMPT_EXTRA_FILES"] = "work_mode/sop/work_agreement.md"
+    return
 
 def main():
     """ main entry """
@@ -99,6 +103,9 @@ YOU ARE ({env_agent_name})
 
 If you have final_answer, you should output it with specified format.
 """
+
+    # extra system prompt
+    extend_system_prompt()
 
     # agent
     agent = get_agent_chat(sys_prompt_content, disabled_tools=["agent_tool"])
