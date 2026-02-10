@@ -10,6 +10,7 @@
     @SYSTEM_PROMPT: file or content;
     @TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: 1 is save, 0 is not save. default is 0.
     @TOPSAILAI_TASK: file or content.
+    @TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET: one number for offset (msgs[:offset] + msgs[-offset:]), default is 7.
 '''
 
 import sys
@@ -32,6 +33,9 @@ from topsailai.workspace.agent_shell import get_agent_chat
 from topsailai.workspace.input_tool import (
     get_message,
 )
+
+
+DEFAULT_HEAD_TAIL_OFFSET = 7
 
 
 def main():
@@ -59,6 +63,21 @@ def main():
         messages_from_session = ctx_manager.get_messages_by_session(session_id)
         if not messages_from_session:
             ctx_manager.create_session(session_id, task=message)
+
+    # offset
+    if messages_from_session:
+        head_tail_offset = env_tool.EnvReaderInstance.get("TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET")
+        if head_tail_offset:
+            # to int
+            try:
+                head_tail_offset = int(head_tail_offset)
+            except:
+                head_tail_offset = None
+            if not head_tail_offset:
+                head_tail_offset = DEFAULT_HEAD_TAIL_OFFSET
+        if head_tail_offset:
+            if len(messages_from_session) > (head_tail_offset*2):
+                messages_from_session = messages_from_session[:head_tail_offset] + messages_from_session[-head_tail_offset:]
 
     # system prompt
     env_sys_prompt = os.getenv("SYSTEM_PROMPT")
