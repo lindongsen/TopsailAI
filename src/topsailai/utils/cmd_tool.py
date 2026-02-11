@@ -13,6 +13,11 @@ from topsailai.logger import logger
 from .text_tool import safe_decode
 
 
+def format_cmd(cmd):
+    if isinstance(cmd, str):
+        cmd = cmd.replace('$', '\$')
+    return cmd
+
 def build_env(d:dict=None, keys:list=None):
     """Build environment dictionary with essential system variables.
 
@@ -72,6 +77,7 @@ def exec_cmd(
         >>> exec_cmd("ls /nonexistent", no_need_stderr=True)
         (2, "", "")
     """
+    cmd = format_cmd(cmd)
     env = build_env(env_info, env_keys)
     result = subprocess.run(
         cmd,
@@ -150,6 +156,7 @@ def exec_cmd_in_new_process(cmd:str|list, env:dict=None) -> int:
         from the current process group. The caller is responsible for managing
         the process lifecycle.
     """
+    cmd = format_cmd(cmd)
     env = build_env(env)
     p = subprocess.Popen(
         cmd,

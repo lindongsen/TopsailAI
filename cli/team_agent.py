@@ -23,11 +23,15 @@ sys.path.insert(0, project_root + "/src")
 
 os.chdir(project_root)
 
+from topsailai.logger import logger
 from topsailai.ai_base.agent_types import react
 from topsailai.ai_base.constants import (
     ROLE_ASSISTANT,
 )
-from topsailai.utils import env_tool
+from topsailai.utils import (
+    env_tool,
+    json_tool,
+)
 from topsailai.context import ctx_manager
 from topsailai.workspace.agent_shell import get_agent_chat
 from topsailai.workspace.input_tool import (
@@ -100,8 +104,6 @@ def main():
     # team role
     sys_prompt_content += f"""
 YOU ARE ({env_agent_name})
-
-If you have final_answer, you should output it with specified format.
 """
 
     # extra system prompt
@@ -124,6 +126,7 @@ If you have final_answer, you should output it with specified format.
     def hook_after_init_prompt(self):
         if messages_from_session:
             self.messages += messages_from_session
+        logger.info("attach history messages [%s]: %s", len(messages_from_session), json_tool.safe_json_dump(messages_from_session, indent=2))
 
     def hook_after_new_session(self):
         ctx_manager.add_session_message(session_id, self.messages[-1])

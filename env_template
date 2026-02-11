@@ -44,6 +44,9 @@ TOPSAILAI_PRINT_TOOL_PROMPT=0
 # Input Messages
 # CHAT_MULTI_LINE=0
 
+# file or content pass to message of agent
+TOPSAILAI_TASK=""
+
 # =============================================================================
 # LLM Parameters
 # =============================================================================
@@ -196,3 +199,22 @@ SANDBOX_SETTINGS=""
 # Format: Module paths separated by semicolons (';')
 # hook_func(content:str) -> list[dict]|str
 TOPSAILAI_HOOK_AFTER_LLM_CHAT=""
+
+# =============================================================================
+# Team Configuration
+# =============================================================================
+
+# file or content
+TEAM_PROMPT=""
+
+# folder path to team member
+TEAM_PATH=""
+
+# 1 to save, 0 is not save. team_agent can store the first message (task) and the last message (final_answer)
+TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE=""
+
+# one number for offset (msgs[:offset] + msgs[-offset:])
+TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET=""
+
+# env keys pass to team_agent
+TOPSAILAI_TEAM_ENV_KEYS=""
