@@ -13,9 +13,10 @@ from topsailai.logger import logger
 from .text_tool import safe_decode
 
 
-def format_cmd(cmd):
+def format_cmd(cmd, remote=None):
     if isinstance(cmd, str):
-        cmd = cmd.replace('$', '\$')
+        if remote:
+            cmd = cmd.replace('$', '\$')
     return cmd
 
 def build_env(d:dict=None, keys:list=None):
@@ -134,6 +135,7 @@ def exec_cmd_in_remote(cmd:str, remote:str, port=22, timeout:int=None):
     if port:
         options += f"-p {port}"
 
+    cmd = format_cmd(cmd, remote=remote)
     cmd_ssh = f"cat << topsailaiEOF | ssh {options} root@{remote} bash -s\n{cmd}\ntopsailaiEOF"
     return exec_cmd(cmd_ssh, timeout=timeout)
 
