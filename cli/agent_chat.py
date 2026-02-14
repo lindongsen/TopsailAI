@@ -20,8 +20,7 @@ sys.path.insert(0, project_root + "/src")
 
 os.chdir(project_root)
 
-from topsailai.ai_base.agent_base import AgentRun
-from topsailai.ai_base.agent_types import react
+from topsailai.ai_base.agent_types import get_agent_step_call
 from topsailai.utils import env_tool
 from topsailai.context import ctx_manager
 from topsailai.workspace.agent_shell import get_agent_chat
@@ -91,7 +90,7 @@ def main():
     agent.hooks_after_init_prompt.append(hook_after_init_prompt)
     agent.hooks_after_new_session.append(hook_after_new_session)
 
-    answer = agent.run(react.Step4ReAct(), message)
+    answer = agent.run(get_agent_step_call(), message)
     if answer:
         ctx_manager.add_session_message(session_id, agent.messages[-1])
 

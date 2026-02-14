@@ -14,7 +14,7 @@ from topsailai.ai_base.agent_base import AgentRun
 from topsailai.workspace.print_tool import ContentDots
 
 
-def get_agent_chat(system_prompt="", to_dump_messages=False, disabled_tools:list[str]=None):
+def get_agent_chat(system_prompt="", to_dump_messages=False, disabled_tools:list[str]=None, agent_type=None):
     """ return a agent object of ReAct mode. """
     env_disabled_tools = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_CLI_AGENT_CHAT_DISABLED_TOOLS")
     if env_disabled_tools is None:
@@ -24,7 +24,7 @@ def get_agent_chat(system_prompt="", to_dump_messages=False, disabled_tools:list
         # null of config
         env_disabled_tools = []
 
-    agent_type = get_agent_type()
+    agent_type = get_agent_type(agent_type)
     agent = AgentRun(
         agent_type.SYSTEM_PROMPT + "\n---\n" + system_prompt,
         tools=None,

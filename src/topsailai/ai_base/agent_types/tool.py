@@ -19,14 +19,23 @@ from topsailai.utils.thread_local_tool import (
 from . import exception as agent_exception
 
 
-def get_tool_func(tool_map:dict, tool_name:str):
-    """get a callable func.
+def get_tool_func(tool_map: dict, tool_name: str):
+    """
+    Retrieve a callable tool function from a tool map by name.
 
-    Compatible connection characters to avoid mistakes made by LLM.
+    This function looks up a tool function in the provided dictionary using the tool name.
+    It handles compatibility with different connection characters (dots and hyphens) to avoid
+    mistakes made by LLM when generating tool calls.
 
     Args:
-        tool_map (dict): key is tool_name, value is tool_func
-        tool_name (str):
+        tool_map (dict): A dictionary where keys are tool names (strings) and values are
+            the corresponding callable tool functions.
+        tool_name (str): The name of the tool to retrieve. Can use either '.' or '-' as
+            connection characters.
+
+    Returns:
+        callable|None: The tool function if found, None otherwise. Returns None if either
+            the tool_map or tool_name is empty/None after processing.
     """
     if not tool_map or not tool_name:
         return None
@@ -46,6 +55,22 @@ def get_tool_func(tool_map:dict, tool_name:str):
     return None
 
 def exec_tool_func(tool_func, args):
+    """
+    Execute a tool function with the given arguments.
+
+    This function calls the provided tool function with the given arguments and handles
+    any exceptions that may occur during execution. Special exceptions like
+    AgentEndProcess are re-raised, while other exceptions are converted to string
+    representations.
+
+    Args:
+        tool_func (callable): The tool function to execute.
+        args (dict): A dictionary of arguments to pass to the tool function.
+
+    Returns:
+        any: The result of the tool function execution, or a string representation
+            of the error if an exception occurred (except for AgentEndProcess).
+    """
     try:
         result = tool_func(**args)
     except agent_exception.AgentEndProcess as e:
@@ -65,8 +90,21 @@ class StepCallTool(StepCallBase):
 
     def execute_step_action(self, step, tools, rsp_msg_obj, **_):
         """
+        Execute a tool action step.
+
+        This method handles the execution of tool calls during the action step of the agent.
+        It retrieves the tool call information from the step, looks up the tool function,
+        and executes it with the provided arguments.
+
+        Args:
+            step: The current step containing tool call information.
+            tools (dict): A dictionary mapping tool names to their callable functions.
+            rsp_msg_obj: The response message object that may contain additional context.
+            **_ : Additional keyword arguments (ignored).
+
         Returns:
-            Exception|any: Exception for error, other for tool_call return
+            Exception|any: A ToolError exception if there's an issue (missing tool call or
+                tool not found), otherwise the result of the tool function execution.
         """
         # Handle action step - execute tool calls
         tool_call_info = self.get_tool_call_info(step, rsp_msg_obj)
@@ -85,6 +123,17 @@ class StepCallTool(StepCallBase):
         return exec_tool_func(tool_func, args)
 
     def execute_step_interactive(self):
+        """
+        Get user input in interactive mode.
+
+        This method prompts the user for input when the agent is running in interactive mode.
+        It continues to prompt until valid input is provided. If not in interactive mode
+        or not running in the main thread, it returns an automatic message directing
+        the user to either provide input or output a final answer.
+
+        Returns:
+            str: User input string or an automatic guidance message.
+        """
         _auto_msg = "If you are sure that user information is required or task is finished, output `final_answer`. Otherwise, continue executing"
         if not self.flag_interactive or not is_main_thread():
             return _auto_msg
@@ -96,6 +145,16 @@ class StepCallTool(StepCallBase):
             return user_input
 
     def complete_step_thought(self, response, **_):
+        """
+        Handle the completion of a thought step.
+
+        This method is called when a thought step is completed. If the response contains
+        only one element, it indicates that the agent needs user input or confirmation.
+
+        Args:
+            response (list): The response from the thought step processing.
+            **_ : Additional keyword arguments (ignored).
+        """
         # Handle thought step - process reasoning
         if len(response) == 1:
             self.user_msg = self.execute_step_interactive()
@@ -103,6 +162,22 @@ class StepCallTool(StepCallBase):
             return
 
     def complete_cannot_handle(self, step_name:str, step:dict, tools:dict, response:list, index:int, rsp_msg_obj=None, **_):
+        """
+        Handle cases where the agent cannot process a step.
+
+        This method is called when the agent encounters a step it cannot handle.
+        If this is the last element in the response, it logs an error indicating
+        an LLM mistake and sets the final state with an error message.
+
+        Args:
+            step_name (str): The name of the step that cannot be handled.
+            step (dict): The step dictionary containing step information.
+            tools (dict): A dictionary of available tools.
+            response (list): The response list being processed.
+            index (int): The current index in the response list.
+            rsp_msg_obj: The response message object (optional).
+            **_ : Additional keyword arguments (ignored).
+        """
         if len(response) == (index+1):
             # the last element, LLM has a mistake
             logger.error(
@@ -116,17 +191,50 @@ class StepCallTool(StepCallBase):
         return
 
     def complete_final(self, step:dict, **_):
+        """
+        Handle the final answer step.
+
+        This method is called when the agent has completed its task and received
+        a final answer. It extracts the raw text from the step and sets the
+        appropriate completion code.
+
+        Args:
+            step (dict): The final step dictionary containing the raw text result.
+            **_ : Additional keyword arguments (ignored).
+        """
         # Handle final answer step - complete the task
         self.result = step["raw_text"]
         self.code = self.CODE_TASK_FINAL
         return
 
     def complete_inquiry(self, **_):
+        """
+        Handle an inquiry step.
+
+        This method is called when the agent needs to make an inquiry to the user.
+        It prompts for interactive user input and sets the appropriate completion code.
+
+        Args:
+            **_ : Additional keyword arguments (ignored).
+        """
         self.user_msg = self.execute_step_interactive()
         self.code = self.CODE_STEP_FINAL
         return
 
     def complete_action(self, step, tools, rsp_msg_obj, **_):
+        """
+        Handle the completion of an action step.
+
+        This method is called after an action step is executed. It retrieves the result
+        from the tool execution, converts any exceptions to strings, stores the result
+        in tool_msg, and sets the appropriate completion code.
+
+        Args:
+            step: The action step that was executed.
+            tools (dict): A dictionary of available tools.
+            rsp_msg_obj: The response message object.
+            **_ : Additional keyword arguments (ignored).
+        """
         result = self.execute_step_action(
             step=step,
             tools=tools,

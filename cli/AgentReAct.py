@@ -27,12 +27,20 @@ from topsailai.ai_base.agent_types.react import (
     Step4ReAct,
 )
 
-from topsailai.workspace.agent_shell import get_agent_chat as get_agent
+from topsailai.workspace.agent_shell import get_agent_chat
 
 
 # define global variables
 g_flag_interactive = True
 
+
+def get_agent(system_prompt="", to_dump_messages=False, disabled_tools:list[str]=None):
+    return get_agent_chat(
+        system_prompt=system_prompt,
+        to_dump_messages=to_dump_messages,
+        disabled_tools=disabled_tools,
+        agent_type="react"
+    )
 
 def run_once(user_input, to_print_step=None, user_prompt=""):
     """ return final answer, or None if error """

@@ -110,7 +110,7 @@ YOU ARE ({env_agent_name})
     extend_system_prompt()
 
     # agent
-    agent = get_agent_chat(sys_prompt_content, disabled_tools=["agent_tool"])
+    agent = get_agent_chat(sys_prompt_content, disabled_tools=["agent_tool"], agent_type="react")
     if env_agent_name:
         # set agent name
         agent.agent_name = env_agent_name

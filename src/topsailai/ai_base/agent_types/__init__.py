@@ -25,7 +25,9 @@ AGENT_TYPE_MAP = {
 }
 
 
-def get_agent_type() -> _template:
+def get_agent_type(agent_type=None) -> _template:
+    if agent_type and agent_type in AGENT_TYPE_MAP:
+        return AGENT_TYPE_MAP[agent_type]
     agent_type = env_tool.EnvReaderInstance.get("TOPSAILAI_AGENT_TYPE") or "default"
     return AGENT_TYPE_MAP.get(agent_type) or AGENT_TYPE_MAP["default"]
 

@@ -22,7 +22,7 @@ sys.path.insert(0, project_root + "/src")
 
 os.chdir(project_root)
 
-from topsailai.ai_base.agent_types import react
+from topsailai.ai_base.agent_types import get_agent_step_call
 from topsailai.context import ctx_manager
 from topsailai.utils import (
     env_tool,
@@ -138,7 +138,7 @@ def main():
         max_count -= 1
 
         try:
-            answer = agent.run(react.Step4ReAct(True), message)
+            answer = agent.run(get_agent_step_call(args=(True,)), message)
         except KeyboardInterrupt:
             if not input_yes("Agent Session Continue [yes/no] "):
                 break
