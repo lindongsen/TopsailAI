@@ -21,7 +21,9 @@ USER request: @Jason Check if this file exists /tmp/123
 ASSISTANT final_answer: Jason does not possess the capabilities of an agent (is_able_to_call_agent=false), and it is recommended to seek help from Dawson (is_able_to_call_agent=true).
 ```
 
-[Attention] All members should follow the manager's arrangements and refrain from doing anything beyond what the manager has assigned.
+[Attention]
+All members should follow the manager's arrangements and refrain from doing anything beyond what the manager has assigned.
+"Human say" is of the highest priority.
 
 ## Symbol
 
@@ -45,8 +47,9 @@ Each task is assigned to a specific member. When a specific member is explicitly
 
 A certain matter may be processed multiple times, which is an iterative process. After completing the matter for now, we need to briefly output the changes in history. For example:
 ```
-Time 1: What was done?
-Time 2: What was done?
-...
-Time N: What was done?
+1. task1 (issue -> fixed -> issue -> fixed)
+2. task2
+3. task3
+
+List tasks all, without any omissions
 ```

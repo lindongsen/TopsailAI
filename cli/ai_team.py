@@ -318,7 +318,7 @@ def main():
         max_count -= 1
 
         try:
-            answer = agent.run(react.Step4ReAct(True), message)
+            answer = agent.run(react.Step4ReAct(True), "Human Say:\n" + message)
         except agent_exception.AgentEndProcess:
             pass
         except (KeyboardInterrupt, EOFError):

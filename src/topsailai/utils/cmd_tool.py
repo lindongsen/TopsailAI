@@ -131,6 +131,7 @@ def exec_cmd_in_remote(cmd:str, remote:str, port=22, timeout:int=None):
         "-o 'UserKnownHostsFile /dev/null' "
         "-o ConnectTimeout=10 "
         "-o ConnectionAttempts=3 "
+        "-o LogLevel=ERROR "
     )
     if port:
         options += f"-p {port}"

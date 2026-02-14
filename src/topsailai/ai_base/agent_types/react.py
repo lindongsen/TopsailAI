@@ -68,6 +68,11 @@ class Step4ReAct(StepCallBase):
                     step_name = "final"
                     print_tool.print_error("LLM mistake: give final due to duplicate to thought only")
 
+                if step_name == "thought":
+                    if len(response) == 1:
+                        if step.get("raw_text") and 'final_answer' in step["raw_text"]:
+                            step_name = "final"
+                            print_tool.print_error("LLM mistake: give final due to found 'final_answer'")
 
         self._last_step_name = step_name
         self._last_step_count = len(response)
@@ -114,7 +119,7 @@ class Step4ReAct(StepCallBase):
                 self.code = self.CODE_STEP_FINAL
                 return
         elif step_name == "thought":
-            _auto_msg = "If you are sure that user information is required, output `final_answer`. Otherwise, continue executing"
+            _auto_msg = "If you are sure that user information is required or task is finished, output `final_answer`. Otherwise, continue executing"
             # Handle thought step - process reasoning
             if len(response) == 1:
                 if not self.flag_interactive:
