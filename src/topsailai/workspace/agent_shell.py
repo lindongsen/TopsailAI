@@ -8,7 +8,7 @@
 from topsailai.utils import (
     env_tool,
 )
-from topsailai.ai_base.agent_types import react
+from topsailai.ai_base.agent_types import get_agent_type
 from topsailai.ai_base.agent_base import AgentRun
 
 from topsailai.workspace.print_tool import ContentDots
@@ -24,10 +24,11 @@ def get_agent_chat(system_prompt="", to_dump_messages=False, disabled_tools:list
         # null of config
         env_disabled_tools = []
 
+    agent_type = get_agent_type()
     agent = AgentRun(
-        react.SYSTEM_PROMPT + "\n---\n" + system_prompt,
+        agent_type.SYSTEM_PROMPT + "\n---\n" + system_prompt,
         tools=None,
-        agent_name=react.AGENT_NAME,
+        agent_name=agent_type.AGENT_NAME,
         excluded_tool_kits=env_disabled_tools if isinstance(env_disabled_tools, list) else disabled_tools,
     )
 

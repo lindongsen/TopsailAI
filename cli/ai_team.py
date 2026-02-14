@@ -25,7 +25,7 @@ sys.path.insert(0, project_root + "/src")
 os.chdir(project_root)
 
 from topsailai.ai_base.agent_types import (
-    react,
+    get_agent_step_call,
     exception as agent_exception,
 )
 from topsailai.context import ctx_manager
@@ -318,7 +318,7 @@ def main():
         max_count -= 1
 
         try:
-            answer = agent.run(react.Step4ReAct(True), "Human Say:\n" + message)
+            answer = agent.run(get_agent_step_call(args=(True,)), "Human Say:\n" + message)
         except agent_exception.AgentEndProcess:
             pass
         except (KeyboardInterrupt, EOFError):

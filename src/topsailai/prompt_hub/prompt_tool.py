@@ -135,18 +135,6 @@ class PromptHubExtractor(object):
         + read_prompt("work_mode/format/topsailai_ReAct.md")
     )
 
-    # work-mode PlanAndExecute
-    prompt_mode_PlanAndExecute = (
-        read_prompt("work_mode/PlanAndExecute.md")
-        + prompt_common
-        + prompt_task
-        + prompt_extra
-        + read_prompt("work_mode/sop/sub_tasks.md")
-
-        # place them to tail
-        + prompt_interactive_json
-        + read_prompt("work_mode/format/json_PlanAndExecute.md")
-    )
 
 def disable_tools(raw_tools:list[str], target_tools:list[str]):
     """ return available tools """

@@ -47,6 +47,9 @@ TOPSAILAI_PRINT_TOOL_PROMPT=0
 # file or content pass to message of agent
 TOPSAILAI_TASK=""
 
+# Agent Type, default is react
+TOPSAILAI_AGENT_TYPE=""
+
 # =============================================================================
 # LLM Parameters
 # =============================================================================

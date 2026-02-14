@@ -5,21 +5,14 @@
   Purpose: ReAct (Reasoning and Acting) framework implementation for AI agents
 '''
 
-from topsailai.logger import logger
-
-from topsailai.utils.thread_tool import (
-    is_main_thread,
-)
 from topsailai.utils import (
     env_tool,
     print_tool,
 )
 from topsailai.prompt_hub.prompt_tool import PromptHubExtractor
-from topsailai.ai_base.agent_base import (
-    StepCallBase,
+from .tool import (
+    StepCallTool,
 )
-from . import exception as agent_exception
-from .tool import get_tool_func
 
 # define prompt of ReAct framework
 SYSTEM_PROMPT = PromptHubExtractor.prompt_mode_ReAct_toolPrompt
@@ -29,7 +22,7 @@ if env_tool.is_use_tool_calls():
 AGENT_NAME = "AgentReAct"
 
 
-class Step4ReAct(StepCallBase):
+class Step4ReAct(StepCallTool):
     """Implementation of the ReAct (Reasoning and Acting) framework for AI agents"""
 
     def _execute(self, step:dict, tools:dict, response:list, index:int, rsp_msg_obj=None, **_):
@@ -78,85 +71,44 @@ class Step4ReAct(StepCallBase):
         self._last_step_count = len(response)
 
         if step_name == 'action':
-            # Handle action step - execute tool calls
-            tool_call_info = self.get_tool_call_info(step, rsp_msg_obj)
-            if tool_call_info is None:
-                # LLM mistake, missing argv
-                obs_json = {
-                    "step_name": "observation",
-                    "raw_text": "missing tool_call"
-                }
-                self.tool_msg = obs_json
-                self.code = self.CODE_STEP_FINAL
-                return
-
-            tool = tool_call_info.func_name
-            args = tool_call_info.func_args or {}
-
-            tool_func = get_tool_func(tools, tool)
-            if tool_func is None:
-                # LLM mistake, no found this tool
-                obs_json = {
-                    "step_name": "observation",
-                    "raw_text": f"no found such as tool: {tool}"
-                }
-                self.tool_msg = obs_json
-                self.code = self.CODE_STEP_FINAL
-                return
-            else:
-                try:
-                    obs = tool_func(**args)
-                except agent_exception.AgentEndProcess as e:
-                    raise e
-                except Exception as e:
-                    obs = str(e)
-                    logger.exception(e)
-                obs_json = {
-                    "step_name": "observation",
-                    "raw_text": obs
-                }
-                self.tool_msg = obs_json
-                self.code = self.CODE_STEP_FINAL
-                return
-        elif step_name == "thought":
-            _auto_msg = "If you are sure that user information is required or task is finished, output `final_answer`. Otherwise, continue executing"
-            # Handle thought step - process reasoning
-            if len(response) == 1:
-                if not self.flag_interactive:
-                    # for retry
-                    self.code = self.CODE_STEP_FINAL
-                    self.user_msg = _auto_msg
-                    # for failed
-                    # self.code = self.CODE_TASK_FAILED
-                    # self.result = ("only thought step without action or final_answer in non-interactive mode, exiting.")
-                    return
-                # interactive mode, ask user for more input
-                # only thought, no action or final_answer, ask user for more input
-                user_input = _auto_msg
-                while True:
-                    if not is_main_thread():
-                        break
-                    user_input = input("\n>>> Your input: ")
-                    if not user_input.strip():
-                        continue
-                    break
-                self.user_msg = user_input
-                self.code = self.CODE_STEP_FINAL
-                return
-        elif step_name.startswith('final'):
-            # Handle final answer step - complete the task
-            self.result = step["raw_text"]
-            self.code = self.CODE_TASK_FINAL
-            return
-        elif len(response) == (index+1):
-            # the last element, LLM has a mistake
-            logger.error(
-                "LLM has a mistake: agent can not handle it [%s] [%s]",
-                step_name,
-                rsp_msg_obj.content if rsp_msg_obj else None,
+            result = self.execute_step_action(
+                step=step,
+                tools=tools,
+                rsp_msg_obj=rsp_msg_obj,
             )
+            if isinstance(result, Exception):
+                result = str(result)
+            self.tool_msg = {
+                "step_name": "observation",
+                "raw_text": result,
+            }
             self.code = self.CODE_STEP_FINAL
-            self.user_msg = "I can not handle it"
-            return
+        elif step_name == "thought":
+            self.complete_step_thought(
+                response=response
+            )
+        elif step_name.startswith('final'):
+            self.complete_final(
+                step=step,
+            )
+        else:
+            self.complete_cannot_handle(
+                step_name=step_name,
+                step=step,
+                tools=tools,
+                response=response,
+                index=index,
+                rsp_msg_obj=rsp_msg_obj,
+            )
 
         return
+
+# set common name
+AgentStepCall = Step4ReAct
+
+
+__all__ = [
+    SYSTEM_PROMPT,
+    AGENT_NAME,
+    AgentStepCall,
+]

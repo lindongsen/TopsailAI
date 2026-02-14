@@ -9,3 +9,6 @@
 class AgentEndProcess(Exception):
     """ Force to abort execution of agent """
     pass
+
+class ToolError(Exception):
+    pass

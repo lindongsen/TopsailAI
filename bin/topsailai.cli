@@ -33,4 +33,4 @@ get_args_id() {
   done
 }
 
-eval "${run_cli} cli/${BASE_NAME}.py $(get_args_id 1 $#)"
+eval "TOPSAILAI_AGENT_TYPE=react ${run_cli} cli/${BASE_NAME}.py $(get_args_id 1 $#)"
