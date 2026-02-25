@@ -38,7 +38,6 @@ class JsonError(Exception):
 class ModelServiceError(Exception):
     pass
 
-
 def _to_list(obj):
     """
     Convert an object to a list if it is not already a list.
@@ -114,6 +113,11 @@ def _format_messages(messages, key_name, value_name):
         Only processes messages starting from index 2 (skipping system and user messages)
         that contain JSON-like content (starting with '[' or '{')
     """
+
+    new_messages = hook_execute("TOPSAILAI_HOOK_BEFORE_LLM_CHAT", messages)
+    if new_messages:
+        messages = new_messages
+
     func_format = None  # func(content, key_name, value_name)
 
     if format_tool.TOPSAILAI_FORMAT_PREFIX in messages[0]["content"]:
@@ -522,7 +526,7 @@ class LLMModel(object):
             dict: Parameters dictionary for the chat completion API
         """
         messages = copy.deepcopy(messages)
-        _format_messages(messages, key_name="step_name", value_name="raw_text")
+        messages = _format_messages(messages, key_name="step_name", value_name="raw_text")
         params = dict(
             model=self.model_name,
             messages=messages,

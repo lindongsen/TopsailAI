@@ -10,12 +10,12 @@ from topsailai.utils import (
     env_tool,
 )
 
-def hook_execute(key:str, content:str) -> list[dict]|str:
+def hook_execute(key:str, content:str|list) -> list[dict]|str:
     """ execute hooks
 
     Args:
         key (str): e.g TOPSAILAI_HOOK_AFTER_LLM_CHAT
-        content (str): content from llm
+        content (str|list): content from llm
 
     Returns:
         list[dict]|str
