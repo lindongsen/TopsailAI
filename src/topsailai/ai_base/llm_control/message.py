@@ -128,6 +128,14 @@ def format_messages(messages, key_name, value_name):
 
     return messages
 
+def get_tool_calls_of_rsp(rsp_obj):
+    if not rsp_obj:
+        return None
+    rsp_msg = get_response_message(rsp_obj)
+    if rsp_msg:
+        return rsp_msg.tool_calls
+    return None
+
 def fix_llm_mistakes(response:list, rsp_obj=None):
     if not response:
         return response
@@ -288,10 +296,14 @@ def format_response(response, rsp_obj=None, messages=None):
 
                     # case: only thought
                     if item.get("step_name") == "thought":
-                        action_count = get_count_of_action(messages)
-                        if action_count > 0:
-                            print_error(f"fix llm mistake: maybe final answer due to found action count [{action_count}]")
-                            item["step_name"] = "final_answer"
+                        try:
+                            if not get_tool_calls_of_rsp(rsp_obj):
+                                action_count = get_count_of_action(messages)
+                                if action_count > 0:
+                                    print_error(f"fix llm mistake: maybe final answer due to found action count [{action_count}]")
+                                    item["step_name"] = "final_answer"
+                        except Exception as e:
+                            logger.exception(e)
 
     # hook after chat
     new_response = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", response)
@@ -308,10 +320,14 @@ def format_response(response, rsp_obj=None, messages=None):
             print_error("fix llm mistake: maybe only thought")
             step_name = format_tool.TOPSAILAI_STEP_THINK
 
-            action_count = get_count_of_action(messages)
-            if action_count > 0:
-                print_error(f"fix llm mistake: maybe final answer due to found action count [{action_count}]")
-                step_name = format_tool.TOPSAILAI_STEP_FINAL
+            try:
+                if not get_tool_calls_of_rsp(rsp_obj):
+                    action_count = get_count_of_action(messages)
+                    if action_count > 0:
+                        print_error(f"fix llm mistake: change step to final answer due to found action count [{action_count}]")
+                        step_name = format_tool.TOPSAILAI_STEP_FINAL
+            except Exception as e:
+                logger.exception(e)
 
             return format_response(step_name + "\n" + response, rsp_obj=rsp_obj)
 

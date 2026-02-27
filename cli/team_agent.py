@@ -83,6 +83,8 @@ def main():
                 head_tail_offset = None
             if not head_tail_offset:
                 head_tail_offset = DEFAULT_HEAD_TAIL_OFFSET
+        else:
+            head_tail_offset = DEFAULT_HEAD_TAIL_OFFSET
         if head_tail_offset:
             if len(messages_from_session) > (head_tail_offset*2):
                 messages_from_session = messages_from_session[:head_tail_offset] + messages_from_session[-head_tail_offset:]
