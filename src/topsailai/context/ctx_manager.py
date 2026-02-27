@@ -8,10 +8,12 @@
 import os
 
 from topsailai.logger import logger
+from topsailai.utils.format_tool import to_list
 
 from .chat_history_manager import ALL_MANAGERS
 from .chat_history_manager.__base import (
     ChatHistoryBase,
+    ChatHistoryMessageData,
 )
 from .session_manager.__base import (
     SessionStorageBase,
@@ -135,7 +137,11 @@ def get_session_manager(conn=None, default_conn=DEFAULT_CONN) -> SessionStorageB
     raise Exception("fail to get session manager")
 
 
-def get_messages_by_session(session_id:str="", session_mgr:SessionStorageBase=None) -> list[dict]:
+def get_messages_by_session(
+        session_id:str="",
+        session_mgr:SessionStorageBase=None,
+        for_raw=False,
+    ) -> list[dict] | list[ChatHistoryMessageData]:
     """
     Retrieve messages for a specific session.
 
@@ -149,8 +155,9 @@ def get_messages_by_session(session_id:str="", session_mgr:SessionStorageBase=No
                                                    If None, a new one is created.
 
     Returns:
-        list[dict]: List of message dictionaries for the session,
+        list[dict]: for_raw=False, List of message dictionaries for the session,
                    or empty list if session doesn't exist or no session_id provided.
+        list[ChatHistoryMessageData]: for_raw=True,
     """
     # Try to get session_id from environment if not provided
     if not session_id:
@@ -166,7 +173,10 @@ def get_messages_by_session(session_id:str="", session_mgr:SessionStorageBase=No
 
     # Retrieve messages if session exists
     if session_mgr.exists_session(session_id):
-        messages_from_session = session_mgr.retrieve_messages(session_id)
+        if for_raw:
+            messages_from_session = session_mgr.get_messages_by_session(session_id)
+        else:
+            messages_from_session = session_mgr.retrieve_messages(session_id)
         logger.info(f"retrieve messages: session_id={session_id}, count={len(messages_from_session)}")
         return messages_from_session
 
@@ -223,5 +233,22 @@ def add_session_message(session_id:str, message:dict) -> bool:
     # Add message to all managers
     for mgr in history_mgrs:
         mgr.add_session_message(message, session_id=session_id)
+
+    return True
+
+def del_session_messages(session_id:str, message_ids:list[str]) -> bool:
+    # Get all configured chat history managers
+    history_mgrs = get_managers_by_env()
+    if not history_mgrs:
+        return False
+
+    if not message_ids:
+        return False
+
+    message_ids = to_list(message_ids)
+    # Add message to all managers
+    for mgr in history_mgrs:
+        for msg_id in message_ids:
+            mgr.del_messages(msg_id, session_id)
 
     return True

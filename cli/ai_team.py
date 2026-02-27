@@ -45,6 +45,7 @@ from topsailai.workspace.hook_instruction import HookInstruction
 from topsailai.workspace.agent_shell import get_agent_chat
 from topsailai.workspace.print_tool import (
     print_context_messages,
+    print_raw_messages,
 )
 
 from topsailai.tools.agent_tool import subprocess_agent_memory_as_story
@@ -296,10 +297,38 @@ def main():
         print("/member: Show members")
         print(g_members)
         return
+    def _history2():
+        print(f"\n\n{SPLIT_LINE}")
+        print(f"/history2: Show raw history messages {session_id}")
+        raw_msgs = ctx_manager.get_messages_by_session(session_id, for_raw=True)
+        if raw_msgs:
+            print_raw_messages(raw_msgs)
+        return
+    def _del(index:int):
+        """
+        delete one message
+
+        Args:
+          index: int
+        """
+        nonlocal messages_from_session
+        assert index > 0 and index <= len(messages_from_session), "nothing can be deleted"
+        index -= 1
+        raw_msgs = ctx_manager.get_messages_by_session(session_id, for_raw=True)
+        index_msg = raw_msgs[index]
+        index_msg_id = index_msg.msg_id
+        ctx_manager.del_session_messages(session_id, [index_msg_id])
+        messages_from_session.clear()
+        messages_from_session += ctx_manager.get_messages_by_session(session_id)
+        _history()
+        _member()
+        return
     hook_instruction.add_hook("/clear", _clear, "clear context messages")
     hook_instruction.add_hook("/story", _story, "save context messages to a story")
     hook_instruction.add_hook("/history", _history, "show context messages")
+    hook_instruction.add_hook("/history2", _history2, "show raw context messages")
     hook_instruction.add_hook("/member", _member, "show members")
+    hook_instruction.add_hook("/del", _del)
 
     ##########################################################################################
     # main

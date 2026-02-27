@@ -27,7 +27,7 @@ All members should follow the manager's arrangements and refrain from doing anyt
 
 ## Symbol
 
-### Users can use '@' to designate specific members for chat
+### Users can use '@' to designate specific members for chat/agent
 
 "@all" indicates all members, and it also indicates all members when not specified.
 
@@ -39,16 +39,24 @@ What do you think about this issue?
 @AI2
 ```
 
+Example:
+```
+@AI1 verify the result
+```
+Manager MUST call AI1 to perform a specific task, rather than directly generating a new result.
+
 ## Execution
 
 When users explicitly request re-analysis, follow-up analysis, or similar intents, do not directly reference previous conclusions. Instead, fully reprocess the task and ensure thorough implementation.
 
 Each task is assigned to a specific member. When a specific member is explicitly assigned to perform a task, even if the task fails, you cannot let another member take over the task. For example, if (@A) is explicitly assigned, even if A fails, you cannot let B take over A's task.
 
-A certain matter may be processed multiple times, which is an iterative process. After completing the matter for now, we need to briefly output the changes in history. For example:
+A certain matter may be processed multiple times, which is an iterative process.
+After completing the matter for now, we need to briefly output the changes in history AND we need to know the progress of the task in real time.
+For example:
 ```
-1. task1 (issue -> fixed -> issue -> fixed)
-2. task2
+1. task1 [done] (issue -> fixed -> issue -> fixed)
+2. task2 [doing] (issue)
 3. task3
 
 List tasks all, without any omissions

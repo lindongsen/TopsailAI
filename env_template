@@ -203,6 +203,10 @@ SANDBOX_SETTINGS=""
 # hook_func(content:str) -> list[dict]|str
 TOPSAILAI_HOOK_AFTER_LLM_CHAT=""
 
+# Format: Module paths separated by semicolons (';')
+# hook_func(content:list[dict]) -> list[dict]
+TOPSAILAI_HOOK_BEFORE_LLM_CHAT=""
+
 # =============================================================================
 # Team Configuration
 # =============================================================================

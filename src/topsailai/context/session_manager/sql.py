@@ -171,6 +171,10 @@ class SessionSQLAlchemy(SessionStorageBase):
         """ retrieve messages for session """
         return self.chat_history.retrieve_messages(session_id)
 
+    def get_messages_by_session(self, session_id:str):
+        """ get messages by chat_history_manager """
+        return self.chat_history.get_messages_by_session(session_id)
+
     def delete_session(self, session_id: str):
         """
         Delete a session and its associated chat history.

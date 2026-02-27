@@ -9,6 +9,10 @@ Email: lin_dongsen@126.com
 Created: 2025-10-29
 """
 
+from topsailai.context.chat_history_manager.__base import (
+    ChatHistoryMessageData,
+)
+
 class SessionData(object):
     """
     Data container for a single session in the AI engineering framework.
@@ -119,4 +123,8 @@ class SessionStorageBase(object):
         Returns:
             int: Number of sessions deleted.
         """
+        raise NotImplementedError
+
+    def get_messages_by_session(self, session_id:str) -> list[ChatHistoryMessageData]:
+        """ get messages by chat_history_manager """
         raise NotImplementedError
