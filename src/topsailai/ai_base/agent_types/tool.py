@@ -206,7 +206,7 @@ class StepCallTool(StepCallBase):
                 rsp_msg_obj.content if rsp_msg_obj else None,
             )
             self.code = self.CODE_STEP_FINAL
-            self.user_msg = "I can not handle it"
+            self.user_msg = "I can not handle it: missing action?"
             return
         return
 
