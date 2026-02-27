@@ -43,7 +43,7 @@ Example:
 ```
 @AI1 verify the result
 ```
-Manager MUST call AI1 to perform a specific task, rather than directly generating a new result.
+Manager MUST call AI1 Agent to perform a specific task, rather than directly generating a new result.
 
 ## Execution
 

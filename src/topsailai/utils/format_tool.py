@@ -205,3 +205,18 @@ def to_topsailai_format(content:str|list|dict, key_name:str, value_name:str, for
             result += safe_json_dump(d) + "\n"
         result += "\n"
     return result
+
+def parse_str_to_dict(s:str) -> dict:
+    """parse string to dict, k1=v1;k2=v2
+
+    Args:
+        s (str): _description_
+
+    Returns:
+        dict: _description_
+    """
+    d = {}
+    for kv in s.split(';'):
+        k, v = kv.split('=', 1)
+        d[k] = v
+    return d

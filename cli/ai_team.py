@@ -312,6 +312,7 @@ def main():
           index: int
         """
         nonlocal messages_from_session
+        index = int(index)
         assert index > 0 and index <= len(messages_from_session), "nothing can be deleted"
         index -= 1
         raw_msgs = ctx_manager.get_messages_by_session(session_id, for_raw=True)

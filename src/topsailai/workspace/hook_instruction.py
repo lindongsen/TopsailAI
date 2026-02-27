@@ -16,6 +16,7 @@ import os
 from topsailai.utils import (
     json_tool,
     print_tool,
+    format_tool,
 )
 
 # Characters that trigger hook processing when found at the beginning of a message
@@ -234,7 +235,13 @@ class HookInstruction(HookBaseUtils):
             return
 
         if isinstance(kwargs, str):
-            kwargs = json_tool.safe_json_load(kwargs)
+            new_kwargs = json_tool.safe_json_load(kwargs)
+
+            if not new_kwargs and '=' in kwargs:
+                new_kwargs = format_tool.parse_str_to_dict(kwargs)
+
+            if new_kwargs:
+                kwargs = new_kwargs
 
         if not kwargs:
             kwargs = {}
