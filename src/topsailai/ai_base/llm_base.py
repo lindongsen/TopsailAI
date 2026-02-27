@@ -296,7 +296,7 @@ def _format_response(response, rsp_obj=None):
     # only thought
     if response and format_tool.TOPSAILAI_FORMAT_PREFIX not in response \
         and response[0] not in "[]{}" \
-        and response[-1] not in "[]{}":
+        and (response[-1] not in "[]{}" or response[:5] not in "[{"):
             print_error("fix llm mistake: maybe only thought")
             return _format_response(format_tool.TOPSAILAI_STEP_THINK + "\n" + response, rsp_obj=rsp_obj)
 

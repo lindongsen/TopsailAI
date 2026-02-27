@@ -55,9 +55,11 @@ A certain matter may be processed multiple times, which is an iterative process.
 After completing the matter for now, we need to briefly output the changes in history AND we need to know the progress of the task in real time.
 For example:
 ```
-1. task1 [done] (issue -> fixed -> issue -> fixed)
-2. task2 [doing] (issue)
+1. task1 (done) (issue -> fixed -> issue -> fixed)
+2. task2 (doing) (issue)
 3. task3
 
 List tasks all, without any omissions
 ```
+
+Note: All agent members are required to use this tool `finish_task` to complete task.

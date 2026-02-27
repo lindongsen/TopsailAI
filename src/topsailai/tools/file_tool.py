@@ -66,7 +66,7 @@ def write_file(file_path:str, content:str, seek:int=0, to_insert:bool=False):
     Args:
         file_path (str): The path to the file to write to
         content (str): The content to write to the file
-        seek (int, optional): Position to start writing from. Defaults to 0.
+        seek (int, optional): bytes, Position to start writing from. Defaults to 0.
             - Positive values: seek from start of file, position=min(seek, len(existing_content))
             - Negative values: seek from end of file
             - 0: start of file
@@ -195,8 +195,8 @@ def read_file(file_path:str, seek:int=0, size:int=-1):
 
     Args:
         file_path: string, the file path;
-        seek: int, read from this offset, default is 0;
-        size: int, -1 for all, default is -1;
+        seek: int, bytes, read from this offset, default is 0;
+        size: int, bytes, -1 for all, default is -1;
 
     Return:
         string for ok, None for failed.

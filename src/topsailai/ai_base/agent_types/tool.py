@@ -88,6 +88,21 @@ class StepCallTool(StepCallBase):
     2. "complete", complete all
     """
 
+    def is_action_finish_task(self, action:str) -> bool:
+        return action.replace('.', '-') == "ctx_tool-finish_task"
+
+    def build_step_for_finish_task(self, step, rsp_msg_obj) -> dict|None:
+        """ return new step """
+        tool_call_info = self.get_tool_call_info(step, rsp_msg_obj)
+        if not tool_call_info:
+            return None
+        if not self.is_action_finish_task(tool_call_info.func_name):
+            return None
+        return {
+            "step_name": "final_answer",
+            "raw_text": tool_call_info.func_args["final_answer"]
+        }
+
     def execute_step_action(self, step, tools, rsp_msg_obj, **_):
         """
         Execute a tool action step.
