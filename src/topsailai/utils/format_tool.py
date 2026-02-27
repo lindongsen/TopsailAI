@@ -15,6 +15,7 @@ from .json_tool import safe_json_dump
 TOPSAILAI_FORMAT_PREFIX = "topsailai."
 TOPSAILAI_STEP_ACTION = TOPSAILAI_FORMAT_PREFIX + "action"
 TOPSAILAI_STEP_THINK = TOPSAILAI_FORMAT_PREFIX + "thought"
+TOPSAILAI_STEP_FINAL = TOPSAILAI_FORMAT_PREFIX + "final_answer"
 
 
 def to_list(v, to_ignore_none=False):

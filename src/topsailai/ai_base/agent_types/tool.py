@@ -103,6 +103,11 @@ class StepCallTool(StepCallBase):
             "raw_text": tool_call_info.func_args["final_answer"]
         }
 
+    def hook_pre_step(self, step, rsp_msg_obj) -> dict|None:
+        """ return new step """
+        # case: action is finish_task
+        return self.build_step_for_finish_task(step, rsp_msg_obj)
+
     def execute_step_action(self, step, tools, rsp_msg_obj, **_):
         """
         Execute a tool action step.

@@ -46,8 +46,8 @@ class Step4ReAct(StepCallTool):
         """
         step_name = None
         try:
-            # hook action
-            new_step = self.build_step_for_finish_task(step, rsp_msg_obj)
+            # hook
+            new_step = self.hook_pre_step(step, rsp_msg_obj)
             if new_step:
                 step = new_step
 

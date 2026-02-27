@@ -7,7 +7,7 @@ Purpose:
 
 import sys
 
-from topsailai.ai_base.llm_base import ContentSender
+from topsailai.ai_base.llm_control.base_class import ContentSender
 from topsailai.utils import (
     format_tool,
     json_tool,

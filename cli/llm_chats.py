@@ -23,7 +23,8 @@ sys.path.insert(0, project_root + "/src")
 os.chdir(project_root)
 
 from topsailai.logger import logger
-from topsailai.ai_base.llm_base import LLMModel, ContentStdout
+from topsailai.ai_base.llm_base import LLMModel
+from topsailai.ai_base.llm_control.base_class import ContentStdout
 from topsailai.ai_base.prompt_base import PromptBase
 from topsailai.utils import env_tool
 from topsailai.utils.thread_local_tool import set_thread_var, KEY_SESSION_ID

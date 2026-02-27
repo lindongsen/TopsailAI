@@ -62,4 +62,4 @@ For example:
 List tasks all, without any omissions
 ```
 
-Note: All agent members are required to use this tool `finish_task` to complete task.
+Note: All agent members are required to use this tool `finish_task` to output final answer.
