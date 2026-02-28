@@ -65,8 +65,7 @@ def get_team_list() -> list[dict]:
 
     Returns:
         list[dict]: A list of dictionaries containing member information, where each dict has:
-            - member_id: The file path of the member file
-            - member_name: The base name of the member file without extension
+            - member_id: The base name of the member file without extension
             - member_info: The content of the member file
             - is_able_to_call_chat: Boolean indicating if chat capability exists
             - is_able_to_call_agent: Boolean indicating if agent capability exists
@@ -84,7 +83,6 @@ def get_team_list() -> list[dict]:
 
         member = {
             "member_id": "",
-            "member_name": "",
             "member_info": "",
             "is_able_to_call_chat": False,
             "is_able_to_call_agent": False,
@@ -94,12 +92,11 @@ def get_team_list() -> list[dict]:
         with open(f_path, encoding="utf-8") as fd:
             f_content = fd.read().strip()
 
-        member["member_id"] = f_path
-        member["member_name"] = os.path.basename(f_path).rsplit('.', 1)[0]
+        member["member_id"] = os.path.basename(f_path).rsplit('.', 1)[0]
         member["member_info"] = f_content
 
         # global vars
-        g_members.append(member["member_name"])
+        g_members.append(member["member_id"])
 
         # ability
         for ext in ["chat", "agent"]:
@@ -198,12 +195,16 @@ def generate_system_prompt():
 
 def build_message(message:str) -> str:
     """ return new message """
+
+    # case: @member
     for member_name in g_members:
         member_name = member_name.strip()
         if not member_name:
             continue
         if member_name in message or f'@{member_name}' in message:
             message += "\nManager to use tool call"
+            break
+
     return message
 
 def main():

@@ -56,3 +56,5 @@ For example:
 
 List tasks all, without any omissions
 ```
+
+[Remember] Each member only handles a single task at a time
