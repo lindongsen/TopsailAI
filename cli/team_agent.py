@@ -74,20 +74,14 @@ def main():
 
     # offset
     if messages_from_session:
-        head_tail_offset = env_tool.EnvReaderInstance.get("TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET")
-        if head_tail_offset:
-            # to int
-            try:
-                head_tail_offset = int(head_tail_offset)
-            except:
-                head_tail_offset = None
-            if not head_tail_offset:
-                head_tail_offset = DEFAULT_HEAD_TAIL_OFFSET
-        else:
-            head_tail_offset = DEFAULT_HEAD_TAIL_OFFSET
-        if head_tail_offset:
-            if len(messages_from_session) > (head_tail_offset*2):
-                messages_from_session = messages_from_session[:head_tail_offset] + messages_from_session[-head_tail_offset:]
+        head_tail_offset = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET",
+            formatter=int,
+        ) or DEFAULT_HEAD_TAIL_OFFSET
+        messages_from_session = ctx_manager.cut_messages(
+            messages_from_session,
+            head_tail_offset
+        )
 
     # system prompt
     env_sys_prompt = os.getenv("SYSTEM_PROMPT")

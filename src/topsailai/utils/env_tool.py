@@ -7,6 +7,9 @@
 
 import os
 
+from topsailai.logger import logger
+
+
 def is_debug_mode():
     """Check if the application is running in debug mode.
 
@@ -141,17 +144,27 @@ class EnvironmentReader(object):
     def is_null_config(self, name):
         return self.get(name) == ""
 
-    def get(self, name, default=None):
+    def get(self, name, default=None, formatter=None):
         """Get environment variable value with default.
 
         Args:
             name (str): Environment variable name.
             default: Default value if variable is not set.
+            formatter: format value, new_v = func(v)
 
         Returns:
             The environment variable value or default.
         """
-        return os.getenv(name, default=default)
+        v = os.getenv(name, default=default)
+        if formatter:
+            try:
+                v = formatter(v)
+            except Exception as e:
+                logger.exception(e)
+                v = None
+        if v is None:
+            v = default
+        return v
 
 # init
 EnvReaderInstance = EnvironmentReader()

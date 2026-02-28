@@ -50,7 +50,7 @@ from topsailai.workspace.print_tool import (
 
 from topsailai.tools.agent_tool import subprocess_agent_memory_as_story
 
-
+DEFAULT_HEAD_TAIL_OFFSET = 7
 PROMPT_FILE_AI_TEAM = f"{project_root}/cli/ai_team.md"
 
 g_members = []
@@ -226,6 +226,7 @@ def main():
         """
         Add the latest agent message to the session context and local messages list.
         """
+        nonlocal messages_from_session
         if session_id:
             ctx_manager.add_session_message(session_id, agent.messages[-1])
         messages_from_session.append(agent.messages[-1])
@@ -238,6 +239,18 @@ def main():
         Args:
             self: The agent instance
         """
+        nonlocal messages_from_session
+        # offset
+        if messages_from_session:
+            head_tail_offset = env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET",
+                formatter=int,
+            ) or DEFAULT_HEAD_TAIL_OFFSET
+            messages_from_session = ctx_manager.cut_messages(
+                messages_from_session,
+                head_tail_offset
+            )
+
         if messages_from_session:
             self.messages += messages_from_session
 
@@ -261,6 +274,7 @@ def main():
         Clear context messages if no session ID exists.
         Shows message if session ID prevents clearing.
         """
+        nonlocal messages_from_session
         if session_id:
             print(f"{message}: Context cannot be clear due to exist session_id({session_id})")
         else:
@@ -273,20 +287,40 @@ def main():
         Save context messages to a new story using subprocess.
         Only works if there are existing messages in the session.
         """
+        nonlocal messages_from_session
         if not messages_from_session:
             return
         pid = subprocess_agent_memory_as_story(messages_from_session)
         print(f"/story: The history messages will be save to a new story, pid=[{pid}]")
         return
-    def _history():
+    def _history(offset:str=""):
         """
         Display the history of messages for the current session.
         Shows separator line and all context messages if available.
+
+        Args:
+            offset:
+              - usage1: number, e.g. 7 is 7:-7;
+              - usage2: 'head_num:tail_num', e.g 5:-3
         """
         print(f"\n\n{SPLIT_LINE}")
         print(f"/history: Show history messages {session_id}")
         if messages_from_session:
-            print_context_messages(messages_from_session)
+            head_offset = None
+            tail_offset = None
+            if offset:
+                try:
+                    if ':' in offset:
+                        head_offset, tail_offset = offset.split(':', 1)
+                        head_offset = int(head_offset)
+                        tail_offset = int(tail_offset)
+                    else:
+                        head_offset = tail_offset = int(offset)
+                        tail_offset = -tail_offset
+                except Exception:
+                    pass
+            _msgs = messages_from_session if head_offset is None else messages_from_session[head_offset:tail_offset]
+            print_context_messages(_msgs)
         return
     def _member():
         """

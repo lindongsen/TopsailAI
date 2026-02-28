@@ -252,3 +252,15 @@ def del_session_messages(session_id:str, message_ids:list[str]) -> bool:
             mgr.del_messages(msg_id, session_id)
 
     return True
+
+def cut_messages(messages:list, head_tail_offset:int=7) -> list:
+    if not messages:
+        return messages
+
+    head_tail_offset = int(head_tail_offset)
+
+    if head_tail_offset > 0:
+        if len(messages) > (head_tail_offset*2):
+            return messages[:head_tail_offset] + messages[-head_tail_offset:]
+
+    return messages
