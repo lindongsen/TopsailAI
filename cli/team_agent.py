@@ -4,7 +4,7 @@
   Author: DawsonLin
   Email: lin_dongsen@126.com
   Created: 2025-10-19
-  Purpose:
+  Purpose: I am AI member
   Env:
     @SESSION_ID: string; JUST USE history messages, DONOT SAVE any new messages.
     @SYSTEM_PROMPT: file or content;
@@ -99,7 +99,11 @@ def main():
 
     # team role
     sys_prompt_content += f"""
-YOU ARE ({env_agent_name})
+
+---
+YOU ARE Member ({env_agent_name})
+---
+
 """
 
     # extra system prompt

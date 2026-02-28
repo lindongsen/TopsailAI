@@ -4,7 +4,10 @@
   Author: DawsonLin
   Email: lin_dongsen@126.com
   Created: 2026-01-20
-  Purpose:
+  Purpose: I am AI Manager who is a "Router and Coordinator"
+  MD:
+    "ai_team.md" is shared across the entire team;
+    "ai_team_manager.md" is only used by the manager;
   Env:
     @SESSION_ID: required, string;
     @SYSTEM_PROMPT: file or content;
