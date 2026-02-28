@@ -52,6 +52,7 @@ from topsailai.tools.agent_tool import subprocess_agent_memory_as_story
 
 DEFAULT_HEAD_TAIL_OFFSET = 7
 PROMPT_FILE_AI_TEAM = f"{project_root}/cli/ai_team.md"
+PROMPT_FILE_AI_TEAM_MANAGER = f"{project_root}/cli/ai_team_manager.md"
 
 g_members = []
 
@@ -181,7 +182,26 @@ def generate_system_prompt():
 
     print(team_prompt_content)
 
-    return sys_prompt_content + "\nYou Are Manager"
+    # manager prompt
+    _, manager_prompt_content = file_tool.get_file_content_fuzzy(PROMPT_FILE_AI_TEAM_MANAGER)
+
+    return (
+        sys_prompt_content +
+        "\n\n---" +
+        "\n\n**You Are Manager**\n\n" +
+        manager_prompt_content +
+        "\n\n---"
+    )
+
+def build_message(message:str) -> str:
+    """ return new message """
+    for member_name in g_members:
+        member_name = member_name.strip()
+        if not member_name:
+            continue
+        if member_name in message or f'@{member_name}' in message:
+            message += "\nManager to use tool call"
+    return message
 
 def main():
     """ main entry """
@@ -382,6 +402,7 @@ def main():
         max_count -= 1
 
         try:
+            message = build_message(message)
             answer = agent.run(get_agent_step_call(args=(True,)), "Human Say:\n" + message)
         except agent_exception.AgentEndProcess:
             pass

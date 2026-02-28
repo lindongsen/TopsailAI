@@ -156,7 +156,7 @@ class EnvironmentReader(object):
             The environment variable value or default.
         """
         v = os.getenv(name, default=default)
-        if formatter:
+        if v is not None and formatter and callable(formatter):
             try:
                 v = formatter(v)
             except Exception as e:
