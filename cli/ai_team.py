@@ -400,13 +400,14 @@ def main():
     if not message:
         message = get_message(hook_instruction)
 
-    max_count = 100
+    curr_count = 0
     while True:
         answer = ""
-        max_count -= 1
+        curr_count += 1
 
         try:
-            message = build_message(message)
+            if curr_count != 1:
+                message = build_message(message)
             answer = agent.run(get_agent_step_call(args=(True,)), "Human Say:\n" + message)
         except agent_exception.AgentEndProcess:
             pass
@@ -427,8 +428,8 @@ def main():
             print(answer)
 
         print()
-        if max_count == 0:
-            break
+        print(f"The manager have scheduled tasks [{curr_count}] times")
+        print()
 
         while True:
             message = input_message(hook=hook_instruction)
