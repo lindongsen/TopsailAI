@@ -76,7 +76,13 @@ def list_sub_mods_name(path):
             mod_name_set.append(modname)
     return mod_name_set
 
-def get_function_map(path, key="TOOLS", prefix_name="", conn_char=DEFAULT_CONN_CHAR, hook_check=None):
+def get_function_map(
+        path,
+        key="TOOLS",
+        prefix_name="",
+        conn_char=DEFAULT_CONN_CHAR,
+        hook_check=None,
+    ):
     """Create a mapping of function names to functions from modules.
 
     This function scans modules in a package and collects functions
@@ -221,7 +227,13 @@ def get_path_for_sys_and_package(path:str) -> tuple[str|None, str|None]:
         pass
     return (sys_path, pkg_path)
 
-def get_external_function_map(path:str, key:str="TOOLS", prefix_name:str="", conn_char=DEFAULT_CONN_CHAR):
+def get_external_function_map(
+        path:str,
+        key:str="TOOLS",
+        prefix_name:str="",
+        conn_char=DEFAULT_CONN_CHAR,
+        hook_check=None,
+    ):
     """Create a mapping of function names to functions from modules.
 
     This function scans modules in a package and collects functions
@@ -257,4 +269,8 @@ def get_external_function_map(path:str, key:str="TOOLS", prefix_name:str="", con
         sys.path.append(sys_path)
 
     assert pkg_path, f"no found pkg_path for this path: [{path}]"
-    return get_function_map(pkg_path, key, prefix_name, conn_char=conn_char)
+    return get_function_map(
+        pkg_path, key, prefix_name,
+        conn_char=conn_char,
+        hook_check=hook_check,
+    )

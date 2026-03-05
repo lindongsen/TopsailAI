@@ -34,7 +34,11 @@ def is_tool_enabled(tool_mod):
     return True
 
 # key is tool_name, value is function
-TOOLS = module_tool.get_function_map("topsailai.tools", "TOOLS", conn_char=CONN_CHAR)
+TOOLS = module_tool.get_function_map(
+    "topsailai.tools", "TOOLS",
+    conn_char=CONN_CHAR,
+    hook_check=is_tool_enabled,
+)
 
 # key is tool_name, value is dict
 # Value Example:
@@ -60,7 +64,12 @@ TOOLS = module_tool.get_function_map("topsailai.tools", "TOOLS", conn_char=CONN_
 #         }
 #     }
 # }
-TOOLS_INFO = module_tool.get_function_map("topsailai.tools", "TOOLS_INFO", conn_char=CONN_CHAR)
+TOOLS_INFO = module_tool.get_function_map(
+    "topsailai.tools",
+    "TOOLS_INFO",
+    conn_char=CONN_CHAR,
+    hook_check=is_tool_enabled,
+)
 
 
 TOOL_PROMPT = """
@@ -100,11 +109,19 @@ def expand_plugin_tools():
     if not env_plugin_tools:
         return
     for plugin_path in env_plugin_tools.split(';'):
-        _tools = module_tool.get_external_function_map(plugin_path, "TOOLS", conn_char=CONN_CHAR)
+        _tools = module_tool.get_external_function_map(
+            plugin_path, "TOOLS",
+            conn_char=CONN_CHAR,
+            hook_check=is_tool_enabled,
+        )
         if _tools:
             TOOLS.update(_tools)
 
-        _tools_info = module_tool.get_external_function_map(plugin_path, "TOOLS_INFO", conn_char=CONN_CHAR)
+        _tools_info = module_tool.get_external_function_map(
+            plugin_path, "TOOLS_INFO",
+            conn_char=CONN_CHAR,
+            hook_check=is_tool_enabled,
+            )
         if _tools_info:
             TOOLS_INFO.update(_tools_info)
 
