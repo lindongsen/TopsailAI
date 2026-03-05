@@ -16,7 +16,7 @@ from .text_tool import safe_decode
 def format_cmd(cmd, remote=None):
     if isinstance(cmd, str):
         if remote:
-            cmd = cmd.replace('$', '\$')
+            cmd = cmd.replace('$', r'\$')
     return cmd
 
 def build_env(d:dict=None, keys:list=None):
