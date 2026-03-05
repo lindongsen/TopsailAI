@@ -5,7 +5,7 @@
   Purpose:
 '''
 
-from . import file_tool
+from topsailai.tools import file_tool
 
 TOOLS = dict(
     read_file=file_tool.read_file,
