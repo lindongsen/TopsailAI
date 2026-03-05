@@ -47,7 +47,9 @@ class HookFunc(object):
             args (tuple, optional): Default positional arguments. Defaults to None.
             kwargs (dict, optional): Default keyword arguments. Defaults to None.
         """
-        self.description = description or func.__doc__
+        self.description = description or (
+            "\n" + print_tool.add_indent_to_lines(func.__doc__, indent=8)
+        )
         self.func = func
         self.args = args
         self.kwargs = kwargs

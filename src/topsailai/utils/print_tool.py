@@ -190,3 +190,9 @@ def format_dict_to_md(d:dict) -> str:
         s += "\n```\n"
 
     return s
+
+def add_indent_to_lines(s:str, indent=4) -> str:
+    new_s = ""
+    for line in s.splitlines():
+        new_s += " "*indent + line + "\n"
+    return new_s
