@@ -84,7 +84,6 @@ def overview_skill(folder_path:str):
 
 
 TOOLS = dict(
-    call_skill=call_skill,
     overview_skill=overview_skill,
 )
 
