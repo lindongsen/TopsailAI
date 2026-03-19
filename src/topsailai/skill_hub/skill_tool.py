@@ -26,13 +26,11 @@ import yaml
 
 from topsailai.utils.format_tool import to_list
 from topsailai.utils.env_tool import EnvReaderInstance
+from topsailai.prompt_hub import prompt_tool
 from topsailai.workspace.folder_constants import FOLDER_SKILL
 
-PROMPT_SKILL = """
-# SKILLS
-Every time you want to use a skill you MUST read `{folder}/SKILL.md (or skill.md)` for entire details.
-When skill refers to a file with a relative_path, you should use `{folder}/{relative_path}` to construct an absolute_path to access it.
-"""
+
+PROMPT_SKILL = prompt_tool.read_prompt("skills/skill.md")
 
 
 class SkillInfo(object):
