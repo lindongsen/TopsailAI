@@ -169,11 +169,15 @@ EXTRA_TOOLS=""
 # Each plugin is loaded from a separate directory and integrated via the 'TOOLS' variable
 PLUGIN_TOOLS=""
 
-# default char is '.', example file_tool.read_file
+# default char is '-', example file_tool-read_file
 # TOPSAILAI_TOOL_CONN_CHAR=""
 
 # White list for file extensions do not truncate, split by ';'
 # TOPSAILAI_FILE_WHITE_LIST_NO_TRUNCATE_EXT=""
+
+# Plugin Skills
+# Format: directory paths separated by semicolons (';')
+TOPSAILAI_PLUGIN_SKILLS=""
 
 # =============================================================================
 # Sandbox Configuration

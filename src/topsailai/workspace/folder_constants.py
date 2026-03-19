@@ -22,12 +22,17 @@ Usage:
     file_path = FOLDER_WORKSPACE + "/my_file.txt"
 """
 
+###################################################################################
 # Layer 1: Root directory for the entire TopsailAI system
 # This is the top-level directory that contains all system components
 FOLDER_ROOT = "/topsailai"
+###################################################################################
 
+
+###################################################################################
 # Layer 2: Main system directories under the root
 # These directories organize the system into functional areas
+###################################################################################
 
 # Workspace directory - Contains active projects, user data, and working files
 FOLDER_WORKSPACE = FOLDER_ROOT + "/workspace"
@@ -38,8 +43,13 @@ FOLDER_MEMORY = FOLDER_ROOT + "/memory"
 # Lock directory - Manages file locks and synchronization mechanisms
 FOLDER_LOCK = FOLDER_ROOT + "/lock"
 
+# Skill directory
+FOLDER_SKILL = FOLDER_ROOT + "/skill"
+
+###################################################################################
 # Layer 3: Subdirectories within the main system directories
 # These provide further organization within each functional area
+###################################################################################
 
 # Story subdirectory - Contains story files and narrative data within the memory system
 FOLDER_MEMORY_STORY = FOLDER_MEMORY + "/story"

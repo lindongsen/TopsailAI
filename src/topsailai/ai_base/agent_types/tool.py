@@ -16,6 +16,7 @@ from topsailai.utils.thread_local_tool import (
     get_agent_name,
 )
 
+from . import context as agent_ctx
 from . import exception as agent_exception
 
 
@@ -154,8 +155,16 @@ class StepCallTool(StepCallBase):
         Returns:
             str: User input string or an automatic guidance message.
         """
-        _auto_msg = "If you are sure that user information is required or task is finished, output `final_answer`. Otherwise, continue executing"
         if not self.flag_interactive or not is_main_thread():
+            _auto_msg = ""
+
+            # case: no tool_call has been executed.
+            if agent_ctx.get_count_of_action_for_current_agent() == 0:
+                _auto_msg += "No tool_call has been executed. "
+
+            # default
+            _auto_msg += "If you are sure that user information is required or task is finished, output `final_answer`. Otherwise, continue executing"
+
             return _auto_msg
 
         while True:
