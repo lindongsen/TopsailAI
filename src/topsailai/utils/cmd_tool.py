@@ -53,6 +53,7 @@ def exec_cmd(
         need_error_log=False,
         env_keys:list=None,
         env_info:dict=None,
+        **options
     ):
     """Execute a shell command and return the result.
 
@@ -89,6 +90,7 @@ def exec_cmd(
         stderr=subprocess.PIPE,
         text=False,
         timeout=timeout,
+        **options
     )
     ret = (
         result.returncode,

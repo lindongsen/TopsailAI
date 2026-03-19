@@ -19,7 +19,6 @@ from topsailai.ai_base.llm_base import (
     LLMModel,
 )
 from topsailai.prompt_hub import prompt_tool
-from topsailai.skill_hub import skill_tool
 
 from topsailai.tools import (
     get_tool_prompt,
@@ -309,12 +308,6 @@ class AgentBase(PromptBase):
         # prepare tool_prompt ok
         # Tool prompt text for the agent
         self.tool_prompt = tool_prompt
-
-        # add skills to tool prompt
-        if self.tool_prompt:
-            skill_prompt = skill_tool.get_skill_markdown()
-            if skill_prompt:
-                self.tool_prompt += skill_prompt
 
         # debug
         if self.tool_prompt and env_tool.EnvReaderInstance.check_bool("TOPSAILAI_PRINT_TOOL_PROMPT"):

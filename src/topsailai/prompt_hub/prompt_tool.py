@@ -7,6 +7,7 @@
 
 import os
 
+from topsailai.logger import logger
 from topsailai.utils import env_tool
 
 
@@ -219,19 +220,25 @@ def get_prompt_from_module(module_name:str, key:str="PROMPT") -> str:
     try:
         m = __import__(f"topsailai.tools.{module_name}", None, None, [module_name])
         return getattr(m, key)
-    except Exception:
+    except ModuleNotFoundError:
         pass
+    except Exception as e:
+        logger.exception(e)
     return ""
 
 def get_prompt_by_tools(tools:list[str]) -> str:
     """ return prompt content from prompt_hub """
+    logger.debug("getting prompt by tools: %s", tools)
     prompt_keys = set()
     prompt_content = ""
 
     modules = set()
+
+    from topsailai.tools import CONN_CHAR
+
     for tool_name in tools:
-        # tool_name: agent_tool.WritingAssistant
-        module_name = tool_name.split('.', 1)[0]
+        # tool_name: agent_tool.WritingAssistant or x_tool-func1
+        module_name = tool_name.split(CONN_CHAR, 1)[0]
         modules.add(module_name)
 
     for module_name in modules:
@@ -243,6 +250,7 @@ def get_prompt_by_tools(tools:list[str]) -> str:
         # from tools.module
         tool_prompt = get_prompt_from_module(module_name)
         if tool_prompt:
+            logger.debug("got prompt from module: [%s]", module_name)
             prompt_content += tool_prompt.strip() + "\n\n"
 
     for key in prompt_keys:
