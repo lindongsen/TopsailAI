@@ -16,19 +16,19 @@ from topsailai.skill_hub.skill_tool import get_skill_markdown
 def call_skill(
         folder_path:str,
         cmd:str|list,
-        no_need_stderr:bool=False,
-        timeout:int=None,
+        no_need_stderr:int=0,
+        timeout:int=120,
     ):
     """Execute a shell command and return the result.
 
     Args:
         folder_path (str): required, skill folder.
         cmd (str|list): required, Command to execute.
-        no_need_stderr (bool): If True, stderr will be returned as empty string.
-                               Defaults to False.
+        no_need_stderr (int): If 1, stderr will be returned as empty string.
+                               Defaults to 0.
         timeout (int, optional): Timeout in seconds. If the command does not finish
-                                 within this time, a subprocess.TimeoutExpired
-                                 exception will be raised. Defaults to None.
+                                 within this time, a exception will be raised.
+                                 Defaults to 120.
 
     Returns:
         tuple: (return_code, stdout, stderr) where stdout and stderr are strings.
@@ -43,8 +43,8 @@ def call_skill(
     """
     return exec_cmd(
         cmd,
-        no_need_stderr=no_need_stderr,
-        timeout=timeout,
+        no_need_stderr=True if int(no_need_stderr) else False,
+        timeout=int(timeout),
         cwd=folder_path,
     )
 
@@ -93,7 +93,8 @@ PROMPT = """
 ---
 
 # SKILLS
-Every time you want to use a skill you MUST call `overview_skill` for entire details.
+
+[Attention] Every time you want to use a skill you MUST call `overview_skill` for entire details.
 When skill refers to a file with a relative_path, you should use `{folder}/{relative_path}` to construct an absolute_path to access it.
 
 common folder structure:

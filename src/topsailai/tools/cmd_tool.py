@@ -49,13 +49,20 @@ def format_return(cmd_string:str, t:tuple):
 
     return _format_return(cmd_string, t)
 
-def exec_cmd(cmd:str|list, no_need_stderr:bool=False):
+def exec_cmd(
+        cmd:str|list,
+        no_need_stderr:int=0,
+        timeout:int=120,
+        cwd:str="/tmp",
+    ):
     """ execute command
 
     Args:
-        cmd (str|list): str for shell, example "echo hello" or ["echo", "hello"]
-        no_need_stderr (bool, optional): if True, stderr still be null. Defaults to False.
-
+        cmd (str|list): example "echo hello" or ["echo", "hello"]
+        no_need_stderr (int, optional): if 1, stderr still be null. Defaults to 0.
+        timeout (int, optional): Timeout in seconds. If the command does not finish
+                                 within this time, a exception will be raised.
+                                 Defaults to 120.
     Returns:
         tuple: (code, stdout, stderr)
     """
@@ -70,7 +77,9 @@ def exec_cmd(cmd:str|list, no_need_stderr:bool=False):
 
     result = exec_command(
         cmd,
-        no_need_stderr=no_need_stderr,
+        no_need_stderr=True if int(no_need_stderr) else False,
+        timeout=int(timeout),
+        cwd=cwd,
     )
 
     cmd_string = " ".join(cmd) if isinstance(cmd, list) else cmd
