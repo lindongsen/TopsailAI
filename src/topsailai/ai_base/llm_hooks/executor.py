@@ -13,9 +13,16 @@ from topsailai.utils import (
 
 def get_hooks_runtime(key:str) -> list[str]:
     agent = thread_local_tool.get_agent_object()
+    model_name = None
+
     if agent is None:
+        model_name = env_tool.EnvReaderInstance.get("OPENAI_MODEL") or env_tool.EnvReaderInstance.get("AI_MODEL")
+    else:
+        model_name = agent.llm_model.model_name
+
+    if not model_name:
         return []
-    model_name = agent.llm_model.model_name
+
     model_name_lower = str(model_name).lower()
 
     if model_name_lower.startswith("kimi"):
