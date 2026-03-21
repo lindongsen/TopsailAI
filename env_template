@@ -50,6 +50,9 @@ TOPSAILAI_TASK=""
 # Agent Type, default is react
 TOPSAILAI_AGENT_TYPE=""
 
+# default agent name
+# TOPSAILAI_AGENT_NAME=""
+
 # =============================================================================
 # LLM Parameters
 # =============================================================================
@@ -229,3 +232,12 @@ TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET=""
 
 # env keys pass to team_agent
 TOPSAILAI_TEAM_ENV_KEYS=""
+
+# only agent
+TOPSAILAI_TEAM_MANAGER_ONLY_AGENT=1 # 0 for disabled (default), 1 for enabled
+
+# manager name
+TOPSAIL_TEAM_MANAGER_NAME="AI.Topsail"
+
+# memeber name, DONOT CONFIG it, only setting it for runtime.
+# TOPSAIL_TEAM_MEMBER_NAME=""

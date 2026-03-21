@@ -21,6 +21,8 @@ import sys
 import yaml
 from dotenv import load_dotenv
 
+load_dotenv()
+
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root + "/src")
@@ -36,7 +38,6 @@ from topsailai.utils import (
     env_tool,
     time_tool,
     file_tool,
-    json_tool,
 )
 from topsailai.workspace.input_tool import (
     get_message,
@@ -57,7 +58,28 @@ DEFAULT_HEAD_TAIL_OFFSET = 7
 PROMPT_FILE_AI_TEAM = f"{project_root}/cli/ai_team.md"
 PROMPT_FILE_AI_TEAM_MANAGER = f"{project_root}/cli/ai_team_manager.md"
 
+g_flag_only_agent = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TEAM_MANAGER_ONLY_AGENT")
+if g_flag_only_agent:
+    PROMPT_FILE_AI_TEAM_MANAGER = f"{project_root}/cli/ai_team_manager_only_agent.md"
+
 g_members = []
+
+
+def get_role_prompt(agent_name:str=None) -> str:
+    """ get prompt for role info """
+    if not agent_name:
+        agent_name = os.getenv("TOPSAILAI_AGENT_NAME") or os.getenv("TOPSAIL_TEAM_MANAGER_NAME")
+
+    # default agent_name
+    if not agent_name:
+        agent_name = "AI.Topsail"
+    return f"""
+
+---
+YOUR ROLE IS Manager, YOUR NAME IS ({agent_name})
+---
+
+"""
 
 def get_team_list() -> list[dict]:
     """
@@ -121,6 +143,21 @@ def generate_team_prompt(team_list:list[dict]):
         AssertionError: If team_list is empty
     """
     assert team_list
+
+    if g_flag_only_agent:
+        # remove is_able_to_call...
+        new_team_list = []
+        for team_info in team_list:
+            new_team_info = team_info.copy()
+            new_team_list.append(new_team_info)
+
+            for key in list(new_team_info.keys()):
+                if key.startswith("is_able_to_call_"):
+                    del new_team_info[key]
+
+        # replace to new
+        team_list = new_team_list
+
     content = f"""
 
 ## Team Detail
@@ -180,18 +217,21 @@ def generate_system_prompt():
 
     os.environ["TEAM_PROMPT_CONTENT"] = team_prompt_content
 
-    print(team_prompt_content)
+    # print(team_prompt_content)
 
     # manager prompt
     _, manager_prompt_content = file_tool.get_file_content_fuzzy(PROMPT_FILE_AI_TEAM_MANAGER)
 
-    return (
-        sys_prompt_content +
-        "\n\n---" +
-        "\n\n**You Are Manager**\n\n" +
+    # team role info
+    sys_prompt_content += (
+        get_role_prompt() +
         manager_prompt_content +
         "\n\n---"
     )
+
+    print(sys_prompt_content)
+
+    return sys_prompt_content
 
 def build_message(message:str) -> str:
     """ return new message """
@@ -209,7 +249,6 @@ def build_message(message:str) -> str:
 
 def main():
     """ main entry """
-    load_dotenv()
     message = None
     messages_from_session = None
 

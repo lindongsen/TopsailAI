@@ -17,6 +17,8 @@ import sys
 import os
 from dotenv import load_dotenv
 
+load_dotenv()
+
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root + "/src")
@@ -41,14 +43,31 @@ from topsailai.workspace.input_tool import (
 
 DEFAULT_HEAD_TAIL_OFFSET = 7
 
+
+def get_role_prompt(agent_name:str=None) -> str:
+    """ get prompt for role info """
+    if not agent_name:
+        agent_name = os.getenv("TOPSAILAI_AGENT_NAME") or os.getenv("TOPSAIL_TEAM_MEMBER_NAME")
+
+    # default agent_name
+    if not agent_name:
+        agent_name = "AI.Topsail"
+    return f"""
+
+---
+YOUR ROLE IS Member, YOUR NAME IS ({agent_name})
+---
+
+"""
+
 def extend_system_prompt():
+    """ set default SYSTEM_PROMPT_EXTRA_FILES to eviron """
     if not os.getenv("SYSTEM_PROMPT_EXTRA_FILES"):
         os.environ["SYSTEM_PROMPT_EXTRA_FILES"] = "work_mode/sop/work_agreement.md"
     return
 
 def main():
     """ main entry """
-    load_dotenv()
 
     # message
     message = os.getenv("TOPSAILAI_TASK")
@@ -98,13 +117,7 @@ def main():
             sys_prompt_content = fd.read().strip()
 
     # team role
-    sys_prompt_content += f"""
-
----
-YOU ARE Member ({env_agent_name})
----
-
-"""
+    sys_prompt_content += get_role_prompt(env_agent_name)
 
     # extra system prompt
     extend_system_prompt()
