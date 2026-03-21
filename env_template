@@ -53,6 +53,9 @@ TOPSAILAI_AGENT_TYPE=""
 # default agent name
 # TOPSAILAI_AGENT_NAME=""
 
+# Human name
+TOPSAILAI_HUMAN_NAME = "Topsail"
+
 # =============================================================================
 # LLM Parameters
 # =============================================================================
@@ -219,10 +222,10 @@ TOPSAILAI_HOOK_BEFORE_LLM_CHAT=""
 # =============================================================================
 
 # file or content
-TEAM_PROMPT=""
+TOPSAILAI_TEAM_PROMPT=""
 
 # folder path to team member
-TEAM_PATH=""
+TOPSAILAI_TEAM_PATH=""
 
 # 1 to save, 0 is not save. team_agent can store the first message (task) and the last message (final_answer)
 TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE=""
@@ -237,7 +240,7 @@ TOPSAILAI_TEAM_ENV_KEYS=""
 TOPSAILAI_TEAM_MANAGER_ONLY_AGENT=1 # 0 for disabled (default), 1 for enabled
 
 # manager name
-TOPSAIL_TEAM_MANAGER_NAME="AI.Topsail"
+TOPSAIL_TEAM_MANAGER_NAME="Topsail"
 
 # memeber name, DONOT CONFIG it, only setting it for runtime.
-# TOPSAIL_TEAM_MEMBER_NAME=""
+# TOPSAIL_TEAM_MEMBER_NAME="km-k25"

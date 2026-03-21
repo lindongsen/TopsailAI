@@ -11,14 +11,13 @@
   Env:
     @SESSION_ID: required, string;
     @SYSTEM_PROMPT: file or content;
-    @TEAM_PROMPT: required, file or content;
-    @TEAM_PATH: required, the team folder;
+    @TOPSAILAI_TEAM_PROMPT: required, file or content;
+    @TOPSAILAI_TEAM_PATH: required, the team folder;
     @TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: team_agent can store the first message (task) and the last message (final_answer)
 '''
 
 import os
 import sys
-import yaml
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -32,6 +31,19 @@ os.chdir(project_root)
 from topsailai.ai_base.agent_types import (
     get_agent_step_call,
     exception as agent_exception,
+)
+from topsailai.ai_team.manager import (
+    get_team_list,
+    g_members,
+    generate_team_prompt,
+    build_manager_message,
+)
+from topsailai.ai_team.role import (
+    get_manager_name,
+    get_manager_prompt,
+)
+from topsailai.human.role import (
+    get_human_name,
 )
 from topsailai.context import ctx_manager
 from topsailai.utils import (
@@ -54,6 +66,7 @@ from topsailai.workspace.print_tool import (
 
 from topsailai.tools.agent_tool import subprocess_agent_memory_as_story
 
+
 DEFAULT_HEAD_TAIL_OFFSET = 7
 PROMPT_FILE_AI_TEAM = f"{project_root}/cli/ai_team.md"
 PROMPT_FILE_AI_TEAM_MANAGER = f"{project_root}/cli/ai_team_manager.md"
@@ -62,110 +75,6 @@ g_flag_only_agent = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TEAM_MANAGE
 if g_flag_only_agent:
     PROMPT_FILE_AI_TEAM_MANAGER = f"{project_root}/cli/ai_team_manager_only_agent.md"
 
-g_members = []
-
-
-def get_role_prompt(agent_name:str=None) -> str:
-    """ get prompt for role info """
-    if not agent_name:
-        agent_name = os.getenv("TOPSAILAI_AGENT_NAME") or os.getenv("TOPSAIL_TEAM_MANAGER_NAME")
-
-    # default agent_name
-    if not agent_name:
-        agent_name = "AI.Topsail"
-    return f"""
-
----
-YOUR ROLE IS Manager, YOUR NAME IS ({agent_name})
----
-
-"""
-
-def get_team_list() -> list[dict]:
-    """
-    Get a list of team members from the TEAM_PATH directory.
-
-    Returns:
-        list[dict]: A list of dictionaries containing member information, where each dict has:
-            - member_id: The base name of the member file without extension
-            - member_info: The content of the member file
-            - is_able_to_call_chat: Boolean indicating if chat capability exists
-            - is_able_to_call_agent: Boolean indicating if agent capability exists
-
-    Raises:
-        AssertionError: If TEAM_PATH is not set or is not a valid directory
-    """
-    team_path = os.getenv("TEAM_PATH")
-    assert team_path and os.path.isdir(team_path), f"invalid team path: {team_path}"
-
-    team_list = []
-    for f in os.listdir(team_path):
-        if not f.endswith(".member"):
-            continue
-
-        member = {
-            "member_id": "",
-            "member_info": "",
-            "is_able_to_call_chat": False,
-            "is_able_to_call_agent": False,
-        }
-        team_list.append(member)
-        f_path = os.path.join(team_path, f)
-        with open(f_path, encoding="utf-8") as fd:
-            f_content = fd.read().strip()
-
-        member["member_id"] = os.path.basename(f_path).rsplit('.', 1)[0]
-        member["member_info"] = f_content
-
-        # global vars
-        g_members.append(member["member_id"])
-
-        # ability
-        for ext in ["chat", "agent"]:
-            f_ext = f_path.rsplit('.', 1)[0] + "." + ext
-            member[f"is_able_to_call_{ext}"] = os.path.exists(f_ext)
-            if member[f"is_able_to_call_{ext}"]:
-                os.system(f"chmod +x {f_ext}")
-
-    return team_list
-
-def generate_team_prompt(team_list:list[dict]):
-    """
-    Generate a YAML-formatted prompt section for the team members.
-
-    Args:
-        team_list (list[dict]): List of team member dictionaries from get_team_list()
-
-    Returns:
-        str: A formatted string containing team details in YAML format
-
-    Raises:
-        AssertionError: If team_list is empty
-    """
-    assert team_list
-
-    if g_flag_only_agent:
-        # remove is_able_to_call...
-        new_team_list = []
-        for team_info in team_list:
-            new_team_info = team_info.copy()
-            new_team_list.append(new_team_info)
-
-            for key in list(new_team_info.keys()):
-                if key.startswith("is_able_to_call_"):
-                    del new_team_info[key]
-
-        # replace to new
-        team_list = new_team_list
-
-    content = f"""
-
-## Team Detail
-```yaml
-{yaml.safe_dump(team_list)}
-```
-"""
-    return content
 
 def generate_system_prompt():
     """
@@ -181,31 +90,21 @@ def generate_system_prompt():
 
     Environment Variables Used:
         SYSTEM_PROMPT: File path or content for system prompt
-        TEAM_PROMPT: File path for team prompt (defaults to PROMPT_FILE_AI_TEAM)
-        TEAM_PATH: Path to team member directory (used by get_team_list())
+        TOPSAILAI_TEAM_PROMPT: File path for team prompt (defaults to PROMPT_FILE_AI_TEAM)
+        TOPSAILAI_TEAM_PATH: Path to team member directory (used by get_team_list())
     """
     # team info
     team_list = get_team_list()
-    team_info = generate_team_prompt(team_list)
+    team_info = generate_team_prompt(team_list, g_flag_only_agent)
 
     # system prompt
     env_sys_prompt = os.getenv("SYSTEM_PROMPT")
-    sys_prompt_file = ""
-    sys_prompt_content = ""
-    if env_sys_prompt:
-        if os.path.exists(env_sys_prompt):
-            sys_prompt_file = env_sys_prompt
-        else:
-            sys_prompt_content = env_sys_prompt
-
-    if sys_prompt_file:
-        with open(sys_prompt_file, encoding="utf-8") as fd:
-            sys_prompt_content = fd.read().strip()
+    _, sys_prompt_content = file_tool.get_file_content_fuzzy(env_sys_prompt)
 
     # team prompt
-    if not os.getenv("TEAM_PROMPT"):
-        os.environ["TEAM_PROMPT"] = PROMPT_FILE_AI_TEAM
-    env_team_prompt = os.getenv("TEAM_PROMPT")
+    if not os.getenv("TOPSAILAI_TEAM_PROMPT"):
+        os.environ["TOPSAILAI_TEAM_PROMPT"] = PROMPT_FILE_AI_TEAM
+    env_team_prompt = os.getenv("TOPSAILAI_TEAM_PROMPT")
     _, team_prompt_content = file_tool.get_file_content_fuzzy(env_team_prompt)
     if team_prompt_content:
         sys_prompt_content += "\n" + team_prompt_content.strip()
@@ -215,7 +114,8 @@ def generate_system_prompt():
     # team info
     sys_prompt_content += team_info
 
-    os.environ["TEAM_PROMPT_CONTENT"] = team_prompt_content
+    # agent will use this
+    os.environ["TOPSAILAI_TEAM_PROMPT_CONTENT"] = team_prompt_content
 
     # print(team_prompt_content)
 
@@ -224,7 +124,7 @@ def generate_system_prompt():
 
     # team role info
     sys_prompt_content += (
-        get_role_prompt() +
+        get_manager_prompt() +
         manager_prompt_content +
         "\n\n---"
     )
@@ -233,31 +133,20 @@ def generate_system_prompt():
 
     return sys_prompt_content
 
-def build_message(message:str) -> str:
-    """ return new message """
-
-    # case: @member
-    for member_name in g_members:
-        member_name = member_name.strip()
-        if not member_name:
-            continue
-        if member_name in message or f'@{member_name}' in message:
-            message += "\nManager to use tool call"
-            break
-
-    return message
-
 def main():
     """ main entry """
     message = None
     messages_from_session = None
+
+    # agent name
+    manager_name = get_manager_name()
 
     # prompt
     sys_prompt_content = generate_system_prompt()
 
     # agent
     agent = get_agent_chat(sys_prompt_content, disabled_tools=["agent_tool"])
-    agent.agent_name = "AITeam"
+    agent.agent_name = manager_name
 
     # llm
     llm_model = agent.llm_model
@@ -439,6 +328,9 @@ def main():
     if not message:
         message = get_message(hook_instruction)
 
+    # env
+    human_name = get_human_name()
+
     curr_count = 0
     while True:
         answer = ""
@@ -446,8 +338,8 @@ def main():
 
         try:
             if curr_count != 1:
-                message = build_message(message)
-            answer = agent.run(get_agent_step_call(args=(True,)), "Human Say:\n" + message)
+                message = build_manager_message(message)
+            answer = agent.run(get_agent_step_call(args=(True,)), f"{human_name} Say:\n" + message)
         except agent_exception.AgentEndProcess:
             pass
         except (KeyboardInterrupt, EOFError):

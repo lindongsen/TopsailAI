@@ -24,6 +24,10 @@ from topsailai.logger import logger
 from topsailai.ai_base.llm_base import LLMModel
 from topsailai.ai_base.llm_control.base_class import ContentStdout
 from topsailai.ai_base.prompt_base import PromptBase, ROLE_USER
+from topsailai.ai_team.role import (
+    get_member_name,
+    get_member_prompt,
+)
 from topsailai.utils import (
     env_tool,
     json_tool,
@@ -32,9 +36,7 @@ from topsailai.utils import (
 from topsailai.utils.thread_local_tool import set_thread_var, KEY_SESSION_ID
 
 from topsailai.context import ctx_manager
-from topsailai.workspace.input_tool import (
-    get_message,
-)
+
 
 def format_messages(messages):
     for i, msg in enumerate(messages):
@@ -60,7 +62,7 @@ def main():
     message = message.strip() or None
 
     # team
-    team_member_name = os.getenv("TOPSAIL_TEAM_MEMBER_NAME")
+    team_member_name = get_member_name()
 
     # session
     session_id = os.getenv("SESSION_ID")
@@ -77,10 +79,7 @@ def main():
     # system prompt
     env_sys_prompt = os.getenv("SYSTEM_PROMPT")
     _, sys_prompt_content = file_tool.get_file_content_fuzzy(env_sys_prompt)
-    if sys_prompt_content:
-        sys_prompt_content += f"""
-YOU ARE ({team_member_name})
-
+    sys_prompt_content += get_member_prompt(team_member_name) + """
 # Output Required
 Directly output the content without any formatting.
 """

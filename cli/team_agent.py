@@ -30,9 +30,14 @@ from topsailai.ai_base.agent_types import react
 from topsailai.ai_base.constants import (
     ROLE_ASSISTANT,
 )
+from topsailai.ai_team.role import (
+    get_member_name,
+    get_member_prompt,
+)
 from topsailai.utils import (
     env_tool,
     json_tool,
+    file_tool,
 )
 from topsailai.context import ctx_manager
 from topsailai.workspace.agent_shell import get_agent_chat
@@ -43,22 +48,6 @@ from topsailai.workspace.input_tool import (
 
 DEFAULT_HEAD_TAIL_OFFSET = 7
 
-
-def get_role_prompt(agent_name:str=None) -> str:
-    """ get prompt for role info """
-    if not agent_name:
-        agent_name = os.getenv("TOPSAILAI_AGENT_NAME") or os.getenv("TOPSAIL_TEAM_MEMBER_NAME")
-
-    # default agent_name
-    if not agent_name:
-        agent_name = "AI.Topsail"
-    return f"""
-
----
-YOUR ROLE IS Member, YOUR NAME IS ({agent_name})
----
-
-"""
 
 def extend_system_prompt():
     """ set default SYSTEM_PROMPT_EXTRA_FILES to eviron """
@@ -79,7 +68,7 @@ def main():
         message = message1 + "\n" + message
 
     # agent name
-    env_agent_name = os.getenv("TOPSAILAI_AGENT_NAME") or os.getenv("TOPSAIL_TEAM_MEMBER_NAME")
+    env_agent_name = get_member_name()
 
     # session
     session_id = os.getenv("SESSION_ID")
@@ -104,20 +93,10 @@ def main():
 
     # system prompt
     env_sys_prompt = os.getenv("SYSTEM_PROMPT")
-    sys_prompt_file = ""
-    sys_prompt_content = ""
-    if env_sys_prompt:
-        if os.path.exists(env_sys_prompt):
-            sys_prompt_file = env_sys_prompt
-        else:
-            sys_prompt_content = env_sys_prompt
-
-    if sys_prompt_file:
-        with open(sys_prompt_file, encoding="utf-8") as fd:
-            sys_prompt_content = fd.read().strip()
+    _, sys_prompt_content = file_tool.get_file_content_fuzzy(env_sys_prompt)
 
     # team role
-    sys_prompt_content += get_role_prompt(env_agent_name)
+    sys_prompt_content += get_member_prompt(env_agent_name)
 
     # extra system prompt
     extend_system_prompt()

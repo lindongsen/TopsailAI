@@ -1,0 +1,111 @@
+'''
+  Author: DawsonLin
+  Email: lin_dongsen@126.com
+  Created: 2026-03-21
+  Purpose:
+'''
+
+import os
+import yaml
+
+g_members = []
+
+def get_team_list() -> list[dict]:
+    """
+    Get a list of team members from the TOPSAILAI_TEAM_PATH directory.
+
+    Returns:
+        list[dict]: A list of dictionaries containing member information, where each dict has:
+            - member_id: The base name of the member file without extension
+            - member_info: The content of the member file
+            - is_able_to_call_chat: Boolean indicating if chat capability exists
+            - is_able_to_call_agent: Boolean indicating if agent capability exists
+
+    Raises:
+        AssertionError: If TOPSAILAI_TEAM_PATH is not set or is not a valid directory
+    """
+    team_path = os.getenv("TOPSAILAI_TEAM_PATH")
+    assert team_path and os.path.isdir(team_path), f"invalid team path: {team_path}"
+
+    team_list = []
+    for f in os.listdir(team_path):
+        if not f.endswith(".member"):
+            continue
+
+        member = {
+            "member_id": "",
+            "member_info": "",
+            "is_able_to_call_chat": False,
+            "is_able_to_call_agent": False,
+        }
+        team_list.append(member)
+        f_path = os.path.join(team_path, f)
+        with open(f_path, encoding="utf-8") as fd:
+            f_content = fd.read().strip()
+
+        member["member_id"] = os.path.basename(f_path).rsplit('.', 1)[0]
+        member["member_info"] = f_content
+
+        # global vars
+        g_members.append(member["member_id"])
+
+        # ability
+        for ext in ["chat", "agent"]:
+            f_ext = f_path.rsplit('.', 1)[0] + "." + ext
+            member[f"is_able_to_call_{ext}"] = os.path.exists(f_ext)
+            if member[f"is_able_to_call_{ext}"]:
+                os.system(f"chmod +x {f_ext}")
+
+    return team_list
+
+def generate_team_prompt(team_list:list[dict], only_agent=True):
+    """
+    Generate a YAML-formatted prompt section for the team members.
+
+    Args:
+        team_list (list[dict]): List of team member dictionaries from get_team_list()
+
+    Returns:
+        str: A formatted string containing team details in YAML format
+
+    Raises:
+        AssertionError: If team_list is empty
+    """
+    assert team_list
+
+    if only_agent:
+        # remove is_able_to_call...
+        new_team_list = []
+        for team_info in team_list:
+            new_team_info = team_info.copy()
+            new_team_list.append(new_team_info)
+
+            for key in list(new_team_info.keys()):
+                if key.startswith("is_able_to_call_"):
+                    del new_team_info[key]
+
+        # replace to new
+        team_list = new_team_list
+
+    content = f"""
+
+## Team Detail
+```yaml
+{yaml.safe_dump(team_list)}
+```
+"""
+    return content
+
+def build_manager_message(message:str) -> str:
+    """ return new message to manager """
+
+    # case: @member
+    for member_name in g_members:
+        member_name = member_name.strip()
+        if not member_name:
+            continue
+        if member_name in message or f'@{member_name}' in message:
+            message += "\nManager to use tool call"
+            break
+
+    return message
