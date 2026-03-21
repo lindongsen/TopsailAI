@@ -319,7 +319,7 @@ def async_multitasks_agent_writer2(
 def agent_memory_as_story(
         msg_or_file:str,
         model_name:str=None,
-        workspace:str=DEFAULT_WORKSPACE,
+        workspace:str=None,
     ):
     """ A professional Assistant for writer.
     Core Goal: Summarize the messages and generate appropriate a title and content.
@@ -333,6 +333,15 @@ def agent_memory_as_story(
 
     Return final answer.
     """
+    if not model_name:
+        model_name = EnvReaderInstance.get("TOPSAILAI_STORY_MODEL")
+
+    if not workspace:
+        workspace = EnvReaderInstance.get("TOPSAILAI_STORY_WORKSPACE")
+
+    if not workspace:
+        workspace = DEFAULT_WORKSPACE
+
     from . import story_tool, format_tools_map
 
     prompt = (
@@ -355,11 +364,17 @@ def agent_memory_as_story(
 def subprocess_agent_memory_as_story(
         msg_or_file,
         model_name:str=None,
-        workspace:str=DEFAULT_WORKSPACE,
+        workspace:str=None,
     ) -> int | None:
     """ return pid """
     if not msg_or_file:
         return None
+
+    if not model_name:
+        model_name = EnvReaderInstance.get("TOPSAILAI_STORY_MODEL")
+
+    if not workspace:
+        workspace = EnvReaderInstance.get("TOPSAILAI_STORY_WORKSPACE")
 
     if isinstance(msg_or_file, (list, dict, set)):
         msg_or_file = json_dump(msg_or_file)
@@ -374,7 +389,7 @@ def subprocess_agent_memory_as_story(
         args,
         env=dict(
             PURE_SYSTEM_PROMPT="1",
-            STORY_PROMPT=EnvReaderInstance.get("STORY_PROMPT", ""),
+            TOPSAILAI_STORY_PROMPT=EnvReaderInstance.get("TOPSAILAI_STORY_PROMPT", ""),
             ENABLED_TOOLS="story_tool",
             EXTRA_TOOLS="",
             PLUGIN_TOOLS="",
@@ -385,7 +400,7 @@ def subprocess_agent_memory_as_story(
 def async_agent_memory_as_story(
         msg_or_file,
         model_name:str=None,
-        workspace:str=DEFAULT_WORKSPACE,
+        workspace:str=None,
     ):
     if isinstance(msg_or_file, (list, dict, set)):
         msg_or_file = json_dump(msg_or_file)

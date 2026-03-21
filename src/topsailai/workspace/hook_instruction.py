@@ -11,17 +11,20 @@ Created: 2025-12-25
 Purpose: Provide a hook-based instruction system for command processing
 '''
 
-import os
-
 from topsailai.utils import (
     json_tool,
     print_tool,
     format_tool,
 )
+from topsailai.workspace.plugin_instruction import (
+    INSTRUCTIONS,
+)
+
 
 # Characters that trigger hook processing when found at the beginning of a message
 TRIGGER_CHARS = "/@"
 
+SPLIT_LINE = "-" * 73
 
 class HookFunc(object):
     """
@@ -76,33 +79,7 @@ class HookFunc(object):
 
 
 class HookBaseUtils(object):
-
-    def set_env(self, k:str, v:str):
-        """set environment
-
-        Args:
-            k (str): key
-            v (str): value
-        """
-        k = str(k)
-        v = str(v)
-        old_v = os.getenv(k)
-        if k:
-            os.environ[k] = v
-        print(f"set environment ok: old={old_v} new={v}")
-        return
-
-    def get_env(self, k:str) -> str|None:
-        """get environment
-
-        Args:
-            k (str): key
-
-        Returns:
-            str: value
-            None: not config
-        """
-        return os.getenv(str(k))
+    pass
 
 
 class HookInstruction(HookBaseUtils):
@@ -137,15 +114,31 @@ class HookInstruction(HookBaseUtils):
         # Structure: {hook_name: [HookFunc1, HookFunc2, ...]}
         self.hook_map = {
             "/help": [HookFunc("show help info", self.show_help)],
-            "/setenv": [
-                HookFunc("", self.set_env),
-            ],
-            "/getenv": [
-                HookFunc("", self.get_env),
-            ],
         }
 
-    def show_help(self):
+        # add plugin hooks
+        self.load_instructions(INSTRUCTIONS)
+
+        return
+
+    def load_instructions(self, instructions:dict):
+        """ add instructions to hook_map """
+        for key, func in instructions.items():
+            if key[0] not in TRIGGER_CHARS:
+                key = TRIGGER_CHARS[0] + key
+            self.hook_map[key] = [
+                HookFunc("", func),
+            ]
+        return
+
+    def __print_hook(self, hook_name:str):
+        hook_set = self.hook_map[hook_name]
+        print(f"\n  {hook_name}")
+        for hook_func in hook_set:
+            print(f"    - {hook_func.func.__name__}, {hook_func.description}")
+        return
+
+    def show_help(self, hook_name:str=None):
         """
         Display help information for all registered hooks.
 
@@ -155,12 +148,14 @@ class HookInstruction(HookBaseUtils):
         Returns:
             None
         """
+        print(SPLIT_LINE)
         print("Instructions:")
-        for hook_name, hook_set in self.hook_map.items():
-            print(f"\n  {hook_name}")
-            for hook_func in hook_set:
-                print(f"    - {hook_func.func.__name__}, {hook_func.description}")
-        print()
+        # all
+        for _hook_name in self.hook_map:
+            if hook_name and hook_name not in _hook_name:
+                continue
+            self.__print_hook(_hook_name)
+        print(SPLIT_LINE)
         return
 
     def add_hook(self, hook_name, hook_func: HookFunc, description=""):
@@ -182,6 +177,10 @@ class HookInstruction(HookBaseUtils):
             AssertionError: If hook_func is not callable
         """
         assert callable(hook_func)
+
+        if hook_name[0] not in TRIGGER_CHARS:
+            hook_name = TRIGGER_CHARS[0] + hook_name
+
         if hook_name not in self.hook_map:
             self.hook_map[hook_name] = []
 
@@ -213,6 +212,18 @@ class HookInstruction(HookBaseUtils):
                 self.hook_map[hook_name].remove(hook_func)
         return
 
+    def __is_help(self, s) -> bool:
+        """ check str if is 'help' """
+        if isinstance(s, str) and s in [
+            "help",
+            "--help",
+            "-h",
+            "/help",
+            "@help",
+        ]:
+            return True
+        return False
+
     def call_hook(self, hook_name, kwargs:str|dict=None):
         """
         Execute all hook functions registered under a given hook name.
@@ -226,6 +237,9 @@ class HookInstruction(HookBaseUtils):
         Returns:
             None
         """
+        if self.__is_help(kwargs):
+            self.show_help(hook_name)
+            return
 
         # case: /xxx kwargs
         if not kwargs and ' ' in hook_name:
@@ -233,24 +247,36 @@ class HookInstruction(HookBaseUtils):
 
         hook_name = hook_name.strip()
 
+        if self.__is_help(kwargs):
+            self.show_help(hook_name)
+            return
+
         if hook_name not in self.hook_map:
             return
 
+        args = []
         if isinstance(kwargs, str):
             new_kwargs = json_tool.safe_json_load(kwargs)
+            if not isinstance(new_kwargs, dict):
+                new_kwargs = None
 
-            if not new_kwargs and '=' in kwargs:
-                new_kwargs = format_tool.parse_str_to_dict(kwargs)
+            if not new_kwargs:
+                if '=' in kwargs:
+                    new_kwargs = format_tool.parse_str_to_dict(kwargs)
+                elif ' ' in kwargs:
+                    args = kwargs.split(' ')
+                else:
+                    args = [kwargs]
 
             if new_kwargs:
                 kwargs = new_kwargs
 
-        if not kwargs:
+        if not kwargs or not isinstance(kwargs, dict):
             kwargs = {}
 
         for hook_func in self.hook_map[hook_name]:
             try:
-                ret = hook_func(**kwargs)
+                ret = hook_func(*args, **kwargs)
                 if ret:
                     print(ret)
             except Exception as e:

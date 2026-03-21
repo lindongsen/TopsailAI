@@ -59,12 +59,11 @@ from topsailai.workspace.input_tool import (
 )
 from topsailai.workspace.hook_instruction import HookInstruction
 from topsailai.workspace.agent_shell import get_agent_chat
-from topsailai.workspace.print_tool import (
-    print_context_messages,
-    print_raw_messages,
+from topsailai.workspace.context.ctx_runtime import (
+    ContextRuntimeInstructions,
+    ContextRuntimeAIAgent,
+    ContextRuntimeData,
 )
-
-from topsailai.tools.agent_tool import subprocess_agent_memory_as_story
 
 
 DEFAULT_HEAD_TAIL_OFFSET = 7
@@ -136,7 +135,9 @@ def generate_system_prompt():
 def main():
     """ main entry """
     message = None
-    messages_from_session = None
+
+    # context runtime data
+    ctx_runtime_data = ContextRuntimeData()
 
     # agent name
     manager_name = get_manager_name()
@@ -162,56 +163,54 @@ def main():
         print(f"session_id: {session_id}")
         print(f"members: {g_members}")
 
-        messages_from_session = ctx_manager.get_messages_by_session(session_id)
-        if not messages_from_session:
+        ctx_runtime_data.init(session_id, ai_agent=agent)
+        if not ctx_runtime_data.messages:
             message = get_message()
             ctx_manager.create_session(session_id, task=message[:100])
 
-    if not messages_from_session:
-        messages_from_session = []
+    # context runtime xxx
+    ctx_rt_aiagent = ContextRuntimeAIAgent(ctx_runtime_data)
+    ctx_rt_instruction = ContextRuntimeInstructions(ctx_runtime_data)
 
     ##########################################################################################
     # Hook Agent
     ##########################################################################################
 
-    def add_session_message():
-        """
-        Add the latest agent message to the session context and local messages list.
-        """
-        nonlocal messages_from_session
-        if session_id:
-            ctx_manager.add_session_message(session_id, agent.messages[-1])
-        messages_from_session.append(agent.messages[-1])
-
-    def hook_after_init_prompt(self):
+    def hook_after_init_prompt(ai_agent):
         """
         Hook function called after agent prompt initialization.
         Adds existing session messages to the agent's message history.
 
         Args:
-            self: The agent instance
+            ai_agent: The agent instance
         """
-        nonlocal messages_from_session
         # offset
-        if messages_from_session:
+        if ctx_runtime_data.messages:
             head_tail_offset = env_tool.EnvReaderInstance.get(
                 "TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET",
                 formatter=int,
             ) or DEFAULT_HEAD_TAIL_OFFSET
-            messages_from_session = ctx_manager.cut_messages(
-                messages_from_session,
+
+            new_messages = ctx_manager.cut_messages(
+                ctx_runtime_data.messages,
                 head_tail_offset
             )
+            ctx_runtime_data.set_messages(new_messages)
 
-        if messages_from_session:
-            self.messages += messages_from_session
+        # add messages to agent
+        ctx_rt_aiagent.add_runtime_messages()
 
-    def hook_after_new_session(self):
+        return
+
+    def hook_after_new_session(ai_agent):
         """
         Hook function called after a new session is created.
         Adds the initial session message to the context.
+
+        Args:
+            ai_agent: The agent instance
         """
-        add_session_message()
+        ctx_rt_aiagent.add_session_message()
 
     agent.hooks_after_init_prompt.append(hook_after_init_prompt)
     agent.hooks_after_new_session.append(hook_after_new_session)
@@ -221,59 +220,8 @@ def main():
     ##########################################################################################
 
     hook_instruction = HookInstruction()
-    def _clear():
-        """
-        Clear context messages if no session ID exists.
-        Shows message if session ID prevents clearing.
-        """
-        nonlocal messages_from_session
-        if session_id:
-            print(f"{message}: Context cannot be clear due to exist session_id({session_id})")
-        else:
-            # clear context messages
-            messages_from_session.clear()
-            print("/clear: Context already is clear")
-        return
-    def _story():
-        """
-        Save context messages to a new story using subprocess.
-        Only works if there are existing messages in the session.
-        """
-        nonlocal messages_from_session
-        if not messages_from_session:
-            return
-        pid = subprocess_agent_memory_as_story(messages_from_session)
-        print(f"/story: The history messages will be save to a new story, pid=[{pid}]")
-        return
-    def _history(offset:str=""):
-        """
-        Display the history of messages for the current session.
-        Shows separator line and all context messages if available.
+    hook_instruction.load_instructions(ctx_rt_instruction.instructions)
 
-        Args:
-            offset:
-              - usage1: number, e.g. 7 is 7:-7;
-              - usage2: 'head_num:tail_num', e.g 5:-3
-        """
-        print(f"\n\n{SPLIT_LINE}")
-        print(f"/history: Show history messages {session_id}")
-        if messages_from_session:
-            head_offset = None
-            tail_offset = None
-            if offset:
-                try:
-                    if ':' in offset:
-                        head_offset, tail_offset = offset.split(':', 1)
-                        head_offset = int(head_offset)
-                        tail_offset = int(tail_offset)
-                    else:
-                        head_offset = tail_offset = int(offset)
-                        tail_offset = -tail_offset
-                except Exception:
-                    pass
-            _msgs = messages_from_session if head_offset is None else messages_from_session[head_offset:tail_offset]
-            print_context_messages(_msgs)
-        return
     def _member():
         """
         Display the list of team members.
@@ -283,45 +231,14 @@ def main():
         print("/member: Show members")
         print(g_members)
         return
-    def _history2():
-        print(f"\n\n{SPLIT_LINE}")
-        print(f"/history2: Show raw history messages {session_id}")
-        raw_msgs = ctx_manager.get_messages_by_session(session_id, for_raw=True)
-        if raw_msgs:
-            print_raw_messages(raw_msgs)
-        return
-    def _del(index:int):
-        """
-        delete one message
 
-        Args:
-          index: int
-        """
-        nonlocal messages_from_session
-        index = int(index)
-        assert index > 0 and index <= len(messages_from_session), "nothing can be deleted"
-        index -= 1
-        raw_msgs = ctx_manager.get_messages_by_session(session_id, for_raw=True)
-        index_msg = raw_msgs[index]
-        index_msg_id = index_msg.msg_id
-        ctx_manager.del_session_messages(session_id, [index_msg_id])
-        messages_from_session.clear()
-        messages_from_session += ctx_manager.get_messages_by_session(session_id)
-        _history()
-        _member()
-        return
-    hook_instruction.add_hook("/clear", _clear, "clear context messages")
-    hook_instruction.add_hook("/story", _story, "save context messages to a story")
-    hook_instruction.add_hook("/history", _history, "show context messages")
-    hook_instruction.add_hook("/history2", _history2, "show raw context messages")
     hook_instruction.add_hook("/member", _member, "show members")
-    hook_instruction.add_hook("/del", _del)
 
     ##########################################################################################
     # main
     ##########################################################################################
     if session_id:
-        _history()
+        ctx_rt_instruction.history()
         _member()
         print(SPLIT_LINE + "\n\n")
 
@@ -347,10 +264,10 @@ def main():
                 break
 
         if answer:
-            add_session_message()
+            ctx_rt_aiagent.add_session_message()
 
-        messages_from_session = ctx_manager.get_messages_by_session(session_id)
-        _history()
+        ctx_runtime_data.reset_messages()
+        ctx_rt_instruction.history()
         _member()
 
         if answer and not env_tool.is_debug_mode():

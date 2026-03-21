@@ -82,14 +82,14 @@ class EnvironmentReader(object):
     def story_prompt_content(self):
         """Retrieve story prompt content from environment variable.
 
-        The environment variable STORY_PROMPT may contain either a file path
+        The environment variable TOPSAILAI_STORY_PROMPT may contain either a file path
         or the actual content. If it's a file path, the file is read; otherwise
         the variable's value is returned directly.
 
         Returns:
             str: Story prompt content, or empty string if not set.
         """
-        env_var = os.getenv("STORY_PROMPT")
+        env_var = os.getenv("TOPSAILAI_STORY_PROMPT")
         if not env_var:
             return ""
         content = self.try_read_file(env_var)

@@ -145,7 +145,10 @@ def print_error(msg):
     Args:
         msg: Error message to log and print
     """
-    logger.error(msg)
+    if isinstance(msg, Exception):
+        logger.exception(msg)
+    else:
+        logger.error(msg)
     print_with_time(f"Error: {msg}", need_format=False)
     return
 

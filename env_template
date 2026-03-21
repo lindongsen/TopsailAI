@@ -99,9 +99,6 @@ TOPSAILAI_FLAG_INTERACTIVE_MODE=0
 # one file or content. Describe the current environmental information.
 # ENV_PROMPT=""
 
-# Story prompt will be used when generating stories based on historical messages.
-# STORY_PROMPT=""
-
 # =============================================================================
 # System Prompt Control
 # =============================================================================
@@ -244,3 +241,25 @@ TOPSAIL_TEAM_MANAGER_NAME="Topsail"
 
 # memeber name, DONOT CONFIG it, only setting it for runtime.
 # TOPSAIL_TEAM_MEMBER_NAME="km-k25"
+
+# =============================================================================
+# Instruction Configuration
+# =============================================================================
+
+# Plugin Instructions, expand it from external folders
+# Format: directory paths separated by semicolons (';')
+# Reference: topsailai.workspace.plugin_instruction
+TOPSAILAI_PLUGIN_INSTRUCTIONS=""
+
+# =============================================================================
+# Story Configuration
+# =============================================================================
+
+# Story prompt will be used when generating stories based on historical messages.
+TOPSAILAI_STORY_PROMPT=""
+
+# Use the LLM to generate story, e.g. DeepSeek-V3.2
+TOPSAILAI_STORY_MODEL=""
+
+# Save stories to the workspace
+TOPSAILAI_STORY_WORKSPACE=""
