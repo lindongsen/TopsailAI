@@ -131,7 +131,7 @@ CONTEXT_HISTORY_MANAGERS="sql.ChatHistorySQLAlchemy conn=sqlite:///memory.db;"
 CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH=43
 
 # When the number of messages reaches a threshold, they will be summarized
-TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD=17
+# TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD=17
 
 # =============================================================================
 # Feature Flags

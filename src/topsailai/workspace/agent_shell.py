@@ -3,6 +3,9 @@
   Email: lin_dongsen@126.com
   Created: 2025-12-29
   Purpose:
+  Context:
+    1. ai_agent.messages: Save the context message that is currently being processed
+    2. ctx_runtime_data.messages: Save the processed Q&A messages
 '''
 
 import os
@@ -43,17 +46,17 @@ class AgentChat(object):
     """ AI Agent controller, Human chats with Agent, Agent chats with LLM """
     def __init__(
             self,
-            ai_agent:AgentRun,
             hook_instruction:HookInstruction,
             ctx_rt_aiagent:ContextRuntimeAIAgent,
             ctx_rt_instruction:ContextRuntimeInstructions,
 
             session_head_tail_offset:int=DEFAULT_HEAD_TAIL_OFFSET, # cut messages
         ):
-        self.ai_agent = ai_agent
         self.hook_instruction = hook_instruction
         self.ctx_rt_aiagent = ctx_rt_aiagent
         self.ctx_rt_instruction = ctx_rt_instruction
+
+        self.ai_agent = ctx_rt_aiagent.ai_agent
 
         self.first_message = None
         self.last_message = None
@@ -106,14 +109,21 @@ class AgentChat(object):
             Args:
                 _ai_agent: agent instance
             """
-            if ctx_runtime_data.is_need_summarize():
-                ctx_runtime_data.summarize_messages()
+
+            # the processed Q&A messages
+            if ctx_runtime_data.is_need_summarize_for_processed():
+                ctx_runtime_data.summarize_messages_for_processed()
+
+            # the processing agent messages
+            if ctx_runtime_data.is_need_summarize_for_processing():
+                ctx_runtime_data.summarize_messages_for_processing()
+
             return
 
         # add hooks
-        ai_agent.hooks_after_init_prompt.append(hook_after_init_prompt)
-        ai_agent.hooks_after_new_session.append(hook_after_new_session)
-        ai_agent.hooks_pre_chat.append(hook_summarize_messages)
+        self.ai_agent.hooks_after_init_prompt.append(hook_after_init_prompt)
+        self.ai_agent.hooks_after_new_session.append(hook_after_new_session)
+        self.ai_agent.hooks_pre_chat.append(hook_summarize_messages)
 
         return
 
@@ -393,7 +403,6 @@ def get_agent_chat(
 
     # agent chat
     agent_chat = AgentChat(
-        ai_agent=ai_agent,
         hook_instruction=hook_instruction,
         ctx_rt_aiagent=ctx_rt_aiagent,
         ctx_rt_instruction=ctx_rt_instruction,

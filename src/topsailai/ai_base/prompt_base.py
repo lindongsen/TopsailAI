@@ -226,7 +226,7 @@ class PromptBase(object):
                 logger.error(f"failed to call hook: {traceback.format_exc()}")
         return
 
-    def new_session(self, user_message):
+    def new_session(self, user_message, need_print_message=True):
         """
         Start a new session with a user message
 
@@ -234,7 +234,7 @@ class PromptBase(object):
             user_message: The initial user message for the new session
         """
         self.init_prompt()
-        self.add_user_message(user_message)
+        self.add_user_message(user_message, need_print=need_print_message)
         for hook in self.hooks_after_new_session:
             try:
                 hook(self)
@@ -284,7 +284,7 @@ class PromptBase(object):
         self.messages[1] = {"role": ROLE_SYSTEM, "content": generate_prompt_for_env()}
         return
 
-    def add_user_message(self, content):
+    def add_user_message(self, content, need_print=True):
         """
         Add a user message to the context
 
@@ -299,7 +299,8 @@ class PromptBase(object):
             need_format = True
 
         content = self.hook_format_content(content)
-        print_step(content, need_format=need_format)
+        if need_print:
+            print_step(content, need_format=need_format)
         self.append_message({"role": ROLE_USER, "content": content})
 
     def add_assistant_message(self, content, tool_calls=None):
@@ -380,3 +381,11 @@ class PromptBase(object):
             self.messages = json_load(content)
             assert isinstance(self.messages, list)
         return
+
+    def get_work_memory_first_position(self) -> int|None:
+        """ get the first position in the conversation """
+        for index, msg in enumerate(self.messages):
+            msg_dict = json_load(msg)
+            if msg_dict["role"] != ROLE_SYSTEM:
+                return index
+        return None

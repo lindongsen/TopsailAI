@@ -29,10 +29,10 @@ class LLMChat(object):
         self.last_message = ""
         return
 
-    def chat(self, message:str="") -> str:
+    def chat(self, message:str="", need_print=True) -> str:
         """ chatting to LLM, return answer """
         if message:
-            self.prompt_ctl.add_user_message(message)
+            self.prompt_ctl.add_user_message(message, need_print=need_print)
 
         self.prompt_ctl.update_message_for_env()
 
@@ -57,6 +57,7 @@ def get_llm_chat(
         need_stdout:bool=True,
         need_input_message:bool=True,
         need_print_session:bool=True,
+        need_print_message:bool=True,
         func_formatter_messages=None,
     ) -> LLMChat:
     """ get a object for chatting.
@@ -103,9 +104,9 @@ def get_llm_chat(
     if messages_from_session:
         prompt_ctl.messages = func_formatter_messages(messages_from_session) if func_formatter_messages else messages_from_session
         if message:
-            prompt_ctl.add_user_message(message)
+            prompt_ctl.add_user_message(message, need_print=need_print_message)
     else:
-        prompt_ctl.new_session(message)
+        prompt_ctl.new_session(message, need_print_message=need_print_message)
 
     llm_chat = LLMChat(
         prompt_ctl,

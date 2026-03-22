@@ -5,7 +5,10 @@
   Purpose:
 '''
 
+import random
+
 from topsailai.logger import logger
+from topsailai.ai_base.constants import ROLE_USER
 from topsailai.ai_base.agent_base import AgentBase
 from topsailai.tools.agent_tool import (
     subprocess_agent_memory_as_story,
@@ -84,27 +87,12 @@ class ContextRuntimeData(object):
             self.set_messages(messages_from_session)
         return
 
-    def summarize_messages(
-            self,
-            messages:list|str=None,
-            head_offset_to_keep:int=1,
-            need_interactive:bool=False,
-        ) -> str|None:
-        """ Summarize messages to one text """
-        if not messages:
-            if self.session_id:
-                raw_messages = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
-                messages = [raw_msg.message for raw_msg in raw_messages]
-                messages = "\n".join(messages)
-            else:
-                messages = self.messages
+    def _summarize_messages(self, messages):
+        """ summarize messages to one text.
 
-        if not messages:
-            return None
-
-        # print info
-        print_step(f"!!! Summarizing context messages: msg_len=[{len(messages)}]", need_format=False)
-
+        return (llm_chat, answer)
+        """
+        assert messages, "null of messages"
         one_msg = messages if isinstance(messages, str) else json_tool.json_dump(messages)
         enhanced_prompt = "\n---\nYou MUST focus on the Human's intention\n---\n\n"
 
@@ -116,57 +104,179 @@ class ContextRuntimeData(object):
             need_stdout=False,
             need_input_message=False,
             need_print_session=False,
+            need_print_message=False,
         )
-        answer = llm_chat.chat()
-        if answer:
-            if need_interactive:
-                try:
-                    print(SPLIT_LINE)
-                    while True:
-                        yn = input(">>> Is this answer acceptable? [yes/no] ").lower().strip()
-                        if not yn:
-                            continue
-                        if yn != "yes":
-                            return answer
-                        break
-                except Exception:
-                    return answer
+        answer = llm_chat.chat(need_print=False)
 
-            if head_offset_to_keep < 0:
-                head_offset_to_keep = 0
+        return (llm_chat, answer)
 
-            if self.session_id:
-                # delete history messages
-                raw_messages_from_session = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
-                if raw_messages_from_session:
-                    for raw_msg in raw_messages_from_session[head_offset_to_keep:]:
-                        ctx_manager.del_session_messages(self.session_id, [raw_msg.msg_id])
-                else:
-                    logger.critical("BUG: how did it happend? null of messages from session: [%s]", self.session_id)
+    def summarize_messages_for_processed(
+            self,
+            messages:list=None,
+            head_offset_to_keep:int=1,
+            need_interactive:bool=False,
+        ) -> str|None:
+        """ Summarize messages to one text """
+        if not messages:
+            # just the processed Q&A messages for current runtime
+            messages = self.messages
 
-                # add answer to session
-                ctx_manager.add_session_message(self.session_id, llm_chat.prompt_ctl.messages[-1])
+        if not messages:
+            return None
 
-                # reset messages
-                self.reset_messages()
+        # print info
+        print_step(f"!!! Summarizing context messages for processed: msg_len=[{len(messages)}]", need_format=False)
+
+        llm_chat, answer = self._summarize_messages(messages)
+        if not answer:
+            return None
+
+        if need_interactive:
+            try:
+                print(SPLIT_LINE)
+                while True:
+                    yn = input(">>> Is this answer acceptable? [yes/no] ").lower().strip()
+                    if not yn:
+                        continue
+                    if yn != "yes":
+                        return answer
+                    break
+            except Exception:
+                return answer
+
+        if head_offset_to_keep < 0:
+            head_offset_to_keep = 0
+
+        if self.session_id:
+            raw_messages_from_session = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
+
+            # keep last user message
+            last_user_raw_msg = None
+            for raw_msg in reversed(raw_messages_from_session):
+                msg_dict = json_tool.json_load(raw_msg.message)
+                if msg_dict["role"] == ROLE_USER:
+                    last_user_raw_msg = raw_msg
+                    break
+
+            # delete history messages
+            if raw_messages_from_session:
+                for raw_msg in raw_messages_from_session[head_offset_to_keep:]:
+                    if last_user_raw_msg and raw_msg.msg_id == last_user_raw_msg.msg_id:
+                        continue
+                    ctx_manager.del_session_messages(self.session_id, [raw_msg.msg_id])
             else:
-                self.set_messages(
-                    self.messages[:head_offset_to_keep] + [answer]
-                )
+                logger.critical("BUG: how did it happend? null of messages from session: [%s]", self.session_id)
+
+            # add answer to session
+            ctx_manager.add_session_message(self.session_id, llm_chat.prompt_ctl.messages[-1])
+
+            # reset messages
+            self.reset_messages()
+        else:
+            # keep last user message
+            last_user_msg = None
+            for msg in reversed(messages):
+                msg_dict = json_tool.json_load(msg)
+                if msg_dict["role"] == ROLE_USER:
+                    last_user_msg = msg
+                    break
+
+            new_messages = messages[:head_offset_to_keep]
+            if last_user_msg:
+                new_messages.append(last_user_msg)
+            new_messages.append(llm_chat.prompt_ctl.messages[-1])
+
+            self.set_messages(new_messages)
 
         return answer
 
-    def is_need_summarize(self) -> bool:
-        quantity_threshold = max(
-            17,
-            env_tool.EnvReaderInstance.get(
-                "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD",
-                default=73,
-                formatter=int,
-            )
+    def summarize_messages_for_processing(
+            self,
+            messages:list|str=None,
+            head_offset_to_keep:int=1,
+        ) -> str|None:
+        """ Summarize messages to one text """
+        index = self.ai_agent.get_work_memory_first_position()
+        if index is None:
+            return None
+
+        if not messages:
+            messages = self.ai_agent.messages[index:]
+
+        if not messages:
+            return None
+
+        # print info
+        print_step(f"!!! Summarizing context messages for processing: msg_len=[{len(messages)}]", need_format=False)
+
+        llm_chat, answer = self._summarize_messages(messages)
+        if not answer:
+            return None
+
+        if head_offset_to_keep < 0:
+            head_offset_to_keep = 0
+
+        # keep last user message
+        last_user_msg = None
+        for msg in reversed(messages):
+            msg_dict = json_tool.json_load(msg)
+            if msg_dict["role"] == ROLE_USER:
+                last_user_msg = msg
+                break
+
+        new_messages = messages[:head_offset_to_keep]
+        if last_user_msg:
+            new_messages.append(last_user_msg)
+        new_messages.append(llm_chat.prompt_ctl.messages[-1])
+        self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
+
+        print_step(f"!!! New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]", need_format=False)
+        logger.info("new context messages: %s", self.ai_agent.messages)
+
+        return answer
+
+    def __get_quantity_threshold(self) -> int:
+        """ if 0 or null, it is disabled. """
+        env_quantity_threshold = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD",
+            formatter=int,
         )
+        # disabled
+        if not env_quantity_threshold or env_quantity_threshold < 0:
+            return 0
+
+        number_list = [13, 17, 19, 23]
+        quantity_threshold = max(random.choice(number_list), env_quantity_threshold)
+        return quantity_threshold
+
+    def is_need_summarize_for_processed(self) -> bool:
+        """ the processed Q&A messages, it is ctx_runtime_data.messages """
+        quantity_threshold = self.__get_quantity_threshold()
+        if not quantity_threshold:
+            return False
+
         if len(self.messages) >= quantity_threshold:
             return True
+
+        return False
+
+    def is_need_summarize_for_processing(self) -> bool:
+        """ the agent is working, it is ai_agent.messages """
+        quantity_threshold = self.__get_quantity_threshold()
+        if not quantity_threshold:
+            return False
+
+        number_list = [23, 27, 29, 31, 37, 41, 43, 47] # min -> max
+        if quantity_threshold >= number_list[0]:
+            number_list.append(quantity_threshold)
+        if quantity_threshold*2 <= number_list[-1]:
+            number_list.append(quantity_threshold*2)
+
+        quantity_threshold = random.choice(number_list)
+
+        if len(self.ai_agent.messages) >= quantity_threshold:
+            return True
+
         return False
 
 
@@ -319,12 +429,12 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         return
 
     def summarize(self, head_offset_to_keep:int=1):
-        """Summarize context messages
+        """Summarize context messages for current session.
 
         Args:
             head_offset_to_keep (int): default is 1
         """
-        self.ctx_runtime_data.summarize_messages(
+        self.ctx_runtime_data.summarize_messages_for_processed(
             head_offset_to_keep=head_offset_to_keep,
             need_interactive=True,
         )

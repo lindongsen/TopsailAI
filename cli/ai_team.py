@@ -137,6 +137,9 @@ def main():
     # prompt
     sys_prompt_content = generate_system_prompt()
 
+    # show members
+    print(g_members)
+
     # agent chat
     agent_chat = get_agent_chat(
         system_prompt=sys_prompt_content,
