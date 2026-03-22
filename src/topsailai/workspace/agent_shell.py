@@ -100,9 +100,20 @@ class AgentChat(object):
             ctx_rt_aiagent.add_session_message()
             return
 
+        def hook_summarize_messages(_ai_agent):
+            """Summarize context messages
+
+            Args:
+                _ai_agent: agent instance
+            """
+            if ctx_runtime_data.is_need_summarize():
+                ctx_runtime_data.summarize_messages()
+            return
+
         # add hooks
         ai_agent.hooks_after_init_prompt.append(hook_after_init_prompt)
         ai_agent.hooks_after_new_session.append(hook_after_new_session)
+        ai_agent.hooks_pre_chat.append(hook_summarize_messages)
 
         return
 

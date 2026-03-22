@@ -12,11 +12,13 @@ from topsailai.tools.agent_tool import (
 )
 from topsailai.tools import (
     story_tool,
+    env_tool,
 )
 from topsailai.context import ctx_manager
 from topsailai.utils import (
     json_tool,
 )
+from topsailai.utils.print_tool import print_step
 from topsailai.workspace.input_tool import (
     SPLIT_LINE,
 )
@@ -49,7 +51,7 @@ class ContextRuntimeData(object):
         """ add a message to session """
         msg_dict = {"role": role, "content": message}
 
-        self.messages.append(msg_dict)
+        self.append_message(msg_dict)
 
         if self.session_id:
             ctx_manager.add_session_message(
@@ -57,6 +59,13 @@ class ContextRuntimeData(object):
             )
 
         return
+
+    def append_message(self, message:dict):
+        """ append a message """
+        if not message:
+            return
+
+        self.messages.append(message)
 
     def set_messages(self, value:list):
         """ set new value """
@@ -92,6 +101,9 @@ class ContextRuntimeData(object):
 
         if not messages:
             return None
+
+        # print info
+        print_step(f"!!! Summarizing context messages: msg_len=[{len(messages)}]", need_format=False)
 
         one_msg = messages if isinstance(messages, str) else json_tool.json_dump(messages)
         enhanced_prompt = "\n---\nYou MUST focus on the Human's intention\n---\n\n"
@@ -144,6 +156,19 @@ class ContextRuntimeData(object):
 
         return answer
 
+    def is_need_summarize(self) -> bool:
+        quantity_threshold = max(
+            17,
+            env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD",
+                default=73,
+                formatter=int,
+            )
+        )
+        if len(self.messages) >= quantity_threshold:
+            return True
+        return False
+
 
 class ContextRuntimeUtils(object):
     """ common utils """
@@ -177,7 +202,7 @@ class ContextRuntimeAIAgent(ContextRuntimeUtils):
         if self.session_id:
             ctx_manager.add_session_message(self.session_id, message)
 
-        self.messages.append(message)
+        self.ctx_runtime_data.append_message(message)
 
         return
 

@@ -456,6 +456,9 @@ class AgentRun(AgentBase):
                 print_critical("No progress made in this iteration, exiting.")
                 return None
 
+            # hook, pre-chat
+            self.call_hooks_pre_chat()
+
             # update env
             self.update_message_for_env()
 

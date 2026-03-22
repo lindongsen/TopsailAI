@@ -150,6 +150,16 @@ class PromptBase(object):
         # hooks, func(self)
         self.hooks_after_init_prompt = []
         self.hooks_after_new_session = []
+        self.hooks_pre_chat = []
+
+    def call_hooks_pre_chat(self):
+        """ call hooks before chatting """
+        for hook in self.hooks_pre_chat:
+            try:
+                hook(self)
+            except Exception as e:
+                logger.exception("failed to call hook: %s", e)
+        return
 
     def call_hooks_ctx_history(self):
         """
