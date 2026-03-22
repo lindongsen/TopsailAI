@@ -93,6 +93,7 @@ def main():
         func_build_message=hook_build_message,
         need_save_answer=env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE"),
         need_confirm_abort=False,
+        need_symbol_for_answer=True,
         only_save_final=True,
     )
 

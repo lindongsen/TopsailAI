@@ -26,6 +26,7 @@ from topsailai.workspace.input_tool import (
     get_message,
     input_message,
     input_yes,
+    SPLIT_LINE,
 )
 from topsailai.workspace.context.ctx_runtime import (
     ContextRuntimeData,
@@ -77,7 +78,11 @@ class AgentChat(object):
                     ctx_runtime_data.messages,
                     session_head_tail_offset,
                 )
-                ctx_runtime_data.set_messages(new_messages)
+                if new_messages is not ctx_runtime_data.messages or \
+                    len(new_messages) != len(ctx_runtime_data.messages) or \
+                    new_messages[-1] != ctx_runtime_data.messages[-1] or \
+                        new_messages[0] != ctx_runtime_data.messages[0]:
+                    ctx_runtime_data.set_messages(new_messages)
 
             # add messages to agent
             ctx_rt_aiagent.add_runtime_messages()
@@ -123,9 +128,13 @@ class AgentChat(object):
 
             need_save_answer:bool=True,
             need_confirm_abort:bool=True,
+            need_interactive:bool=True,
+            need_symbol_for_answer=False,
             only_save_final:bool=False,
         ) -> str:
-        """ run agent """
+        """ run agent.
+        :message: if it is none, get message; if it is null string, continue.
+        """
         if not func_print_pre_input_message:
             # noop
             func_print_pre_input_message = lambda *args, **kwargs: None
@@ -135,7 +144,7 @@ class AgentChat(object):
             if self.first_message:
                 message = self.first_message
 
-        if not message:
+        if message is None:
             func_print_pre_input_message()
             message = get_message(self.hook_instruction)
 
@@ -164,7 +173,7 @@ class AgentChat(object):
             try:
                 answer = self.ai_agent.run(
                     get_agent_step_call(
-                        args=(True,),
+                        args=(need_interactive,),
                         agent_type=self.ai_agent.agent_type,
                     ),
                     message,
@@ -177,7 +186,10 @@ class AgentChat(object):
                     break
 
             if answer:
-                answer = self.hook_build_answer(answer)
+                answer = self.hook_build_answer(
+                    answer,
+                    need_symbol=need_symbol_for_answer,
+                )
                 if need_save_answer:
                     if only_save_final:
                         self.ctx_runtime_data.add_session_message(ROLE_ASSISTANT, answer)
@@ -198,6 +210,7 @@ class AgentChat(object):
                 print(answer)
 
             print()
+            print(SPLIT_LINE)
             print(f"The manager have scheduled tasks [{curr_count}] times")
             print()
 
@@ -213,17 +226,18 @@ class AgentChat(object):
 
         return answer
 
-    def hook_build_answer(self, answer:str) -> str:
+    def hook_build_answer(self, answer:str, need_symbol:bool=False) -> str:
         """ build new answer """
         if not answer:
             return answer
 
-        # symbol
-        symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER")
-        if not symbol_start and self.agent_name:
-            symbol_start = f"From '{self.agent_name}':\n"
-        if symbol_start and symbol_start not in answer[:len(symbol_start)+17]:
-            answer = symbol_start + answer
+        if need_symbol:
+            # symbol
+            symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER")
+            if not symbol_start and self.agent_name:
+                symbol_start = f"From '{self.agent_name}':\n"
+            if symbol_start and symbol_start not in answer[:len(symbol_start)+17]:
+                answer = symbol_start + answer
 
         return answer
 
@@ -312,6 +326,7 @@ def get_agent_chat(
 
     # context runtime data
     ctx_runtime_data = ContextRuntimeData()
+    ctx_runtime_data.init(session_id, ai_agent)
 
     # instructions
     hook_instruction = HookInstruction()

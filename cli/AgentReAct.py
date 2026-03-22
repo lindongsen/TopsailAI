@@ -7,10 +7,7 @@
 
 import os
 import sys
-# DONOT DELETE THIS FOR FUNCTION 'input'
-import readline
 import argparse
-from dotenv import load_dotenv
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -23,10 +20,6 @@ from topsailai.utils.print_tool import (
     disable_flag_print_step,
 )
 from topsailai.ai_base.prompt_base import PromptBase
-from topsailai.ai_base.agent_types.react import (
-    Step4ReAct,
-)
-
 from topsailai.workspace.agent_shell import get_agent_chat
 
 
@@ -56,15 +49,17 @@ def run_once(user_input, to_print_step=None, user_prompt=""):
         g_flag_interactive = True
 
     agent = get_agent(user_prompt)
-    step_call = Step4ReAct(flag_interactive=g_flag_interactive)
-    final_answer = agent.run(step_call, user_input)
+    final_answer = agent.run(
+        message=user_input, times=1,
+        need_interactive=g_flag_interactive,
+    )
     return final_answer
 
 def continue_task(msg_file):
     """ continue a task """
     agent = get_agent()
-    agent.load_messages(msg_file)
-    final_answer = agent.run(Step4ReAct(), "")
+    agent.ai_agent.load_messages(msg_file)
+    final_answer = agent.run(message="", times=1)
     return final_answer
 
 def get_params():
@@ -104,7 +99,7 @@ def get_params():
 
     # get prompt content
     if params["prompt_file"]:
-        with open(params["prompt_file"], "r") as fd:
+        with open(params["prompt_file"], "r", encoding='utf-8') as fd:
             params["prompt_content"] = fd.read() or ""
 
     # set flags
@@ -116,8 +111,6 @@ def get_params():
 
 def main():
     """ return nothing """
-    load_dotenv()  # load environment variables from .env file if present
-
     params = get_params()
 
     # continue a task
@@ -143,18 +136,8 @@ def main():
 
     # interactive mode
     agent = get_agent(params["prompt_content"])
-    print("Welcome to the AI Agent Shell. Type 'exit' to quit.")
-    while True:
-        user_input = input("\n>>> Enter your task: ")
-        if user_input.lower() in ['exit', 'quit']:
-            break
-        if user_input.strip() == "":
-            continue
-        final_answer = agent.run(Step4ReAct(), user_input)
-        if final_answer:
-            print(f"\nFinal Answer: {final_answer}")
-        else:
-            print("Failed to get a final answer.")
+    agent.run()
+
     return
 
 if __name__ == "__main__":

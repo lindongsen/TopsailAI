@@ -19,84 +19,12 @@ sys.path.insert(0, project_root + "/src")
 
 os.chdir(project_root)
 
-from topsailai.ai_base.agent_types import get_agent_step_call
-from topsailai.utils import env_tool
-from topsailai.context import ctx_manager
 from topsailai.workspace.agent_shell import get_agent_chat
 
 
-def get_message():
-    """ return str for message """
-    message = ' '.join(sys.argv[1:])
-
-    # message from file
-    file_path = message
-    if sys.argv[1] == '-':
-        file_path = "/dev/stdin"
-    if file_path and os.path.exists(file_path):
-        with open(file_path) as fd:
-            message = fd.read()
-
-    message = message.strip()
-    assert message, "message is null"
-    return message
-
 def main():
     """ main entry """
-    message = get_message()
-
-    # session
-    session_id = os.getenv("SESSION_ID")
-    messages_from_session = None
-    if session_id:
-        print(f"session_id: {session_id}")
-
-        messages_from_session = ctx_manager.get_messages_by_session(session_id)
-        if not messages_from_session:
-            ctx_manager.create_session(session_id, task=message)
-
-    # system prompt
-    env_sys_prompt = os.getenv("SYSTEM_PROMPT")
-    sys_prompt_file = ""
-    sys_prompt_content = ""
-    if env_sys_prompt:
-        if os.path.exists(env_sys_prompt):
-            sys_prompt_file = env_sys_prompt
-        else:
-            sys_prompt_content = env_sys_prompt
-
-    if sys_prompt_file:
-        with open(sys_prompt_file, encoding="utf-8") as fd:
-            sys_prompt_content = fd.read().strip()
-
-    # agent
-    agent = get_agent_chat(sys_prompt_content, disabled_tools=["agent_tool"])
-
-    # llm
-    llm_model = agent.llm_model
-    llm_model.max_tokens = max(1600, llm_model.max_tokens)
-    llm_model.temperature = max(0.97, llm_model.temperature)
-
-    def hook_after_init_prompt(self):
-        if messages_from_session:
-            self.messages += messages_from_session
-
-    def hook_after_new_session(self):
-        ctx_manager.add_session_message(session_id, self.messages[-1])
-
-    agent.hooks_after_init_prompt.append(hook_after_init_prompt)
-    agent.hooks_after_new_session.append(hook_after_new_session)
-
-    answer = agent.run(get_agent_step_call(), message)
-    if answer:
-        ctx_manager.add_session_message(session_id, agent.messages[-1])
-
-    if not env_tool.is_debug_mode():
-        print()
-        print(">>> answer:")
-        print(answer)
-
-    print()
+    get_agent_chat(disabled_tools=["agent_tool"]).run(times=1)
 
 if __name__ == "__main__":
     main()

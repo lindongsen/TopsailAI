@@ -10,7 +10,6 @@
 import os
 import sys
 import argparse
-from dotenv import load_dotenv
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -60,7 +59,6 @@ def get_params():
     return params
 
 def main():
-    load_dotenv()
     params = get_params()
     result = agent_memory_as_story(
         msg_or_file=params["message"],
