@@ -254,6 +254,8 @@ class AgentBase(PromptBase):
         self.tools = tools
         # Name of the agent
         self.agent_name = agent_name
+        self.agent_type = ""
+
         assert self.system_prompt, "system_prompt is required"
 
         self.llm_model = LLMModel()  # LLM model instance for the agent

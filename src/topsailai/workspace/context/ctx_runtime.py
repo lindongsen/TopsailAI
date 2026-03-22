@@ -45,6 +45,18 @@ class ContextRuntimeData(object):
         self.reset_messages()
         return
 
+    def add_session_message(self, role:str, message:str) -> bool:
+        """ add a message to session """
+        if not self.session_id:
+            return False
+
+        msg_dict = {"role": role, "content": message}
+
+        self.messages.append(msg_dict)
+        return ctx_manager.add_session_message(
+            self.session_id, msg_dict,
+        )
+
     def set_messages(self, value:list):
         """ set new value """
         if not value:
@@ -151,14 +163,18 @@ class ContextRuntimeUtils(object):
 class ContextRuntimeAIAgent(ContextRuntimeUtils):
     """ reference to AIAgent """
 
-    def add_session_message(self):
+    def add_session_message(self, message:dict=None):
         """
         Add the latest agent message to the session context and local messages list.
         """
-        if self.session_id:
-            ctx_manager.add_session_message(self.session_id, self.ai_agent.messages[-1])
+        if not message:
+            message = self.ai_agent.messages[-1]
 
-        self.messages.append(self.ai_agent.messages[-1])
+        if self.session_id:
+            ctx_manager.add_session_message(self.session_id, message)
+
+        self.messages.append(message)
+
         return
 
     def add_runtime_messages(self):

@@ -5,16 +5,243 @@
   Purpose:
 '''
 
+import os
+
 from topsailai.utils import (
     env_tool,
+    file_tool,
 )
-from topsailai.ai_base.agent_types import get_agent_type
+from topsailai.ai_base.constants import (
+    ROLE_ASSISTANT,
+)
+from topsailai.ai_base.agent_types import (
+    get_agent_type,
+    get_agent_step_call,
+    exception as agent_exception,
+)
 from topsailai.ai_base.agent_base import AgentRun
-
+from topsailai.context import ctx_manager
 from topsailai.workspace.print_tool import ContentDots
+from topsailai.workspace.input_tool import (
+    get_message,
+    input_message,
+    input_yes,
+)
+from topsailai.workspace.context.ctx_runtime import (
+    ContextRuntimeData,
+    ContextRuntimeAIAgent,
+    ContextRuntimeInstructions,
+)
+from topsailai.workspace.hook_instruction import HookInstruction
 
 
-def get_agent_chat(system_prompt="", to_dump_messages=False, disabled_tools:list[str]=None, agent_type=None):
+DEFAULT_HEAD_TAIL_OFFSET = 7
+
+
+class AgentChat(object):
+    """ AI Agent controller, Human chats with Agent, Agent chats with LLM """
+    def __init__(
+            self,
+            ai_agent:AgentRun,
+            hook_instruction:HookInstruction,
+            ctx_rt_aiagent:ContextRuntimeAIAgent,
+            ctx_rt_instruction:ContextRuntimeInstructions,
+
+            session_head_tail_offset:int=DEFAULT_HEAD_TAIL_OFFSET, # cut messages
+        ):
+        self.ai_agent = ai_agent
+        self.hook_instruction = hook_instruction
+        self.ctx_rt_aiagent = ctx_rt_aiagent
+        self.ctx_rt_instruction = ctx_rt_instruction
+
+        self.first_message = None
+        self.last_message = None
+
+        ctx_runtime_data = ctx_rt_aiagent.ctx_runtime_data
+
+        ##########################################################################################
+        # Hook Agent
+        ##########################################################################################
+
+        def hook_after_init_prompt(_ai_agent):
+            """
+            Hook function called after agent prompt initialization.
+            Adds existing session messages to the agent's message history.
+
+            Args:
+                _ai_agent: The agent instance
+            """
+            # cut messages
+            if session_head_tail_offset and ctx_runtime_data.messages:
+                new_messages = ctx_manager.cut_messages(
+                    ctx_runtime_data.messages,
+                    session_head_tail_offset,
+                )
+                ctx_runtime_data.set_messages(new_messages)
+
+            # add messages to agent
+            ctx_rt_aiagent.add_runtime_messages()
+
+            return
+
+        def hook_after_new_session(_ai_agent):
+            """
+            Hook function called after a new session is created.
+            Adds the initial session message to the context.
+
+            Args:
+                _ai_agent: The agent instance
+            """
+            ctx_rt_aiagent.add_session_message()
+            return
+
+        # add hooks
+        ai_agent.hooks_after_init_prompt.append(hook_after_init_prompt)
+        ai_agent.hooks_after_new_session.append(hook_after_new_session)
+
+        return
+
+    @property
+    def agent_name(self):
+        return self.ai_agent.agent_name
+
+    @property
+    def messages(self):
+        return self.ai_agent.messages
+
+    @property
+    def ctx_runtime_data(self):
+        return self.ctx_rt_aiagent.ctx_runtime_data
+
+    def run(
+            self,
+            message:str=None,
+            times:int=0,
+
+            func_build_message=None,
+            func_print_pre_input_message=None,
+
+            need_save_answer:bool=True,
+            need_confirm_abort:bool=True,
+            only_save_final:bool=False,
+        ) -> str:
+        """ run agent """
+        if not func_print_pre_input_message:
+            # noop
+            func_print_pre_input_message = lambda *args, **kwargs: None
+
+        # first message
+        if not message:
+            if self.first_message:
+                message = self.first_message
+
+        if not message:
+            func_print_pre_input_message()
+            message = get_message(self.hook_instruction)
+
+        if not self.first_message:
+            self.first_message = message
+
+        # variables
+        answer = ""
+        curr_count = 0
+
+        # start
+        while True:
+            # reset answer to null string
+            answer = ""
+
+            curr_count += 1
+
+            # build message
+            if func_build_message:
+                message = func_build_message(
+                    message=message,
+                    curr_count=curr_count,
+                )
+
+            # run
+            try:
+                answer = self.ai_agent.run(
+                    get_agent_step_call(
+                        args=(True,),
+                        agent_type=self.ai_agent.agent_type,
+                    ),
+                    message,
+                )
+            except agent_exception.AgentEndProcess:
+                self.last_message = self.messages[-1]
+            except (KeyboardInterrupt, EOFError):
+                answer = "failed due to abort by Human"
+                if need_confirm_abort and not input_yes("Agent Session Continue [yes/no] "):
+                    break
+
+            if answer:
+                answer = self.hook_build_answer(answer)
+                if need_save_answer:
+                    if only_save_final:
+                        self.ctx_runtime_data.add_session_message(ROLE_ASSISTANT, answer)
+                    else:
+                        self.ctx_rt_aiagent.add_session_message()
+                self.last_message = answer
+
+            # check times
+            if times > 0 and curr_count >= times:
+                break
+
+            self.ctx_runtime_data.reset_messages()
+            self.ctx_rt_instruction.history()
+
+            if not env_tool.is_debug_mode():
+                print()
+                print(">>> answer:")
+                print(answer)
+
+            print()
+            print(f"The manager have scheduled tasks [{curr_count}] times")
+            print()
+
+            func_print_pre_input_message()
+            while True:
+                message = input_message(hook=self.hook_instruction)
+                message = message.strip()
+                if message:
+                    break
+
+        # hook answer
+        self.hook_for_answer(answer)
+
+        return answer
+
+    def hook_build_answer(self, answer:str) -> str:
+        """ build new answer """
+        if not answer:
+            return answer
+
+        # symbol
+        symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER")
+        if not symbol_start and self.agent_name:
+            symbol_start = f"From '{self.agent_name}':\n"
+        if symbol_start and symbol_start not in answer[:len(symbol_start)+17]:
+            answer = symbol_start + answer
+
+        return answer
+
+    def hook_for_answer(self, answer:str):
+        """ do sth. for answer """
+        if not answer:
+            return
+
+        # save answer to file
+        file_path_result = os.getenv("TOPSAILAI_SAVE_RESULT_TO_FILE")
+        if file_path_result:
+            with open(file_path_result, encoding='utf-8', mode='w') as fd:
+                fd.write(answer)
+
+        return
+
+
+def get_ai_agent(system_prompt="", to_dump_messages=False, disabled_tools:list[str]=None, agent_type=None):
     """ return a agent object of ReAct mode. """
     env_disabled_tools = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_CLI_AGENT_CHAT_DISABLED_TOOLS")
     if env_disabled_tools is None:
@@ -28,9 +255,10 @@ def get_agent_chat(system_prompt="", to_dump_messages=False, disabled_tools:list
     agent = AgentRun(
         agent_type.SYSTEM_PROMPT + "\n---\n" + system_prompt,
         tools=None,
-        agent_name=agent_type.AGENT_NAME,
+        agent_name=os.getenv("TOPSAILAI_AGENT_NAME") or agent_type.AGENT_NAME,
         excluded_tool_kits=env_disabled_tools if isinstance(env_disabled_tools, list) else disabled_tools,
     )
+    agent.agent_type = agent_type
 
     if env_tool.is_debug_mode():
         if env_tool.EnvReaderInstance.check_bool("LLM_RESPONSE_STREAM"):
@@ -41,3 +269,112 @@ def get_agent_chat(system_prompt="", to_dump_messages=False, disabled_tools:list
         agent.flag_dump_messages = True
 
     return agent
+
+def get_agent_chat(
+        system_prompt:str="",
+        to_dump_messages:bool=False,
+        disabled_tools:list[str]=None,
+        agent_type:str=None,
+
+        agent_name:str=None,
+        session_id:str=None,
+        message:str=None,
+
+        session_head_tail_offset:int=DEFAULT_HEAD_TAIL_OFFSET, # cut messages
+
+        need_print_session:bool=True,
+        need_input_message:bool=True,
+    ) -> AgentChat:
+    """ get an instance of AgentChat """
+    # system prompt
+    if not system_prompt:
+        env_sys_prompt = os.getenv("SYSTEM_PROMPT")
+        _, sys_prompt_content = file_tool.get_file_content_fuzzy(env_sys_prompt)
+        if sys_prompt_content:
+            system_prompt = sys_prompt_content
+
+    # ai agent
+    ai_agent = get_ai_agent(
+        system_prompt=system_prompt,
+        to_dump_messages=to_dump_messages,
+        disabled_tools=disabled_tools,
+        agent_type=agent_type,
+    )
+
+    if agent_name:
+        ai_agent.agent_name = agent_name
+
+
+    # llm model
+    llm_model = ai_agent.llm_model
+    llm_model.max_tokens = max(3000, llm_model.max_tokens)
+    llm_model.temperature = min(0.97, llm_model.temperature)
+
+    # context runtime data
+    ctx_runtime_data = ContextRuntimeData()
+
+    # instructions
+    hook_instruction = HookInstruction()
+
+    # message
+    if not message:
+        # from env
+        message = os.getenv("TOPSAILAI_TASK")
+        os.environ["TOPSAILAI_TASK"] = "" # only once
+        _, message_content = file_tool.get_file_content_fuzzy(message)
+        if message_content:
+            message = message_content
+
+    if not message:
+        message = ""
+
+    message_from_args = ""
+    if not need_input_message:
+        message_from_args = get_message(need_input=need_input_message)
+
+    if message_from_args:
+        message = message_from_args + "\n" + message
+
+    # session
+    if session_id is None:
+        session_id = os.getenv("SESSION_ID")
+
+    if session_id:
+        os.environ["SESSION_ID"] = session_id
+
+        # basic info
+        if need_print_session:
+            print(f"session_id: {session_id}")
+
+        ctx_runtime_data.init(session_id, ai_agent=ai_agent)
+        if not ctx_runtime_data.messages:
+            if not message:
+                message = get_message(hook_instruction, need_input=need_input_message)
+            ctx_manager.create_session(session_id, task=message[:100])
+
+    # context runtime xxx
+    ctx_rt_aiagent = ContextRuntimeAIAgent(ctx_runtime_data)
+    ctx_rt_instruction = ContextRuntimeInstructions(ctx_runtime_data)
+
+    ##########################################################################################
+    # Hook Instruction
+    ##########################################################################################
+    hook_instruction.load_instructions(ctx_rt_instruction.instructions)
+
+    # print sth.
+    if need_print_session and session_id:
+        ctx_rt_instruction.history()
+
+    # agent chat
+    agent_chat = AgentChat(
+        ai_agent=ai_agent,
+        hook_instruction=hook_instruction,
+        ctx_rt_aiagent=ctx_rt_aiagent,
+        ctx_rt_instruction=ctx_rt_instruction,
+
+        session_head_tail_offset=session_head_tail_offset,
+    )
+
+    agent_chat.first_message = message
+
+    return agent_chat

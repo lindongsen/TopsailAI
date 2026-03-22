@@ -22,25 +22,15 @@ sys.path.insert(0, project_root + "/src")
 
 os.chdir(project_root)
 
-from topsailai.logger import logger
-from topsailai.ai_base.agent_types import react
-from topsailai.ai_base.constants import (
-    ROLE_ASSISTANT,
-)
 from topsailai.ai_team.role import (
     get_member_name,
     get_member_prompt,
 )
 from topsailai.utils import (
     env_tool,
-    json_tool,
     file_tool,
 )
-from topsailai.context import ctx_manager
 from topsailai.workspace.agent_shell import get_agent_chat
-from topsailai.workspace.input_tool import (
-    get_message,
-)
 
 
 DEFAULT_HEAD_TAIL_OFFSET = 7
@@ -52,107 +42,61 @@ def extend_system_prompt():
         os.environ["SYSTEM_PROMPT_EXTRA_FILES"] = "work_mode/sop/work_agreement.md"
     return
 
-def main():
-    """ main entry """
-
-    # message
-    message = os.getenv("TOPSAILAI_TASK")
-    if message:
-        message = env_tool.EnvReaderInstance.try_read_file("message") or message
-
-    message1 = get_message(need_input=False)
-    if message1:
-        message = message1 + "\n" + message
-
-    # agent name
-    env_agent_name = get_member_name()
-
-    # session
-    session_id = os.getenv("SESSION_ID")
-    messages_from_session = None
-    if session_id:
-        print(f"session_id: {session_id}")
-
-        messages_from_session = ctx_manager.get_messages_by_session(session_id)
-        if not messages_from_session:
-            ctx_manager.create_session(session_id, task=message)
-
-    # offset
-    if messages_from_session:
-        head_tail_offset = env_tool.EnvReaderInstance.get(
-            "TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET",
-            formatter=int,
-        ) or DEFAULT_HEAD_TAIL_OFFSET
-        messages_from_session = ctx_manager.cut_messages(
-            messages_from_session,
-            head_tail_offset
-        )
-
+def get_system_prompt(agent_name:str) -> str:
+    """ get & extend system prompt  """
     # system prompt
     env_sys_prompt = os.getenv("SYSTEM_PROMPT")
     _, sys_prompt_content = file_tool.get_file_content_fuzzy(env_sys_prompt)
 
     # team role
-    sys_prompt_content += get_member_prompt(env_agent_name)
+    sys_prompt_content += get_member_prompt(agent_name)
 
     # extra system prompt
     extend_system_prompt()
 
-    # agent
-    agent = get_agent_chat(sys_prompt_content, disabled_tools=["agent_tool"], agent_type="react")
-    if env_agent_name:
-        # set agent name
-        agent.agent_name = env_agent_name
+    return sys_prompt_content
 
-        # team role
-        message = f"@{env_agent_name}: {message}"
+def hook_build_message(message:str, **kwargs) -> str:
+    """ return new message """
+    agent_name = get_member_name()
 
-    # llm
-    llm_model = agent.llm_model
-    llm_model.max_tokens = max(1500, llm_model.max_tokens)
-    llm_model.temperature = min(0.97, llm_model.temperature)
+    if agent_name not in message[:len(agent_name)+5]:
+        message = f"@{agent_name}: {message}"
 
-    def hook_after_init_prompt(self):
-        if messages_from_session:
-            self.messages += messages_from_session
-        logger.info("attach history messages [%s]: %s", len(messages_from_session), json_tool.safe_json_dump(messages_from_session, indent=2))
+    return message
 
-    def hook_after_new_session(self):
-        ctx_manager.add_session_message(session_id, self.messages[-1])
+def main():
+    """ main entry """
+    # agent name
+    agent_name = get_member_name()
 
-    agent.hooks_after_init_prompt.append(hook_after_init_prompt)
-    if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE"):
-        agent.hooks_after_new_session.append(hook_after_new_session)
+    # system prompt
+    system_prompt = get_system_prompt(agent_name)
 
-    try:
-        answer = agent.run(react.Step4ReAct(True), message)
-    except (EOFError, KeyboardInterrupt):
-        answer = "failed due to abort"
-    if answer:
-        symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER")
-        if not symbol_start and env_agent_name:
-            symbol_start = f"From '{env_agent_name}':\n"
-        if symbol_start and not answer.startswith(symbol_start.strip()):
-            answer = symbol_start + answer
+    # agent chat
+    agent_chat = get_agent_chat(
+        system_prompt=system_prompt,
+        disabled_tools=["agent_tool"],
+        agent_type="react",
 
-        if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE"):
-            ctx_manager.add_session_message(
-                session_id,
-                {"role": ROLE_ASSISTANT, "content": answer}
-            )
+        agent_name=agent_name,
+        session_head_tail_offset=env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET",
+            formatter=int,
+        ) or DEFAULT_HEAD_TAIL_OFFSET,
+        need_print_session=False,
+        need_input_message=False,
+    )
 
-        # save answer to file
-        file_path_result = os.getenv("TOPSAILAI_SAVE_RESULT_TO_FILE")
-        if file_path_result:
-            with open(file_path_result, encoding='utf-8', mode='w') as fd:
-                fd.write(answer)
+    answer = agent_chat.run(
+        times=1,
+        func_build_message=hook_build_message,
+        need_save_answer=env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE"),
+        need_confirm_abort=False,
+        only_save_final=True,
+    )
 
-    if not env_tool.is_debug_mode():
-        print()
-        print(">>> answer:")
-        print(answer)
-
-    print()
+    return answer
 
 if __name__ == "__main__":
     main()

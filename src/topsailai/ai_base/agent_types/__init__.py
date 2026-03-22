@@ -31,9 +31,9 @@ def get_agent_type(agent_type=None) -> _template:
     agent_type = env_tool.EnvReaderInstance.get("TOPSAILAI_AGENT_TYPE") or "default"
     return AGENT_TYPE_MAP.get(agent_type) or AGENT_TYPE_MAP["default"]
 
-def get_agent_step_call(args:tuple=None, kwargs:dict=None) -> StepCallBase:
+def get_agent_step_call(args:tuple=None, kwargs:dict=None, agent_type:str=None) -> StepCallBase:
     """  get agent type for tool_call """
-    agent_module = get_agent_type()
+    agent_module = get_agent_type(agent_type)
     if args is None:
         args = tuple()
     if not kwargs:
