@@ -12,7 +12,6 @@
 
 import sys
 import os
-from dotenv import load_dotenv
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -20,10 +19,7 @@ sys.path.insert(0, project_root + "/src")
 
 os.chdir(project_root)
 
-from topsailai.logger import logger
-from topsailai.ai_base.llm_base import LLMModel
-from topsailai.ai_base.llm_control.base_class import ContentStdout
-from topsailai.ai_base.prompt_base import PromptBase, ROLE_USER
+from topsailai.ai_base.prompt_base import ROLE_USER
 from topsailai.ai_team.role import (
     get_member_name,
     get_member_prompt,
@@ -31,11 +27,8 @@ from topsailai.ai_team.role import (
 from topsailai.utils import (
     env_tool,
     json_tool,
-    file_tool,
 )
-from topsailai.utils.thread_local_tool import set_thread_var, KEY_SESSION_ID
-
-from topsailai.context import ctx_manager
+from topsailai.workspace.llm_shell import get_llm_chat
 
 
 def format_messages(messages):
@@ -55,56 +48,28 @@ def format_messages(messages):
 
 def main():
     """ main entry """
-    load_dotenv()
-
-    # message = get_message()
-    message = ' '.join(sys.argv[1:]) if len(sys.argv) > 1 else ""
-    message = message.strip() or None
-
     # team
     team_member_name = get_member_name()
 
-    # session
-    session_id = os.getenv("SESSION_ID")
-    messages_from_session = None
-    if session_id:
-        if env_tool.is_debug_mode():
-            print(f"session_id: {session_id}")
-        set_thread_var(KEY_SESSION_ID, session_id)
-
-        messages_from_session = ctx_manager.get_messages_by_session(session_id)
-        if not messages_from_session:
-            ctx_manager.create_session(session_id, task=message)
-
-    # system prompt
-    env_sys_prompt = os.getenv("SYSTEM_PROMPT")
-    _, sys_prompt_content = file_tool.get_file_content_fuzzy(env_sys_prompt)
-    sys_prompt_content += get_member_prompt(team_member_name) + """
+    # member prompt
+    member_prompt = get_member_prompt(team_member_name) + """
 # Output Required
 Directly output the content without any formatting.
 """
 
-    llm_model = LLMModel()
-    llm_model.content_senders.append(ContentStdout())
-    llm_model.max_tokens = max(1500, llm_model.max_tokens)
-    llm_model.temperature = min(0.97, llm_model.temperature)
+    # llm chat
+    llm_chat = get_llm_chat(
+        more_prompt=member_prompt,
+        need_input_message=False,
+        need_print_session=env_tool.is_debug_mode(),
+        func_formatter_messages=format_messages,
+    )
 
-    # debug
-    # logger.info("XXXXXX: %s", sys_prompt_content)
-    prompt_ctl = PromptBase(sys_prompt_content)
-    if messages_from_session:
-        prompt_ctl.messages = format_messages(messages_from_session)
-        if message:
-            prompt_ctl.add_user_message(message)
-    else:
-        prompt_ctl.new_session(message or None)
-
-    answer = llm_model.chat(prompt_ctl.messages, for_raw=True, for_stream=True)
+    answer = llm_chat.chat()
     if answer:
         symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER") or (f"From '{team_member_name}':\n" if team_member_name else "")
         if symbol_start and not answer.startswith(symbol_start.strip()):
             answer = symbol_start + answer
-        prompt_ctl.add_assistant_message(answer)
 
         file_path_result = os.getenv("TOPSAILAI_SAVE_RESULT_TO_FILE")
         if file_path_result:

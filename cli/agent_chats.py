@@ -12,9 +12,6 @@
 
 import os
 import sys
-# DONOT DELETE THIS FOR FUNCTION 'input'
-import readline
-from dotenv import load_dotenv
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -44,8 +41,6 @@ from topsailai.tools.agent_tool import subprocess_agent_memory_as_story
 
 def main():
     """ main entry """
-    load_dotenv()
-
     message = get_message()
 
     # session

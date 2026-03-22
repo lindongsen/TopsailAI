@@ -12,7 +12,6 @@
 
 import sys
 import os
-from dotenv import load_dotenv
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -44,8 +43,6 @@ def get_message():
 
 def main():
     """ main entry """
-    load_dotenv()
-
     message = get_message()
 
     # session

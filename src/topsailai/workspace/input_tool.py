@@ -195,14 +195,14 @@ def get_message(hook: HookInstruction = None, need_input=True) -> str:
         >>> print(message)
         'From stdin'
     """
-    message = ' '.join(sys.argv[1:])
+    message = ' '.join(sys.argv[1:]) if len(sys.argv) > 1 else ""
 
     # message from file
     file_path = message
     if len(sys.argv) > 1 and sys.argv[1] == '-':
         file_path = "/dev/stdin"
     if file_path and os.path.exists(file_path):
-        with open(file_path) as fd:
+        with open(file_path, encoding='utf-8') as fd:
             message = fd.read()
 
     message = message.strip()

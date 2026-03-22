@@ -10,9 +10,8 @@
     @SYSTEM_PROMPT: file or content;
 '''
 
-import sys
 import os
-from dotenv import load_dotenv
+import sys
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -20,80 +19,17 @@ sys.path.insert(0, project_root + "/src")
 
 os.chdir(project_root)
 
-from topsailai.logger import logger
-from topsailai.ai_base.llm_base import LLMModel
-from topsailai.ai_base.llm_control.base_class import ContentStdout
-from topsailai.ai_base.prompt_base import PromptBase
 from topsailai.utils import env_tool
-from topsailai.utils.thread_local_tool import set_thread_var, KEY_SESSION_ID
+from topsailai.workspace.llm_shell import get_llm_chat
 
-from topsailai.context import ctx_manager
-from topsailai.context.session_manager.__base import SessionData
-
-def get_message():
-    """ return str for message """
-    message = ' '.join(sys.argv[1:])
-
-    # message from file
-    file_path = message
-    if sys.argv[1] == '-':
-        file_path = "/dev/stdin"
-    if file_path and os.path.exists(file_path):
-        with open(file_path) as fd:
-            message = fd.read()
-
-    message = message.strip()
-    assert message, "message is null"
-    return message
 
 def main():
     """ main entry """
-    load_dotenv()
-
-    message = get_message()
-
-    # session
-    session_id = os.getenv("SESSION_ID")
-    messages_from_session = None
-    if session_id:
-        print(f"session_id: {session_id}")
-        set_thread_var(KEY_SESSION_ID, session_id)
-
-        messages_from_session = ctx_manager.get_messages_by_session(session_id)
-        if not messages_from_session:
-            ctx_manager.create_session(session_id, task=message)
-
-    # system prompt
-    env_sys_prompt = os.getenv("SYSTEM_PROMPT")
-    sys_prompt_file = ""
-    sys_prompt_content = ""
-    if env_sys_prompt:
-        if os.path.exists(env_sys_prompt):
-            sys_prompt_file = env_sys_prompt
-        else:
-            sys_prompt_content = env_sys_prompt
-
-    if sys_prompt_file:
-        with open(sys_prompt_file, encoding="utf-8") as fd:
-            sys_prompt_content = fd.read().strip()
-
-    llm_model = LLMModel()
-    llm_model.content_senders.append(ContentStdout())
-    llm_model.max_tokens = max(1600, llm_model.max_tokens)
-    llm_model.temperature = 0.97
-
-    prompt_ctl = PromptBase(sys_prompt_content or "You are a helpful assistant.")
-    if messages_from_session:
-        prompt_ctl.messages = messages_from_session
-        prompt_ctl.add_user_message(message)
-    else:
-        prompt_ctl.new_session(message)
-
+    llm_chat = get_llm_chat(need_input_message=False)
     if not env_tool.is_debug_mode():
-        print(f">>> message:\n{message}")
+        print(f">>> message:\n{llm_chat.first_message}")
         print(">>> answer:")
-    answer = llm_model.chat(prompt_ctl.messages, for_raw=True, for_stream=True)
-    prompt_ctl.add_assistant_message(answer)
+    llm_chat.chat()
     print()
 
 if __name__ == "__main__":

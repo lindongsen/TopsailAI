@@ -5,11 +5,18 @@
   Purpose:
 '''
 
+from topsailai.logger import logger
 from topsailai.ai_base.agent_base import AgentBase
 from topsailai.tools.agent_tool import (
     subprocess_agent_memory_as_story,
 )
+from topsailai.tools import (
+    story_tool,
+)
 from topsailai.context import ctx_manager
+from topsailai.utils import (
+    json_tool,
+)
 from topsailai.workspace.input_tool import (
     SPLIT_LINE,
 )
@@ -17,6 +24,7 @@ from topsailai.workspace.print_tool import (
     print_context_messages,
     print_raw_messages,
 )
+from topsailai.workspace.llm_shell import get_llm_chat
 
 
 class ContextRuntimeData(object):
@@ -51,6 +59,76 @@ class ContextRuntimeData(object):
             messages_from_session = ctx_manager.get_messages_by_session(self.session_id) or []
             self.set_messages(messages_from_session)
         return
+
+    def summarize_messages(
+            self,
+            messages:list|str=None,
+            head_offset_to_keep:int=1,
+            need_interactive:bool=False,
+        ) -> str|None:
+        """ Summarize messages to one text """
+        if not messages:
+            if self.session_id:
+                raw_messages = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
+                messages = [raw_msg.message for raw_msg in raw_messages]
+                messages = "\n".join(messages)
+            else:
+                messages = self.messages
+
+        if not messages:
+            return None
+
+        one_msg = messages if isinstance(messages, str) else json_tool.json_dump(messages)
+        enhanced_prompt = "\n---\nYou MUST focus on the Human's intention\n---\n\n"
+
+        llm_chat = get_llm_chat(
+            message=enhanced_prompt+one_msg,
+            session_id="",
+            system_prompt=story_tool.PROMPT_SUMMARY,
+
+            need_stdout=False,
+            need_input_message=False,
+            need_print_session=False,
+        )
+        answer = llm_chat.chat()
+        if answer:
+            if need_interactive:
+                try:
+                    print(SPLIT_LINE)
+                    while True:
+                        yn = input(">>> Is this answer acceptable? [yes/no] ").lower().strip()
+                        if not yn:
+                            continue
+                        if yn != "yes":
+                            return answer
+                        break
+                except Exception:
+                    return answer
+
+            if head_offset_to_keep < 0:
+                head_offset_to_keep = 0
+
+            if self.session_id:
+                # delete history messages
+                raw_messages_from_session = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
+                if raw_messages_from_session:
+                    for raw_msg in raw_messages_from_session[head_offset_to_keep:]:
+                        ctx_manager.del_session_messages(self.session_id, [raw_msg.msg_id])
+                else:
+                    logger.critical("BUG: how did it happend? null of messages from session: [%s]", self.session_id)
+
+                # add answer to session
+                ctx_manager.add_session_message(self.session_id, llm_chat.prompt_ctl.messages[-1])
+
+                # reset messages
+                self.reset_messages()
+            else:
+                self.set_messages(
+                    self.messages[:head_offset_to_keep] + [answer]
+                )
+
+        return answer
+
 
 class ContextRuntimeUtils(object):
     """ common utils """
@@ -101,6 +179,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             history=self.history,
             history2=self.history2,
             delete=self.delete,
+            summarize=self.summarize,
         )
 
     def clear(self):
@@ -191,5 +270,18 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         index_msg_id = index_msg.msg_id
         ctx_manager.del_session_messages(session_id, [index_msg_id])
         self.ctx_runtime_data.reset_messages()
+        self.history()
+        return
+
+    def summarize(self, head_offset_to_keep:int=1):
+        """Summarize context messages
+
+        Args:
+            head_offset_to_keep (int): default is 1
+        """
+        self.ctx_runtime_data.summarize_messages(
+            head_offset_to_keep=head_offset_to_keep,
+            need_interactive=True,
+        )
         self.history()
         return

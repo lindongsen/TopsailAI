@@ -11,9 +11,12 @@ import threading
 from topsailai.logger import logger
 from topsailai.utils.json_tool import json_dump, json_load
 from topsailai.utils.format_tool import to_list
-from topsailai.utils import thread_local_tool
 from topsailai.utils.cmd_tool import exec_cmd_in_new_process
 from topsailai.utils.env_tool import EnvReaderInstance
+from topsailai.utils import (
+    thread_local_tool,
+    file_tool,
+)
 from topsailai.prompt_hub import prompt_tool
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE
 
@@ -46,8 +49,11 @@ def _agent_writer(
         msg_or_file:str,
         model_name:str=None,
         workspace:str=DEFAULT_WORKSPACE,
+
+        # internal only. DONOT WRITING TO DOC
         tools:list=None,
         more_prompt:str="\nYou are a professional writer.\n",
+        system_prompt:str="",
     ):
     """ A professional Assistant for writer.
     The writing assistant can read a large amount of text content.
@@ -79,8 +85,14 @@ def _agent_writer(
     from topsailai.ai_base.agent_base import AgentRun
     from topsailai.ai_base.agent_types.react import SYSTEM_PROMPT, Step4ReAct
 
+    _, system_prompt_content = file_tool.get_file_content_fuzzy(system_prompt)
+    _, more_prompt_content = file_tool.get_file_content_fuzzy(more_prompt)
+    if not system_prompt_content:
+        system_prompt_content = SYSTEM_PROMPT
+    system_prompt_content += more_prompt_content
+
     agent = AgentRun(
-        system_prompt=SYSTEM_PROMPT + more_prompt,
+        system_prompt=system_prompt_content,
         tools=tools,
         agent_name="AgentWriter",
         excluded_tool_kits=["agent_tool"],
@@ -344,14 +356,7 @@ def agent_memory_as_story(
 
     from . import story_tool, format_tools_map
 
-    prompt = (
-        "\n"
-        "You are a professional writer.\n"
-        "Your Core Goal: Summarize the messages and generate appropriate a title and content.\n"
-        "Use story_tool to save content.\n"
-        "[Attention] story_id is title, also is filename, max length is 250, Cannot contain any special characters other than '_-'\n"
-    )
-    prompt += EnvReaderInstance.story_prompt_content
+    prompt = story_tool.PROMPT_SUMMARY_AS_STORY
 
     return _agent_writer(
         msg_or_file=msg_or_file,

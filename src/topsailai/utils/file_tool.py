@@ -206,11 +206,11 @@ def get_file_content_fuzzy(f:str) -> tuple[str, str]:
     Returns:
         tuple[str, str]: (file_path, file_content)
     """
+    if not f:
+        return ("", "")
+
     file_path = ""
     file_content = ""
-
-    if f is None:
-        return ("", "")
 
     if os.path.exists(f):
         file_path = f

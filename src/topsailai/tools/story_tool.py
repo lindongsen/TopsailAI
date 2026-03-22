@@ -10,12 +10,23 @@ import os
 from topsailai.utils import (
     time_tool,
     file_tool,
+    env_tool,
 )
 from topsailai.workspace import (
     lock_tool,
 )
 
 KEY_STORY = "story"
+
+PROMPT_SUMMARY = """
+You are a professional writer.
+Your Core Goal: Summarize the messages and generate appropriate a title and content in Markdown format.
+"""
+
+PROMPT_SUMMARY_AS_STORY = PROMPT_SUMMARY + """
+Use story_tool to save content.
+[Attention] story_id is title, also is filename, max length is 250, Cannot contain any special characters other than '_-'
+""" + env_tool.EnvReaderInstance.story_prompt_content
 
 
 class StoryBase(object):
