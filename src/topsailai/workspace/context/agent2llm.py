@@ -38,9 +38,13 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         if not indexes:
             return []
 
+        first_position = self.ai_agent.get_work_memory_first_position()
+        if first_position is None:
+            return []
+
         new_messages = []
         deleted_list = []
-        for i, msg in enumerate(self.ai_agent.messages):
+        for i, msg in enumerate(self.ai_agent.messages[first_position:]):
             new_messages.append(msg)
             msg_dict = json_tool.json_load(msg)
             if msg_dict["role"] == ROLE_SYSTEM:

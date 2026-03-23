@@ -22,7 +22,7 @@ from topsailai.workspace.plugin_instruction import (
 
 
 # Characters that trigger hook processing when found at the beginning of a message
-TRIGGER_CHARS = "/@"
+TRIGGER_CHARS = "/"
 
 SPLIT_LINE = "-" * 73
 
