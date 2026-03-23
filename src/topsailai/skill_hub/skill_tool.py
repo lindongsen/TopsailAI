@@ -34,14 +34,27 @@ PROMPT_SKILL = prompt_tool.read_prompt("skills/skill.md")
 
 
 class SkillInfo(object):
+    """Container for skill metadata extracted from a skill folder.
+
+    This class holds information about a skill including its folder path,
+    name, and description. It also provides a formatted markdown representation
+    for use in prompts.
+    """
+
     def __init__(self):
+        """Initialize a new SkillInfo instance with empty fields."""
         self.folder = ""
         self.name = ""
         self.description = ""
 
     @property
     def markdown(self):
-        """ return prompt """
+        """Generate a markdown formatted string for this skill.
+
+        Returns:
+            str: A formatted markdown string containing the skill name,
+                 folder path, and description, suitable for inclusion in prompts.
+        """
         return f"""
 ## {self.name}. folder=`{self.folder}`
 {self.description}
