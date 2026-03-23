@@ -6,16 +6,11 @@
 '''
 
 import os
-import traceback
 
 from topsailai.logger.log_chat import logger
-from topsailai.tools import (
-    get_tool_prompt,
-)
 from topsailai.ai_base.constants import (
     ROLE_USER, ROLE_ASSISTANT, ROLE_SYSTEM, ROLE_TOOL,
 )
-from topsailai.prompt_hub import prompt_tool
 from topsailai.utils.print_tool import (
     print_step,
     print_error,
@@ -26,7 +21,6 @@ from topsailai.utils.json_tool import (
 )
 from topsailai.utils import (
     time_tool,
-    env_tool,
 )
 from topsailai.utils.thread_local_tool import (
     get_agent_name,
@@ -57,10 +51,10 @@ class ThresholdContextHistory(object):
         """
         Initialize threshold context history with environment variable overrides
 
-        Reads MAX_TOKENS and CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH from environment
+        Reads CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS and CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH from environment
         to override default values if present.
         """
-        self.token_max = int(os.getenv("MAX_TOKENS", self.token_max))
+        self.token_max = int(os.getenv("CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS", self.token_max))
         self.slim_len = int(os.getenv("CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH", self.slim_len))
 
     def exceed_ratio(self, token_count):
@@ -158,7 +152,7 @@ class PromptBase(object):
             try:
                 hook(self)
             except Exception as e:
-                logger.exception("failed to call hook: %s", e)
+                logger.exception("failed to call hook [%s]: %s", hook, e)
         return
 
     def call_hooks_ctx_history(self):
@@ -182,16 +176,16 @@ class PromptBase(object):
 
                 try:
                     hook.add_session_message(self.messages[-1])
-                except Exception:
-                    logger.error(f"failed to call hook add_session_message: {traceback.format_exc()}")
+                except Exception as e:
+                    logger.exception("failed to call hook add_session_message: %s", e)
 
         # check threshold, link messages to reduce content
         if self.threshold_ctx_history.is_exceeded(self.messages):
             for hook in self.hooks_ctx_history:
                 try:
                     hook.link_messages(self.messages)
-                except Exception:
-                    logger.error(f"failed to call hook link_messages: {traceback.format_exc()}")
+                except Exception as e:
+                    logger.exception("failed to call hook link_messages: %s", e)
         return
 
     def append_message(self, msg:dict, to_suppress_log=False):
@@ -222,8 +216,8 @@ class PromptBase(object):
         for hook in self.hooks_after_init_prompt:
             try:
                 hook(self)
-            except Exception:
-                logger.error(f"failed to call hook: {traceback.format_exc()}")
+            except Exception as e:
+                logger.exception("failed to call hook [%s]: %s", hook, e)
         return
 
     def new_session(self, user_message, need_print_message=True):
@@ -238,8 +232,8 @@ class PromptBase(object):
         for hook in self.hooks_after_new_session:
             try:
                 hook(self)
-            except Exception:
-                logger.error(f"failed to call hook: {traceback.format_exc()}")
+            except Exception as e:
+                logger.exception("failed to call hook [%s]: %s", hook, e)
         return
 
     def hook_format_content(self, content):

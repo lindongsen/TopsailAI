@@ -3,6 +3,8 @@
   Email: lin_dongsen@126.com
   Created: 2026-03-21
   Purpose:
+    UserSession -> ctx_runtime_data.messages -> user chats to agent
+    AgentSession -> ctx_runtime_aiagent.messages -> agent chats to LLM
 '''
 
 import random
@@ -38,6 +40,17 @@ class ContextRuntimeData(object):
         self.session_id = ""
         self.messages = []
         self.ai_agent:AgentBase = None
+
+    @property
+    def last_user_message(self):
+        """ get last of user message from self.messages of current session """
+        last_user_msg = None
+        for msg in reversed(self.messages):
+            msg_dict = json_tool.json_load(msg)
+            if msg_dict["role"] == ROLE_USER:
+                last_user_msg = msg
+                break
+        return last_user_msg
 
     def init(
             self,
@@ -110,10 +123,30 @@ class ContextRuntimeData(object):
 
         return (llm_chat, answer)
 
+    def __get_head_offset_to_keep_in_summary(
+            self,
+            head_offset_to_keep:int=None,
+        ) -> int:
+        """
+        Args:
+            head_offset_to_keep: if None, get it from env.
+        """
+        if head_offset_to_keep is None:
+            head_offset_to_keep = env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP",
+                default=0,
+                formatter=int
+            ) or 0
+
+        if head_offset_to_keep < 0:
+            head_offset_to_keep = 0
+
+        return head_offset_to_keep
+
     def summarize_messages_for_processed(
             self,
             messages:list=None,
-            head_offset_to_keep:int=1,
+            head_offset_to_keep:int=None,
             need_interactive:bool=False,
         ) -> str|None:
         """ Summarize messages to one text """
@@ -144,8 +177,8 @@ class ContextRuntimeData(object):
             except Exception:
                 return answer
 
-        if head_offset_to_keep < 0:
-            head_offset_to_keep = 0
+        # head_offset_to_keep
+        head_offset_to_keep = self.__get_head_offset_to_keep_in_summary(head_offset_to_keep)
 
         if self.session_id:
             raw_messages_from_session = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
@@ -174,17 +207,13 @@ class ContextRuntimeData(object):
             self.reset_messages()
         else:
             # keep last user message
-            last_user_msg = None
-            for msg in reversed(messages):
-                msg_dict = json_tool.json_load(msg)
-                if msg_dict["role"] == ROLE_USER:
-                    last_user_msg = msg
-                    break
+            last_user_msg = self.last_user_message
 
+            # new messages
             new_messages = messages[:head_offset_to_keep]
+            new_messages.append(llm_chat.prompt_ctl.messages[-1]) # add answer(summary) to messages
             if last_user_msg:
                 new_messages.append(last_user_msg)
-            new_messages.append(llm_chat.prompt_ctl.messages[-1])
 
             self.set_messages(new_messages)
 
@@ -193,7 +222,7 @@ class ContextRuntimeData(object):
     def summarize_messages_for_processing(
             self,
             messages:list|str=None,
-            head_offset_to_keep:int=1,
+            head_offset_to_keep:int=None,
         ) -> str|None:
         """ Summarize messages to one text """
         index = self.ai_agent.get_work_memory_first_position()
@@ -213,21 +242,17 @@ class ContextRuntimeData(object):
         if not answer:
             return None
 
-        if head_offset_to_keep < 0:
-            head_offset_to_keep = 0
+        # head_offset_to_keep
+        head_offset_to_keep = self.__get_head_offset_to_keep_in_summary(head_offset_to_keep)
 
         # keep last user message
-        last_user_msg = None
-        for msg in reversed(messages):
-            msg_dict = json_tool.json_load(msg)
-            if msg_dict["role"] == ROLE_USER:
-                last_user_msg = msg
-                break
+        last_user_msg = self.last_user_message
 
+        # new messages
         new_messages = messages[:head_offset_to_keep]
+        new_messages.append(llm_chat.prompt_ctl.messages[-1]) # add answer(summary) to messages
         if last_user_msg:
             new_messages.append(last_user_msg)
-        new_messages.append(llm_chat.prompt_ctl.messages[-1])
         self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
 
         print_step(f"!!! New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]", need_format=False)
@@ -308,6 +333,8 @@ class ContextRuntimeAIAgent(ContextRuntimeUtils):
         if not message:
             if self.ai_agent.messages:
                 message = self.ai_agent.messages[-1]
+
+        assert message
 
         if self.session_id:
             ctx_manager.add_session_message(self.session_id, message)

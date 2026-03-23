@@ -10,6 +10,7 @@
 
 import os
 
+from topsailai.logger import logger
 from topsailai.utils import (
     env_tool,
     file_tool,
@@ -60,6 +61,9 @@ class AgentChat(object):
 
         self.first_message = None
         self.last_message = None
+
+        # hook(self)
+        self.hooks_pre_run = []
 
         ctx_runtime_data = ctx_rt_aiagent.ctx_runtime_data
 
@@ -139,6 +143,16 @@ class AgentChat(object):
     def ctx_runtime_data(self):
         return self.ctx_rt_aiagent.ctx_runtime_data
 
+    def call_hooks_pre_run(self):
+        """ call hooks for pre-run """
+        for hook in self.hooks_pre_run:
+            try:
+                hook(self)
+            except Exception as e:
+                logger.exception("call hook_pre_run failed [%s]: %s", hook, e)
+                # continue
+        return
+
     def run(
             self,
             message:str=None,
@@ -156,6 +170,9 @@ class AgentChat(object):
         """ run agent.
         :message: if it is none, get message; if it is null string, continue.
         """
+
+        self.call_hooks_pre_run()
+
         if not func_print_pre_input_message:
             # noop
             func_print_pre_input_message = lambda *args, **kwargs: None
