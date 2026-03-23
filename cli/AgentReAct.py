@@ -1,9 +1,36 @@
 #!/usr/bin/env python
 # encoding: utf-8
+"""
+AgentReAct CLI - AI Agent running in ReAct (Reasoning + Acting) framework
 
-# this is a ai agent, it running in ReAct framework.
-# it can think, act, observe and give final answer.
-# it can use tool exec_cmd to execute command line in local system.
+This module provides an AI agent that operates using the ReAct framework,
+which enables the agent to think, act, observe, and provide final answers.
+The agent can use various tools including command execution to perform tasks.
+
+The ReAct (Reasoning + Acting) approach combines:
+- Reasoning: The agent thinks about the current state and decides on actions
+- Acting: The agent executes actions (e.g., running commands, using tools)
+- Observing: The agent observes the results of actions
+- Final Answer: The agent provides a final response after reasoning
+
+Usage:
+    AgentReAct.py [options]
+
+Options:
+    -p, --prompt_file FILE    Give a prompt file to extend system prompt
+    -t, --task TASK           Give a task for run-once mode
+    --dump_msg                Dump all messages to a file
+    --msg_file FILE           Use the msg_file to continue a task
+
+Examples:
+    AgentReAct.py -t "List all files in current directory"
+    AgentReAct.py -p custom_prompt.txt
+    AgentReAct.py --msg_file previous_session.json
+    AgentReAct.py --dump_msg -t "Your task here"
+
+Author: DawsonLin
+Email: lin_dongsen@126.com
+"""
 
 import os
 import sys
@@ -28,6 +55,29 @@ g_flag_interactive = True
 
 
 def get_agent(system_prompt="", to_dump_messages=False, disabled_tools:list[str]=None):
+    """
+    Create and return an agent chat instance configured for ReAct mode.
+    
+    This function creates an agent that uses the ReAct (Reasoning + Acting)
+    framework for task execution. The agent can think, act, observe, and
+    provide final answers.
+    
+    Args:
+        system_prompt (str, optional): System prompt to configure the agent's
+                                       behavior and capabilities. Defaults to "".
+        to_dump_messages (bool, optional): Whether to dump all messages to a
+                                           file for debugging. Defaults to False.
+        disabled_tools (list[str], optional): List of tool names to disable.
+                                              Defaults to None.
+    
+    Returns:
+        AgentChat: An agent chat instance configured with ReAct agent type.
+        
+    Example:
+        >>> agent = get_agent(system_prompt="You are a helpful assistant")
+        >>> type(agent).__name__
+        'AgentChat'
+    """
     return get_agent_chat(
         system_prompt=system_prompt,
         to_dump_messages=to_dump_messages,
@@ -35,8 +85,36 @@ def get_agent(system_prompt="", to_dump_messages=False, disabled_tools:list[str]
         agent_type="react"
     )
 
+
 def run_once(user_input, to_print_step=None, user_prompt=""):
-    """ return final answer, or None if error """
+    """
+    Execute a single task in non-interactive mode using the ReAct agent.
+    
+    This function runs the agent once with the given user input and returns
+    the final answer. It's designed for batch processing or single-task execution.
+    
+    Args:
+        user_input (str): The task or question to be processed by the agent.
+                          This is a required parameter.
+        to_print_step (bool, optional): Whether to enable step-by-step printing
+                                        of the agent's reasoning process.
+                                        - True: Enable detailed step printing
+                                        - False: Disable step printing
+                                        - None: Keep current setting
+        user_prompt (str, optional): Additional user prompt to extend the system
+                                     prompt. Defaults to "".
+    
+    Returns:
+        str or None: The final answer from the agent, or None if an error occurred.
+        
+    Raises:
+        AssertionError: If user_input is empty or None
+        
+    Example:
+        >>> result = run_once("What is the current directory?")
+        >>> print(result)
+        The current working directory is /home/user
+    """
     assert user_input, "user_input is required"
     if to_print_step:
         enable_flag_print_step()
@@ -55,18 +133,58 @@ def run_once(user_input, to_print_step=None, user_prompt=""):
     )
     return final_answer
 
+
 def continue_task(msg_file):
-    """ continue a task """
+    """
+    Continue a previously saved task from a message file.
+    
+    This function loads a previously saved session (messages) from a file
+    and continues the task from where it left off.
+    
+    Args:
+        msg_file (str): Path to the file containing saved messages from a
+                        previous session.
+    
+    Returns:
+        str or None: The final answer from continuing the task, or None if failed.
+        
+    Example:
+        >>> result = continue_task("/tmp/previous_session.json")
+        >>> print(result)
+        Continuing from previous task...
+    """
     agent = get_agent()
     agent.ai_agent.load_messages(msg_file)
     final_answer = agent.run(message="", times=1)
     return final_answer
 
+
 def get_params():
-    ''' return dict for parameters '''
+    """
+    Parse command-line arguments and return parameters as a dictionary.
+    
+    This function uses argparse to parse the following arguments:
+    - prompt_file: Optional path to a file containing additional system prompt
+    - task: Optional task to execute in run-once mode
+    - flag_dump_messages: Whether to dump all messages to a file
+    - msg_file: Optional path to a file containing previous session messages
+    
+    Returns:
+        dict: Dictionary containing parsed parameters:
+              - prompt_file (str or None): Path to prompt file
+              - prompt_content (str): Content of the prompt file
+              - task (str or None): Task to execute
+              - flag_dump_messages (bool): Whether to dump messages
+              - msg_file (str or None): Path to message file for continuing task
+              
+    Example:
+        >>> params = get_params()
+        >>> print(params)
+        {'prompt_file': None, 'prompt_content': '', 'task': None, ...}
+    """
     parser = argparse.ArgumentParser(
         usage="",
-        description=""
+        description="AI Agent running in ReAct framework"
     )
     parser.add_argument(
         "-p", "--prompt_file", required=False, dest="prompt_file", type=str,
@@ -110,7 +228,32 @@ def get_params():
 
 
 def main():
-    """ return nothing """
+    """
+    Main entry point for the AgentReAct CLI.
+    
+    This function supports three modes of operation:
+    1. Continue mode: Load a previous session from msg_file and continue the task
+    2. Run-once mode: Execute a single task provided via -t/--task argument
+    3. Interactive mode: Start an interactive chat session (default)
+    
+    The function parses command-line arguments and executes the appropriate
+    mode based on the provided arguments.
+    
+    Returns:
+        None
+        
+    Mode Details:
+        - Continue mode: If --msg_file is provided, loads previous session
+                        and continues the task
+        - Run-once mode: If -t/--task is provided, executes the task once
+                        and prints the final answer
+        - Interactive mode: Default mode, starts an interactive chat session
+        
+    Example:
+        $ python AgentReAct.py -t "List files"
+        >>> Final Answer:
+        ['file1.txt', 'file2.txt', ...]
+    """
     params = get_params()
 
     # continue a task
@@ -139,6 +282,7 @@ def main():
     agent.run()
 
     return
+
 
 if __name__ == "__main__":
     main()

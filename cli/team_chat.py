@@ -1,14 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-'''
-  Author: DawsonLin
-  Email: lin_dongsen@126.com
-  Created: 2025-10-19
-  Purpose:
-  Env:
-    @SESSION_ID: string;
-    @SYSTEM_PROMPT: file or content;
-'''
+"""
+Team Chat CLI - Chat with AI team members using LLM
+
+This module provides a command-line interface for team chat functionality,
+allowing users to interact with AI team members through an LLM-based chat system.
+
+Author: DawsonLin
+Email: lin_dongsen@126.com
+Created: 2025-10-19
+
+Environment Variables:
+    SESSION_ID: Optional session identifier for maintaining conversation history
+    SYSTEM_PROMPT: Optional file path or content for system prompt
+"""
 
 import sys
 import os
@@ -32,6 +37,23 @@ from topsailai.workspace.llm_shell import get_llm_chat
 
 
 def format_messages(messages):
+    """
+    Format messages for processing by extracting raw text from JSON content.
+    
+    This function processes messages in the conversation history, extracting
+    the 'raw_text' field from JSON-formatted content when available.
+    
+    Args:
+        messages (list): List of message dictionaries with 'role' and 'content' fields.
+        
+    Returns:
+        list: Processed messages with raw text extracted from JSON content.
+        
+    Example:
+        >>> msgs = [{"role": "user", "content": '{"raw_text": "Hello"}'}]
+        >>> format_messages(msgs)
+        [{"role": "user", "content": "Hello"}]
+    """
     for i, msg in enumerate(messages):
         content  = msg["content"]
         content_obj = None
@@ -46,8 +68,30 @@ def format_messages(messages):
                 msg["content"] = content_obj["raw_text"]
     return messages
 
+
 def main():
-    """ main entry """
+    """
+    Main entry point for team chat functionality.
+    
+    Initializes an LLM-based chat session with a team member, processes
+    the conversation, and optionally saves the result to a file.
+    
+    The function:
+    1. Gets the current team member name
+    2. Creates a member prompt with output requirements
+    3. Initializes the LLM chat with appropriate settings
+    4. Processes the chat response and optionally saves it
+    
+    Environment Variables Used:
+        TOPSAILAI_SYMBOL_STARTSWITH_ANSWER: Optional prefix for answer output
+        TOPSAILAI_SAVE_RESULT_TO_FILE: Optional file path to save the result
+        
+    Returns:
+        None
+        
+    Raises:
+        Exception: Any exceptions from chat processing are handled internally
+    """
     # team
     team_member_name = get_member_name()
 
@@ -77,6 +121,7 @@ Directly output the content without any formatting.
                 fd.write(answer)
 
     return
+
 
 if __name__ == "__main__":
     main()

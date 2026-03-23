@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Clean old messages from chat history
+Clean Messages CLI - Clean old messages from chat history
+
+This module provides command-line functionality to clean up old messages
+from the chat history database based on a time threshold. Messages older
+than the specified number of seconds will be deleted.
+
+This is useful for:
+- Freeing up database storage space
+- Removing outdated conversation history
+- Maintaining privacy by deleting old messages
 
 Usage:
     ai_clean_messages.py [before_seconds] [database_connection_string]
@@ -17,6 +26,9 @@ Examples:
     ai_clean_messages.py
     ai_clean_messages.py 86400
     ai_clean_messages.py 604800 sqlite:///custom.db
+
+Author: DawsonLin
+Email: lin_dongsen@126.com
 """
 
 import sys
@@ -33,6 +45,32 @@ from topsailai.context.ctx_manager import get_session_manager
 
 
 def main():
+    """
+    Main entry point for cleaning old messages.
+    
+    This function:
+    1. Parses command-line arguments for time threshold and database connection
+    2. Creates a session manager with the specified database connection
+    3. Deletes all messages older than the specified number of seconds
+    4. Displays the number of deleted messages and cutoff time
+    
+    Default Behavior:
+        - If no before_seconds provided, defaults to 30 days (2592000 seconds)
+        - If no database_connection_string provided, uses in-memory SQLite
+    
+    Returns:
+        None
+        
+    Raises:
+        SystemExit: Exits with code 1 if before_seconds is invalid or error occurs
+    
+    Example:
+        Running with 86400 seconds (1 day):
+        $ ai_clean_messages.py 86400
+        Successfully cleaned 150 messages
+        Cutoff time: 2026-03-23 00:34:07
+        Messages older than 86400 seconds (1 days) have been deleted
+    """
     # Default values
     default_before_seconds = 30 * 24 * 60 * 60  # 30 days in seconds
 

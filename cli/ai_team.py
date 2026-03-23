@@ -59,7 +59,26 @@ if g_flag_only_agent:
 
 
 def hook_build_message(message:str, curr_count:int, **_) -> str:
-    """ return  new message """
+    """
+    Transform and format messages with agent mention format.
+    
+    This hook is called for each message to add the human name prefix
+    and build manager messages for subsequent turns.
+    
+    Args:
+        message: The message content to transform.
+        curr_count: The current message count/turn number.
+        **_: Additional keyword arguments (ignored).
+    
+    Returns:
+        str: The transformed message with proper formatting.
+    
+    Example:
+        >>> hook_build_message("Hello", 1)
+        'Human Say:\\nHello'
+        >>> hook_build_message("Hello", 2)
+        'Human Say:\\n[Manager] Hello'
+    """
     # env
     human_name = get_human_name()
 
@@ -129,14 +148,42 @@ def generate_system_prompt():
 
     return sys_prompt_content
 
+
 def get_session_id() -> str:
-    """ return a session """
+    """
+    Generate or retrieve a session ID for the current session.
+    
+    Uses SESSION_ID environment variable if set, otherwise generates
+    one based on current date and time.
+    
+    Returns:
+        str: A unique session identifier string.
+    
+    Example:
+        >>> get_session_id()
+        '20260120123456'
+    """
     session_id = os.getenv("SESSION_ID") or time_tool.get_current_date(with_t=True).replace('-', '')
     session_id = session_id.replace(':', '')
     return session_id
 
+
 def main():
-    """ main entry """
+    """
+    Main entry point for the AI Team Manager.
+    
+    This function:
+    1. Retrieves the manager name
+    2. Generates the complete system prompt
+    3. Displays team members
+    4. Initializes and runs the agent chat with hooks
+    
+    Returns:
+        The answer/response from the agent chat session.
+    
+    Environment Variables:
+        TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET: Optional offset for session context (default: 7)
+    """
     # agent name
     manager_name = get_manager_name()
 
@@ -198,6 +245,7 @@ def main():
     )
 
     return answer
+
 
 if __name__ == "__main__":
     main()

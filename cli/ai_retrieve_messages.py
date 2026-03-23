@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Retrieve messages for a specific session ID
+Retrieve Messages CLI - Retrieve messages for a specific session ID
+
+This module provides command-line functionality to retrieve all messages
+associated with a given session from the database.
 
 Usage:
     retrieve_messages.py <session_id> [database_connection_string]
@@ -14,6 +17,9 @@ Arguments:
 Examples:
     retrieve_messages.py abc123
     retrieve_messages.py abc123 sqlite:///custom.db
+
+Author: DawsonLin
+Email: lin_dongsen@126.com
 """
 
 import sys
@@ -31,7 +37,34 @@ from topsailai.workspace.print_tool import print_context_messages
 
 
 def format_messages(messages):
-    """Format messages for display"""
+    """
+    Format messages for display in a human-readable format.
+    
+    This function takes a list of message dictionaries and formats them
+    into a readable string with headers, separators, and proper JSON
+    pretty-printing.
+    
+    Args:
+        messages (list): List of message dictionaries containing 'role' and 'content' fields.
+        
+    Returns:
+        str: Formatted string containing all messages with headers and separators.
+             Returns "No messages found for this session." if messages list is empty.
+    
+    Example:
+        >>> msgs = [{"role": "user", "content": "Hello"}]
+        >>> print(format_messages(msgs))
+        Messages:
+        ------------------------------------------------------------------------------------------------------------------------
+        Message #1:
+        {
+          "role": "user",
+          "content": "Hello"
+        }
+        ------------------------------------------------------------
+        ------------------------------------------------------------
+        Total: 1 messages
+    """
     if not messages:
         return "No messages found for this session."
 
@@ -58,6 +91,21 @@ def format_messages(messages):
 
 
 def main():
+    """
+    Main entry point for retrieving messages.
+    
+    This function:
+    1. Validates command-line arguments (requires session_id)
+    2. Creates a session manager with optional database connection
+    3. Retrieves all messages for the specified session
+    4. Displays the messages using print_context_messages
+    
+    Returns:
+        None
+        
+    Raises:
+        SystemExit: Exits with code 1 if session_id is missing or error occurs
+    """
     # Check for required session_id argument
     if len(sys.argv) < 2:
         print("Error: session_id is required")

@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Delete a session by session ID
+Delete Session CLI - Delete a session by session ID
+
+This module provides command-line functionality to delete a specific session
+from the database. It checks if the session exists before attempting deletion
+and provides appropriate error messages.
 
 Usage:
     delete_session.py <session_id> [database_connection_string]
@@ -14,6 +18,9 @@ Arguments:
 Examples:
     delete_session.py abc123
     delete_session.py abc123 sqlite:///custom.db
+
+Author: DawsonLin
+Email: lin_dongsen@126.com
 """
 
 import sys
@@ -29,6 +36,28 @@ from topsailai.context.ctx_manager import get_session_manager
 
 
 def main():
+    """
+    Main entry point for deleting a session.
+    
+    This function:
+    1. Validates command-line arguments (requires session_id)
+    2. Creates a session manager with optional database connection
+    3. Checks if the session exists before deletion
+    4. Deletes the session and displays success message
+    
+    Returns:
+        None
+        
+    Raises:
+        SystemExit: Exits with code 1 if session_id is missing, session doesn't exist, or error occurs
+    
+    Example:
+        $ python ai_delete_session.py abc123
+        Session 'abc123' has been successfully deleted
+        
+        $ python ai_delete_session.py nonexistent
+        Error: Session 'nonexistent' does not exist
+    """
     # Check for required session_id argument
     if len(sys.argv) < 2:
         print("Error: session_id is required")

@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Clean old sessions from session storage
+Clean Sessions CLI - Clean old sessions from session storage
+
+This module provides command-line functionality to clean up old sessions
+from the database based on a time threshold. Sessions older than the
+specified number of seconds will be deleted.
 
 Usage:
     ai_clean_sessions.py [before_seconds] [database_connection_string]
@@ -17,6 +21,9 @@ Examples:
     ai_clean_sessions.py
     ai_clean_sessions.py 86400
     ai_clean_sessions.py 604800 sqlite:///custom.db
+
+Author: DawsonLin
+Email: lin_dongsen@126.com
 """
 
 import sys
@@ -33,6 +40,32 @@ from topsailai.context.ctx_manager import get_session_manager
 
 
 def main():
+    """
+    Main entry point for cleaning old sessions.
+    
+    This function:
+    1. Parses command-line arguments for time threshold and database connection
+    2. Creates a session manager with the specified database connection
+    3. Deletes all sessions older than the specified number of seconds
+    4. Displays the number of deleted sessions and cutoff time
+    
+    Default Behavior:
+        - If no before_seconds provided, defaults to 30 days (2592000 seconds)
+        - If no database_connection_string provided, uses in-memory SQLite
+    
+    Returns:
+        None
+        
+    Raises:
+        SystemExit: Exits with code 1 if before_seconds is invalid or error occurs
+    
+    Example:
+        Running with 86400 seconds (1 day):
+        $ ai_clean_sessions.py 86400
+        Successfully cleaned 15 sessions
+        Cutoff time: 2026-03-23 00:34:07
+        Sessions older than 86400 seconds (1 days) have been deleted
+    """
     # Default values
     default_before_seconds = 30 * 24 * 60 * 60  # 30 days in seconds (1 month)
 
