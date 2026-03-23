@@ -20,7 +20,7 @@ from topsailai.ai_base.llm_base import (
 )
 from topsailai.prompt_hub import prompt_tool
 
-from topsailai.tools import (
+from topsailai.tools.base.common import (
     get_tool_prompt,
     TOOLS as INTERNAL_TOOLS,
     get_tools_for_chat,

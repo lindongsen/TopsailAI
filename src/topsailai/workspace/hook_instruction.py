@@ -280,7 +280,7 @@ class HookInstruction(HookBaseUtils):
                 if ret:
                     print(ret)
             except Exception as e:
-                print_tool.print_error(e)
+                print_tool.print_error(f"hook is failed [{hook_name}]: args={args} kwargs={kwargs} {e}")
         return
 
     def exist_hook(self, hook_name) -> bool:

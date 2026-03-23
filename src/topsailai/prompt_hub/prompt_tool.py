@@ -236,7 +236,7 @@ def get_prompt_by_tools(tools:list[str]) -> str:
 
     modules = set()
 
-    from topsailai.tools import CONN_CHAR
+    from topsailai.tools.base.init import CONN_CHAR
 
     for tool_name in tools:
         # tool_name: agent_tool.WritingAssistant or x_tool-func1

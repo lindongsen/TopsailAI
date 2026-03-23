@@ -5,7 +5,6 @@
   Purpose: Utility functions for data formatting and conversion
 '''
 
-import re
 import simplejson
 from collections import OrderedDict
 
@@ -17,6 +16,25 @@ TOPSAILAI_STEP_ACTION = TOPSAILAI_FORMAT_PREFIX + "action"
 TOPSAILAI_STEP_THINK = TOPSAILAI_FORMAT_PREFIX + "thought"
 TOPSAILAI_STEP_FINAL = TOPSAILAI_FORMAT_PREFIX + "final_answer"
 
+def to_int(v) -> None|int:
+    """
+    Safely convert a value to an integer.
+
+    Args:
+        v: Value to convert (int, float, str, etc.)
+
+    Returns:
+        int: Converted integer value, or None if conversion fails
+    """
+    if v is None:
+        return None
+    if isinstance(v, int):
+        return v
+    try:
+        return int(v)
+    except Exception:
+        pass
+    return None
 
 def to_list(v, to_ignore_none=False):
     """Convert a value to a list, handling various input types.
@@ -45,6 +63,66 @@ def to_list(v, to_ignore_none=False):
         if to_ignore_none:
             return v
     return [v]
+
+def to_list_int(value) -> list[int]:
+    """
+    Convert various input types to a list of integers.
+
+    Args:
+        value: Can be a single integer, string, float, list, tuple or dict
+
+    Returns:
+        list: A list containing integers
+
+    Don't throw exceptions, try to get the value, and ignore it if it cannot be obtained
+    """
+    if value is None:
+        return []
+
+    # Handle dictionary - extract values only
+    if isinstance(value, dict):
+        value = list(value.values())
+
+    # Handle string input
+    if isinstance(value, str):
+        # Clean and split the string
+        cleaned = value.strip().strip('[](){}').replace(' ', '')
+        if cleaned == '':
+            return []
+        parts = cleaned.split(',')
+        result = []
+        for part in parts:
+            if part != '':
+                try:
+                    result.append(int(part))
+                except (ValueError, TypeError):
+                    continue
+        return result
+
+    # Handle single integer or float
+    elif isinstance(value, (int, float)):
+        try:
+            return [int(value)]
+        except (ValueError, TypeError):
+            return []
+
+    # Handle list, tuple, or other iterables
+    elif hasattr(value, '__iter__'):
+        result = []
+        for item in value:
+            try:
+                result.append(int(item))
+            except (ValueError, TypeError):
+                continue
+        return result
+
+    # Handle other types
+    else:
+        try:
+            return [int(value)]
+        except (ValueError, TypeError):
+            return []
+
 
 def fix_llm_mistakes(text:str, step_keys=("thought", "action", "final_answer", "final-answer")):
     """Fix common formatting mistakes in LLM-generated text.

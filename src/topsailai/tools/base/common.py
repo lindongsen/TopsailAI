@@ -1,0 +1,125 @@
+'''
+  Author: DawsonLin
+  Email: lin_dongsen@126.com
+  Created: 2026-03-23
+  Purpose:
+'''
+
+import os
+
+from topsailai.tools.base.init import (
+    TOOLS,
+    TOOLS_INFO,
+    TOOL_PROMPT,
+    CONN_CHAR,
+    is_tool_enabled,
+)
+from topsailai.utils import (
+    module_tool,
+    format_tool,
+    print_tool,
+)
+
+
+def add_tool(name:str, func):
+    """ add a tool before creating agent instance. """
+    assert callable(func), f"invalid function: {func}"
+    if not name:
+        name = "aiagent" + CONN_CHAR + func.__name__
+    TOOLS[name] = func
+    return
+
+def get_tool_prompt(tools_name:list=None, tools_map:dict=None):
+    """
+    :tools_name: list_str;
+    :tools_map: dict, key is tool name, value is function.
+
+    return tool_prompt for tools """
+    tools_doc = {}
+
+    if tools_name:
+        for tool_name in format_tool.to_list(tools_name, to_ignore_none=True):
+            tools_doc[tool_name] = TOOLS[tool_name].__doc__
+
+    if tools_map:
+        for tool_name, tool_func in tools_map.items():
+            tools_doc[tool_name] = tool_func.__doc__
+
+    if not tools_doc:
+        return ""
+
+    return TOOL_PROMPT.format(
+        __TOOLS__=print_tool.format_dict_to_md(tools_doc)
+    )
+
+def expand_plugin_tools():
+    """ expand tools by external plugins """
+    env_plugin_tools = os.getenv("PLUGIN_TOOLS")
+    if not env_plugin_tools:
+        return
+    for plugin_path in env_plugin_tools.split(';'):
+        _tools = module_tool.get_external_function_map(
+            plugin_path, "TOOLS",
+            conn_char=CONN_CHAR,
+            hook_check=is_tool_enabled,
+            need_module_log=False,
+        )
+        if _tools:
+            TOOLS.update(_tools)
+
+        _tools_info = module_tool.get_external_function_map(
+            plugin_path, "TOOLS_INFO",
+            conn_char=CONN_CHAR,
+            hook_check=is_tool_enabled,
+            need_module_log=False,
+        )
+        if _tools_info:
+            TOOLS_INFO.update(_tools_info)
+
+    return
+
+def generate_tool_info(tool_name, tool_description):
+    result = {
+        "type": "function",
+        "function": {
+            "name": tool_name,
+            "description": tool_description,
+            "parameters": {
+                "type": "object",
+            }
+        }
+    }
+    return result
+
+def get_tools_for_chat(tools_map:dict) -> dict:
+    """ return tools info """
+    result = {}
+    for tool_name in list(tools_map.keys()):
+        if tool_name in TOOLS_INFO:
+            result[tool_name] = TOOLS_INFO[tool_name]
+            result[tool_name]["function"]["name"] = tool_name
+            continue
+        if tool_name in TOOLS:
+            result[tool_name] = generate_tool_info(tool_name, TOOLS[tool_name].__doc__)
+
+    return result
+
+def format_tools_map(tools_map:dict, prefix_name:str) -> dict:
+    """format tool name.
+
+    Args:
+        tools_map (dict): key is toolname
+        prefix_name (str): toolname starts with this.
+
+    Return new tools_map.
+    """
+    if prefix_name[-1] != ".":
+        prefix_name += "."
+
+    new_tools_map = {}
+    for key in tools_map:
+        raw_key = key
+        if not key.startswith(prefix_name):
+            key = prefix_name + key
+        new_tools_map[key] = tools_map[raw_key]
+    return new_tools_map

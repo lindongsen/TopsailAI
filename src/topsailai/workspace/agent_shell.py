@@ -17,6 +17,7 @@ from topsailai.utils import (
     file_tool,
     thread_local_tool,
 )
+# from topsailai.tools.base.common import add_tool
 from topsailai.ai_base.constants import (
     ROLE_ASSISTANT,
 )
@@ -36,7 +37,12 @@ from topsailai.workspace.input_tool import (
 )
 from topsailai.workspace.context.ctx_runtime import (
     ContextRuntimeData,
+)
+from topsailai.workspace.context.agent import (
     ContextRuntimeAIAgent,
+    # ContextRuntimeAgentTools,
+)
+from topsailai.workspace.context.instruction import (
     ContextRuntimeInstructions,
 )
 from topsailai.workspace.hook_instruction import HookInstruction
@@ -360,26 +366,14 @@ def get_agent_chat(
         if sys_prompt_content:
             system_prompt = sys_prompt_content
 
-    # ai agent
-    ai_agent = get_ai_agent(
-        system_prompt=system_prompt,
-        to_dump_messages=to_dump_messages,
-        disabled_tools=disabled_tools,
-        agent_type=agent_type,
-    )
-
-    if agent_name:
-        ai_agent.agent_name = agent_name
-
-
-    # llm model
-    llm_model = ai_agent.llm_model
-    llm_model.max_tokens = max(3000, llm_model.max_tokens)
-    llm_model.temperature = min(0.97, llm_model.temperature)
-
-    # context runtime data
+    # context runtime xxx
     ctx_runtime_data = ContextRuntimeData()
-    ctx_runtime_data.init(session_id, ai_agent)
+    ctx_rt_aiagent = ContextRuntimeAIAgent(ctx_runtime_data)
+    ctx_rt_instruction = ContextRuntimeInstructions(ctx_runtime_data)
+    # ctx_rt_aiagent_tools = ContextRuntimeAgentTools(ctx_runtime_data)
+
+    # agent tools
+    # add_tool("context.delete_messages", ctx_rt_aiagent_tools.tool_delete_messages_for_processing)
 
     # instructions
     hook_instruction = HookInstruction()
@@ -415,15 +409,30 @@ def get_agent_chat(
         if need_print_session:
             print(f"session_id: {session_id}")
 
-        ctx_runtime_data.init(session_id, ai_agent=ai_agent)
+        ctx_runtime_data.init(session_id, ai_agent=None)
         if not ctx_runtime_data.messages:
             if not message:
                 message = get_message(hook_instruction, need_input=need_input_message)
             ctx_manager.create_session(session_id, task=message[:100])
 
-    # context runtime xxx
-    ctx_rt_aiagent = ContextRuntimeAIAgent(ctx_runtime_data)
-    ctx_rt_instruction = ContextRuntimeInstructions(ctx_runtime_data)
+    # ai agent
+    ai_agent = get_ai_agent(
+        system_prompt=system_prompt,
+        to_dump_messages=to_dump_messages,
+        disabled_tools=disabled_tools,
+        agent_type=agent_type,
+    )
+
+    if agent_name:
+        ai_agent.agent_name = agent_name
+
+    # llm model
+    llm_model = ai_agent.llm_model
+    llm_model.max_tokens = max(3000, llm_model.max_tokens)
+    llm_model.temperature = min(0.97, llm_model.temperature)
+
+    # context runtime is ready
+    ctx_runtime_data.init(session_id, ai_agent)
 
     ##########################################################################################
     # Hook Instruction
