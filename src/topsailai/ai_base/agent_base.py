@@ -1,3 +1,10 @@
+'''
+  Author: DawsonLin
+  Email: lin_dongsen@126.com
+  Created: 2026-03-24
+  Purpose:
+'''
+
 from topsailai.logger.log_chat import logger
 from topsailai.utils.print_tool import (
     print_critical,
