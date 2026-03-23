@@ -297,7 +297,7 @@ class ContextRuntimeData(object):
         if quantity_threshold*2 <= number_list[-1]:
             number_list.append(quantity_threshold*2)
 
-        quantity_threshold = random.choice(number_list)
+        quantity_threshold = max(random.choice(number_list), quantity_threshold)
 
         if len(self.ai_agent.messages) >= quantity_threshold:
             return True
