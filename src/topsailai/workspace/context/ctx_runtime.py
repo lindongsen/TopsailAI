@@ -1,11 +1,17 @@
-'''
-  Author: DawsonLin
-  Email: lin_dongsen@126.com
-  Created: 2026-03-21
-  Purpose:
+"""
+Context Runtime Module.
+
+This module provides runtime context management for user sessions and AI agent interactions.
+It handles message storage, retrieval, deletion, and summarization for conversation contexts.
+
+Author: DawsonLin
+Email: lin_dongsen@126.com
+Created: 2026-03-21
+
+Purpose:
     UserSession -> ctx_runtime_data.messages -> user chats to agent
     AgentSession -> ctx_runtime_aiagent.messages -> agent chats to LLM
-'''
+"""
 
 from topsailai.logger import logger
 from topsailai.ai_base.constants import (
@@ -28,19 +34,41 @@ from topsailai.workspace.context.agent2llm import (
 
 
 class ContextRuntimeData(ContextRuntimeAgent2LLM):
-    """ context manager for runtime
-
-    Variables:
-        self.messages: user chats to agent
-        self.ai_agent.messages: agent chats to LLM
+    """
+    Context manager for runtime data storage and manipulation.
+    
+    This class manages conversation messages between users and agents,
+    providing methods to add, delete, and summarize messages. It maintains
+    two message stores:
+        - self.messages: messages from user chats to agent
+        - self.ai_agent.messages: messages from agent chats to LLM
+    
+    Attributes:
+        session_id: The current session identifier
+        messages: List of message dictionaries with 'role' and 'content' keys
     """
 
     ###############################################################
     # User chats to Agent
     ###############################################################
 
-    def add_session_message(self, role:str, message:str):
-        """ add a message to session """
+    def add_session_message(self, role: str, message: str):
+        """
+        Add a message to the current session.
+        
+        Appends a new message to the session's message list and persists
+        it to the context manager if a session_id is available.
+        
+        Args:
+            role (str): The role of the message sender (e.g., 'user', 'assistant', 'system')
+            message (str): The content of the message
+        
+        Returns:
+            None
+        
+        Example:
+            >>> runtime.add_session_message("user", "Hello, how are you?")
+        """
         msg_dict = {"role": role, "content": message}
 
         self.append_message(msg_dict)
@@ -52,11 +80,21 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
 
         return
 
-    def del_session_message(self, index:int):
-        """delete a message
-
+    def del_session_message(self, index: int):
+        """
+        Delete a single message from the session by index.
+        
+        Removes a message at the specified index from both the local
+        message list and the context manager (if session_id exists).
+        
         Args:
-            index (int): Sequence number starting from 0
+            index (int): Sequence number of the message to delete, starting from 0
+        
+        Raises:
+            AssertionError: If index is out of valid range
+        
+        Returns:
+            None
         """
         session_id = self.session_id
 
@@ -74,14 +112,24 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         return
 
     # user chats to agent
-    def del_session_messages(self, indexes:list[int]) -> list[int]:
-        """delete some messages from session messages.
-
+    def del_session_messages(self, indexes: list[int]) -> list[int]:
+        """
+        Delete multiple messages from the session by their indexes.
+        
+        Removes messages at the specified indexes from the session,
+        filtering out system messages. Only deletes non-system messages
+        that are in the provided indexes list.
+        
         Args:
-            indexes (list[int]): Sequence number starting from 0
-
+            indexes (list[int]): List of sequence numbers of messages to delete,
+                                starting from 0
+        
         Returns:
-            list[int]: already deleted list
+            list[int]: List of indexes that were successfully deleted
+        
+        Example:
+            >>> deleted = runtime.del_session_messages([0, 2, 5])
+            >>> print(deleted)  # [0, 2, 5]
         """
         if not indexes:
             return []
@@ -116,11 +164,37 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
 
     def summarize_messages_for_processed(
             self,
-            messages:list=None,
-            head_offset_to_keep:int=None,
-            need_interactive:bool=False,
-        ) -> str|None:
-        """ Summarize messages to one text """
+            messages: list = None,
+            head_offset_to_keep: int = None,
+            need_interactive: bool = False,
+        ) -> str | None:
+        """
+        Summarize the processed conversation messages into a single text.
+        
+        This method compresses the conversation history by summarizing
+        older messages while preserving the most recent messages. It can
+        operate in interactive mode to prompt the user for confirmation.
+        
+        Args:
+            messages (list, optional): List of messages to summarize.
+                                      Defaults to self.messages if None.
+            head_offset_to_keep (int, optional): Number of recent messages
+                                                 to keep unsummarized.
+                                                 If None, uses default threshold.
+            need_interactive (bool): If True, prompts user to confirm
+                                     the summarized answer. Defaults to False.
+        
+        Returns:
+            str | None: The summarized text if successful, None otherwise.
+                        Returns None if there are no messages to summarize
+                        or if summarization fails.
+        
+        Example:
+            >>> summary = runtime.summarize_messages_for_processed(
+            ...     head_offset_to_keep=5,
+            ...     need_interactive=True
+            ... )
+        """
         if not messages:
             # just the processed Q&A messages for current runtime
             messages = self.messages
@@ -192,7 +266,21 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
 
 
     def is_need_summarize_for_processed(self) -> bool:
-        """ the processed Q&A messages, it is ctx_runtime_data.messages """
+        """
+        Check if the processed messages need to be summarized.
+        
+        Determines whether the current message quantity has exceeded
+        the threshold that triggers message summarization. This helps
+        manage memory and context window limitations.
+        
+        Returns:
+            bool: True if the number of messages exceeds the quantity
+                  threshold and summarization is needed, False otherwise.
+        
+        Example:
+            >>> if runtime.is_need_summarize_for_processed():
+            ...     runtime.summarize_messages_for_processed()
+        """
         quantity_threshold = self.__get_quantity_threshold()
         if not quantity_threshold:
             return False

@@ -1,9 +1,14 @@
-'''
-  Author: DawsonLin
-  Email: lin_dongsen@126.com
-  Created: 2026-03-23
-  Purpose:
-'''
+"""
+Context runtime agent to LLM conversion module.
+
+This module provides functionality for converting agent messages to LLM format
+and managing message summarization for processing.
+
+Author: DawsonLin
+Email: lin_dongsen@126.com
+Created: 2026-03-23
+Purpose: Handle agent-to-LLM message conversion and context summarization.
+"""
 
 import random
 
@@ -23,17 +28,22 @@ from topsailai.workspace.context.base import (
 
 
 class ContextRuntimeAgent2LLM(ContextRuntimeBase):
-    """ Agent chats to LLM """
+    """
+    Agent chats to LLM.
+    
+    This class provides functionality for managing agent conversations with LLM,
+    including message deletion, summarization, and processing threshold detection.
+    """
 
-    # agent chats to LLM
-    def del_agent_messages(self, indexes:list[int]) -> list[int]:
-        """delete some messages from ai_agent.messages
+    def del_agent_messages(self, indexes: list[int]) -> list[int]:
+        """
+        Delete specific messages from the agent's message list.
 
         Args:
-            indexes (list[int]): Sequence number starting from 0
+            indexes (list[int]): Sequence numbers of messages to delete, starting from 0.
 
         Returns:
-            list[int]: already deleted list
+            list[int]: List of successfully deleted message indexes.
         """
         if not indexes:
             return []
@@ -61,10 +71,19 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
     def summarize_messages_for_processing(
             self,
-            messages:list|str=None,
-            head_offset_to_keep:int=None,
-        ) -> str|None:
-        """ Summarize messages to one text """
+            messages: list | str = None,
+            head_offset_to_keep: int = None,
+        ) -> str | None:
+        """
+        Summarize messages into a single text for processing.
+
+        Args:
+            messages (list | str, optional): Messages to summarize. Defaults to None.
+            head_offset_to_keep (int, optional): Number of recent messages to keep. Defaults to None.
+
+        Returns:
+            str | None: The summarized text, or None if summarization fails.
+        """
         index = self.ai_agent.get_work_memory_first_position()
         if index is None:
             return None
@@ -90,7 +109,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         # new messages
         new_messages = messages[:head_offset_to_keep]
-        new_messages.append(llm_chat.prompt_ctl.messages[-1]) # add answer(summary) to messages
+        new_messages.append(llm_chat.prompt_ctl.messages[-1])  # add answer(summary) to messages
         if last_user_msg:
             new_messages.append(last_user_msg)
         self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
@@ -101,16 +120,24 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         return answer
 
     def is_need_summarize_for_processing(self) -> bool:
-        """ the agent is working, it is ai_agent.messages """
+        """
+        Check if messages need to be summarized based on quantity threshold.
+
+        Determines whether the current message count exceeds the configured threshold
+        and requires summarization for efficient processing.
+
+        Returns:
+            bool: True if summarization is needed, False otherwise.
+        """
         quantity_threshold = self.__get_quantity_threshold()
         if not quantity_threshold:
             return False
 
-        number_list = [23, 27, 29, 31, 37, 41, 43, 47] # min -> max
+        number_list = [23, 27, 29, 31, 37, 41, 43, 47]  # min -> max
         if quantity_threshold >= number_list[0]:
             number_list.append(quantity_threshold)
-        if quantity_threshold*2 <= number_list[-1]:
-            number_list.append(quantity_threshold*2)
+        if quantity_threshold * 2 <= number_list[-1]:
+            number_list.append(quantity_threshold * 2)
 
         quantity_threshold = max(random.choice(number_list), quantity_threshold)
 

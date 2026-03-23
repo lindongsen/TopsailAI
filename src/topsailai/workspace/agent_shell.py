@@ -52,7 +52,12 @@ DEFAULT_HEAD_TAIL_OFFSET = 7
 
 
 class AgentChat(object):
-    """ AI Agent controller, Human chats with Agent, Agent chats with LLM """
+    """AI Agent controller for managing human-agent and agent-LLM conversations.
+    
+    This class coordinates the interaction between a human user and an AI agent,
+    handling message routing, context management, and session lifecycle.
+    """
+    
     def __init__(
             self,
             hook_instruction:HookInstruction,
@@ -61,6 +66,15 @@ class AgentChat(object):
 
             session_head_tail_offset:int=DEFAULT_HEAD_TAIL_OFFSET, # cut messages
         ):
+        """Initialize the AgentChat controller.
+        
+        Args:
+            hook_instruction: Hook instruction instance for input handling.
+            ctx_rt_aiagent: Context runtime AI agent instance.
+            ctx_rt_instruction: Context runtime instructions instance.
+            session_head_tail_offset: Number of messages to keep from head and tail 
+                                      when truncating conversation history. Defaults to 7.
+        """
         self.hook_instruction = hook_instruction
         self.ctx_rt_aiagent = ctx_rt_aiagent
         self.ctx_rt_instruction = ctx_rt_instruction
@@ -80,12 +94,13 @@ class AgentChat(object):
         ##########################################################################################
 
         def hook_after_init_prompt(_ai_agent):
-            """
-            Hook function called after agent prompt initialization.
+            """Hook function called after agent prompt initialization.
+            
             Adds existing session messages to the agent's message history.
-
+            Truncates messages if session_head_tail_offset is configured.
+            
             Args:
-                _ai_agent: The agent instance
+                _ai_agent: The agent instance to operate on.
             """
             # cut messages
             if session_head_tail_offset and ctx_runtime_data.messages:
@@ -105,21 +120,24 @@ class AgentChat(object):
             return
 
         def hook_after_new_session(_ai_agent):
-            """
-            Hook function called after a new session is created.
-            Adds the initial session message to the context.
-
+            """Hook function called after a new session is created.
+            
+            Adds the initial session message to the context for tracking.
+            
             Args:
-                _ai_agent: The agent instance
+                _ai_agent: The agent instance to operate on.
             """
             ctx_rt_aiagent.add_session_message()
             return
 
         def hook_summarize_messages(_ai_agent):
-            """Summarize context messages
-
+            """Summarize context messages to reduce token usage.
+            
+            Checks if message summarization is needed for either processed Q&A messages
+            or currently processing agent messages, and performs summarization if required.
+            
             Args:
-                _ai_agent: agent instance
+                _ai_agent: The agent instance to operate on.
             """
 
             # the processed Q&A messages
@@ -140,19 +158,39 @@ class AgentChat(object):
         return
 
     @property
-    def agent_name(self):
+    def agent_name(self) -> str:
+        """Get the name of the AI agent.
+        
+        Returns:
+            str: The agent's name string.
+        """
         return self.ai_agent.agent_name
 
     @property
-    def messages(self):
+    def messages(self) -> list:
+        """Get the current conversation messages.
+        
+        Returns:
+            list: List of message dictionaries in the conversation.
+        """
         return self.ai_agent.messages
 
     @property
-    def ctx_runtime_data(self):
+    def ctx_runtime_data(self) -> ContextRuntimeData:
+        """Get the context runtime data instance.
+        
+        Returns:
+            ContextRuntimeData: The runtime data object containing session context.
+        """
         return self.ctx_rt_aiagent.ctx_runtime_data
 
     def call_hooks_pre_run(self):
-        """ call hooks for pre-run """
+        """Execute all pre-run hooks registered in the hooks_pre_run list.
+        
+        Iterates through each registered hook function and executes it with
+        the current AgentChat instance as the argument. Any exceptions raised
+        by hooks are logged but do not stop execution of remaining hooks.
+        """
         for hook in self.hooks_pre_run:
             try:
                 hook(self)
@@ -175,10 +213,26 @@ class AgentChat(object):
             need_symbol_for_answer=False,
             only_save_final:bool=False,
         ) -> str:
-        """ run agent.
-        :message: if it is none, get message; if it is null string, continue.
+        """Run the agent chat session.
+        
+        Executes the main conversation loop between human and AI agent.
+        Handles message input, agent execution, response processing, and
+        session management.
+        
+        Args:
+            message: Initial message to send to the agent. If None, prompts for input.
+            times: Maximum number of conversation turns. 0 means unlimited.
+            func_build_message: Optional callback to transform message before sending.
+            func_print_pre_input_message: Optional callback to execute before prompting for input.
+            need_save_answer: Whether to save answers to context. Defaults to True.
+            need_confirm_abort: Whether to confirm before aborting on keyboard interrupt.
+            need_interactive: Whether to use interactive mode. Defaults to True.
+            need_symbol_for_answer: Whether to prepend symbol to answer. Defaults to False.
+            only_save_final: If True, only save the final answer to session history.
+        
+        Returns:
+            str: The final answer from the AI agent.
         """
-
         self.call_hooks_pre_run()
 
         if not func_print_pre_input_message:
@@ -280,7 +334,19 @@ class AgentChat(object):
         return answer
 
     def hook_build_answer(self, answer:str, need_symbol:bool=False) -> str:
-        """ build new answer """
+        """Build and format the final answer string.
+        
+        Optionally prepends a symbol to the answer based on configuration.
+        The symbol is determined by environment variable TOPSAILAI_SYMBOL_STARTSWITH_ANSWER
+        or defaults to "From '{agent_name}':\n".
+        
+        Args:
+            answer: The raw answer string from the agent.
+            need_symbol: Whether to prepend a symbol. Defaults to False.
+        
+        Returns:
+            str: The formatted answer string.
+        """
         if not answer:
             return answer
 
@@ -295,7 +361,14 @@ class AgentChat(object):
         return answer
 
     def hook_for_answer(self, answer:str):
-        """ do sth. for answer """
+        """Perform post-processing actions on the answer.
+        
+        Currently handles saving the answer to a file if the environment variable
+        TOPSAILAI_SAVE_RESULT_TO_FILE is set.
+        
+        Args:
+            answer: The answer string to process.
+        """
         if not answer:
             return
 
@@ -308,8 +381,21 @@ class AgentChat(object):
         return
 
 
-def get_ai_agent(system_prompt="", to_dump_messages=False, disabled_tools:list[str]=None, agent_type=None):
-    """ return a agent object of ReAct mode. """
+def get_ai_agent(system_prompt:str="", to_dump_messages:bool=False, disabled_tools:list[str]=None, agent_type=None):
+    """Create and return an AI agent instance in ReAct mode.
+    
+    Initializes an AgentRun instance with the specified configuration.
+    The agent uses ReAct (Reasoning + Acting) prompting strategy.
+    
+    Args:
+        system_prompt: Additional system prompt to prepend to the agent's prompt.
+        to_dump_messages: Whether to enable message dumping for debugging.
+        disabled_tools: List of tool names to exclude from the agent.
+        agent_type: Type of agent to create. Defaults to configuration or ReAct.
+    
+    Returns:
+        AgentRun: An initialized AI agent instance.
+    """
     env_disabled_tools = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_CLI_AGENT_CHAT_DISABLED_TOOLS")
     if env_disabled_tools is None:
         # not config
@@ -352,7 +438,27 @@ def get_agent_chat(
         need_print_session:bool=True,
         need_input_message:bool=True,
     ) -> AgentChat:
-    """ get an instance of AgentChat """
+    """Create and return an AgentChat instance with all required components.
+    
+    This is the main factory function for creating a complete chat session.
+    It initializes all necessary components including context runtime, AI agent,
+    instructions, and hooks.
+    
+    Args:
+        system_prompt: Additional system prompt for the agent.
+        to_dump_messages: Whether to enable message dumping for debugging.
+        disabled_tools: List of tool names to exclude from the agent.
+        agent_type: Type of agent to create.
+        agent_name: Name to assign to the agent.
+        session_id: Session identifier for context tracking.
+        message: Initial message to process.
+        session_head_tail_offset: Number of messages to keep from head/tail.
+        need_print_session: Whether to print session information.
+        need_input_message: Whether to prompt for input when needed.
+    
+    Returns:
+        AgentChat: A fully initialized AgentChat instance ready for conversation.
+    """
     # set agent name to thread local
     if agent_name:
         thread_local_tool.set_thread_var(thread_local_tool.KEY_AGENT_NAME, agent_name)

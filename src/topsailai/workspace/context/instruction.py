@@ -1,9 +1,14 @@
-'''
-  Author: DawsonLin
-  Email: lin_dongsen@126.com
-  Created: 2026-03-23
-  Purpose:
-'''
+"""
+Context runtime instructions module.
+
+This module provides instruction handlers for managing context messages
+in the TopsailAI workspace, including operations like clearing, viewing,
+deleting, and summarizing messages.
+
+Author: DawsonLin
+Email: lin_dongsen@126.com
+Created: 2026-03-23
+"""
 
 from topsailai.context import ctx_manager
 from topsailai.tools.agent_tool import (
@@ -20,11 +25,23 @@ from topsailai.workspace.context.agent import ContextRuntimeUtils
 
 
 class ContextRuntimeInstructions(ContextRuntimeUtils):
-    """ instrunctions for human """
+    """
+    Instructions handler for human interaction with context messages.
+
+    This class provides methods to manage context messages including
+    clearing, viewing history, deleting messages, and summarizing.
+    Inherits utility methods from ContextRuntimeUtils.
+    """
 
     @property
     def instructions(self) -> dict:
-        """ get instructions """
+        """
+        Get the dictionary of available instruction methods.
+
+        Returns:
+            dict: A dictionary mapping instruction names to their
+                  corresponding methods.
+        """
         return dict(
             clear=self.clear,
             story=self.story,
@@ -37,8 +54,14 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
 
     def clear(self):
         """
-        Clear context messages if no session ID exists.
-        Shows message if session ID prevents clearing.
+        Clear all context messages for the current session.
+
+        Clears the context messages if no session ID exists.
+        If a session ID is present, displays a message indicating
+        that clearing is not possible due to the active session.
+
+        Returns:
+            None
         """
         session_id = self.session_id
 
@@ -52,8 +75,14 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
 
     def story(self):
         """
-        Save context messages to a new story using subprocess.
-        Only works if there are existing messages in the session.
+        Save context messages to a new story.
+
+        Saves the current context messages to a new story using
+        subprocess agent. Only executes if there are existing
+        messages in the session.
+
+        Returns:
+            None
         """
         if not self.messages:
             return
@@ -64,12 +93,19 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
     def history(self, offset:str=""):
         """
         Display the history of messages for the current session.
-        Shows separator line and all context messages if available.
+
+        Shows all context messages with an optional offset to display
+        a subset of messages. A separator line is printed before
+        the messages.
 
         Args:
-            offset:
-              - usage1: number, e.g. 7 is 7:-7;
-              - usage2: 'head_num:tail_num', e.g 5:-3
+            offset (str, optional): Offset specification for message range.
+                - Usage 1: Single number, e.g., "7" displays 7:-7
+                - Usage 2: Range format "head_num:tail_num", e.g., "5:-3"
+                Defaults to empty string, which displays all messages.
+
+        Returns:
+            None
         """
         session_id = self.session_id
 
@@ -96,7 +132,15 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         return
 
     def history2(self):
-        """ print raw history messages """
+        """
+        Display raw history messages for the current session.
+
+        Prints the raw (unprocessed) context messages for the
+        current session, useful for debugging or detailed inspection.
+
+        Returns:
+            None
+        """
         session_id = self.session_id
 
         print(f"\n\n{SPLIT_LINE}")
@@ -107,10 +151,21 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         return
 
     def delete(self, index:int):
-        """delete one message
+        """
+        Delete a single message by its index.
+
+        Removes a message at the specified index (1-based) from
+        the context messages and refreshes the history display.
 
         Args:
-            index (int): Sequence number starting from 1
+            index (int): Sequence number of the message to delete,
+                         starting from 1.
+
+        Raises:
+            AssertionError: If index is out of valid range.
+
+        Returns:
+            None
         """
         assert index > 0 and index <= len(self.messages), "nothing can be deleted"
         index -= 1
@@ -121,18 +176,26 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         return
 
     def delete_multi(self, *indexes:list[int]):
-        """delete multiple messages
+        """
+        Delete multiple messages by their indexes.
+
+        Removes messages at the specified indexes (1-based) from
+        the context messages and displays the result.
 
         Args:
-            *indexes (list[int]): Sequence number starting from 1
+            *indexes (list[int]): Variable number of sequence numbers
+                                  of messages to delete, starting from 1.
+
+        Returns:
+            None
         """
         new_indexes = []
-        # -1
+        # Convert 1-based to 0-based index
         for index in indexes:
             new_indexes.append(int(index)-1)
 
         result = self.ctx_runtime_data.del_session_messages(new_indexes)
-        # +1
+        # Convert back to 1-based for display
         for i, value in enumerate(result):
             result[i] = value + 1
         print(f"deleted: {result}")
@@ -140,10 +203,21 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         return
 
     def summarize(self, head_offset_to_keep:int=1):
-        """Summarize context messages for current session.
+        """
+        Summarize context messages for the current session.
+
+        Triggers the summarization process for context messages,
+        keeping only the specified number of most recent messages
+        from the beginning. After summarization, displays the
+        updated history.
 
         Args:
-            head_offset_to_keep (int): default is 1
+            head_offset_to_keep (int, optional): Number of messages
+                to keep from the beginning of the message list
+                before summarization. Defaults to 1.
+
+        Returns:
+            None
         """
         self.ctx_runtime_data.summarize_messages_for_processed(
             head_offset_to_keep=head_offset_to_keep,

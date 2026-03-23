@@ -1,9 +1,15 @@
-'''
-  Author: DawsonLin
-  Email: lin_dongsen@126.com
-  Created: 2026-03-22
-  Purpose:
-'''
+"""
+LLM Shell Module.
+
+This module provides functionality for interacting with Large Language Models (LLM).
+It includes the LLMChat class for managing chat sessions and a factory function
+for creating chat instances with various configuration options.
+
+Author: DawsonLin
+Email: lin_dongsen@126.com
+Created: 2026-03-22
+Purpose: Provides LLM chat interface for the TopsailAI framework.
+"""
 
 import os
 
@@ -24,17 +30,51 @@ from topsailai.context import ctx_manager
 
 
 class LLMChat(object):
-    """ chatting with LLM """
-    def __init__(self, prompt_ctl:PromptBase, llm_model:LLMModelBase):
-        self.prompt_ctl:PromptBase = prompt_ctl
-        self.llm_model:LLMModelBase = llm_model
+    """
+    A class for managing chat interactions with a Large Language Model (LLM).
+    
+    This class handles the conversation flow between the user and the LLM,
+    including message management, prompt control, and response handling.
+    
+    Attributes:
+        prompt_ctl (PromptBase): The prompt controller managing conversation messages.
+        llm_model (LLMModelBase): The LLM model instance for generating responses.
+        first_message (str): The first message in the conversation.
+        last_message (str): The last response received from the LLM.
+    """
+    
+    def __init__(self, prompt_ctl: PromptBase, llm_model: LLMModelBase):
+        """
+        Initialize the LLMChat instance.
+        
+        Args:
+            prompt_ctl (PromptBase): The prompt controller for managing messages.
+            llm_model (LLMModelBase): The LLM model instance for generating responses.
+        """
+        self.prompt_ctl: PromptBase = prompt_ctl
+        self.llm_model: LLMModelBase = llm_model
 
         self.first_message = ""
         self.last_message = ""
         return
 
-    def chat(self, message:str="", need_print=True) -> str:
-        """ chatting to LLM, return answer """
+    def chat(self, message: str = "", need_print: bool = True) -> str:
+        """
+        Send a message to the LLM and receive a response.
+        
+        This method adds the user's message to the prompt controller, updates
+        the environment variables, sends the conversation to the LLM, and
+        returns the assistant's response.
+        
+        Args:
+            message (str, optional): The user's message to send to the LLM.
+                Defaults to empty string.
+            need_print (bool, optional): Whether to print the message before
+                sending. Defaults to True.
+        
+        Returns:
+            str: The LLM's response message, or empty string if no response.
+        """
         if message:
             self.prompt_ctl.add_user_message(message, need_print=need_print)
 
@@ -49,25 +89,60 @@ class LLMChat(object):
 
 
 def get_llm_chat(
-        message:str=None,
-        session_id:str=None,
-        system_prompt:str="",
-        more_prompt:str="",
-
-        # llm parameters
-        max_tokens:int=3000,
-        temperature:float=0.97,
-
-        need_stdout:bool=True,
-        need_input_message:bool=True,
-        need_print_session:bool=True,
-        need_print_message:bool=True,
+        message: str = None,
+        session_id: str = None,
+        system_prompt: str = "",
+        more_prompt: str = "",
+        max_tokens: int = 3000,
+        temperature: float = 0.97,
+        need_stdout: bool = True,
+        need_input_message: bool = True,
+        need_print_session: bool = True,
+        need_print_message: bool = True,
         func_formatter_messages=None,
     ) -> LLMChat:
-    """ get a object for chatting.
-
+    """
+    Create and return an LLMChat instance for interacting with a Large Language Model.
+    
+    This factory function initializes an LLM chat session with the specified parameters.
+    It handles session management, prompt configuration, and model initialization.
+    If no session_id is provided, it will attempt to retrieve it from environment variables.
+    If no message is provided, it will prompt the user for input.
+    
     Args:
-        session_id, set an empty string to indicate non-use, set None to get it by environ
+        message (str, optional): The initial message to send to the LLM.
+            If None and need_input_message is True, will prompt for user input.
+        session_id (str, optional): The session identifier for maintaining conversation
+            history. If None, will attempt to get from SESSION_ID environment variable.
+            If empty string, session management is disabled.
+        system_prompt (str, optional): The system prompt to use for the LLM.
+            If empty, will attempt to get from SYSTEM_PROMPT environment variable.
+        more_prompt (str, optional): Additional prompt content to append to the system prompt.
+        max_tokens (int, optional): Maximum number of tokens in the LLM response.
+            Defaults to 3000.
+        temperature (float, optional): The temperature parameter for LLM generation.
+            Defaults to 0.97.
+        need_stdout (bool, optional): Whether to enable stdout content sending.
+            Defaults to True.
+        need_input_message (bool, optional): Whether to prompt for user input if
+            message is not provided. Defaults to True.
+        need_print_session (bool, optional): Whether to print the session_id when
+            using session management. Defaults to True.
+        need_print_message (bool, optional): Whether to print messages before
+            sending to LLM. Defaults to True.
+        func_formatter_messages (callable, optional): A function to format messages
+            from session history. Defaults to None.
+    
+    Returns:
+        LLMChat: An initialized LLMChat instance ready for conversation.
+    
+    Raises:
+        AssertionError: If message is required but not provided.
+    
+    Example:
+        >>> chat = get_llm_chat(message="Hello, how are you?")
+        >>> response = chat.chat()
+        >>> print(response)
     """
     if not message:
         message = get_message(need_input=need_input_message)
