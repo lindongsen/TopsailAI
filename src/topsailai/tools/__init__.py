@@ -38,6 +38,7 @@ TOOLS = module_tool.get_function_map(
     "topsailai.tools", "TOOLS",
     conn_char=CONN_CHAR,
     hook_check=is_tool_enabled,
+    need_module_log=False,
 )
 
 # key is tool_name, value is dict
@@ -69,6 +70,7 @@ TOOLS_INFO = module_tool.get_function_map(
     "TOOLS_INFO",
     conn_char=CONN_CHAR,
     hook_check=is_tool_enabled,
+    need_module_log=False,
 )
 
 
@@ -113,6 +115,7 @@ def expand_plugin_tools():
             plugin_path, "TOOLS",
             conn_char=CONN_CHAR,
             hook_check=is_tool_enabled,
+            need_module_log=False,
         )
         if _tools:
             TOOLS.update(_tools)
@@ -121,7 +124,8 @@ def expand_plugin_tools():
             plugin_path, "TOOLS_INFO",
             conn_char=CONN_CHAR,
             hook_check=is_tool_enabled,
-            )
+            need_module_log=False,
+        )
         if _tools_info:
             TOOLS_INFO.update(_tools_info)
 

@@ -158,7 +158,7 @@ class ContextRuntimeData(object):
             return None
 
         # print info
-        print_step(f"!!! Summarizing context messages for processed: msg_len=[{len(messages)}]", need_format=False)
+        print_step(f"!!! Summarizing context messages for processed: msg_len=[{len(messages)}]", need_format=False, need_log=True)
 
         llm_chat, answer = self._summarize_messages(messages)
         if not answer:
@@ -236,7 +236,7 @@ class ContextRuntimeData(object):
             return None
 
         # print info
-        print_step(f"!!! Summarizing context messages for processing: msg_len=[{len(messages)}]", need_format=False)
+        print_step(f"!!! Summarizing context messages for processing: msg_len=[{len(messages)}]", need_format=False, need_log=True)
 
         llm_chat, answer = self._summarize_messages(messages)
         if not answer:
@@ -255,7 +255,7 @@ class ContextRuntimeData(object):
             new_messages.append(last_user_msg)
         self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
 
-        print_step(f"!!! New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]", need_format=False)
+        print_step(f"!!! New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]", need_format=False, need_log=True)
         logger.info("new context messages: %s", self.ai_agent.messages)
 
         return answer

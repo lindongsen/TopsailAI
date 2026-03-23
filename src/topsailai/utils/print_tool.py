@@ -107,7 +107,7 @@ def print_with_time(msg, need_format=False):
 
     print(content)
 
-def print_step(msg, need_format=True):
+def print_step(msg, need_format=True, need_log=False):
     """Print a step message if step printing is enabled.
 
     This function only prints messages when:
@@ -117,6 +117,9 @@ def print_step(msg, need_format=True):
     Args:
         msg: Step message to print
     """
+    if need_log:
+        logger.info(msg)
+
     if thread_local_tool.get_thread_var(
         thread_local_tool.KEY_FLAG_DEBUG
     ) == 0:

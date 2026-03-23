@@ -14,6 +14,7 @@ from topsailai.logger import logger
 from topsailai.utils import (
     env_tool,
     file_tool,
+    thread_local_tool,
 )
 from topsailai.ai_base.constants import (
     ROLE_ASSISTANT,
@@ -338,6 +339,12 @@ def get_agent_chat(
         need_input_message:bool=True,
     ) -> AgentChat:
     """ get an instance of AgentChat """
+    # set agent name to thread local
+    if agent_name:
+        thread_local_tool.set_thread_var(thread_local_tool.KEY_AGENT_NAME, agent_name)
+    if session_id:
+        thread_local_tool.set_thread_name(session_id)
+
     # system prompt
     if not system_prompt:
         env_sys_prompt = os.getenv("SYSTEM_PROMPT")
@@ -393,6 +400,7 @@ def get_agent_chat(
         session_id = os.getenv("SESSION_ID")
 
     if session_id:
+        thread_local_tool.set_thread_name(session_id)
         os.environ["SESSION_ID"] = session_id
 
         # basic info

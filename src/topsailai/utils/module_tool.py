@@ -31,7 +31,7 @@ def get_mod(path):
         return None
     return __import__(path, None, None, [path.split('.')[-1]])
 
-def get_var(path:str, name):
+def get_var(path:str, name, need_module_log=True):
     """Get a variable from a module by path and name.
 
     Args:
@@ -51,7 +51,8 @@ def get_var(path:str, name):
     try:
         var = getattr(sub_mod, name)
     except Exception as e:
-        logger.warning(f"{sub_mod}, {name}, {e}")
+        if need_module_log:
+            logger.warning(f"{sub_mod}, {name}, {e}")
     return var
 
 def list_sub_mods_name(path):
@@ -82,6 +83,7 @@ def get_function_map(
         prefix_name="",
         conn_char=DEFAULT_CONN_CHAR,
         hook_check=None,
+        need_module_log=True,
     ):
     """Create a mapping of function names to functions from modules.
 
@@ -122,7 +124,7 @@ def get_function_map(
         if hook_check and not hook_check(mod_obj):
             continue
 
-        values = get_var(mod_path, key)
+        values = get_var(mod_path, key, need_module_log=need_module_log)
         if not values:
             continue
 
@@ -233,6 +235,7 @@ def get_external_function_map(
         prefix_name:str="",
         conn_char=DEFAULT_CONN_CHAR,
         hook_check=None,
+        need_module_log=True,
     ):
     """Create a mapping of function names to functions from modules.
 
@@ -273,4 +276,5 @@ def get_external_function_map(
         pkg_path, key, prefix_name,
         conn_char=conn_char,
         hook_check=hook_check,
+        need_module_log=need_module_log,
     )

@@ -1,10 +1,21 @@
+'''
+  Author: DawsonLin
+  Email: lin_dongsen@126.com
+  Created: 2026-03-23
+  Purpose:
+'''
+
 import threading
 from contextlib import contextmanager
+
+from topsailai.logger import logger
+
 
 # Define static variables for thread-local storage keys
 KEY_AGENT_NAME = "agent_name"
 KEY_SESSION_ID = "session_id"
 KEY_AGENT_OBJECT = "agent_object"
+KEY_THREAD_NAME = ""
 
 # Define a thread-local storage object
 g_thr_local = threading.local()
@@ -89,6 +100,45 @@ def decr_agent_deep():
         set_thread_var(KEY_AGENT_DEEP, v)
     return
 
+def get_thread_name():
+    """ get thread name from thread_local """
+    return get_thread_var(KEY_THREAD_NAME)
+
+def set_thread_name(thread_name):
+    """ add thread name to thread_local  """
+    # log
+    old_thread_name = get_thread_var(KEY_THREAD_NAME)
+
+    if old_thread_name == thread_name:
+        # no need set
+        return
+
+    if old_thread_name:
+        logger.info("set thread name: old=[%s] new=[%s]", old_thread_name, thread_name)
+
+    set_thread_var(KEY_THREAD_NAME, thread_name)
+    return
+
+@contextmanager
+def ctxm_set_thread_local(key, value):
+    """Context manager to temporarily set sth. in thread-local storage.
+
+    yield: old_value
+    """
+    old_value = get_thread_var(key)
+    if old_value and old_value != value:
+        logger.info("set thread local [%s]: old=[%s] new=[%s]", key, old_value, value)
+
+    set_thread_var(key, value)
+    try:
+        yield old_value
+    finally:
+        if old_value:
+            set_thread_var(key, old_value)
+        else:
+            unset_thread_var(key)
+    return
+
 @contextmanager
 def ctxm_give_agent_name(agent_name):
     """Context manager to temporarily set agent name in thread-local storage.
@@ -104,15 +154,8 @@ def ctxm_give_agent_name(agent_name):
             # Code that uses the agent name
             print(get_agent_name())  # Output: "my_agent"
     """
-    old_agent_name = get_thread_var(KEY_AGENT_NAME)
-    set_thread_var(KEY_AGENT_NAME, agent_name)
-    try:
-        yield
-    finally:
-        if old_agent_name:
-            set_thread_var(KEY_AGENT_NAME, old_agent_name)
-        else:
-            unset_thread_var(KEY_AGENT_NAME)
+    with ctxm_set_thread_local(KEY_AGENT_NAME, agent_name) as old_value:
+        yield old_value
     return
 
 def get_agent_name():

@@ -222,6 +222,8 @@ def get_prompt_from_module(module_name:str, key:str="PROMPT") -> str:
         return getattr(m, key)
     except ModuleNotFoundError:
         pass
+    except AttributeError:
+        pass
     except Exception as e:
         logger.exception(e)
     return ""

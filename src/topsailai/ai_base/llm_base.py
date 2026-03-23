@@ -56,7 +56,7 @@ class LLMModel(LLMModelBase):
         Returns:
             object: OpenAI chat completions object
         """
-        logger.info("getting llm model ...")
+        logger.info("getting llm model [%s]: ...", api_key[:5] if api_key else None)
         return openai.OpenAI(
             api_key=api_key or os.getenv("OPENAI_API_KEY", ""),
             base_url=api_base or os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1"),

@@ -11,7 +11,11 @@ from topsailai.ai_base.llm_base import LLMModel
 from topsailai.ai_base.llm_control.base_class import ContentStdout
 from topsailai.ai_base.prompt_base import PromptBase
 from topsailai.ai_base.llm_control.base_class import LLMModelBase
-from topsailai.utils.thread_local_tool import set_thread_var, KEY_SESSION_ID
+from topsailai.utils.thread_local_tool import (
+    set_thread_var,
+    KEY_SESSION_ID,
+    set_thread_name,
+)
 from topsailai.utils import (
     file_tool,
 )
@@ -78,6 +82,7 @@ def get_llm_chat(
             print(f"session_id: {session_id}")
 
         set_thread_var(KEY_SESSION_ID, session_id)
+        set_thread_name(session_id)
 
         messages_from_session = ctx_manager.get_messages_by_session(session_id)
         if not messages_from_session:

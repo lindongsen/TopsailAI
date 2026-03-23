@@ -21,21 +21,41 @@ class AgentFormatter(logging.Formatter):
         logging.Formatter.__init__(self, fmt, datefmt)
 
     def format(self, record):
-        from topsailai.utils.thread_local_tool import get_agent_name
+        """ format log content """
+        # DONOT: import outside
+        from topsailai.utils.thread_local_tool import (
+            get_agent_name,
+            get_thread_name,
+        )
+
         # thread local in python
+
+        # agent_name
         agent_name = get_agent_name()
         if not agent_name:
             # env in script
             agent_name = os.environ.get("AGENT_NAME", "") or os.environ.get("AI_AGENT", "")
-        if agent_name:
-          agent_name = f"({agent_name})"
-        record.agent_name = agent_name or ""
+        if not agent_name:
+            agent_name = ""
+
+        # thread_name
+        thread_name = get_thread_name() or ""
+
+        # generate message_id
+        message_id = ""
+        if agent_name \
+            or thread_name \
+        :
+            message_id = f"({agent_name}:{thread_name})"
+        record.message_id = message_id
+
+        # format
         return logging.Formatter.format(self, record)
 
 
 def setup_logger(name:str=None, log_file:str=None, level=logging.DEBUG):
     """ generate logger """
-    formatter = AgentFormatter('%(asctime)s %(levelname)s -%(thread)d- %(message)s (%(pathname)s:%(lineno)d)%(agent_name)s')
+    formatter = AgentFormatter('%(asctime)s %(levelname)s -%(thread)d- %(message)s (%(pathname)s:%(lineno)d) %(message_id)s')
     _logger = logging.getLogger(name)
 
     if not log_file:
