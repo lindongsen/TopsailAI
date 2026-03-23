@@ -58,12 +58,14 @@ def get_team_list() -> list[dict]:
 
     return team_list
 
-def generate_team_prompt(team_list:list[dict], only_agent=True):
+
+def generate_team_prompt(team_list: list[dict], only_agent: bool = True) -> str:
     """
     Generate a YAML-formatted prompt section for the team members.
 
     Args:
         team_list (list[dict]): List of team member dictionaries from get_team_list()
+        only_agent (bool): If True, removes ability flags from the output. Defaults to True.
 
     Returns:
         str: A formatted string containing team details in YAML format
@@ -84,7 +86,6 @@ def generate_team_prompt(team_list:list[dict], only_agent=True):
                 if key.startswith("is_able_to_call_"):
                     del new_team_info[key]
 
-        # replace to new
         team_list = new_team_list
 
     content = f"""
@@ -96,9 +97,20 @@ def generate_team_prompt(team_list:list[dict], only_agent=True):
 """
     return content
 
-def build_manager_message(message:str) -> str:
-    """ return new message to manager """
 
+def build_manager_message(message: str) -> str:
+    """
+    Build and return a modified message for the manager.
+
+    This function checks if any team member is mentioned in the message (using @mention format).
+    If a member is mentioned, it appends a note for the manager to use tool call.
+
+    Args:
+        message (str): The original message to be checked for member mentions.
+
+    Returns:
+        str: The modified message with additional instructions if a member is mentioned.
+    """
     # case: @member
     for member_name in g_members:
         member_name = member_name.strip()

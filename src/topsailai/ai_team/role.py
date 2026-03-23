@@ -18,9 +18,16 @@ MEMBER_STARTSWITH = "AIMember."
 
 def get_manager_name(manager_name:str=None) -> str:
     """Get the manager name.
+    
     If the manager name is not provided, it will be read from the environment variable "TOPSAIL_TEAM_MANAGER_NAME".
     If the environment variable is not set, it will default to "Manager".
     The manager name will be prefixed with "AIManager." if it does not already start with it.
+    
+    Args:
+        manager_name: Optional manager name. If not provided, reads from environment.
+    
+    Returns:
+        str: The manager name with "AIManager." prefix.
     """
     if not manager_name:
         manager_name = env_tool.EnvReaderInstance.get("TOPSAIL_TEAM_MANAGER_NAME") \
@@ -34,11 +41,19 @@ def get_manager_name(manager_name:str=None) -> str:
 
     return manager_name
 
+
 def get_member_name(member_name:str=None) -> str:
     """Get the member name.
+    
     If the member name is not provided, it will be read from the environment variable "TOPSAIL_TEAM_MEMBER_NAME".
     If the environment variable is not set, it will default to "Member".
     The member name will be prefixed with "AIMember." if it does not already start with it.
+    
+    Args:
+        member_name: Optional member name. If not provided, reads from environment.
+    
+    Returns:
+        str: The member name with "AIMember." prefix.
     """
     if not member_name:
         member_name = env_tool.EnvReaderInstance.get("TOPSAIL_TEAM_MEMBER_NAME") \
@@ -52,8 +67,19 @@ def get_member_name(member_name:str=None) -> str:
 
     return member_name
 
+
 def get_manager_prompt(agent_name:str=None) -> str:
-    """ get prompt for role info """
+    """Get the manager prompt for role info.
+    
+    Generates a formatted prompt string that defines the manager's role in the AI team.
+    The agent name will be prefixed with "AIManager." if it does not already start with it.
+    
+    Args:
+        agent_name: Optional agent name. If not provided, reads from environment or uses default.
+    
+    Returns:
+        str: Formatted prompt string with role and manager information.
+    """
     agent_name = get_manager_name(agent_name)
     return f"""
 
@@ -63,8 +89,20 @@ YOUR ROLE IS Manager, YOUR NAME IS ({agent_name})
 
 """
 
+
 def get_member_prompt(agent_name:str=None) -> str:
-    """ get prompt for role info """
+    """Get the member prompt for role info.
+    
+    Generates a formatted prompt string that defines the member's role in the AI team.
+    The agent name will be prefixed with "AIMember." if it does not already start with it.
+    Additionally, it reads the member's values from a .values file if it exists.
+    
+    Args:
+        agent_name: Optional agent name. If not provided, reads from environment.
+    
+    Returns:
+        str: Formatted prompt string with role and member information.
+    """
     raw_name = agent_name
     agent_name = get_member_name(agent_name)
     if raw_name == agent_name:
