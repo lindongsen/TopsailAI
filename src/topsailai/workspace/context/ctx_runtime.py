@@ -17,11 +17,12 @@ from topsailai.tools.agent_tool import (
 )
 from topsailai.tools import (
     story_tool,
-    env_tool,
 )
 from topsailai.context import ctx_manager
 from topsailai.utils import (
     json_tool,
+    env_tool,
+    file_tool,
 )
 from topsailai.utils.print_tool import print_step
 from topsailai.workspace.input_tool import (
@@ -100,7 +101,7 @@ class ContextRuntimeData(object):
             self.set_messages(messages_from_session)
         return
 
-    def _summarize_messages(self, messages):
+    def _summarize_messages(self, messages, prompt:str=None):
         """ summarize messages to one text.
 
         return (llm_chat, answer)
@@ -109,10 +110,17 @@ class ContextRuntimeData(object):
         one_msg = messages if isinstance(messages, str) else json_tool.json_dump(messages)
         enhanced_prompt = "\n---\nYou MUST focus on the Human's intention\n---\n\n"
 
+        # prompt
+        if prompt is None:
+            prompt = env_tool.EnvReaderInstance.get("TOPSAILAI_SUMMARY_PROMPT")
+        _, prompt_content = file_tool.get_file_content_fuzzy(prompt)
+        if not prompt_content:
+            prompt_content = ""
+
         llm_chat = get_llm_chat(
             message=enhanced_prompt+one_msg,
             session_id="",
-            system_prompt=story_tool.PROMPT_SUMMARY,
+            system_prompt=story_tool.PROMPT_SUMMARY + prompt_content,
 
             need_stdout=False,
             need_input_message=False,

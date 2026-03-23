@@ -141,6 +141,9 @@ CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS=10000
 # ONLY RUNTIME: a file path to save answer
 # TOPSAILAI_SAVE_RESULT_TO_FILE=""
 
+# Prompt for summary, file or content
+TOPSAILAI_SUMMARY_PROMPT=""
+
 # =============================================================================
 # Feature Flags
 # =============================================================================
