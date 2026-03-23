@@ -12,16 +12,14 @@ from topsailai.utils import (
     file_tool,
     env_tool,
 )
+from topsailai.prompt_hub import prompt_tool
 from topsailai.workspace import (
     lock_tool,
 )
 
 KEY_STORY = "story"
 
-PROMPT_SUMMARY = """
-You are a professional writer.
-Your Core Goal: Summarize the messages and generate appropriate a Heading and Content in Markdown format.
-"""
+PROMPT_SUMMARY = prompt_tool.read_prompt("context/summary/L0.md")
 
 PROMPT_SUMMARY_AS_STORY = PROMPT_SUMMARY + """
 Use story_tool to save content.

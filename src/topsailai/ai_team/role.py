@@ -5,6 +5,8 @@
   Purpose:
 '''
 
+import os
+
 from topsailai.utils import (
     env_tool,
 )
@@ -63,11 +65,25 @@ YOUR ROLE IS Manager, YOUR NAME IS ({agent_name})
 
 def get_member_prompt(agent_name:str=None) -> str:
     """ get prompt for role info """
+    raw_name = agent_name
     agent_name = get_member_name(agent_name)
-    return f"""
+    if raw_name == agent_name:
+        raw_name = agent_name.replace(MEMBER_STARTSWITH, "", 1)
+
+    # get values
+    value_content = ""
+    value_path = env_tool.EnvReaderInstance.get("TOPSAILAI_TEAM_PATH") + f"/{raw_name}.values"
+    if os.path.exists(value_path):
+        with open(value_path, encoding="utf-8") as fd:
+            value_content = fd.read()
+
+    member_prompt = f"""
 
 ---
 YOUR ROLE IS Member, YOUR NAME IS ({agent_name})
 ---
 
 """
+    member_prompt += value_content
+
+    return member_prompt + "\n---\n"

@@ -49,7 +49,9 @@ def get_system_prompt(agent_name:str) -> str:
     _, sys_prompt_content = file_tool.get_file_content_fuzzy(env_sys_prompt)
 
     # team role
-    sys_prompt_content += get_member_prompt(agent_name)
+    member_prompt = get_member_prompt(agent_name)
+    if member_prompt not in sys_prompt_content:
+        sys_prompt_content += member_prompt
 
     # extra system prompt
     extend_system_prompt()

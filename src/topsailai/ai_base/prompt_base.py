@@ -228,7 +228,8 @@ class PromptBase(object):
             user_message: The initial user message for the new session
         """
         self.init_prompt()
-        self.add_user_message(user_message, need_print=need_print_message)
+        if user_message:
+            self.add_user_message(user_message, need_print=need_print_message)
         for hook in self.hooks_after_new_session:
             try:
                 hook(self)

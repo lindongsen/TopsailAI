@@ -201,7 +201,7 @@ class AgentChat(object):
             curr_count += 1
 
             # build message
-            if func_build_message:
+            if message and func_build_message:
                 message = func_build_message(
                     message=message,
                     curr_count=curr_count,

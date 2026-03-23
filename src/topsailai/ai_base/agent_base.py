@@ -417,8 +417,8 @@ class AgentRun(AgentBase):
             print_step(f"[effective_tools] [{len(tools_for_chat)}] {list(tools_for_chat.keys())}", need_format=False)
 
         # new session
-        if user_input:
-            self.new_session({"step_name":"task","raw_text":user_input})
+        user_message = {"step_name":"task","raw_text":user_input} if user_input else None
+        self.new_session(user_message)
 
         while True:
             rsp_obj, response = self.llm_model.chat(

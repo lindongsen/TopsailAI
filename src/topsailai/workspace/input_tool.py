@@ -12,7 +12,10 @@ import sys
 import readline
 
 from topsailai.utils import env_tool
-from topsailai.workspace.hook_instruction import HookInstruction
+from topsailai.workspace.hook_instruction import (
+    HookInstruction,
+    TRIGGER_CHARS,
+)
 
 SPLIT_LINE = "--------------------------------------------------------------------------------"
 INPUT_TIPS = ">>> Your Turn: "
@@ -54,6 +57,11 @@ def hook_message(message: str, hook: HookInstruction) -> bool:
     if hook.exist_hook(message):
         hook.call_hook(message)
         return True
+    elif message[0] in TRIGGER_CHARS:
+        if message.lower() == "/noop":
+            return False
+        hook.call_hook("/help")
+        return True
     return False
 
 
@@ -89,6 +97,8 @@ def input_one_line(tips: str = "", hook: HookInstruction = None) -> str:
         if hook_message(message, hook):
             continue
         break
+    if message.lower() == "/noop":
+        return ""
     return message
 
 
@@ -136,6 +146,8 @@ def input_multi_line(tips: str = "", hook: HookInstruction = None) -> str:
             if hook_message(message, hook):
                 message = ""
                 break
+            if message.strip().lower() ==  "/noop":
+                return ""
 
     message = message.strip()
     if message:
