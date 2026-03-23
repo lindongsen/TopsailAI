@@ -129,6 +129,12 @@ def generate_system_prompt():
 
     return sys_prompt_content
 
+def get_session_id() -> str:
+    """ return a session """
+    session_id = os.getenv("SESSION_ID") or time_tool.get_current_date(with_t=True).replace('-', '')
+    session_id = session_id.replace(':', '')
+    return session_id
+
 def main():
     """ main entry """
     # agent name
@@ -148,7 +154,7 @@ def main():
         ],
 
         agent_name=manager_name,
-        session_id=os.getenv("SESSION_ID") or time_tool.get_current_date(with_t=True),
+        session_id=get_session_id(),
 
         session_head_tail_offset=env_tool.EnvReaderInstance.get(
             "TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET",
