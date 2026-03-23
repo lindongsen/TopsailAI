@@ -9,6 +9,7 @@
 '''
 
 import os
+import time
 
 from topsailai.logger import logger
 from topsailai.utils import (
@@ -191,6 +192,7 @@ class AgentChat(object):
             self.first_message = message
 
         # variables
+        # up_time = int(time.time())
         answer = ""
         curr_count = 0
 
@@ -209,6 +211,7 @@ class AgentChat(object):
                 )
 
             # run
+            start_time = int(time.time())
             try:
                 answer = self.ai_agent.run(
                     get_agent_step_call(
@@ -243,6 +246,9 @@ class AgentChat(object):
             self.ctx_runtime_data.reset_messages()
             self.ctx_rt_instruction.history()
 
+            # end time
+            end_time = int(time.time())
+
             if not env_tool.is_debug_mode():
                 print()
                 print(">>> answer:")
@@ -251,8 +257,10 @@ class AgentChat(object):
             print()
             print(SPLIT_LINE)
             print(f"The manager have scheduled tasks [{curr_count}] times")
-            print()
+            print(f"session: {self.ctx_runtime_data.session_id}")
+            print(f"elapsed_time: {end_time-start_time}")
 
+            # next time
             func_print_pre_input_message()
             while True:
                 message = input_message(hook=self.hook_instruction)
