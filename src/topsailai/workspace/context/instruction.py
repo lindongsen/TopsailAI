@@ -179,6 +179,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         Returns:
             None
         """
+        index = int(index)
         assert index > 0 and index <= len(self.messages), "nothing can be deleted"
         index -= 1
 
