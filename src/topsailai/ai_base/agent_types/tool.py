@@ -74,7 +74,7 @@ def exec_tool_func(tool_func, args):
     """
     try:
         result = tool_func(**args)
-    except agent_exception.AgentEndProcess as e:
+    except (agent_exception.AgentToolCallException) as e:
         raise e
     except Exception as e:
         result = str(e)

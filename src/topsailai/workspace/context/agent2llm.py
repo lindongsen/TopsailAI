@@ -30,12 +30,12 @@ from topsailai.workspace.context.base import (
 class ContextRuntimeAgent2LLM(ContextRuntimeBase):
     """
     Agent chats to LLM.
-    
+
     This class provides functionality for managing agent conversations with LLM,
     including message deletion, summarization, and processing threshold detection.
     """
 
-    def del_agent_messages(self, indexes: list[int]) -> list[int]:
+    def del_agent_messages(self, indexes: list[int], to_del_last=False) -> list[int]:
         """
         Delete specific messages from the agent's message list.
 
@@ -54,7 +54,9 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         new_messages = []
         deleted_list = []
+        last_index = None
         for i, msg in enumerate(self.ai_agent.messages[first_position:]):
+            last_index = i
             new_messages.append(msg)
             msg_dict = json_tool.json_load(msg)
             if msg_dict["role"] == ROLE_SYSTEM:
@@ -63,6 +65,11 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 continue
             deleted_list.append(i)
             new_messages.pop()
+
+        if to_del_last:
+            if last_index is not None and last_index not in indexes:
+                new_messages.pop()
+
         if not deleted_list:
             return []
         self.ai_agent.messages = new_messages
@@ -102,7 +109,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             return None
 
         # head_offset_to_keep
-        head_offset_to_keep = self.__get_head_offset_to_keep_in_summary(head_offset_to_keep)
+        head_offset_to_keep = self._get_head_offset_to_keep_in_summary(head_offset_to_keep)
 
         # keep last user message
         last_user_msg = self.last_user_message
@@ -129,7 +136,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         Returns:
             bool: True if summarization is needed, False otherwise.
         """
-        quantity_threshold = self.__get_quantity_threshold()
+        quantity_threshold = self._get_quantity_threshold()
         if not quantity_threshold:
             return False
 

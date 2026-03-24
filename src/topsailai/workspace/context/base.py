@@ -28,18 +28,18 @@ from topsailai.workspace.llm_shell import get_llm_chat
 class ContextRuntimeBase(object):
     """
     Context manager for runtime (session).
-    
+
     Manages user chat sessions and maintains message history between users and agents.
-    
+
     Variables:
         self.messages: User chats to agent in the current session.
         self.ai_agent.messages: Agent chats to LLM.
     """
-    
+
     def __init__(self):
         """
         Initialize the ContextRuntimeBase instance.
-        
+
         Sets up default values for session ID, messages list, and AI agent reference.
         """
         self.session_id = ""
@@ -50,7 +50,7 @@ class ContextRuntimeBase(object):
     def last_user_message(self):
         """
         Get the last user message from self.messages of current session.
-        
+
         Returns:
             dict or None: The last message from ROLE_USER, or None if not found.
         """
@@ -65,11 +65,11 @@ class ContextRuntimeBase(object):
     def init(self, session_id: str, ai_agent: AgentBase):
         """
         Initialize the context runtime with session ID and AI agent.
-        
+
         Args:
             session_id (str): Unique identifier for the session.
             ai_agent (AgentBase): The AI agent instance to use for processing.
-        
+
         Returns:
             None
         """
@@ -81,10 +81,10 @@ class ContextRuntimeBase(object):
     def append_message(self, message: dict):
         """
         Append a message to the messages list.
-        
+
         Args:
             message (dict): The message dictionary to append.
-        
+
         Returns:
             None
         """
@@ -96,12 +96,12 @@ class ContextRuntimeBase(object):
     def set_messages(self, value: list):
         """
         Set a new value for the messages list.
-        
+
         Replaces all existing messages with the provided list.
-        
+
         Args:
             value (list): New list of messages to set.
-        
+
         Returns:
             None
         """
@@ -116,9 +116,9 @@ class ContextRuntimeBase(object):
     def reset_messages(self):
         """
         Reset messages to the newest from session storage.
-        
+
         Retrieves messages from the session storage and updates the internal messages list.
-        
+
         Returns:
             None
         """
@@ -130,13 +130,13 @@ class ContextRuntimeBase(object):
     ###############################################################
     # Env
     ###############################################################
-    
-    def __get_quantity_threshold(self) -> int:
+
+    def _get_quantity_threshold(self) -> int:
         """
         Get the quantity threshold for message summarization.
-        
+
         If the value is 0 or null, summarization is disabled.
-        
+
         Returns:
             int: The quantity threshold value. Returns 0 if disabled.
         """
@@ -152,17 +152,17 @@ class ContextRuntimeBase(object):
         quantity_threshold = max(random.choice(number_list), env_quantity_threshold)
         return quantity_threshold
 
-    def __get_head_offset_to_keep_in_summary(
+    def _get_head_offset_to_keep_in_summary(
             self,
             head_offset_to_keep: int = None,
         ) -> int:
         """
         Get the head offset to keep in summary.
-        
+
         Args:
             head_offset_to_keep (int, optional): If provided, use this value directly.
                 If None, retrieve from environment variable.
-        
+
         Returns:
             int: The head offset value to keep in summary. Always returns non-negative value.
         """
@@ -181,21 +181,21 @@ class ContextRuntimeBase(object):
     ###############################################################
     # Summary
     ###############################################################
-    
+
     def _summarize_messages(self, messages, prompt: str = None):
         """
         Summarize messages into a single text using LLM.
-        
+
         Args:
             messages: The messages to summarize. Can be a string or list/dict.
             prompt (str, optional): Custom prompt for summarization. If None, uses
                 default from environment variable.
-        
+
         Returns:
             tuple: A tuple containing (llm_chat, answer) where:
                 - llm_chat: The LLM chat instance used for summarization
                 - answer (str): The summarized text response from LLM
-        
+
         Raises:
             AssertionError: If messages is null/empty.
         """

@@ -19,6 +19,9 @@ from topsailai.utils import (
     env_tool,
 )
 
+from topsailai.ai_base.agent_types.exception import (
+    AgentNoCareResult,
+)
 from topsailai.ai_base.prompt_base import (
     PromptBase,
 )
@@ -444,8 +447,13 @@ class AgentRun(AgentBase):
             ctx_count = len(self.messages)
 
             for i, step in enumerate(response):
-                ret = step_call(step, tools=all_tools, response=response, index=i, rsp_msg_obj=rsp_msg)
+                try:
+                    ret = step_call(step, tools=all_tools, response=response, index=i, rsp_msg_obj=rsp_msg)
+                except AgentNoCareResult:
+                    break
+
                 assert isinstance(ret, StepCallBase), "step_call must return StepCallBase instance"
+
                 if ret.code == ret.CODE_TASK_FINAL:
                     logger.info(f"final: {ret.result}")
                     return ret.result
