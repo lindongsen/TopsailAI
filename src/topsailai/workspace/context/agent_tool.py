@@ -8,9 +8,6 @@
 from topsailai.utils import (
     format_tool,
 )
-from topsailai.ai_base.agent_types.exception import (
-    AgentNoCareResult,
-)
 from topsailai.workspace.context.agent import (
     ContextRuntimeAIAgent,
 )
@@ -27,7 +24,7 @@ class ContextRuntimeAgentTools(ContextRuntimeAIAgent):
     TOOL_CONTEXT_DELETE_MESSAGES = "context-delete_messages"
 
     # user chats to agent
-    def tool_delete_messages_for_processed(self, indexes: list[int]) -> AgentNoCareResult:
+    def tool_delete_messages_for_processed(self, indexes: list[int]) -> str:
         """ You can use this tool to prune out useless messages
 
         Args:
@@ -39,13 +36,13 @@ class ContextRuntimeAgentTools(ContextRuntimeAIAgent):
         """
         indexes = format_tool.to_list_int(indexes)
         if not indexes:
-            raise AgentNoCareResult("do nothing")
+            return ("do nothing")
 
         result = self.ctx_runtime_data.del_session_messages(indexes)
-        raise AgentNoCareResult(f"deleted ok: {result}")
+        return (f"deleted ok: {result}")
 
     # agent chats to LLM
-    def tool_delete_messages_for_processing(self, indexes: list[int]) -> AgentNoCareResult:
+    def tool_delete_messages_for_processing(self, indexes: list[int]) -> str:
         """ You can use this tool to prune out useless messages
 
         Args:
@@ -63,7 +60,7 @@ class ContextRuntimeAgentTools(ContextRuntimeAIAgent):
         """
         indexes = format_tool.to_list_int(indexes)
         if not indexes:
-            raise AgentNoCareResult("do nothing")
+            return ("do nothing")
 
-        result = self.ctx_runtime_data.del_agent_messages(indexes, to_del_last=True)
-        raise AgentNoCareResult(f"deleted ok: {result}")
+        result = self.ctx_runtime_data.del_agent_messages(indexes)
+        return (f"deleted ok: {result}")
