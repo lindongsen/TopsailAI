@@ -43,7 +43,8 @@ class ContextRuntimeAgentTools(ContextRuntimeAIAgent):
 
     # agent chats to LLM
     def tool_delete_messages_for_processing(self, indexes: list[int]) -> str:
-        """ You can use this tool to prune out useless messages
+        """ You can use this tool to prune out useless messages.
+        Note that when the number of messages exceeds 50, use this tool to prune them, ensuring the context remains concise and efficient.
 
         Args:
             indexes (list[int]):
