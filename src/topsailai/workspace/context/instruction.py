@@ -42,17 +42,29 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             dict: A dictionary mapping instruction names to their
                   corresponding methods.
         """
-        return dict(
-            clear=self.clear,
-            story=self.story,
-            history=self.history,
-            history2=self.history2,
-            delete=self.delete,
-            del_msgs=self.delete_multi,
-            summarize=self.summarize,
-        )
 
-    def clear(self):
+        # context messages
+        ctx_map = {
+            "ctx.clear": self.ctx_clear,
+            "ctx.story": self.ctx_story,
+            "ctx.history": self.ctx_history,
+            "ctx.history2": self.ctx_history2,
+            "ctx.del_msg": self.ctx_delete_message,
+            "ctx.del_msgs": self.ctx_delete_messages,
+            "ctx.summarize": self.ctx_summarize,
+        }
+
+        # total
+        instructions = {}
+        instructions.update(ctx_map)
+
+        # result
+        return instructions
+
+    ##############################################################################
+    # Context, ctx
+    ##############################################################################
+    def ctx_clear(self):
         """
         Clear all context messages for the current session.
 
@@ -73,7 +85,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             print("Context already is clear")
         return
 
-    def story(self):
+    def ctx_story(self):
         """
         Save context messages to a new story.
 
@@ -90,7 +102,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         print(f"The history messages will be save to a new story, pid=[{pid}], msg_len=[{len(self.messages)}]")
         return
 
-    def history(self, offset:str=""):
+    def ctx_history(self, offset:str=""):
         """
         Display the history of messages for the current session.
 
@@ -131,7 +143,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
 
         return
 
-    def history2(self):
+    def ctx_history2(self):
         """
         Display raw history messages for the current session.
 
@@ -150,7 +162,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             print_raw_messages(raw_msgs)
         return
 
-    def delete(self, index:int):
+    def ctx_delete_message(self, index:int):
         """
         Delete a single message by its index.
 
@@ -172,10 +184,10 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
 
         self.ctx_runtime_data.del_session_message(index)
 
-        self.history()
+        self.ctx_history()
         return
 
-    def delete_multi(self, *indexes:list[int]):
+    def ctx_delete_messages(self, *indexes:list[int]):
         """
         Delete multiple messages by their indexes.
 
@@ -199,10 +211,10 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         for i, value in enumerate(result):
             result[i] = value + 1
         print(f"deleted: {result}")
-        self.history()
+        self.ctx_history()
         return
 
-    def summarize(self, head_offset_to_keep:int=1):
+    def ctx_summarize(self, head_offset_to_keep:int=1):
         """
         Summarize context messages for the current session.
 
@@ -223,5 +235,5 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             head_offset_to_keep=head_offset_to_keep,
             need_interactive=True,
         )
-        self.history()
+        self.ctx_history()
         return
