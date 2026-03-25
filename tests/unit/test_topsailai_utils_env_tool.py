@@ -127,7 +127,7 @@ class TestEnvironmentReader:
     
     def test_story_prompt_content_direct_content(self):
         """Test story_prompt_content with direct content"""
-        with patch.dict(os.environ, {"STORY_PROMPT": "direct content"}):
+        with patch.dict(os.environ, {"TOPSAILAI_STORY_PROMPT": "direct content"}):
             assert self.reader.story_prompt_content == "direct content"
     
     def test_story_prompt_content_file_path(self):
@@ -137,7 +137,7 @@ class TestEnvironmentReader:
             tmp_path = tmp.name
         
         try:
-            with patch.dict(os.environ, {"STORY_PROMPT": tmp_path}):
+            with patch.dict(os.environ, {"TOPSAILAI_STORY_PROMPT": tmp_path}):
                 assert self.reader.story_prompt_content == "file content"
         finally:
             os.unlink(tmp_path)
