@@ -58,8 +58,8 @@ class StepCallBase(object):
         # Flag indicating if this is an interactive step
         self.flag_interactive = True if flag_interactive else False
 
-        if env_tool.EnvReaderInstance.get("TOPSAILAI_FLAG_INTERACTIVE_MODE") is not None:
-            self.flag_interactive = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_FLAG_INTERACTIVE_MODE")
+        if env_tool.EnvReaderInstance.get("TOPSAILAI_CHAT_INTERACTIVE_MODE") is not None:
+            self.flag_interactive = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CHAT_INTERACTIVE_MODE")
         logger.info("interactive mode: [%s]", self.flag_interactive)
 
         # print_step(f"interactive mode: [{self.flag_interactive}]", need_format=False)
