@@ -182,6 +182,15 @@ def get_messages_by_session(
 
     return []
 
+def exists_session(session_id:str, session_mgr:SessionStorageBase=None) -> bool:
+    """ check if exists session """
+    if not session_id:
+        return False
+
+    if session_mgr is None:
+        session_mgr = get_session_manager()
+
+    return session_mgr.exists_session(session_id)
 
 def create_session(session_id:str, task:str, session_mgr:SessionStorageBase=None) -> bool:
     """

@@ -518,7 +518,7 @@ def get_agent_chat(
             print(f"session_id: {session_id}")
 
         ctx_runtime_data.init(session_id, ai_agent=None)
-        if not ctx_runtime_data.messages:
+        if not ctx_runtime_data.messages and not ctx_manager.exists_session(session_id):
             if not message:
                 message = get_message(hook_instruction, need_input=need_input_message)
             ctx_manager.create_session(session_id, task=message[:100])
