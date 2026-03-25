@@ -10,6 +10,10 @@ import yaml
 
 g_members = []
 
+def get_members_cache() -> list:
+    """ return members """
+    return g_members
+
 def get_team_list() -> list[dict]:
     """
     Get a list of team members from the TOPSAILAI_TEAM_PATH directory.

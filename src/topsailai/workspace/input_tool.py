@@ -180,6 +180,11 @@ def input_message(tips: str = "", hook: HookInstruction = None) -> str:
         return input_multi_line(tips, hook)
     return input_one_line(tips, hook)
 
+def call_hook_get_message_for_task_from_file():
+    """ user message is a file """
+    if not env_tool.EnvReaderInstance.get("TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP", formatter=int):
+        os.environ["TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP"] = "1"
+    return
 
 def get_message(hook: HookInstruction = None, need_input=True) -> str:
     """
@@ -216,6 +221,8 @@ def get_message(hook: HookInstruction = None, need_input=True) -> str:
     if file_path and os.path.exists(file_path):
         with open(file_path, encoding='utf-8') as fd:
             message = fd.read()
+        # hook for message from file
+        call_hook_get_message_for_task_from_file()
 
     message = message.strip()
     if not message and need_input:

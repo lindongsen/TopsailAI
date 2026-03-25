@@ -22,57 +22,47 @@ import sys
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root + "/src")
-
 os.chdir(project_root)
 
 from topsailai.ai_team.manager import (
-    get_team_list,
-    g_members,
-    generate_team_prompt,
+    get_members_cache,
     build_manager_message,
 )
 from topsailai.ai_team.role import (
     get_manager_name,
-    get_manager_prompt,
 )
 from topsailai.human.role import (
     get_human_name,
 )
 from topsailai.utils import (
     env_tool,
-    time_tool,
-    file_tool,
 )
 from topsailai.workspace.input_tool import (
     SPLIT_LINE,
 )
 from topsailai.workspace.agent_shell import get_agent_chat
-
-
-DEFAULT_HEAD_TAIL_OFFSET = 7
-PROMPT_FILE_AI_TEAM = f"{project_root}/cli/ai_team.md"
-PROMPT_FILE_AI_TEAM_MANAGER = f"{project_root}/cli/ai_team_manager.md"
-
-g_flag_only_agent = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TEAM_MANAGER_ONLY_AGENT")
-if g_flag_only_agent:
-    PROMPT_FILE_AI_TEAM_MANAGER = f"{project_root}/cli/ai_team_manager_only_agent.md"
+from topsailai.ai_team.common import (
+    DEFAULT_HEAD_TAIL_OFFSET,
+    generate_system_prompt,
+    get_session_id,
+)
 
 
 def hook_build_message(message:str, curr_count:int, **_) -> str:
     """
     Transform and format messages with agent mention format.
-    
+
     This hook is called for each message to add the human name prefix
     and build manager messages for subsequent turns.
-    
+
     Args:
         message: The message content to transform.
         curr_count: The current message count/turn number.
         **_: Additional keyword arguments (ignored).
-    
+
     Returns:
         str: The transformed message with proper formatting.
-    
+
     Example:
         >>> hook_build_message("Hello", 1)
         'Human Say:\\nHello'
@@ -90,97 +80,19 @@ def hook_build_message(message:str, curr_count:int, **_) -> str:
 
     return message
 
-
-def generate_system_prompt():
-    """
-    Generate the complete system prompt by combining multiple sources.
-
-    Combines:
-    - Team information from get_team_list() and generate_team_prompt()
-    - System prompt from environment variable or file
-    - Team prompt from environment variable or default file
-
-    Returns:
-        str: The complete system prompt content
-
-    Environment Variables Used:
-        SYSTEM_PROMPT: File path or content for system prompt
-        TOPSAILAI_TEAM_PROMPT: File path for team prompt (defaults to PROMPT_FILE_AI_TEAM)
-        TOPSAILAI_TEAM_PATH: Path to team member directory (used by get_team_list())
-    """
-    # team info
-    team_list = get_team_list()
-    team_info = generate_team_prompt(team_list, g_flag_only_agent)
-
-    # system prompt
-    env_sys_prompt = os.getenv("SYSTEM_PROMPT")
-    _, sys_prompt_content = file_tool.get_file_content_fuzzy(env_sys_prompt)
-
-    # team prompt
-    if not os.getenv("TOPSAILAI_TEAM_PROMPT"):
-        os.environ["TOPSAILAI_TEAM_PROMPT"] = PROMPT_FILE_AI_TEAM
-    env_team_prompt = os.getenv("TOPSAILAI_TEAM_PROMPT")
-    _, team_prompt_content = file_tool.get_file_content_fuzzy(env_team_prompt)
-    if team_prompt_content:
-        sys_prompt_content += "\n" + team_prompt_content.strip()
-
-    team_prompt_content += team_info
-
-    # team info
-    sys_prompt_content += team_info
-
-    # agent will use this
-    os.environ["TOPSAILAI_TEAM_PROMPT_CONTENT"] = team_prompt_content
-
-    # print(team_prompt_content)
-
-    # manager prompt
-    _, manager_prompt_content = file_tool.get_file_content_fuzzy(PROMPT_FILE_AI_TEAM_MANAGER)
-
-    # team role info
-    sys_prompt_content += (
-        get_manager_prompt() +
-        manager_prompt_content +
-        "\n\n---"
-    )
-
-    print(sys_prompt_content)
-
-    return sys_prompt_content
-
-
-def get_session_id() -> str:
-    """
-    Generate or retrieve a session ID for the current session.
-    
-    Uses SESSION_ID environment variable if set, otherwise generates
-    one based on current date and time.
-    
-    Returns:
-        str: A unique session identifier string.
-    
-    Example:
-        >>> get_session_id()
-        '20260120123456'
-    """
-    session_id = os.getenv("SESSION_ID") or time_tool.get_current_date(with_t=True).replace('-', '')
-    session_id = session_id.replace(':', '')
-    return session_id
-
-
 def main():
     """
     Main entry point for the AI Team Manager.
-    
+
     This function:
     1. Retrieves the manager name
     2. Generates the complete system prompt
     3. Displays team members
     4. Initializes and runs the agent chat with hooks
-    
+
     Returns:
         The answer/response from the agent chat session.
-    
+
     Environment Variables:
         TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET: Optional offset for session context (default: 7)
     """
@@ -191,7 +103,7 @@ def main():
     sys_prompt_content = generate_system_prompt()
 
     # show members
-    print(g_members)
+    print(get_members_cache())
 
     # agent chat
     agent_chat = get_agent_chat(
