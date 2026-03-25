@@ -207,6 +207,8 @@ TOPSAILAI_PLUGIN_SKILLS=""
 # Purpose: Enables command execution in isolated environments
 SANDBOX_SETTINGS=""
 
+# Envion keys separated by semicolons (';')
+TOPSAILAI_CMD_ENV_KEYS=""
 
 # =============================================================================
 # CLI Configuration

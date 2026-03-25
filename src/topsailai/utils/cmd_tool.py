@@ -11,6 +11,7 @@ import subprocess
 
 from topsailai.logger import logger
 from .text_tool import safe_decode
+from .env_tool import EnvReaderInstance
 
 
 def format_cmd(cmd, remote=None):
@@ -36,8 +37,12 @@ def build_env(d:dict=None, keys:list=None):
     env = {}
     for k in [
         "PYTHONPATH", "PATH", "HOSTNAME", "SHELL",
-        "GOCACHE",
-    ] + (keys or []):
+        "GOCACHE", "GOPATH",
+    ] + (
+            keys or []
+    ) + (
+            EnvReaderInstance.get_list_str("TOPSAILAI_CMD_ENV_KEYS", separator=None) or []
+    ):
         v = os.getenv(k)
         if v:
             env[k] = v
