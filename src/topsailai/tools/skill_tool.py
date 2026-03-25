@@ -92,8 +92,6 @@ TOOLS = dict(
     overview_skill=overview_skill,
 )
 
-PROMPT_PLUGIN_SKILLS = get_skill_markdown()
-
 PROMPT_SKILL = """
 ---
 
@@ -113,9 +111,9 @@ folder-name/
 ```
 """
 
-PROMPT = PROMPT_SKILL + PROMPT_PLUGIN_SKILLS + "\n---\n"
-
-FLAG_TOOL_ENABLED = True if PROMPT_PLUGIN_SKILLS else False
+PROMPT_PLUGIN_SKILLS = ""
+PROMPT = ""
+FLAG_TOOL_ENABLED = False
 
 def reload():
     """ reload prompt """
@@ -129,3 +127,5 @@ def reload():
     FLAG_TOOL_ENABLED = True if PROMPT_PLUGIN_SKILLS else False
 
     return
+
+reload()
