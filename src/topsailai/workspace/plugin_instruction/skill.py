@@ -15,9 +15,12 @@ def show_skills(word:str=None):
     Args:
         word (str, optional): Simple fuzzy matching
     """
+    skills = skill_tool.get_skills_from_cache()
+    if not skills:
+        return
     print()
     print("# SKILLS")
-    for skill in skill_tool.get_skills_from_cache():
+    for skill in skills:
         if word:
             if word in skill.name:
                 print(str(skill))
@@ -35,7 +38,10 @@ def unload_skill(folder:str):
     skill_tool.unload_skill(folder)
     agent = get_ai_agent()
     if agent:
+        if not skill_tool.get_skills_from_cache():
+            agent.remove_tools("skill_tool")
         agent.reload_tool_prompt()
+    print("OK")
     return
 
 def load_skill(folder:str):
@@ -48,9 +54,10 @@ def load_skill(folder:str):
     skill_tool.load_skill(folder)
     agent = get_ai_agent()
     if agent:
+        agent.add_tools_by_module("topsailai.tools.skill_tool")
         agent.reload_tool_prompt()
     if skill_tool.exists_skill(folder):
-        print("Load skill into map ok")
+        print("OK")
     else:
         print("Failed")
     return

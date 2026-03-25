@@ -143,7 +143,7 @@ def print_debug(msg):
     msg = f"[DEBUG] {msg}"
     print_step(msg, need_format=False)
 
-def print_error(msg):
+def print_error(msg, exception=False):
     """Print an error message to both logger and console.
 
     This function logs the error using the application's logger
@@ -152,7 +152,7 @@ def print_error(msg):
     Args:
         msg: Error message to log and print
     """
-    if isinstance(msg, Exception):
+    if isinstance(msg, Exception) or exception:
         logger.exception(msg)
     else:
         logger.error(msg)

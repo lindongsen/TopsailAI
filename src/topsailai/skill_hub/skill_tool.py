@@ -176,8 +176,7 @@ def unload_skill(folder_path:str):
         skill_folders = set(skill_folders)
         if folder_path in skill_folders:
             skill_folders.remove(folder_path)
-    if skill_folders:
-        os.environ["TOPSAILAI_PLUGIN_SKILLS"] = ";".join(skill_folders)
+    os.environ["TOPSAILAI_PLUGIN_SKILLS"] = ";".join(list(skill_folders)) if skill_folders else ""
 
     # remove cache
     if folder_path in g_skills:
@@ -194,6 +193,16 @@ def load_skill(folder_path:str) -> SkillInfo:
     Returns:
         SkillInfo: a instance
     """
+    # add env
+    skill_folders = EnvReaderInstance.get_list_str("TOPSAILAI_PLUGIN_SKILLS", separator="")
+    if not skill_folders:
+        skill_folders = []
+    if folder_path not in skill_folders:
+        skill_folders.append(folder_path)
+    if skill_folders:
+        os.environ["TOPSAILAI_PLUGIN_SKILLS"] = ";".join(skill_folders)
+
+    # add skill
     return parse_skill_folder(folder_path)
 
 def exists_skill(folder_path:str) -> bool:

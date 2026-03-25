@@ -6,7 +6,7 @@
 '''
 
 from topsailai.logger import logger
-from topsailai.ai_base.agent_base import (
+from topsailai.ai_base.tool_call import (
     StepCallBase,
 )
 from topsailai.utils.thread_tool import (

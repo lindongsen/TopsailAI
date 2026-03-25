@@ -28,8 +28,8 @@ def get_mod(path):
     try:
         return __import__(path, None, None, [path.split('.')[-1]])
     except ModuleNotFoundError:
-        return None
-    return __import__(path, None, None, [path.split('.')[-1]])
+        pass
+    return None
 
 def get_var(path:str, name, need_module_log=True):
     """Get a variable from a module by path and name.

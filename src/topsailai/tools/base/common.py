@@ -29,6 +29,25 @@ def add_tool(name:str, func):
     TOOLS[name] = func
     return
 
+def get_tools_by_module(module_path:str, key:str="TOOLS") -> dict:
+    """
+    Get tool map, key is tool_name, value is func
+
+    Args:
+        module_path (str): import path e.g. topsailai.tools.xxx
+
+    Returns:
+        dict:
+    """
+    m = module_tool.get_mod(module_path)
+    name_prefix = module_path.rsplit('.', 1)[-1]
+    _tools = getattr(m, key)
+    tool_map = {}
+    for name, func in _tools.items():
+        tool_name = name_prefix + CONN_CHAR + name
+        tool_map[tool_name] = func
+    return tool_map
+
 def get_tool_prompt(tools_name:list=None, tools_map:dict=None):
     """
     :tools_name: list_str;
