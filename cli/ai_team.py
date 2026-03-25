@@ -24,9 +24,13 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root + "/src")
 os.chdir(project_root)
 
+from topsailai.ai_team.constants import (
+    DEFAULT_HEAD_TAIL_OFFSET,
+)
 from topsailai.ai_team.manager import (
     get_members_cache,
     build_manager_message,
+    generate_system_prompt,
 )
 from topsailai.ai_team.role import (
     get_manager_name,
@@ -42,8 +46,6 @@ from topsailai.workspace.input_tool import (
 )
 from topsailai.workspace.agent_shell import get_agent_chat
 from topsailai.ai_team.common import (
-    DEFAULT_HEAD_TAIL_OFFSET,
-    generate_system_prompt,
     get_session_id,
 )
 
@@ -101,6 +103,7 @@ def main():
 
     # prompt
     sys_prompt_content = generate_system_prompt()
+    print(sys_prompt_content)
 
     # show members
     print(get_members_cache())
