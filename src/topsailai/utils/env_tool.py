@@ -10,6 +10,12 @@ import os
 from topsailai.logger import logger
 
 
+def is_interactive_mode() -> bool:
+    """ Check if running in interactive mode, default is True """
+    if os.getenv("TOPSAILAI_INTERACTIVE_MODE", "1") == "0":
+        return False
+    return True
+
 def is_debug_mode():
     """Check if the application is running in debug mode.
 

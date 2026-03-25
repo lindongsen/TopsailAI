@@ -38,6 +38,9 @@ DEBUG=1
 
 DEBUG_PRINT_TRUNCATE_LENGTH=3000
 
+# Interactive Mode, 1 for enabled, 0 for disabled
+TOPSAILAI_INTERACTIVE_MODE=1
+
 # Print tool prompt content
 TOPSAILAI_PRINT_TOOL_PROMPT=0
 

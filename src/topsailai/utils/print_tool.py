@@ -85,6 +85,10 @@ def print_with_time(msg, need_format=False):
     - Optional agent name if set in thread-local storage
     - The message content
     """
+    from . import env_tool
+    if not env_tool.is_interactive_mode():
+        return
+
     from . import thread_local_tool, format_tool
 
     try:

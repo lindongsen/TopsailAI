@@ -49,6 +49,9 @@ cd "${WORK_DIR}" || error_quit "enter work_dir failed: ${WORK_DIR}"
 [ "${DEBUG}" == "" ] && DEBUG=0
 export DEBUG
 
+[ "${TOPSAILAI_INTERACTIVE_MODE}" == "" ] && TOPSAILAI_INTERACTIVE_MODE=1
+export TOPSAILAI_INTERACTIVE_MODE
+
 # task
 task="$*"
 task_ex=""
@@ -58,22 +61,14 @@ if [ "$1" == "-" ]; then
 fi
 
 # print histroy messages
-[ -n "${SESSION_ID}" ] && {
-  command -v ai_retrieve_messages > /dev/null && ai_retrieve_messages "${SESSION_ID}"
-}
+if [ "${TOPSAILAI_INTERACTIVE_MODE}" == "1" ] || [ "${DEBUG}" != "0" ]; then
+  [ -n "${SESSION_ID}" ] && {
+    command -v ai_retrieve_messages > /dev/null && ai_retrieve_messages "${SESSION_ID}"
+  }
+fi
 
 run_cli="uv run"
 [ "${UV_NO_DEV}" == "1" ] && run_cli="python"
 
 # start
-DEBUG=1 ${run_cli} cli/agent_chat.py "${task} ${task_ex}"
-[ -n "${SESSION_ID}" ] && for _ in {1..100}; do
-  echo ""
-  read -e -r -p ">>> Your turn: " user_input
-  [ -z "${user_input}" ] && continue
-  [ "${user_input}" == " " ] && continue
-  if [ "${user_input}" == "quit" ] || [ "${user_input}" == "exit" ]; then
-    exit 0
-  fi
-  DEBUG=1 ${run_cli} cli/agent_chat.py "${user_input}"
-done
+${run_cli} cli/agent_chat.py "${task} ${task_ex}"

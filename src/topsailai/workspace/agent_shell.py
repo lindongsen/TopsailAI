@@ -237,7 +237,7 @@ class AgentChat(object):
         """
         self.call_hooks_pre_run()
 
-        if not func_print_pre_input_message:
+        if not func_print_pre_input_message or not env_tool.is_interactive_mode():
             # noop
             func_print_pre_input_message = lambda *args, **kwargs: None
 
@@ -248,7 +248,7 @@ class AgentChat(object):
 
         if message is None:
             func_print_pre_input_message()
-            message = get_message(self.hook_instruction)
+            message = get_message(self.hook_instruction, need_input=env_tool.is_interactive_mode())
 
         if not self.first_message:
             self.first_message = message
@@ -301,26 +301,27 @@ class AgentChat(object):
                         self.ctx_rt_aiagent.add_session_message()
                 self.last_message = answer
 
+            # it is not interactive mode
+            if not env_tool.is_debug_mode() or not env_tool.is_interactive_mode():
+                print(answer)
+
             # check times
             if times > 0 and curr_count >= times:
                 break
 
             self.ctx_runtime_data.reset_messages()
-            self.ctx_rt_instruction.ctx_history()
+            if env_tool.is_interactive_mode():
+                self.ctx_rt_instruction.ctx_history()
 
             # end time
             end_time = int(time.time())
 
-            if not env_tool.is_debug_mode():
+            if env_tool.is_interactive_mode() or env_tool.is_debug_mode():
                 print()
-                print(">>> answer:")
-                print(answer)
-
-            print()
-            print(SPLIT_LINE)
-            print(f"The manager have scheduled tasks [{curr_count}] times")
-            print(f"session: {self.ctx_runtime_data.session_id}")
-            print(f"elapsed_time: {end_time-start_time}")
+                print(SPLIT_LINE)
+                print(f"The manager have scheduled tasks [{curr_count}] times")
+                print(f"session: {self.ctx_runtime_data.session_id}")
+                print(f"elapsed_time: {end_time-start_time}")
 
             # next time
             func_print_pre_input_message()
@@ -437,7 +438,7 @@ def get_agent_chat(
 
         session_head_tail_offset:int=DEFAULT_HEAD_TAIL_OFFSET, # cut messages
 
-        need_print_session:bool=True,
+        need_print_session:bool=None,
         need_input_message:bool=True,
     ) -> AgentChat:
     """Create and return an AgentChat instance with all required components.
@@ -461,6 +462,16 @@ def get_agent_chat(
     Returns:
         AgentChat: A fully initialized AgentChat instance ready for conversation.
     """
+    if need_print_session is None:
+        if env_tool.is_debug_mode():
+            need_print_session = False
+        else:
+            need_print_session = True
+
+    if not env_tool.is_interactive_mode():
+        need_print_session = False
+        need_input_message = False
+
     # set agent name to thread local
     if agent_name:
         thread_local_tool.set_thread_var(thread_local_tool.KEY_AGENT_NAME, agent_name)

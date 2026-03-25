@@ -38,25 +38,24 @@ from topsailai.workspace.agent_shell import get_agent_chat
 def main():
     """
     Main entry point for single-turn agent chat.
-    
+
     This function creates and runs a single-turn chat session with an AI agent.
     The agent has access to various tools but the "agent_tool" is disabled
     to prevent recursive agent calls.
-    
+
     The function:
     1. Gets an agent chat instance with agent_tool disabled
     2. Runs the chat for exactly one iteration (single-turn)
     3. Returns the agent's response
-    
+
     Returns:
         None: The agent's response is printed to stdout during execution
-        
+
     Note:
         - This is a single-turn chat (times=1)
         - The agent_tool is disabled to prevent nested agent calls
         - Session history can be maintained via SESSION_ID environment variable
     """
-    """ main entry """
     get_agent_chat(disabled_tools=["agent_tool"]).run(times=1)
 
 if __name__ == "__main__":
