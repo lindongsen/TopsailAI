@@ -75,6 +75,7 @@ TOOL_PROMPT = """
 ---
 # TOOLS
 Attention: You MUST use the tool name (completely), e.g. whole name is 'x_tool%sy_func', you cannot use 'y_func'.
+You should pay attention to the [Attention]/[Remember] sections in the tool documentation.
 {__TOOLS__}
 ---
 """ % CONN_CHAR
