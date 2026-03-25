@@ -64,6 +64,14 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
     ##############################################################################
     # Context, ctx
     ##############################################################################
+    def ctx_refresh(self):
+        """
+        Refresh context messages
+        """
+        if self.session_id:
+            self.ctx_runtime_data.reset_messages()
+        return
+
     def ctx_clear(self):
         """
         Clear all context messages for the current session.
@@ -119,6 +127,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         Returns:
             None
         """
+        self.ctx_refresh()
         session_id = self.session_id
 
         print(f"\n\n{SPLIT_LINE}")
