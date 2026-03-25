@@ -131,7 +131,7 @@ def main():
         """
         print(f"\n\n{SPLIT_LINE}")
         print("Show members")
-        print(g_members)
+        print(get_members_cache())
         return
 
     # team.xxx
