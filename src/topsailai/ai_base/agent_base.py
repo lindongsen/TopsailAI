@@ -31,7 +31,6 @@ from topsailai.ai_base.llm_base import (
 from topsailai.prompt_hub import prompt_tool
 
 from topsailai.tools.base.common import (
-    get_tool_prompt,
     TOOLS as INTERNAL_TOOLS,
     get_tools_for_chat,
 )
@@ -262,6 +261,7 @@ class AgentBase(PromptBase):
         self.system_prompt = system_prompt
         # Specific tools for this agent
         self.tools = tools
+        self.tool_prompt_raw = tool_prompt
         # Name of the agent
         self.agent_name = agent_name
         self.agent_type = ""
@@ -303,30 +303,38 @@ class AgentBase(PromptBase):
         ######################################################################
         # tool prompts
         ######################################################################
-        if not tool_prompt:
-            tool_prompt = ""
+        self.generate_tool_prompt()
+
+        super(AgentBase, self).__init__(self.system_prompt, self.tool_prompt)
+        return
+
+    def reload_tool_prompt(self):
+        """ reload tool prompt to message """
+        self.generate_tool_prompt(True)
+        self.update_message_for_tool()
+        return
+
+    def generate_tool_prompt(self, need_reload=False):
+        """ generate final tool prompt """
+        tool_prompt = self.tool_prompt_raw or ""
 
         if self.available_tools:
-            if not env_tool.is_use_tool_calls():
-                # get tool docs as prompt
-                tool_prompt += get_tool_prompt(None, self.available_tools)
-
-            # extend prompt with tool
-            tool_prompt += prompt_tool.get_prompt_by_tools(self.available_tools)
-
-            # extra tools
-            tool_prompt += prompt_tool.get_extra_tools()
+            tool_prompt += prompt_tool.generate_prompt_by_tools(
+                self.available_tools,
+                need_reload=need_reload,
+            )
 
         # prepare tool_prompt ok
         # Tool prompt text for the agent
         self.tool_prompt = tool_prompt
 
         # debug
-        if self.tool_prompt and env_tool.EnvReaderInstance.check_bool("TOPSAILAI_PRINT_TOOL_PROMPT"):
+        if self.tool_prompt \
+            and env_tool.EnvReaderInstance.check_bool("TOPSAILAI_PRINT_TOOL_PROMPT") \
+            and env_tool.is_interactive_mode():
             print_step(f"[tool_prompt]:\n{self.tool_prompt}\n", need_format=False)
 
-        super(AgentBase, self).__init__(self.system_prompt, self.tool_prompt)
-        return
+        return self.tool_prompt
 
     @property
     def max_tokens(self) -> int:

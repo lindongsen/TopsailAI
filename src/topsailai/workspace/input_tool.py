@@ -60,7 +60,7 @@ def hook_message(message: str, hook: HookInstruction) -> bool:
     elif message[0] in TRIGGER_CHARS:
         if message.lower() == "/noop":
             return False
-        hook.call_hook("/help")
+        hook.call_hook("/help " + message)
         return True
     return False
 

@@ -262,10 +262,11 @@ class PromptBase(object):
             to_suppress_log (bool, optional): Whether to suppress logging. Defaults to False.
         """
         self.messages = []
-        # 1
+        # 0, system
         self.append_message({"role": ROLE_SYSTEM, "content": self.system_prompt}, to_suppress_log)
-        # 2
+        # 1, env
         self.append_message({"role": ROLE_SYSTEM, "content": generate_prompt_for_env()}, to_suppress_log)
+        # 2, tool
         if self.tool_prompt:
             # last
             self.append_message({"role": ROLE_SYSTEM, "content": self.tool_prompt}, to_suppress_log)
@@ -277,6 +278,13 @@ class PromptBase(object):
         Replaces the environment prompt message with current environment data
         """
         self.messages[1] = {"role": ROLE_SYSTEM, "content": generate_prompt_for_env()}
+        return
+
+    def update_message_for_tool(self):
+        """
+        Update the tool prompt message
+        """
+        self.messages[2] = {"role": ROLE_SYSTEM, "content": self.tool_prompt}
         return
 
     def add_user_message(self, content, need_print=True):

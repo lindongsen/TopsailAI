@@ -30,6 +30,8 @@ from topsailai.prompt_hub import prompt_tool
 from topsailai.workspace.folder_constants import FOLDER_SKILL
 
 
+g_skills = {} # key is folder, value is SkillInfo
+
 PROMPT_SKILL = prompt_tool.read_prompt("skills/skill.md")
 
 
@@ -59,6 +61,9 @@ class SkillInfo(object):
 ## {self.name}. folder=`{self.folder}`
 {self.description}
 """
+
+    def __str__(self):
+        return self.markdown
 
 
 def parse_skill_folder(folder_path: str) -> SkillInfo:
@@ -109,6 +114,9 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
         except yaml.YAMLError:
             pass
 
+    if skill_info.name:
+        g_skills[skill_info.folder] = skill_info
+
     return skill_info
 
 
@@ -154,3 +162,48 @@ def get_skill_markdown(skill_folders=None) -> str:
     if result:
         return PROMPT_SKILL + result
     return ""
+
+
+def get_skills_from_cache() -> list[SkillInfo]:
+    """ get all of skills """
+    return g_skills.values()
+
+def unload_skill(folder_path:str):
+    """ unload a skill """
+    # remove env
+    skill_folders = EnvReaderInstance.get_list_str("TOPSAILAI_PLUGIN_SKILLS", separator="")
+    if skill_folders:
+        skill_folders = set(skill_folders)
+        if folder_path in skill_folders:
+            skill_folders.remove(folder_path)
+    if skill_folders:
+        os.environ["TOPSAILAI_PLUGIN_SKILLS"] = ";".join(skill_folders)
+
+    # remove cache
+    if folder_path in g_skills:
+        del g_skills[folder_path]
+    return
+
+def load_skill(folder_path:str) -> SkillInfo:
+    """
+    Load a skill
+
+    Args:
+        folder_path (str): skill folder
+
+    Returns:
+        SkillInfo: a instance
+    """
+    return parse_skill_folder(folder_path)
+
+def exists_skill(folder_path:str) -> bool:
+    """
+    Check if the skill exists
+
+    Args:
+        folder_path (str): skill folder
+
+    Returns:
+        bool: True for ok
+    """
+    return folder_path in g_skills

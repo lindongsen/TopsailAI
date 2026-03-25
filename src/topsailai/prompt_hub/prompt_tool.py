@@ -27,8 +27,8 @@ def get_extra_tools():
     result = ""
     extra_tools = os.getenv("EXTRA_TOOLS")
     if extra_tools:
-       # split by ';'
-       extra_tools = extra_tools.split(';')
+        # split by ';'
+        extra_tools = extra_tools.split(';')
     for tool_prompt_file in extra_tools or []:
         tool_prompt_file = tool_prompt_file.strip()
         if not tool_prompt_file:
@@ -67,7 +67,7 @@ def read_prompt(relative_path):
     :relative_path: e.g. 'work_mode/format/json.md'
     """
     file_path = get_prompt_file_path(relative_path)
-    with open(file_path) as fd:
+    with open(file_path, encoding='utf-8') as fd:
         content = fd.read().strip()
         if content:
             # add split line to tail
@@ -228,7 +228,21 @@ def get_prompt_from_module(module_name:str, key:str="PROMPT") -> str:
         logger.exception(e)
     return ""
 
-def get_prompt_by_tools(tools:list[str]) -> str:
+def reload_prompt_on_module(module_name:str, key:str="reload"):
+    """ call reload function """
+    try:
+        m = __import__(f"topsailai.tools.{module_name}", None, None, [module_name])
+        getattr(m, key)()
+        logger.info("reload prompt ok: [%s]", module_name)
+    except ModuleNotFoundError:
+        pass
+    except AttributeError:
+        pass
+    except Exception as e:
+        logger.exception(e)
+    return
+
+def get_prompt_by_tools(tools:list[str], need_reload=False) -> str:
     """ return prompt content from prompt_hub """
     logger.debug("getting prompt by tools: %s", tools)
     prompt_keys = set()
@@ -249,6 +263,9 @@ def get_prompt_by_tools(tools:list[str]) -> str:
         if exists_prompt_file(key):
             prompt_keys.add(key)
 
+        if need_reload:
+            reload_prompt_on_module(module_name)
+
         # from tools.module
         tool_prompt = get_prompt_from_module(module_name)
         if tool_prompt:
@@ -259,3 +276,28 @@ def get_prompt_by_tools(tools:list[str]) -> str:
         prompt_content += read_prompt(key)
 
     return prompt_content
+
+def generate_prompt_by_tools(tools:list[str]|dict, need_reload=False) -> str:
+    """ generate final tool prompt as system prompt """
+    tools_name = None
+    tools_map = None
+    if isinstance(tools, list):
+        tools_name = tools
+    if isinstance(tools, dict):
+        tools_name = list(tools.keys())
+        tools_map = tools
+
+    tool_prompt = ""
+
+    if not env_tool.is_use_tool_calls():
+        # get tool docs as prompt
+        from topsailai.tools.base.common import get_tool_prompt
+        tool_prompt += get_tool_prompt(tools_name, tools_map)
+
+    # extend prompt with tool
+    tool_prompt += get_prompt_by_tools(tools_name, need_reload=need_reload)
+
+    # extra tools
+    tool_prompt += get_extra_tools()
+
+    return tool_prompt

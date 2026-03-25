@@ -48,6 +48,7 @@ from topsailai.workspace.context.instruction import (
     ContextRuntimeInstructions,
 )
 from topsailai.workspace.hook_instruction import HookInstruction
+from topsailai.workspace.plugin_instruction.base.cache import set_ai_agent
 
 
 DEFAULT_HEAD_TAIL_OFFSET = 7
@@ -85,6 +86,8 @@ class AgentChat(object):
 
         self.first_message = None
         self.last_message = None
+
+        set_ai_agent(self.ai_agent)
 
         # hook(self)
         self.hooks_pre_run = []

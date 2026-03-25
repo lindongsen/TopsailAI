@@ -10,8 +10,12 @@ import os
 from topsailai.utils import (
     file_tool,
 )
-from topsailai.utils.cmd_tool import exec_cmd
-from topsailai.skill_hub.skill_tool import get_skill_markdown
+from topsailai.skill_hub.skill_tool import (
+    get_skill_markdown,
+    get_skills_from_cache,
+)
+from topsailai.tools.cmd_tool import exec_cmd
+
 
 def call_skill(
         folder_path:str,
@@ -19,11 +23,11 @@ def call_skill(
         no_need_stderr:int=0,
         timeout:int=120,
     ):
-    """Execute a shell command and return the result.
+    """Execute a skill script
 
     Args:
         folder_path (str): required, skill folder.
-        cmd (str|list): required, Command to execute.
+        cmd (str|list): required, Command to execute, The executable file must be an absolute path.
         no_need_stderr (int): If 1, stderr will be returned as empty string.
                                Defaults to 0.
         timeout (int, optional): Timeout in seconds. If the command does not finish
@@ -33,14 +37,14 @@ def call_skill(
     Returns:
         tuple: (return_code, stdout, stderr) where stdout and stderr are strings.
                If no_need_stderr is True, stderr will be empty string.
-
-    Example:
-        >>> exec_cmd(["echo", "hello"])
-        (0, "hello\n", "")
-
-        >>> exec_cmd("ls /nonexistent", no_need_stderr=True)
-        (2, "", "")
     """
+    flag_cmd_matched = False
+    for skill in get_skills_from_cache():
+        if cmd.startswith(skill.folder):
+            flag_cmd_matched = True
+            break
+    assert flag_cmd_matched, "Illegal cmd, The executable file must be an absolute path"
+
     return exec_cmd(
         cmd,
         no_need_stderr=True if int(no_need_stderr) else False,
@@ -84,12 +88,13 @@ def overview_skill(folder_path:str):
 
 
 TOOLS = dict(
+    call_skill=call_skill,
     overview_skill=overview_skill,
 )
 
 PROMPT_PLUGIN_SKILLS = get_skill_markdown()
 
-PROMPT = """
+PROMPT_SKILL = """
 ---
 
 # SKILLS
@@ -106,6 +111,21 @@ folder-name/
 - assets/     # [resource] static files
 - config/     # [variable] config file can be updated
 ```
-""" + PROMPT_PLUGIN_SKILLS + "\n---\n"
+"""
+
+PROMPT = PROMPT_SKILL + PROMPT_PLUGIN_SKILLS + "\n---\n"
 
 FLAG_TOOL_ENABLED = True if PROMPT_PLUGIN_SKILLS else False
+
+def reload():
+    """ reload prompt """
+    global PROMPT_PLUGIN_SKILLS
+    PROMPT_PLUGIN_SKILLS = get_skill_markdown()
+
+    global PROMPT
+    PROMPT = PROMPT_SKILL + PROMPT_PLUGIN_SKILLS + "\n---\n"
+
+    global FLAG_TOOL_ENABLED
+    FLAG_TOOL_ENABLED = True if PROMPT_PLUGIN_SKILLS else False
+
+    return

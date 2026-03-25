@@ -16,7 +16,7 @@ from topsailai.utils import (
     print_tool,
     format_tool,
 )
-from topsailai.workspace.plugin_instruction import (
+from topsailai.workspace.plugin_instruction.base.init import (
     INSTRUCTIONS,
 )
 
@@ -251,7 +251,11 @@ class HookInstruction(HookBaseUtils):
             self.show_help(hook_name)
             return
 
+        if not hook_name:
+            return
+
         if hook_name not in self.hook_map:
+            self.show_help(hook_name)
             return
 
         args = []
