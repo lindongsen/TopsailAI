@@ -8,7 +8,7 @@
 import simplejson
 from collections import OrderedDict
 
-from .json_tool import safe_json_dump
+from .json_tool import safe_json_dump, safe_json_load
 
 
 TOPSAILAI_FORMAT_PREFIX = "topsailai."
@@ -57,6 +57,9 @@ def to_list(v, to_ignore_none=False):
         to_list(None) -> [None]
         to_list(None, to_ignore_none=True) -> None
     """
+    if isinstance(v, str) and v[0] in "[(":
+        # list or tuple string
+        v = safe_json_load(v) or v
     if isinstance(v, (list, set, tuple)):
         return list(v)
     if v is None:

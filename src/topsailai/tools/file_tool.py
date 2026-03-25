@@ -296,6 +296,7 @@ def mkdirs(dirs):
         raise an Error if error, else return true.
     """
     for d in format_tool.to_list(dirs):
+        assert d[0] == "/", f"require absolute path: {d}"
         os.makedirs(d, exist_ok=True)
     return True
 
