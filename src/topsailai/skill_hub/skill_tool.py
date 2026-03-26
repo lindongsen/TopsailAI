@@ -94,6 +94,31 @@ def get_file_skill_md(folder_path:str) -> str:
             return skill_file
     return ""
 
+def is_disabled_skill(folder_path:str) -> bool:
+    """
+    Check if the skill is disabled
+
+    Args:
+        folder_path (str): a skill folder
+
+    Returns:
+        bool: True is disabled
+    """
+    if not folder_path:
+        return True
+
+    disabled_list = EnvReaderInstance.get_list_str("TOPSAILAI_DISABLED_SKILLS", separator="")
+    if not disabled_list:
+        return False
+    if disabled_list == "*":
+        return True
+    if folder_path in disabled_list:
+        return True
+    for f in disabled_list:
+        if folder_path.startswith(f):
+            return True
+    return False
+
 def parse_skill_folder(folder_path: str) -> SkillInfo:
     """Parse a skill folder to extract skill information.
 
@@ -110,6 +135,10 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
     skill_info.folder = folder_path
 
     if not os.path.isdir(folder_path):
+        return skill_info
+
+    # if disabled
+    if is_disabled_skill(folder_path):
         return skill_info
 
     # Look for SKILL.md or skill.md
@@ -176,6 +205,7 @@ def get_skill_markdown(skill_folders=None) -> str:
             EnvReaderInstance.get_list_str("TOPSAILAI_PLUGIN_SKILLS", separator="") or []
         )
 
+    max_recursion_depth = EnvReaderInstance.get("TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH", default=3, formatter=int) or 3
     for skill_folder in to_list(skill_folders):
         if not os.path.exists(skill_folder):
             continue
@@ -189,7 +219,7 @@ def get_skill_markdown(skill_folders=None) -> str:
                 result += skill_info.markdown
             else:
                 # If no skill.md/SKILL.md found, process subfolders
-                result += get_skill_markdown_with_subfolders(skill_folder, recursion_depth=1)
+                result += get_skill_markdown_with_subfolders(skill_folder, recursion_depth=max_recursion_depth)
 
     if result:
         return PROMPT_SKILL + result

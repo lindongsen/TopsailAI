@@ -201,7 +201,9 @@ PLUGIN_TOOLS=""
 
 # Plugin Skills
 # Format: directory paths separated by semicolons (';')
-TOPSAILAI_PLUGIN_SKILLS=""
+TOPSAILAI_PLUGIN_SKILLS=""     # support to search folder with max depth TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH(default 3)
+TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH=3
+TOPSAILAI_DISABLED_SKILLS=""
 
 # =============================================================================
 # Sandbox Configuration
