@@ -54,7 +54,7 @@ def is_need_load_overview(folder_path:str) -> bool:
         return False
 
     for skill_folder in skill_list:
-        if skill_folder.startswith(folder_path):
+        if folder_path.startswith(skill_folder):
             return True
     return False
 
@@ -184,7 +184,8 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
             if data:
                 skill_info.name = data.get("name", "")
                 skill_info.description = data.get("description", "")
-                skill_info.flag_overview = True if to_int(data.get("flag_overview", 0)) else False
+                if "flag_overview" in data and data["flag_overview"] != "":
+                    skill_info.flag_overview = True if to_int(data.get("flag_overview", 0)) else False
         except yaml.YAMLError as e:
             logger.exception(e)
 
