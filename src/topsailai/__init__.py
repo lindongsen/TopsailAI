@@ -21,6 +21,7 @@ for WORK_FOLDER in [
     if os.path.isdir(WORK_FOLDER) and os.path.exists(env_file):
         os.chdir(WORK_FOLDER)
         os.environ["TOPSAILAI_WORK_FOLDER"] = WORK_FOLDER
+        load_dotenv(env_file)
         break
 
 # init
