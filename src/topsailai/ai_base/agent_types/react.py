@@ -52,6 +52,8 @@ class Step4ReAct(StepCallTool):
                 step = new_step
 
             step_name = step["step_name"]
+        except KeyboardInterrupt as e:
+            raise e
         except Exception:
             self.user_msg = "missing step_name"
             self.code = self.CODE_STEP_FINAL

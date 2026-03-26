@@ -267,6 +267,7 @@ class AgentChat(object):
 
         # start
         while True:
+            flag_abort = False
             # reset answer to null string
             answer = ""
 
@@ -292,6 +293,7 @@ class AgentChat(object):
             except agent_exception.AgentEndProcess:
                 self.last_message = self.messages[-1]
             except (KeyboardInterrupt, EOFError):
+                flag_abort = True
                 answer = "failed due to abort by Human"
                 if need_confirm_abort and not input_yes("Agent Session Continue [yes/no] "):
                     break
@@ -305,7 +307,8 @@ class AgentChat(object):
                     if only_save_final:
                         self.ctx_runtime_data.add_session_message(ROLE_ASSISTANT, answer)
                     else:
-                        self.ctx_rt_aiagent.add_session_message()
+                        if not flag_abort:
+                            self.ctx_rt_aiagent.add_session_message()
                 self.last_message = answer
 
             # it is not interactive mode
