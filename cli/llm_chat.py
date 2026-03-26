@@ -39,27 +39,26 @@ from topsailai.workspace.llm_shell import get_llm_chat
 def main():
     """
     Main entry point for single-turn LLM chat.
-    
+
     This function creates and runs a single-turn chat session directly with
     an LLM (Language Model). It provides a simpler interface compared to
     the agent chat, without tool usage capabilities.
-    
+
     The function:
     1. Gets an LLM chat instance
     2. If not in debug mode, prints the first message and ">>> answer:" prompt
     3. Runs the chat for one interaction
     4. Prints a blank line after completion
-    
+
     Returns:
         None: The LLM's response is printed to stdout during execution
-        
+
     Note:
         - This is a single-turn chat
         - No tools are available in this mode
         - Session history can be maintained via SESSION_ID environment variable
         - In debug mode, the first message is not printed
     """
-    """ main entry """
     llm_chat = get_llm_chat(need_input_message=False)
     if not env_tool.is_debug_mode():
         print(f">>> message:\n{llm_chat.first_message}")

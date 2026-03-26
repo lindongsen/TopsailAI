@@ -67,13 +67,3 @@ run_cli="uv run"
 
 # start
 ${run_cli} cli/llm_chat.py "${task} ${task_ex}"
-[ -n "${SESSION_ID}" ] && for _ in {1..100}; do
-  echo ""
-  read -e -r -p ">>> Your turn: " user_input
-  [ -z "${user_input}" ] && continue
-  [ "${user_input}" == " " ] && continue
-  if [ "${user_input}" == "quit" ] || [ "${user_input}" == "exit" ]; then
-    exit 0
-  fi
-  ${run_cli} cli/llm_chat.py "${user_input}"
-done
