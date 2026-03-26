@@ -39,6 +39,26 @@ g_skills = {} # key is folder, value is SkillInfo
 PROMPT_SKILL = prompt_tool.read_prompt("skills/skill.md")
 
 
+def is_need_load_overview(folder_path:str) -> bool:
+    """
+    Check if need load overview content into prompt
+
+    Args:
+        folder_path (str): a skill folder
+
+    Returns:
+        bool:
+    """
+    skill_list = EnvReaderInstance.get_list_str("TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS", separator="")
+    if not skill_list:
+        return False
+
+    for skill_folder in skill_list:
+        if skill_folder.startswith(folder_path):
+            return True
+    return False
+
+
 class SkillInfo(object):
     """Container for skill metadata extracted from a skill folder.
 
@@ -54,7 +74,7 @@ class SkillInfo(object):
         self.description = ""
 
         # flags
-        self.flag_overview = False # If True, set overview info to prompt
+        self.flag_overview = None
 
     @property
     def markdown(self):
@@ -69,9 +89,10 @@ class SkillInfo(object):
 {self.description}
 """
 
-        #only_one_file = (len(os.listdir(self.folder)) == 1)
-        #if self.flag_overview or only_one_file:
-        #    result += "\n>>> [SKILL_OVERVIEW_START]\n" + overview_skill_native(self.folder) + "\n<<< [SKILL_OVERVIEW_END]\n"
+        if self.flag_overview is None:
+            self.flag_overview = is_need_load_overview(self.folder)
+        if self.flag_overview:
+            result += "\n>>> [SKILL_OVERVIEW_START]\n" + overview_skill_native(self.folder) + "\n<<< [SKILL_OVERVIEW_END]\n"
 
         return result
 

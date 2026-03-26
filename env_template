@@ -204,6 +204,7 @@ PLUGIN_TOOLS=""
 TOPSAILAI_PLUGIN_SKILLS=""     # support to search folder with max depth TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH(default 3)
 TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH=3
 TOPSAILAI_DISABLED_SKILLS=""
+TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS=""
 
 # =============================================================================
 # Sandbox Configuration
