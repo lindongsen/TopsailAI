@@ -129,6 +129,7 @@ def input_multi_line(tips: str = "", hook: HookInstruction = None) -> str:
         tips = INPUT_TIPS
 
     print(tips + " Press 'CTRL D' or Enter 'EOF' for end")
+    sys.stdout.flush()
     message = ""
     count = 0
     while True:
