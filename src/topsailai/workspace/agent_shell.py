@@ -215,7 +215,7 @@ class AgentChat(object):
             need_save_answer:bool=True,
             need_confirm_abort:bool=True,
             need_interactive:bool=True,
-            need_symbol_for_answer=False,
+            need_symbol_for_answer=None,
             only_save_final:bool=False,
         ) -> str:
         """Run the agent chat session.
@@ -255,6 +255,10 @@ class AgentChat(object):
 
         if not self.first_message:
             self.first_message = message
+
+        # env
+        if need_symbol_for_answer is None:
+            need_symbol_for_answer = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER", False)
 
         # variables
         # up_time = int(time.time())
