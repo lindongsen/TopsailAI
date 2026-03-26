@@ -82,6 +82,8 @@ def parse_model_settings():
     items = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_MODEL_SETTINGS", separator=';') or \
         env_tool.EnvReaderInstance.get_list_str("MODEL_SETTINGS", separator=';')
     result = []
+    if not items:
+        return result
     for item in items:
         d = format_tool.parse_str_to_dict(item, item_separator=',', kv_separator='=', kv_strip=True)
         if d:
