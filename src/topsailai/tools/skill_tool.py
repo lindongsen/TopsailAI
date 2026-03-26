@@ -5,12 +5,17 @@
   Purpose:
 '''
 
+import os
+
 from topsailai.skill_hub.skill_tool import (
     get_skill_markdown,
     get_skills_from_cache,
     overview_skill_native,
 )
 from topsailai.tools.cmd_tool import exec_cmd
+from topsailai.utils import (
+    json_tool,
+)
 
 
 def call_skill(
@@ -34,9 +39,31 @@ def call_skill(
         tuple: (return_code, stdout, stderr) where stdout and stderr are strings.
                If no_need_stderr is True, stderr will be empty string.
     """
+    raw_cmd = cmd
+    if isinstance(cmd, str):
+        if cmd[0] == "[":
+            # json str
+            cmd = json_tool.safe_json_load(cmd)
+    if not cmd:
+        raise Exception("illegal cmd: [%s]" % raw_cmd)
+
+    cmd_exe_file = cmd
+    if isinstance(cmd, list):
+        cmd_exe_file = cmd[0]
+
+    if not cmd_exe_file:
+        raise Exception("illegal cmd: [%s]" % raw_cmd)
+
+    if cmd_exe_file[0] != '/' and not cmd_exe_file.startswith(folder_path):
+        cmd_exe_file = os.path.join(folder_path, cmd_exe_file)
+        if isinstance(cmd, list):
+            cmd[0] = cmd_exe_file
+        else:
+            cmd = folder_path + "/" + cmd
+
     flag_cmd_matched = False
     for skill in get_skills_from_cache():
-        if cmd.startswith(skill.folder):
+        if cmd_exe_file.startswith(skill.folder):
             flag_cmd_matched = True
             break
     assert flag_cmd_matched, "Illegal cmd, The executable file must be an absolute path from skill folder"
