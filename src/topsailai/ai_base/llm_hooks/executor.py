@@ -11,7 +11,7 @@ from topsailai.utils import (
     thread_local_tool,
 )
 
-def get_hooks_runtime(key:str) -> list[str]:
+def get_hooks_runtime(key:str, content) -> list[str]:
     agent = thread_local_tool.get_agent_object()
     model_name = None
 
@@ -41,6 +41,18 @@ def get_hooks_runtime(key:str) -> list[str]:
                 return [
                     "topsailai.ai_base.llm_hooks.hook_before_chat.only_one_system_message",
                 ]
+
+    if isinstance(content, str):
+        if key == "TOPSAILAI_HOOK_AFTER_LLM_CHAT":
+            if 'minimax' in content:
+                return [
+                    "topsailai.ai_base.llm_hooks.hook_after_chat.minimax"
+                ]
+            elif '|tool_calls_section_begin|' in content:
+                return [
+                    "topsailai.ai_base.llm_hooks.hook_after_chat.kimi"
+                ]
+
     return []
 
 def hook_execute(key:str, content:str|list) -> list[dict]|str:
@@ -53,7 +65,7 @@ def hook_execute(key:str, content:str|list) -> list[dict]|str:
     Returns:
         list[dict]|str
     """
-    hooks = env_tool.EnvReaderInstance.get_list_str(key) or get_hooks_runtime(key)
+    hooks = env_tool.EnvReaderInstance.get_list_str(key) or get_hooks_runtime(key, content)
     if not hooks:
         return content
     for hook_path in hooks:
