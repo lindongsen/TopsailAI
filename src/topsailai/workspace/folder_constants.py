@@ -46,6 +46,9 @@ FOLDER_LOCK = FOLDER_ROOT + "/lock"
 # Skill directory
 FOLDER_SKILL = FOLDER_ROOT + "/skill"
 
+# Log
+FOLDER_LOG = FOLDER_ROOT + "/log"
+
 ###################################################################################
 # Layer 3: Subdirectories within the main system directories
 # These provide further organization within each functional area
