@@ -68,9 +68,10 @@ class SkillInfo(object):
 ## {self.name}. folder=`{self.folder}`
 {self.description}
 """
-        only_one_file = (len(os.listdir(self.folder)) == 1)
-        if self.flag_overview or only_one_file:
-            result += "\n>>> [SKILL_OVERVIEW_START]\n" + overview_skill_native(self.folder) + "\n<<< [SKILL_OVERVIEW_END]\n"
+
+        #only_one_file = (len(os.listdir(self.folder)) == 1)
+        #if self.flag_overview or only_one_file:
+        #    result += "\n>>> [SKILL_OVERVIEW_START]\n" + overview_skill_native(self.folder) + "\n<<< [SKILL_OVERVIEW_END]\n"
 
         return result
 

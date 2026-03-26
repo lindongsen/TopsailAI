@@ -66,7 +66,8 @@ PROMPT_SKILL = """
 
 # SKILLS
 
-[Attention] Every time you want to use a skill you MUST call `overview_skill` for entire details.
+When your task is related to a skill, you MUST call `overview_skill` for detail.
+The following skill information is merely a summary, Every time you want to use a skill you MUST call `overview_skill` for entire details.
 When skill refers to a file with a relative_path, you should use `{folder}/{relative_path}` to construct an absolute_path to access it.
 
 common folder structure:

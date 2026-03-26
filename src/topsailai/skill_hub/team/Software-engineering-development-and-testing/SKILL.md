@@ -2,8 +2,8 @@
 name: AI Team Workflow for Dev and Test
 description: |
   A method for coordinating an AI team to iteratively develop, review, and test code modules with strict atomic constraints
-  - coding
-  - testing
+  - coding, golang/go, python, c, shell, zed, typescript
+  - testing, unit test, functional test
   - programmer, developer
 
 # Project Configuration, [Note] After analyzing, if you are unclear about these informations, you must inquire with the Human
