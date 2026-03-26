@@ -34,3 +34,16 @@ def get_current_day():
     """
     dt = datetime.now()
     return dt.strftime("%Y-%m-%d")
+
+
+def parse_time_seconds(ts: int) -> str:
+    """
+    Convert Unix timestamp to human-readable datetime string.
+
+    Args:
+        ts: Integer representing Unix timestamp (seconds since epoch)
+
+    Returns:
+        Formatted datetime string in the format YYYY-MM-DDTHH:MM:SS
+    """
+    return datetime.fromtimestamp(ts).strftime('%Y-%m-%dT%H:%M:%S')

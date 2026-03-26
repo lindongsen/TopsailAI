@@ -45,7 +45,7 @@ def get_manager_name(manager_name:str=None) -> str:
 def get_member_name(member_name:str=None) -> str:
     """Get the member name.
 
-    If the member name is not provided, it will be read from the environment variable "TOPSAIL_TEAM_MEMBER_NAME".
+    If the member name is not provided, it will be read from the environment variable "TOPSAILAI_TEAM_MEMBER_NAME".
     If the environment variable is not set, it will default to "Member".
     The member name will be prefixed with "AIMember." if it does not already start with it.
 
@@ -56,7 +56,7 @@ def get_member_name(member_name:str=None) -> str:
         str: The member name with "AIMember." prefix.
     """
     if not member_name:
-        member_name = env_tool.EnvReaderInstance.get("TOPSAIL_TEAM_MEMBER_NAME") \
+        member_name = env_tool.EnvReaderInstance.get("TOPSAILAI_TEAM_MEMBER_NAME") \
             or env_tool.EnvReaderInstance.get("TOPSAILAI_AGENT_NAME")
 
     if not member_name:

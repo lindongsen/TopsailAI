@@ -16,6 +16,7 @@ from topsailai.utils import (
     env_tool,
     file_tool,
     thread_local_tool,
+    time_tool,
 )
 from topsailai.ai_base.constants import (
     ROLE_ASSISTANT,
@@ -327,6 +328,8 @@ class AgentChat(object):
                 print(SPLIT_LINE)
                 print(f"The manager have scheduled tasks [{curr_count}] times")
                 print(f"session: {self.ctx_runtime_data.session_id}")
+                print(f"start_time: {time_tool.parse_time_seconds(start_time)}")
+                print(f"end_time(now): {time_tool.parse_time_seconds(end_time)}")
                 print(f"elapsed_time: {end_time-start_time}")
 
             # next time
