@@ -23,7 +23,7 @@ def call_skill(
 
     Args:
         folder_path (str): required, skill folder.
-        cmd (str|list): required, Command to execute, The executable file must be an absolute path.
+        cmd (str|list): required, The executable file must be an absolute path from skill folder.
         no_need_stderr (int): If 1, stderr will be returned as empty string.
                                Defaults to 0.
         timeout (int, optional): Timeout in seconds. If the command does not finish
@@ -39,7 +39,7 @@ def call_skill(
         if cmd.startswith(skill.folder):
             flag_cmd_matched = True
             break
-    assert flag_cmd_matched, "Illegal cmd, The executable file must be an absolute path"
+    assert flag_cmd_matched, "Illegal cmd, The executable file must be an absolute path from skill folder"
 
     return exec_cmd(
         cmd,
