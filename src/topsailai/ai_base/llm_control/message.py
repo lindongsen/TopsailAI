@@ -221,6 +221,15 @@ def get_count_of_action(messages:list) -> int:
             count += 1
     return count
 
+def update_response_item(item:dict) -> dict:
+    """ for item in response(list) """
+    if item.get("step_name") == "action" and item.get("raw_text"):
+        item_extra = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", item["raw_text"])
+        if item_extra and isinstance(item_extra, list) and len(item_extra) == 1:
+            print_error("fix llm mistake: TOPSAILAI_HOOK_AFTER_LLM_CHAT, action content format is unexpected")
+            item.update(item_extra[0])
+    return item
+
 def format_response(response, rsp_obj=None, messages=None):
     """
     Format response to a standardized list format for internal use.
@@ -288,11 +297,7 @@ def format_response(response, rsp_obj=None, messages=None):
             if isinstance(response, list):
                 if len(response) == 1:
                     item = response[0]
-                    if len(item) == 2 and item.get("step_name") == "action" and item.get("raw_text"):
-                        item_extra = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", item["raw_text"])
-                        if item_extra and isinstance(item_extra, list) and len(item_extra) == 1:
-                            print_error("fix llm mistake: TOPSAILAI_HOOK_AFTER_LLM_CHAT, action content format is unexpected")
-                            item.update(item_extra[0])
+                    update_response_item(item)
 
                     # case: only thought
                     if item.get("step_name") == "thought":
@@ -304,6 +309,12 @@ def format_response(response, rsp_obj=None, messages=None):
                                     item["step_name"] = "final_answer"
                         except Exception as e:
                             logger.exception(e)
+                else:
+                    # search step_name="action"
+                    for item in response:
+                        if not isinstance(item, dict):
+                            continue
+                        update_response_item(item)
 
     # hook after chat
     new_response = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", response)
