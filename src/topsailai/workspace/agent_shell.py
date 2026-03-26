@@ -327,10 +327,10 @@ class AgentChat(object):
                 print()
                 print(SPLIT_LINE)
                 print(f"[{self.agent_name}] have scheduled tasks [{curr_count}] times")
-                print(f"session: {self.ctx_runtime_data.session_id}")
-                print(f"start_time: {time_tool.parse_time_seconds(start_time)}")
-                print(f"end_time(now): {time_tool.parse_time_seconds(end_time)}")
-                print(f"elapsed_time: {end_time-start_time}")
+                print(f"session         : {self.ctx_runtime_data.session_id}")
+                print(f"start_time      : {time_tool.parse_time_seconds(start_time)}")
+                print(f"end_time(now)   : {time_tool.parse_time_seconds(end_time)}")
+                print(f"elapsed_time    : {end_time-start_time}")
 
             # next time
             func_print_pre_input_message()
