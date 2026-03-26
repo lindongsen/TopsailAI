@@ -326,7 +326,7 @@ class AgentChat(object):
             if env_tool.is_interactive_mode() or env_tool.is_debug_mode():
                 print()
                 print(SPLIT_LINE)
-                print(f"The manager have scheduled tasks [{curr_count}] times")
+                print(f"[{self.agent_name}] have scheduled tasks [{curr_count}] times")
                 print(f"session: {self.ctx_runtime_data.session_id}")
                 print(f"start_time: {time_tool.parse_time_seconds(start_time)}")
                 print(f"end_time(now): {time_tool.parse_time_seconds(end_time)}")
