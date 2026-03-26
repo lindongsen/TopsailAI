@@ -24,8 +24,12 @@ import re
 
 import yaml
 
-from topsailai.utils.format_tool import to_list
+from topsailai.logger import logger
+from topsailai.utils.format_tool import to_list, to_int
 from topsailai.utils.env_tool import EnvReaderInstance
+from topsailai.utils import (
+    file_tool,
+)
 from topsailai.prompt_hub import prompt_tool
 from topsailai.workspace.folder_constants import FOLDER_SKILL
 
@@ -49,6 +53,9 @@ class SkillInfo(object):
         self.name = ""
         self.description = ""
 
+        # flags
+        self.flag_overview = False # If True, set overview info to prompt
+
     @property
     def markdown(self):
         """Generate a markdown formatted string for this skill.
@@ -57,10 +64,15 @@ class SkillInfo(object):
             str: A formatted markdown string containing the skill name,
                  folder path, and description, suitable for inclusion in prompts.
         """
-        return f"""
+        result = f"""
 ## {self.name}. folder=`{self.folder}`
 {self.description}
 """
+        only_one_file = (len(os.listdir(self.folder)) == 1)
+        if self.flag_overview or only_one_file:
+            result += "\n>>> [SKILL_OVERVIEW_START]\n" + overview_skill_native(self.folder) + "\n<<< [SKILL_OVERVIEW_END]\n"
+
+        return result
 
     def __str__(self):
         return self.markdown
@@ -111,14 +123,28 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
             if data:
                 skill_info.name = data.get("name", "")
                 skill_info.description = data.get("description", "")
-        except yaml.YAMLError:
-            pass
+                skill_info.flag_overview = True if to_int(data.get("flag_overview", 0)) else False
+        except yaml.YAMLError as e:
+            logger.exception(e)
 
     if skill_info.name:
         g_skills[skill_info.folder] = skill_info
 
     return skill_info
 
+def get_skill_markdown_with_subfolders(parent_folder:str, recursion_times=0) -> str:
+    assert parent_folder
+    result = ""
+    for item in os.listdir(parent_folder):
+        subfolder = os.path.join(parent_folder, item)
+        if os.path.isdir(subfolder):
+            sub_skill_info = parse_skill_folder(subfolder)
+            if sub_skill_info.name:
+                result += sub_skill_info.markdown
+            elif recursion_times > 0:
+                recursion_times -= 1
+                result += get_skill_markdown_with_subfolders(subfolder, recursion_times)
+    return result
 
 def get_skill_markdown(skill_folders=None) -> str:
     """Get the markdown prompt for all available skills.
@@ -152,12 +178,7 @@ def get_skill_markdown(skill_folders=None) -> str:
                 result += skill_info.markdown
             else:
                 # If no skill.md/SKILL.md found, process subfolders
-                for item in os.listdir(skill_folder):
-                    subfolder = os.path.join(skill_folder, item)
-                    if os.path.isdir(subfolder):
-                        sub_skill_info = parse_skill_folder(subfolder)
-                        if sub_skill_info.name:
-                            result += sub_skill_info.markdown
+                result += get_skill_markdown_with_subfolders(skill_folder, recursion_times=1)
 
     if result:
         return PROMPT_SKILL + result
@@ -216,3 +237,37 @@ def exists_skill(folder_path:str) -> bool:
         bool: True for ok
     """
     return folder_path in g_skills
+
+def overview_skill_native(folder_path:str) -> str:
+    """ Every time you want to use a skill you MUST call `overview_skill` for entire details.
+    Args:
+        folder_path (str): required, skill folder.
+    """
+    file_skill_md = ""
+    for skill_md in ["SKILL.md", "skill.md"]:
+        file_skill_md = os.path.join(folder_path, skill_md)
+        if os.path.exists(file_skill_md):
+            break
+
+        file_skill_md = ""
+
+    assert file_skill_md, f"no found skill.md in this folder: {folder_path}"
+
+    content_skill_md = ""
+    with open(file_skill_md, encoding="utf-8") as fd:
+        content_skill_md = fd.read()
+
+    folder_content = "\n".join(file_tool.list_files(folder_path, to_exclude_dot_start=True))
+
+    result = f"""
+# skill overview: folder={folder_path}
+
+## file content
+
+### {file_skill_md}
+{content_skill_md}
+
+## folder content
+{folder_content}
+"""
+    return result

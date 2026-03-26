@@ -176,9 +176,14 @@ def input_message(tips: str = "", hook: HookInstruction = None) -> str:
         What would you like to do?
     """
     print(SPLIT_LINE)
-    if env_tool.is_chat_multi_line():
-        return input_multi_line(tips, hook)
-    return input_one_line(tips, hook)
+    try:
+        if env_tool.is_chat_multi_line():
+            return input_multi_line(tips, hook)
+        return input_one_line(tips, hook)
+    except KeyboardInterrupt as e:
+        if input_yes("Quit Your Turn? [yes/no] "):
+            raise e
+    return ""
 
 def call_hook_get_message_for_task_from_file():
     """ user message is a file """

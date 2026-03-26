@@ -33,4 +33,10 @@ get_args_id() {
   done
 }
 
-eval "CHAT_MULTI_LINE=1 TOPSAILAI_AGENT_TYPE=react ${run_cli} cli/${BASE_NAME}.py $(get_args_id 1 $#)"
+[ -n "${TOPSAILAI_AGENT_TYPE}" ] || TOPSAILAI_AGENT_TYPE=react
+
+eval "
+  CHAT_MULTI_LINE=1
+  TOPSAILAI_AGENT_TYPE=${TOPSAILAI_AGENT_TYPE}
+  ${run_cli} cli/${BASE_NAME}.py $(get_args_id 1 $#)
+"

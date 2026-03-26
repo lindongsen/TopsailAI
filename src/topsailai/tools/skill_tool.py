@@ -5,14 +5,10 @@
   Purpose:
 '''
 
-import os
-
-from topsailai.utils import (
-    file_tool,
-)
 from topsailai.skill_hub.skill_tool import (
     get_skill_markdown,
     get_skills_from_cache,
+    overview_skill_native,
 )
 from topsailai.tools.cmd_tool import exec_cmd
 
@@ -57,34 +53,7 @@ def overview_skill(folder_path:str):
     Args:
         folder_path (str): required, skill folder.
     """
-    file_skill_md = ""
-    for skill_md in ["SKILL.md", "skill.md"]:
-        file_skill_md = os.path.join(folder_path, skill_md)
-        if os.path.exists(file_skill_md):
-            break
-
-        file_skill_md = ""
-
-    assert file_skill_md, f"no found skill.md in this folder: {folder_path}"
-
-    content_skill_md = ""
-    with open(file_skill_md, encoding="utf-8") as fd:
-        content_skill_md = fd.read()
-
-    folder_content = "\n".join(file_tool.list_files(folder_path, to_exclude_dot_start=True))
-
-    result = f"""
-# skill overview: folder={folder_path}
-
-## file content
-
-### {file_skill_md}
-{content_skill_md}
-
-## folder content
-{folder_content}
-"""
-    return result
+    return overview_skill_native(folder_path)
 
 
 TOOLS = dict(
