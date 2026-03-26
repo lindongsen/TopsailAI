@@ -78,6 +78,21 @@ class SkillInfo(object):
     def __str__(self):
         return self.markdown
 
+def get_file_skill_md(folder_path:str) -> str:
+    """
+    Get file of skill.md
+
+    Args:
+        folder_path (str): a skill folder
+
+    Returns:
+        str: file path of skill.md
+    """
+    for filename in ["SKILL.md", "skill.md"]:
+        skill_file = os.path.join(folder_path, filename)
+        if os.path.isfile(skill_file):
+            return skill_file
+    return ""
 
 def parse_skill_folder(folder_path: str) -> SkillInfo:
     """Parse a skill folder to extract skill information.
@@ -98,12 +113,7 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
         return skill_info
 
     # Look for SKILL.md or skill.md
-    skill_file = None
-    for filename in ["SKILL.md", "skill.md"]:
-        candidate = os.path.join(folder_path, filename)
-        if os.path.isfile(candidate):
-            skill_file = candidate
-            break
+    skill_file = get_file_skill_md(folder_path)
 
     if not skill_file:
         return skill_info
@@ -133,7 +143,7 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
 
     return skill_info
 
-def get_skill_markdown_with_subfolders(parent_folder:str, recursion_times=0) -> str:
+def get_skill_markdown_with_subfolders(parent_folder:str, recursion_depth=0) -> str:
     assert parent_folder
     result = ""
     for item in os.listdir(parent_folder):
@@ -142,9 +152,9 @@ def get_skill_markdown_with_subfolders(parent_folder:str, recursion_times=0) -> 
             sub_skill_info = parse_skill_folder(subfolder)
             if sub_skill_info.name:
                 result += sub_skill_info.markdown
-            elif recursion_times > 0:
-                recursion_times -= 1
-                result += get_skill_markdown_with_subfolders(subfolder, recursion_times)
+            elif recursion_depth > 0:
+                recursion_depth -= 1
+                result += get_skill_markdown_with_subfolders(subfolder, recursion_depth)
     return result
 
 def get_skill_markdown(skill_folders=None) -> str:
@@ -179,7 +189,7 @@ def get_skill_markdown(skill_folders=None) -> str:
                 result += skill_info.markdown
             else:
                 # If no skill.md/SKILL.md found, process subfolders
-                result += get_skill_markdown_with_subfolders(skill_folder, recursion_times=1)
+                result += get_skill_markdown_with_subfolders(skill_folder, recursion_depth=1)
 
     if result:
         return PROMPT_SKILL + result
