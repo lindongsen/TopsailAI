@@ -11,6 +11,9 @@ from topsailai.utils.cmd_tool import (
     exec_cmd_in_remote,
     exec_cmd,
 )
+from topsailai.utils import (
+    env_tool,
+)
 
 
 class Sandbox(object):
@@ -124,8 +127,9 @@ def list_sandbox(tag:str) -> str:
     # example: tag=ai,protocol=ssh,node={hostname};tag=ai,protocol=docker,node={hostname},name={container_name}
 
     result = ""
-    env_sandbox_settings = os.getenv("SANDBOX_SETTINGS")
-    for sandbox_conf in env_sandbox_settings.split(';'):
+    env_sandbox_settings = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_SANDBOX_SETTINGS", separator=';') or \
+        env_tool.EnvReaderInstance.get_list_str("SANDBOX_SETTINGS", separator=';')
+    for sandbox_conf in env_sandbox_settings:
         sandbox_conf = sandbox_conf.strip()
         if not sandbox_conf:
             continue

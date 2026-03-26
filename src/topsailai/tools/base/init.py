@@ -16,10 +16,28 @@ from topsailai.utils import (
 
 CONN_CHAR = env_tool.EnvReaderInstance.get("TOPSAILAI_TOOL_CONN_CHAR", "-") or "-"
 
-ENABLED_TOOLS = env_tool.EnvReaderInstance.get_list_str("ENABLED_TOOLS", separator='')
+ENABLED_TOOLS = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_ENABLED_TOOLS", separator='') or \
+    env_tool.EnvReaderInstance.get_list_str("ENABLED_TOOLS", separator='')
+
+DISABLED_TOOLS = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_DISABLED_TOOLS", separator='') or \
+    env_tool.EnvReaderInstance.get_list_str("DISABLED_TOOLS", separator='')
+
 
 def is_tool_enabled(tool_mod):
     """ checking if enables the tool by variable: FLAG_TOOL_ENABLED """
+    # disabled
+    if DISABLED_TOOLS:
+        try:
+            tool_name = tool_mod.__name__.split('.')[-1]
+            if tool_name in DISABLED_TOOLS:
+                return False
+        except:
+            pass
+
+    # enabled
+    if ENABLED_TOOLS:
+        if '*' in ENABLED_TOOLS:
+            return True
     try:
         if getattr(tool_mod, "FLAG_TOOL_ENABLED") is False:
             if not ENABLED_TOOLS:

@@ -288,8 +288,8 @@ def to_topsailai_format(content:str|list|dict, key_name:str, value_name:str, for
         result += "\n"
     return result
 
-def parse_str_to_dict(s:str) -> dict:
-    """parse string to dict, k1=v1;k2=v2
+def parse_str_to_dict(s:str, item_separator=';', kv_separator='=', kv_strip=False) -> dict:
+    """parse string to dict, "k1=v1;k2=v2" or "k1=v1,k2=v2"
 
     Args:
         s (str): _description_
@@ -297,8 +297,16 @@ def parse_str_to_dict(s:str) -> dict:
     Returns:
         dict: _description_
     """
+    if not item_separator:
+        item_separator = ';'
+    if not kv_separator:
+        kv_separator = '='
+
     d = {}
-    for kv in s.split(';'):
-        k, v = kv.split('=', 1)
+    for kv in s.split(item_separator):
+        k, v = kv.split(kv_separator, 1)
+        if kv_strip:
+            k = k.strip()
+            v = v.strip()
         d[k] = v
     return d

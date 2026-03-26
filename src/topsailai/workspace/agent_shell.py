@@ -17,7 +17,6 @@ from topsailai.utils import (
     file_tool,
     thread_local_tool,
 )
-from topsailai.tools.base.common import add_tool
 from topsailai.ai_base.constants import (
     ROLE_ASSISTANT,
 )
@@ -41,9 +40,9 @@ from topsailai.workspace.context.ctx_runtime import (
 from topsailai.workspace.context.agent import (
     ContextRuntimeAIAgent,
 )
-from topsailai.workspace.context.agent_tool import (
-    ContextRuntimeAgentTools,
-)
+#from topsailai.workspace.context.agent_tool import (
+#    ContextRuntimeAgentTools,
+#)
 from topsailai.workspace.context.instruction import (
     ContextRuntimeInstructions,
 )
@@ -498,8 +497,7 @@ def get_agent_chat(
     ctx_rt_instruction = ContextRuntimeInstructions(ctx_runtime_data)
 
     # agent tools
-    ctx_rt_aiagent_tools = ContextRuntimeAgentTools(ctx_runtime_data)
-    add_tool(ctx_rt_aiagent_tools.TOOL_CONTEXT_DELETE_MESSAGES, ctx_rt_aiagent_tools.tool_delete_messages_for_processing)
+    # ctx_rt_aiagent_tools = ContextRuntimeAgentTools(ctx_runtime_data)
 
     # instructions
     hook_instruction = HookInstruction()

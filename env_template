@@ -24,7 +24,7 @@ OPENAI_API_BASE="https://openapi.coreshub.cn/v1"
 # Each model: key-value pairs separated by commas (',')
 # Example: api_key=aaa,api_base=bbb;api_key=ccc,api_base=ddd
 # Purpose: Allows using multiple LLM providers with automatic failover
-MODEL_SETTINGS=""
+TOPSAILAI_MODEL_SETTINGS=""
 
 
 # =============================================================================
@@ -45,7 +45,7 @@ TOPSAILAI_INTERACTIVE_MODE=1
 TOPSAILAI_PRINT_TOOL_PROMPT=0
 
 # Input Messages
-# CHAT_MULTI_LINE=0
+TOPSAILAI_CHAT_MULTI_LINE=0
 
 # file or content pass to message of agent
 TOPSAILAI_TASK=""
@@ -54,7 +54,7 @@ TOPSAILAI_TASK=""
 TOPSAILAI_AGENT_TYPE=""
 
 # default agent name
-# TOPSAILAI_AGENT_NAME=""
+TOPSAILAI_AGENT_NAME="TopsailAI"
 
 # Human name
 TOPSAILAI_HUMAN_NAME = "Topsail"
@@ -73,11 +73,11 @@ TEMPERATURE=0.3
 
 # Top P (Commented out - available for advanced configuration)
 # Controls diversity via nucleus sampling
-#TOP_P=0.97
+TOP_P=0.97
 
 # Frequency Penalty (Commented out - available for advanced configuration)
 # Penalizes repeated tokens: 0.0 = no penalty, 1.0 = maximum penalty
-#FREQUENCY_PENALTY=0.3
+FREQUENCY_PENALTY=0.0
 
 # =============================================================================
 # LLM Interactive
@@ -135,7 +135,7 @@ CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH=43
 CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS=10000
 
 # When the number of messages reaches a threshold, they will be summarized to limit the message length
-# TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD=17
+# TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD=97
 # TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP=0
 
 # ONLY RUNTIME: default is 0 to disable;
@@ -159,7 +159,7 @@ TOPSAILAI_SUMMARY_PROMPT=""
 # Dump Messages Flag
 # When set to 1, chat history messages are automatically dumped to a file
 # after each execution for debugging and analysis purposes
-FLAG_DUMP_MESSAGES=0
+TOPSAILAI_FLAG_DUMP_MESSAGES=0
 
 
 # =============================================================================
@@ -167,37 +167,37 @@ FLAG_DUMP_MESSAGES=0
 # =============================================================================
 
 # Give 'tools' to chat, 0 for tool_prompt only.
-USE_TOOL_CALLS=0
+TOPSAILAI_USE_TOOL_CALLS=0
 
 # Disabled Tools
 # Internal tools to disable (tools starting with these keywords)
 # Format: Tool names separated by semicolons (';')
 # Example: "agent_tool;story_tool" - disables all tools starting with these prefixes
-DISABLED_TOOLS=""
+TOPSAILAI_DISABLED_TOOLS=""
 
 # Enabled Tools
 # Internal tools to enable (tools starting with these keywords)
 # Format: Tool names separated by semicolons (';')
 # Takes precedence over DISABLED_TOOLS - only tools matching these prefixes will be available
-ENABLED_TOOLS=""
+TOPSAILAI_ENABLED_TOOLS=""
 
 # Extra Tools
 # Additional external tools to include in the agent's toolset
 # Format: File paths separated by semicolons (';')
 # Each tool should be defined in a separate Markdown (.md) file
-EXTRA_TOOLS=""
+TOPSAILAI_EXTRA_TOOLS=""
 
 # Plugin Tools
 # External plugin tools to dynamically load
 # Format: Plugin directory paths separated by semicolons (';')
 # Each plugin is loaded from a separate directory and integrated via the 'TOOLS' variable
-PLUGIN_TOOLS=""
+TOPSAILAI_PLUGIN_TOOLS=""
 
 # default char is '-', example file_tool-read_file
-# TOPSAILAI_TOOL_CONN_CHAR=""
+TOPSAILAI_TOOL_CONN_CHAR="-"
 
 # White list for file extensions do not truncate, split by ';'
-# TOPSAILAI_FILE_WHITE_LIST_NO_TRUNCATE_EXT=""
+TOPSAILAI_FILE_WHITE_LIST_NO_TRUNCATE_EXT=""
 
 # Plugin Skills
 # Format: directory paths separated by semicolons (';')
@@ -216,7 +216,7 @@ TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS=""
 # Example: tag=ai,protocol=ssh,node=hostname;tag=ai,protocol=docker,node=host,name=container
 # Supported protocols: ssh, docker
 # Purpose: Enables command execution in isolated environments
-SANDBOX_SETTINGS=""
+TOPSAILAI_SANDBOX_SETTINGS=""
 
 # Envion keys separated by semicolons (';')
 TOPSAILAI_CMD_ENV_KEYS=""
@@ -263,7 +263,7 @@ TOPSAILAI_TEAM_ENV_KEYS=""
 TOPSAILAI_TEAM_MANAGER_ONLY_AGENT=1 # 0 for disabled (default), 1 for enabled
 
 # manager name
-TOPSAIL_TEAM_MANAGER_NAME="Topsail"
+TOPSAILAI_TEAM_MANAGER_NAME="TopsailAI"
 
 # memeber name, DONOT CONFIG it, only setting it for runtime.
 # TOPSAIL_TEAM_MEMBER_NAME="km-k25"

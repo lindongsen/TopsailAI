@@ -36,7 +36,7 @@ def is_code_file(file_path:str) -> bool:
 
 def get_all_agent_tools():
     """ return dict, key is tool_name, value is tool_func. """
-    from . import TOOLS as INTERNAL_TOOLS
+    from .base.init import TOOLS as INTERNAL_TOOLS
 
     agent_tools = {}
     for tool_name, tool_func in INTERNAL_TOOLS.items():
@@ -354,7 +354,8 @@ def agent_memory_as_story(
     if not workspace:
         workspace = DEFAULT_WORKSPACE
 
-    from . import story_tool, format_tools_map
+    from . import story_tool
+    from .base.common import format_tools_map
 
     prompt = story_tool.PROMPT_SUMMARY_AS_STORY
 
@@ -434,3 +435,5 @@ PROMPT = """
 ## About agent_tool (assistant)
 Unless the user explicitly includes the word "assistant" (or phrases such as "call the assistant" or "use an assistant") in their request, you must not invoke, delegate, or imply any third-party assistant/agent_tool to perform the task. All responses must be generated solely by you.
 """
+
+FLAG_TOOL_ENABLED = False

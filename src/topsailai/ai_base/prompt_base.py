@@ -138,7 +138,7 @@ class PromptBase(object):
         self.reset_messages(to_suppress_log=True)
 
         # set flags
-        if os.getenv("FLAG_DUMP_MESSAGES") == "1":
+        if os.getenv("TOPSAILAI_FLAG_DUMP_MESSAGES") == "1":
             self.flag_dump_messages = True
 
         # hooks, func(self)

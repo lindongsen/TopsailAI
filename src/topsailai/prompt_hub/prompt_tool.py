@@ -12,7 +12,7 @@ from topsailai.utils import env_tool
 
 
 def get_extra_prompt() -> str:
-    prompt_files = env_tool.EnvReaderInstance.get_list_str("SYSTEM_PROMPT_EXTRA_FILES")
+    prompt_files = env_tool.EnvReaderInstance.get_list_str("SYSTEM_PROMPT_EXTRA_FILES", separator='')
     if not prompt_files:
         return ""
     prompt_content = ""
@@ -25,7 +25,8 @@ def get_extra_tools():
     return string for prompt content of extra tools
     """
     result = ""
-    extra_tools = os.getenv("EXTRA_TOOLS")
+    extra_tools = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_EXTRA_TOOLS", separator='') or \
+        env_tool.EnvReaderInstance.get_list_str("EXTRA_TOOLS", separator='')
     if extra_tools:
         # split by ';'
         extra_tools = extra_tools.split(';')
@@ -160,15 +161,17 @@ def disable_tools_by_env(raw_tools:list[str]):
     """ return available tools """
     if not raw_tools:
         return raw_tools
-    env_target_tools = os.getenv("DISABLED_TOOLS")
+    from topsailai.tools.base.init import DISABLED_TOOLS
+    env_target_tools = DISABLED_TOOLS
     if not env_target_tools:
         return raw_tools
-    env_target_tools = env_target_tools.replace(',', ';').split(';')
     return disable_tools(raw_tools, env_target_tools)
 
 def enable_tools(raw_tools:list[str], target_tools:list[str]):
     """ return available tools """
     if not raw_tools:
+        return raw_tools
+    if target_tools and '*' in target_tools:
         return raw_tools
     new_tools = set()
     target_tools = set(target_tools)
@@ -189,10 +192,11 @@ def enable_tools_by_env(raw_tools:list[str]):
     """ return available tools """
     if not raw_tools:
         return raw_tools
-    env_target_tools = os.getenv("ENABLED_TOOLS")
+
+    from topsailai.tools.base.init import ENABLED_TOOLS
+    env_target_tools = ENABLED_TOOLS
     if not env_target_tools:
         return raw_tools
-    env_target_tools = env_target_tools.replace(',', ';').split(';')
     return enable_tools(raw_tools, env_target_tools)
 
 def get_tools_by_env(raw_tools:list[str]):

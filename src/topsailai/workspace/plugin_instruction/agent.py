@@ -34,9 +34,19 @@ def get_tool_prompt() -> str:
         print(agent.messages[2]["content"])
     return
 
+def get_tools() -> list[str]:
+    """
+    Print tools
+    """
+    agent = get_ai_agent()
+    if agent:
+        print(sorted(list(agent.available_tools.keys())))
+    return
+
 
 INSTRUCTIONS = dict(
     system_prompt=get_system_prompt,
     env_prompt = get_env_prompt,
     tool_prompt=get_tool_prompt,
+    tools=get_tools,
 )

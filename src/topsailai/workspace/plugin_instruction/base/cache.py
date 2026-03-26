@@ -5,6 +5,7 @@
   Purpose:
 '''
 
+from topsailai.ai_base.agent_base import AgentBase
 
 # ai agent object
 g_ai_agent = None
@@ -16,6 +17,6 @@ def set_ai_agent(agent):
         g_ai_agent = agent
     return
 
-def get_ai_agent():
+def get_ai_agent() -> AgentBase:
     """ return a agent object """
     return g_ai_agent

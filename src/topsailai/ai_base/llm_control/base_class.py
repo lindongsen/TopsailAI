@@ -79,23 +79,12 @@ def parse_model_settings():
         Returns: [{"k1_a": "v1_a", "k2_a": "v2_a"}, {"k1_b": "v1_b", "k2_b": "v2_b"}]
 
     """
-    settings_str = os.getenv("MODEL_SETTINGS")
-    if not settings_str:
-        return []
-    items = settings_str.split(';')
+    items = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_MODEL_SETTINGS", separator=';') or \
+        env_tool.EnvReaderInstance.get_list_str("MODEL_SETTINGS", separator=';')
     result = []
     for item in items:
-        item = item.strip()
-        if not item:
-            continue
-        kv_pairs = item.split(',')
-        d = {}
-        for kv in kv_pairs:
-            kv = kv.strip()
-            if '=' in kv:
-                k, v = kv.split('=', 1)
-                d[k.strip()] = v.strip()
-        if d:  # only append if dict is not empty
+        d = format_tool.parse_str_to_dict(item, item_separator=',', kv_separator='=', kv_strip=True)
+        if d:
             result.append(d)
     return result
 

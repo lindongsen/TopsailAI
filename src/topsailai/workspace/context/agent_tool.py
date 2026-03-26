@@ -8,6 +8,8 @@
 from topsailai.utils import (
     format_tool,
 )
+from topsailai.tools.base.common import add_tool
+from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
 from topsailai.workspace.context.agent import (
     ContextRuntimeAIAgent,
 )
@@ -20,8 +22,21 @@ class ContextRuntimeAgentTools(ContextRuntimeAIAgent):
     both session messages and agent messages during processing.
     """
 
-    # tool name
-    TOOL_CONTEXT_DELETE_MESSAGES = "context-delete_messages"
+    def __init__(self, ctx_runtime_data: ContextRuntimeData):
+        """
+        Args:
+            ctx_runtime_data (ContextRuntimeData):
+        """
+        super().__init__(ctx_runtime_data)
+
+        self.TOOLS = {
+            "context-cut_messages": self.tool_delete_messages_for_processing,
+        }
+
+        for tool_name, tool_call in self.TOOLS:
+            add_tool(tool_name, tool_call)
+
+        return
 
     # user chats to agent
     def tool_delete_messages_for_processed(self, indexes: list[int]) -> str:

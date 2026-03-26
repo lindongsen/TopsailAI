@@ -15,3 +15,13 @@ TOOLS = dict(
 )
 
 FLAG_TOOL_ENABLED = False
+
+def reload():
+    """ Reload TOOLS """
+    # avoid duplicate
+    from topsailai.tools.base.init import is_tool_enabled
+    if is_tool_enabled(file_tool):
+        TOOLS.clear()
+    return
+
+reload()

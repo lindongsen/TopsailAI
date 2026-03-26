@@ -18,6 +18,7 @@ from topsailai.utils import (
     module_tool,
     format_tool,
     print_tool,
+    env_tool,
 )
 
 
@@ -73,10 +74,11 @@ def get_tool_prompt(tools_name:list=None, tools_map:dict=None):
 
 def expand_plugin_tools():
     """ expand tools by external plugins """
-    env_plugin_tools = os.getenv("PLUGIN_TOOLS")
+    env_plugin_tools = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_PLUGIN_TOOLS", separator='') or \
+        env_tool.EnvReaderInstance.get_list_str("PLUGIN_TOOLS", separator='')
     if not env_plugin_tools:
         return
-    for plugin_path in env_plugin_tools.split(';'):
+    for plugin_path in env_plugin_tools:
         _tools = module_tool.get_external_function_map(
             plugin_path, "TOOLS",
             conn_char=CONN_CHAR,

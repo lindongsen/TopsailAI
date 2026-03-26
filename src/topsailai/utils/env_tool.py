@@ -40,9 +40,10 @@ def is_use_tool_calls() -> bool:
     Returns:
         bool: True if tool calls are enabled, False otherwise
     """
-    if os.getenv("USE_TOOL_CALLS", "0") == "0":
-        return False
-    return True
+    if os.getenv("USE_TOOL_CALLS", "0") != "0" or \
+        os.getenv("TOPSAILAI_USE_TOOL_CALLS", "0") != "0":
+        return True
+    return False
 
 def is_chat_multi_line() -> bool:
     """Check if multi-line chat mode is enabled.
@@ -54,12 +55,17 @@ def is_chat_multi_line() -> bool:
     Returns:
         bool: True if multi-line chat mode is enabled, False otherwise
     """
-    if os.getenv("CHAT_MULTI_LINE", "0") == "0":
-        return False
-    return True
+    if os.getenv("TOPSAILAI_CHAT_MULTI_LINE", "0") != "0":
+        return True
+
+    if os.getenv("CHAT_MULTI_LINE", "0") != "0":
+        return True
+
+    return False
 
 
 class EnvironmentReader(object):
+    """ base class to read env """
 
     @staticmethod
     def try_read_file(file_path:str) -> str:
