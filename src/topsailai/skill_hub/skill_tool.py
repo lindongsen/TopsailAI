@@ -138,6 +138,8 @@ def is_disabled_skill(folder_path:str) -> bool:
     for f in disabled_list:
         if folder_path.startswith(f):
             return True
+        if folder_path.endswith(f):
+            return True
     return False
 
 def parse_skill_folder(folder_path: str) -> SkillInfo:
