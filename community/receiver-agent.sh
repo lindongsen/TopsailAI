@@ -41,6 +41,9 @@ mkdir -p "${LOCK_DIR}"
 
 # start
 flock -E 203 -w 0 -x "${LOCK_DIR}/receiver_${MESSENGER_MODE:-sync}.lock" agent_chat "'${MESSENGER_SENDER}' Say: " "${MESSENGER_MESSAGE}"
-[ $? -eq 203 ] && {
+RET_CODE=$?
+[ ${RET_CODE} -eq 203 ] && {
     echo "(${TOPSAILAI_AGENT_NAME}) is busy"
+    exit 0
 }
+exit ${RET_CODE}
