@@ -81,7 +81,7 @@ class AgentChat(object):
         self.hook_instruction = hook_instruction
         self.ctx_rt_aiagent = ctx_rt_aiagent
         self.ctx_rt_instruction = ctx_rt_instruction
-
+        ctx_runtime_data = ctx_rt_aiagent.ctx_runtime_data
         self.ai_agent = ctx_rt_aiagent.ai_agent
 
         self.first_message = None
@@ -91,8 +91,16 @@ class AgentChat(object):
 
         # hook(self)
         self.hooks_pre_run = []
+        self.hooks_for_final_answer = []
 
-        ctx_runtime_data = ctx_rt_aiagent.ctx_runtime_data
+        if env_tool.EnvReaderInstance.get("TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION"):
+            def hook_final_summarize_into_session(_) -> None:
+                """ summarize messages of agent2llm, save summary content to session of user2agent """
+                summary_content = ctx_runtime_data.summarize_messages_for_processing()
+                if summary_content:
+                    ctx_runtime_data.add_session_message(ROLE_ASSISTANT, summary_content)
+                return
+            self.hooks_for_final_answer.append(hook_final_summarize_into_session)
 
         ##########################################################################################
         # Hook Agent
@@ -204,6 +212,20 @@ class AgentChat(object):
                 # continue
         return
 
+    def call_hook_for_final_answer(self):
+        """
+        Iterates through each registered hook function and executes it with
+        the current AgentChat instance as the argument. Any exceptions raised
+        by hooks are logged but do not stop execution of remaining hooks.
+        """
+        for hook in self.hooks_for_final_answer:
+            try:
+                hook(self)
+            except Exception as e:
+                logger.exception("call hook_for_final_answer failed [%s]: %s", hook, e)
+                # continue
+        return
+
     def run(
             self,
             message:str=None,
@@ -310,6 +332,8 @@ class AgentChat(object):
                         if not flag_abort:
                             self.ctx_rt_aiagent.add_session_message()
                 self.last_message = answer
+
+            self.call_hook_for_final_answer()
 
             # it is not interactive mode
             if not env_tool.is_debug_mode() or not env_tool.is_interactive_mode():

@@ -152,6 +152,10 @@ TOPSAILAI_NEED_SYMBOL_FOR_ANSWER=0
 # Prompt for summary, file or content
 TOPSAILAI_SUMMARY_PROMPT=""
 
+# Summarize messages of agent2llm, save summary content to session of user2agent
+# 1 is enabled, 0 is disabled
+TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION="0"
+
 # =============================================================================
 # Feature Flags
 # =============================================================================

@@ -101,6 +101,9 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         if not messages:
             return None
 
+        if len(messages) <= 2:
+            return None
+
         # print info
         print_step(f"!!! Summarizing context messages for processing: msg_len=[{len(messages)}]", need_format=False, need_log=True)
 
