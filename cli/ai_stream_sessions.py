@@ -18,10 +18,8 @@ from datetime import datetime
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root + "/src")
 
-os.chdir(project_root)
-
 from topsailai.context.ctx_manager import get_session_manager
-from topsailai.utils import json_tool
+from topsailai.utils import json_tool, format_tool
 
 
 # Global flag for graceful exit
@@ -33,24 +31,6 @@ def signal_handler(signum, frame):
     global running
     print("\n\nReceived interrupt signal. Shutting down...")
     running = False
-
-
-def get_latest_message_time(session_manager, session_id: str) -> datetime:
-    """
-    Get the creation time of the latest message for a session.
-
-    Args:
-        session_manager: The session manager instance.
-        session_id: The session ID to check.
-
-    Returns:
-        datetime: The creation time of the latest message, or None if no messages exist.
-    """
-    messages = session_manager.get_messages_by_session(session_id)
-    if messages:
-        # Messages are ordered by create_time ascending, so get the last one
-        return messages[-1].create_time
-    return None
 
 
 def format_message_content(msg) -> str:
