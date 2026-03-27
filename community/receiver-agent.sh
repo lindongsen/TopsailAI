@@ -12,8 +12,8 @@
 # check
 [ -n "${MESSENGER_MESSAGE}" ] || exit 1
 [ -n "${MESSENGER_SENDER}" ] || exit 1
-[ "$MESSENGER_MESSAGE" == "ping" ] && echo "pong" && exit 0
-[ "$MESSENGER_MESSAGE" == "health check" ] && echo healthy && exit 0
+[ "$MESSENGER_MESSAGE" == "ping" ] && echo "${MESSENGER_SENDER}: pong" && exit 0
+[ "$MESSENGER_MESSAGE" == "health check" ] && echo "${MESSENGER_SENDER}: healthy" && exit 0
 
 # env
 EXE_FILE=$(readlink -f "$0")
