@@ -37,7 +37,10 @@ def format_message_content(msg) -> str:
     """
     Format message content for better readability.
 
-    Handles nested JSON with step_name and raw_text structure.
+    Handles:
+    1. JSON array format: [{"step_name": "xxx", "raw_text": "yyy"}]
+    2. Nested JSON with step_name and raw_text structure
+    3. Plain text content
 
     Args:
         msg: The message object.
@@ -51,7 +54,33 @@ def format_message_content(msg) -> str:
         # If not JSON, return as-is
         return msg.message
 
-    # Check if content has the nested structure with step_name and raw_text
+    # Handle JSON array format: [{"step_name": "xxx", "raw_text": "yyy"}]
+    if isinstance(content, list):
+        lines = []
+        for idx, item in enumerate(content):
+            if isinstance(item, dict):
+                step_name = item.get('step_name', '')
+                raw_text = item.get('raw_text', '')
+                
+                if step_name and raw_text:
+                    if idx > 0:
+                        lines.append("")  # Add blank line between items
+                    lines.append(f"[{step_name}]")
+                    lines.append(str(raw_text))
+                elif item:  # Non-empty dict without step_name/raw_text
+                    if idx > 0:
+                        lines.append("")
+                    lines.append(json_tool.json_dump(item, indent=2))
+            elif item:  # Non-empty non-dict item
+                if idx > 0:
+                    lines.append("")
+                lines.append(str(item))
+        
+        if lines:
+            return "\n".join(lines)
+        return str(content)
+
+    # Handle JSON dict format
     if isinstance(content, dict):
         # Check for step_name and raw_text structure
         step_name = content.get('step_name')
@@ -60,7 +89,7 @@ def format_message_content(msg) -> str:
         if step_name and raw_text:
             # This is a nested AI message, try to parse raw_text
             lines = []
-            lines.append(f"Step: {step_name}")
+            lines.append(f"[{step_name}]")
 
             # Try to parse raw_text as JSON
             try:
@@ -70,26 +99,29 @@ def format_message_content(msg) -> str:
                     inner_step = raw_data.get('step_name', '')
                     inner_raw = raw_data.get('raw_text', raw_text)
                     if inner_step:
-                        lines.append(f"Inner Step: {inner_step}")
-                    # Try to parse inner_raw if it's a JSON string
-                    try:
-                        inner_content = json_tool.json_load(inner_raw)
-                        if isinstance(inner_content, dict):
-                            inner_step2 = inner_content.get('step_name', '')
-                            inner_raw2 = inner_content.get('raw_text', inner_raw)
-                            if inner_step2:
-                                lines.append(f"Inner Step: {inner_step2}")
-                            lines.append(f"Content:\n{inner_raw2}")
-                        else:
-                            lines.append(f"Content:\n{inner_raw}")
-                    except Exception:
-                        lines.append(f"Content:\n{inner_raw}")
+                        lines.append(f"[{inner_step}]")
+                    lines.append(str(inner_raw))
+                elif isinstance(raw_data, list):
+                    # Handle list inside raw_text
+                    for idx, item in enumerate(raw_data):
+                        if isinstance(item, dict):
+                            inner_step = item.get('step_name', '')
+                            inner_raw = item.get('raw_text', '')
+                            if inner_step and inner_raw:
+                                if idx > 0:
+                                    lines.append("")
+                                lines.append(f"[{inner_step}]")
+                                lines.append(str(inner_raw))
+                        elif item:
+                            if idx > 0:
+                                lines.append("")
+                            lines.append(str(item))
                 else:
                     # raw_text is a plain string
-                    lines.append(f"Content:\n{raw_text}")
+                    lines.append(str(raw_text))
             except Exception:
                 # raw_text is a plain string
-                lines.append(f"Content:\n{raw_text}")
+                lines.append(str(raw_text))
 
             return "\n".join(lines)
 
@@ -108,19 +140,34 @@ def format_message_content(msg) -> str:
                         inner_step = inner_content.get('step_name', '')
                         inner_raw = inner_content.get('raw_text', content_text)
                         if inner_step:
-                            lines.append(f"Step: {inner_step}")
-                        lines.append(f"Content:\n{inner_raw}")
+                            lines.append(f"[{inner_step}]")
+                        lines.append(str(inner_raw))
+                    elif isinstance(inner_content, list):
+                        # Handle list in content
+                        for idx, item in enumerate(inner_content):
+                            if isinstance(item, dict):
+                                inner_step = item.get('step_name', '')
+                                inner_raw = item.get('raw_text', '')
+                                if inner_step and inner_raw:
+                                    if idx > 0:
+                                        lines.append("")
+                                    lines.append(f"[{inner_step}]")
+                                    lines.append(str(inner_raw))
+                            elif item:
+                                if idx > 0:
+                                    lines.append("")
+                                lines.append(str(item))
                     else:
-                        lines.append(f"Content:\n{content_text}")
+                        lines.append(str(content_text))
                 except Exception:
-                    lines.append(f"Content:\n{content_text}")
+                    lines.append(str(content_text))
 
             return "\n".join(lines)
 
         # If no special structure, just dump as formatted JSON
         return json_tool.json_dump(content, indent=2)
 
-    # If not a dict, return as-is
+    # If not a dict or list, return as-is
     return str(content)
 
 
