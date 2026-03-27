@@ -31,10 +31,8 @@ while read -r line; do
   if [ "${c1}" == "#" ] || [ "${c1}" == " " ] || [ "${c1}" == "\t" ]; then
     continue
   fi
-  KV=$(echo "${line}" | cut -d '#' -f 1)
-  # strip
-  KV="${KV%"${KV##*[![:space:]]}"}"
-  export ${KV}
+  KEY=$(echo "${line}" | cut -d '=' -f 1)
+  export ${KEY}
 done < "${ENV_FILE}"
 
 # lock
