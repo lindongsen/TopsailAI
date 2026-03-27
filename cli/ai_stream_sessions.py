@@ -53,6 +53,97 @@ def get_latest_message_time(session_manager, session_id: str) -> datetime:
     return None
 
 
+def format_message_content(msg) -> str:
+    """
+    Format message content for better readability.
+
+    Handles nested JSON with step_name and raw_text structure.
+
+    Args:
+        msg: The message object.
+
+    Returns:
+        str: Formatted message content.
+    """
+    try:
+        content = json_tool.json_load(msg.message)
+    except Exception:
+        # If not JSON, return as-is
+        return msg.message
+
+    # Check if content has the nested structure with step_name and raw_text
+    if isinstance(content, dict):
+        # Check for step_name and raw_text structure
+        step_name = content.get('step_name')
+        raw_text = content.get('raw_text')
+
+        if step_name and raw_text:
+            # This is a nested AI message, try to parse raw_text
+            lines = []
+            lines.append(f"Step: {step_name}")
+
+            # Try to parse raw_text as JSON
+            try:
+                raw_data = json_tool.json_load(raw_text)
+                if isinstance(raw_data, dict):
+                    # Extract the actual message content
+                    inner_step = raw_data.get('step_name', '')
+                    inner_raw = raw_data.get('raw_text', raw_text)
+                    if inner_step:
+                        lines.append(f"Inner Step: {inner_step}")
+                    # Try to parse inner_raw if it's a JSON string
+                    try:
+                        inner_content = json_tool.json_load(inner_raw)
+                        if isinstance(inner_content, dict):
+                            inner_step2 = inner_content.get('step_name', '')
+                            inner_raw2 = inner_content.get('raw_text', inner_raw)
+                            if inner_step2:
+                                lines.append(f"Inner Step: {inner_step2}")
+                            lines.append(f"Content:\n{inner_raw2}")
+                        else:
+                            lines.append(f"Content:\n{inner_raw}")
+                    except Exception:
+                        lines.append(f"Content:\n{inner_raw}")
+                else:
+                    # raw_text is a plain string
+                    lines.append(f"Content:\n{raw_text}")
+            except Exception:
+                # raw_text is a plain string
+                lines.append(f"Content:\n{raw_text}")
+
+            return "\n".join(lines)
+
+        # Check for role field
+        role = content.get('role', '')
+        if role:
+            lines = [f"Role: {role}"]
+
+            # Check for content field
+            content_text = content.get('content', '')
+            if content_text:
+                # Try to parse content if it's a JSON string
+                try:
+                    inner_content = json_tool.json_load(content_text)
+                    if isinstance(inner_content, dict):
+                        inner_step = inner_content.get('step_name', '')
+                        inner_raw = inner_content.get('raw_text', content_text)
+                        if inner_step:
+                            lines.append(f"Step: {inner_step}")
+                        lines.append(f"Content:\n{inner_raw}")
+                    else:
+                        lines.append(f"Content:\n{content_text}")
+                except Exception:
+                    lines.append(f"Content:\n{content_text}")
+
+            return "\n".join(lines)
+
+        # If no special structure, just dump as formatted JSON
+        return json_tool.json_dump(content, indent=2)
+
+    # If not a dict, return as-is
+    return str(content)
+
+
 def stream_session_messages(session_manager, session_id: str, session_name: str, poll_interval: float = 1.0):
     """
     Stream messages for a specific session.
@@ -94,14 +185,11 @@ def stream_session_messages(session_manager, session_id: str, session_name: str,
 
                     # Output new messages
                     for msg in new_messages:
-                        try:
-                            content = json_tool.json_load(msg.message)
-                        except Exception:
-                            content = msg.message
+                        formatted_content = format_message_content(msg)
 
                         print(f"\n[{msg.create_time.strftime('%Y-%m-%d %H:%M:%S') if msg.create_time else 'N/A'}] "
                               f"msg_id={msg.msg_id}")
-                        print(f"Content: {json_tool.json_dump(content, indent=2)}")
+                        print(formatted_content)
                         print("-" * 80)
 
                     # Update last seen message
@@ -167,15 +255,12 @@ def stream_all_sessions(session_manager, poll_interval: float = 1.0):
 
                             # Output new messages
                             for msg in new_messages:
-                                try:
-                                    content = json_tool.json_load(msg.message)
-                                except Exception:
-                                    content = msg.message
+                                formatted_content = format_message_content(msg)
 
                                 print(f"\n[{msg.create_time.strftime('%Y-%m-%d %H:%M:%S') if msg.create_time else 'N/A'}] "
                                       f"Session: {session_id} ({session_name})")
                                 print(f"msg_id={msg.msg_id}")
-                                print(f"Content: {json_tool.json_dump(content, indent=2)}")
+                                print(formatted_content)
                                 print("-" * 80)
 
                             # Update last seen message
