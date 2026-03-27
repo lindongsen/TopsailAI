@@ -34,7 +34,7 @@ while read -r line; do
   KV=$(echo "${line}" | cut -d '#' -f 1)
   # strip
   KV="${KV%"${KV##*[![:space:]]}"}"
-  export "${KV}"
+  export ${KV}
 done < "${ENV_FILE}"
 
 # lock
