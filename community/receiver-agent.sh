@@ -12,13 +12,15 @@
 # check
 [ -n "${MESSENGER_MESSAGE}" ] || exit 1
 [ -n "${MESSENGER_SENDER}" ] || exit 1
-[ "$MESSENGER_MESSAGE" == "ping" ] && echo "${MESSENGER_SENDER}: pong" && exit 0
-[ "$MESSENGER_MESSAGE" == "health check" ] && echo "${MESSENGER_SENDER}: healthy" && exit 0
 
 # env
 EXE_FILE=$(readlink -f "$0")
 ENV_FILE="${EXE_FILE%.*}.env"
 . "${ENV_FILE}"
+
+# hook
+[ "$MESSENGER_MESSAGE" == "ping" ] && echo "${TOPSAILAI_AGENT_NAME}: pong" && exit 0
+[ "$MESSENGER_MESSAGE" == "health check" ] && echo "${TOPSAILAI_AGENT_NAME}: healthy" && exit 0
 
 [ "${MESSENGER_RECEIVER}" == "${TOPSAILAI_AGENT_NAME}" ] || exit 1
 
