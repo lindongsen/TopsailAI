@@ -261,10 +261,10 @@ def output_messages(messages: list, session_id: str = None, session_name: str = 
         
         if show_session and session_id:
             print(f"\n[{timestamp}] Session: {session_id} ({session_name or 'Unnamed'})")
+            print(f"msg_id={msg.msg_id}")
         else:
             print(f"\n[{timestamp}] msg_id={msg.msg_id}")
         
-        print(f"msg_id={msg.msg_id}")
         print(formatted_content)
         print("-" * SEPARATOR_WIDTH)
 
