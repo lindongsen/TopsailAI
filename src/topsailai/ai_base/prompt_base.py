@@ -212,6 +212,7 @@ class PromptBase(object):
 
         Resets messages and calls after-init-prompt hooks
         """
+        logger.info("initializing prompt")
         self.reset_messages()
         for hook in self.hooks_after_init_prompt:
             try:

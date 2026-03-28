@@ -254,6 +254,24 @@ def ctxm_file_lock(file_path, mode="w"):
     return
 
 @contextmanager
+def ctxm_try_file_lock(file_path, mode="w"):
+    """ yield file object for locked, None for unlocked """
+    with open(file_path, mode) as file:
+        flag_locked = False
+        try:
+            fcntl.flock(file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            flag_locked = True
+        except Exception:
+            # locked by other process
+            flag_locked = False
+
+        try:
+            yield file if flag_locked else None
+        finally:
+            fcntl.flock(file.fileno(), fcntl.LOCK_UN)
+    return
+
+@contextmanager
 def ctxm_temp_file(file_content, mode="w"):
     """
     Args:
@@ -277,5 +295,41 @@ def ctxm_temp_file(file_content, mode="w"):
             yield (file_path, fd)
     finally:
         delete_file(file_path)
+
+    return
+
+@contextmanager
+def ctxm_wait_flock(file_path, timeout=60, to_delete_lock_file=True):
+    """ yield file object for locked, None for unlocked """
+    if not file_path:
+        yield None
+        return
+
+    timeout = int(timeout)
+    if timeout <= 0:
+        timeout = 1
+
+    logger.debug("waiting flock: [%s] [%s]", file_path, timeout)
+
+    start_time = int(time.time())
+    end_time = start_time + timeout
+    while time.time() < end_time:
+        with ctxm_try_file_lock(file_path) as fp:
+            if not fp:
+                time.sleep(0.1)
+                continue
+
+            logger.debug("wait flock OK: [%s] [%s]", file_path, timeout)
+            try:
+                yield fp
+            finally:
+                logger.debug("free flock: [%s]", file_path)
+                if to_delete_lock_file:
+                    delete_file(file_path)
+            return
+
+    # timeout
+    logger.warning("wait flock timeout: [%s] [%s]", file_path, timeout)
+    yield None
 
     return

@@ -10,6 +10,8 @@ from contextlib import contextmanager
 
 from topsailai.utils.file_tool import (
     ctxm_file_lock,
+    delete_file,
+    ctxm_wait_flock,
 )
 
 from . import folder_constants
@@ -32,6 +34,17 @@ def init():
 
 # Initialize lock directory on module import
 init()
+
+
+class YieldData(object):
+    """ save data for yield """
+    def __init__(self, **kwargs):
+        self.data = kwargs
+        return
+
+    def get(self, k:str):
+        """ get value """
+        return self.data.get(k)
 
 
 @contextmanager
@@ -77,8 +90,42 @@ def FileLock(name: str):
 
     # Acquire the lock and yield control to the critical section
     with ctxm_file_lock(file_path) as fd:
-        yield fd
+        try:
+            yield fd
+        finally:
+            delete_file(file_path)
 
     # Lock is automatically released when context exits
     # No need to manually delete the lock file
+    return
+
+@contextmanager
+def ctxm_try_session_lock(session_id:str=None, timeout=60):
+    """
+    yield YieldData(session_id, fp, msg)
+      if exists file operation object, session is locked, else None for locking failed.
+    """
+    if not session_id:
+        session_id = os.getenv("SESSION_ID")
+
+    lock_file = None
+    if session_id:
+        lock_name = session_id.replace("/", ".").replace(" ", ".") + ".lock"
+        lock_file = os.path.join(folder_constants.FOLDER_LOCK, lock_name)
+
+    msg = ""
+    with ctxm_wait_flock(lock_file, to_delete_lock_file=True, timeout=timeout) as fp:
+        if session_id and not fp:
+            msg = f"session is busy: [{session_id}]"
+
+        yield YieldData(session_id=session_id, fp=fp, msg=msg)
+
+    return
+
+@contextmanager
+def ctxm_void(*_, **__):
+    """ void
+    yield YieldData
+    """
+    yield YieldData()
     return

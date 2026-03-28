@@ -49,6 +49,7 @@ from topsailai.workspace.context.instruction import (
 )
 from topsailai.workspace.hook_instruction import HookInstruction
 from topsailai.workspace.plugin_instruction.base.cache import set_ai_agent
+from topsailai.workspace import lock_tool
 
 
 DEFAULT_HEAD_TAIL_OFFSET = 7
@@ -115,6 +116,8 @@ class AgentChat(object):
             Args:
                 _ai_agent: The agent instance to operate on.
             """
+            ctx_runtime_data.reset_messages()
+
             # cut messages
             if session_head_tail_offset and ctx_runtime_data.messages:
                 new_messages = ctx_manager.cut_messages(
@@ -282,6 +285,13 @@ class AgentChat(object):
         if need_symbol_for_answer is None:
             need_symbol_for_answer = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER", False)
 
+        need_session_lock = env_tool.EnvReaderInstance.check_bool(
+            "TOPSAILAI_ENABLE_SESSION_LOCK", False,
+        )
+        ctxm_tool = lock_tool.ctxm_void
+        if need_session_lock:
+            ctxm_tool = lock_tool.ctxm_try_session_lock
+
         # variables
         # up_time = int(time.time())
         answer = ""
@@ -305,13 +315,24 @@ class AgentChat(object):
             # run
             start_time = int(time.time())
             try:
-                answer = self.ai_agent.run(
-                    get_agent_step_call(
-                        args=(need_interactive,),
-                        agent_type=self.ai_agent.agent_type,
-                    ),
-                    message,
-                )
+                with ctxm_tool() as data:
+                    # it need session lock but lock failed
+                    if need_session_lock and data.get("session_id") and not data.get("fp"):
+                        print(data.get("msg"))
+                        return data.get("msg")
+
+                    # lock session ok, refresh session messages in hook_after_init_prompt
+                    #if fp:
+                        # refresh session messages
+                        #self.ctx_runtime_data.reset_messages()
+
+                    answer = self.ai_agent.run(
+                        get_agent_step_call(
+                            args=(need_interactive,),
+                            agent_type=self.ai_agent.agent_type,
+                        ),
+                        message,
+                    )
             except agent_exception.AgentEndProcess:
                 self.last_message = self.messages[-1]
             except (KeyboardInterrupt, EOFError):

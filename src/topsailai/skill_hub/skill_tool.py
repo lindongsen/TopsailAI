@@ -39,6 +39,20 @@ g_skills = {} # key is folder, value is SkillInfo
 PROMPT_SKILL = prompt_tool.read_prompt("skills/skill.md")
 
 
+def is_matched_skill(skill_folder:str, keys:list[str]) -> bool:
+    """ return True for matched """
+    if keys:
+        if '*' in keys:
+            return True
+
+    for key in keys or []:
+        if skill_folder.startswith(key):
+            return True
+        if skill_folder.endswith(key):
+            return True
+
+    return False
+
 def is_need_load_overview(folder_path:str) -> bool:
     """
     Check if need load overview content into prompt
