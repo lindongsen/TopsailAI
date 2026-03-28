@@ -21,6 +21,7 @@ ENV_FILE="${EXE_FILE%.*}.env"
 # hook
 [ "$MESSENGER_MESSAGE" == "ping" ] && echo "${TOPSAILAI_AGENT_NAME}: pong" && exit 0
 [ "$MESSENGER_MESSAGE" == "health check" ] && echo "${TOPSAILAI_AGENT_NAME}: healthy" && exit 0
+[ "$MESSENGER_MESSAGE" == "debug" ] && echo "${TOPSAILAI_AGENT_NAME}: debug" && exit 0
 
 [ "${MESSENGER_RECEIVER}" == "${TOPSAILAI_AGENT_NAME}" ] || exit 1
 
