@@ -21,6 +21,7 @@ from topsailai.utils.print_tool import (
 )
 from topsailai.utils import (
     json_tool,
+    env_tool,
 )
 from topsailai.workspace.context.base import (
     ContextRuntimeBase,
@@ -101,8 +102,29 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         if not messages:
             return None
 
-        if len(messages) <= 2:
+        msg_len = len(messages)
+
+        if msg_len <= 2:
+            logger.warning("no need summarize due to messages too short: [%s]", msg_len)
             return None
+
+        # if need keep session messages
+        need_session_messages = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES", True)
+
+        session_msg_len = len(self.messages)
+
+        if need_session_messages:
+            ctx_quantity_threshold = env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD", default=100, formatter=int) or 100
+            if session_msg_len >= int(ctx_quantity_threshold/2):
+                need_session_messages = False
+                logger.warning("summary step cannot keep session messages due to it is too long: [%s]", session_msg_len)
+
+        if need_session_messages:
+            # the messages too short
+            if msg_len < (session_msg_len + 17):
+                logger.warning("no need summarize due to messages too short: [%s]", msg_len)
+                return None
 
         # print info
         print_step(f"!!! Summarizing context messages for processing: msg_len=[{len(messages)}]", need_format=False, need_log=True)
@@ -119,9 +141,26 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         # new messages
         new_messages = messages[:head_offset_to_keep]
-        new_messages.append(llm_chat.prompt_ctl.messages[-1])  # add answer(summary) to messages
+
+        # add session messages
+        if need_session_messages:
+            if not new_messages:
+                # Note that they are different objects, so use '+=', DONOT use '='
+                new_messages += self.messages
+            else:
+                _len = len(new_messages)
+                for msg in self.messages:
+                    if msg in new_messages[:_len]:
+                        continue
+                    new_messages.append(msg)
+
+        # add answer(summary) to messages
+        new_messages.append(llm_chat.prompt_ctl.messages[-1])
+
+        # add last of user message
         if last_user_msg:
-            new_messages.append(last_user_msg)
+            if last_user_msg not in new_messages:
+                new_messages.append(last_user_msg)
         self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
 
         print_step(f"!!! New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]", need_format=False, need_log=True)

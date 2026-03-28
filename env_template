@@ -138,6 +138,9 @@ CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS=10000
 # TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD=97
 # TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP=0
 
+# Keep session messages after summarizing, 1 is enabled(default), 0 is disabled
+TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES=1
+
 # ONLY RUNTIME: default is 0 to disable;
 # if set it to 1, but not set TOPSAILAI_SYMBOL_STARTSWITH_ANSWER, default symbol is agent name
 # Exmaple: `From 'AI.Dawson': {answer}`
