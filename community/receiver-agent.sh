@@ -33,7 +33,7 @@ while read -r line; do
   if [ "${c1}" == "#" ] || [ "${c1}" == " " ] || [ "${c1}" == "\t" ]; then
     continue
   fi
-  KEY=$(echo "${line}" | cut -d '=' -f 1)
+  KEY="${line%%=*}"
   export ${KEY}
 done < "${ENV_FILE}"
 
@@ -42,7 +42,10 @@ LOCK_DIR=/topsailai/lock/
 mkdir -p "${LOCK_DIR}"
 
 # start
-flock -E 203 -w 0 -x "${LOCK_DIR}/receiver_${MESSENGER_MODE:-sync}.lock" agent_chat "'${MESSENGER_SENDER}' Say: " "${MESSENGER_MESSAGE}"
+_HEAD_MSG="
+# AI-Community
+'${MESSENGER_SENDER}' Say: "
+flock -E 203 -w 0 -x "${LOCK_DIR}/receiver_${MESSENGER_MODE:-sync}.lock" agent_chat "${_HEAD_MSG}" "${MESSENGER_MESSAGE}"
 RET_CODE=$?
 [ ${RET_CODE} -eq 203 ] && {
     echo "(${TOPSAILAI_AGENT_NAME}) is busy"
