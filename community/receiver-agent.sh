@@ -25,6 +25,7 @@ ENV_FILE="${EXE_FILE%.*}.env"
 [ "${MESSENGER_RECEIVER}" == "${TOPSAILAI_AGENT_NAME}" ] || exit 1
 
 export SESSION_ID="${MESSENGER_RECEIVER}+${MESSENGER_SENDER}"
+export TOPSAILAI_ENABLE_SESSION_LOCK=1
 export SYSTEM_PROMPT="${SYSTEM_PROMPT}\n\n---\nYour name is ${TOPSAILAI_AGENT_NAME}\n---\n\n"
 
 while read -r line; do
