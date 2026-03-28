@@ -19,9 +19,10 @@ from topsailai.workspace import (
 
 KEY_STORY = "story"
 
-PROMPT_SUMMARY = prompt_tool.read_prompt("context/summary/L0.md")
+PROMPT_SUMMARY_TASK = prompt_tool.read_prompt("context/summary/task.md")
+PROMPT_SUMMARY_MEMORY = prompt_tool.read_prompt("context/summary/memory.md")
 
-PROMPT_SUMMARY_AS_STORY = PROMPT_SUMMARY + """
+PROMPT_SUMMARY_AS_STORY = PROMPT_SUMMARY_MEMORY + """
 Use story_tool to save content.
 [Attention] story_id is Heading/Title, also is filename, max length is 250, Cannot contain any special characters other than '_-'
 """ + env_tool.EnvReaderInstance.story_prompt_content

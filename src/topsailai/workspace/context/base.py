@@ -213,7 +213,7 @@ class ContextRuntimeBase(object):
         llm_chat = get_llm_chat(
             message=enhanced_prompt + one_msg,
             session_id="",
-            system_prompt=story_tool.PROMPT_SUMMARY + prompt_content,
+            system_prompt=story_tool.PROMPT_SUMMARY_TASK + prompt_content,
 
             need_stdout=False,
             need_input_message=False,
