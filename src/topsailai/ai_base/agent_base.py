@@ -176,6 +176,7 @@ class AgentRun(AgentBase):
 
             # Current message count
             ctx_count = len(self.messages)
+            last_message = self.messages[-1]
 
             for i, step in enumerate(response):
                 try:
@@ -198,7 +199,7 @@ class AgentRun(AgentBase):
 
             # end for step in response
 
-            if len(self.messages) == ctx_count:
+            if len(self.messages) == ctx_count and last_message == self.messages[-1]:
                 print_critical("No progress made in this iteration, exiting.")
                 return None
 
