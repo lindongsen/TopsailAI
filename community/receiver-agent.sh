@@ -25,10 +25,19 @@ ENV_FILE="${EXE_FILE%.*}.env"
 # only for debug
 [ "$MESSENGER_MESSAGE" == "debug" ] && {
   echo "${TOPSAILAI_AGENT_NAME}: debug"
-  echo "---"
+
+  echo ""
   echo "Environ:"
+  echo "---"
   env
   echo "---"
+
+  echo ""
+  echo "EnvFile: ${ENV_FILE}"
+  echo "---"
+  cat "${ENV_FILE}"
+  echo "---"
+
   exit 0
 }
 
