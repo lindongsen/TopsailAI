@@ -14,7 +14,7 @@
 [ -n "${MESSENGER_SENDER}" ] || exit 1
 
 # env
-EXE_FILE=$(readlink -f "$0")
+EXE_FILE=${0}
 ENV_FILE="${EXE_FILE%.*}.env"
 . "${ENV_FILE}"
 
