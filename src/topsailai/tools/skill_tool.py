@@ -115,7 +115,10 @@ def call_skill(
         if need_refresh_session:
             ai_agent = thread_local_tool.get_agent_object()
             if ai_agent:
+                # keep last message
+                last_message = ai_agent.messages[-1]
                 ai_agent.init_prompt()
+                ai_agent.messages += [last_message]
 
         return exec_cmd(
             cmd,
