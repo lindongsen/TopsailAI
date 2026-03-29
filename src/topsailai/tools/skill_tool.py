@@ -59,7 +59,14 @@ def call_skill(
     if not cmd_exe_file:
         raise Exception("illegal cmd: [%s]" % raw_cmd)
 
-    if cmd_exe_file[0] != '/' and not cmd_exe_file.startswith(folder_path):
+    if not cmd_exe_file.startswith(folder_path):
+        # case: /xxx or .xxx
+        for _ in range(2):
+            if cmd_exe_file[0] in ['/', '.']:
+                cmd_exe_file = cmd_exe_file[1:]
+            else:
+                break
+
         cmd_exe_file = os.path.join(folder_path, cmd_exe_file)
         if isinstance(cmd, list):
             cmd[0] = cmd_exe_file
