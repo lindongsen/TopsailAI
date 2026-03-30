@@ -7,17 +7,20 @@
 # env
 EXE_FILE=${0}
 ENV_FILE="${EXE_FILE%.*}.env"
-. "${ENV_FILE}"
 
-while read -r line; do
-  [ -n "${line}" ] || continue
-  c1=${line::1}
-  if [ "${c1}" == "#" ] || [ "${c1}" == " " ] || [ "${c1}" == "\t" ]; then
-    continue
-  fi
-  KEY="${line%%=*}"
-  export ${KEY}
-done < "${ENV_FILE}"
+if [ -e "${ENV_FILE}" ]; then
+    . "${ENV_FILE}"
+
+    while read -r line; do
+    [ -n "${line}" ] || continue
+    c1=${line::1}
+    if [ "${c1}" == "#" ] || [ "${c1}" == " " ] || [ "${c1}" == "\t" ]; then
+        continue
+    fi
+    KEY="${line%%=*}"
+    export ${KEY}
+    done < "${ENV_FILE}"
+fi
 
 
 TOPSAILAI_ENABLE_SESSION_LOCK=0 \
