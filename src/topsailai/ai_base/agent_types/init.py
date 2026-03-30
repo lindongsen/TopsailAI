@@ -14,6 +14,7 @@ from topsailai.ai_base.tool_call import (
 
 from . import (
     react,
+    react_community,
     plan_and_execute,
     _template,
 )
@@ -21,6 +22,7 @@ from . import (
 AGENT_TYPE_MAP = {
     "default": react,
     "react": react,
+    "react_community": react_community,
     "plan_and_execute": plan_and_execute,
 }
 
