@@ -197,7 +197,12 @@ class AgentRun(AgentBase):
                         data.ctx_runtime_data.add_session_message_dict(last_message)
 
                         # add result of tool_call to session
-                        self.add_tool_message(data.tool_result)
+                        self.add_tool_message(
+                            {
+                                "step_name": "observation",
+                                "raw_text": data.tool_result,
+                            }
+                        )
                         data.ctx_runtime_data.add_session_message_dict(self.messages[-1])
 
                         # done
