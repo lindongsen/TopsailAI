@@ -18,7 +18,10 @@ from topsailai.tools.cmd_tool import exec_cmd
 from topsailai.utils import (
     json_tool,
     env_tool,
-    thread_local_tool,
+)
+from topsailai.ai_base.agent_types.exception import (
+    DataAgentRefreshSession,
+    AgentNeedRefreshSession,
 )
 from topsailai.workspace import lock_tool
 
@@ -94,6 +97,7 @@ def call_skill(
     if is_matched_skill(folder_path, _skills_need_lock_session):
         need_lock_session = True
 
+    # ctxm
     ctxm_tool = lock_tool.ctxm_void
     if need_lock_session:
         ctxm_tool = lock_tool.ctxm_try_session_lock
@@ -106,26 +110,26 @@ def call_skill(
     if is_matched_skill(folder_path, _skills_need_refresh_session):
         need_refresh_session = True
 
+    result = None
     with ctxm_tool() as data:
         if isinstance(data, lock_tool.YieldData):
             if need_lock_session and data.get("session_id"):
                 if not data.get("fp"):
                     return f"call_skill failed: {data.get("msg")}"
 
-        if need_refresh_session:
-            ai_agent = thread_local_tool.get_agent_object()
-            if ai_agent:
-                # keep last message
-                last_message = ai_agent.messages[-1]
-                ai_agent.init_prompt()
-                ai_agent.messages += [last_message]
-
-        return exec_cmd(
+        result = exec_cmd(
             cmd,
             no_need_stderr=True if int(no_need_stderr) else False,
             timeout=int(timeout),
             cwd=folder_path,
         )
+        if result:
+            if need_refresh_session and data.get("session_id"):
+                raise AgentNeedRefreshSession(
+                    DataAgentRefreshSession(result, data.get("session_id"))
+                )
+
+        return result
 
 def overview_skill(folder_path:str):
     """ Every time you want to use a skill you MUST call `overview_skill` for entire details.

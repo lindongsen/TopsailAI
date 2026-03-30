@@ -20,6 +20,8 @@ from topsailai.utils import (
 
 from topsailai.ai_base.agent_types.exception import (
     AgentNoCareResult,
+    AgentNeedRefreshSession,
+    DataAgentRefreshSession,
 )
 from topsailai.ai_base.llm_base import (
     LLMModel,
@@ -183,6 +185,26 @@ class AgentRun(AgentBase):
                     ret = step_call(step, tools=all_tools, response=response, index=i, rsp_msg_obj=rsp_msg)
                 except AgentNoCareResult:
                     break
+                except AgentNeedRefreshSession as e:
+                    data = e.args[0] if e.args else None
+                    if data is None:
+                        logger.critical("BUG: missing data of tool_call")
+                        return None
+                    elif isinstance(data, DataAgentRefreshSession):
+                        data.ai_agent = self
+
+                        # add last message to session
+                        data.ctx_runtime_data.add_session_message_dict(last_message)
+
+                        # add result of tool_call to session
+                        self.add_tool_message(data.tool_result)
+                        data.ctx_runtime_data.add_session_message_dict(self.messages[-1])
+
+                        # done
+                        break
+                    else:
+                        logger.critical("BUG: illegal data of tool_call [%s]", data)
+                        return None
 
                 assert isinstance(ret, StepCallBase), "step_call must return StepCallBase instance"
 

@@ -71,13 +71,17 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         """
         msg_dict = {"role": role, "content": message}
 
-        self.append_message(msg_dict)
+        self.add_session_message_dict(msg_dict)
 
+        return
+
+    def add_session_message_dict(self, message:dict):
+        assert isinstance(message, dict)
+        self.append_message(message)
         if self.session_id:
             ctx_manager.add_session_message(
-                self.session_id, msg_dict,
+                self.session_id, message
             )
-
         return
 
     def del_session_message(self, index: int):
