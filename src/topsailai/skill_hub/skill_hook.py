@@ -20,6 +20,19 @@ from topsailai.skill_hub.skill_tool import (
 
 
 g_hooks = {}
+def get_hooks():
+    """ init hooks """
+    if g_hooks:
+        return g_hooks
+
+    _skill_hooks = env_tool.EnvReaderInstance.get_list_str(
+        "TOPSAILAI_HOOK_MODULE_SKILLS", separator=None,
+    ) or []
+    for _hook_module in _skill_hooks:
+        _hooks = module_tool.get_external_function_map(_hook_module, key="HOOKS")
+        if _hooks:
+            g_hooks.update(_hooks)
+    return g_hooks
 
 
 class SkillHookData(object):
@@ -58,7 +71,7 @@ class SkillHookData(object):
         self.need_refresh_session = None
 
         self.data_agent_refresh_session = DataAgentRefreshSession(None, None)
-        self.hooks = g_hooks
+        self.hooks = get_hooks()
 
         self.init()
 
@@ -93,16 +106,6 @@ class SkillHookData(object):
             need_refresh_session = True
 
         self.need_refresh_session = need_refresh_session
-
-        # hooks
-        if not self.hooks:
-            _skill_hooks = env_tool.EnvReaderInstance.get_list_str(
-                "TOPSAILAI_HOOK_MODULE_SKILLS", separator=None,
-            ) or []
-            for _hook_module in _skill_hooks:
-                _hooks = module_tool.get_external_function_map(_hook_module, key="HOOKS")
-                if _hooks:
-                    self.hooks.update(_hooks)
 
         return
 
