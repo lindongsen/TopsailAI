@@ -15,6 +15,7 @@ from topsailai.skill_hub.skill_hook import (
 KEY_SKILL_FOLDER = "ai-community"
 
 def handle_hook_before_call_skill(self:SkillHookHandler):
+    """ Run before a skill is called """
     if not is_matched_skill(self.skill_folder, [KEY_SKILL_FOLDER]):
         return
 
@@ -35,6 +36,7 @@ def handle_hook_before_call_skill(self:SkillHookHandler):
     return
 
 def handle_hook_after_call_skill(self:SkillHookHandler):
+    """ Run After a skill is called """
     if not is_matched_skill(self.skill_folder, [KEY_SKILL_FOLDER]):
         return
 

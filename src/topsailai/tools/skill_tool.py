@@ -22,7 +22,6 @@ from topsailai.utils import (
     format_tool,
 )
 from topsailai.ai_base.agent_types.exception import (
-    DataAgentRefreshSession,
     AgentNeedRefreshSession,
 )
 from topsailai.workspace import lock_tool
