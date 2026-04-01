@@ -19,7 +19,13 @@ class AgentNoCareResult(AgentToolCallException):
 
 class DataAgentRefreshSession(object):
     def __init__(self, tool_result, session_id):
+
+        # request message
+        self.tool_request = ""
+
+        # response message
         self.tool_result = tool_result
+
         self.session_id = session_id
         self.ai_agent = None
 

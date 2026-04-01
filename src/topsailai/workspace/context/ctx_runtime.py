@@ -16,6 +16,7 @@ Purpose:
 from topsailai.logger import logger
 from topsailai.ai_base.constants import (
     ROLE_USER,
+    ROLE_ASSISTANT,
     ROLE_SYSTEM,
 )
 
@@ -69,7 +70,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         Example:
             >>> runtime.add_session_message("user", "Hello, how are you?")
         """
-        msg_dict = {"role": role, "content": message}
+        msg_dict = {"role": role or ROLE_ASSISTANT, "content": message}
 
         self.add_session_message_dict(msg_dict)
 

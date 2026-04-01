@@ -194,7 +194,13 @@ class AgentRun(AgentBase):
                         data.ai_agent = self
 
                         # add last message to session
-                        data.ctx_runtime_data.add_session_message_dict(last_message)
+                        if data.tool_request:
+                            data.ctx_runtime_data.add_session_message(
+                                role=None,
+                                message=data.tool_request,
+                            )
+                        else:
+                            data.ctx_runtime_data.add_session_message_dict(last_message)
 
                         # add result of tool_call to session
                         self.add_tool_message(

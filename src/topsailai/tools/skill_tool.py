@@ -8,6 +8,7 @@
 import os
 import shlex
 
+from topsailai.skill_hub import skill_hook
 from topsailai.skill_hub.skill_tool import (
     get_skill_markdown,
     get_skills_from_cache,
@@ -100,6 +101,9 @@ def call_skill(
         if isinstance(cmd, list):
             cmd[0] = cmd_exe_file
         else:
+            for _ in range(2):
+                if cmd[0] in '/.':
+                    cmd = cmd[1:]
             cmd = folder_path + "/" + cmd
 
     flag_cmd_matched = False
@@ -114,27 +118,15 @@ def call_skill(
     if isinstance(cmd, str):
         cmd = shlex.split(cmd)
 
-    # lock session
-    need_lock_session = False
-
-    _skills_need_lock_session = env_tool.EnvReaderInstance.get_list_str(
-        "TOPSAILAI_SESSION_LOCK_ON_SKILLS", separator=None,
-    ) or []
-    if is_matched_skill(folder_path, _skills_need_lock_session):
-        need_lock_session = True
+    # hook
+    hook_handler = skill_hook.SkillHookHandler(
+        folder_path, cmd,
+    )
 
     # ctxm
     ctxm_tool = lock_tool.ctxm_void
-    if need_lock_session:
+    if hook_handler.need_lock_session:
         ctxm_tool = lock_tool.ctxm_try_session_lock
-
-    # refresh session
-    need_refresh_session = False
-    _skills_need_refresh_session = env_tool.EnvReaderInstance.get_list_str(
-        "TOPSAILAI_SESSION_REFRESH_ON_SKILLS", separator=None,
-    ) or []
-    if is_matched_skill(folder_path, _skills_need_refresh_session):
-        need_refresh_session = True
 
     # timeout
     timeout = max(
@@ -142,10 +134,13 @@ def call_skill(
         get_call_skill_timeout(folder_path),
     )
 
+    # hook before
+    hook_handler.handle_before_call_skill()
+
     result = None
     with ctxm_tool() as data:
         if isinstance(data, lock_tool.YieldData):
-            if need_lock_session and data.get("session_id"):
+            if hook_handler.need_lock_session and data.get("session_id"):
                 if not data.get("fp"):
                     return f"call_skill failed: {data.get("msg")}"
 
@@ -155,11 +150,17 @@ def call_skill(
             timeout=int(timeout),
             cwd=folder_path,
         )
+        hook_handler.data_agent_refresh_session.tool_result = result
+
+        # hook after
+        hook_handler.handle_after_call_skill()
+
         if result:
-            if need_refresh_session and data.get("session_id"):
-                raise AgentNeedRefreshSession(
-                    DataAgentRefreshSession(result, data.get("session_id"))
-                )
+            if hook_handler.need_refresh_session and data.get("session_id"):
+                hook_handler.data_agent_refresh_session.session_id = data.get("session_id")
+                if not hook_handler.data_agent_refresh_session.tool_result:
+                    hook_handler.data_agent_refresh_session.tool_result = result
+                raise AgentNeedRefreshSession(hook_handler.data_agent_refresh_session)
 
         return result
 

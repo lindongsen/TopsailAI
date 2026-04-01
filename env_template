@@ -230,6 +230,9 @@ TOPSAILAI_SESSION_REFRESH_ON_SKILLS=""
 # Format 'skill_folder=timeout' separated by semicolons (';')
 TOPSAILAI_CALL_SKILL_TIMEOUT_MAP="ai-community=86400"
 
+# Skill Hooks, module dir paths separated by semicolons (';')
+TOPSAILAI_HOOK_MODULE_SKILLS=""
+
 # =============================================================================
 # Sandbox Configuration
 # =============================================================================
