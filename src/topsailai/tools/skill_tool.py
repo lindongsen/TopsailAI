@@ -18,6 +18,7 @@ from topsailai.tools.cmd_tool import exec_cmd
 from topsailai.utils import (
     json_tool,
     env_tool,
+    format_tool,
 )
 from topsailai.ai_base.agent_types.exception import (
     DataAgentRefreshSession,
@@ -25,6 +26,31 @@ from topsailai.ai_base.agent_types.exception import (
 )
 from topsailai.workspace import lock_tool
 
+
+DEFAULT_CALL_SKILL_TIMEOUT = 600
+
+def get_call_skill_timeout(folder_path:str) -> int:
+    """ get timeout from environ """
+
+    timeout_map_s = env_tool.EnvReaderInstance.get("TOPSAILAI_CALL_SKILL_TIMEOUT_MAP")
+    if not timeout_map_s:
+        return DEFAULT_CALL_SKILL_TIMEOUT
+
+    skill_timeout_map = format_tool.parse_str_to_dict(timeout_map_s, kv_strip=True)
+    if not skill_timeout_map:
+        return DEFAULT_CALL_SKILL_TIMEOUT
+
+    # matched?
+    for key, timeout in skill_timeout_map.items():
+        if is_matched_skill(folder_path, [key]):
+            return int(timeout)
+
+    # default
+    default_timeout = DEFAULT_CALL_SKILL_TIMEOUT
+    if skill_timeout_map.get("default"):
+        default_timeout = int(skill_timeout_map["default"])
+
+    return default_timeout
 
 def call_skill(
         folder_path:str,
@@ -109,6 +135,12 @@ def call_skill(
     ) or []
     if is_matched_skill(folder_path, _skills_need_refresh_session):
         need_refresh_session = True
+
+    # timeout
+    timeout = max(
+        int(timeout),
+        get_call_skill_timeout(folder_path),
+    )
 
     result = None
     with ctxm_tool() as data:

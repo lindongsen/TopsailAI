@@ -22,6 +22,10 @@ if [ -e "${ENV_FILE}" ]; then
     done < "${ENV_FILE}"
 fi
 
+[ -n "${SESSION_ID}" ] || {
+    echo "please give a SESSION_ID to environ"
+    exit 1
+}
 
 TOPSAILAI_ENABLE_SESSION_LOCK=0 \
 TOPSAILAI_SESSION_LOCK_ON_SKILLS="ai-community" \

@@ -209,6 +209,11 @@ TOPSAILAI_TOOL_CONN_CHAR="-"
 # White list for file extensions do not truncate, split by ';'
 TOPSAILAI_FILE_WHITE_LIST_NO_TRUNCATE_EXT=""
 
+
+# =============================================================================
+# Skill Configuration
+# =============================================================================
+
 # Plugin Skills
 # Format: directory paths separated by semicolons (';')
 TOPSAILAI_PLUGIN_SKILLS=""     # support to search folder with max depth TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH(default 3)
@@ -221,6 +226,9 @@ TOPSAILAI_SESSION_LOCK_ON_SKILLS=""
 
 # Refresh session after calling these skills
 TOPSAILAI_SESSION_REFRESH_ON_SKILLS=""
+
+# Format 'skill_folder=timeout' separated by semicolons (';')
+TOPSAILAI_CALL_SKILL_TIMEOUT_MAP="ai-community=86400"
 
 # =============================================================================
 # Sandbox Configuration
