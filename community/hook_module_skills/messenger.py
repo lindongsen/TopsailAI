@@ -21,15 +21,21 @@ def handle_hook_before_call_skill(self:SkillHookHandler):
 
     # get tool_request
     if self.need_refresh_session:
-        index = None
+        message_head = ""
+        message_body = ""
         for i, k in enumerate(self.cmd_list):
             if i == 0:
                 continue
-            if k.endswith("-message"):
-                index = i
-                break
-        if index:
-            self.data_agent_refresh_session.tool_request = self.cmd_list[index+1]
+            if k.endswith("-receiver"):
+                message_head = "To '%s':\n" % self.cmd_list[i+1]
+                if message_body:
+                    break
+            elif k.endswith("-message"):
+                message_body = self.cmd_list[i+1]
+                if message_head:
+                    break
+        if message_body:
+            self.data_agent_refresh_session.tool_request = message_head + message_body
         else:
             self.need_refresh_session = False
 
