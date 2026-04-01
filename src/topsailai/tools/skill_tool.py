@@ -108,7 +108,7 @@ def call_skill(
             flag_cmd_matched = True
             break
     assert flag_cmd_matched, \
-        "Illegal cmd, The executable file must be an absolute path from skill folder: error_exe_file=[%s]" % cmd_exe_file
+        "Illegal cmd, The executable file must be an absolute path from skill folder OR no found this skill: error_exe_file=[%s]" % cmd_exe_file
 
     # enhance security
     if isinstance(cmd, str):
