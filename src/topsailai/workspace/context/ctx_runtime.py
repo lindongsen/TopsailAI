@@ -238,6 +238,9 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         if self.session_id:
             raw_messages_from_session = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
 
+            # add answer to session
+            ctx_manager.add_session_message(self.session_id, llm_chat.prompt_ctl.messages[-1])
+
             # keep last user message
             last_user_raw_msg = None
             for raw_msg in reversed(raw_messages_from_session):
@@ -254,9 +257,6 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                     ctx_manager.del_session_messages(self.session_id, [raw_msg.msg_id])
             else:
                 logger.critical("BUG: how did it happend? null of messages from session: [%s]", self.session_id)
-
-            # add answer to session
-            ctx_manager.add_session_message(self.session_id, llm_chat.prompt_ctl.messages[-1])
 
             # reset messages
             self.reset_messages()
