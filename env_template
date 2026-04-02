@@ -320,3 +320,10 @@ TOPSAILAI_STORY_MODEL=""
 
 # Save stories to the workspace
 TOPSAILAI_STORY_WORKSPACE=""
+
+# =============================================================================
+# Memory Configuration
+# =============================================================================
+
+# Save memories to the workspace
+TOPSAILAI_MEMORY_WORKSPACE=""

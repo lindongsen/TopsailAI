@@ -14,6 +14,9 @@ from topsailai.utils import (
     env_tool,
     time_tool,
 )
+from topsailai.utils.print_tool import (
+    print_step,
+)
 from topsailai.ai_base.constants import (
     ROLE_ASSISTANT,
 )
@@ -125,7 +128,7 @@ class AgentChat(AgentChatBase):
                 with ctxm_tool() as data:
                     # it need session lock but lock failed
                     if need_session_lock and data.get("session_id") and not data.get("fp"):
-                        print(data.get("msg"))
+                        print_step(data.get("msg"), need_format=False, need_log=True)
                         return data.get("msg")
 
                     # lock session ok, refresh session messages in hook_after_init_prompt

@@ -6,6 +6,7 @@
 '''
 
 import os
+import string
 
 from topsailai.utils import (
     time_tool,
@@ -26,6 +27,21 @@ PROMPT_SUMMARY_AS_STORY = PROMPT_SUMMARY_MEMORY + """
 Use story_tool to save content.
 [Attention] story_id is Heading/Title, also is filename, max length is 250, Cannot contain any special characters other than '_-'
 """ + env_tool.EnvReaderInstance.story_prompt_content
+
+
+def build_story_id(s:str):
+    s = s.strip()
+    now = time_tool.get_current_date(with_t=True)
+
+    if not s:
+        return now + ".md"
+
+    chars_to_replace = string.punctuation + string.whitespace
+    trans_table = str.maketrans(chars_to_replace, '_' * len(chars_to_replace))
+    s = s.translate(trans_table)
+    if not s.endswith(".md"):
+        s += ".md"
+    return now + "." + s.replace('__', '_')
 
 
 class StoryBase(object):
@@ -172,7 +188,7 @@ class StoryFile(StoryBase):
             _filepath = self.get_story_file(workspace, story_id)
             if _filepath:
                 file_tool.delete_file(_filepath)
-            return
+            return True
 
 # init
 StoryFileInstance = StoryFile()

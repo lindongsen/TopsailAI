@@ -385,7 +385,7 @@ def subprocess_agent_memory_as_story(
     if isinstance(msg_or_file, (list, dict, set)):
         msg_or_file = json_dump(msg_or_file)
 
-    args = ["agent_story", "-m", msg_or_file]
+    args = ["topsailai_agent_story", "-m", msg_or_file]
     if model_name:
         args += ["-M", model_name]
     if workspace:

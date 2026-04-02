@@ -23,10 +23,12 @@ from topsailai.ai_base.constants import (
 from topsailai.context import ctx_manager
 from topsailai.utils import (
     json_tool,
+    env_tool,
 )
 from topsailai.utils.print_tool import print_step
 from topsailai.tools import (
     story_tool,
+    story_memory_tool,
 )
 from topsailai.workspace.input_tool import (
     SPLIT_LINE,
@@ -231,6 +233,14 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                     break
             except Exception:
                 return answer
+
+        # persistent memory with story
+        if story_memory_tool.WORKSPACE:
+            story_file = story_memory_tool.write_memory(
+                memory_title=answer.split('\n', 1)[0],
+                memory_content=answer,
+            )
+            logger.info("new memory with story: [%s]", story_file)
 
         # head_offset_to_keep
         head_offset_to_keep = self._get_head_offset_to_keep_in_summary(head_offset_to_keep)
