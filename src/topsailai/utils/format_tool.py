@@ -304,6 +304,8 @@ def parse_str_to_dict(s:str, item_separator=';', kv_separator='=', kv_strip=Fals
 
     d = {}
     for kv in s.split(item_separator):
+        if not kv:
+            continue
         k, v = kv.split(kv_separator, 1)
         if kv_strip:
             k = k.strip()

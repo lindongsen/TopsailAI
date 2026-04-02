@@ -25,10 +25,12 @@ from topsailai.utils import (
     json_tool,
 )
 from topsailai.utils.print_tool import print_step
+from topsailai.tools import (
+    story_tool,
+)
 from topsailai.workspace.input_tool import (
     SPLIT_LINE,
 )
-
 from topsailai.workspace.context.agent2llm import (
     ContextRuntimeAgent2LLM,
 )
@@ -213,7 +215,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         # print info
         print_step(f"!!! Summarizing context messages for processed: msg_len=[{len(messages)}]", need_format=False, need_log=True)
 
-        llm_chat, answer = self._summarize_messages(messages)
+        llm_chat, answer = self._summarize_messages(messages, extra_prompt=story_tool.PROMPT_SUMMARY_MEMORY)
         if not answer:
             return None
 

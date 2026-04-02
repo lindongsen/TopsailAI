@@ -23,6 +23,7 @@ from topsailai.utils import (
     file_tool,
 )
 from topsailai.workspace.llm_shell import get_llm_chat
+from topsailai.workspace.context import summary_tool
 
 
 class ContextRuntimeBase(object):
@@ -182,7 +183,12 @@ class ContextRuntimeBase(object):
     # Summary
     ###############################################################
 
-    def _summarize_messages(self, messages, prompt: str = None):
+    def _summarize_messages(
+            self,
+            messages,
+            prompt: str = None,
+            extra_prompt: str=None,
+        ):
         """
         Summarize messages into a single text using LLM.
 
@@ -199,21 +205,42 @@ class ContextRuntimeBase(object):
         Raises:
             AssertionError: If messages is null/empty.
         """
+        # message
         assert messages, "null of messages"
+        message_title = """
+---
+Summarize Messages
+---
+"""
         one_msg = messages if isinstance(messages, str) else json_tool.json_dump(messages)
-        enhanced_prompt = "\n---\nYou MUST focus on the Human's intention\n---\n\n"
 
         # prompt
+        prompt_content = ""
         if prompt is None:
             prompt = env_tool.EnvReaderInstance.get("TOPSAILAI_SUMMARY_PROMPT")
         _, prompt_content = file_tool.get_file_content_fuzzy(prompt)
         if not prompt_content:
             prompt_content = ""
 
+        # extra prompt
+        extra_prompt_content = ""
+        if extra_prompt is None:
+            extra_prompt = summary_tool.get_summary_prompt(self.ai_agent.agent_type)
+            if not extra_prompt:
+                if self.ai_agent.agent_type.lower().endswith("community"):
+                    extra_prompt = story_tool.PROMPT_SUMMARY_MEMORY
+                else:
+                    extra_prompt = story_tool.PROMPT_SUMMARY_TASK
+            extra_prompt_content = extra_prompt
+        else:
+            _, extra_prompt_content = file_tool.get_file_content_fuzzy(extra_prompt)
+            if not extra_prompt_content:
+                extra_prompt_content = ""
+
         llm_chat = get_llm_chat(
-            message=enhanced_prompt + one_msg,
+            message=message_title + one_msg,
             session_id="",
-            system_prompt=story_tool.PROMPT_SUMMARY_TASK + prompt_content,
+            system_prompt=extra_prompt_content + prompt_content,
 
             need_stdout=False,
             need_input_message=False,

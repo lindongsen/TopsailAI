@@ -158,6 +158,10 @@ TOPSAILAI_NEED_SYMBOL_FOR_ANSWER=0
 # Prompt for summary, file or content
 TOPSAILAI_SUMMARY_PROMPT=""
 
+# Extra Prompt for summary
+# Format "key1=value1,value2;key2=value2", key is agent_type, value are files
+TOPSAILAI_SUMMARY_PROMPT_EXTRA_MAP="react_community=context/summary/memory.md;"
+
 # Summarize messages of agent2llm, save summary content to session of user2agent
 # 1 is enabled, 0 is disabled
 TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION="0"

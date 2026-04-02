@@ -274,6 +274,10 @@ class AgentChat(object):
             if self.first_message:
                 message = self.first_message
 
+        # show session messages
+        if env_tool.is_interactive_mode():
+            self.ctx_rt_instruction.ctx_history()
+
         if message is None:
             func_print_pre_input_message()
             message = get_message(self.hook_instruction, need_input=env_tool.is_interactive_mode())
@@ -464,6 +468,7 @@ def get_ai_agent(system_prompt:str="", to_dump_messages:bool=False, disabled_too
         # null of config
         env_disabled_tools = []
 
+    agent_type_name = agent_type
     agent_type = get_agent_type(agent_type)
     agent = AgentRun(
         agent_type.SYSTEM_PROMPT + "\n---\n" + system_prompt,
@@ -471,7 +476,7 @@ def get_ai_agent(system_prompt:str="", to_dump_messages:bool=False, disabled_too
         agent_name=os.getenv("TOPSAILAI_AGENT_NAME") or agent_type.AGENT_NAME,
         excluded_tool_kits=env_disabled_tools if isinstance(env_disabled_tools, list) else disabled_tools,
     )
-    agent.agent_type = agent_type
+    agent.agent_type = agent_type_name or agent_type.AGENT_NAME
 
     if env_tool.is_debug_mode():
         if env_tool.EnvReaderInstance.check_bool("LLM_RESPONSE_STREAM"):

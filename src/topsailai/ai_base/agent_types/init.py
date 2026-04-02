@@ -24,6 +24,10 @@ AGENT_TYPE_MAP = {
     "react": react,
     "react_community": react_community,
     "plan_and_execute": plan_and_execute,
+
+    react.AGENT_NAME: react,
+    react_community.AGENT_NAME: react_community,
+    plan_and_execute.AGENT_NAME: plan_and_execute,
 }
 
 
