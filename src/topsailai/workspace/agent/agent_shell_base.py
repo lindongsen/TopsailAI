@@ -80,11 +80,11 @@ class AgentChat(AgentChatBase):
             if self.first_message:
                 message = self.first_message
 
-        # show session messages
-        if env_tool.is_interactive_mode():
-            self.ctx_rt_instruction.ctx_history()
-
         if message is None:
+            # show session messages
+            if env_tool.is_interactive_mode():
+                self.ctx_rt_instruction.ctx_history()
+
             func_print_pre_input_message()
             message = get_message(self.hook_instruction, need_input=env_tool.is_interactive_mode())
 

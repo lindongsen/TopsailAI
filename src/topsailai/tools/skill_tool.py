@@ -61,8 +61,8 @@ def call_skill(
     """Execute a skill script
 
     Args:
-        folder_path (str): required, skill folder.
-        cmd (str|list): required, The executable file must be an absolute path from skill folder.
+        folder_path (str): required, a skill folder.
+        cmd (str|list): required, The executable file must be in folder_path, otherwise it cannot be called.
         no_need_stderr (int): If 1, stderr will be returned as empty string.
                                Defaults to 0.
         timeout (int, optional): Timeout in seconds. If the command does not finish
