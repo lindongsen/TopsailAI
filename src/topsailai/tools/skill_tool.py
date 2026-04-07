@@ -57,6 +57,7 @@ def call_skill(
         cmd:str|list,
         no_need_stderr:int=0,
         timeout:int=120,
+        output_file:str=None,
     ):
     """Execute a skill script
 
@@ -68,11 +69,18 @@ def call_skill(
         timeout (int, optional): Timeout in seconds. If the command does not finish
                                  within this time, a exception will be raised.
                                  Defaults to 120.
+        output_file (str): save stdout to a file path.
 
     Returns:
         tuple: (return_code, stdout, stderr) where stdout and stderr are strings.
                If no_need_stderr is True, stderr will be empty string.
     """
+    # check parameter: output_file
+    if output_file:
+        assert output_file[0] == '/', "The output_file MUST be a absolute path"
+        assert not os.path.exists(output_file), "The output_file already exists and cannot be overwritten"
+
+    # check parameter: cmd
     raw_cmd = cmd
     if isinstance(cmd, str):
         if cmd[0] == "[":
@@ -155,6 +163,11 @@ def call_skill(
         hook_handler.handle_after_call_skill()
 
         if result:
+            # save stdout to the output_file
+            if output_file and result[1]:
+                with open(output_file, mode='w', encoding='utf-8') as fp:
+                    fp.write(result[1])
+
             if hook_handler.need_refresh_session and data.get("session_id"):
                 hook_handler.data_agent_refresh_session.session_id = data.get("session_id")
                 if not hook_handler.data_agent_refresh_session.tool_result:
