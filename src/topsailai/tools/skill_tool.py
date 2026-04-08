@@ -15,12 +15,13 @@ from topsailai.skill_hub.skill_tool import (
     overview_skill_native,
     is_matched_skill,
 )
-from topsailai.tools.cmd_tool import exec_cmd
+from topsailai.tools.cmd_tool import format_return
 from topsailai.utils import (
     json_tool,
     env_tool,
     format_tool,
 )
+from topsailai.utils.cmd_tool import exec_cmd
 from topsailai.ai_base.agent_types.exception import (
     AgentNeedRefreshSession,
 )
@@ -180,7 +181,7 @@ def call_skill(
                     hook_handler.data_agent_refresh_session.tool_result = result
                 raise AgentNeedRefreshSession(hook_handler.data_agent_refresh_session)
 
-        return result
+        return format_return(cmd, result)
 
 def overview_skill(folder_path:str):
     """ Every time you want to use a skill you MUST call `overview_skill` for entire details.

@@ -33,8 +33,10 @@ def _format_return(cmd_string: str, t:tuple):
         need_truncate = False
     return (t[0], format_text(t[1], need_truncate=need_truncate), format_text(t[2]))
 
-def format_return(cmd_string:str, t:tuple):
+def format_return(cmd:str|list, t:tuple):
     """ hack result """
+    cmd_string = " ".join(cmd) if isinstance(cmd, list) else cmd
+
     # no need stderr
     for tool in [
         "curl", "wget",
