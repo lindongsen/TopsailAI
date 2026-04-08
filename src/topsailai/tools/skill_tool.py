@@ -54,7 +54,8 @@ def get_call_skill_timeout(folder_path:str) -> int:
 
 def call_skill(
         folder_path:str,
-        cmd:str|list,
+        script_path:str,
+        script_parameters:str="",
         no_need_stderr:int=0,
         timeout:int=120,
         output_file:str=None,
@@ -63,7 +64,9 @@ def call_skill(
 
     Args:
         folder_path (str): required, a skill folder.
-        cmd (str|list): required, The executable file must be in folder_path, otherwise it cannot be called.
+        script_path (str): required, The executable file must be in folder_path, otherwise it cannot be called.
+        script_parameters (str): optional
+
         no_need_stderr (int): If 1, stderr will be returned as empty string.
                                Defaults to 0.
         timeout (int, optional): Timeout in seconds. If the command does not finish
@@ -79,6 +82,9 @@ def call_skill(
     if output_file:
         assert output_file[0] == '/', "The output_file MUST be a absolute path"
         assert not os.path.exists(output_file), "The output_file already exists and cannot be overwritten"
+
+    # cmd
+    cmd = f"{script_path.strip()} {script_parameters.strip()}".strip()
 
     # check parameter: cmd
     raw_cmd = cmd
