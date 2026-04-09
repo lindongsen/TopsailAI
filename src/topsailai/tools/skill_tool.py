@@ -103,12 +103,13 @@ def call_skill(
                     script_path = f"{_script_dirname}/{script_path}"
                     break
 
-    # format script_parameters
-    if isinstance(script_parameters, list):
-        script_parameters = " ".join(list(str(p) for p in script_parameters))
-
     # cmd
-    cmd = f"{script_path.strip()} {script_parameters.strip()}".strip()
+    if isinstance(script_parameters, list):
+        cmd = [
+            script_path.strip(),
+        ] + script_parameters
+    else:
+        cmd = f"{script_path.strip()} {script_parameters.strip()}".strip()
 
     # check parameter: cmd
     raw_cmd = cmd
