@@ -56,7 +56,7 @@ def get_call_skill_timeout(folder_path:str) -> int:
 def call_skill(
         folder_path:str,
         script_path:str,
-        script_parameters:str="",
+        script_parameters:str|list="",
         no_need_stderr:int=0,
         timeout:int=120,
         output_file:str=None,
@@ -66,14 +66,16 @@ def call_skill(
     Args:
         folder_path (str): required, a skill folder.
         script_path (str): required, The executable file must be in folder_path, otherwise it cannot be called.
-        script_parameters (str): optional
+        script_parameters (str|list): optional
 
         no_need_stderr (int): If 1, stderr will be returned as empty string.
                                Defaults to 0.
         timeout (int, optional): Timeout in seconds. If the command does not finish
                                  within this time, a exception will be raised.
                                  Defaults to 120.
-        output_file (str): save stdout to a file path.
+        output_file (str): Save stdout to a file path.
+                           The result may be truncated due to the content being too long.
+                           You can output it to a file and then process the large text.
 
     Returns:
         tuple: (return_code, stdout, stderr) where stdout and stderr are strings.
@@ -83,6 +85,27 @@ def call_skill(
     if output_file:
         assert output_file[0] == '/', "The output_file MUST be a absolute path"
         assert not os.path.exists(output_file), "The output_file already exists and cannot be overwritten"
+
+    # format script_path
+    if not script_path.startswith(folder_path):
+        # case: /xxx or .xxx
+        for _ in range(2):
+            if script_path[0] in ['/', '.']:
+                script_path = script_path[1:]
+            else:
+                break
+        if not os.path.exists(f"{folder_path}/{script_path}"):
+            for _script_dirname in [
+                "scripts",
+                "script"
+            ]:
+                if os.path.exists(f"{folder_path}/{_script_dirname}/{script_path}"):
+                    script_path = f"{_script_dirname}/{script_path}"
+                    break
+
+    # format script_parameters
+    if isinstance(script_parameters, list):
+        script_parameters = " ".join(list(str(p) for p in script_parameters))
 
     # cmd
     cmd = f"{script_path.strip()} {script_parameters.strip()}".strip()
