@@ -12,7 +12,7 @@ It should include the following:
 
 ## Log format
 
-Format the output log content using JSON and use the standard library `log/slog`.
+Format the output log content using JSON and use the standard library `log/slog` + `lumberjack`(for logrotate).
 
 A standardized JSON log entry should include the following core fields to ensure consistency and searchability:
 
