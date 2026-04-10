@@ -352,3 +352,38 @@ def overview_skill_native(folder_path:str) -> str:
 {folder_content}
 """
     return result
+
+def get_skill_file(folder_path:str, file_name:str) -> str:
+    """ Return a skill file """
+    # format file_name
+    for _ in range(2):
+        if file_name[0] in "./":
+            file_name = file_name[1:]
+        else:
+            break
+
+    # check file path
+    fpath = os.path.join(folder_path, file_name)
+    if os.path.exists(fpath):
+        return fpath
+
+    # real file_name
+    for _ in range(2):
+        if file_name[-1] == '/':
+            file_name = file_name[:-1]
+        else:
+            break
+    file_name = file_name.rsplit('/', 1)[-1]
+    if not file_name:
+        return ""
+
+    # list folder
+    file_list = file_tool.list_files(
+        folder_path,
+        to_exclude_dot_start=True,
+        included_filename_keywords=[file_name],
+    )
+    if file_list and len(file_list) == 1:
+        return file_list[0]
+
+    return ""

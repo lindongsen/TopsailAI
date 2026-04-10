@@ -14,6 +14,8 @@ from topsailai.skill_hub.skill_tool import (
     get_skills_from_cache,
     overview_skill_native,
     is_matched_skill,
+    exists_skill,
+    get_skill_file,
 )
 from topsailai.tools.cmd_tool import format_return
 from topsailai.utils import (
@@ -214,10 +216,32 @@ def overview_skill(folder_path:str):
     """
     return overview_skill_native(folder_path)
 
+def read_skill_file(
+        folder_path:str,
+        file_name:str,
+    ):
+    """ Read A File from skill folder.
+
+    Args:
+        folder_path (str): a skill folder
+        file_name (str): a file with relative path
+    """
+    assert exists_skill(folder_path), f"no found this skill folder: {folder_path}"
+
+    file_path = get_skill_file(folder_path, file_name)
+    assert file_path, f"no found this skill file: {file_name}"
+
+    file_content = ""
+    with open(file_path, encoding='utf-8') as fp:
+        file_content = fp.read()
+
+    return file_content
+
 
 TOOLS = dict(
     call_skill=call_skill,
     overview_skill=overview_skill,
+    read_skill_file=read_skill_file,
 )
 
 PROMPT_SKILL = """
