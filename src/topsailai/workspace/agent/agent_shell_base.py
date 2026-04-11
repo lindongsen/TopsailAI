@@ -32,6 +32,7 @@ from topsailai.workspace.input_tool import (
 )
 from topsailai.workspace import lock_tool
 from topsailai.workspace.agent.agent_chat_base import AgentChatBase
+from topsailai.workspace.task import task_tool
 
 
 class AgentChat(AgentChatBase):
@@ -48,6 +49,7 @@ class AgentChat(AgentChatBase):
             need_interactive:bool=True,
             need_symbol_for_answer=None,
             only_save_final:bool=False,
+            task_id=None,
         ) -> str:
         """Run the agent chat session.
 
@@ -102,6 +104,15 @@ class AgentChat(AgentChatBase):
         if need_session_lock:
             ctxm_tool = lock_tool.ctxm_try_session_lock
 
+        # task
+        task = None
+        if times == 1:
+            if not task_id:
+                task_id = env_tool.EnvReaderInstance.get("TOPSAILAI_TASK_ID")
+            if task_id:
+                task = task_tool.TaskUtil(task_id)
+                task.session_messages = self.ctx_runtime_data.messages
+
         # variables
         # up_time = int(time.time())
         answer = ""
@@ -122,10 +133,19 @@ class AgentChat(AgentChatBase):
                     curr_count=curr_count,
                 )
 
+            # task
+            if task:
+                if message:
+                    task.task_content = message
+                    message = task.manifest + message
+
             # run
             start_time = int(time.time())
             try:
-                with ctxm_tool() as data:
+                with (
+                    task_tool.ctxm_process_task(task),
+                    ctxm_tool() as data
+                    ):
                     # it need session lock but lock failed
                     if need_session_lock and data.get("session_id") and not data.get("fp"):
                         print_step(data.get("msg"), need_format=False, need_log=True)
@@ -143,6 +163,11 @@ class AgentChat(AgentChatBase):
                         ),
                         message,
                     )
+
+                    # task
+                    if task:
+                        task.result = answer
+
             except agent_exception.AgentEndProcess:
                 self.last_message = self.messages[-1]
             except (KeyboardInterrupt, EOFError):
@@ -156,6 +181,13 @@ class AgentChat(AgentChatBase):
                     answer,
                     need_symbol=need_symbol_for_answer,
                 )
+
+                # task
+                if task:
+                    answer = task.manifest + answer
+                    need_save_answer = True
+                    only_save_final = True
+
                 if need_save_answer:
                     if only_save_final:
                         self.ctx_runtime_data.add_session_message(ROLE_ASSISTANT, answer)

@@ -302,7 +302,7 @@ def mkdirs(dirs):
 
 def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
     """
-    Replace specific lines in a file based on line numbers.
+    Replace specific lines in a file based on line numbers (start from 1).
 
     Args:
         file_path (str): Path to the file to modify

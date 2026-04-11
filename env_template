@@ -327,3 +327,10 @@ TOPSAILAI_STORY_WORKSPACE=""
 
 # Save memories to the workspace
 TOPSAILAI_MEMORY_WORKSPACE=""
+
+# =============================================================================
+# Task Configuration
+# =============================================================================
+
+# DONOT SET IT, only for runtime.
+# TOPSAILAI_TASK_ID=""

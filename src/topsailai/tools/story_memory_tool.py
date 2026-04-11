@@ -7,13 +7,17 @@
 
 import os
 
+from topsailai.workspace.folder_constants import FOLDER_MEMORY_STORY
 from .story_tool import (
     StoryFileInstance,
     build_story_id,
 )
 
 
-WORKSPACE = os.getenv("TOPSAILAI_STORY_WORKSPACE") or os.getenv("TOPSAILAI_MEMORY_WORKSPACE")
+WORKSPACE = os.getenv("TOPSAILAI_STORY_WORKSPACE") or os.getenv("TOPSAILAI_MEMORY_WORKSPACE") or FOLDER_MEMORY_STORY
+if WORKSPACE:
+    # If set it to ' ', disable this memory tool.
+    WORKSPACE = WORKSPACE.strip()
 if WORKSPACE:
     assert WORKSPACE[0] == "/", f"Require the use of absolute paths: [{WORKSPACE}]"
 

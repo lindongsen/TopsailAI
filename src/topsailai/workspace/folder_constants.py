@@ -56,3 +56,6 @@ FOLDER_LOG = FOLDER_ROOT + "/log"
 
 # Story subdirectory - Contains story files and narrative data within the memory system
 FOLDER_MEMORY_STORY = FOLDER_MEMORY + "/story"
+
+# Task files
+FOLDER_WORKSPACE_TASK = FOLDER_WORKSPACE + "/task"

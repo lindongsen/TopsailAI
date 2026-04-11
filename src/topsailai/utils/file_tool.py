@@ -223,6 +223,28 @@ def get_file_content_fuzzy(f:str) -> tuple[str, str]:
 
     return (file_path, file_content)
 
+def write_text(file_path:str, file_content:str):
+    """
+    Write text to file
+
+    Args:
+        file_path (str): _description_
+        file_content (str): _description_
+    """
+
+    # folder
+    folder_path = os.path.dirname(file_path)
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path, exist_ok=True)
+
+    # file
+    if os.path.exists(file_path):
+        logger.warning("exists file and overwrite it: [%s]", file_path)
+    with open(file_path, mode='w', encoding='utf-8') as fp:
+        fp.write(file_content)
+        fp.flush()
+    return
+
 
 ##########################################################
 # Lock Shell
