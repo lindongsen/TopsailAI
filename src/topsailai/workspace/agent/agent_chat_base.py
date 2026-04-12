@@ -70,9 +70,14 @@ class AgentChatBase(object):
 
         set_ai_agent(self.ai_agent)
 
+        ##########################################################################################
+        # Agent HOOKS
+        ##########################################################################################
+        from topsailai.workspace.agent.hooks.base.init import get_hooks
+
         # hook(self)
-        self.hooks_pre_run = []
-        self.hooks_for_final_answer = []
+        self.hooks_pre_run = get_hooks("pre_run")
+        self.hooks_for_final_answer = get_hooks("post_final_answer")
 
         if env_tool.EnvReaderInstance.get("TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION"):
             def hook_final_summarize_into_session(_) -> None:

@@ -271,6 +271,10 @@ TOPSAILAI_HOOK_AFTER_LLM_CHAT=""
 # hook_func(content:list[dict]) -> list[dict]
 TOPSAILAI_HOOK_BEFORE_LLM_CHAT=""
 
+# Format: "{script_file} {cmd_options};"
+# e.g. "script_file1 k1=v1 k2=v2; script_file2 k1=v1 k2=v2"
+TOPSAILAI_HOOK_SCRIPTS_POST_FINAL_ANSWER=""
+
 # =============================================================================
 # Team Configuration
 # =============================================================================
