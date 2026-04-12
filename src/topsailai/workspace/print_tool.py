@@ -17,6 +17,56 @@ from topsailai.context.chat_history_manager.__base import (
 )
 
 
+class TeeOutput:
+    """ A class that outputs to both the screen and a file simultaneously.
+
+    # Method 1: Using context manager (Recommended, safe)
+    with TeeOutput("app.log", mode='w'):
+        print("This is a log message")
+        print(f"Current time: {datetime.now()}")
+        print("Program is running normally...")
+        # All prints here will output to both the screen and app.log
+
+    print("This line only outputs to the screen and won't be written to the file")  # Restores normal behavior after exiting 'with'
+
+    # Method 2: Manual setup (Suitable for global logging)
+    logger = TeeOutput("runtime.log", mode='a')
+    sys.stdout = logger
+
+    print("This will output to both the screen and runtime.log")
+    print("Error messages can also be displayed normally")
+
+    # Restore before program ends (Optional)
+    # sys.stdout = logger.terminal
+    # logger.close()
+    """
+    def __init__(self, filename, mode='a', encoding='utf-8'):
+        self.terminal = sys.stdout
+        self.log_file = open(filename, mode, encoding=encoding)
+        self.filename = filename
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log_file.write(message)
+        self.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log_file.flush()
+
+    def close(self):
+        self.log_file.close()
+
+    def __enter__(self):
+        sys.stdout = self
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stdout = self.terminal
+        self.close()
+        return False
+
+
 class ContentDots(ContentSender):
     """
     A content sender implementation that outputs dots for each content sent.

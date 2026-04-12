@@ -20,6 +20,7 @@ from topsailai.utils import (
 from topsailai.workspace.folder_constants import (
     FOLDER_WORKSPACE_TASK,
 )
+from topsailai.workspace.print_tool import TeeOutput
 
 
 class TaskData(object):
@@ -248,7 +249,14 @@ def ctxm_process_task(task:TaskUtil):
     with ctxm_try_file_lock(task.task_file) as fp:
         assert fp, f"lock task file failed: task is being executed: {task.task_file}"
         task.post_lock(fp)
-        yield fp
+
+        stdout_file = task.task_file + ".stdout"
+        with TeeOutput(stdout_file):
+            try:
+                yield fp
+            finally:
+                delete_file(stdout_file)
+
         task.pre_unlock(fp)
     task.post_unlock()
     return
