@@ -47,9 +47,6 @@ TOPSAILAI_PRINT_TOOL_PROMPT=0
 # Input Messages
 TOPSAILAI_CHAT_MULTI_LINE=0
 
-# file or content pass to message of agent
-TOPSAILAI_TASK=""
-
 # Agent Type, default is react
 TOPSAILAI_AGENT_TYPE=""
 
@@ -336,5 +333,9 @@ TOPSAILAI_MEMORY_WORKSPACE=""
 # Task Configuration
 # =============================================================================
 
-# DONOT SET IT, only for runtime.
+# DONOT SET IT, only for runtime
+# file or content pass to message of agent
+# TOPSAILAI_TASK=""
+
+# DONOT SET IT, only for runtime
 # TOPSAILAI_TASK_ID=""
