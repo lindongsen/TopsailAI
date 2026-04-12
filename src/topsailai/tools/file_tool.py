@@ -420,6 +420,36 @@ def list_dir(folder_path:str) -> list[str]:
     """
     return os.listdir(folder_path)
 
+def read_files(files:list[str]) -> dict:
+    """
+    Read multiple files.
+
+    Args:
+        files (list[str]): some files
+
+    Returns:
+        dict: key is file_path, value is file_content
+    """
+    result = {}
+    for file_path in format_tool.to_list(files):
+        result[file_path] = read_file(file_path)
+    return result
+
+def list_dirs(dirs:list[str]) -> dict:
+    """
+    List multiple folders.
+
+    Args:
+        dirs (list[str]): some folders
+
+    Returns:
+        dict: key is folder_path, value is files
+    """
+    result = {}
+    for dir_path in format_tool.to_list(dirs):
+        result[dir_path] = list_dir(dir_path)
+    return result
+
 
 TOOLS = dict(
     write_file=write_file,
@@ -429,7 +459,8 @@ TOOLS = dict(
     mkdirs=mkdirs,
     replace_lines_in_file=replace_lines_in_file,
     read_lines=read_lines,
-    list_dir=list_dir,
+    list_dirs=list_dirs,
+    read_files=read_files,
 )
 
 TOOLS_INFO = dict(
