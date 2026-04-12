@@ -98,7 +98,7 @@ def build_cmd_parameters(script_file:str, cmd_options:dict) -> dict:
 
     return result
 
-def call_hook_scripts(key:str) -> dict:
+def call_hook_scripts(key:str, env_info:dict) -> dict:
     """
     Execute all hook scripts associated with the given environment variable key.
 
@@ -129,6 +129,12 @@ def call_hook_scripts(key:str) -> dict:
         ret = None
         try:
             cmd_parameters = build_cmd_parameters(script_file, cmd_options)
+
+            if env_info:
+                if "env_info" not in cmd_parameters:
+                    cmd_parameters["env_info"] = {}
+                cmd_parameters["env_info"].update(env_info)
+
             ret = cmd_tool.exec_cmd(**cmd_parameters)
             logger.info("call hook ok: [%s], %s", key, ret)
         except Exception as e:

@@ -7,6 +7,7 @@
 
 from topsailai.utils import (
     hook_tool,
+    json_tool,
 )
 from topsailai.workspace.agent.agent_chat_base import AgentChatBase
 
@@ -23,7 +24,12 @@ def call_scripts(self:AgentChatBase) -> dict:
     Returns:
         dict: key is script_file, value is result
     """
-    return hook_tool.call_hook_scripts(ENV_KEY)
+    return hook_tool.call_hook_scripts(
+        ENV_KEY,
+        env_info={
+            "TOPSAILAI_FINAL_ANSWER": json_tool.safe_json_dump(self.last_message),
+        }
+    )
 
 
 HOOKS = dict(
