@@ -82,25 +82,7 @@ class TestSessionStateChecker(unittest.TestCase):
         
         os.chmod(script_path, 0o755)
         
-    def test_state_checker_script_executable(self):
-        """Test that state checker script is executable"""
-        state_checker_script = os.environ.get('TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER')
-        
-        # Skip test if using /bin/echo as it's not a real state checker
-        if state_checker_script == '/bin/echo':
-            self.skipTest("Using /bin/echo as state checker, skipping executable test")
-        if not os.path.exists(state_checker_script):
-            self.skipTest("State checker script path does not exist, skipping")
-        
-        self.assertIsNotNone(state_checker_script)
-        self.assertTrue(os.path.exists(state_checker_script))
-        
-        result = subprocess.run([state_checker_script], capture_output=True, text=True, timeout=5)
-        
-        self.assertEqual(result.returncode, 0)
-        
-        output = result.stdout.strip().lower()
-        self.assertIn(output, ['idle', 'processing'])
+        try:
             env = os.environ.copy()
             env['TOPSAILAI_SESSION_ID'] = 'my-test-session-123'
             
@@ -122,21 +104,6 @@ class TestSessionStateChecker(unittest.TestCase):
         
         self.assertIsNotNone(state_checker_script)
         self.assertTrue(os.path.exists(state_checker_script))
-        
-        result = subprocess.run([state_checker_script], capture_output=True, text=True, timeout=5)
-        
-        self.assertEqual(result.returncode, 0)
-        
-        output = result.stdout.strip().lower()
-        self.assertIn(output, ['idle', 'processing'])
-        """Test that state checker script is executable"""
-        state_checker_script = os.environ.get('TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER')
-        self.assertIsNotNone(state_checker_script)
-        self.assertTrue(os.path.exists(state_checker_script))
-        
-        # Skip test if using /bin/echo as it's not a real state checker
-        if state_checker_script == '/bin/echo':
-            self.skipTest("Using /bin/echo as state checker, skipping executable test")
         
         result = subprocess.run([state_checker_script], capture_output=True, text=True, timeout=5)
         
@@ -220,10 +187,6 @@ class TestSessionStateCheckerFile(unittest.TestCase):
         if not os.path.exists(state_checker_script):
             self.skipTest("State checker script path does not exist, skipping")
         
-        self.assertIsNotNone(state_checker_script)
-        self.assertTrue(os.path.exists(state_checker_script))
-        """Test that state checker script exists"""
-        state_checker_script = os.environ.get('TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER')
         self.assertIsNotNone(state_checker_script)
         self.assertTrue(os.path.exists(state_checker_script))
     
