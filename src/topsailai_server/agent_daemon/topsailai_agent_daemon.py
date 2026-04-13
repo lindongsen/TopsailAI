@@ -13,7 +13,8 @@ import signal
 import time
 
 # Add the parent directory to the path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CWD = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(CWD))
 
 from topsailai import WORK_FOLDER
 from topsailai_server.agent_daemon import logger
@@ -23,9 +24,27 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = "7373"
 DEFAULT_DB_URL = "sqlite:///topsailai_agent_daemon.db"
 
+DEFAULT_PROCESSOR = CWD + "/scripts/processor.sh"
+DEFAULT_SUMMARIZER = CWD + "/scripts/summarizer.sh"
+DEFAULT_SESSION_STATE_CHECKER = CWD + "/scripts/session_state_checker.py"
+
 # PID file location
 PID_FILE = os.path.join(WORK_FOLDER, "topsailai_agent_daemon.pid")
 
+
+def init_env():
+    """ Init Environ """
+    for k, v in dict(
+        DEFAULT_HOST=DEFAULT_HOST,
+        DEFAULT_PORT=DEFAULT_PORT,
+        DEFAULT_DB_URL=DEFAULT_DB_URL,
+        DEFAULT_PROCESSOR=DEFAULT_PROCESSOR,
+        DEFAULT_SUMMARIZER=DEFAULT_SUMMARIZER,
+        DEFAULT_SESSION_STATE_CHECKER=DEFAULT_SESSION_STATE_CHECKER,
+    ).items():
+        if os.getenv(k) is None:
+            os.environ[k] = v
+    return
 
 def write_pid(pid):
     """Write PID to file"""
@@ -67,6 +86,8 @@ def is_process_running(pid):
 
 def do_start(args):
     """Start the agent_daemon server"""
+    init_env()
+
     # Check if already running
     existing_pid = read_pid()
     if existing_pid and is_process_running(existing_pid):
