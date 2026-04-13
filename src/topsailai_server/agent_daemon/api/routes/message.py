@@ -5,8 +5,7 @@
   Purpose: Message API routes - FastAPI implementation
 '''
 
-import uuid
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -134,8 +133,6 @@ async def receive_message(
     """
     msg_id = None
     try:
-        msg_id = str(uuid.uuid4())
-
         # Create message data
         now = datetime.now()
         message_data = MessageData(
@@ -146,6 +143,7 @@ async def receive_message(
             create_time=now,
             update_time=now
         )
+        msg_id = message_data.msg_id
 
         # Save message to storage
         storage.message.create(message_data)
@@ -170,7 +168,7 @@ async def receive_message(
         # a loop or duplicate processing.
         if request.processed_msg_id:
             storage.session.update_processed_msg_id(request.session_id, request.processed_msg_id)
-            logger.info("Updated processed_msg_id for session %s: %s", 
+            logger.info("Updated processed_msg_id for session %s: %s",
                        request.session_id, request.processed_msg_id)
         else:
             # Only check for automatic processing when processed_msg_id is NOT provided

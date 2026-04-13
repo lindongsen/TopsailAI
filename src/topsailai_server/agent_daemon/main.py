@@ -81,6 +81,9 @@ class AgentDaemon:
         """Run the application"""
         logger.info("Starting agent_daemon on %s:%d", self.config.host, self.config.port)
 
+        # Start the scheduler
+        self.scheduler.start()
+
         import uvicorn
         uvicorn.run(
             self.app,

@@ -214,6 +214,8 @@ response:
 
 Using this module: `from topsailai_server.agent_daemon import logger`
 
+默认的日志文件保存在：/topsailai/log/agent_daemon.log
+
 Example
 ```python
 from topsailai_server.agent_daemon import logger
@@ -256,6 +258,8 @@ supported_args: refer to `env_template`, If parameters are specified, CLI will s
 - `--processor`, a script file
 - `--summarizer`, a script file
 - `--session_state_checker`, a script file
+
+Running in the background: `export HOME=/path/to/tests/integration; nohup ./topsailai_agent_daemon.py start --processor ,,, --summarizer ... > /tmp/topsailai_agent_daemon.log 2>&1 &`
 
 ### topsailai_agent_client
 

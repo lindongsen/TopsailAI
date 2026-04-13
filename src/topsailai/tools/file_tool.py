@@ -316,12 +316,12 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
             lines=[(5, "#hello\n#world")]
 
     Returns:
-        str: "OK" on success, error message on failure
+        str: file content on success, error message on failure
     """
     try:
         # Check if file exists
         if not os.path.exists(file_path):
-            return f"File not found: {file_path}"
+            raise Exception(f"File not found: {file_path}")
 
         # json str
         if isinstance(lines, str):
@@ -361,9 +361,11 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
             lines_content[-1] = lines_content[-1].rstrip('\n\r')
 
         # Write the modified content back to the file
+        new_content = ''.join(lines_content)
         with open(file_path, 'w', encoding='utf-8') as file:
-            file.write(''.join(lines_content))
-        return "OK"
+            file.write(new_content)
+            file.flush()
+        return new_content
     except Exception as e:
         return str(e)
 
@@ -376,6 +378,9 @@ def insert_data_to_file(file_path: str, data: str, line_num: int, before_or_afte
         data (str): Data to insert
         line_num (int): Line number to insert before/after (1-based)
         before_or_after (str, optional): Whether to insert "before" or "after" the line. Defaults to "after".
+
+    Returns:
+        str: file content on success, error message on failure
     """
     # Validate before_or_after parameter
     if before_or_after not in ("before", "after"):
@@ -407,10 +412,12 @@ def insert_data_to_file(file_path: str, data: str, line_num: int, before_or_afte
     lines.insert(insert_index, data)
 
     # Write back to file
+    new_content = "".join(lines)
     with open(file_path, 'w') as f:
         f.writelines(lines)
+        f.flush()
 
-    return "OK"
+    return new_content
 
 def read_lines(file_path:str, start_num:int, end_num:int):
     """Read specific lines from a file and return them as a string.

@@ -326,7 +326,7 @@ class TestFileToolReplaceLinesInFile:
 
         # Replace line 3
         result = replace_lines_in_file(test_file, [(3, "New Line 3")])
-        assert result == "OK"
+        assert result == "Line 1\nLine 2\nNew Line 3\nLine 4\nLine 5"
 
         # Verify the replacement
         with open(test_file, 'r') as f:
@@ -346,7 +346,7 @@ class TestFileToolReplaceLinesInFile:
             (2, "New Second line"),
             (4, "New Fourth line")
         ])
-        assert result == "OK"
+        assert result == "First line\nNew Second line\nThird line\nNew Fourth line\nFifth line"
 
         # Verify the replacements
         with open(test_file, 'r') as f:
@@ -363,7 +363,7 @@ class TestFileToolReplaceLinesInFile:
 
         # Replace line 3
         result = replace_lines_in_file(test_file, [(3, "New Line 3")])
-        assert result == "OK"
+        assert result == "Line 1\nLine 2\nNew Line 3\nLine 4\nLine 5"
 
         # Verify the replacement - the function normalizes line endings to \n
         with open(test_file, 'r', newline='') as f:
@@ -380,7 +380,7 @@ class TestFileToolReplaceLinesInFile:
 
         # Try to replace line 10 (which doesn't exist)
         result = replace_lines_in_file(test_file, [(10, "Non-existent line")])
-        assert result == "OK"
+        assert result == initial_content
 
         # Verify the file content remains unchanged
         with open(test_file, 'r') as f:
@@ -396,7 +396,7 @@ class TestFileToolReplaceLinesInFile:
 
         # Try to replace line -1 (invalid)
         result = replace_lines_in_file(test_file, [(-1, "Invalid line")])
-        assert result == "OK"
+        assert result == initial_content
 
         # Verify the file content remains unchanged
         with open(test_file, 'r') as f:
@@ -411,7 +411,7 @@ class TestFileToolReplaceLinesInFile:
 
         # Try to replace line 1
         result = replace_lines_in_file(test_file, [(1, "New line")])
-        assert result == "OK"
+        assert result == ""
 
         # Verify the file remains empty
         with open(test_file, 'r') as f:
@@ -427,7 +427,7 @@ class TestFileToolReplaceLinesInFile:
 
         # Replace line 2
         result = replace_lines_in_file(test_file, [(2, "New Line 2")])
-        assert result == "OK"
+        assert result == "Line 1\nNew Line 2\nLine 3"
 
         # Verify the replacement
         with open(test_file, 'r') as f:
@@ -447,7 +447,7 @@ class TestFileToolReplaceLinesInFile:
             (2, "Filled Line 2"),
             (4, "Filled Line 4")
         ])
-        assert result == "OK"
+        assert result == "Line 1\nFilled Line 2\nLine 3\nFilled Line 4\nLine 5"
 
         # Verify the replacements
         with open(test_file, 'r') as f:
@@ -468,7 +468,7 @@ class TestFileToolReplaceLinesInFile:
             (2, "Second replacement"),
             (2, "Final replacement")
         ])
-        assert result == "OK"
+        assert result == "Line 1\nFinal replacement\nLine 3"
 
         # Verify only the last replacement is applied
         with open(test_file, 'r') as f:
@@ -494,7 +494,8 @@ class TestFileToolReplaceLinesInFile:
         # Replace with Unicode content
         unicode_content = "你好世界 🌍\nUnicode line with emoji 😊"
         result = replace_lines_in_file(test_file, [(2, unicode_content)])
-        assert result == "OK"
+        expected_content = f"Line 1\n{unicode_content}\nLine 3"
+        assert result == expected_content
 
         # Verify the Unicode content is preserved
         with open(test_file, 'r', encoding='utf-8') as f:
@@ -516,7 +517,12 @@ class TestFileToolReplaceLinesInFile:
             (500, "Middle Line Replacement"),
             (1000, "New Last Line")
         ])
-        assert result == "OK"
+        # Verify the result is the new content
+        lines_result = result.splitlines()
+        assert lines_result[0] == "New First Line"
+        assert lines_result[499] == "Middle Line Replacement"
+        assert lines_result[999] == "New Last Line"
+        assert len(lines_result) == 1000
 
         # Verify the replacements
         with open(test_file, 'r') as f:
@@ -537,7 +543,7 @@ class TestFileToolReplaceLinesInFile:
 
         # Try to replace line 0 (invalid)
         result = replace_lines_in_file(test_file, [(0, "Invalid line")])
-        assert result == "OK"
+        assert result == initial_content
 
         # Verify the file content remains unchanged
         with open(test_file, 'r') as f:
@@ -553,7 +559,7 @@ class TestFileToolReplaceLinesInFile:
 
         # Replace line 3
         result = replace_lines_in_file(test_file, [(3, "New Line 3")])
-        assert result == "OK"
+        assert result == "Line 1\nLine 2\nNew Line 3\nLine 4\nLine 5"
 
         # Verify the replacement - the function normalizes line endings to \n
         with open(test_file, 'r', newline='') as f:
@@ -570,7 +576,7 @@ class TestFileToolReplaceLinesInFile:
 
         # Replace line 2 with empty content
         result = replace_lines_in_file(test_file, [(2, "")])
-        assert result == "OK"
+        assert result == "Line 1\n\nLine 3"
 
         # Verify the replacement
         with open(test_file, 'r') as f:
@@ -587,7 +593,7 @@ class TestFileToolReplaceLinesInFile:
 
         # Replace line 2 with None content
         result = replace_lines_in_file(test_file, [(2, None)])
-        assert result == "OK"
+        assert result == "Line 1\n\nLine 3"
 
         # Verify the replacement (None should be treated as empty string)
         with open(test_file, 'r') as f:
@@ -607,12 +613,13 @@ class TestFileToolReplaceLinesInFile:
         try:
             # Try to replace a line (should fail with permission error)
             result = replace_lines_in_file(test_file, [(2, "New Line 2")])
-            # The function may return "OK" if the permission error doesn't occur in this environment
+            # The function may return file content if the permission error doesn't occur in this environment
             # or it may return an error message
-            if result != "OK":
+            # Check if it's either the modified content or an error
+            if result != "Line 1\nNew Line 2\nLine 3":
                 assert "Permission denied" in result or "permission" in result.lower()
             else:
-                # If no error occurs, that's acceptable too - it means the environment
+                # If the modification succeeded, that's acceptable too - it means the environment
                 # doesn't enforce read-only permissions in the expected way
                 pass
         finally:
@@ -628,7 +635,7 @@ class TestFileToolReplaceLinesInFile:
 
         # Replace the last line (line 3)
         result = replace_lines_in_file(test_file, [(3, "New Last Line")])
-        assert result == "OK"
+        assert result == "Line 1\nLine 2\nNew Last Line"
 
         # Verify the replacement
         with open(test_file, 'r') as f:
@@ -645,7 +652,7 @@ class TestFileToolReplaceLinesInFile:
 
         # Replace the last line (line 3)
         result = replace_lines_in_file(test_file, [(3, "New Last Line")])
-        assert result == "OK"
+        assert result == "Line 1\nLine 2\nNew Last Line"
 
         # Verify the replacement
         with open(test_file, 'r') as f:
@@ -662,7 +669,7 @@ class TestFileToolReplaceLinesInFile:
 
         # Replace the first line (line 1)
         result = replace_lines_in_file(test_file, [(1, "New First Line")])
-        assert result == "OK"
+        assert result == "New First Line\nLine 2\nLine 3"
 
         # Verify the replacement
         with open(test_file, 'r') as f:
@@ -693,7 +700,7 @@ class TestFileToolInsertDataToFile:
 
         # Insert after line 2
         result = insert_data_to_file(test_file, "Inserted Line", line_num=2, before_or_after="after")
-        assert result == "OK"
+        assert result == "Line 1\nLine 2\nInserted Line\nLine 3\n"
 
         # Verify the insertion
         with open(test_file, 'r') as f:
@@ -710,7 +717,7 @@ class TestFileToolInsertDataToFile:
 
         # Insert before line 3
         result = insert_data_to_file(test_file, "Inserted Line", line_num=3, before_or_after="before")
-        assert result == "OK"
+        assert result == "Line 1\nLine 2\nInserted Line\nLine 3\n"
 
         # Verify the insertion
         with open(test_file, 'r') as f:
@@ -727,7 +734,7 @@ class TestFileToolInsertDataToFile:
 
         # Insert after line 1
         result = insert_data_to_file(test_file, "New Line", line_num=1, before_or_after="after")
-        assert result == "OK"
+        assert result == "Line 1\nNew Line\nLine 2\nLine 3\n"
 
         # Verify the insertion
         with open(test_file, 'r') as f:
@@ -744,7 +751,7 @@ class TestFileToolInsertDataToFile:
 
         # Insert after last line (line 3)
         result = insert_data_to_file(test_file, "New Line", line_num=3, before_or_after="after")
-        assert result == "OK"
+        assert result == "Line 1\nLine 2\nLine 3\nNew Line\n"
 
         # Verify the insertion
         with open(test_file, 'r') as f:
@@ -760,7 +767,7 @@ class TestFileToolInsertDataToFile:
 
         # Try to insert after line 0 (clamped to 0)
         result = insert_data_to_file(test_file, "New Line", line_num=0, before_or_after="after")
-        assert result == "OK"
+        assert result == "New Line\n"
 
         # Verify the insertion - function adds newline to data
         with open(test_file, 'r') as f:
@@ -777,7 +784,7 @@ class TestFileToolInsertDataToFile:
 
         # Insert without newline
         result = insert_data_to_file(test_file, "Inserted", line_num=1, before_or_after="after")
-        assert result == "OK"
+        assert result == "Line 1\nInserted\nLine 2\n"
 
         # Verify the insertion - newline should be added automatically
         with open(test_file, 'r') as f:
@@ -794,7 +801,7 @@ class TestFileToolInsertDataToFile:
 
         # Insert with trailing newline
         result = insert_data_to_file(test_file, "Inserted Line\n", line_num=1, before_or_after="after")
-        assert result == "OK"
+        assert result == "Line 1\nInserted Line\nLine 2\n"
 
         # Verify the insertion
         with open(test_file, 'r') as f:
@@ -823,7 +830,7 @@ class TestFileToolInsertDataToFile:
 
         # Insert after line 100 (beyond file length)
         result = insert_data_to_file(test_file, "New Line", line_num=100, before_or_after="after")
-        assert result == "OK"
+        assert result == "Line 1\nLine 2\nNew Line\n"
 
         # Verify the insertion - should append at end
         with open(test_file, 'r') as f:
@@ -840,7 +847,7 @@ class TestFileToolInsertDataToFile:
 
         # Insert after line 0 (clamped to beginning)
         result = insert_data_to_file(test_file, "New Line", line_num=0, before_or_after="after")
-        assert result == "OK"
+        assert result == "New Line\nLine 1\nLine 2\n"
 
         # Verify the insertion
         with open(test_file, 'r') as f:
@@ -858,7 +865,8 @@ class TestFileToolInsertDataToFile:
         # Insert Unicode content
         unicode_content = "你好世界 🌍"
         result = insert_data_to_file(test_file, unicode_content, line_num=1, before_or_after="after")
-        assert result == "OK"
+        expected_content = f"Line 1\n{unicode_content}\nLine 2\n"
+        assert result == expected_content
 
         # Verify the insertion
         with open(test_file, 'r', encoding='utf-8') as f:
@@ -875,7 +883,7 @@ class TestFileToolInsertDataToFile:
 
         # Insert empty data - empty string is falsy so it won't be inserted
         result = insert_data_to_file(test_file, "", line_num=1, before_or_after="after")
-        assert result == "OK"
+        assert result == initial_content
 
         # Verify - empty data is not inserted (function does nothing for empty data)
         with open(test_file, 'r') as f:
@@ -893,7 +901,7 @@ class TestFileToolInsertDataToFile:
         # Insert before line 100 (beyond file length)
         # Both "before" and "after" clamp to end when line number > file length
         result = insert_data_to_file(test_file, "New Line", line_num=100, before_or_after="before")
-        assert result == "OK"
+        assert result == "Line 1\nLine 2\nLine 3\nNew Line\n"
 
         # Verify the insertion - function clamps to end, same as "after"
         with open(test_file, 'r') as f:
@@ -910,7 +918,7 @@ class TestFileToolInsertDataToFile:
 
         # Insert after line 1
         result = insert_data_to_file(test_file, "New Line", line_num=1, before_or_after="after")
-        assert result == "OK"
+        assert result == "Only Line\nNew Line\n"
 
         # Verify the insertion
         with open(test_file, 'r') as f:
@@ -928,7 +936,8 @@ class TestFileToolInsertDataToFile:
         # Insert with special characters
         special_content = "Tab:\tNewline:\nBackslash:\\"
         result = insert_data_to_file(test_file, special_content, line_num=1, before_or_after="after")
-        assert result == "OK"
+        expected_content = f"Line 1\n{special_content}\nLine 2\n"
+        assert result == expected_content
 
         # Verify the insertion
         with open(test_file, 'r') as f:

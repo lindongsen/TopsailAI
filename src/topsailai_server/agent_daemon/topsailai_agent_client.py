@@ -26,6 +26,18 @@ DEFAULT_PORT = 7373
 DEFAULT_SESSION_ID = socket.gethostname()
 
 
+def format_time(time_str):
+    """Format time string to YYYY-MM-DD HH:MM:SS"""
+    if not time_str:
+        return 'N/A'
+    # Handle ISO format: 2026-04-13T23:27:53.123456
+    if 'T' in time_str:
+        date_part, time_part = time_str.split('T')
+        time_part = time_part.split('.')[0]
+        return f"{date_part} {time_part}"
+    return time_str
+
+
 def do_client_health(args):
     """Check server health"""
     base_url = f"http://{args.host}:{args.port}"
@@ -80,7 +92,14 @@ def do_client_list_sessions(args):
                     print(f"Response: {json.dumps(result, indent=2)}")
                 else:
                     for session in sessions:
-                        print(f"  [{session.get('create_time')}] {session.get('session_id')}: {session.get('session_name', 'N/A')}")
+                        create_time = format_time(session.get('create_time'))
+                        session_id = session.get('session_id')
+                        session_name = session.get('session_name', 'N/A')
+                        # Only show one when session_id == session_name
+                        if session_id == session_name:
+                            print(f"  [{create_time}] {session_id}")
+                        else:
+                            print(f"  [{create_time}] {session_id}: {session_name}")
                         print(f"    Task: {session.get('task', 'N/A')}, Processed: {session.get('processed_msg_id', 'N/A')}")
                 return True
             else:
@@ -170,12 +189,28 @@ def do_client_get_messages(args):
             result = response.json()
             if result.get("code") == 0:
                 messages = result.get("data", [])
-                print(f"Retrieved {len(messages)} message(s)")
+                # First line shows count and session_id
+                if messages:
+                    session_id = messages[0].get('session_id')
+                    print(f"Retrieved {len(messages)} message(s), Session: {session_id}")
                 if args.verbose:
                     print(f"Response: {json.dumps(result, indent=2)}")
                 else:
                     for msg in messages:
-                        print(f"  [{msg.get('create_time')}] {msg.get('role')}: {msg.get('message')[:50]}...")
+                        create_time = format_time(msg.get('create_time'))
+                        role = msg.get('role')
+                        message = msg.get('message')
+                        task_id = msg.get('task_id')
+                        task_result = msg.get('task_result')
+                        
+                        # Show time, role and full message (no session_id in content)
+                        print(f"[{create_time}] {role}: {message}")
+                        # If task_id exists, show it
+                        if task_id:
+                            print(f"task_id: {task_id}")
+                        # If task_result exists, show it
+                        if task_result:
+                            print(f"task_result: {task_result}")
                 return True
             else:
                 print(f"Error: {result.get('message', 'Unknown error')}")
@@ -267,7 +302,17 @@ def do_client_get_tasks(args):
                     print(f"Response: {json.dumps(result, indent=2)}")
                 else:
                     for task in tasks:
-                        print(f"  [{task.get('create_time')}] {task.get('task_id')}: {task.get('task_result', '')[:50]}...")
+                        create_time = format_time(task.get('create_time'))
+                        session_id = task.get('session_id')
+                        msg_id = task.get('msg_id')
+                        task_id = task.get('task_id')
+                        task_result = task.get('task_result')
+                        
+                        # Show session_id, message, and full task_result
+                        print(f"  Session: {session_id}")
+                        print(f"  Message: {msg_id}")
+                        print(f"  [{create_time}] Task: {task_id}")
+                        print(f"    Result: {task_result}")
                 return True
             else:
                 print(f"Error: {result.get('message', 'Unknown error')}")
@@ -282,6 +327,7 @@ def do_client_get_tasks(args):
         logger.exception("Failed to retrieve tasks: %s", e)
         print(f"Error: {e}")
         return False
+
 
 def do_client_process_session(args):
     """Process pending messages for a session"""
@@ -320,7 +366,6 @@ def do_client_process_session(args):
         logger.exception("Failed to process session: %s", e)
         print(f"Error: {e}")
         return False
-
 
 
 def cli():
@@ -372,7 +417,7 @@ def cli():
     send_msg_parser.add_argument('--processed-msg-id', type=str, help='Processed message ID')
     send_msg_parser.set_defaults(func=do_client_send_message)
 
-    # Get messages
+    # Get messages (also available as list-messages)
     get_msgs_parser = subparsers.add_parser('get-messages', help='Retrieve messages from a session')
     get_msgs_parser.add_argument('--session-id', type=str, default=DEFAULT_SESSION_ID, help=f'Session ID (default: {DEFAULT_SESSION_ID})')
     get_msgs_parser.add_argument('--start-time', type=str, help='Start time filter')
@@ -383,6 +428,17 @@ def cli():
     get_msgs_parser.add_argument('--order-by', type=str, default='desc', choices=['asc', 'desc'], help='Order by (default: desc)')
     get_msgs_parser.set_defaults(func=do_client_get_messages)
 
+    # List messages (alias for get-messages)
+    list_msgs_parser = subparsers.add_parser('list-messages', help='Retrieve messages from a session (alias for get-messages)')
+    list_msgs_parser.add_argument('--session-id', type=str, default=DEFAULT_SESSION_ID, help=f'Session ID (default: {DEFAULT_SESSION_ID})')
+    list_msgs_parser.add_argument('--start-time', type=str, help='Start time filter')
+    list_msgs_parser.add_argument('--end-time', type=str, help='End time filter')
+    list_msgs_parser.add_argument('--offset', type=int, default=0, help='Offset (default: 0)')
+    list_msgs_parser.add_argument('--limit', type=int, default=1000, help='Limit (default: 1000)')
+    list_msgs_parser.add_argument('--sort-key', type=str, default='create_time', help='Sort key (default: create_time)')
+    list_msgs_parser.add_argument('--order-by', type=str, default='desc', choices=['asc', 'desc'], help='Order by (default: desc)')
+    list_msgs_parser.set_defaults(func=do_client_get_messages)
+
     # Set task result
     set_task_parser = subparsers.add_parser('set-task-result', help='Set a task result')
     set_task_parser.add_argument('--session-id', type=str, default=DEFAULT_SESSION_ID, help=f'Session ID (default: {DEFAULT_SESSION_ID})')
@@ -391,7 +447,7 @@ def cli():
     set_task_parser.add_argument('--task-result', type=str, required=True, help='Task result')
     set_task_parser.set_defaults(func=do_client_set_task_result)
 
-    # Get tasks
+    # Get tasks (also available as list-tasks)
     get_tasks_parser = subparsers.add_parser('get-tasks', help='Retrieve tasks')
     get_tasks_parser.add_argument('--session-id', type=str, default=DEFAULT_SESSION_ID, help=f'Session ID (default: {DEFAULT_SESSION_ID})')
     get_tasks_parser.add_argument('--task-ids', type=str, help='Comma-separated task IDs')
@@ -402,6 +458,18 @@ def cli():
     get_tasks_parser.add_argument('--sort-key', type=str, default='create_time', help='Sort key (default: create_time)')
     get_tasks_parser.add_argument('--order-by', type=str, default='desc', choices=['asc', 'desc'], help='Order by (default: desc)')
     get_tasks_parser.set_defaults(func=do_client_get_tasks)
+
+    # List tasks (alias for get-tasks)
+    list_tasks_parser = subparsers.add_parser('list-tasks', help='Retrieve tasks (alias for get-tasks)')
+    list_tasks_parser.add_argument('--session-id', type=str, default=DEFAULT_SESSION_ID, help=f'Session ID (default: {DEFAULT_SESSION_ID})')
+    list_tasks_parser.add_argument('--task-ids', type=str, help='Comma-separated task IDs')
+    list_tasks_parser.add_argument('--start-time', type=str, help='Start time filter')
+    list_tasks_parser.add_argument('--end-time', type=str, help='End time filter')
+    list_tasks_parser.add_argument('--offset', type=int, default=0, help='Offset (default: 0)')
+    list_tasks_parser.add_argument('--limit', type=int, default=1000, help='Limit (default: 1000)')
+    list_tasks_parser.add_argument('--sort-key', type=str, default='create_time', help='Sort key (default: create_time)')
+    list_tasks_parser.add_argument('--order-by', type=str, default='desc', choices=['asc', 'desc'], help='Order by (default: desc)')
+    list_tasks_parser.set_defaults(func=do_client_get_tasks)
 
     # Process session
     process_session_parser = subparsers.add_parser('process-session', help='Process pending messages for a session')

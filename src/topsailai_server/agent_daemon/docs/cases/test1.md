@@ -1,7 +1,7 @@
 # Construct actual testing scenarios to ensure successful functional testing
 
 Steps:
-1. Startup agent_daemon server; `HOME=/path/to/tests/integration ./topsailai_agent_daemon.py start --processor ,,, --summarizer ...`
+1. Startup agent_daemon server; `export HOME=/path/to/tests/integration; nohup ./topsailai_agent_daemon.py start --processor ,,, --summarizer ... > /tmp/topsailai_agent_daemon.log 2>&1 &`
 2. Call ReceiveMessage to give a message; `./topsailai_agent_client.py send-message ...`
 3. Call RetrieveMessages to check response;
 4. If exists task, call RetrieveTasks to check response;
