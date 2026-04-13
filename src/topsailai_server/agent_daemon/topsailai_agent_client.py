@@ -9,6 +9,7 @@
 import argparse
 import json
 import sys
+import socket
 import requests
 
 # Add the parent directory to the path for imports
@@ -22,6 +23,7 @@ from topsailai_server.agent_daemon import logger
 # Default values
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 7373
+DEFAULT_SESSION_ID = socket.gethostname()
 
 
 def do_client_health(args):
@@ -326,14 +328,14 @@ def cli():
     # Send message
     send_msg_parser = subparsers.add_parser('send-message', help='Send a message to a session')
     send_msg_parser.add_argument('--message', type=str, required=True, help='Message content')
-    send_msg_parser.add_argument('--session-id', type=str, required=True, help='Session ID')
+    send_msg_parser.add_argument('--session-id', type=str, default=DEFAULT_SESSION_ID, help=f'Session ID (default: {DEFAULT_SESSION_ID})')
     send_msg_parser.add_argument('--role', type=str, default='user', choices=['user', 'assistant'], help='Message role (default: user)')
     send_msg_parser.add_argument('--processed-msg-id', type=str, help='Processed message ID')
     send_msg_parser.set_defaults(func=do_client_send_message)
 
     # Get messages
     get_msgs_parser = subparsers.add_parser('get-messages', help='Retrieve messages from a session')
-    get_msgs_parser.add_argument('--session-id', type=str, required=True, help='Session ID')
+    get_msgs_parser.add_argument('--session-id', type=str, default=DEFAULT_SESSION_ID, help=f'Session ID (default: {DEFAULT_SESSION_ID})')
     get_msgs_parser.add_argument('--start-time', type=str, help='Start time filter')
     get_msgs_parser.add_argument('--end-time', type=str, help='End time filter')
     get_msgs_parser.add_argument('--offset', type=int, default=0, help='Offset (default: 0)')
@@ -344,7 +346,7 @@ def cli():
 
     # Set task result
     set_task_parser = subparsers.add_parser('set-task-result', help='Set a task result')
-    set_task_parser.add_argument('--session-id', type=str, required=True, help='Session ID')
+    set_task_parser.add_argument('--session-id', type=str, default=DEFAULT_SESSION_ID, help=f'Session ID (default: {DEFAULT_SESSION_ID})')
     set_task_parser.add_argument('--processed-msg-id', type=str, required=True, help='Processed message ID')
     set_task_parser.add_argument('--task-id', type=str, required=True, help='Task ID')
     set_task_parser.add_argument('--task-result', type=str, required=True, help='Task result')
@@ -352,7 +354,7 @@ def cli():
 
     # Get tasks
     get_tasks_parser = subparsers.add_parser('get-tasks', help='Retrieve tasks')
-    get_tasks_parser.add_argument('--session-id', type=str, required=True, help='Session ID')
+    get_tasks_parser.add_argument('--session-id', type=str, default=DEFAULT_SESSION_ID, help=f'Session ID (default: {DEFAULT_SESSION_ID})')
     get_tasks_parser.add_argument('--task-ids', type=str, help='Comma-separated task IDs')
     get_tasks_parser.add_argument('--start-time', type=str, help='Start time filter')
     get_tasks_parser.add_argument('--end-time', type=str, help='End time filter')
