@@ -45,6 +45,57 @@ def do_client_health(args):
         return False
 
 
+def do_client_list_sessions(args):
+    """List sessions"""
+    base_url = f"http://{args.host}:{args.port}"
+    url = f"{base_url}/api/v1/session"
+
+    params = {}
+
+    if args.start_time:
+        params["start_time"] = args.start_time
+    if args.end_time:
+        params["end_time"] = args.end_time
+    if args.offset is not None:
+        params["offset"] = args.offset
+    if args.limit is not None:
+        params["limit"] = args.limit
+    if args.sort_key:
+        params["sort_key"] = args.sort_key
+    if args.order_by:
+        params["order_by"] = args.order_by
+
+    try:
+        logger.info("Listing sessions")
+        response = requests.get(url, params=params, timeout=10)
+
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("code") == 0:
+                sessions = result.get("data", [])
+                print(f"Retrieved {len(sessions)} session(s)")
+                if args.verbose:
+                    print(f"Response: {json.dumps(result, indent=2)}")
+                else:
+                    for session in sessions:
+                        print(f"  [{session.get('create_time')}] {session.get('session_id')}: {session.get('session_name', 'N/A')}")
+                        print(f"    Task: {session.get('task', 'N/A')}, Processed: {session.get('processed_msg_id', 'N/A')}")
+                return True
+            else:
+                print(f"Error: {result.get('message', 'Unknown error')}")
+                return False
+        else:
+            print(f"Error: HTTP {response.status_code} - {response.text}")
+            return False
+    except requests.exceptions.ConnectionError:
+        print(f"Error: Cannot connect to server at {base_url}")
+        return False
+    except Exception as e:
+        logger.exception("Failed to list sessions: %s", e)
+        print(f"Error: {e}")
+        return False
+
+
 def do_client_send_message(args):
     """Send a message to a session"""
     base_url = f"http://{args.host}:{args.port}"
@@ -261,6 +312,16 @@ def cli():
     # Health check
     health_parser = subparsers.add_parser('health', help='Check server health')
     health_parser.set_defaults(func=do_client_health)
+
+    # List sessions
+    list_sessions_parser = subparsers.add_parser('list-sessions', help='List all sessions')
+    list_sessions_parser.add_argument('--start-time', type=str, help='Start time filter')
+    list_sessions_parser.add_argument('--end-time', type=str, help='End time filter')
+    list_sessions_parser.add_argument('--offset', type=int, default=0, help='Offset (default: 0)')
+    list_sessions_parser.add_argument('--limit', type=int, default=1000, help='Limit (default: 1000)')
+    list_sessions_parser.add_argument('--sort-key', type=str, default='create_time', help='Sort key (default: create_time)')
+    list_sessions_parser.add_argument('--order-by', type=str, default='desc', choices=['asc', 'desc'], help='Order by (default: desc)')
+    list_sessions_parser.set_defaults(func=do_client_list_sessions)
 
     # Send message
     send_msg_parser = subparsers.add_parser('send-message', help='Send a message to a session')

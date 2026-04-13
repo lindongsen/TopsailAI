@@ -14,7 +14,7 @@ workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '
 if (workspace_root + "/src") not in sys.path:
     sys.path.insert(0, workspace_root)
     sys.path.insert(0, workspace_root + "/src")
-from topsailai.tools.file_tool import write_file, read_file, replace_lines_in_file
+from topsailai.tools.file_tool import write_file, read_file, replace_lines_in_file, insert_data_to_file
 
 class TestFileToolWriteFile:
     @pytest.fixture
@@ -668,4 +668,270 @@ class TestFileToolReplaceLinesInFile:
         with open(test_file, 'r') as f:
             content = f.read()
         expected_content = "New First Line\nLine 2\nLine 3"
+        assert content == expected_content
+
+
+class TestFileToolInsertDataToFile:
+    @pytest.fixture
+    def temp_dir(self):
+        """Create a temporary directory for test files"""
+        temp_dir = tempfile.mkdtemp()
+        yield temp_dir
+        shutil.rmtree(temp_dir)
+
+    @pytest.fixture
+    def test_file(self, temp_dir):
+        """Create a test file path in the temporary directory"""
+        return os.path.join(temp_dir, "test.txt")
+
+    def test_insert_data_to_file_after_line(self, test_file):
+        """Test inserting data after a specific line"""
+        # Create initial file content with trailing newline
+        initial_content = "Line 1\nLine 2\nLine 3\n"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Insert after line 2
+        result = insert_data_to_file(test_file, "Inserted Line", line_num=2, before_or_after="after")
+        assert result == "OK"
+
+        # Verify the insertion
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\nLine 2\nInserted Line\nLine 3\n"
+        assert content == expected_content
+
+    def test_insert_data_to_file_before_line(self, test_file):
+        """Test inserting data before a specific line"""
+        # Create initial file content with trailing newline
+        initial_content = "Line 1\nLine 2\nLine 3\n"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Insert before line 3
+        result = insert_data_to_file(test_file, "Inserted Line", line_num=3, before_or_after="before")
+        assert result == "OK"
+
+        # Verify the insertion
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\nLine 2\nInserted Line\nLine 3\n"
+        assert content == expected_content
+
+    def test_insert_data_to_file_first_line_after(self, test_file):
+        """Test inserting data after the first line"""
+        # Create initial file content with trailing newline
+        initial_content = "Line 1\nLine 2\nLine 3\n"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Insert after line 1
+        result = insert_data_to_file(test_file, "New Line", line_num=1, before_or_after="after")
+        assert result == "OK"
+
+        # Verify the insertion
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\nNew Line\nLine 2\nLine 3\n"
+        assert content == expected_content
+
+    def test_insert_data_to_file_last_line_after(self, test_file):
+        """Test inserting data after the last line"""
+        # Create initial file content with trailing newline
+        initial_content = "Line 1\nLine 2\nLine 3\n"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Insert after last line (line 3)
+        result = insert_data_to_file(test_file, "New Line", line_num=3, before_or_after="after")
+        assert result == "OK"
+
+        # Verify the insertion
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\nLine 2\nLine 3\nNew Line\n"
+        assert content == expected_content
+
+    def test_insert_data_to_file_empty_file(self, test_file):
+        """Test inserting data into an empty file"""
+        # Create empty file
+        with open(test_file, 'w') as f:
+            f.write("")
+
+        # Try to insert after line 0 (clamped to 0)
+        result = insert_data_to_file(test_file, "New Line", line_num=0, before_or_after="after")
+        assert result == "OK"
+
+        # Verify the insertion - function adds newline to data
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "New Line\n"
+        assert content == expected_content
+
+    def test_insert_data_to_file_data_without_newline(self, test_file):
+        """Test inserting data without trailing newline (should add one)"""
+        # Create initial file content with trailing newline
+        initial_content = "Line 1\nLine 2\n"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Insert without newline
+        result = insert_data_to_file(test_file, "Inserted", line_num=1, before_or_after="after")
+        assert result == "OK"
+
+        # Verify the insertion - newline should be added automatically
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\nInserted\nLine 2\n"
+        assert content == expected_content
+
+    def test_insert_data_to_file_data_with_newline(self, test_file):
+        """Test inserting data that already ends with newline"""
+        # Create initial file content with trailing newline
+        initial_content = "Line 1\nLine 2\n"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Insert with trailing newline
+        result = insert_data_to_file(test_file, "Inserted Line\n", line_num=1, before_or_after="after")
+        assert result == "OK"
+
+        # Verify the insertion
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\nInserted Line\nLine 2\n"
+        assert content == expected_content
+
+    def test_insert_data_to_file_invalid_before_or_after(self, test_file):
+        """Test error handling with invalid before_or_after value"""
+        # Create initial file
+        with open(test_file, 'w') as f:
+            f.write("Line 1\n")
+
+        # Try to insert with invalid before_or_after
+        with pytest.raises(ValueError) as exc_info:
+            insert_data_to_file(test_file, "New Line", line_num=1, before_or_after="invalid")
+
+        assert "before_or_after must be 'before' or 'after'" in str(exc_info.value)
+
+    def test_insert_data_to_file_out_of_bounds_line(self, test_file):
+        """Test inserting after a line number beyond file length"""
+        # Create initial file content with trailing newline
+        initial_content = "Line 1\nLine 2\n"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Insert after line 100 (beyond file length)
+        result = insert_data_to_file(test_file, "New Line", line_num=100, before_or_after="after")
+        assert result == "OK"
+
+        # Verify the insertion - should append at end
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\nLine 2\nNew Line\n"
+        assert content == expected_content
+
+    def test_insert_data_to_file_zero_line_number(self, test_file):
+        """Test inserting at line 0"""
+        # Create initial file content with trailing newline
+        initial_content = "Line 1\nLine 2\n"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Insert after line 0 (clamped to beginning)
+        result = insert_data_to_file(test_file, "New Line", line_num=0, before_or_after="after")
+        assert result == "OK"
+
+        # Verify the insertion
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "New Line\nLine 1\nLine 2\n"
+        assert content == expected_content
+
+    def test_insert_data_to_file_unicode_content(self, test_file):
+        """Test inserting Unicode content"""
+        # Create initial file content with trailing newline
+        initial_content = "Line 1\nLine 2\n"
+        with open(test_file, 'w', encoding='utf-8') as f:
+            f.write(initial_content)
+
+        # Insert Unicode content
+        unicode_content = "你好世界 🌍"
+        result = insert_data_to_file(test_file, unicode_content, line_num=1, before_or_after="after")
+        assert result == "OK"
+
+        # Verify the insertion
+        with open(test_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        expected_content = f"Line 1\n{unicode_content}\nLine 2\n"
+        assert content == expected_content
+
+    def test_insert_data_to_file_empty_data(self, test_file):
+        """Test inserting empty data - empty data is not inserted"""
+        # Create initial file content with trailing newline
+        initial_content = "Line 1\nLine 2\n"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Insert empty data - empty string is falsy so it won't be inserted
+        result = insert_data_to_file(test_file, "", line_num=1, before_or_after="after")
+        assert result == "OK"
+
+        # Verify - empty data is not inserted (function does nothing for empty data)
+        with open(test_file, 'r') as f:
+            content = f.read()
+        # Empty data is not inserted - function skips insertion for empty/falsy data
+        assert content == initial_content
+
+    def test_insert_data_to_file_large_line_number_before(self, test_file):
+        """Test inserting before a line number larger than file"""
+        # Create initial file content with trailing newline
+        initial_content = "Line 1\nLine 2\nLine 3\n"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Insert before line 100 (beyond file length)
+        # Both "before" and "after" clamp to end when line number > file length
+        result = insert_data_to_file(test_file, "New Line", line_num=100, before_or_after="before")
+        assert result == "OK"
+
+        # Verify the insertion - function clamps to end, same as "after"
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Line 1\nLine 2\nLine 3\nNew Line\n"
+        assert content == expected_content
+
+    def test_insert_data_to_file_single_line_file(self, test_file):
+        """Test inserting into a file with a single line"""
+        # Create file with single line (with trailing newline)
+        initial_content = "Only Line\n"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Insert after line 1
+        result = insert_data_to_file(test_file, "New Line", line_num=1, before_or_after="after")
+        assert result == "OK"
+
+        # Verify the insertion
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = "Only Line\nNew Line\n"
+        assert content == expected_content
+
+    def test_insert_data_to_file_special_characters(self, test_file):
+        """Test inserting content with special characters"""
+        # Create initial file content with trailing newline
+        initial_content = "Line 1\nLine 2\n"
+        with open(test_file, 'w') as f:
+            f.write(initial_content)
+
+        # Insert with special characters
+        special_content = "Tab:\tNewline:\nBackslash:\\"
+        result = insert_data_to_file(test_file, special_content, line_num=1, before_or_after="after")
+        assert result == "OK"
+
+        # Verify the insertion
+        with open(test_file, 'r') as f:
+            content = f.read()
+        expected_content = f"Line 1\n{special_content}\nLine 2\n"
         assert content == expected_content

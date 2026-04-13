@@ -367,6 +367,49 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
     except Exception as e:
         return str(e)
 
+def insert_data_to_file(file_path: str, data: str, line_num: int, before_or_after: str = "after"):
+    """
+    Insert data(ends with newline) to file before/after line number.
+
+    Args:
+        file_path (str): Path to the file to modify
+        data (str): Data to insert
+        line_num (int): Line number to insert before/after (1-based)
+        before_or_after (str, optional): Whether to insert "before" or "after" the line. Defaults to "after".
+    """
+    # Validate before_or_after parameter
+    if before_or_after not in ("before", "after"):
+        raise ValueError(f"before_or_after must be 'before' or 'after', got '{before_or_after}'")
+
+    # Ensure data ends with newline if it doesn't already
+    if data and not data.endswith('\n'):
+        data += '\n'
+
+    # Read existing lines
+    with open(file_path, 'r') as f:
+        lines = f.readlines()
+
+    # Calculate insertion index (0-based)
+    # line_num is 1-based, so subtract 1 to get 0-based index
+    insert_index = line_num - 1
+
+    # Adjust index based on before/after
+    if before_or_after == "after":
+        insert_index += 1
+
+    # Handle edge cases for insertion index
+    # Clamp to valid range [0, len(lines)]
+    insert_index = max(0, min(insert_index, len(lines)))
+
+    # Insert the data
+    lines.insert(insert_index, data)
+
+    # Write back to file
+    with open(file_path, 'w') as f:
+        f.writelines(lines)
+
+    return "OK"
+
 def read_lines(file_path:str, start_num:int, end_num:int):
     """Read specific lines from a file and return them as a string.
 
@@ -458,6 +501,7 @@ TOOLS = dict(
     check_files_existing=check_files_existing,
     mkdirs=mkdirs,
     replace_lines_in_file=replace_lines_in_file,
+    insert_data_to_file=insert_data_to_file,
     read_lines=read_lines,
     list_dirs=list_dirs,
     read_files=read_files,

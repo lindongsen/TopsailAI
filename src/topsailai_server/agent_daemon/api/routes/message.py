@@ -137,8 +137,9 @@ async def receive_message(
 
     This endpoint:
     1. Saves the message to storage
-    2. Checks if the session's processed_msg_id is at the latest message
-    3. If not, triggers the processor to handle unprocessed messages
+    2. Creates session if it doesn't exist
+    3. Checks if the session's processed_msg_id is at the latest message
+    4. If not, triggers the processor to handle unprocessed messages
     """
     try:
         # Generate msg_id
@@ -157,6 +158,16 @@ async def receive_message(
 
         # Save message to storage
         storage.message.create(message_data)
+
+        # Create session if it doesn't exist
+        session = storage.session.get(request.session_id)
+        if not session:
+            session = storage.session.get_or_create(
+                session_id=request.session_id,
+                session_name=request.session_id,
+                task=None
+            )
+            logger.info("Session created: %s", request.session_id)
 
         logger.info("Message received: session_id=%s, msg_id=%s",
                    request.session_id, msg_id)
