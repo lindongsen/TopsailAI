@@ -107,7 +107,7 @@ async def _check_and_process_messages(
             # Check if session is idle
             if worker_manager.is_session_idle(session_id):
                 # Get unprocessed messages
-                unprocessed = storage.message.get_messages_after(session_id, session.processed_msg_id)
+                unprocessed = storage.message.get_unprocessed_messages(session_id, session.processed_msg_id)
                 if unprocessed:
                     # Combine unprocessed messages into a task
                     task = "\n".join([msg.message for msg in unprocessed])

@@ -77,11 +77,13 @@ def create_app(session_storage, message_storage, worker_manager, scheduler) -> F
         }
 
     # Include routers
-    from topsailai_server.agent_daemon.api.routes import message, task
+    from topsailai_server.agent_daemon.api.routes import message, task, session
     message.set_dependencies(session_storage, message_storage, worker_manager)
     task.set_dependencies(session_storage, message_storage, worker_manager)
+    session.set_dependencies(session_storage, message_storage, worker_manager)
 
     fastapi_app.include_router(message.router)
     fastapi_app.include_router(task.router)
+    fastapi_app.include_router(session.router)
 
     return fastapi_app
