@@ -1,0 +1,317 @@
+#!/usr/bin/env python3
+'''
+  Author: Dawsonlin
+  Email: lin_dongsen@126.com
+  Created: 2026-04-12
+  Purpose: Client CLI for agent_daemon API
+'''
+
+import argparse
+import json
+import sys
+import requests
+
+# Add the parent directory to the path for imports
+CWD = __file__
+import os
+CWD = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(CWD))
+
+from topsailai_server.agent_daemon import logger
+
+# Default values
+DEFAULT_HOST = "localhost"
+DEFAULT_PORT = 7373
+
+
+def do_client_health(args):
+    """Check server health"""
+    base_url = f"http://{args.host}:{args.port}"
+    try:
+        response = requests.get(f"{base_url}/health", timeout=5)
+        if response.status_code == 200:
+            print(f"Server is healthy at {base_url}")
+            if args.verbose:
+                print(f"Response: {response.json()}")
+            return True
+        else:
+            print(f"Server returned status code: {response.status_code}")
+            return False
+    except requests.exceptions.ConnectionError:
+        print(f"Error: Cannot connect to server at {base_url}")
+        return False
+    except Exception as e:
+        print(f"Error: {e}")
+        return False
+
+
+def do_client_send_message(args):
+    """Send a message to a session"""
+    base_url = f"http://{args.host}:{args.port}"
+    url = f"{base_url}/api/v1/message"
+
+    data = {
+        "message": args.message,
+        "session_id": args.session_id,
+    }
+
+    if args.role:
+        data["role"] = args.role
+
+    if args.processed_msg_id:
+        data["processed_msg_id"] = args.processed_msg_id
+
+    try:
+        logger.info("Sending message to session %s", args.session_id)
+        response = requests.post(url, json=data, timeout=10)
+
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("code") == 0:
+                print(f"Message sent successfully")
+                if args.verbose:
+                    print(f"Response: {json.dumps(result, indent=2)}")
+                return True
+            else:
+                print(f"Error: {result.get('message', 'Unknown error')}")
+                return False
+        else:
+            print(f"Error: HTTP {response.status_code} - {response.text}")
+            return False
+    except requests.exceptions.ConnectionError:
+        print(f"Error: Cannot connect to server at {base_url}")
+        return False
+    except Exception as e:
+        logger.exception("Failed to send message: %s", e)
+        print(f"Error: {e}")
+        return False
+
+
+def do_client_get_messages(args):
+    """Retrieve messages from a session"""
+    base_url = f"http://{args.host}:{args.port}"
+    url = f"{base_url}/api/v1/message"
+
+    params = {
+        "session_id": args.session_id,
+    }
+
+    if args.start_time:
+        params["start_time"] = args.start_time
+    if args.end_time:
+        params["end_time"] = args.end_time
+    if args.offset is not None:
+        params["offset"] = args.offset
+    if args.limit is not None:
+        params["limit"] = args.limit
+    if args.sort_key:
+        params["sort_key"] = args.sort_key
+    if args.order_by:
+        params["order_by"] = args.order_by
+
+    try:
+        logger.info("Retrieving messages for session %s", args.session_id)
+        response = requests.get(url, params=params, timeout=10)
+
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("code") == 0:
+                messages = result.get("data", [])
+                print(f"Retrieved {len(messages)} message(s)")
+                if args.verbose:
+                    print(f"Response: {json.dumps(result, indent=2)}")
+                else:
+                    for msg in messages:
+                        print(f"  [{msg.get('create_time')}] {msg.get('role')}: {msg.get('message')[:50]}...")
+                return True
+            else:
+                print(f"Error: {result.get('message', 'Unknown error')}")
+                return False
+        else:
+            print(f"Error: HTTP {response.status_code} - {response.text}")
+            return False
+    except requests.exceptions.ConnectionError:
+        print(f"Error: Cannot connect to server at {base_url}")
+        return False
+    except Exception as e:
+        logger.exception("Failed to retrieve messages: %s", e)
+        print(f"Error: {e}")
+        return False
+
+
+def do_client_set_task_result(args):
+    """Set a task result"""
+    base_url = f"http://{args.host}:{args.port}"
+    url = f"{base_url}/api/v1/task"
+
+    data = {
+        "session_id": args.session_id,
+        "processed_msg_id": args.processed_msg_id,
+        "task_id": args.task_id,
+        "task_result": args.task_result,
+    }
+
+    try:
+        logger.info("Setting task result for session %s, task %s", args.session_id, args.task_id)
+        response = requests.post(url, json=data, timeout=10)
+
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("code") == 0:
+                print(f"Task result set successfully")
+                if args.verbose:
+                    print(f"Response: {json.dumps(result, indent=2)}")
+                return True
+            else:
+                print(f"Error: {result.get('message', 'Unknown error')}")
+                return False
+        else:
+            print(f"Error: HTTP {response.status_code} - {response.text}")
+            return False
+    except requests.exceptions.ConnectionError:
+        print(f"Error: Cannot connect to server at {base_url}")
+        return False
+    except Exception as e:
+        logger.exception("Failed to set task result: %s", e)
+        print(f"Error: {e}")
+        return False
+
+
+def do_client_get_tasks(args):
+    """Retrieve tasks"""
+    base_url = f"http://{args.host}:{args.port}"
+    url = f"{base_url}/api/v1/task"
+
+    params = {
+        "session_id": args.session_id,
+    }
+
+    if args.task_ids:
+        params["task_ids"] = args.task_ids
+    if args.start_time:
+        params["start_time"] = args.start_time
+    if args.end_time:
+        params["end_time"] = args.end_time
+    if args.offset is not None:
+        params["offset"] = args.offset
+    if args.limit is not None:
+        params["limit"] = args.limit
+    if args.sort_key:
+        params["sort_key"] = args.sort_key
+    if args.order_by:
+        params["order_by"] = args.order_by
+
+    try:
+        logger.info("Retrieving tasks for session %s", args.session_id)
+        response = requests.get(url, params=params, timeout=10)
+
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("code") == 0:
+                tasks = result.get("data", [])
+                print(f"Retrieved {len(tasks)} task(s)")
+                if args.verbose:
+                    print(f"Response: {json.dumps(result, indent=2)}")
+                else:
+                    for task in tasks:
+                        print(f"  [{task.get('create_time')}] {task.get('task_id')}: {task.get('task_result', '')[:50]}...")
+                return True
+            else:
+                print(f"Error: {result.get('message', 'Unknown error')}")
+                return False
+        else:
+            print(f"Error: HTTP {response.status_code} - {response.text}")
+            return False
+    except requests.exceptions.ConnectionError:
+        print(f"Error: Cannot connect to server at {base_url}")
+        return False
+    except Exception as e:
+        logger.exception("Failed to retrieve tasks: %s", e)
+        print(f"Error: {e}")
+        return False
+
+
+def cli():
+    """Client CLI entry point"""
+    parser = argparse.ArgumentParser(
+        description='Agent Daemon Client - CLI to interact with agent_daemon API',
+        prog='topsailai_agent_daemon client'
+    )
+    parser.add_argument(
+        '--host',
+        type=str,
+        default=DEFAULT_HOST,
+        help=f'Server host (default: {DEFAULT_HOST})'
+    )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=DEFAULT_PORT,
+        help=f'Server port (default: {DEFAULT_PORT})'
+    )
+    parser.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        help='Verbose output'
+    )
+
+    # Client subcommands
+    subparsers = parser.add_subparsers(dest='operation', help='Client operations')
+
+    # Health check
+    health_parser = subparsers.add_parser('health', help='Check server health')
+    health_parser.set_defaults(func=do_client_health)
+
+    # Send message
+    send_msg_parser = subparsers.add_parser('send-message', help='Send a message to a session')
+    send_msg_parser.add_argument('--message', type=str, required=True, help='Message content')
+    send_msg_parser.add_argument('--session-id', type=str, required=True, help='Session ID')
+    send_msg_parser.add_argument('--role', type=str, default='user', choices=['user', 'assistant'], help='Message role (default: user)')
+    send_msg_parser.add_argument('--processed-msg-id', type=str, help='Processed message ID')
+    send_msg_parser.set_defaults(func=do_client_send_message)
+
+    # Get messages
+    get_msgs_parser = subparsers.add_parser('get-messages', help='Retrieve messages from a session')
+    get_msgs_parser.add_argument('--session-id', type=str, required=True, help='Session ID')
+    get_msgs_parser.add_argument('--start-time', type=str, help='Start time filter')
+    get_msgs_parser.add_argument('--end-time', type=str, help='End time filter')
+    get_msgs_parser.add_argument('--offset', type=int, default=0, help='Offset (default: 0)')
+    get_msgs_parser.add_argument('--limit', type=int, default=1000, help='Limit (default: 1000)')
+    get_msgs_parser.add_argument('--sort-key', type=str, default='create_time', help='Sort key (default: create_time)')
+    get_msgs_parser.add_argument('--order-by', type=str, default='desc', choices=['asc', 'desc'], help='Order by (default: desc)')
+    get_msgs_parser.set_defaults(func=do_client_get_messages)
+
+    # Set task result
+    set_task_parser = subparsers.add_parser('set-task-result', help='Set a task result')
+    set_task_parser.add_argument('--session-id', type=str, required=True, help='Session ID')
+    set_task_parser.add_argument('--processed-msg-id', type=str, required=True, help='Processed message ID')
+    set_task_parser.add_argument('--task-id', type=str, required=True, help='Task ID')
+    set_task_parser.add_argument('--task-result', type=str, required=True, help='Task result')
+    set_task_parser.set_defaults(func=do_client_set_task_result)
+
+    # Get tasks
+    get_tasks_parser = subparsers.add_parser('get-tasks', help='Retrieve tasks')
+    get_tasks_parser.add_argument('--session-id', type=str, required=True, help='Session ID')
+    get_tasks_parser.add_argument('--task-ids', type=str, help='Comma-separated task IDs')
+    get_tasks_parser.add_argument('--start-time', type=str, help='Start time filter')
+    get_tasks_parser.add_argument('--end-time', type=str, help='End time filter')
+    get_tasks_parser.add_argument('--offset', type=int, default=0, help='Offset (default: 0)')
+    get_tasks_parser.add_argument('--limit', type=int, default=1000, help='Limit (default: 1000)')
+    get_tasks_parser.add_argument('--sort-key', type=str, default='create_time', help='Sort key (default: create_time)')
+    get_tasks_parser.add_argument('--order-by', type=str, default='desc', choices=['asc', 'desc'], help='Order by (default: desc)')
+    get_tasks_parser.set_defaults(func=do_client_get_tasks)
+
+    # Parse arguments
+    args = parser.parse_args()
+
+    # Require operation
+    if not args.operation:
+        parser.print_help()
+        sys.exit(1)
+
+    # Execute the operation
+    args.func(args)
+
+
+if __name__ == '__main__':
+    cli()

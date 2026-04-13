@@ -15,18 +15,6 @@ from topsailai_server.agent_daemon.storage import Storage, MessageData
 from topsailai_server.agent_daemon.worker import WorkerManager
 from topsailai_server.agent_daemon.api.utils import ApiResponse, success_response, error_response
 # Import from message module - they share the same globals set by app.py
-from topsailai_server.agent_daemon.api.routes.message import get_storage as _get_storage_msg, get_worker_manager as _get_worker_manager_msg
-
-# Re-export for consistency
-get_storage = _get_storage_msg
-get_worker_manager = _get_worker_manager_msg
-from topsailai_server.agent_daemon.worker import WorkerManager
-# Import from message module - they share the same globals set by app.py
-from topsailai_server.agent_daemon.api.routes.message import get_storage as _get_storage_msg, get_worker_manager as _get_worker_manager_msg
-
-# Re-export for consistency
-get_storage = _get_storage_msg
-get_worker_manager = _get_worker_manager_msg
 from topsailai_server.agent_daemon.api.routes.message import get_storage, get_worker_manager
 
 

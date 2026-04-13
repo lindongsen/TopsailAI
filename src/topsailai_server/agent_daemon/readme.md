@@ -115,6 +115,18 @@ restful api
 - data, list|dict|str|any, response content
 - message: str, some info for error or warning
 
+### session, uri_path:api/v1/session
+
+#### ListSessions
+
+parameters:
+- start_time: if null, no limit it
+- end_time: if null, no limit it
+- offset: int, default 0
+- limit: int, default 1000
+- sort_key: str, default is create_time
+- order_by: str, desc or asc, default is desc
+
 ### message, uri_path:api/v1/message
 
 #### ReceiveMessage
@@ -213,7 +225,11 @@ except Exception as e:
 
 ## About CLI
 
-cli_name: topsailai_agent_daemon
+### topsailai_agent_daemon
+
+start/stop server
+
+cli_file: topsailai_agent_daemon.py
 
 supported_args: refer to `env_template`, If parameters are specified, CLI will set these parameters to the environment variables.
 
@@ -223,6 +239,12 @@ supported_args: refer to `env_template`, If parameters are specified, CLI will s
 - `--processor`, a script file
 - `--summarizer`, a script file
 - `--session_state_checker`, a script file
+
+### topsailai_agent_client
+
+call api to server
+
+cli_file: topsailai_agent_client.py
 
 ## Scripts
 
