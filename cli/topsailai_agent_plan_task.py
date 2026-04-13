@@ -2,7 +2,7 @@
   Author: DawsonLin
   Email: lin_dongsen@126.com
   Created: 2026-04-13
-  Purpose:
+  Purpose: Plan and execute task agent for TopsailAI CLI
 '''
 
 import os
@@ -25,17 +25,38 @@ from topsailai.workspace.agent_shell import get_agent_chat
 
 task_agent = None
 
+
 def gen_task_id():
+    """
+    Generate a new unique task ID and set it as an environment variable.
+
+    This function generates a new task ID using the task_tool module, stores it
+    in the TOPSAILAI_TASK_ID environment variable, and logs the generation.
+
+    Returns:
+        str: The newly generated task ID.
+    """
     task_id = task_tool.generate_task_id()
     os.environ["TOPSAILAI_TASK_ID"] = task_id
     logger.info("generate new task id: [%s]", task_id)
     return task_id
 
+
 def get_task_id():
+    """
+    Get the current task ID from environment or generate a new one.
+
+    This function retrieves the task ID from the TOPSAILAI_TASK_ID environment
+    variable. If no task ID exists, it generates a new one by calling gen_task_id().
+
+    Returns:
+        str: The current task ID (existing or newly generated).
+    """
     task_id = os.getenv("TOPSAILAI_TASK_ID")
     if task_id:
         return task_id
     return gen_task_id()
+
 
 ############################################################################
 # Plan Tools
@@ -63,7 +84,18 @@ def call_assistant(task:str) -> str:
         task_id=task_id,
     )
 
+
 def get_tool_map() -> dict:
+    """
+    Build and return a mapping of tool names to their corresponding functions.
+
+    This function constructs a dictionary that maps tool names to their handler
+    functions. It includes the plan_tool-call_assistant function and all file
+    readonly tools. Each tool is also registered using the add_tool function.
+
+    Returns:
+        dict: A dictionary mapping tool names (str) to their handler functions.
+    """
     tool_map = {
         "plan_tool-call_assistant": call_assistant,
     }
@@ -76,7 +108,21 @@ def get_tool_map() -> dict:
 
     return tool_map
 
+
 def main():
+    """
+    Main entry point for the plan and execute task agent.
+
+    This function initializes and configures two agents:
+    1. plan_agent: Handles planning with call_assistant and file readonly tools.
+    2. task_agent: Executes tasks with disabled planning tools.
+
+    The function sets up the global task_agent, configures available tools,
+    and starts the plan_agent to run once.
+
+    Returns:
+        None
+    """
     # plan agent
     plan_agent = get_agent_chat(
         disabled_tools=["agent_tool"],
@@ -99,6 +145,7 @@ def main():
     # run
     plan_agent.run(times=1)
     return
+
 
 if __name__ == "__main__":
     main()
