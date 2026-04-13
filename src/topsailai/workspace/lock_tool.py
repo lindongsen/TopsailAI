@@ -103,7 +103,7 @@ def FileLock(name: str):
     return
 
 @contextmanager
-def ctxm_try_session_lock(session_id:str=None, timeout=60):
+def ctxm_try_session_lock(session_id:str=None, timeout:int=None):
     """
     yield YieldData(session_id, fp, msg)
       if exists file operation object, session is locked, else None for locking failed.
@@ -115,6 +115,10 @@ def ctxm_try_session_lock(session_id:str=None, timeout=60):
     if session_id:
         lock_name = session_id.replace("/", ".").replace(" ", ".") + ".lock"
         lock_file = os.path.join(folder_constants.FOLDER_LOCK, lock_name)
+
+    if not timeout:
+        timeout = env_tool.EnvReaderInstance.get("TOPSAILAI_SESSION_LOCK_WAIT_TIMEOUT", default=60, formatter=int)
+    timeout = max(1, timeout)
 
     msg = ""
     with ctxm_wait_flock(lock_file, to_delete_lock_file=True, timeout=timeout) as fp:

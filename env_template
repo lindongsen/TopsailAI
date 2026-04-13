@@ -121,6 +121,8 @@ PURE_SYSTEM_PROMPT=0
 # Lock session, agent_shell: start -> lock session -> refresh session -> agent_run
 TOPSAILAI_ENABLE_SESSION_LOCK=0
 
+TOPSAILAI_SESSION_LOCK_WAIT_TIMEOUT=1
+
 # Chat History Managers
 # Format: Manager classes separated by semicolons (';')
 # Each manager: class_name parameters separated by spaces (' ')

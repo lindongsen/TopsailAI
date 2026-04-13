@@ -105,9 +105,9 @@ class AgentChat(AgentChatBase):
             need_session_lock = env_tool.EnvReaderInstance.check_bool(
                 "TOPSAILAI_ENABLE_SESSION_LOCK", False,
             )
-        ctxm_tool = lock_tool.ctxm_void
+        ctxm_lock_tool = lock_tool.ctxm_void
         if need_session_lock:
-            ctxm_tool = lock_tool.ctxm_try_session_lock
+            ctxm_lock_tool = lock_tool.ctxm_try_session_lock
 
         # task
         task = None
@@ -149,7 +149,7 @@ class AgentChat(AgentChatBase):
             try:
                 with (
                     task_tool.ctxm_process_task(task),
-                    ctxm_tool() as data
+                    ctxm_lock_tool(timeout=0) as data
                     ):
                     # it need session lock but lock failed
                     if need_session_lock and data.get("session_id") and not data.get("fp"):

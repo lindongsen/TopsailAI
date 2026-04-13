@@ -45,18 +45,21 @@ def get_message_storage() -> Storage:
     return Storage(_message_storage.engine)
 
 
-def _has_user_messages_after(session_id: str, processed_msg_id: Optional[str]) -> bool:
+def _are_all_messages_assistant(
+    session_id: str, 
+    processed_msg_id: Optional[str], 
+    latest_msg_id: str
+) -> bool:
     """
-    Check if there are any user messages after processed_msg_id.
+    Check if all messages between processed_msg_id and latest_msg_id are assistant.
     
     Returns:
-        True if there are user messages after processed_msg_id
-        True if processed_msg_id is None (new session)
-        False if no user messages exist after processed_msg_id
+        True if all messages are assistant (or no messages exist)
+        False if any user message exists
     """
-    # New session - assume has messages
+    # New session - assume has work to do
     if not processed_msg_id:
-        return True
+        return False
     
     try:
         message_storage = get_message_storage()
@@ -65,29 +68,31 @@ def _has_user_messages_after(session_id: str, processed_msg_id: Optional[str]) -
         processed_msg = message_storage.message.get(session_id, processed_msg_id)
         if not processed_msg:
             # If processed_msg_id doesn't exist, treat as new session
-            return True
+            return False
         
-        # Query for any user message after processed_msg_id
+        # Query for messages after processed_msg_id
         from sqlalchemy import text
         query = text("""
-            SELECT EXISTS(
-                SELECT 1 FROM message 
-                WHERE session_id = :session_id 
-                AND create_time > :processed_create_time
-                AND role = 'user'
-            ) as has_user_msg
+            SELECT msg_id, role FROM message 
+            WHERE session_id = :session_id 
+            AND create_time > :processed_create_time
+            ORDER BY create_time ASC
         """)
         
         result = message_storage.session.execute(
             query, 
             {"session_id": session_id, "processed_create_time": processed_msg.create_time}
-        ).scalar()
+        ).fetchall()
         
-        return bool(result)
+        if not result:
+            return True  # No messages = all (zero) are assistant
+        
+        # Check if ALL are assistant
+        return all(row.role == "assistant" for row in result)
     except Exception as e:
-        logger.exception("Failed to check user messages: %s", e)
+        logger.exception("Failed to check messages: %s", e)
         # On error, assume there are messages to process
-        return True
+        return False
 
 
 # Request/Response models
@@ -160,10 +165,11 @@ async def list_sessions(
 @router.post("/process")
 async def process_session(request: ProcessSessionRequest):
     """
-    Process a session: 
-    Step 1: Check if there are user messages after processed_msg_id (avoid infinite loop)
-    Step 2: Execute TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER script
-    Step 3: Execute processor script if idle
+    Process a session:
+    Step 1: If processed_msg_id is the latest message, exit
+    Step 2: If all messages between processed_msg_id and latest are assistant, log and exit (avoid infinite loop)
+    Step 3: Execute TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER script - if idle, continue; if processing, exit
+    Step 4: Set latest message ID as TOPSAILAI_MSG_ID, execute processor script
     """
     try:
         session_id = request.session_id
@@ -199,7 +205,7 @@ async def process_session(request: ProcessSessionRequest):
         latest_message = messages[-1]
         latest_msg_id = latest_message.msg_id
         
-        # Check if processed_msg_id is the latest
+        # Step 1: If processed_msg_id is the latest message, exit
         if session.processed_msg_id == latest_msg_id:
             return {
                 "code": 0,
@@ -207,17 +213,17 @@ async def process_session(request: ProcessSessionRequest):
                 "message": "Session is already up to date"
             }
         
-        # Step 1: Check if there are user messages after processed_msg_id (avoid infinite loop)
-        has_user_msg = _has_user_messages_after(session_id, session.processed_msg_id)
-        if not has_user_msg:
-            logger.info("No user messages to process for session %s, skipping to avoid infinite loop", session_id)
+        # Step 2: If all messages between processed_msg_id and latest are assistant, exit (avoid infinite loop)
+        all_assistant = _are_all_messages_assistant(session_id, session.processed_msg_id, latest_msg_id)
+        if all_assistant:
+            logger.info("All messages are assistant, skipping session %s to avoid infinite loop", session_id)
             return {
                 "code": 0,
-                "data": {"session_id": session_id, "status": "skipped", "reason": "no_user_messages"},
-                "message": "No user messages to process"
+                "data": {"session_id": session_id, "status": "skipped", "reason": "all_assistant"},
+                "message": "All messages are assistant, skipping to avoid infinite loop"
             }
         
-        # Step 2: Check session state using TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER
+        # Step 3: Check session state using TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER
         from topsailai_server.agent_daemon.configer import get_config
         config = get_config()
         
@@ -230,14 +236,9 @@ async def process_session(request: ProcessSessionRequest):
                 "message": "TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER not configured"
             }
         
-        # Check session state
-        import os
-        env = os.environ.copy()
-        env["TOPSAILAI_SESSION_ID"] = session_id
-        
         worker_mgr = _worker_manager
         
-        # Check if session is idle - FIX: Use is_session_idle() which returns boolean
+        # Check if session is idle
         is_idle = worker_mgr.is_session_idle(session_id)
         
         if not is_idle:
@@ -275,10 +276,7 @@ async def process_session(request: ProcessSessionRequest):
             if msg.task_result:
                 task_content += f"[task_result]: {msg.task_result}\n"
         
-        # Get the latest pending message's msg_id
-        latest_pending_msg = pending_messages[-1]
-        
-        # Step 3: Trigger processor
+        # Step 4: Trigger processor with LATEST message ID (not pending)
         processor_script = config.processor_script
         if not processor_script:
             return {
@@ -287,17 +285,15 @@ async def process_session(request: ProcessSessionRequest):
                 "message": "TOPSAILAI_AGENT_DAEMON_PROCESSOR not configured"
             }
         
-        # Set environment variables for processor
-        env["TOPSAILAI_MSG_ID"] = latest_pending_msg.msg_id
-        env["TOPSAILAI_TASK"] = task_content
-        worker_mgr.start_processor(session_id, latest_pending_msg.msg_id, task_content)
+        # Set environment variables for processor - use latest_msg_id
+        worker_mgr.start_processor(session_id, latest_msg_id, task_content)
         
         return {
             "code": 0,
             "data": {
                 "session_id": session_id,
                 "status": "processing",
-                "msg_id": latest_pending_msg.msg_id
+                "msg_id": latest_msg_id
             },
             "message": "Processor started"
         }
