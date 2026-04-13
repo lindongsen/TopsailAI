@@ -35,14 +35,14 @@ PID_FILE = os.path.join(WORK_FOLDER, "topsailai_agent_daemon.pid")
 def init_env():
     """ Init Environ """
     for k, v in dict(
-        DEFAULT_HOST=DEFAULT_HOST,
-        DEFAULT_PORT=DEFAULT_PORT,
-        DEFAULT_DB_URL=DEFAULT_DB_URL,
-        DEFAULT_PROCESSOR=DEFAULT_PROCESSOR,
-        DEFAULT_SUMMARIZER=DEFAULT_SUMMARIZER,
-        DEFAULT_SESSION_STATE_CHECKER=DEFAULT_SESSION_STATE_CHECKER,
+        TOPSAILAI_AGENT_DAEMON_HOST=DEFAULT_HOST,
+        TOPSAILAI_AGENT_DAEMON_PORT=DEFAULT_PORT,
+        TOPSAILAI_AGENT_DAEMON_DB_URL=DEFAULT_DB_URL,
+        TOPSAILAI_AGENT_DAEMON_PROCESSOR=DEFAULT_PROCESSOR,
+        TOPSAILAI_AGENT_DAEMON_SUMMARIZER=DEFAULT_SUMMARIZER,
+        TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER=DEFAULT_SESSION_STATE_CHECKER,
     ).items():
-        if os.getenv(k) is None:
+        if not os.getenv(k):
             os.environ[k] = v
     return
 
@@ -109,14 +109,23 @@ def do_start(args):
     if args.session_state_checker:
         os.environ['TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER'] = args.session_state_checker
 
-    # Log the configuration
+    # Log the configuration using os.getenv to reflect actual values being used
     logger.info("Starting agent_daemon with configuration:")
-    logger.info("  host: %s", args.host or DEFAULT_HOST)
-    logger.info("  port: %s", args.port or DEFAULT_PORT)
-    logger.info("  db_url: %s", args.db_url or DEFAULT_DB_URL)
-    logger.info("  processor: %s", args.processor or "not set")
-    logger.info("  summarizer: %s", args.summarizer or "not set")
-    logger.info("  session_state_checker: %s", args.session_state_checker or "not set")
+    logger.info("  host: %s", os.getenv('TOPSAILAI_AGENT_DAEMON_HOST', DEFAULT_HOST))
+    logger.info("  port: %s", os.getenv('TOPSAILAI_AGENT_DAEMON_PORT', DEFAULT_PORT))
+    logger.info("  db_url: %s", os.getenv('TOPSAILAI_AGENT_DAEMON_DB_URL', DEFAULT_DB_URL))
+    logger.info("  processor: %s", os.getenv('TOPSAILAI_AGENT_DAEMON_PROCESSOR') or "not set")
+    logger.info("  session_state_checker: %s", os.getenv('TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER') or "not set")
+
+    required_vars = [
+        "TOPSAILAI_AGENT_DAEMON_PROCESSOR",
+        "TOPSAILAI_AGENT_DAEMON_SUMMARIZER",
+        "TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER"
+    ]
+    for var in required_vars:
+        if not os.getenv(var):
+            logger.error("Required environment variable %s is not set", var)
+            sys.exit(1)
 
     # Import main after setting environment variables
     from topsailai_server.agent_daemon.main import main

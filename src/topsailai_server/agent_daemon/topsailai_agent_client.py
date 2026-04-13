@@ -363,6 +363,61 @@ def do_client_process_session(args):
         print(f"Error: Cannot connect to server at {base_url}")
         return False
     except Exception as e:
+
+def do_client_delete_sessions(args):
+    """Delete sessions"""
+    base_url = f"http://{args.host}:{args.port}"
+    url = f"{base_url}/api/v1/session/delete"
+
+    # Get session IDs from positional args or --session-ids option
+    session_ids = []
+    if args.session_ids:
+        # Handle comma-separated string
+        if isinstance(args.session_ids, str):
+            session_ids = [s.strip() for s in args.session_ids.split(',') if s.strip()]
+        else:
+            session_ids = list(args.session_ids)
+    
+    if not session_ids:
+        print("Error: At least one session ID is required")
+        return False
+
+    data = {
+        "session_ids": session_ids,
+    }
+
+    try:
+        logger.info("Deleting %d session(s)", len(session_ids))
+        response = requests.post(url, json=data, timeout=10)
+
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("code") == 0:
+                data = result.get("data", {})
+                deleted_sessions = data.get("deleted_sessions", 0)
+                deleted_messages = data.get("deleted_messages", 0)
+                deleted_ids = data.get("session_ids", [])
+                
+                print(f"Deleted {deleted_sessions} session(s)")
+                print(f"Deleted {deleted_messages} message(s)")
+                print(f"Session IDs: {', '.join(deleted_ids)}")
+                
+                if args.verbose:
+                    print(f"Response: {json.dumps(result, indent=2)}")
+                return True
+            else:
+                print(f"Error: {result.get('message', 'Unknown error')}")
+                return False
+        else:
+            print(f"Error: HTTP {response.status_code} - {response.text}")
+            return False
+    except requests.exceptions.ConnectionError:
+        print(f"Error: Cannot connect to server at {base_url}")
+        return False
+    except Exception as e:
+        logger.exception("Failed to delete sessions: %s", e)
+        print(f"Error: {e}")
+        return False
         logger.exception("Failed to process session: %s", e)
         print(f"Error: {e}")
         return False

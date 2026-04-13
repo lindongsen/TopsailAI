@@ -131,6 +131,13 @@ parameters:
 response:
 - data: list[dict]
 
+#### DeleteSessions
+
+delete session and messages
+
+parameters:
+- session_ids, list[str]
+
 #### ProcessSession
 
 判断 session表中的processed_msg_id是否为最新的消息，如果不是，进入到执行 `TOPSAILAI_AGENT_DAEMON_PROCESSOR` 的流程。
@@ -208,13 +215,17 @@ response:
 
 ## 流程:`TOPSAILAI_AGENT_DAEMON_PROCESSOR`
 
-执行脚本`TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER`，返回idle则继续执行processor脚本，返回processing表示该会话的消息正在处理中、就退出。
+1. 如果 processed_msg_id 就是 最新消息，退出。
+2. 如果 processed_msg_id 到 最新消息 之间，全都是role=assistant，则打印日志提示信息并退出。避免无限循环。
+3. 设置必要的、相关的环境变量去执行脚本`TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER`，返回idle则继续，返回processing表示该会话的消息正在处理中、就退出。
+4. 将最新消息ID作为 TOPSAILAI_MSG_ID, 设置必要的、相关的环境变量，执行processor脚本
 
 ## About log
 
 Using this module: `from topsailai_server.agent_daemon import logger`
 
 默认的日志文件保存在：/topsailai/log/agent_daemon.log
+测试过程要特别关注日志文件的内容，确保及时发现BUG
 
 Example
 ```python
