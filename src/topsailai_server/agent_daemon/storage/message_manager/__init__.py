@@ -5,7 +5,7 @@
   Purpose:
 '''
 
-from .__base import MessageData, MessageStorageBase
+from .base import MessageData, MessageStorageBase
 from .sql import MessageSQLAlchemy
 
 __all__ = [

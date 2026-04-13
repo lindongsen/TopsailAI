@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session as SQLSession
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import desc
 
-from .__base import MessageStorageBase
-from .__base import MessageData
+from .base import MessageStorageBase
+from .base import MessageData
 
 Base = declarative_base()
 
@@ -218,7 +218,7 @@ class MessageSQLAlchemy(MessageStorageBase):
                 Message.msg_id == message_data.msg_id,
                 Message.session_id == message_data.session_id
             ).first()
-            
+
             if message:
                 message.message = message_data.message
                 message.role = message_data.role
