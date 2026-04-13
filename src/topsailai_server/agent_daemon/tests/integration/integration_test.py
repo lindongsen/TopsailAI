@@ -209,7 +209,7 @@ def test_health():
         return False
 
 
-def test_receive_message(msg_id, message, role="user", processed_msg_id=None):
+def receive_message_helper(msg_id, message, role="user", processed_msg_id=None):
     """Test ReceiveMessage API"""
     url = f"{BASE_URL}/api/v1/message"
     data = {
@@ -231,7 +231,7 @@ def test_receive_message(msg_id, message, role="user", processed_msg_id=None):
         return None
 
 
-def test_retrieve_messages():
+def retrieve_messages_helper():
     """Test RetrieveMessages API"""
     url = f"{BASE_URL}/api/v1/message"
     params = {
@@ -250,7 +250,7 @@ def test_retrieve_messages():
         return None
 
 
-def test_retrieve_tasks():
+def retrieve_tasks_helper():
     """Test RetrieveTasks API"""
     url = f"{BASE_URL}/api/v1/task"
     params = {
@@ -269,7 +269,7 @@ def test_retrieve_tasks():
         return None
 
 
-def test_set_task_result(session_id, processed_msg_id, task_id, task_result):
+def set_task_result_helper(session_id, processed_msg_id, task_id, task_result):
     """Test SetTaskResult API"""
     url = f"{BASE_URL}/api/v1/task"
     data = {
@@ -385,7 +385,7 @@ def test_concurrent_processing():
     
     # Try to send a message - it should not trigger processor due to "processing" state
     msg_content = "Test message during processing state"
-    result = test_receive_message("msg-concurrent", msg_content)
+    result = receive_message_helper("msg-concurrent", msg_content)
     
     # Clean up state file
     try:
@@ -431,7 +431,7 @@ def run_integration_test():
             
             # Step 2: Send message
             msg_content = f"Test message #{i} from integration test at {time.strftime('%H:%M:%S')}"
-            result = test_receive_message(f"msg-{i}", msg_content)
+            result = receive_message_helper(f"msg-{i}", msg_content)
             if result:
                 messages_sent.append(msg_content)
                 logger.info("Message %d sent successfully", i)
@@ -446,7 +446,7 @@ def run_integration_test():
             
             # Step 3: Retrieve messages
             print(f"\n--- Retrieving messages after sending message {i} ---")
-            messages = test_retrieve_messages()
+            messages = retrieve_messages_helper()
             if messages and messages.get('code') == 0:
                 # API returns list directly, not dict with 'items' key
                 data = messages.get('data', [])
@@ -464,7 +464,7 @@ def run_integration_test():
             
             # Step 4: Check for tasks
             print(f"\n--- Checking for tasks ---")
-            tasks = test_retrieve_tasks()
+            tasks = retrieve_tasks_helper()
             if tasks and tasks.get('code') == 0:
                 # API returns list directly, not dict with 'items' key
                 data = tasks.get('data', [])
@@ -486,7 +486,7 @@ def run_integration_test():
         
         # Test SetTaskResult API
         print_section("Testing SetTaskResult API")
-        task_result = test_set_task_result(
+        task_result = set_task_result_helper(
             session_id=SESSION_ID,
             processed_msg_id="msg-test-task",
             task_id="task-test-001",
