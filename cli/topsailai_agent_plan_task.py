@@ -23,6 +23,8 @@ from topsailai.workspace.task import task_tool
 from topsailai.workspace.agent_shell import get_agent_chat
 
 
+task_agent = None
+
 def gen_task_id():
     task_id = task_tool.generate_task_id()
     os.environ["TOPSAILAI_TASK_ID"] = task_id
@@ -35,9 +37,16 @@ def get_task_id():
         return task_id
     return gen_task_id()
 
-def execute_task(task:str) -> str:
+############################################################################
+# Plan Tools
+############################################################################
+
+def call_assistant(task:str) -> str:
     """
     This is a versatile AI assistant. Leave everything you can't solve to it.
+
+    [REMEMBER] When encountering difficulties(example: available tools are limited), DONOT ask the user, but call this assistant tool to solve them.
+    **Everything you cannot, you JUST delegate to the assistant tool**
 
     Args:
         task (str): content
@@ -48,13 +57,15 @@ def execute_task(task:str) -> str:
     assert task, "missing task content"
     task_id = get_task_id()
     return task_agent.run(
-        message=task, times=1, need_interactive=False,
+        message=task,
+        times=1,
+        need_session_lock=False,
         task_id=task_id,
     )
 
 def get_tool_map() -> dict:
     tool_map = {
-        "plan_tool-call_assistant": execute_task,
+        "plan_tool-call_assistant": call_assistant,
     }
     for tool_name, tool_func in file_readonly_tool.FILE_RO_TOOLS.items():
         tool_name = "file_readonly_tool-" + tool_name
@@ -65,23 +76,29 @@ def get_tool_map() -> dict:
 
     return tool_map
 
-# plan agent
-plan_agent = get_agent_chat(
-    disabled_tools=["agent_tool"],
-    tool_map=get_tool_map(),
-    agent_type="plan_and_execute",
-)
-
-# task agent
-task_agent = get_agent_chat(
-    disabled_tools=["agent_tool"],
-    need_input_message=False,
-)
-task_agent.hooks_for_final_answer.clear()
-
 def main():
-    plan_agent.run(times=1, need_interactive=False)
+    # plan agent
+    plan_agent = get_agent_chat(
+        disabled_tools=["agent_tool"],
+        tool_map=get_tool_map(),
+        agent_type="plan_and_execute",
+    )
 
+    global task_agent
+    # task agent
+    disabled_tools = ["agent_tool", "plan_tool-call_assistant"]
+    file_readonly_tool.reload()
+    if not file_readonly_tool.TOOLS:
+        disabled_tools.append("file_readonly_tool")
+    task_agent = get_agent_chat(
+        disabled_tools=disabled_tools,
+        need_input_message=False,
+    )
+    task_agent.hooks_for_final_answer.clear()
+
+    # run
+    plan_agent.run(times=1)
+    return
 
 if __name__ == "__main__":
     main()

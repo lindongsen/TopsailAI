@@ -46,8 +46,9 @@ class AgentChat(AgentChatBase):
 
             need_save_answer:bool=True,
             need_confirm_abort:bool=True,
-            need_interactive:bool=True,
+            need_interactive:bool=None,
             need_symbol_for_answer=None,
+            need_session_lock:bool=None,
             only_save_final:bool=False,
             task_id=None,
         ) -> str:
@@ -94,12 +95,16 @@ class AgentChat(AgentChatBase):
             self.first_message = message
 
         # env
+        if need_interactive is None:
+            need_interactive = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_INTERACTIVE_MODE", True)
+
         if need_symbol_for_answer is None:
             need_symbol_for_answer = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER", False)
 
-        need_session_lock = env_tool.EnvReaderInstance.check_bool(
-            "TOPSAILAI_ENABLE_SESSION_LOCK", False,
-        )
+        if need_session_lock is None:
+            need_session_lock = env_tool.EnvReaderInstance.check_bool(
+                "TOPSAILAI_ENABLE_SESSION_LOCK", False,
+            )
         ctxm_tool = lock_tool.ctxm_void
         if need_session_lock:
             ctxm_tool = lock_tool.ctxm_try_session_lock

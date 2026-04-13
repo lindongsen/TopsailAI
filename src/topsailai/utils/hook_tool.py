@@ -137,7 +137,7 @@ def call_hook_scripts(key:str, env_info:dict) -> dict:
                 cmd_parameters["env_info"].update(env_info)
 
             ret = cmd_tool.exec_cmd(**cmd_parameters)
-            logger.info("call hook ok: [%s], %s", key, ret)
+            logger.info("call hook done: [%s], [%s], %s", key, script_file, ret)
         except Exception as e:
             logger.exception("call hook failed: [%s], %s", key, e)
         finally:
