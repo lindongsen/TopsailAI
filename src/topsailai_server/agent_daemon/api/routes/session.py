@@ -2,109 +2,82 @@
   Author: DawsonLin
   Email: lin_dongsen@126.com
   Created: 2026-04-12
-  Purpose: Session API routes - FastAPI implementation
+  Purpose: Session API routes for agent_daemon
 '''
 
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
 from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.storage import Storage
-from topsailai_server.agent_daemon.api.utils import ApiResponse, success_response, error_response
+from topsailai_server.agent_daemon.worker.process_manager import WorkerManager
 
 # Create router
 router = APIRouter(prefix="/api/v1/session", tags=["session"])
 
-# Dependency injection for storage
-_storage = None
+# Global dependencies (set by app.py)
+_session_storage = None
+_message_storage = None
 _worker_manager = None
 
-def get_storage() -> Storage:
-    """Get storage instance."""
-    global _storage
-    if _storage is None:
-        from topsailai_server.agent_daemon.storage import Storage
-        _storage = Storage()
-    return _storage
-
-def get_worker_manager():
-    """Get worker manager instance."""
-    global _worker_manager
-    if _worker_manager is None:
-        from topsailai_server.agent_daemon.worker import WorkerManager
-        _worker_manager = WorkerManager()
-    return _worker_manager
 
 def set_dependencies(session_storage, message_storage, worker_manager):
-    """Set dependencies for the router."""
-    global _storage, _worker_manager
-    from topsailai_server.agent_daemon.storage import Storage
-    _storage = Storage(session_storage.engine)
+    """Set dependencies for the routes (called by app.py)"""
+    global _session_storage, _message_storage, _worker_manager
+    _session_storage = session_storage
+    _message_storage = message_storage
     _worker_manager = worker_manager
 
-# Pydantic models for request/response
-class SessionResponse(BaseModel):
-    session_id: str
-    session_name: Optional[str] = None
-    task: Optional[str] = None
-    create_time: Optional[datetime] = None
-    update_time: Optional[datetime] = None
-    processed_msg_id: Optional[str] = None
+
+def get_storage() -> Storage:
+    """Get Storage instance"""
+    if _session_storage is None:
+        raise RuntimeError("Storage not initialized")
+    return Storage(_session_storage.engine)
+
+
+def get_worker_manager() -> WorkerManager:
+    """Get WorkerManager instance"""
+    if _worker_manager is None:
+        raise RuntimeError("WorkerManager not initialized")
+    return _worker_manager
 
 
 class ProcessSessionRequest(BaseModel):
+    """Request model for ProcessSession endpoint"""
     session_id: str
 
 
-class ProcessSessionResponse(BaseModel):
-    session_id: str
-    processed: bool
-    message: str
-    worker_result: Optional[str] = None
-
-
-@router.get("", response_model=ApiResponse)
+@router.get("")
 async def list_sessions(
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    offset: int = 0,
-    limit: int = 1000,
-    sort_key: str = "create_time",
-    order_by: str = "desc",
-    storage: Storage = Depends(get_storage)
-) -> ApiResponse:
+    start_time: Optional[str] = Query(None, description="Filter by create_time >= start_time (ISO format)"),
+    end_time: Optional[str] = Query(None, description="Filter by create_time <= end_time (ISO format)"),
+    offset: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(1000, ge=1, le=10000, description="Maximum number of records to return"),
+    sort_key: str = Query("create_time", description="Field to sort by"),
+    order_by: str = Query("desc", description="Sort order: asc or desc")
+) -> dict:
     """
-    List sessions with filtering and pagination.
+    List sessions with filtering, sorting, and pagination.
     
-    Parameters:
-    - start_time: Filter sessions created after this time (ISO format)
-    - end_time: Filter sessions created before this time (ISO format)
-    - offset: Number of records to skip (default: 0)
-    - limit: Maximum number of records to return (default: 1000)
-    - sort_key: Field to sort by (default: create_time)
-    - order_by: Sort order - 'asc' or 'desc' (default: desc)
+    Args:
+        start_time: Filter sessions created after this time (ISO format)
+        end_time: Filter sessions created before this time (ISO format)
+        offset: Number of records to skip
+        limit: Maximum number of records to return
+        sort_key: Field to sort by (default: create_time)
+        order_by: Sort order (asc or desc, default: desc)
+    
+    Returns:
+        Unified response format with list of sessions
     """
+    logger.info("ListSessions request: start_time=%s, end_time=%s, offset=%d, limit=%d, sort_key=%s, order_by=%s",
+                start_time, end_time, offset, limit, sort_key, order_by)
+    
     try:
-        # Validate sort_key
-        allowed_sort_keys = ["create_time", "update_time", "session_id", "session_name"]
-        if sort_key not in allowed_sort_keys:
-            return error_response(f"Invalid sort_key. Allowed values: {allowed_sort_keys}")
-        
-        # Validate order_by
-        if order_by not in ["asc", "desc"]:
-            return error_response("Invalid order_by. Must be 'asc' or 'desc'")
-        
-        # Validate limit
-        if limit < 1:
-            return error_response("Limit must be greater than 0")
-        if limit > 1000:
-            return error_response("Limit must not exceed 1000")
-        
-        # Validate offset
-        if offset < 0:
-            return error_response("Offset must be non-negative")
+        storage = get_storage()
         
         # Parse time filters
         start_dt = None
@@ -114,16 +87,16 @@ async def list_sessions(
             try:
                 start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
             except ValueError:
-                return error_response("Invalid start_time format. Use ISO format.")
+                return {"code": 1, "data": None, "message": "Invalid start_time format. Use ISO format."}
         
         if end_time:
             try:
                 end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
             except ValueError:
-                return error_response("Invalid end_time format. Use ISO format.")
+                return {"code": 1, "data": None, "message": "Invalid end_time format. Use ISO format."}
         
         # Get sessions from storage
-        sessions = storage.session.list_sessions(
+        sessions = storage.list_sessions(
             start_time=start_dt,
             end_time=end_dt,
             offset=offset,
@@ -132,7 +105,7 @@ async def list_sessions(
             order_by=order_by
         )
         
-        # Convert to response format
+        # Convert to dict format
         session_list = []
         for session in sessions:
             session_list.append({
@@ -144,146 +117,121 @@ async def list_sessions(
                 "processed_msg_id": session.processed_msg_id
             })
         
-        logger.info("Listed %d sessions (offset=%d, limit=%d)", len(session_list), offset, limit)
-        return success_response(session_list)
-    
+        logger.info("ListSessions response: count=%d", len(session_list))
+        return {"code": 0, "data": session_list, "message": "success"}
+        
     except Exception as e:
-        logger.exception("Error listing sessions: %s", e)
-        return error_response(f"Failed to list sessions: {str(e)}")
+        logger.exception("ListSessions error: %s", e)
+        return {"code": 1, "data": None, "message": str(e)}
 
 
-@router.post("/process", response_model=ApiResponse)
-async def process_session(
-    request: ProcessSessionRequest,
-    storage: Storage = Depends(get_storage),
-    worker_manager = Depends(get_worker_manager)
-) -> ApiResponse:
+@router.post("/process")
+async def process_session(request: ProcessSessionRequest) -> dict:
     """
-    Process pending messages for a session.
+    Process a session - check if there are unprocessed messages and trigger processor.
     
-    Checks if session.processed_msg_id is the latest message.
-    If not, triggers TOPSAILAI_AGENT_DAEMON_PROCESSOR to process messages.
+    Args:
+        session_id: The session ID to process
     
-    Parameters:
-    - session_id: The session ID to process
+    Returns:
+        Unified response format with processing result
     """
+    logger.info("ProcessSession request: session_id=%s", request.session_id)
+    
     try:
-        session_id = request.session_id
+        storage = get_storage()
+        worker_manager = get_worker_manager()
         
         # Get session
-        session = storage.session.get(session_id)
+        session = storage.get_session(request.session_id)
         if not session:
-            logger.warning("Session not found: %s", session_id)
-            return error_response(f"Session not found: {session_id}")
+            return {"code": 1, "data": None, "message": f"Session not found: {request.session_id}"}
         
-        # Get latest message for this session
-        messages = storage.message.get_messages(
-            session_id=session_id,
-            limit=1,
+        # Get all messages for this session
+        messages = storage.list_messages(
+            session_id=request.session_id,
             sort_key="create_time",
-            order_by="desc"
+            order_by="asc"
         )
         
         if not messages:
-            logger.info("No messages found for session: %s", session_id)
-            return success_response({
-                "session_id": session_id,
-                "processed": False,
-                "message": "No messages in session"
-            })
+            return {"code": 0, "data": {"processed": False, "reason": "no_messages"}, "message": "No messages to process"}
         
-        # Get the latest message
-        latest_message = messages[0]
-        latest_msg_id = latest_message.msg_id
-        processed_msg_id = session.processed_msg_id
+        # Get latest message
+        latest_message = messages[-1]
         
-        # Check if already at latest
-        if processed_msg_id == latest_msg_id:
-            logger.info("Session %s is already at latest message: %s", session_id, latest_msg_id)
-            return success_response({
-                "session_id": session_id,
-                "processed": False,
-                "message": "Session is already at the latest message"
-            })
+        # Check if processed_msg_id is the latest
+        if session.processed_msg_id == latest_message.msg_id:
+            logger.info("Session %s already processed up to message %s", request.session_id, session.processed_msg_id)
+            return {"code": 0, "data": {"processed": False, "reason": "already_processed"}, "message": "Session is up to date"}
         
-        # Check session state - is it currently processing?
-        from topsailai_server.agent_daemon.configer import Configer
-        configer = Configer()
-        session_state_checker = configer.get_session_state_checker()
+        # Find unprocessed messages (after processed_msg_id)
+        unprocessed_messages = []
+        found_processed = session.processed_msg_id is None
         
+        for msg in messages:
+            if not found_processed:
+                unprocessed_messages.append(msg)
+            if msg.msg_id == session.processed_msg_id:
+                found_processed = True
+        
+        if not unprocessed_messages:
+            return {"code": 0, "data": {"processed": False, "reason": "no_unprocessed"}, "message": "No unprocessed messages"}
+        
+        # Combine unprocessed messages into a single task
+        combined_task = "\n".join([
+            f"[{msg.create_time.isoformat()}] {msg.message}"
+            for msg in unprocessed_messages
+        ])
+        
+        # Include task_id and task_result if present in the last message
+        last_msg = unprocessed_messages[-1]
+        if last_msg.task_id:
+            combined_task += f"\n\nTask ID: {last_msg.task_id}"
+        if last_msg.task_result:
+            combined_task += f"\nTask Result: {last_msg.task_result}"
+        
+        # Get processor script from environment
+        import os
+        processor_script = os.environ.get("TOPSAILAI_AGENT_DAEMON_PROCESSOR")
+        if not processor_script:
+            return {"code": 1, "data": None, "message": "TOPSAILAI_AGENT_DAEMON_PROCESSOR not configured"}
+        
+        # Get session state checker
+        session_state_checker = os.environ.get("TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER")
+        
+        # Check session state if checker is available
         if session_state_checker:
-            import os
-            env = os.environ.copy()
-            env["TOPSAILAI_SESSION_ID"] = session_id
-            
-            import subprocess
             try:
+                import subprocess
                 result = subprocess.run(
-                    [session_state_checker, session_id],
-                    env=env,
+                    [session_state_checker, request.session_id],
                     capture_output=True,
                     text=True,
                     timeout=30
                 )
                 state = result.stdout.strip().lower()
-                
                 if "processing" in state:
-                    logger.info("Session %s is currently processing, skipping", session_id)
-                    return success_response({
-                        "session_id": session_id,
-                        "processed": False,
-                        "message": "Session is currently processing another message"
-                    })
+                    logger.info("Session %s is currently processing", request.session_id)
+                    return {"code": 0, "data": {"processed": False, "reason": "session_processing"}, "message": "Session is being processed"}
             except Exception as e:
                 logger.warning("Failed to check session state: %s", e)
-                # Continue anyway - don't block processing
         
-        # Get unprocessed messages (after processed_msg_id)
-        unprocessed_messages = storage.message.get_unprocessed_messages(
-            session_id=session_id,
-            processed_msg_id=processed_msg_id
-        )
+        # Trigger processor
+        env = {
+            "TOPSAILAI_MSG_ID": last_msg.msg_id,
+            "TOPSAILAI_SESSION_ID": request.session_id,
+            "TOPSAILAI_TASK": combined_task
+        }
         
-        if not unprocessed_messages:
-            logger.info("No unprocessed messages for session: %s", session_id)
-            return success_response({
-                "session_id": session_id,
-                "processed": False,
-                "message": "No unprocessed messages"
-            })
+        try:
+            worker_manager.start_processor(processor_script, env)
+            logger.info("Started processor for session %s, message %s", request.session_id, last_msg.msg_id)
+            return {"code": 0, "data": {"processed": True, "msg_id": last_msg.msg_id}, "message": "Processor started"}
+        except Exception as e:
+            logger.exception("Failed to start processor: %s", e)
+            return {"code": 1, "data": None, "message": f"Failed to start processor: {e}"}
         
-        # Combine messages into a single task
-        combined_task = "\n".join([msg.message for msg in unprocessed_messages])
-        msg_id = unprocessed_messages[0].msg_id
-        
-        logger.info("Processing session %s with %d messages, starting from msg_id: %s",
-                    session_id, len(unprocessed_messages), msg_id)
-        
-        # Trigger the processor
-        processor_script = configer.get_processor()
-        
-        if not processor_script:
-            logger.error("No processor script configured")
-            return error_response("No processor script configured")
-        
-        # Set environment variables
-        env = os.environ.copy()
-        env["TOPSAILAI_MSG_ID"] = msg_id
-        env["TOPSAILAI_TASK"] = combined_task
-        env["TOPSAILAI_SESSION_ID"] = session_id
-        
-        # Start the processor
-        worker_manager.start_worker(processor_script, env)
-        
-        logger.info("Triggered processor for session %s", session_id)
-        
-        return success_response({
-            "session_id": session_id,
-            "processed": True,
-            "message": f"Processing {len(unprocessed_messages)} message(s)",
-            "worker_result": None
-        })
-    
     except Exception as e:
-        logger.exception("Error processing session: %s", e)
-        return error_response(f"Failed to process session: {str(e)}")
+        logger.exception("ProcessSession error: %s", e)
+        return {"code": 1, "data": None, "message": str(e)}

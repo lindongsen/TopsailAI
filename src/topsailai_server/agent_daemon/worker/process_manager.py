@@ -164,15 +164,39 @@ class WorkerManager:
         finally:
             lock.release()
 
-    def start_summarizer(self, session_id: str, task: str, summarizer_script: str) -> bool:
-        """Start summarizer for a session"""
+    def start_summarizer(self, session_id: str, task: str) -> subprocess.Popen:
+        """Start summarizer for a session.
+        
+        Args:
+            session_id: The session ID to summarize
+            task: The message content to summarize
+            
+        Returns:
+            subprocess.Popen object on success, None on failure
+        """
         try:
+            # Get summarizer script path from config
+            summarizer_script = self.config.summarizer_script
+            if not summarizer_script:
+                logger.error("Summarizer script not configured")
+                return None
+            
+            # Check if script exists and is executable
+            if not os.path.exists(summarizer_script):
+                logger.error("Summarizer script not found: %s", summarizer_script)
+                return None
+            
+            if not os.access(summarizer_script, os.X_OK):
+                logger.error("Summarizer script is not executable: %s", summarizer_script)
+                return None
+            
+            # Set environment variables
             env = os.environ.copy()
             env['TOPSAILAI_SESSION_ID'] = session_id
             env['TOPSAILAI_TASK'] = task
-
+            
             logger.info("Starting summarizer for session: %s", session_id)
-
+            
             process = subprocess.Popen(
                 [summarizer_script],
                 env=env,
@@ -180,10 +204,10 @@ class WorkerManager:
                 stderr=subprocess.PIPE
             )
             logger.info("Summarizer started for session: %s, pid: %d", session_id, process.pid)
-            return True
+            return process
         except Exception as e:
             logger.exception("Error starting summarizer: %s", e)
-            return False
+            return None
 
     def wait_for_completion(self, timeout: int = 30):
         """Wait for all running processes to complete"""

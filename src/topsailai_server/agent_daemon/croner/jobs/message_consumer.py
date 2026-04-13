@@ -46,7 +46,9 @@ class MessageConsumer(CronJobBase):
             engine = get_engine()
             self.storage = Storage(engine)
         if self.worker_manager is None:
-            self.worker_manager = WorkerManager()
+            from topsailai_server.agent_daemon.configer import get_config
+            config = get_config()
+            self.worker_manager = WorkerManager(config)
     
     def run(self):
         """Execute the message consumer job"""

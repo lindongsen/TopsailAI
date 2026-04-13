@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from topsailai_server.agent_daemon import logger
-from topsailai_server.agent_daemon.storage import Storage, MessageData
+from topsailai_server.agent_daemon.storage import Storage, MessageData, SessionData
 from topsailai_server.agent_daemon.worker import WorkerManager
 from topsailai_server.agent_daemon.api.utils import ApiResponse, success_response, error_response
 
@@ -33,12 +33,14 @@ def set_dependencies(session_storage, message_storage, worker_manager):
     _message_storage = message_storage
     _worker_manager = worker_manager
 
+
 def get_storage() -> Storage:
     """Get Storage instance"""
     if _session_storage is None:
         raise RuntimeError("Storage not initialized")
     # Get engine from session_storage
     return Storage(_session_storage.engine)
+
 
 def get_worker_manager() -> WorkerManager:
     """Get WorkerManager instance"""
@@ -54,17 +56,6 @@ class ReceiveMessageRequest(BaseModel):
     session_id: str
     role: str = "user"
     processed_msg_id: Optional[str] = None
-
-
-class RetrieveMessagesRequest(BaseModel):
-    """Request model for retrieving messages"""
-    session_id: str
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
-    offset: int = 0
-    limit: int = 1000
-    sort_key: str = "create_time"
-    order_by: str = "desc"
 
 
 class MessageResponse(BaseModel):
@@ -162,11 +153,12 @@ async def receive_message(
         # Create session if it doesn't exist
         session = storage.session.get(request.session_id)
         if not session:
-            storage.session.create(
+            session_data = SessionData(
                 session_id=request.session_id,
                 session_name=request.session_id,
                 task=None
             )
+            storage.session.create(session_data)
             logger.info("Session created: %s", request.session_id)
 
         logger.info("Message received: session_id=%s, msg_id=%s", request.session_id, msg_id)

@@ -18,6 +18,10 @@ from topsailai.logger import logger
 from topsailai.tools.base.common import add_tool
 from topsailai.tools import (
     file_readonly_tool,
+    skill_tool,
+)
+from topsailai.utils import (
+    env_tool,
 )
 from topsailai.workspace.task import task_tool
 from topsailai.workspace.agent_shell import get_agent_chat
@@ -123,24 +127,34 @@ def main():
     Returns:
         None
     """
-    # plan agent
-    plan_agent = get_agent_chat(
-        disabled_tools=["agent_tool"],
-        tool_map=get_tool_map(),
-        agent_type="plan_and_execute",
-    )
-
-    global task_agent
     # task agent
-    disabled_tools = ["agent_tool", "plan_tool-call_assistant"]
-    file_readonly_tool.reload()
-    if not file_readonly_tool.TOOLS:
-        disabled_tools.append("file_readonly_tool")
-    task_agent = get_agent_chat(
-        disabled_tools=disabled_tools,
-        need_input_message=False,
-    )
-    task_agent.hooks_for_final_answer.clear()
+    global task_agent
+
+    with env_tool.ctxm_hide_env(
+        [
+            "TOPSAILAI_TASK",
+        ]
+    ):
+        disabled_tools = ["agent_tool", "plan_tool-call_assistant"]
+        task_agent = get_agent_chat(
+            disabled_tools=disabled_tools,
+            need_input_message=False,
+        )
+        task_agent.hooks_for_final_answer.clear()
+
+        call_assistant.__doc__ += "\n>>> SKILL START\n" + skill_tool.PROMPT_PLUGIN_SKILLS + "\n<<< SKILL END"
+
+    # plan agent
+    with env_tool.ctxm_hide_env(
+        [
+            "TOPSAILAI_PLUGIN_SKILLS",
+        ]
+    ):
+        plan_agent = get_agent_chat(
+            disabled_tools=["agent_tool"],
+            tool_map=get_tool_map(),
+            agent_type="plan_and_execute",
+        )
 
     # run
     plan_agent.run(times=1)

@@ -6,8 +6,30 @@
 '''
 
 import os
+from contextlib import contextmanager
 
 from topsailai.logger import logger
+
+@contextmanager
+def ctxm_hide_env(keys:list[str]):
+    """ hide environ """
+    if isinstance(keys, str):
+        keys = [keys]
+
+    ori_data = {}
+    try:
+        for k in keys:
+            v = os.getenv(k)
+            if v is None:
+                continue
+            ori_data[k] = v
+            del os.environ[k]
+        yield ori_data
+    finally:
+        for k, v in ori_data.items():
+            os.environ[k] = v
+    return
+
 
 def get_session_id() -> str|None:
     """ get session """

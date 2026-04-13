@@ -215,3 +215,5 @@ STORY_FILE_ALL_TOOLS = dict(
     retrieve_stories=StoryFileInstance.retrieve_stories,
     delete_story=StoryFileInstance.delete_story,
 )
+
+FLAG_TOOL_ENABLED = False

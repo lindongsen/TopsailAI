@@ -5,14 +5,11 @@
   Purpose: Message summarizer cron job - summarizes messages daily
 '''
 
-import os
-import subprocess
 from datetime import datetime, timedelta
 from typing import Optional
 
 from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.storage import Storage
-from topsailai_server.agent_daemon.configer import get_config
 from topsailai_server.agent_daemon.worker import WorkerManager
 from topsailai_server.agent_daemon.croner.jobs.__base import CronJobBase
 
@@ -48,8 +45,11 @@ class MessageSummarizer(CronJobBase):
             from topsailai_server.agent_daemon.configer import get_engine
             engine = get_engine()
             self.storage = Storage(engine)
-        # Get config
-        self.config = get_config()
+        # Initialize worker_manager if not provided
+        if self.worker_manager is None:
+            from topsailai_server.agent_daemon.configer import get_config
+            config = get_config()
+            self.worker_manager = WorkerManager(config)
     
     def run(self):
         """Execute the message summarizer job"""
@@ -97,30 +97,19 @@ class MessageSummarizer(CronJobBase):
                 for msg in messages
             ])
             
-            # Set environment variables
-            env = os.environ.copy()
-            env['TOPSAILAI_SESSION_ID'] = session_id
-            env['TOPSAILAI_TASK'] = combined_task
-            
-            # Call summarizer script
+            # Call summarizer using WorkerManager
             logger.info("Calling summarizer for session_id=%s, message_count=%d", 
                        session_id, len(messages))
             
-            result = subprocess.run(
-                [self.config.summarizer_script],
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=300  # 5 minutes timeout
+            result = self.worker_manager.start_summarizer(
+                session_id=session_id,
+                task=combined_task
             )
             
-            if result.returncode == 0:
-                logger.info("Summarizer completed for session_id=%s", session_id)
+            if result is not None:
+                logger.info("Summarizer started for session_id=%s", session_id)
             else:
-                logger.warning("Summarizer failed for session_id=%s: %s", 
-                              session_id, result.stderr)
+                logger.warning("Failed to start summarizer for session_id=%s", session_id)
         
-        except subprocess.TimeoutExpired:
-            logger.error("Summarizer timed out for session_id=%s", session_id)
         except Exception as e:
             logger.exception("Error summarizing session %s: %s", session_id, e)
