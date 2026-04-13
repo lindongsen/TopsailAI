@@ -340,7 +340,6 @@ TOPSAILAI_MEMORY_WORKSPACE=""
 # DONOT SET IT, only for runtime
 # TOPSAILAI_TASK_ID=""
 
-
 # =============================================================================
 # Runtime Configuration, DONOT SETTING THEM
 # =============================================================================

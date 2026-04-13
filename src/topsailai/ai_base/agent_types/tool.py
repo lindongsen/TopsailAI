@@ -15,6 +15,9 @@ from topsailai.utils.thread_tool import (
 from topsailai.utils.thread_local_tool import (
     get_agent_name,
 )
+from topsailai.utils import (
+    print_tool,
+)
 
 from . import context as agent_ctx
 from . import exception as agent_exception
@@ -81,6 +84,12 @@ def exec_tool_func(tool_func, args):
         logger.exception(e)
     return result
 
+
+class ExceptionStepCallEnd(Exception):
+    """
+    the step is end
+    """
+    pass
 
 class StepCallTool(StepCallBase):
     """
@@ -274,3 +283,47 @@ class StepCallTool(StepCallBase):
         self.tool_msg = result
         self.code = self.CODE_STEP_FINAL
         return
+
+    def pre_execute(self, step:dict, tools:dict, response:list, index:int, rsp_msg_obj=None, **_):
+        """
+
+        Returns:
+            tuple(step_name, step)
+        Exception:
+            ExceptionStepCallEnd, current step is end
+        """
+        step_name = None
+        try:
+            # hook
+            new_step = self.hook_pre_step(step, rsp_msg_obj)
+            if new_step:
+                step = new_step
+
+            step_name = step["step_name"]
+        except KeyboardInterrupt as e:
+            raise e
+        except Exception as e:
+            self.user_msg = "missing step_name"
+            self.code = self.CODE_STEP_FINAL
+            raise ExceptionStepCallEnd(e)
+        finally:
+            ori_step_name = step_name
+            keys = ["thought", "inquiry"]
+            if self._last_step_name and step_name:
+                if self._last_step_name in keys \
+                    and step_name == self._last_step_name \
+                    and len(response) == 1 \
+                    and self._last_step_count == 1:
+                    # only thought, duplicate found
+                    step_name = "final"
+                    print_tool.print_error(f"LLM mistake: give final due to duplicate to [{ori_step_name}] only")
+
+                if step_name in keys:
+                    if len(response) == 1:
+                        if step.get("raw_text") and 'final_answer' in step["raw_text"]:
+                            step_name = "final"
+                            print_tool.print_error("LLM mistake: give final due to found 'final_answer'")
+
+        self._last_step_name = step_name
+        self._last_step_count = len(response)
+        return (step_name, step)

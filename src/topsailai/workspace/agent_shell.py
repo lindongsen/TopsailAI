@@ -39,7 +39,14 @@ from topsailai.workspace.agent.agent_shell_base import (
 )
 
 
-def get_ai_agent(system_prompt:str="", to_dump_messages:bool=False, disabled_tools:list[str]=None, agent_type=None):
+def get_ai_agent(
+        system_prompt:str="",
+        to_dump_messages:bool=False,
+        disabled_tools:list[str]=None,
+        agent_type=None,
+        enabled_tools:list[str]=None,
+        tool_map:dict=None,
+    ):
     """Create and return an AI agent instance in ReAct mode.
 
     Initializes an AgentRun instance with the specified configuration.
@@ -50,6 +57,8 @@ def get_ai_agent(system_prompt:str="", to_dump_messages:bool=False, disabled_too
         to_dump_messages: Whether to enable message dumping for debugging.
         disabled_tools: List of tool names to exclude from the agent.
         agent_type: Type of agent to create. Defaults to configuration or ReAct.
+        enabled_tools: List of tool names to include from the agent.
+        tool_map: extra tool, key is tool_name, value is tool_func.
 
     Returns:
         AgentRun: An initialized AI agent instance.
@@ -66,8 +75,9 @@ def get_ai_agent(system_prompt:str="", to_dump_messages:bool=False, disabled_too
     agent_type = get_agent_type(agent_type)
     agent = AgentRun(
         agent_type.SYSTEM_PROMPT + "\n---\n" + system_prompt,
-        tools=None,
+        tools=tool_map,
         agent_name=os.getenv("TOPSAILAI_AGENT_NAME") or agent_type.AGENT_NAME,
+        tool_kits=enabled_tools,
         excluded_tool_kits=env_disabled_tools if isinstance(env_disabled_tools, list) else disabled_tools,
     )
     agent.agent_type = agent_type_name or agent_type.AGENT_NAME
@@ -86,6 +96,8 @@ def get_agent_chat(
         system_prompt:str="",
         to_dump_messages:bool=False,
         disabled_tools:list[str]=None,
+        enabled_tools:list[str]=None,
+        tool_map:dict=None,
         agent_type:str=None,
 
         agent_name:str=None,
@@ -195,6 +207,8 @@ def get_agent_chat(
         system_prompt=system_prompt,
         to_dump_messages=to_dump_messages,
         disabled_tools=disabled_tools,
+        enabled_tools=enabled_tools,
+        tool_map=tool_map,
         agent_type=agent_type,
     )
 

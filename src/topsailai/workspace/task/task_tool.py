@@ -24,6 +24,19 @@ from topsailai.workspace.folder_constants import (
 from topsailai.workspace.print_tool import TeeOutput
 
 
+def generate_task_id() -> str:
+    """
+    Generate a task id
+
+    Returns:
+        str:
+    """
+    parts = [
+        env_tool.get_session_id() or "topsailai",
+        time_tool.get_current_date(True),
+    ]
+    return '.'.join(parts)
+
 class TaskData(object):
     """
     Data class to store task information.

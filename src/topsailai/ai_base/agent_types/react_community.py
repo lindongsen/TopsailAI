@@ -34,7 +34,7 @@ if env_tool.is_use_tool_calls():
 AGENT_NAME = "AgentReActCommunity"
 
 __all__ = [
-    SYSTEM_PROMPT,
-    AGENT_NAME,
-    AgentStepCall,
+    "SYSTEM_PROMPT",
+    "AGENT_NAME",
+    "AgentStepCall",
 ]

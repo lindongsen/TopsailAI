@@ -11,6 +11,7 @@ from topsailai.utils import (
 from topsailai.prompt_hub.prompt_tool import PromptHubExtractor, read_prompt
 from .tool import (
     StepCallTool,
+    ExceptionStepCallEnd,
 )
 
 # define prompt of Plan-And-Execute framework
@@ -50,7 +51,17 @@ class StepCall4PlanAndExecute(StepCallTool):
     """ running on Plan-And-Execute mode """
     def _execute(self, step:dict, tools:dict, response:list, index:int, rsp_msg_obj=None, **_):
         """ acting steps """
-        step_name = step.get("step_name", "")
+        try:
+            step_name, step = self.pre_execute(
+                step=step,
+                tools=tools,
+                response=response,
+                index=index,
+                rsp_msg_obj=rsp_msg_obj,
+                **_
+            )
+        except ExceptionStepCallEnd:
+            return
 
         if step_name.startswith("final"):
             self.complete_final(
@@ -63,6 +74,10 @@ class StepCall4PlanAndExecute(StepCallTool):
                 step=step,
                 tools=tools,
                 rsp_msg_obj=rsp_msg_obj,
+            )
+        elif step_name == "thought":
+            self.complete_step_thought(
+                response=response
             )
         else:
             self.complete_cannot_handle(
@@ -79,7 +94,7 @@ class StepCall4PlanAndExecute(StepCallTool):
 AgentStepCall = StepCall4PlanAndExecute
 
 __all__ = [
-    SYSTEM_PROMPT,
-    AGENT_NAME,
-    AgentStepCall,
+    "SYSTEM_PROMPT",
+    "AGENT_NAME",
+    "AgentStepCall",
 ]

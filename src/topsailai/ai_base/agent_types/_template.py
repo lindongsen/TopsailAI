@@ -14,7 +14,7 @@ AGENT_NAME = ""
 AgentStepCall = object # StepCall4XXX
 
 __all__ = [
-    SYSTEM_PROMPT,
-    AGENT_NAME,
-    AgentStepCall,
+    "SYSTEM_PROMPT",
+    "AGENT_NAME",
+    "AgentStepCall",
 ]
