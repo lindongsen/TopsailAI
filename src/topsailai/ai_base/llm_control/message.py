@@ -328,6 +328,14 @@ def format_response(response, rsp_obj=None, messages=None):
     if response and format_tool.TOPSAILAI_FORMAT_PREFIX not in response \
         and response[0] not in "[]{}" \
         and (response[-1] not in "[]{}" or response[:5] not in "[{"):
+            # case: <FunctionCall>
+            if '\n<FunctionCall>\n' in response or \
+                response.startswith("<FunctionCall>\n") or \
+                response.endswith("</FunctionCall>"):
+                    _msg = "llm maybe mistake: cannot to parse action"
+                    print_error(_msg)
+                    response += "\n---\n" + _msg
+
             print_error("fix llm mistake: maybe only thought")
             step_name = format_tool.TOPSAILAI_STEP_THINK
 
