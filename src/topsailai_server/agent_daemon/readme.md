@@ -74,13 +74,14 @@ msg3  -> processed_msg_id
 msg4
 msg5
 
-msg3 是最近处理过的消息点，那么就会自动将 msg3 及其之后的消息（msg4, msg5）合成一条消息并处理这条消息。
+msg3 是最近处理过的消息点，那么就会自动将 msg3 及其之后的消息（msg4, msg5）合成一条消息作为“待处理消息”并处理这条消息。
 当`TOPSAILAI_AGENT_DAEMON_PROCESSOR`执行完毕后，它会主动调用API'告知'结果，processed_msg_id 就会变成 msg5。
 在消息处理完毕后，有两种可能结果：
 1. 直接产生一条新消息msg6，这种情况是因为消息可以直接做出回答，所以无需生成任务去处理。
 2. msg5 在message表中对应的记录会产生 task_id，会产生task_result。
 
 值得注意：如果 msg3 还没处理完成，那么后续的消息不会被处理。
+如果某个消息中存在 task_id 和 task_result,要把它们也作为“待处理消息”的一部分，不可省略。
 ```
 
 ## Component: Configer
@@ -127,6 +128,9 @@ parameters:
 - sort_key: str, default is create_time
 - order_by: str, desc or asc, default is desc
 
+response:
+- data: list[dict]
+
 #### ProcessSession
 
 判断 session表中的processed_msg_id是否为最新的消息，如果不是，进入到执行 `TOPSAILAI_AGENT_DAEMON_PROCESSOR` 的流程。
@@ -157,6 +161,9 @@ parameters:
 - sort_key: str, default is create_time
 - order_by: str, desc or asc, default is desc
 
+response:
+- data: list[dict]
+
 ### task, uri_path:api/v1/task
 
 #### SetTaskResult
@@ -181,6 +188,9 @@ parameters:
 - limit: int, default 1000
 - sort_key: str, default is create_time
 - order_by: str, desc or asc, default is desc
+
+response:
+- data: list[dict]
 
 ## Component: Croner
 

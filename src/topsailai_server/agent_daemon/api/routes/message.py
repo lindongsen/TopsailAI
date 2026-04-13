@@ -141,8 +141,8 @@ async def receive_message(
     3. Checks if the session's processed_msg_id is at the latest message
     4. If not, triggers the processor to handle unprocessed messages
     """
+    msg_id = None
     try:
-        # Generate msg_id
         msg_id = str(uuid.uuid4())
 
         # Create message data
@@ -162,18 +162,28 @@ async def receive_message(
         # Create session if it doesn't exist
         session = storage.session.get(request.session_id)
         if not session:
-            session = storage.session.get_or_create(
+            storage.session.create(
                 session_id=request.session_id,
                 session_name=request.session_id,
                 task=None
             )
             logger.info("Session created: %s", request.session_id)
 
-        logger.info("Message received: session_id=%s, msg_id=%s",
-                   request.session_id, msg_id)
+        logger.info("Message received: session_id=%s, msg_id=%s", request.session_id, msg_id)
 
-        # Check if we need to process messages
-        await _check_and_process_messages(request.session_id, storage, worker_manager)
+        # Update session's processed_msg_id if provided
+        # When processed_msg_id is provided, it means the caller is explicitly telling us
+        # that this message (or a previous message) has been processed. In this case,
+        # we should NOT automatically trigger the processor again, as that would cause
+        # a loop or duplicate processing.
+        if request.processed_msg_id:
+            storage.session.update_processed_msg_id(request.session_id, request.processed_msg_id)
+            logger.info("Updated processed_msg_id for session %s: %s", 
+                       request.session_id, request.processed_msg_id)
+        else:
+            # Only check for automatic processing when processed_msg_id is NOT provided
+            # (i.e., when a new user message comes in that needs processing)
+            await _check_and_process_messages(request.session_id, storage, worker_manager)
 
         return success_response(data={"msg_id": msg_id}, message="Message received")
 
