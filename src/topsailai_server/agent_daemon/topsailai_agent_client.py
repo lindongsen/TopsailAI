@@ -363,6 +363,10 @@ def do_client_process_session(args):
         print(f"Error: Cannot connect to server at {base_url}")
         return False
     except Exception as e:
+        logger.exception("Failed to process session: %s", e)
+        print(f"Error: {e}")
+        return False
+
 
 def do_client_delete_sessions(args):
     """Delete sessions"""
@@ -416,9 +420,6 @@ def do_client_delete_sessions(args):
         return False
     except Exception as e:
         logger.exception("Failed to delete sessions: %s", e)
-        print(f"Error: {e}")
-        return False
-        logger.exception("Failed to process session: %s", e)
         print(f"Error: {e}")
         return False
 
@@ -530,6 +531,12 @@ def cli():
     process_session_parser = subparsers.add_parser('process-session', help='Process pending messages for a session')
     process_session_parser.add_argument('--session-id', type=str, default=DEFAULT_SESSION_ID, help=f'Session ID (default: {DEFAULT_SESSION_ID})')
     process_session_parser.set_defaults(func=do_client_process_session)
+
+    # Delete sessions
+    delete_sessions_parser = subparsers.add_parser('delete-sessions', help='Delete sessions')
+    delete_sessions_parser.add_argument('session_ids', nargs='*', help='Session IDs to delete (positional args)')
+    delete_sessions_parser.add_argument('--session-ids', type=str, help='Comma-separated session IDs to delete')
+    delete_sessions_parser.set_defaults(func=do_client_delete_sessions)
 
     # Parse arguments
     args = parser.parse_args()
