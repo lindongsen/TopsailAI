@@ -78,6 +78,12 @@ async def _check_and_process_messages(
     Check if there are unprocessed messages and start processor if needed.
 
     This is called after receiving a message or setting a task result.
+    
+    Flow:
+    1. If processed_msg_id is the latest message -> exit
+    2. If all messages from processed_msg_id to latest are role=assistant -> log and exit (avoid infinite loop)
+    3. Run TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER -> if processing, exit
+    4. Start the processor
     """
     try:
         # Get session
@@ -92,25 +98,35 @@ async def _check_and_process_messages(
             logger.warning("No messages found for session: %s", session_id)
             return
 
-        # Check if processed_msg_id is at the latest message
-        if session.processed_msg_id != latest_message.msg_id:
-            # Check if session is idle
-            if worker_manager.is_session_idle(session_id):
-                # Get unprocessed messages
-                unprocessed = storage.message.get_unprocessed_messages(session_id, session.processed_msg_id)
-                if unprocessed:
-                    # Combine unprocessed messages into a task
-                    task = "\n".join([msg.message for msg in unprocessed])
-                    # Start processor with the first unprocessed message
-                    first_msg = unprocessed[0]
-                    logger.info("Starting processor for session: %s, msg_id: %s", session_id, first_msg.msg_id)
-                    worker_manager.start_processor(
-                        session_id=session_id,
-                        msg_id=first_msg.msg_id,
-                        task=task
-                    )
-            else:
-                logger.info("Session %s is processing, skipping", session_id)
+        # Step 1: Check if processed_msg_id is at the latest message
+        if session.processed_msg_id == latest_message.msg_id:
+            logger.debug("Session %s is up to date", session_id)
+            return
+
+        # Get unprocessed messages
+        unprocessed = storage.message.get_unprocessed_messages(session_id, session.processed_msg_id)
+        if not unprocessed:
+            logger.debug("No unprocessed messages for session: %s", session_id)
+            return
+        
+        # Step 2: Check if ALL unprocessed messages are assistant (avoid infinite loop)
+        if all(msg.role == "assistant" for msg in unprocessed):
+            logger.info("All unprocessed messages are assistant, skipping session %s to avoid infinite loop", session_id)
+            return
+
+        # Step 3: Check if session is idle
+        if not worker_manager.is_session_idle(session_id):
+            logger.info("Session %s is processing, skipping", session_id)
+            return
+
+        # Step 4: Combine unprocessed messages into a task and start processor
+        task = "\n".join([msg.message for msg in unprocessed])
+        logger.info("Starting processor for session: %s, msg_id: %s", session_id, latest_message.msg_id)
+        worker_manager.start_processor(
+            session_id=session_id,
+            msg_id=latest_message.msg_id,  # Use latest message ID
+            task=task
+        )
 
     except Exception as e:
         logger.exception("Error checking/processing messages: %s", e)

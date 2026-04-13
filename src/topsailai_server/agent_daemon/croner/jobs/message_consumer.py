@@ -25,7 +25,7 @@ class MessageConsumer(CronJobBase):
     4. If so, start the processor for that session
     """
     
-    def __init__(
+    def __init__( 
         self, 
         interval_seconds: int = 60,
         storage: Optional[Storage] = None,
@@ -92,16 +92,9 @@ class MessageConsumer(CronJobBase):
                 logger.warning("No messages found for session: %s", session_id)
                 return
             
-            # Check if there are unprocessed messages
+            # Step 1: Check if there are unprocessed messages
             if session.processed_msg_id == latest_message.msg_id:
                 logger.debug("Session %s is up to date", session_id)
-                return
-            
-            # Check session state
-            session_state = self.worker_manager.check_session_state(session_id)
-            
-            if session_state != "idle":
-                logger.info("Session %s is currently processing, skipping", session_id)
                 return
             
             # Get unprocessed messages
@@ -114,6 +107,19 @@ class MessageConsumer(CronJobBase):
                 logger.debug("No unprocessed messages for session: %s", session_id)
                 return
             
+            # Step 2: Check if all unprocessed messages are from assistant (avoid infinite loop)
+            if all(msg.role == "assistant" for msg in unprocessed_messages):
+                logger.info("All unprocessed messages are assistant, skipping session %s to avoid infinite loop", session_id)
+                return
+            
+            # Step 3: Check session state
+            session_state = self.worker_manager.check_session_state(session_id)
+            
+            if session_state != "idle":
+                logger.info("Session %s is currently processing, skipping", session_id)
+                return
+            
+            # Step 4: Start processor
             # Combine messages into a single task
             combined_task = "\n".join([msg.message for msg in unprocessed_messages])
             

@@ -216,7 +216,7 @@ response:
 ## 流程:`TOPSAILAI_AGENT_DAEMON_PROCESSOR`
 
 1. 如果 processed_msg_id 就是 最新消息，退出。
-2. 如果 processed_msg_id 到 最新消息 之间，全都是role=assistant，则打印日志提示信息并退出。避免无限循环。
+2. 如果 processed_msg_id 到 最新消息 之间，不包括 processed_msg_id, 包括 最新消息，全都是role=assistant，则打印日志提示信息并退出。避免无限循环。
 3. 设置必要的、相关的环境变量去执行脚本`TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER`，返回idle则继续，返回processing表示该会话的消息正在处理中、就退出。
 4. 将最新消息ID作为 TOPSAILAI_MSG_ID, 设置必要的、相关的环境变量，执行processor脚本
 
