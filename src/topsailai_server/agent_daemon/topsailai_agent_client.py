@@ -283,6 +283,45 @@ def do_client_get_tasks(args):
         print(f"Error: {e}")
         return False
 
+def do_client_process_session(args):
+    """Process pending messages for a session"""
+    base_url = f"http://{args.host}:{args.port}"
+    url = f"{base_url}/api/v1/session/process"
+
+    data = {
+        "session_id": args.session_id,
+    }
+
+    try:
+        logger.info("Processing session %s", args.session_id)
+        response = requests.post(url, json=data, timeout=30)
+
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("code") == 0:
+                data = result.get("data", {})
+                processed = data.get("processed", False)
+                message = data.get("message", "")
+                print(f"Session processed: {processed}")
+                print(f"Message: {message}")
+                if args.verbose:
+                    print(f"Response: {json.dumps(result, indent=2)}")
+                return True
+            else:
+                print(f"Error: {result.get('message', 'Unknown error')}")
+                return False
+        else:
+            print(f"Error: HTTP {response.status_code} - {response.text}")
+            return False
+    except requests.exceptions.ConnectionError:
+        print(f"Error: Cannot connect to server at {base_url}")
+        return False
+    except Exception as e:
+        logger.exception("Failed to process session: %s", e)
+        print(f"Error: {e}")
+        return False
+
+
 
 def cli():
     """Client CLI entry point"""
@@ -363,6 +402,11 @@ def cli():
     get_tasks_parser.add_argument('--sort-key', type=str, default='create_time', help='Sort key (default: create_time)')
     get_tasks_parser.add_argument('--order-by', type=str, default='desc', choices=['asc', 'desc'], help='Order by (default: desc)')
     get_tasks_parser.set_defaults(func=do_client_get_tasks)
+
+    # Process session
+    process_session_parser = subparsers.add_parser('process-session', help='Process pending messages for a session')
+    process_session_parser.add_argument('--session-id', type=str, default=DEFAULT_SESSION_ID, help=f'Session ID (default: {DEFAULT_SESSION_ID})')
+    process_session_parser.set_defaults(func=do_client_process_session)
 
     # Parse arguments
     args = parser.parse_args()

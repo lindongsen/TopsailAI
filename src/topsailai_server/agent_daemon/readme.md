@@ -127,6 +127,13 @@ parameters:
 - sort_key: str, default is create_time
 - order_by: str, desc or asc, default is desc
 
+#### ProcessSession
+
+判断 session表中的processed_msg_id是否为最新的消息，如果不是，进入到执行 `TOPSAILAI_AGENT_DAEMON_PROCESSOR` 的流程。
+
+parameters:
+- session_id: str, required
+
 ### message, uri_path:api/v1/message
 
 #### ReceiveMessage

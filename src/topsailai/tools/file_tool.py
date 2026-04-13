@@ -389,6 +389,8 @@ def insert_data_to_file(file_path: str, data: str, line_num: int, before_or_afte
     with open(file_path, 'r') as f:
         lines = f.readlines()
 
+    line_num = int(line_num)
+
     # Calculate insertion index (0-based)
     # line_num is 1-based, so subtract 1 to get 0-based index
     insert_index = line_num - 1
