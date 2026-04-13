@@ -24,6 +24,7 @@ from topsailai.utils.thread_local_tool import (
 )
 from topsailai.utils import (
     file_tool,
+    env_tool,
 )
 from topsailai.workspace.input_tool import get_message
 from topsailai.context import ctx_manager
@@ -32,21 +33,21 @@ from topsailai.context import ctx_manager
 class LLMChat(object):
     """
     A class for managing chat interactions with a Large Language Model (LLM).
-    
+
     This class handles the conversation flow between the user and the LLM,
     including message management, prompt control, and response handling.
-    
+
     Attributes:
         prompt_ctl (PromptBase): The prompt controller managing conversation messages.
         llm_model (LLMModelBase): The LLM model instance for generating responses.
         first_message (str): The first message in the conversation.
         last_message (str): The last response received from the LLM.
     """
-    
+
     def __init__(self, prompt_ctl: PromptBase, llm_model: LLMModelBase):
         """
         Initialize the LLMChat instance.
-        
+
         Args:
             prompt_ctl (PromptBase): The prompt controller for managing messages.
             llm_model (LLMModelBase): The LLM model instance for generating responses.
@@ -61,17 +62,17 @@ class LLMChat(object):
     def chat(self, message: str = "", need_print: bool = True) -> str:
         """
         Send a message to the LLM and receive a response.
-        
+
         This method adds the user's message to the prompt controller, updates
         the environment variables, sends the conversation to the LLM, and
         returns the assistant's response.
-        
+
         Args:
             message (str, optional): The user's message to send to the LLM.
                 Defaults to empty string.
             need_print (bool, optional): Whether to print the message before
                 sending. Defaults to True.
-        
+
         Returns:
             str: The LLM's response message, or empty string if no response.
         """
@@ -103,12 +104,12 @@ def get_llm_chat(
     ) -> LLMChat:
     """
     Create and return an LLMChat instance for interacting with a Large Language Model.
-    
+
     This factory function initializes an LLM chat session with the specified parameters.
     It handles session management, prompt configuration, and model initialization.
     If no session_id is provided, it will attempt to retrieve it from environment variables.
     If no message is provided, it will prompt the user for input.
-    
+
     Args:
         message (str, optional): The initial message to send to the LLM.
             If None and need_input_message is True, will prompt for user input.
@@ -132,13 +133,13 @@ def get_llm_chat(
             sending to LLM. Defaults to True.
         func_formatter_messages (callable, optional): A function to format messages
             from session history. Defaults to None.
-    
+
     Returns:
         LLMChat: An initialized LLMChat instance ready for conversation.
-    
+
     Raises:
         AssertionError: If message is required but not provided.
-    
+
     Example:
         >>> chat = get_llm_chat(message="Hello, how are you?")
         >>> response = chat.chat()
@@ -149,7 +150,7 @@ def get_llm_chat(
 
     # session
     if session_id is None:
-        session_id = os.getenv("SESSION_ID")
+        session_id = env_tool.get_session_id()
 
     messages_from_session = None
     if session_id:

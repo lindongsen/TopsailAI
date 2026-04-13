@@ -13,6 +13,9 @@ from topsailai.utils.file_tool import (
     delete_file,
     ctxm_wait_flock,
 )
+from topsailai.utils import (
+    env_tool,
+)
 
 from . import folder_constants
 
@@ -106,7 +109,7 @@ def ctxm_try_session_lock(session_id:str=None, timeout=60):
       if exists file operation object, session is locked, else None for locking failed.
     """
     if not session_id:
-        session_id = os.getenv("SESSION_ID")
+        session_id = env_tool.get_session_id()
 
     lock_file = None
     if session_id:

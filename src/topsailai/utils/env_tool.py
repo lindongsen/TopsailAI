@@ -9,6 +9,11 @@ import os
 
 from topsailai.logger import logger
 
+def get_session_id() -> str|None:
+    """ get session """
+    return \
+        os.getenv("TOPSAILAI_SESSION_ID") or \
+        os.getenv("SESSION_ID")
 
 def is_interactive_mode() -> bool:
     """ Check if running in interactive mode, default is True """

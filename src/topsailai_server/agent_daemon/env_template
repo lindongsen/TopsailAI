@@ -1,0 +1,93 @@
+# TopsailAI Agent Daemon Environment Configuration Template
+# Copy this file to .env and customize values for your deployment
+# =============================================================================
+
+# =============================================================================
+# REQUIRED ENVIRONMENT VARIABLES
+# These MUST be set, otherwise the service will fail to start
+# =============================================================================
+
+# TOPSAILAI_AGENT_DAEMON_PROCESSOR
+# Description: Script file used to process messages. When processing completes,
+#              it actively records results to storage.
+# Runtime env vars provided to this script:
+#   - TOPSAILAI_MSG_ID: Latest unprocessed msg_id from message table
+#   - TOPSAILAI_TASK: Message content to process
+#   - TOPSAILAI_SESSION_ID: Session identifier
+# Example: /path/to/processor.sh or /path/to/processor.py
+TOPSAILAI_AGENT_DAEMON_PROCESSOR=/path/to/your/processor_script
+
+# TOPSAILAI_AGENT_DAEMON_SUMMARIZER
+# Description: Script file used to summarize messages. The service does not
+#              need to care about the summary result - it's closely related
+#              to the processor's processing logic.
+# Runtime env vars provided to this script:
+#   - TOPSAILAI_SESSION_ID: Session identifier
+#   - TOPSAILAI_TASK: Message content to summarize
+# Example: /path/to/summarizer.sh or /path/to/summarizer.py
+TOPSAILAI_AGENT_DAEMON_SUMMARIZER=/path/to/your/summarizer_script
+
+# TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER
+# Description: Script file to get session state (idle/processing).
+#              Returns 'idle' if no messages are being processed.
+# Runtime env vars provided to this script:
+#   - TOPSAILAI_SESSION_ID: Session identifier
+# Example: /path/to/state_checker.sh or /path/to/state_checker.py
+TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER=/path/to/your/state_checker_script
+
+# =============================================================================
+# OPTIONAL ENVIRONMENT VARIABLES
+# These have sensible defaults but can be customized
+# =============================================================================
+
+# TOPSAILAI_AGENT_DAEMON_HOST
+# Description: HTTP server host address to bind to
+# Default: 0.0.0.0 (all interfaces)
+# Example: 127.0.0.1 (localhost only), 0.0.0.0 (all interfaces)
+TOPSAILAI_AGENT_DAEMON_HOST=0.0.0.0
+
+# TOPSAILAI_AGENT_DAEMON_PORT
+# Description: HTTP server port to listen on
+# Default: 7373
+# Example: 7373, 8080, 3000
+TOPSAILAI_AGENT_DAEMON_PORT=7373
+
+# TOPSAILAI_AGENT_DAEMON_DB_URL
+# Description: Database connection URL for SQLAlchemy
+# Default: sqlite:///topsailai_agent_daemon.db (relative to working directory)
+# Examples:
+#   - SQLite (file): sqlite:///path/to/database.db
+#   - SQLite (memory): sqlite:///:memory:
+#   - PostgreSQL: postgresql://user:password@localhost:5432/dbname
+#   - MySQL: mysql+pymysql://user:password@localhost:3306/dbname
+TOPSAILAI_AGENT_DAEMON_DB_URL=sqlite:///topsailai_agent_daemon.db
+
+# =============================================================================
+# ADDITIONAL NOTES
+# =============================================================================
+
+# Worker Scripts Requirements:
+# All worker scripts (processor, summarizer, state_checker) should:
+# 1. Be executable (chmod +x for shell scripts)
+# 2. Handle the runtime environment variables provided
+# 3. Return appropriate exit codes (0 for success)
+# 4. For processor: After completion, call the SetTaskResult API to record results
+
+# Example Processor Script (processor.sh):
+#   #!/bin/bash
+#   echo "Processing message $TOPSAILAI_MSG_ID for session $TOPSAILAI_SESSION_ID"
+#   echo "Task content: $TOPSAILAI_TASK"
+#   # ... processing logic ...
+#   # Call API to set result: curl -X POST http://localhost:7373/api/v1/task ...
+
+# Example State Checker Script (state_checker.sh):
+#   #!/bin/bash
+#   # Check if session is processing
+#   # Output "idle" or "processing" to stdout
+#   echo "idle"
+
+# Security Considerations:
+# - Store sensitive database credentials securely
+# - Use absolute paths for worker scripts
+# - Ensure worker scripts have appropriate permissions
+# - Consider using environment-specific .env files (dev.env, prod.env)

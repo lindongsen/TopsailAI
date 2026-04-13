@@ -88,6 +88,7 @@ def build_cmd_parameters(script_file:str, cmd_options:dict) -> dict:
         timeout=cmd_options.get("timeout") or DEFAULT_CMD_TIMEOUT,
         env_keys=[
             "SESSION_ID",
+            "TOPSAILAI_SESSION_ID",
             "TOPSAILAI_TASK_ID",
         ],
     )

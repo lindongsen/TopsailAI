@@ -173,11 +173,12 @@ def get_agent_chat(
 
     # session
     if session_id is None:
-        session_id = os.getenv("SESSION_ID")
+        session_id = env_tool.get_session_id()
 
     if session_id:
         thread_local_tool.set_thread_name(session_id)
         os.environ["SESSION_ID"] = session_id
+        os.environ["TOPSAILAI_SESSION_ID"] = session_id
 
         # basic info
         if need_print_session:

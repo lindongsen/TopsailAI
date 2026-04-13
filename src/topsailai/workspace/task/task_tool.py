@@ -16,6 +16,7 @@ from topsailai.utils.file_tool import (
 from topsailai.utils import (
     time_tool,
     json_tool,
+    env_tool,
 )
 from topsailai.workspace.folder_constants import (
     FOLDER_WORKSPACE_TASK,
@@ -56,7 +57,7 @@ class TaskData(object):
 
         self.task_content = None
         self.create_time = time_tool.get_current_date(with_t=True)
-        self.session_id = os.getenv("SESSION_ID") or ""
+        self.session_id = env_tool.get_session_id() or ""
         self.session_messages = []
 
         self.status = self.TASK_STATUS_INITING

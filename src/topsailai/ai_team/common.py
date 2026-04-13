@@ -5,10 +5,9 @@
   Purpose:
 '''
 
-import os
-
 from topsailai.utils import (
     time_tool,
+    env_tool,
 )
 
 
@@ -26,6 +25,6 @@ def get_session_id() -> str:
         >>> get_session_id()
         '20260120123456'
     """
-    session_id = os.getenv("SESSION_ID") or time_tool.get_current_date(with_t=True).replace('-', '')
+    session_id = env_tool.get_session_id() or time_tool.get_current_date(with_t=True).replace('-', '')
     session_id = session_id.replace(':', '')
     return session_id

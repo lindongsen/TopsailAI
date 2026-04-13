@@ -9,6 +9,9 @@ import os
 
 from topsailai.logger import logger
 from topsailai.utils.format_tool import to_list
+from topsailai.utils import (
+    env_tool,
+)
 
 from .chat_history_manager import ALL_MANAGERS
 from .chat_history_manager.__base import (
@@ -161,7 +164,7 @@ def get_messages_by_session(
     """
     # Try to get session_id from environment if not provided
     if not session_id:
-        session_id = os.getenv("SESSION_ID")
+        session_id = env_tool.get_session_id()
 
     # Return empty list if no session_id is available
     if not session_id:
