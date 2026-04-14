@@ -35,15 +35,15 @@ MSG_SEPARATOR = "-" * TERM_WIDTH
 
 
 def format_time(time_str):
-    """Format time string to HH:MM:SS"""
+    """Format time string to YYYY-MM-DD HH:MM:SS"""
     if not time_str:
         return 'N/A'
     # Handle ISO format: 2026-04-13T23:27:53.123456
     if 'T' in time_str:
         date_part, time_part = time_str.split('T')
         time_part = time_part.split('.')[0]
-        # Return only time part for chat display
-        return time_part.split(':')[0] + ':' + time_part.split(':')[1]
+        # Return full datetime for display
+        return f"{date_part} {time_part}"
     return time_str
 
 
@@ -180,7 +180,7 @@ class AgentTerminal:
             role = msg.get('role', 'unknown')
             content = msg.get('message', '')
             create_time = format_time(msg.get('create_time'))
-            msg_id = msg.get('msg_id', '')[:8]
+            msg_id = msg.get('msg_id', '')
             task_id = msg.get('task_id')
             task_result = msg.get('task_result')
 
@@ -195,9 +195,9 @@ class AgentTerminal:
                 role_label = role.upper()
                 color = self.COLOR_SYSTEM
 
-            # Display message
+            # Display message header with full timestamp and msg_id
             print(MSG_SEPARATOR)
-            print(f"{color}{self.COLOR_BOLD}[{create_time}] {role_label}{self.COLOR_RESET}")
+            print(f"{color}{self.COLOR_BOLD}[{create_time}] [{msg_id}] {role_label}{self.COLOR_RESET}")
 
             # Word wrap the message content
             max_content_width = self.term_width - 2
@@ -233,7 +233,7 @@ class AgentTerminal:
         print(SPLIT_LINE)
         status = f"Messages: {msg_count}"
         if processed_msg_id:
-            status += f" | Processed: {processed_msg_id[:8]}..."
+            status += f" | Processed: {processed_msg_id[:32]}..."
         print(f"  {status}".ljust(self.term_width))
         print(f"  Type your message and press Enter to send | Ctrl+C to exit".ljust(self.term_width))
         print(SPLIT_LINE)
