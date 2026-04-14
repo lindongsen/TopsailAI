@@ -127,9 +127,6 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         Returns:
             None
         """
-        if not self.session_id:
-            return
-
         self.ctx_refresh()
         session_id = self.session_id
 
