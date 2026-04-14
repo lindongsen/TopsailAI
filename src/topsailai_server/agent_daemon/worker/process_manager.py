@@ -90,6 +90,11 @@ class WorkerManager:
                 # Process finished, clean up
                 del self.running_processes[session_id]
 
+        # Check if session state checker script is configured
+        if not self.config.session_state_checker_script:
+            logger.debug("No session state checker configured, assuming idle for session: %s", session_id)
+            return "idle"
+
         # Use the session state checker script
         try:
             env = os.environ.copy()
@@ -164,7 +169,7 @@ class WorkerManager:
         finally:
             lock.release()
 
-    def start_summarizer(self, session_id: str, task: str) -> subprocess.Popen:
+    def start_summarizer(self, session_id: str, task: str) -> Optional[subprocess.Popen]:
         """Start summarizer for a session.
         
         Args:
@@ -233,6 +238,6 @@ class WorkerManager:
                 logger.exception("Error stopping process: %s", e)
                 try:
                     process.kill()
-                except:
+                except Exception:
                     pass
         self.running_processes.clear()

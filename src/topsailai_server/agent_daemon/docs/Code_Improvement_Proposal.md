@@ -1,271 +1,468 @@
-# Code Improvement Proposal for agent_daemon
+---
+maintainer: AI
+workspace: /root/ai/TopsailAI/src/topsailai_server/agent_daemon
+---
+
+# Code Improvement Proposal - Agent Daemon
+
+**Date**: 2026-04-14  
+**Reviewer**: km-k25  
+**Developer**: mm-m25  
+**Status**: Review Complete - Ready for Implementation
+
+---
 
 ## Executive Summary
 
-This document provides a comprehensive gap analysis of the agent_daemon project and recommends an implementation plan to ensure all features are fully functional and usable, passing both unit testing and basic functionality testing.
+The agent_daemon project has a solid foundation with most core components implemented. This proposal outlines the remaining work needed to ensure all features are fully functional and properly tested.
 
-**STATUS: ALL ISSUES RESOLVED - 2026-04-14**
-
----
-
-## 1. Existing Files/Modules Analysis
-
-### 1.1 Core Components (ALL COMPLETE)
-
-| Component | File Path | Status | Notes |
-|-----------|-----------|--------|-------|
-| Logger | `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/logger.py` | ✅ COMPLETE | Uses topsailai.logger.base_logger |
-| Exceptions | `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/exceptions.py` | ✅ COMPLETE | Custom exception hierarchy defined |
-| Configer | `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/configer/` | ✅ COMPLETE | env_config.py with Config class |
-| Storage | `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/storage/` | ✅ COMPLETE | session_manager, message_manager with SQLAlchemy |
-| API | `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/` | ✅ COMPLETE | FastAPI routes for session, message, task |
-| Worker | `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/worker/` | ✅ COMPLETE | process_manager.py with WorkerManager |
-| Croner | `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/croner/` | ✅ COMPLETE | scheduler.py + 3 job implementations |
-| Scripts | `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/scripts/` | ✅ COMPLETE | processor.sh, summarizer.sh, processor_callback.py, session_state_checker.py |
-| CLI | `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/topsailai_agent_daemon.py` | ✅ COMPLETE | start/stop server with argparse |
-| Client CLI | `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/topsailai_agent_client.py` | ✅ COMPLETE | API client for calling server |
-
-### 1.2 Test Files (ALL COMPLETE)
-
-| Test File | Status | Notes |
-|-----------|--------|-------|
-| `tests/test_storage/test_session_manager.py` | ✅ COMPLETE | Unit tests for SessionManager |
-| `tests/test_storage/test_message_manager.py` | ✅ COMPLETE | Unit tests for MessageManager |
-| `tests/test_api/test_routes.py` | ✅ COMPLETE | API route tests |
-| `tests/test_worker/test_processor.py` | ✅ COMPLETE | Processor scenario tests |
-| `tests/test_worker/test_summarizer.py` | ✅ COMPLETE | Summarizer tests |
-| `tests/test_worker/test_session_state_checker.py` | ✅ COMPLETE | Fixed duplicate test method definitions |
-| `tests/conftest.py` | ✅ COMPLETE | pytest fixtures for shared test setup |
-| `tests/test_croner/test_jobs.py` | ✅ COMPLETE | Unit tests for cron jobs |
-| `tests/integration/test_integration.py` | ✅ COMPLETE | End-to-end integration tests |
+**Overall Assessment**: ~85% Complete
 
 ---
 
-## 2. Missing Files/Modules - ALL RESOLVED
+## Component Status Overview
 
-### 2.1 Critical Missing Files - ALL CREATED
-
-| File | Status | Purpose |
-|------|--------|---------|
-| `tests/conftest.py` | ✅ CREATED | pytest fixtures for shared test setup |
-| `tests/test_croner/test_jobs.py` | ✅ CREATED | Unit tests for cron jobs |
-| `tests/integration/test_integration.py` | ✅ CREATED | End-to-end integration tests |
-| `issues/undo/` | ✅ CREATED | Folder for tracking issues to ignore |
-| `issues/done/` | ✅ CREATED | Folder for tracking resolved issues |
-
-### 2.2 Documentation - UP TO DATE
-
-| Doc | Status | Notes |
-|-----|--------|-------|
-| API documentation | ✅ COMPLETE | Available via FastAPI auto-generated docs |
-| env_template | ✅ COMPLETE | Template ready for deployment |
+| Component | Status | Completion | Notes |
+|-----------|--------|------------|-------|
+| Storage (Session/Message) | ✅ Complete | 100% | SQLAlchemy implementation ready |
+| Configer | ✅ Complete | 100% | Environment variable management ready |
+| API Routes | ✅ Complete | 95% | All endpoints implemented, minor fixes needed |
+| Croner (Scheduler + Jobs) | ✅ Complete | 100% | All 3 cron jobs implemented |
+| Worker/Process Manager | ✅ Complete | 95% | SessionLock and WorkerManager ready |
+| CLI (Daemon + Client) | ✅ Complete | 100% | Both CLI tools implemented |
+| Scripts | ✅ Complete | 100% | All 4 scripts ready |
+| Logger | ✅ Complete | 100% | Using topsailai logger |
+| Unit Tests | ⚠️ Partial | 70% | Core tests exist, need more coverage |
+| Integration Tests | ❌ Missing | 0% | Need comprehensive integration tests |
+| Documentation | ⚠️ Partial | 60% | Need test cases documentation |
 
 ---
 
-## 3. Specific Implementation Gaps - ALL RESOLVED
+## Detailed Implementation Tasks
 
-### 3.1 HIGH Priority Issues - ALL FIXED
+### Phase 1: Critical Fixes (Priority: HIGH)
 
-#### Issue 1: Session API Routes Missing ✅ RESOLVED
-**Location**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/session.py`
+#### Task 1.1: Fix API Route Dependencies
+**File**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/session.py`
 
-**Implementation**: 
-- `ListSessions` endpoint with filtering (start_time, end_time, offset, limit, sort_key, order_by)
-- `ProcessSession` endpoint to manually trigger message processing for a session
+**Issues Found**:
+1. `get_message_storage()` function creates incorrect Storage instance
+2. `_are_all_messages_assistant()` uses raw SQL instead of storage methods
+3. Missing `get()` method call in message storage access
 
-**Completion Date**: 2026-04-13
-
-#### Issue 2: API Response Format Inconsistency ✅ RESOLVED
-**Location**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/*.py`
-
-**Implementation**: All endpoints now follow the standard response format:
-```json
-{
-  "code": 0,  // 0 is OK
-  "data": {}, // list|dict|str|any
-  "message": "..."
-}
-```
-
-**Completion Date**: 2026-04-13
-
-#### Issue 3: Session State Checker Script Incomplete ✅ RESOLVED
-**Location**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/scripts/session_state_checker.py`
-
-**Implementation**: Proper session state checking logic that:
-1. Checks if a processor is running for the session
-2. Returns "idle" or "processing"
-
-**Completion Date**: 2026-04-13
-
-#### Issue 4: WorkerManager Missing Methods ✅ RESOLVED
-**Location**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/worker/process_manager.py`
-
-**Implementation**: Added `start_summarizer` method:
+**Required Changes**:
 ```python
-def start_summarizer(self, session_id: str, task: str, summarizer_script: str) -> bool:
-    """Start the summarizer script for a session"""
+# Line ~85: Fix get_message_storage()
+def get_message_storage():
+    """Get Message Storage instance"""
+    if _message_storage is None:
+        raise RuntimeError("Message Storage not initialized")
+    return _message_storage  # Return directly, not wrapped in Storage()
+
+# Line ~95: Fix _are_all_messages_assistant()
+# Replace raw SQL query with storage method calls
+# Use storage.message.get_unprocessed_messages() instead
 ```
 
-**Completion Date**: 2026-04-13
-
-#### Issue 5: Test File Has Duplicate Method ✅ RESOLVED
-**Location**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/test_worker/test_session_state_checker.py`
-
-**Implementation**: Removed duplicate and fixed the test logic
-
-**Completion Date**: 2026-04-13
-
-### 3.2 MEDIUM Priority Issues - ALL RESOLVED
-
-#### Issue 6: Croner Scheduler Timing Configuration ✅ RESOLVED
-**Location**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/croner/scheduler.py`
-
-**Implementation**: Uses interval-based scheduling with configurable intervals:
-- Message consumer: Every minute
-- Message summarizer: Daily at 1:00 AM
-- Session cleaner: Monthly on 1st at 1:00 AM
-
-**Completion Date**: 2026-04-13
-
-#### Issue 7: API Missing Health Check Endpoint ✅ RESOLVED
-**Location**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/`
-
-**Implementation**: Health endpoint is registered in main app at `/health`
-
-**Completion Date**: 2026-04-13
-
-#### Issue 8: Database Index on processed_msg_id ✅ RESOLVED
-**Location**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/storage/session_manager/sql.py`
-
-**Implementation**: Index added on `processed_msg_id` for performance
-
-**Completion Date**: 2026-04-13
-
-### 3.3 LOW Priority Issues - ALL RESOLVED
-
-#### Issue 9: Missing Input Validation ✅ RESOLVED
-**Location**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/*.py`
-
-**Implementation**: FastAPI validation with business logic validation
-
-**Completion Date**: 2026-04-13
-
-#### Issue 10: Error Handling in API Routes ✅ RESOLVED
-**Location**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/*.py`
-
-**Implementation**: All routes catch exceptions and return proper error responses
-
-**Completion Date**: 2026-04-13
+**Verification**:
+- Run unit tests: `python -m pytest tests/unit/test_api/test_routes.py -v`
 
 ---
 
-## 4. Test Coverage - ALL COMPLETE
+#### Task 1.2: Fix Session Route list_sessions Time Parsing
+**File**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/session.py`
 
-### 4.1 Unit Tests - FULL COVERAGE
+**Issue**: `list_sessions()` receives string parameters but passes them directly to storage which expects datetime objects.
 
-| Test Category | Coverage | Status |
-|---------------|----------|--------|
-| Storage (Session) | 100% | ✅ COMPLETE |
-| Storage (Message) | 100% | ✅ COMPLETE |
-| API Routes | 100% | ✅ COMPLETE |
-| Worker (Processor) | 100% | ✅ COMPLETE |
-| Worker (Summarizer) | 100% | ✅ COMPLETE |
-| Worker (Session State Checker) | 100% | ✅ COMPLETE |
-| Cron Jobs | 100% | ✅ COMPLETE |
-| Configer | 100% | ✅ COMPLETE |
+**Required Changes**:
+```python
+# Around line 165: Parse time strings to datetime
+from datetime import datetime
 
-### 4.2 Integration Test - FULL COVERAGE
+start_dt = datetime.fromisoformat(start_time) if start_time else None
+end_dt = datetime.fromisoformat(end_time) if end_time else None
 
-All scenarios from `docs/cases/test1.md` are covered:
-- Full Message Flow
-- Task Generation Flow
-- Summarizer Flow
-- Session State Flow
+sessions = storage.session.list_sessions(
+    start_time=start_dt,
+    end_time=end_dt,
+    ...
+)
+```
 
 ---
 
-## 5. Implementation Order - COMPLETED
+#### Task 1.3: Fix WorkerManager Session State Check
+**File**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/worker/process_manager.py`
 
-### Phase 1: Critical Fixes ✅ COMPLETED
-1. ✅ Fix session.py API routes - Implemented ListSessions and ProcessSession
-2. ✅ Fix WorkerManager - Added start_summarizer method
-3. ✅ Fix test_session_state_checker.py - Removed duplicate method
-4. ✅ Create conftest.py - Added pytest fixtures
+**Issue**: `check_session_state()` may fail if session_state_checker_script is not configured.
 
-### Phase 2: Core Functionality ✅ COMPLETED
-5. ✅ Implement session_state_checker.py - Proper idle/processing detection
-6. ✅ Create test_croner/test_jobs.py - Unit tests for cron jobs
-7. ✅ Create integration tests - End-to-end workflow tests
-8. ✅ Add database indexes - Performance optimization
-
-### Phase 3: Polish & Validation ✅ COMPLETED
-9. ✅ Improve API response consistency - All endpoints follow standard format
-10. ✅ Add input validation - Business logic validation
-11. ✅ Improve error handling - Comprehensive exception handling
-12. ✅ Create issues folders - For tracking
-
-### Phase 4: Documentation ✅ COMPLETED
-13. ✅ API documentation - Available via FastAPI auto-docs
-14. ✅ env_template - Ready for deployment
+**Required Changes**:
+```python
+# Around line 75: Add check for script existence
+if not self.config.session_state_checker_script:
+    logger.debug("No session state checker configured, assuming idle")
+    return "idle"
+```
 
 ---
 
-## 6. Quick Start Commands for Testing
+### Phase 2: Test Implementation (Priority: HIGH)
 
+#### Task 2.1: Create Integration Test Framework
+**New File**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration/test_integration.py`
+
+**Purpose**: End-to-end testing of the complete message processing flow.
+
+**Test Scenarios**:
+1. **Full Message Flow**: Send message → Process → Receive response
+2. **Task Generation Flow**: Send message → Generate task → Set task result → Continue processing
+3. **Multiple Sessions**: Concurrent session handling
+4. **Cron Job Execution**: Verify cron jobs run correctly
+
+**Implementation Template**:
+```python
+"""
+Integration tests for agent_daemon
+"""
+import unittest
+import os
+import time
+import subprocess
+import signal
+from datetime import datetime
+
+# Set test environment
+os.environ['TOPSAILAI_AGENT_DAEMON_DB_URL'] = 'sqlite:///tmp/test_integration.db'
+os.environ['TOPSAILAI_AGENT_DAEMON_PROCESSOR'] = '/path/to/test_processor.sh'
+os.environ['TOPSAILAI_AGENT_DAEMON_SUMMARIZER'] = '/path/to/test_summarizer.sh'
+os.environ['TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER'] = '/path/to/test_checker.sh'
+
+class TestIntegration(unittest.TestCase):
+    """Integration tests for complete message processing flow"""
+    
+    @classmethod
+    def setUpClass(cls):
+        """Start the daemon server"""
+        # Start server in background
+        cls.server_process = subprocess.Popen([
+            'python', 'topsailai_agent_daemon.py', 'start',
+            '--port', '7374'  # Use different port for testing
+        ])
+        time.sleep(2)  # Wait for server to start
+    
+    @classmethod
+    def tearDownClass(cls):
+        """Stop the daemon server"""
+        cls.server_process.send_signal(signal.SIGTERM)
+        cls.server_process.wait(timeout=10)
+    
+    def test_full_message_flow(self):
+        """Test complete message processing flow"""
+        # Implementation here
+        pass
+```
+
+---
+
+#### Task 2.2: Create Test Scripts
+**New Files**:
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration/scripts/test_processor.sh`
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration/scripts/test_summarizer.sh`
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration/scripts/test_state_checker.sh`
+
+**test_processor.sh**:
 ```bash
-# Set environment variables
-export TOPSAILAI_AGENT_DAEMON_PROCESSOR="/root/ai/TopsailAI/src/topsailai_server/agent_daemon/scripts/processor.sh"
-export TOPSAILAI_AGENT_DAEMON_SUMMARIZER="/root/ai/TopsailAI/src/topsailai_server/agent_daemon/scripts/summarizer.sh"
-export TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER="/root/ai/TopsailAI/src/topsailai_server/agent_daemon/scripts/session_state_checker.py"
+#!/bin/bash
+# Test processor that simulates direct reply
 
-# Run unit tests
-python -m pytest tests/test_storage/ -v
-python -m pytest tests/test_api/ -v
-python -m pytest tests/test_worker/ -v
-python -m pytest tests/test_croner/ -v
+if [ -n "$TOPSAILAI_TASK_ID" ]; then
+    # Task mode - call SetTaskResult
+    curl -X POST http://localhost:7374/api/v1/task \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"session_id\": \"$TOPSAILAI_SESSION_ID\",
+            \"processed_msg_id\": \"$TOPSAILAI_MSG_ID\",
+            \"task_id\": \"$TOPSAILAI_TASK_ID\",
+            \"task_result\": \"Test task result\"
+        }"
+else
+    # Direct reply mode - call ReceiveMessage
+    curl -X POST http://localhost:7374/api/v1/message \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"session_id\": \"$TOPSAILAI_SESSION_ID\",
+            \"processed_msg_id\": \"$TOPSAILAI_MSG_ID\",
+            \"message\": \"Test direct reply\",
+            \"role\": \"assistant\"
+        }"
+fi
+```
 
-# Run integration tests
-export HOME=/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration
-cd tests/integration && ./run_tests.sh
+**test_state_checker.sh**:
+```bash
+#!/bin/bash
+# Test state checker - always returns idle for testing
+echo "idle"
+```
+
+**test_summarizer.sh**:
+```bash
+#!/bin/bash
+# Test summarizer - just logs and exits
+echo "Summarizing session: $TOPSAILAI_SESSION_ID"
+echo "Task: $TOPSAILAI_TASK"
+exit 0
 ```
 
 ---
 
-## 7. Success Criteria - ALL MET
+#### Task 2.3: Add Missing Unit Tests
+**New File**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/unit/test_croner/test_jobs.py`
 
-The implementation is complete when:
-
-1. ✅ All unit tests pass (`pytest tests/test_* -v`) - **64 passed, 6 skipped**
-2. ✅ All integration tests pass (`pytest tests/integration/ -v`) - **ALL TESTS PASSED**
-3. ✅ Session API routes fully implemented (ListSessions, ProcessSession)
-4. ✅ WorkerManager has all required methods
-5. ✅ Session state checker properly detects idle/processing states
-6. ✅ Cron jobs have unit tests
-7. ✅ No duplicate code in test files
-8. ✅ API responses follow standard format consistently
+**Test Coverage Needed**:
+1. MessageConsumer job execution
+2. MessageSummarizer job execution
+3. SessionCleaner job execution
+4. CronScheduler job registration and execution
 
 ---
 
-## 8. Files Status Summary
+#### Task 2.4: Add Configer Tests
+**New File**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/unit/test_configer/test_env_config.py`
 
-### All Core Files - COMPLETE
-1. ✅ `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/session.py` - Fully implemented
-2. ✅ `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/worker/process_manager.py` - All methods present
-3. ✅ `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/scripts/session_state_checker.py` - Working
-4. ✅ `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/test_worker/test_session_state_checker.py` - Fixed
-5. ✅ `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/conftest.py` - Created
-6. ✅ `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/test_croner/test_jobs.py` - Created
-7. ✅ `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration/test_integration.py` - Created
-8. ✅ `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/issues/undo/` - Created
-9. ✅ `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/issues/done/` - Created
-10. ✅ `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/storage/session_manager/sql.py` - Index added
-11. ✅ `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/message.py` - Response format fixed
-12. ✅ `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/task.py` - Response format fixed
-13. ✅ `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/pytest.ini` - Created
+**Test Coverage**:
+1. Environment variable loading
+2. Default value handling
+3. Script validation (when enabled)
+4. Configuration reload
 
 ---
 
-*Document updated by mm-m25*
-*Completion Date: 2026-04-14*
-*All issues resolved - Project fully functional*
+### Phase 3: Documentation (Priority: MEDIUM)
+
+#### Task 3.1: Create Test Cases Documentation
+**New File**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/docs/cases/test_scenarios.md`
+
+**Document Structure**:
+```markdown
+# Test Scenarios for Agent Daemon
+
+## Scenario 1: Direct Message Reply
+**Purpose**: Verify processor can reply directly without creating a task
+
+**Steps**:
+1. Send user message via ReceiveMessage API
+2. Processor processes message
+3. Processor calls ReceiveMessage with assistant role
+4. Verify session processed_msg_id is updated
+
+**Expected Result**: Message chain shows user message followed by assistant reply
+
+## Scenario 2: Task Generation and Completion
+**Purpose**: Verify task-based processing flow
+
+**Steps**:
+1. Send user message via ReceiveMessage API
+2. Processor generates task, stores task_id in message
+3. External system completes task
+4. External system calls SetTaskResult
+5. Verify task_result is stored and processing continues
+
+**Expected Result**: Message has task_id and task_result populated
+
+## Scenario 3: Session Cleanup
+**Purpose**: Verify old sessions are cleaned up
+
+**Steps**:
+1. Create session with old update_time (>1 year)
+2. Add messages to session
+3. Trigger SessionCleaner cron job
+4. Verify session and messages are deleted
+
+**Expected Result**: Old session and all related messages removed
+```
+
+---
+
+#### Task 3.2: Update README
+**File**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/readme.md`
+
+**Add Sections**:
+1. Quick Start Guide
+2. API Reference
+3. Environment Variables
+4. Testing Instructions
+5. Troubleshooting
+
+---
+
+### Phase 4: Code Quality Improvements (Priority: MEDIUM)
+
+#### Task 4.1: Add Type Hints
+**Files to Update**:
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/*.py`
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/croner/jobs/*.py`
+
+**Standard**: Add complete type hints for all function parameters and return types.
+
+---
+
+#### Task 4.2: Add Docstrings
+**Files to Update**: All Python files
+
+**Standard**: Every public function/method should have a Google-style docstring.
+
+---
+
+#### Task 4.3: Error Handling Review
+**Files to Review**:
+- All API route files
+- Worker process_manager.py
+- Croner jobs
+
+**Checklist**:
+- [ ] All exceptions are caught and logged
+- [ ] API errors return proper error codes
+- [ ] Database transactions are properly rolled back on error
+
+---
+
+## Implementation Order
+
+### Week 1: Critical Fixes
+1. Task 1.1: Fix API Route Dependencies
+2. Task 1.2: Fix Session Route Time Parsing
+3. Task 1.3: Fix WorkerManager Session State Check
+
+### Week 2: Testing
+4. Task 2.1: Create Integration Test Framework
+5. Task 2.2: Create Test Scripts
+6. Task 2.3: Add Missing Unit Tests
+7. Task 2.4: Add Configer Tests
+
+### Week 3: Documentation & Polish
+8. Task 3.1: Create Test Cases Documentation
+9. Task 3.2: Update README
+10. Task 4.1: Add Type Hints
+11. Task 4.2: Add Docstrings
+12. Task 4.3: Error Handling Review
+
+---
+
+## Dependencies Between Components
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        API Layer                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │   Message   │  │    Task     │  │      Session        │  │
+│  │   Routes    │◄─┤   Routes    │◄─┤      Routes         │  │
+│  └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘  │
+└─────────┼────────────────┼────────────────────┼─────────────┘
+          │                │                    │
+          ▼                ▼                    ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      Business Logic                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │   Worker    │  │   Croner    │  │      Configer       │  │
+│  │   Manager   │  │  Scheduler  │  │                     │  │
+│  └──────┬──────┘  └──────┬──────┘  └─────────────────────┘  │
+└─────────┼────────────────┼──────────────────────────────────┘
+          │                │
+          ▼                ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      Data Layer                              │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │   Session   │  │   Message   │  │      Storage        │  │
+│  │   Manager   │  │   Manager   │  │      Facade         │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key Dependencies**:
+1. API Routes → Worker Manager (for process execution)
+2. API Routes → Storage (for data persistence)
+3. Croner Jobs → Worker Manager (for background processing)
+4. Croner Jobs → Storage (for data queries)
+5. Worker Manager → Configer (for script paths)
+6. All components → Logger
+
+---
+
+## Testing Strategy
+
+### Unit Tests
+- **Scope**: Individual functions/methods
+- **Framework**: unittest
+- **Coverage Target**: 80%+
+- **Location**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/unit/`
+
+### Integration Tests
+- **Scope**: Complete user workflows
+- **Framework**: unittest + subprocess
+- **Coverage Target**: All major workflows
+- **Location**: `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration/`
+
+### Manual Testing Checklist
+- [ ] Start daemon with `topsailai_agent_daemon start`
+- [ ] Send message with `topsailai_agent_client send-message`
+- [ ] List sessions with `topsailai_agent_client list-sessions`
+- [ ] Retrieve messages with `topsailai_agent_client get-messages`
+- [ ] Process session with `topsailai_agent_client process-session`
+- [ ] Set task result with `topsailai_agent_client set-task-result`
+- [ ] Delete sessions with `topsailai_agent_client delete-sessions`
+- [ ] Stop daemon with `topsailai_agent_daemon stop`
+
+---
+
+## Acceptance Criteria
+
+### Functional Requirements
+- [ ] All API endpoints return correct response format
+- [ ] Message processing flow works end-to-end
+- [ ] Task generation and completion works correctly
+- [ ] Cron jobs execute on schedule
+- [ ] Session cleanup removes old data
+- [ ] CLI commands work as documented
+
+### Non-Functional Requirements
+- [ ] Unit test coverage >= 80%
+- [ ] Integration tests pass
+- [ ] No critical errors in logs
+- [ ] Documentation is complete
+- [ ] Code follows project style guidelines
+
+---
+
+## Risk Assessment
+
+| Risk | Probability | Impact | Mitigation |
+|------|-------------|--------|------------|
+| Database concurrency issues | Low | High | Use SQLAlchemy session management |
+| Process zombie issues | Medium | Medium | Implement proper process cleanup |
+| Cron job failures | Low | Medium | Add job execution monitoring |
+| API performance issues | Low | Medium | Add caching if needed |
+
+---
+
+## Notes for Developer (mm-m25)
+
+1. **One File at a Time**: Modify only one file per response as per team workflow
+2. **Test After Each Change**: Run relevant unit tests after each modification
+3. **Log Everything**: Use logger for all significant operations
+4. **Follow Existing Patterns**: Match the coding style of existing files
+5. **Ask for Review**: Request review from km-k25 after each major component
+
+---
+
+## Review Checkpoints
+
+- [ ] Phase 1 Complete: Critical fixes implemented and tested
+- [ ] Phase 2 Complete: All tests passing
+- [ ] Phase 3 Complete: Documentation updated
+- [ ] Phase 4 Complete: Code quality improvements done
+- [ ] Final Review: Full system test passed
+
+---
+
+**End of Proposal**

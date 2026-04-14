@@ -1,0 +1,30 @@
+#!/bin/bash
+
+set -e
+
+BASE_NAME=$(basename "$0")
+CWD=$(dirname $(readlink -f "$0"))
+LIB_FOLDER=$(dirname ${CWD})
+
+cd "${LIB_FOLDER}"
+
+
+get_args_id() {
+  for i in $(seq $1 $2); do
+    echo -n " \"\${${i}}\""
+  done
+}
+
+_relative_name="topsailai_server/agent_daemon/${BASE_NAME}"
+
+for exec_file in \
+  "${LIB_FOLDER}/src/${_relative_name}.py" \
+  "${LIB_FOLDER}/${_relative_name}" \
+  "${LIB_FOLDER}/${_relative_name}.py" \
+; do
+  if [ -e "${exec_file}" ]; then
+    [ -x "${exec_file}" ] || chmod +x "${exec_file}"
+    eval "${exec_file} $(get_args_id 1 $#)"
+    exit $?
+  fi
+done

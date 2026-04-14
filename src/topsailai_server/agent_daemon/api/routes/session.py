@@ -42,7 +42,7 @@ def get_message_storage() -> Storage:
     """Get Message Storage instance"""
     if _message_storage is None:
         raise RuntimeError("Message Storage not initialized")
-    return Storage(_message_storage.engine)
+    return _message_storage  # Return the actual storage instance directly
 
 
 def _are_all_messages_assistant(
@@ -70,25 +70,28 @@ def _are_all_messages_assistant(
             # If processed_msg_id doesn't exist, treat as new session
             return False
         
-        # Query for messages after processed_msg_id
-        from sqlalchemy import text
-        query = text("""
-            SELECT msg_id, role FROM message 
-            WHERE session_id = :session_id 
-            AND create_time > :processed_create_time
-            ORDER BY create_time ASC
-        """)
+        # Get all messages for this session after processed_msg_id using storage method
+        all_messages = message_storage.message.get_messages(
+            session_id=session_id,
+            sort_key="create_time",
+            order_by="asc"
+        )
         
-        result = message_storage.session.execute(
-            query, 
-            {"session_id": session_id, "processed_create_time": processed_msg.create_time}
-        ).fetchall()
+        # Filter messages after processed_msg_id
+        found_processed = False
+        pending_messages = []
+        for msg in all_messages:
+            if msg.msg_id == processed_msg_id:
+                found_processed = True
+                continue
+            if found_processed:
+                pending_messages.append(msg)
         
-        if not result:
+        if not pending_messages:
             return True  # No messages = all (zero) are assistant
         
         # Check if ALL are assistant
-        return all(row.role == "assistant" for row in result)
+        return all(msg.role == "assistant" for msg in pending_messages)
     except Exception as e:
         logger.exception("Failed to check messages: %s", e)
         # On error, assume there are messages to process
@@ -127,9 +130,14 @@ async def list_sessions(
     """
     try:
         storage = get_storage()
+        
+        # Parse time strings to datetime objects
+        start_dt = datetime.fromisoformat(start_time) if start_time else None
+        end_dt = datetime.fromisoformat(end_time) if end_time else None
+        
         sessions = storage.session.list_sessions(
-            start_time=start_time,
-            end_time=end_time,
+            start_time=start_dt,
+            end_time=end_dt,
             offset=offset,
             limit=limit,
             sort_key=sort_key,

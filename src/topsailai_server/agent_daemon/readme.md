@@ -131,6 +131,7 @@ restful api
 #### ListSessions
 
 parameters:
+- session_ids, list[str], optional
 - start_time: if null, no limit it
 - end_time: if null, no limit it
 - offset: int, default 0
