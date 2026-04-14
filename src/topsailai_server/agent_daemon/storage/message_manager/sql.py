@@ -159,6 +159,7 @@ class MessageSQLAlchemy(MessageStorageBase):
                 messages = db.query(Message).filter(
                     Message.session_id == session_id,
                     Message.msg_id != processed_msg_id,
+                    Message.role != "assistant",
                     Message.create_time >= processed_msg.create_time
                 ).order_by(asc(Message.create_time)).all()
 
