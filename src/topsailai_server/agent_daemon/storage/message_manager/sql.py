@@ -155,9 +155,11 @@ class MessageSQLAlchemy(MessageStorageBase):
                 ).order_by(asc(Message.create_time)).all()
             else:
                 # Get messages created after the processed message
+                # Also explicitly exclude processed_msg_id to handle same-timestamp edge case
                 messages = db.query(Message).filter(
                     Message.session_id == session_id,
-                    Message.create_time > processed_msg.create_time
+                    Message.msg_id != processed_msg_id,
+                    Message.create_time >= processed_msg.create_time
                 ).order_by(asc(Message.create_time)).all()
 
             return [self._to_data(m) for m in messages]

@@ -20,6 +20,7 @@ CWD = __file__
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(CWD))
 
+from topsailai.workspace.input_tool import input_multi_line
 from topsailai_server.agent_daemon import logger
 
 # Default values - support environment variable overrides
@@ -84,6 +85,9 @@ class AgentTerminal:
         self.last_msg_count = 0
         self.last_processed_msg_id = None
         self.term_width = get_terminal_size()
+        self.refresh_lock = threading.Lock()
+        self.needs_refresh = False
+        self.last_messages_content = None  # Store last content for comparison
 
         # Colors for terminal (simple ANSI codes)
         self.COLOR_USER = "\033[94m"      # Blue
@@ -238,46 +242,76 @@ class AgentTerminal:
         print(f"  Type your message and press Enter to send | Ctrl+C to exit".ljust(self.term_width))
         print(SPLIT_LINE)
 
-    def refresh_display(self):
-        """Refresh the display with current messages"""
-        clear_screen()
-        self.display_header()
+    def _generate_content_fingerprint(self, messages, processed_msg_id):
+        """Generate a fingerprint of the current content for comparison"""
+        # Create a fingerprint based on message count, last message id, and processed_msg_id
+        parts = [str(len(messages))]
+        if messages:
+            parts.append(messages[-1].get('msg_id', ''))
+        if processed_msg_id:
+            parts.append(processed_msg_id)
+        return '|'.join(parts)
 
+    def refresh_display(self, force=False):
+        """Refresh the display with current messages"""
         messages = self.get_messages()
-        self.display_messages(messages)
 
         # Get session info for processed_msg_id
         session_info = self.get_session_info()
         processed_msg_id = session_info.get('processed_msg_id') if session_info else None
 
+        # Generate content fingerprint and compare with last content
+        current_fingerprint = self._generate_content_fingerprint(messages, processed_msg_id)
+        if not force and current_fingerprint == self.last_messages_content:
+            # Content unchanged, no need to refresh
+            return False
+
+        # Update last content fingerprint
+        self.last_messages_content = current_fingerprint
+
+        # Content changed, perform the actual refresh
+        clear_screen()
+        self.display_header()
+        self.display_messages(messages)
         self.display_status_bar(len(messages), processed_msg_id)
 
-        # Check if there are new messages
-        current_msg_count = len(messages)
-        has_new_messages = current_msg_count > self.last_msg_count
-        self.last_msg_count = current_msg_count
+        # Update state
+        self.last_msg_count = len(messages)
         self.last_processed_msg_id = processed_msg_id
 
-        return has_new_messages
+        return True
+
+    def _auto_refresh_loop(self):
+        """Background thread for auto-refresh"""
+        while self.running:
+            time.sleep(self.refresh_interval)
+            if self.running:
+                with self.refresh_lock:
+                    self.needs_refresh = True
+                    self.refresh_display()
+                    self.needs_refresh = False
 
     def run(self):
         """Run the interactive terminal"""
         # Initial display
         self.refresh_display()
 
-        # Auto-refresh loop
+        # Start auto-refresh thread
+        refresh_thread = threading.Thread(target=self._auto_refresh_loop, daemon=True)
+        refresh_thread.start()
+
+        # Main input loop
         print()
         print(f"{self.COLOR_DIM}  Connecting to session...{self.COLOR_RESET}")
 
         while self.running:
             try:
-                # Wait for input or timeout
+                # Wait for user input
                 print()
                 print(f"{self.COLOR_BOLD}You:{self.COLOR_RESET} ", end="", flush=True)
 
-                # Use input with timeout for auto-refresh
                 try:
-                    user_input = input()
+                    user_input = input_multi_line()
                 except EOFError:
                     break
 
@@ -294,8 +328,8 @@ class AgentTerminal:
                     time.sleep(0.5)  # Brief delay to allow server to process
                     self.refresh_display()
                 else:
-                    # Empty input - just refresh
-                    self.refresh_display()
+                    # Empty input - just refresh (force refresh on Enter key)
+                    self.refresh_display(force=True)
 
             except KeyboardInterrupt:
                 print()

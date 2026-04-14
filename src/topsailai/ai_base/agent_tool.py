@@ -65,7 +65,10 @@ class AgentTool(PromptBase):
         # Dictionary of all available tools for this agent
         self.available_tools = dict()
         for tool_name in tool_kits or []:
-            self.available_tools[tool_name] = INTERNAL_TOOLS[tool_name]
+            for _internal_tool_name in INTERNAL_TOOLS.keys():
+                if _internal_tool_name.startswith(tool_name):
+                    self.available_tools[_internal_tool_name] = INTERNAL_TOOLS[_internal_tool_name]
+
         for tool_name in self.tools or {}:
             self.available_tools[tool_name] = self.tools[tool_name]
 

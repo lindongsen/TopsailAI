@@ -68,6 +68,8 @@ def do_client_list_sessions(args):
 
     params = {}
 
+    if args.session_ids:
+        params["session_ids"] = args.session_ids
     if args.start_time:
         params["start_time"] = args.start_time
     if args.end_time:
@@ -480,6 +482,7 @@ def cli():
 
     # List sessions
     list_sessions_parser = subparsers.add_parser('list-sessions', help='List all sessions')
+    list_sessions_parser.add_argument('--session-ids', type=str, help='Comma-separated session IDs to filter')
     list_sessions_parser.add_argument('--start-time', type=str, help='Start time filter')
     list_sessions_parser.add_argument('--end-time', type=str, help='End time filter')
     list_sessions_parser.add_argument('--offset', type=int, default=0, help='Offset (default: 0)')

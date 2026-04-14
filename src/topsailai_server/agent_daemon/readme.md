@@ -84,7 +84,7 @@ msg3  -> processed_msg_id
 msg4
 msg5
 
-msg3 是最近处理过的消息点，那么就会自动将 msg3 之后的消息（msg4, msg5）合成一条消息作为“待处理消息”并处理这条消息。
+msg3 是最近处理过的消息点，那么就会自动将 msg3 之后的消息（msg4, msg5）合成一条消息作为“待处理消息”并处理这条消息，注意："待处理消息"不包括 processed_msg_id 即 msg3.
 当`TOPSAILAI_AGENT_DAEMON_PROCESSOR`执行完毕后，它会主动调用API'告知'结果，processed_msg_id 就会变成 msg5。
 在消息处理完毕后，有两种可能结果：
 1. 直接产生一条新消息msg6，这种情况是因为消息可以直接做出回答，所以无需生成任务去处理。

@@ -152,6 +152,7 @@ def main():
     ):
         plan_agent = get_agent_chat(
             disabled_tools=["agent_tool"],
+            enabled_tools=["story_memory_tool"],
             tool_map=get_tool_map(),
             agent_type="plan_and_execute",
         )
