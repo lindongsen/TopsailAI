@@ -1,12 +1,18 @@
 ---
+maintainer: human
+# A markdown file's Maintainer can be `human` or `AI`, If it is human, you CANNOT modify this markdown file.
+
 workspace: /root/ai/TopsailAI/src/topsailai_server/agent_daemon
 ProjectFolder: /root/ai/TopsailAI
 
 TestsFolder: {workspace}/tests
 # tests subfolders:
+# - `unit/`, unit test
 # - `integration/`, integration test, If you are performing integration testing, be sure to set the environment variable HOME to this folder
 
 IssuesFolder: {workspace}/issues
+# This IssuesFolder will store various issue files
+# Put the processing results of the issue into the corresponding subfolders
 # issues subfolders:
 # - `done/`, the issues have fixed;
 # - `undo/`, the issues can be ignored;
@@ -16,6 +22,9 @@ DocsFolder: {workspace}/docs
 # - `cases/`, some test cases, Attention must be paid when conducting testing, especially integration testing
 
 programming_language: python
+
+Note:
+  - The beginning of the markdown(md) file may define some information. When the maintainer is defined as human, this file will become a fact file, and you cannot modify any "fact file"
 ---
 
 # Agent Daemon
