@@ -38,11 +38,11 @@ def get_storage() -> Storage:
     return Storage(_session_storage.engine)
 
 
-def get_message_storage() -> Storage:
-    """Get Message Storage instance"""
+def get_message_storage():
+    """Get Message Storage instance (MessageSQLAlchemy)"""
     if _message_storage is None:
         raise RuntimeError("Message Storage not initialized")
-    return _message_storage  # Return the actual storage instance directly
+    return _message_storage  # Return MessageSQLAlchemy instance directly
 
 
 def _are_all_messages_assistant(
@@ -65,13 +65,13 @@ def _are_all_messages_assistant(
         message_storage = get_message_storage()
         
         # Get the create_time of processed_msg_id
-        processed_msg = message_storage.message.get(session_id, processed_msg_id)
+        processed_msg = message_storage.get(processed_msg_id, session_id)
         if not processed_msg:
             # If processed_msg_id doesn't exist, treat as new session
             return False
         
         # Get all messages for this session after processed_msg_id using storage method
-        all_messages = message_storage.message.get_messages(
+        all_messages = message_storage.get_messages(
             session_id=session_id,
             sort_key="create_time",
             order_by="asc"
@@ -196,7 +196,7 @@ async def process_session(request: ProcessSessionRequest):
             }
         
         # Get all messages for this session, sorted by create_time
-        messages = message_storage.message.get_messages(
+        messages = message_storage.get_messages(
             session_id=session_id,
             sort_key="create_time",
             order_by="asc"
@@ -348,7 +348,7 @@ async def delete_sessions(request: DeleteSessionsRequest):
         for session_id in session_ids:
             # Delete messages first (foreign key relationship)
             try:
-                count = message_storage.message.delete_messages_by_session(session_id)
+                count = message_storage.delete_messages_by_session(session_id)
                 deleted_messages += count
             except Exception as e:
                 logger.warning("Failed to delete messages for session %s: %s", session_id, e)

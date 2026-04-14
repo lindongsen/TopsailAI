@@ -120,7 +120,7 @@ class SkillInfo(object):
         if self.flag_overview is None:
             self.flag_overview = is_need_load_overview(self.folder)
         if self.flag_overview:
-            result += "\n>>> [SKILL_OVERVIEW_START]\n" + overview_skill_native(self.folder) + "\n<<< [SKILL_OVERVIEW_END]\n"
+            result += f"\n>>> [SKILL_OVERVIEW_START:{self.folder}]\n" + overview_skill_native(self.folder) + f"\n<<< [SKILL_OVERVIEW_END:{self.folder}]\n"
 
         return result
 
