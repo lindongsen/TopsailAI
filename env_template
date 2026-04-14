@@ -165,6 +165,8 @@ TOPSAILAI_SUMMARY_PROMPT_EXTRA_MAP="react_community=context/summary/memory.md;"
 # 1 is enabled, 0 is disabled
 TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION="0"
 
+TOPSAILAI_PROMPT_WHEN_NO_TOOL_CALL="ATTENTION: NO TOOLS WERE CALLED"
+
 # =============================================================================
 # Feature Flags
 # =============================================================================

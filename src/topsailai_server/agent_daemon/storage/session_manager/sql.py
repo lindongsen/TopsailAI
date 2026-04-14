@@ -186,6 +186,7 @@ class SessionSQLAlchemy(SessionStorageBase):
 
     def list_sessions(
         self,
+        session_ids: Optional[List[str]] = None,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         offset: int = 0,
@@ -197,6 +198,7 @@ class SessionSQLAlchemy(SessionStorageBase):
         Get sessions with filtering, sorting, and pagination.
 
         Args:
+            session_ids: Filter sessions by specific session IDs (optional)
             start_time: Filter sessions created after this time
             end_time: Filter sessions created before this time
             offset: Number of records to skip
@@ -209,6 +211,10 @@ class SessionSQLAlchemy(SessionStorageBase):
         """
         with SQLSession(self.engine) as db:
             query = db.query(Session)
+
+            # Apply session_ids filter
+            if session_ids:
+                query = query.filter(Session.session_id.in_(session_ids))
 
             # Apply time filters
             if start_time:

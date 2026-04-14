@@ -17,6 +17,7 @@ from topsailai.utils.print_tool import (
 from topsailai.utils import (
     format_tool,
     json_tool,
+    env_tool,
 )
 from topsailai.ai_base.llm_hooks.executor import hook_execute
 
@@ -345,6 +346,10 @@ def format_response(response, rsp_obj=None, messages=None):
                     if action_count > 0:
                         print_error(f"fix llm mistake: change step to final answer due to found action count [{action_count}]")
                         step_name = format_tool.TOPSAILAI_STEP_FINAL
+                    else:
+                        no_tool_call_prompt = env_tool.EnvReaderInstance.get("TOPSAILAI_PROMPT_WHEN_NO_TOOL_CALL")
+                        if no_tool_call_prompt:
+                            response += "\n---\n" + no_tool_call_prompt
             except Exception as e:
                 logger.exception(e)
 
