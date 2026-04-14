@@ -198,19 +198,23 @@ def do_client_get_messages(args):
                 else:
                     for msg in messages:
                         create_time = format_time(msg.get('create_time'))
+                        msg_id = msg.get('msg_id')
                         role = msg.get('role')
                         message = msg.get('message')
                         task_id = msg.get('task_id')
                         task_result = msg.get('task_result')
-                        
-                        # Show time, role and full message (no session_id in content)
-                        print(f"[{create_time}] {role}: {message}")
+
+                        print("\n" + "="*77)
+                        # Show time and msg_id on first line
+                        print(f"[{create_time}] [{msg_id}] [{role}]")
+                        # Show role and full message on second line
+                        print(message)
                         # If task_id exists, show it
                         if task_id:
-                            print(f"task_id: {task_id}")
+                            print(f">>> task_id: {task_id}")
                         # If task_result exists, show it
                         if task_result:
-                            print(f"task_result: {task_result}")
+                            print(f">>> task_result: \n{task_result}")
                 return True
             else:
                 print(f"Error: {result.get('message', 'Unknown error')}")
@@ -306,7 +310,7 @@ def do_client_get_tasks(args):
                         session_id = task.get('session_id')
                         task_id = task.get('task_id')
                         task_result = task.get('task_result')
-                        
+
                         # Show session_id, message content, and full task_result
                         print(f"  Session: {session_id}")
                         message = task.get('message', '')
@@ -381,7 +385,7 @@ def do_client_delete_sessions(args):
             session_ids = [s.strip() for s in args.session_ids.split(',') if s.strip()]
         else:
             session_ids = list(args.session_ids)
-    
+
     if not session_ids:
         print("Error: At least one session ID is required")
         return False
@@ -401,11 +405,11 @@ def do_client_delete_sessions(args):
                 deleted_sessions = data.get("deleted_sessions", 0)
                 deleted_messages = data.get("deleted_messages", 0)
                 deleted_ids = data.get("session_ids", [])
-                
+
                 print(f"Deleted {deleted_sessions} session(s)")
                 print(f"Deleted {deleted_messages} message(s)")
                 print(f"Session IDs: {', '.join(deleted_ids)}")
-                
+
                 if args.verbose:
                     print(f"Response: {json.dumps(result, indent=2)}")
                 return True

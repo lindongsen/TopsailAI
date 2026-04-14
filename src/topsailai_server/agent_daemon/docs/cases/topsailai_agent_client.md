@@ -24,12 +24,17 @@
 2. 如果有 task_id, task_result 也要一并和消息一起显示出来
 3. 使用 list-messages 作为操作名字
 4. 显示完整的消息内容，不要省略
-5. 第一行显示出 session_id, 第一行格式："Retrieved {TOTAL_COUNT} message(s), Session: {SESSION_ID}".
+
+Example:
 ```
-root@ai-dev:~/ai/TopsailAI/src/topsailai_server/agent_daemon# ./topsailai_agent_client.py list-messages
-Retrieved 48 message(s), Session: ai-dev
-...
-内容中不需要显示 session_id
+Retrieved {TOTAL_COUNT} message(s), Session: {SESSION_ID}
+
+=============================================================================
+[2026-04-14 09:32:51] [{MSG_ID}] [{ROLE}]
+hello
+>>> task_id: aaa
+>>> task_result:
+content
 ```
 
 ## task
