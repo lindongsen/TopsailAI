@@ -59,7 +59,8 @@ def get_tool_prompt(tools_name:list=None, tools_map:dict=None):
 
     if tools_name:
         for tool_name in format_tool.to_list(tools_name, to_ignore_none=True):
-            tools_doc[tool_name] = TOOLS[tool_name].__doc__
+            if tool_name in TOOLS:
+                tools_doc[tool_name] = TOOLS[tool_name].__doc__
 
     if tools_map:
         for tool_name, tool_func in tools_map.items():

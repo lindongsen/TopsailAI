@@ -171,7 +171,7 @@ def enable_tools(raw_tools:list[str], target_tools:list[str]):
     """ return available tools """
     if not raw_tools:
         return raw_tools
-    if target_tools and '*' in target_tools:
+    if target_tools and ('*' in target_tools or '+' in target_tools):
         return raw_tools
     new_tools = set()
     target_tools = set(target_tools)

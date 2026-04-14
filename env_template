@@ -198,6 +198,9 @@ TOPSAILAI_DISABLED_TOOLS=""
 # Internal tools to enable (tools starting with these keywords)
 # Format: Tool names separated by semicolons (';')
 # Takes precedence over DISABLED_TOOLS - only tools matching these prefixes will be available
+# The symbol '+' is a key declaration, and the symbol '*' represents all
+#   Example: "file_tool;+", request to have 'file_tool';
+#   Example: "*", request to have all tools;
 TOPSAILAI_ENABLED_TOOLS=""
 
 # Extra Tools
