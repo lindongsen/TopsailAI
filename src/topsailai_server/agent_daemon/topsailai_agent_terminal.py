@@ -239,7 +239,7 @@ class AgentTerminal:
         if processed_msg_id:
             status += f" | Processed: {processed_msg_id[:32]}..."
         print(f"  {status}".ljust(self.term_width))
-        print(f"  Type your message and press Enter to send | Ctrl+C to exit".ljust(self.term_width))
+        print(f"  Type your message and press Ctrl+D to send | Ctrl+C to exit".ljust(self.term_width))
         print(SPLIT_LINE)
 
     def _generate_content_fingerprint(self, messages, processed_msg_id):
