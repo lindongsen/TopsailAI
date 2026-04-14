@@ -425,4 +425,11 @@ def hook_execute(content: Any) -> Union[List[Dict[str, Any]], str, Any]:
         if new_content:
             return new_content
 
+        # case: '=>' is ':'
+        if " => " in content:
+            content = content.replace(" => ", ":")
+            new_content = convert_tool_call_case1(content)
+            if new_content:
+                return new_content
+
     return content
