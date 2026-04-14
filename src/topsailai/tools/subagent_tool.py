@@ -70,8 +70,6 @@ def call_assistant(task:str) -> str:
     )
     task_agent.hooks_for_final_answer.clear()
 
-    call_assistant.__doc__ += "\n>>> SKILL START\n" + skill_tool.PROMPT_PLUGIN_SKILLS + "\n<<< SKILL END"
-
     task_id = get_task_id()
     return task_agent.run(
         message=task,
@@ -79,6 +77,7 @@ def call_assistant(task:str) -> str:
         need_session_lock=False,
         task_id=task_id,
     )
+call_assistant.__doc__ += "\n>>> SKILL START\n" + skill_tool.PROMPT_PLUGIN_SKILLS + "\n<<< SKILL END"
 
 TOOLS = dict(
     call_assistant=call_assistant,
