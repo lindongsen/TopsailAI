@@ -25,6 +25,7 @@ DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 7373
 DEFAULT_SESSION_ID = socket.gethostname()
 
+SPLIT_LINE = "\n" + "="*77
 
 def format_time(time_str):
     """Format time string to YYYY-MM-DD HH:MM:SS"""
@@ -204,7 +205,7 @@ def do_client_get_messages(args):
                         task_id = msg.get('task_id')
                         task_result = msg.get('task_result')
 
-                        print("\n" + "="*77)
+                        print(SPLIT_LINE)
                         # Show time and msg_id on first line
                         print(f"[{create_time}] [{msg_id}] [{role}]")
                         # Show role and full message on second line
@@ -309,14 +310,21 @@ def do_client_get_tasks(args):
                         create_time = format_time(task.get('create_time'))
                         session_id = task.get('session_id')
                         task_id = task.get('task_id')
+                        msg_id = task.get('msg_id', 'N/A')
+                        message = task.get('message', '')
                         task_result = task.get('task_result')
 
-                        # Show session_id, message content, and full task_result
-                        print(f"  Session: {session_id}")
-                        message = task.get('message', '')
-                        print(f"  Message: {message}")
-                        print(f"  [{create_time}] Task: {task_id}")
-                        print(f"    Result: {task_result}")
+                        # Format according to document specification:
+                        # [2026-04-14 13:31:36] task=[{TASK_ID}] session=[{SESSION_ID}] msg=[{MSG_ID}]
+                        # task content
+                        # ---
+                        # task result
+                        print(SPLIT_LINE)
+                        print(f"[{create_time}] task=[{task_id}] session=[{session_id}] msg=[{msg_id}]")
+                        print("Task: " + message)
+                        if task_result:
+                            print("---")
+                            print(task_result)
                 return True
             else:
                 print(f"Error: {result.get('message', 'Unknown error')}")

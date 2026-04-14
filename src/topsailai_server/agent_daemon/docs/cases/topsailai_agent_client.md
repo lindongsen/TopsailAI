@@ -58,7 +58,7 @@ Retrieved Tasks: {TOTAL_COUNT}
 
 =============================================================================
 [2026-04-14 13:31:36] task=[{TASK_ID}] session=[{SESSION_ID}] msg=[{MSG_ID}]
-task content
+Task: task content
 ---
 task result
 

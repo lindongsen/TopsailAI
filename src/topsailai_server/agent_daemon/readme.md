@@ -22,7 +22,7 @@ DocsFolder: {workspace}/docs
 # docs files:
 # - Code_Improvement_Proposal.md, AI as maintainer, Fully maintained by AI
 # docs subfolders:
-# - `cases/`, some test cases, Attention must be paid when conducting testing, especially integration testing
+# - `cases/`, some test/use cases, When you are making a test plan, you must read all the files in this folder
 
 Note:
   - The beginning of the markdown(md) file may define some information. When the maintainer is defined as human, this file will become a fact file, and you cannot modify any "fact file"
