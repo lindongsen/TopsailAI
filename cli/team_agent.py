@@ -32,6 +32,9 @@ sys.path.insert(0, project_root + "/src")
 
 os.chdir(project_root)
 
+# Env
+os.environ["TOPSAILAI_COLLABORATION_MODE"] = 1
+
 from topsailai.ai_team.role import (
     get_member_name,
 )

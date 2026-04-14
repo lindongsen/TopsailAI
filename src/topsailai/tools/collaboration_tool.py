@@ -5,13 +5,16 @@
   Purpose: hermit
 '''
 
+from topsailai.utils import (
+    env_tool,
+)
 from topsailai.ai_base.agent_types.exception import (
     AgentFinalAnswer,
 )
 
 ACTION_FINISH_TASK = "await_or_transfer_task"
 
-def await_or_transfer_task(summary:str):
+def await_or_transfer_task(task:str):
     """
     tool_call in following Scenarios:
     - When a certain stage or step is completed.
@@ -21,9 +24,9 @@ def await_or_transfer_task(summary:str):
         execute something by x;
 
     Args:
-        summary (str): complete info
+        task (str): complete task content
     """
-    raise AgentFinalAnswer(summary)
+    raise AgentFinalAnswer(task)
 
 
 def finish_task(final_answer:str):
@@ -40,4 +43,4 @@ TOOLS = dict(
     await_or_transfer_task=await_or_transfer_task,
 )
 
-FLAG_TOOL_ENABLED = False
+FLAG_TOOL_ENABLED = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_COLLABORATION_MODE", False)

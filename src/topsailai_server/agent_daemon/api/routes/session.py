@@ -1,20 +1,22 @@
 '''
-Author: Dawsonlin
-Email: lin_dongsen@126.com
-Created: 2026-04-12
-Purpose: Session API routes for agent_daemon
+  Author: DawsonLin
+  Email: lin_dongsen@126.com
+  Created: 2026-04-14
+  Purpose: Session API routes - FastAPI implementation
 '''
 
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from topsailai_server.agent_daemon import logger
-from topsailai_server.agent_daemon.storage import Storage
-from topsailai_server.agent_daemon.worker.process_manager import WorkerManager
+from topsailai_server.agent_daemon.storage import Storage, MessageData
+from topsailai_server.agent_daemon.worker import WorkerManager
+from topsailai_server.agent_daemon.api.utils import ApiResponse, success_response, error_response
 
-# Create router
+
+# Router
 router = APIRouter(prefix="/api/v1/session", tags=["session"])
 
 # Global dependencies (set by app.py)
@@ -24,7 +26,7 @@ _worker_manager = None
 
 
 def set_dependencies(session_storage, message_storage, worker_manager):
-    """Set global dependencies for route handlers (called by app.py)"""
+    """Set dependencies for the routes (called by app.py)"""
     global _session_storage, _message_storage, _worker_manager
     _session_storage = session_storage
     _message_storage = message_storage
@@ -38,104 +40,164 @@ def get_storage() -> Storage:
     return Storage(_session_storage.engine)
 
 
-def get_message_storage():
-    """Get Message Storage instance (MessageSQLAlchemy)"""
-    if _message_storage is None:
-        raise RuntimeError("Message Storage not initialized")
-    return _message_storage  # Return MessageSQLAlchemy instance directly
+def get_worker_manager() -> WorkerManager:
+    """Get WorkerManager instance"""
+    if _worker_manager is None:
+        raise RuntimeError("WorkerManager not initialized")
+    return _worker_manager
 
 
-def _are_all_messages_assistant(
-    session_id: str, 
-    processed_msg_id: Optional[str], 
-    latest_msg_id: str
-) -> bool:
-    """
-    Check if all messages between processed_msg_id and latest_msg_id are assistant.
-    
-    Returns:
-        True if all messages are assistant (or no messages exist)
-        False if any user message exists
-    """
-    # New session - assume has work to do
-    if not processed_msg_id:
-        return False
-    
-    try:
-        message_storage = get_message_storage()
-        
-        # Get the create_time of processed_msg_id
-        processed_msg = message_storage.get(processed_msg_id, session_id)
-        if not processed_msg:
-            # If processed_msg_id doesn't exist, treat as new session
-            return False
-        
-        # Get all messages for this session after processed_msg_id using storage method
-        all_messages = message_storage.get_messages(
-            session_id=session_id,
-            sort_key="create_time",
-            order_by="asc"
-        )
-        
-        # Filter messages after processed_msg_id
-        found_processed = False
-        pending_messages = []
-        for msg in all_messages:
-            if msg.msg_id == processed_msg_id:
-                found_processed = True
-                continue
-            if found_processed:
-                pending_messages.append(msg)
-        
-        if not pending_messages:
-            return True  # No messages = all (zero) are assistant
-        
-        # Check if ALL are assistant
-        return all(msg.role == "assistant" for msg in pending_messages)
-    except Exception as e:
-        logger.exception("Failed to check messages: %s", e)
-        # On error, assume there are messages to process
-        return False
-
-
-# Request/Response models
-class ProcessSessionRequest(BaseModel):
-    session_id: str
-
-
-class DeleteSessionsRequest(BaseModel):
-    session_ids: list[str]
-
-
+# Request/Response Models
 class SessionResponse(BaseModel):
+    """Response model for a session"""
     session_id: str
-    session_name: Optional[str] = None
+    session_name: str
     task: Optional[str] = None
-    create_time: Optional[str] = None
-    update_time: Optional[str] = None
+    create_time: datetime
+    update_time: datetime
     processed_msg_id: Optional[str] = None
 
 
-@router.get("")
-async def list_sessions(
-    start_time: Optional[str] = Query(None, description="Filter by start time (ISO format)"),
-    end_time: Optional[str] = Query(None, description="Filter by end time (ISO format)"),
-    offset: int = Query(0, ge=0, description="Offset for pagination"),
-    limit: int = Query(1000, ge=1, le=1000, description="Limit for pagination"),
-    sort_key: str = Query("create_time", description="Sort key field"),
-    order_by: str = Query("desc", description="Order direction: asc or desc")
+class ProcessSessionRequest(BaseModel):
+    """Request model for processing a session"""
+    session_id: str
+
+
+class ProcessSessionResponse(BaseModel):
+    """Response model for process session"""
+    processed_msg_id: Optional[str] = None
+    processing_msg_id: Optional[str] = None
+    messages: Optional[List[dict]] = None
+    processor_pid: Optional[int] = None
+
+
+async def _check_and_process_messages(
+    session_id: str,
+    storage: Storage,
+    worker_manager: WorkerManager
 ):
     """
-    List all sessions with optional filtering and pagination.
+    Check if there are unprocessed messages and start processor if needed.
+
+    This is called after receiving a message or setting a task result.
+
+    Flow:
+    1. If processed_msg_id is the latest message -> exit
+    2. If all messages from processed_msg_id to latest are role=assistant -> log and exit (avoid infinite loop)
+    3. Run TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER -> if processing, exit
+    4. Start the processor
     """
     try:
-        storage = get_storage()
-        
-        # Parse time strings to datetime objects
-        start_dt = datetime.fromisoformat(start_time) if start_time else None
-        end_dt = datetime.fromisoformat(end_time) if end_time else None
-        
+        # Get session
+        session = storage.session.get(session_id)
+        if not session:
+            logger.warning("Session not found: %s", session_id)
+            return None
+
+        # Get latest message
+        latest_message = storage.message.get_latest_message(session_id)
+        if not latest_message:
+            logger.warning("No messages found for session: %s", session_id)
+            return None
+
+        # Step 1: Check if processed_msg_id is at the latest message
+        if session.processed_msg_id == latest_message.msg_id:
+            logger.debug("Session %s is up to date", session_id)
+            return None
+
+        # Get unprocessed messages
+        unprocessed = storage.message.get_unprocessed_messages(session_id, session.processed_msg_id)
+        if not unprocessed:
+            logger.debug("No unprocessed messages for session: %s", session_id)
+            return None
+
+        # Step 2: Check if ALL unprocessed messages are assistant (avoid infinite loop)
+        if all(msg.role == "assistant" for msg in unprocessed):
+            logger.info("All unprocessed messages are assistant, skipping session %s to avoid infinite loop", session_id)
+            return None
+
+        # Step 3: Check if session is idle
+        if not worker_manager.is_session_idle(session_id):
+            logger.info("Session %s is processing, skipping", session_id)
+            return None
+
+        # Step 4: Combine unprocessed messages into a task and start processor
+        task = "\n".join([msg.message for msg in unprocessed])
+        logger.info("Starting processor for session: %s, msg_id: %s", session_id, latest_message.msg_id)
+
+        success = worker_manager.start_processor(
+            session_id=session_id,
+            msg_id=latest_message.msg_id,
+            task=task
+        )
+
+        if success:
+            return {
+                "processed_msg_id": session.processed_msg_id,
+                "processing_msg_id": latest_message.msg_id,
+                "messages": [
+                    {
+                        "msg_id": msg.msg_id,
+                        "session_id": msg.session_id,
+                        "message": msg.message,
+                        "role": msg.role,
+                        "create_time": msg.create_time.isoformat() if msg.create_time else None,
+                        "update_time": msg.update_time.isoformat() if msg.update_time else None,
+                        "task_id": msg.task_id,
+                        "task_result": msg.task_result
+                    }
+                    for msg in unprocessed
+                ],
+                "processor_pid": worker_manager.running_processes.get(session_id).pid if session_id in worker_manager.running_processes else None
+            }
+        return None
+
+    except Exception as e:
+        logger.exception("Error checking/processing messages: %s", e)
+        return None
+
+
+@router.get("", response_model=ApiResponse)
+async def list_sessions(
+    session_ids: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    offset: int = 0,
+    limit: int = 1000,
+    sort_key: str = "create_time",
+    order_by: str = "desc",
+    storage: Storage = Depends(get_storage)
+) -> ApiResponse:
+    """
+    List sessions with optional filtering and pagination.
+
+    Args:
+        session_ids: Comma-separated list of session IDs to filter
+        start_time: Start time filter (ISO format string)
+        end_time: End time filter (ISO format string)
+        offset: Pagination offset
+        limit: Maximum number of sessions to return
+        sort_key: Field to sort by (default: create_time)
+        order_by: Sort order (asc or desc, default: desc)
+    """
+    try:
+        # Parse datetime strings if provided
+        start_dt = None
+        end_dt = None
+
+        if start_time:
+            start_dt = datetime.fromisoformat(start_time)
+        if end_time:
+            end_dt = datetime.fromisoformat(end_time)
+
+        # Parse session_ids if provided
+        session_id_list = None
+        if session_ids:
+            session_id_list = [s.strip() for s in session_ids.split(",") if s.strip()]
+
+        # Get sessions from storage
         sessions = storage.session.list_sessions(
+            session_ids=session_id_list,
             start_time=start_dt,
             end_time=end_dt,
             offset=offset,
@@ -143,237 +205,142 @@ async def list_sessions(
             sort_key=sort_key,
             order_by=order_by
         )
-        
-        # Format sessions for response
+
+        # Convert to response format
         session_list = []
         for session in sessions:
-            session_list.append({
-                "session_id": session.session_id,
-                "session_name": session.session_name,
-                "task": session.task,
-                "create_time": session.create_time.strftime("%Y-%m-%d %H:%M:%S") if session.create_time else None,
-                "update_time": session.update_time.strftime("%Y-%m-%d %H:%M:%S") if session.update_time else None,
-                "processed_msg_id": session.processed_msg_id
-            })
-        
-        return {
-            "code": 0,
-            "data": session_list,
-            "message": "Success"
-        }
+            session_list.append(SessionResponse(
+                session_id=session.session_id,
+                session_name=session.session_name,
+                task=session.task,
+                create_time=session.create_time,
+                update_time=session.update_time,
+                processed_msg_id=session.processed_msg_id
+            ))
+
+        logger.info("Listed %d sessions", len(session_list))
+        return success_response(data=session_list)
+
     except Exception as e:
-        logger.exception("Failed to list sessions: %s", e)
-        return {
-            "code": 1,
-            "data": None,
-            "message": str(e)
-        }
+        logger.exception("Error listing sessions: %s", e)
+        return error_response(message=f"Failed to list sessions: {str(e)}")
 
 
-@router.post("/process")
-async def process_session(request: ProcessSessionRequest):
+@router.delete("", response_model=ApiResponse)
+async def delete_sessions(
+    session_ids: str,
+    storage: Storage = Depends(get_storage)
+) -> ApiResponse:
     """
-    Process a session:
-    Step 1: If processed_msg_id is the latest message, exit
-    Step 2: If all messages between processed_msg_id and latest are assistant, log and exit (avoid infinite loop)
-    Step 3: Execute TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER script - if idle, continue; if processing, exit
-    Step 4: Set latest message ID as TOPSAILAI_MSG_ID, execute processor script
+    Delete sessions and their related messages.
+
+    Args:
+        session_ids: Comma-separated list of session IDs to delete
+    """
+    try:
+        # Parse session_ids
+        session_id_list = [s.strip() for s in session_ids.split(",") if s.strip()]
+
+        if not session_id_list:
+            return error_response(message="No session IDs provided")
+
+        deleted_count = 0
+        for session_id in session_id_list:
+            # Delete messages first (cascade)
+            storage.message.delete_by_session_id(session_id)
+            # Delete session
+            storage.session.delete(session_id)
+            deleted_count += 1
+            logger.info("Deleted session and messages: %s", session_id)
+
+        return success_response(
+            data={"deleted_count": deleted_count},
+            message=f"Deleted {deleted_count} session(s)"
+        )
+
+    except Exception as e:
+        logger.exception("Error deleting sessions: %s", e)
+        return error_response(message=f"Failed to delete sessions: {str(e)}")
+
+
+@router.post("/process", response_model=ApiResponse)
+async def process_session(
+    request: ProcessSessionRequest,
+    storage: Storage = Depends(get_storage),
+    worker_manager: WorkerManager = Depends(get_worker_manager)
+) -> ApiResponse:
+    """
+    Process a session - check if there are unprocessed messages and start processor if needed.
+
+    This endpoint:
+    1. Checks if processed_msg_id is the latest message
+    2. If not, triggers the processor to handle unprocessed messages
+    3. Returns information about the processing status
+
+    Args:
+        request: ProcessSessionRequest with session_id
     """
     try:
         session_id = request.session_id
-        
-        # Get storage instances
-        storage = get_storage()
-        message_storage = get_message_storage()
-        
-        # Get session from storage
+
+        # Get session
         session = storage.session.get(session_id)
         if not session:
-            return {
-                "code": 1,
-                "data": None,
-                "message": f"Session {session_id} not found"
-            }
-        
-        # Get all messages for this session, sorted by create_time
-        messages = message_storage.get_messages(
-            session_id=session_id,
-            sort_key="create_time",
-            order_by="asc"
-        )
-        
-        if not messages:
-            return {
-                "code": 0,
-                "data": {"session_id": session_id, "status": "no_messages"},
-                "message": "No messages in session"
-            }
-        
-        # Get the latest message
-        latest_message = messages[-1]
-        latest_msg_id = latest_message.msg_id
-        
-        # Step 1: If processed_msg_id is the latest message, exit
-        if session.processed_msg_id == latest_msg_id:
-            return {
-                "code": 0,
-                "data": {"session_id": session_id, "status": "already_processed"},
-                "message": "Session is already up to date"
-            }
-        
-        # Step 2: If all messages between processed_msg_id and latest are assistant, exit (avoid infinite loop)
-        all_assistant = _are_all_messages_assistant(session_id, session.processed_msg_id, latest_msg_id)
-        if all_assistant:
-            logger.info("All messages are assistant, skipping session %s to avoid infinite loop", session_id)
-            return {
-                "code": 0,
-                "data": {"session_id": session_id, "status": "skipped", "reason": "all_assistant"},
-                "message": "All messages are assistant, skipping to avoid infinite loop"
-            }
-        
-        # Step 3: Check session state using TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER
-        from topsailai_server.agent_daemon.configer import get_config
-        config = get_config()
-        
-        # Get session state checker script
-        session_state_checker_script = config.session_state_checker_script
-        if not session_state_checker_script:
-            return {
-                "code": 1,
-                "data": None,
-                "message": "TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER not configured"
-            }
-        
-        worker_mgr = _worker_manager
-        
+            return error_response(message=f"Session not found: {session_id}")
+
+        # Get latest message
+        latest_message = storage.message.get_latest_message(session_id)
+        if not latest_message:
+            return success_response(
+                data={"processed_msg_id": session.processed_msg_id},
+                message="No messages in session"
+            )
+
+        # Check if processed_msg_id is at the latest message
+        if session.processed_msg_id == latest_message.msg_id:
+            return success_response(
+                data={"processed_msg_id": session.processed_msg_id},
+                message="Session is up to date, no pending messages"
+            )
+
+        # Get unprocessed messages
+        unprocessed = storage.message.get_unprocessed_messages(session_id, session.processed_msg_id)
+        if not unprocessed:
+            return success_response(
+                data={"processed_msg_id": session.processed_msg_id},
+                message="No unprocessed messages"
+            )
+
+        # Check if ALL unprocessed messages are assistant (avoid infinite loop)
+        if all(msg.role == "assistant" for msg in unprocessed):
+            logger.info("All unprocessed messages are assistant, skipping session %s to avoid infinite loop", session_id)
+            return success_response(
+                data={"processed_msg_id": session.processed_msg_id},
+                message="All unprocessed messages are from assistant, skipping to avoid infinite loop"
+            )
+
         # Check if session is idle
-        is_idle = worker_mgr.is_session_idle(session_id)
-        
-        if not is_idle:
-            return {
-                "code": 0,
-                "data": {"session_id": session_id, "status": "processing"},
-                "message": "Session is currently being processed"
-            }
-        
-        # Get messages after processed_msg_id
-        pending_messages = []
-        found_processed = False
-        for msg in messages:
-            if session.processed_msg_id and msg.msg_id == session.processed_msg_id:
-                found_processed = True
-                continue
-            if found_processed:
-                pending_messages.append(msg)
-        
-        if not pending_messages:
-            return {
-                "code": 0,
-                "data": {"session_id": session_id, "status": "no_pending"},
-                "message": "No pending messages to process"
-            }
-        
-        # Build the task content from pending messages
-        task_content = ""
-        for msg in pending_messages:
-            role = msg.role if hasattr(msg, 'role') else 'user'
-            task_content += f"[{role}]: {msg.message}\n"
-            # Include task_id and task_result if present
-            if msg.task_id:
-                task_content += f"[task_id]: {msg.task_id}\n"
-            if msg.task_result:
-                task_content += f"[task_result]: {msg.task_result}\n"
-        
-        # Step 4: Trigger processor with LATEST message ID (not pending)
-        processor_script = config.processor_script
-        if not processor_script:
-            return {
-                "code": 1,
-                "data": None,
-                "message": "TOPSAILAI_AGENT_DAEMON_PROCESSOR not configured"
-            }
-        
-        # Set environment variables for processor - use latest_msg_id
-        worker_mgr.start_processor(session_id, latest_msg_id, task_content)
-        
-        return {
-            "code": 0,
-            "data": {
-                "session_id": session_id,
-                "status": "processing",
-                "msg_id": latest_msg_id
-            },
-            "message": "Processor started"
-        }
-        
-    except Exception as e:
-        logger.exception("Failed to process session: %s", e)
-        return {
-            "code": 1,
-            "data": None,
-            "message": str(e)
-        }
+        if not worker_manager.is_session_idle(session_id):
+            logger.info("Session %s is processing, skipping", session_id)
+            return success_response(
+                data={"processed_msg_id": session.processed_msg_id},
+                message="Session is currently processing"
+            )
 
+        # Start the processor
+        result = await _check_and_process_messages(session_id, storage, worker_manager)
 
-@router.post("/delete")
-async def delete_sessions(request: DeleteSessionsRequest):
-    """
-    Delete sessions and their associated messages.
-    
-    Parameters:
-        session_ids: list of session IDs to delete
-    
-    Returns:
-        deleted_sessions: count of deleted sessions
-        deleted_messages: count of deleted messages
-        session_ids: list of deleted session IDs
-    """
-    try:
-        session_ids = request.session_ids
-        
-        if not session_ids:
-            return {
-                "code": 1,
-                "data": None,
-                "message": "session_ids is required and cannot be empty"
-            }
-        
-        # Get storage instances
-        storage = get_storage()
-        message_storage = get_message_storage()
-        
-        deleted_sessions = 0
-        deleted_messages = 0
-        
-        for session_id in session_ids:
-            # Delete messages first (foreign key relationship)
-            try:
-                count = message_storage.delete_messages_by_session(session_id)
-                deleted_messages += count
-            except Exception as e:
-                logger.warning("Failed to delete messages for session %s: %s", session_id, e)
-            
-            # Delete session
-            try:
-                storage.session.delete(session_id)
-                deleted_sessions += 1
-            except Exception as e:
-                logger.warning("Failed to delete session %s: %s", session_id, e)
-        
-        return {
-            "code": 0,
-            "data": {
-                "deleted_sessions": deleted_sessions,
-                "deleted_messages": deleted_messages,
-                "session_ids": session_ids
-            },
-            "message": "Success"
-        }
-        
+        if result:
+            return success_response(
+                data=result,
+                message="Processor started for unprocessed messages"
+            )
+        else:
+            return success_response(
+                data={"processed_msg_id": session.processed_msg_id},
+                message="Failed to start processor"
+            )
+
     except Exception as e:
-        logger.exception("Failed to delete sessions: %s", e)
-        return {
-            "code": 1,
-            "data": None,
-            "message": str(e)
-        }
+        logger.exception("Error processing session: %s", e)
+        return error_response(message=f"Failed to process session: {str(e)}")

@@ -27,3 +27,5 @@ def reload():
     if is_tool_enabled(file_tool):
         TOOLS.clear()
     return
+
+reload()
