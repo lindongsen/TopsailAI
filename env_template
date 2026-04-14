@@ -121,7 +121,11 @@ PURE_SYSTEM_PROMPT=0
 # Lock session, agent_shell: start -> lock session -> refresh session -> agent_run
 TOPSAILAI_ENABLE_SESSION_LOCK=0
 
+# Wait time in seconds
 TOPSAILAI_SESSION_LOCK_WAIT_TIMEOUT=1
+
+# Delete lock file after unlock
+TOPSAILAI_SESSION_LOCK_FILE_NEED_DELETE=1
 
 # Chat History Managers
 # Format: Manager classes separated by semicolons (';')

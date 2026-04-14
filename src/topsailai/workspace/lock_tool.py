@@ -103,7 +103,7 @@ def FileLock(name: str):
     return
 
 @contextmanager
-def ctxm_try_session_lock(session_id:str=None, timeout:int=None):
+def ctxm_try_session_lock(session_id:str=None, timeout:int=None, to_delete_lock_file:bool=None):
     """
     yield YieldData(session_id, fp, msg)
       if exists file operation object, session is locked, else None for locking failed.
@@ -120,8 +120,13 @@ def ctxm_try_session_lock(session_id:str=None, timeout:int=None):
         timeout = env_tool.EnvReaderInstance.get("TOPSAILAI_SESSION_LOCK_WAIT_TIMEOUT", default=60, formatter=int)
     timeout = max(1, timeout)
 
+    if to_delete_lock_file is None:
+        to_delete_lock_file = env_tool.EnvReaderInstance.check_bool(
+            "TOPSAILAI_SESSION_LOCK_FILE_NEED_DELETE", True
+        )
+
     msg = ""
-    with ctxm_wait_flock(lock_file, to_delete_lock_file=True, timeout=timeout) as fp:
+    with ctxm_wait_flock(lock_file, to_delete_lock_file=to_delete_lock_file, timeout=timeout) as fp:
         if session_id and not fp:
             msg = f"session is busy: [{session_id}]"
 

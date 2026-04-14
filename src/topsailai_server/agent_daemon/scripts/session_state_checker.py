@@ -22,16 +22,16 @@ def main():
     """Check if a session is idle or processing."""
     # Get session_id from environment
     session_id = os.environ.get("TOPSAILAI_SESSION_ID")
-    
+
     if not session_id:
         print("Error: TOPSAILAI_SESSION_ID not set", file=sys.stderr)
         sys.exit(1)
-    
+
     # Try to acquire session lock
     # If lock acquired (fp is not None), no task is working -> idle
     # If lock failed (fp is None), task is running -> processing
     try:
-        with ctxm_try_session_lock(session_id=session_id, timeout=1) as data:
+        with ctxm_try_session_lock(session_id=session_id, timeout=1, to_delete_lock_file=False) as data:
             if data.get("fp"):
                 # Lock acquired, no task is working
                 print(STATUS_IDLE)

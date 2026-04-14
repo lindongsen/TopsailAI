@@ -97,12 +97,19 @@ def do_client_list_sessions(args):
                         create_time = format_time(session.get('create_time'))
                         session_id = session.get('session_id')
                         session_name = session.get('session_name', 'N/A')
+                        task = session.get('task', 'N/A')
+                        processed_msg_id = session.get('processed_msg_id', 'N/A')
+
                         # Only show one when session_id == session_name
                         if session_id == session_name:
-                            print(f"  [{create_time}] {session_id}")
+                            session_display = session_id
                         else:
-                            print(f"  [{create_time}] {session_id}: {session_name}")
-                        print(f"    Task: {session.get('task', 'N/A')}, Processed: {session.get('processed_msg_id', 'N/A')}")
+                            session_display = f"{session_id}: {session_name}"
+
+                        print(SPLIT_LINE)
+                        print(f"[{create_time}] {session_display}")
+                        print(f"Task: {task}")
+                        print(f">>> Processed: {processed_msg_id}")
                 return True
             else:
                 print(f"Error: {result.get('message', 'Unknown error')}")
@@ -200,6 +207,7 @@ def do_client_get_messages(args):
                 else:
                     for msg in messages:
                         create_time = format_time(msg.get('create_time'))
+                        update_time = format_time(msg.get('update_time'))
                         msg_id = msg.get('msg_id')
                         role = msg.get('role')
                         message = msg.get('message')
@@ -213,6 +221,8 @@ def do_client_get_messages(args):
                         print(message)
                         # If task_id exists, show it
                         if task_id:
+                            print("")
+                            print(f">>> update_time: [{update_time}]")
                             print(f">>> task_id: {task_id}")
                         # If task_result exists, show it
                         if task_result:

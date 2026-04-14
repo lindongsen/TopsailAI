@@ -344,7 +344,13 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
             last_line_no_ending = False
 
         # Replace the specified lines
-        for line_num, new_content in lines:
+        for line_item in lines:
+            if isinstance(line_item, dict):
+                line_num = line_item["line_number"]
+                new_content = line_item["content"]
+            else:
+                line_num, new_content = line_item
+
             line_num = int(line_num)
             # Convert to 0-based index
             index = line_num - 1

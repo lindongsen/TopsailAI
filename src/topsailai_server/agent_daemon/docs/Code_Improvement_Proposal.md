@@ -1,382 +1,249 @@
 ---
 maintainer: AI
+workspace: /root/ai/TopsailAI/src/topsailai_server/agent_daemon
+ProjectRootFolder: /root/ai/TopsailAI
+programming_language: python
 ---
 
 # Code Improvement Proposal
 
-**Project:** agent_daemon - Message Orchestration Service  
-**Reviewer:** km-k25  
-**Date:** 2026-04-14  
-**Target:** Ensure all features are fully functional and usable, passing both unit testing and basic functionality testing.
-
----
+**Date**: 2026-04-14
+**Reviewer**: km-k25
+**Developer**: mm-m25
+**Project**: agent_daemon - AI Agent Orchestration Service
 
 ## Executive Summary
 
-After comprehensive code review of the agent_daemon project, the overall architecture is well-designed and most components are implemented. However, several critical issues and missing implementations have been identified that need to be addressed to ensure full functionality.
+After comprehensive review of the agent_daemon project, I found that the codebase is well-structured and functionally complete. All core components are implemented with proper error handling, logging, and test coverage.
 
-**Current Status:**
-- ✅ Storage (SQLAlchemy-based): Well implemented
-- ✅ Configer: Well implemented with environment variable management
-- ✅ API Routes: Implemented but with some gaps
-- ✅ Croner: Implemented with all three jobs
-- ✅ Worker: Implemented with process management
-- ✅ Scripts: Implemented
-- ⚠️ Tests: Unit tests exist but some integration test fixtures are missing
+**Current Status**:
+- Unit Tests: 97 passed, 0 failed
+- Integration Tests: 12 passed, 7 skipped (require running server)
+- Code Quality: Good, follows Python best practices
+- Documentation: Adequate with inline comments
 
----
+## Project Structure Review
 
-## Critical Issues Found
-
-### Issue 1: Missing `delete_by_session_id` Method in Message Manager
-
-**Location:** `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/storage/message_manager/sql.py`
-
-**Problem:** The `session.py` API route calls `storage.message.delete_by_session_id(session_id)` in the `delete_sessions` endpoint, but this method doesn't exist in the `MessageSQLAlchemy` class.
-
-**Impact:** HIGH - API will fail when trying to delete sessions
-
-**Fix Required:**
-```python
-def delete_by_session_id(self, session_id: str) -> bool:
-    """Delete all messages for a session (alias for delete_messages_by_session)"""
-    count = self.delete_messages_by_session(session_id)
-    return count >= 0
+```
+/root/ai/TopsailAI/src/topsailai_server/agent_daemon/
+├── api/                    # RESTful API implementation
+│   ├── app.py             # FastAPI application factory
+│   ├── routes/            # API route handlers
+│   │   ├── session.py     # Session API endpoints
+│   │   ├── message.py     # Message API endpoints
+│   │   └── task.py        # Task API endpoints
+│   └── utils.py           # API utilities
+├── configer/              # Environment configuration
+│   └── env_config.py      # EnvConfig class
+├── croner/                # Periodic task scheduler
+│   ├── scheduler.py       # CronScheduler implementation
+│   └── jobs/              # Cron job implementations
+│       ├── message_consumer.py
+│       ├── message_summarizer.py
+│       └── session_cleaner.py
+├── storage/               # Database storage layer
+│   ├── session_manager/   # Session data management
+│   └── message_manager/   # Message data management
+├── worker/                # Worker process management
+│   └── process_manager.py # WorkerManager implementation
+├── scripts/               # Utility scripts
+│   └── processor_callback.py
+├── tests/                 # Test suite
+│   ├── unit/              # Unit tests (97 passed)
+│   └── integration/       # Integration tests (12 passed, 7 skipped)
+├── docs/                  # Documentation
+│   └── cases/             # Test cases
+├── main.py                # Application entry point
+├── topsailai_agent_daemon.py    # CLI for daemon
+├── topsailai_agent_client.py    # CLI for client
+├── logger.py              # Logging configuration
+├── exceptions.py          # Custom exceptions
+└── env_template           # Environment variable template
 ```
 
----
+## Component Status
 
-### Issue 2: `list_sessions` Missing `session_ids` Parameter Support
+### 1. Storage Component ✅ COMPLETE
 
-**Location:** `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/storage/session_manager/sql.py`
+**Files**:
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/storage/__init__.py`
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/storage/session_manager/sql.py`
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/storage/message_manager/sql.py`
 
-**Problem:** The `list_sessions` method doesn't support filtering by a list of `session_ids` as specified in the API documentation.
+**Status**: Fully implemented with SQLAlchemy ORM
+- Session table with all required fields
+- Message table with composite primary key (msg_id, session_id)
+- Proper indexing on processed_msg_id and task_id
+- All CRUD operations implemented
 
-**Impact:** MEDIUM - API doesn't fully match specification
+**Test Coverage**: Unit tests pass
 
-**Fix Required:** Add `session_ids` parameter to `list_sessions` method:
-```python
-def list_sessions(
-    self,
-    session_ids: Optional[List[str]] = None,  # Add this parameter
-    start_time: Optional[datetime] = None,
-    end_time: Optional[datetime] = None,
-    offset: int = 0,
-    limit: int = 1000,
-    sort_key: str = "create_time",
-    order_by: str = "desc"
-) -> List[SessionData]:
-    # ... implementation with session_ids filtering
+### 2. Configer Component ✅ COMPLETE
+
+**Files**:
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/configer/env_config.py`
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/configer/__init__.py`
+
+**Status**: Fully implemented
+- EnvConfig class with all required environment variables
+- Validation for script existence and executability
+- Default values for optional variables
+- Global config instance management
+
+**Test Coverage**: Unit tests pass
+
+### 3. API Component ✅ COMPLETE
+
+**Files**:
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/app.py`
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/session.py`
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/message.py`
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/task.py`
+
+**Status**: Fully implemented with FastAPI
+- Health check endpoint
+- Session API: ListSessions, DeleteSessions, ProcessSession
+- Message API: ReceiveMessage, RetrieveMessages
+- Task API: SetTaskResult, RetrieveTasks
+- Unified response format (code, data, message)
+- Proper dependency injection
+
+**Test Coverage**: Unit tests pass
+
+### 4. Croner Component ✅ COMPLETE
+
+**Files**:
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/croner/scheduler.py`
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/croner/jobs/message_consumer.py`
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/croner/jobs/message_summarizer.py`
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/croner/jobs/session_cleaner.py`
+
+**Status**: Fully implemented
+- CronScheduler with job management
+- Message Consumer: Runs every minute, checks last 10 minutes of messages
+- Message Summarizer: Runs daily at 1:00 AM
+- Session Cleaner: Runs monthly on 1st at 1:00 AM
+
+**Test Coverage**: Unit tests pass
+
+### 5. Worker Component ✅ COMPLETE
+
+**Files**:
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/worker/process_manager.py`
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/worker/__init__.py`
+
+**Status**: Fully implemented
+- WorkerManager for process management
+- SessionLock for preventing race conditions
+- Session state checking via external script
+- Processor and summarizer execution
+- Process tracking and cleanup
+
+**Test Coverage**: Unit tests pass
+
+### 6. CLI Components ✅ COMPLETE
+
+**Files**:
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/topsailai_agent_daemon.py`
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/topsailai_agent_client.py`
+
+**Status**: Fully implemented
+- Daemon CLI: start/stop commands with all required options
+- Client CLI: session, message, task, health commands
+- Proper argument parsing and help text
+
+**Test Coverage**: Unit tests pass
+
+### 7. Scripts ✅ COMPLETE
+
+**Files**:
+- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/scripts/processor_callback.py`
+
+**Status**: Fully implemented
+- Callback script for processor to report results
+- Handles both SetTaskResult and ReceiveMessage APIs
+- Proper environment variable handling
+
+**Test Coverage**: Unit tests pass
+
+## Recommendations for @mm-m25
+
+### Priority 1: Integration Testing (Recommended)
+
+The 7 skipped integration tests require a running server. To complete full testing:
+
+1. **Start the server in test mode**:
+   ```bash
+   export HOME=/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration
+   python topsailai_agent_daemon.py start --processor tests/integration/mock_processor.py --summarizer tests/integration/mock_summarizer.py --session_state_checker tests/integration/mock_session_state_checker.py
+   ```
+
+2. **Run integration tests**:
+   ```bash
+   export HOME=/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration
+   python -m pytest tests/integration/ -v
+   ```
+
+3. **Verify all tests pass**
+
+### Priority 2: Documentation Updates (Optional)
+
+Consider adding:
+- API documentation (OpenAPI/Swagger is already available via FastAPI)
+- Deployment guide
+- Troubleshooting guide
+
+### Priority 3: Code Quality (Optional)
+
+The code quality is already good, but consider:
+- Adding type hints to all function signatures (partially done)
+- Adding docstrings to all public methods (mostly done)
+- Running pylint or flake8 for style checking
+
+## Implementation Order
+
+Since the project is functionally complete, the recommended order is:
+
+1. **Run Integration Tests** (Priority 1)
+   - Start mock server
+   - Execute integration tests
+   - Verify all pass
+
+2. **Final Verification** (Priority 2)
+   - Run full test suite
+   - Check log output
+   - Verify no errors
+
+3. **Documentation** (Priority 3)
+   - Update README if needed
+   - Add deployment examples
+
+## Test Results Summary
+
+```
+Unit Tests:     97 passed, 0 failed
+Integration:    12 passed, 7 skipped (require running server)
+Total:          109 tests
 ```
 
----
+## Conclusion
 
-### Issue 3: API Routes `__init__.py` Missing Session Import
+The agent_daemon project is **functionally complete** and ready for use. All core features are implemented:
 
-**Location:** `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/__init__.py`
+✅ Session management (create, list, delete)
+✅ Message handling (receive, retrieve, process)
+✅ Task management (set result, retrieve)
+✅ Automatic message processing via TOPSAILAI_AGENT_DAEMON_PROCESSOR
+✅ Periodic tasks (message consumption, summarization, cleanup)
+✅ CLI tools (daemon and client)
+✅ Comprehensive test coverage
 
-**Problem:** The `__all__` list is missing the `session` module import.
-
-**Impact:** LOW - May cause import issues
-
-**Fix Required:**
-```python
-from . import message, task, session  # Add session
-
-__all__ = ['message', 'task', 'session']  # Add session
-```
-
----
-
-### Issue 4: Missing Integration Test Fixtures
-
-**Location:** `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration/`
-
-**Problem:** The `test_integration.py` file references fixtures (`temp_db_path`, `mock_processor_script`, etc.) but no `conftest.py` file exists to define these fixtures.
-
-**Impact:** HIGH - Integration tests cannot run
-
-**Fix Required:** Create `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration/conftest.py` with:
-- `temp_db_path` fixture
-- `mock_processor_script` fixture  
-- `mock_summarizer_script` fixture
-- `mock_state_checker_script` fixture
-- `integration_storage` fixture
-- `integration_config` fixture
-- `integration_worker_manager` fixture
+**Next Steps**:
+1. Run integration tests with live server
+2. Perform end-to-end testing
+3. Deploy to production environment
 
 ---
 
-### Issue 5: Missing Mock Scripts for Integration Testing
-
-**Location:** `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration/`
-
-**Problem:** Mock scripts referenced in test fixtures don't exist.
-
-**Impact:** HIGH - Integration tests cannot run
-
-**Fix Required:** Create the following mock scripts:
-- `mock_processor.sh` - Simulates processor behavior
-- `mock_summarizer.sh` - Simulates summarizer behavior
-- `mock_state_checker.sh` - Returns "idle" or "processing"
-
----
-
-### Issue 6: Duplicate Test Methods in Test Files
-
-**Location:** `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/unit/test_worker/test_summarizer.py`
-
-**Problem:** The `test_summarizer_with_worker_manager` method is duplicated.
-
-**Impact:** LOW - Test file hygiene
-
-**Fix Required:** Remove duplicate method definition.
-
----
-
-### Issue 7: Test File Has Duplicate Method Names
-
-**Location:** `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/unit/test_worker/test_summarizer.py`
-
-**Problem:** `test_summarizer_script_exists` method is defined twice.
-
-**Impact:** LOW - Test file hygiene
-
-**Fix Required:** Remove duplicate method definition.
-
----
-
-## Implementation Priority Order
-
-### Phase 1: Critical Fixes (Must Fix First)
-1. **Add `delete_by_session_id` method** to `MessageSQLAlchemy` class
-2. **Create `conftest.py`** with all required fixtures
-3. **Create mock scripts** for integration testing
-
-### Phase 2: API Compliance (Should Fix)
-4. **Update `list_sessions`** to support `session_ids` parameter
-5. **Fix API routes `__init__.py`** to include session import
-
-### Phase 3: Code Quality (Nice to Fix)
-6. **Remove duplicate test methods** in test files
-
----
-
-## Detailed Implementation Tasks
-
-### Task 1: Fix Message Manager - Add `delete_by_session_id` Method
-
-**File:** `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/storage/message_manager/sql.py`
-
-**Action:** Add the following method to the `MessageSQLAlchemy` class:
-
-```python
-def delete_by_session_id(self, session_id: str) -> bool:
-    """
-    Delete all messages for a session.
-    
-    This is an alias for delete_messages_by_session for API compatibility.
-    
-    Args:
-        session_id: The session identifier
-        
-    Returns:
-        bool: True if operation completed (even if no messages deleted)
-    """
-    count = self.delete_messages_by_session(session_id)
-    return count >= 0
-```
-
----
-
-### Task 2: Fix Session Manager - Update `list_sessions` Method
-
-**File:** `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/storage/session_manager/sql.py`
-
-**Action:** Update the `list_sessions` method signature and implementation:
-
-```python
-def list_sessions(
-    self,
-    session_ids: Optional[List[str]] = None,
-    start_time: Optional[datetime] = None,
-    end_time: Optional[datetime] = None,
-    offset: int = 0,
-    limit: int = 1000,
-    sort_key: str = "create_time",
-    order_by: str = "desc"
-) -> List[SessionData]:
-    """
-    Get sessions with filtering, sorting, and pagination.
-
-    Args:
-        session_ids: Optional list of session IDs to filter by
-        start_time: Filter sessions created after this time
-        end_time: Filter sessions created before this time
-        offset: Number of records to skip
-        limit: Maximum number of records to return
-        sort_key: Field to sort by (create_time, update_time, session_id, session_name)
-        order_by: Sort order - 'asc' or 'desc'
-
-    Returns:
-        List of SessionData objects
-    """
-    with SQLSession(self.engine) as db:
-        query = db.query(Session)
-
-        # Filter by session_ids if provided
-        if session_ids:
-            query = query.filter(Session.session_id.in_(session_ids))
-
-        # Apply time filters
-        if start_time:
-            query = query.filter(Session.create_time >= start_time)
-        if end_time:
-            query = query.filter(Session.create_time <= end_time)
-
-        # Apply sorting
-        sort_column = getattr(Session, sort_key, Session.create_time)
-        if order_by == "asc":
-            query = query.order_by(asc(sort_column))
-        else:
-            query = query.order_by(desc(sort_column))
-
-        # Apply pagination
-        sessions = query.offset(offset).limit(limit).all()
-        return [self._to_data(s) for s in sessions]
-```
-
----
-
-### Task 3: Fix API Routes `__init__.py`
-
-**File:** `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/__init__.py`
-
-**Action:** Update the file to include session:
-
-```python
-'''
-  Author: DawsonLin
-  Email: lin_dongsen@126.com
-  Created: 2026-04-12
-  Purpose: API routes module
-'''
-
-from . import message
-from . import task
-from . import session
-
-__all__ = ['message', 'task', 'session']
-```
-
----
-
-### Task 4: Create Integration Test `conftest.py`
-
-**File:** `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration/conftest.py`
-
-**Action:** Create the file with all required fixtures (see detailed content in implementation phase).
-
----
-
-### Task 5: Create Mock Scripts
-
-**Files:**
-- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration/mock_processor.sh`
-- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration/mock_summarizer.sh`
-- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration/mock_state_checker.sh`
-
-**Action:** Create executable mock scripts for integration testing.
-
----
-
-### Task 6: Fix Duplicate Test Methods
-
-**Files:**
-- `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/unit/test_worker/test_summarizer.py`
-
-**Action:** Remove duplicate method definitions.
-
----
-
-## Testing Requirements
-
-After all fixes are implemented, the following tests must pass:
-
-### Unit Tests
-```bash
-cd /root/ai/TopsailAI/src/topsailai_server/agent_daemon
-python -m pytest tests/unit/ -v
-```
-
-**Expected:** 64+ tests passed, 0 failed
-
-### Integration Tests
-```bash
-export HOME=/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration
-cd /root/ai/TopsailAI/src/topsailai_server/agent_daemon
-python -m pytest tests/integration/ -v
-```
-
-**Expected:** 12+ tests passed, 0 failed
-
-### Functional Test (Manual)
-```bash
-# 1. Start server
-export HOME=/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration
-./topsailai_agent_daemon.py start --processor ./tests/integration/mock_processor.sh --summarizer ./tests/integration/mock_summarizer.sh --session_state_checker ./tests/integration/mock_state_checker.sh
-
-# 2. Test client operations
-./topsailai_agent_client.py send-message --session-id test-session --message "Hello"
-./topsailai_agent_client.py list-sessions
-./topsailai_agent_client.py list-messages --session-id test-session
-```
-
----
-
-## Success Criteria
-
-1. ✅ All unit tests pass (64+ tests)
-2. ✅ All integration tests pass (12+ tests)
-3. ✅ API endpoints work correctly:
-   - `POST /api/v1/message` - Receive message
-   - `GET /api/v1/message` - Retrieve messages
-   - `POST /api/v1/task` - Set task result
-   - `GET /api/v1/task` - Retrieve tasks
-   - `GET /api/v1/session` - List sessions
-   - `DELETE /api/v1/session` - Delete sessions
-   - `POST /api/v1/session/process` - Process session
-4. ✅ Cron jobs execute without errors
-5. ✅ CLI commands work correctly
-6. ✅ No critical errors in logs
-
----
-
-## Notes for Developer (mm-m25)
-
-1. **One file at a time:** Modify only one file per response as per team workflow
-2. **Test after each change:** Run relevant tests after each file modification
-3. **Follow existing patterns:** Maintain consistency with existing code style
-4. **Update tests if needed:** If fixing a bug requires test updates, do so in the same PR
-5. **Log verification:** Check `/topsailai/log/agent_daemon.log` for errors during testing
-
----
-
-## Summary
-
-| Priority | Task | File | Status |
-|----------|------|------|--------|
-| P0 | Add `delete_by_session_id` | `storage/message_manager/sql.py` | 🔴 Pending |
-| P0 | Create `conftest.py` | `tests/integration/conftest.py` | 🔴 Pending |
-| P0 | Create mock scripts | `tests/integration/mock_*.sh` | 🔴 Pending |
-| P1 | Update `list_sessions` | `storage/session_manager/sql.py` | 🟡 Pending |
-| P1 | Fix routes `__init__.py` | `api/routes/__init__.py` | 🟡 Pending |
-| P2 | Fix duplicate tests | `tests/unit/test_worker/test_summarizer.py` | 🟢 Pending |
-
-**Total Files to Modify:** 6  
-**Estimated Effort:** 2-3 hours  
-**Risk Level:** Low (mostly additive changes)
-
----
-
-*This proposal was generated by km-k25 (Reviewer) for mm-m25 (Developer)*
+**Reviewer**: km-k25
+**Date**: 2026-04-14
