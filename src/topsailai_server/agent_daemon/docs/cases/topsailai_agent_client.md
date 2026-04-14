@@ -9,11 +9,17 @@
 ### list-sessions
 
 1. 当 session_id == session_name, 只需显示一个
-```
-  [2026-04-13 23:27:53] test-session-123: test-session-123
-    Task: None, Processed: 126d3ebbdc452e7
 
-这里的 test-session-123 重复了，当相同时，只需要显示一个即可。
+Example
+```
+Retrieved Sessions: {TOTAL_COUNT}
+
+=============================================================================
+[2026-04-13 23:27:53] test-session-123: test-session-123    ->  这里的 test-session-123 重复了，当相同时，只需要显示一个即可。
+Task content
+
+>>> Processed: 126d3ebbdc452e7
+
 ```
 
 ## message
@@ -27,14 +33,16 @@
 
 Example:
 ```
-Retrieved {TOTAL_COUNT} message(s), Session: {SESSION_ID}
+Retrieved Messages: {TOTAL_COUNT}, Session: {SESSION_ID}
 
 =============================================================================
 [2026-04-14 09:32:51] [{MSG_ID}] [{ROLE}]
 hello
+
 >>> task_id: aaa
 >>> task_result:
 content
+
 ```
 
 ## task
@@ -43,3 +51,15 @@ content
 
 1. 要显示对应的 session_id, message，显示完整的message，不可省略
 2. 使用 list-tasks 作为操作名字
+
+Example:
+```
+Retrieved Tasks: {TOTAL_COUNT}
+
+=============================================================================
+[2026-04-14 13:31:36] task=[{TASK_ID}] session=[{SESSION_ID}] msg=[{MSG_ID}]
+task content
+---
+task result
+
+```
