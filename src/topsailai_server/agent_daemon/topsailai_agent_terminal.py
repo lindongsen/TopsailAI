@@ -34,6 +34,7 @@ SPLIT_LINE = "=" * TERM_WIDTH
 DOUBLE_LINE = "=" * TERM_WIDTH
 MSG_SEPARATOR = "-" * TERM_WIDTH
 
+DEFAULT_LIMIT = 17
 
 def format_time(time_str):
     """Format time string to YYYY-MM-DD HH:MM:SS"""
@@ -75,11 +76,12 @@ def truncate_text(text, max_width):
 class AgentTerminal:
     """Interactive terminal for agent_daemon"""
 
-    def __init__(self, host, port, session_id, refresh_interval=2):
+    def __init__(self, host, port, session_id, refresh_interval=2, limit=DEFAULT_LIMIT):
         self.host = host
         self.port = port
         self.session_id = session_id
         self.refresh_interval = refresh_interval
+        self.limit = limit
         self.base_url = f"http://{host}:{port}"
         self.running = True
         self.last_msg_count = 0
@@ -97,13 +99,13 @@ class AgentTerminal:
         self.COLOR_BOLD = "\033[1m"
         self.COLOR_DIM = "\033[2m"
 
-    def get_messages(self, order_by='asc'):
-        """Retrieve messages from the session"""
+    def get_messages(self, order_by='desc'):
+        """Retrieve messages from the session, ordered by create_time"""
         url = f"{self.base_url}/api/v1/message"
         params = {
             "session_id": self.session_id,
             "order_by": order_by,
-            "limit": 1000,
+            "limit": self.limit,
         }
 
         try:
@@ -169,13 +171,13 @@ class AgentTerminal:
         print(f"  topsailai_agent_terminal".center(self.term_width))
         print(f"  Session: {self.session_id}".center(self.term_width))
         print(f"  Server: {self.host}:{self.port}".center(self.term_width))
-        print(f"  Auto-refresh: {self.refresh_interval}s".center(self.term_width))
+        print(f"  Auto-refresh: {self.refresh_interval}s | Limit: {self.limit}".center(self.term_width))
         print(SPLIT_LINE)
         print(self.COLOR_RESET)
         print()
 
     def display_messages(self, messages):
-        """Display messages in chat format"""
+        """Display messages in chat format (messages already sorted by create_time desc)"""
         if not messages:
             print(self.COLOR_DIM + "  No messages yet..." + self.COLOR_RESET)
             return
@@ -255,6 +257,7 @@ class AgentTerminal:
     def refresh_display(self, force=False):
         """Refresh the display with current messages"""
         messages = self.get_messages()
+        messages.reverse()
 
         # Get session info for processed_msg_id
         session_info = self.get_session_info()
@@ -373,6 +376,12 @@ def main():
         default=2,
         help='Auto-refresh interval in seconds (default: 2)'
     )
+    parser.add_argument(
+        '--limit',
+        type=int,
+        default=DEFAULT_LIMIT,
+        help=f'Number of messages to display (default: {DEFAULT_LIMIT}, use 0 for all)'
+    )
 
     args = parser.parse_args()
 
@@ -381,7 +390,8 @@ def main():
         host=args.host,
         port=args.port,
         session_id=args.session_id,
-        refresh_interval=args.refresh_interval
+        refresh_interval=args.refresh_interval,
+        limit=args.limit
     )
 
     try:
