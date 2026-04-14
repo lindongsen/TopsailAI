@@ -304,13 +304,13 @@ def do_client_get_tasks(args):
                     for task in tasks:
                         create_time = format_time(task.get('create_time'))
                         session_id = task.get('session_id')
-                        msg_id = task.get('msg_id')
                         task_id = task.get('task_id')
                         task_result = task.get('task_result')
                         
-                        # Show session_id, message, and full task_result
+                        # Show session_id, message content, and full task_result
                         print(f"  Session: {session_id}")
-                        print(f"  Message: {msg_id}")
+                        message = task.get('message', '')
+                        print(f"  Message: {message}")
                         print(f"  [{create_time}] Task: {task_id}")
                         print(f"    Result: {task_result}")
                 return True

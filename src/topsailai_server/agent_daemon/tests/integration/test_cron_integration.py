@@ -302,12 +302,11 @@ def test_summarizer():
             # Verify environment variables were passed correctly
             if 'TOPSAILAI_SESSION_ID' in result.stdout and test_session_id in result.stdout:
                 logger.info("Summarizer test passed - correct environment variables")
-                print("✓ Summarizer test passed - correct environment variables")
                 return True
             else:
                 logger.warning("Summarizer test: environment variables not found in output")
                 print("✗ Summarizer test failed - environment variables not found")
-                return False
+                assert False, "Environment variables not found in summarizer output"
         else:
             logger.error("Summarizer test failed with non-zero return code")
             print("✗ Summarizer test failed")
@@ -360,7 +359,7 @@ def test_session_cleaner():
         else:
             print(f"  ✗ Old session not found")
             conn.close()
-            return False
+            assert False, "Old session not found"
         
         # Create a recent session (should NOT be cleaned)
         recent_session_id = f"recent-session-{int(time.time())}"
@@ -422,7 +421,7 @@ def test_processor_triggered_by_cron():
         print("✓ Message sent")
     else:
         print("✗ Failed to send message")
-        return False
+        assert False, "Failed to send message"
     
     time.sleep(1)
     
