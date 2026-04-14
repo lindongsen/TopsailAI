@@ -72,7 +72,7 @@ def read_prompt(relative_path):
         content = fd.read().strip()
         if content:
             # add split line to tail
-            if content.endswith("===") or content.endswith("---"):
+            if content.endswith("---") or content.endswith("==="):
                 content += "\n"
             else:
                 content += "\n---\n\n"
@@ -274,7 +274,7 @@ def get_prompt_by_tools(tools:list[str], need_reload=False) -> str:
         tool_prompt = get_prompt_from_module(module_name)
         if tool_prompt:
             logger.debug("got prompt from module: [%s]", module_name)
-            prompt_content += tool_prompt.strip() + "\n\n"
+            prompt_content += f"## TOOL PROMPT:{module_name} \n\n<prompt>\n\n" + tool_prompt.strip() + "\n\n</prompt>\n\n"
 
     for key in prompt_keys:
         prompt_content += read_prompt(key)

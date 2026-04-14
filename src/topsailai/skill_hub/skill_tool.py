@@ -69,8 +69,18 @@ def is_need_load_overview(folder_path:str) -> bool:
     if not skill_list:
         return False
 
+    for _ in range(2):
+        if folder_path[-1] == '/':
+            folder_path = folder_path[:-1]
+        else:
+            break
+
     for skill_folder in skill_list:
         if folder_path.startswith(skill_folder):
+            return True
+        if folder_path.endswith(
+            ('' if skill_folder[0] in "./" else '/')+skill_folder
+        ):
             return True
     return False
 
@@ -91,6 +101,8 @@ class SkillInfo(object):
 
         # flags
         self.flag_overview = None
+
+        self.all = {}
 
     @property
     def markdown(self):
@@ -200,6 +212,7 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
         try:
             data = yaml.safe_load(yaml_content)
             if data:
+                skill_info.all = data
                 skill_info.name = data.get("name", "")
                 skill_info.description = data.get("description", "")
                 if "flag_overview" in data and data["flag_overview"] != "":
@@ -269,6 +282,9 @@ def get_skill_markdown(skill_folders=None) -> str:
 def get_skills_from_cache() -> list[SkillInfo]:
     """ get all of skills """
     return g_skills.values()
+
+def get_skill_info_from_cache(folder_path:str) -> SkillInfo|None:
+    return g_skills.get(folder_path)
 
 def unload_skill(folder_path:str):
     """ unload a skill """
@@ -351,6 +367,27 @@ def overview_skill_native(folder_path:str) -> str:
 ## folder content
 {folder_content}
 """
+
+    # preload_docs
+    skill_info = get_skill_info_from_cache(folder_path)
+    if skill_info:
+        preload_docs = skill_info.all.get("preload_docs")
+        if preload_docs:
+            preload_docs = to_list(preload_docs)
+        else:
+            preload_docs = []
+        for doc_file in preload_docs:
+            try:
+                doc_content = get_skill_file_content(folder_path, doc_file)
+                if doc_content:
+                    result += f"""
+### file:{doc_file}
+{doc_content}
+
+"""
+            except Exception:
+                pass
+
     return result
 
 def get_skill_file(folder_path:str, file_name:str) -> str:
@@ -387,3 +424,23 @@ def get_skill_file(folder_path:str, file_name:str) -> str:
         return file_list[0]
 
     return ""
+
+def get_skill_file_content(folder_path:str, file_name:str) -> str:
+    """
+    Get file content from skill folder
+
+    Args:
+        folder_path (str): skill folder
+        file_name (str): relative file name
+
+    Returns:
+        str: file content
+    """
+    file_path = get_skill_file(folder_path, file_name)
+    assert file_path, f"no found this skill file: {file_name}"
+
+    file_content = ""
+    with open(file_path, encoding='utf-8') as fp:
+        file_content = fp.read()
+
+    return file_content

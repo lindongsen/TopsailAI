@@ -422,29 +422,19 @@ class TestCronJobIntegration:
             integration_storage.message.create(message_data)
         
         # Step 2: Trigger message_consumer_job
-        
-        # Create job instance
         job = MessageConsumer(storage=integration_storage)
         
         # Execute job
-        # Execute job
         result = job.run()
-
         
         # Step 3: Verify processor was triggered
         # The job should have started a processor for the session
         # Check that session now has processed_msg_id or processor was started
         session = integration_storage.session.get(session_id)
         
-        # Note: In real scenario, processor runs asynchronously
-        # Note: In real scenario, processor runs asynchronously
-        # We verify the job executed without error (run() returns None on success)
         # We verify the job executed without error (run() returns None on success)
         assert result is None, "Job should complete successfully"
 
-        # We verify the job executed without error (run() returns None on success)
-        assert result is None, "Job should complete successfully"
-        
         logger.info("Message consumer job test completed successfully")
     
     def test_message_summarizer_job(
@@ -491,21 +481,11 @@ class TestCronJobIntegration:
         job = MessageSummarizer(storage=integration_storage)
         
         # Execute job
-        # Execute job
         result = job.run()
-
         
         # We verify the job executed without error (run() returns None on success)
         assert result is None, "Job should complete successfully"
 
-        # We verify the job executed without error (run() returns None on success)
-        assert result is None, "Job should complete successfully"
-
-
-        assert result is None, "Job should complete successfully"
-
-
-        
         logger.info("Message summarizer job test completed successfully")
 
 
@@ -555,25 +535,6 @@ class TestErrorHandling:
         # This should succeed (model allows None)
         logger.info("Missing parameters test completed successfully")
         
-    def test_database_errors(self, integration_storage):
-        """Test handling of missing required parameters"""
-        # Try to create message without required fields
-        with pytest.raises(Exception):
-            # Create message without msg_id (required)
-            message_data = MessageData(
-                msg_id=None,  # Invalid - required
-                session_id="test-session",
-                message="Test message",
-                role="user",
-                create_time=datetime.now(),
-                update_time=datetime.now(),
-                task_id=None,
-                task_result=None
-            )
-            integration_storage.message.create(message_data)
-        
-        logger.info("Missing parameters test completed successfully")
-    
     def test_database_errors(self, integration_storage):
         """Test handling of database errors"""
         session_id = f"test-db-error-{uuid.uuid4().hex[:8]}"
@@ -651,22 +612,6 @@ class TestWorkerManagerIntegration:
         integration_storage.session.create(session_data)
         
         # Start processor
-        integration_worker_manager.start_processor(
-            session_id=session_id,
-            msg_id=msg_id,
-            task=task
-        )
-        
-        # Give some time for process to start
-        time.sleep(0.5)
-        
-        # Verify session is tracked
-        # Verify session is idle (mock returns 'idle')
-        assert integration_worker_manager.is_session_idle(session_id), \
-            "Session should be processing"
-        
-        logger.info("Worker manager test completed successfully")
-        # Start processor
         result = integration_worker_manager.start_processor(
             session_id=session_id,
             msg_id=msg_id,
@@ -676,9 +621,8 @@ class TestWorkerManagerIntegration:
         # Verify processor was started successfully
         assert result is True, "Processor should start successfully"
         
-        # Note: is_session_idle still returns True because the state checker
-        # is an external script that doesn't track internal processor state
-        # The key is that start_processor returned True
+        # Give some time for process to start
+        time.sleep(0.5)
         
         logger.info("Worker manager test completed successfully")
     

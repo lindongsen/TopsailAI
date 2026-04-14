@@ -245,8 +245,6 @@ TOOLS = dict(
 )
 
 PROMPT_SKILL = """
----
-
 # SKILLS
 
 When your task is related to a skill, you MUST call `overview_skill` for detail.
@@ -274,7 +272,7 @@ def reload():
     PROMPT_PLUGIN_SKILLS = get_skill_markdown()
 
     global PROMPT
-    PROMPT = PROMPT_SKILL + PROMPT_PLUGIN_SKILLS + "\n---\n"
+    PROMPT = PROMPT_SKILL + PROMPT_PLUGIN_SKILLS
 
     global FLAG_TOOL_ENABLED
     FLAG_TOOL_ENABLED = True if PROMPT_PLUGIN_SKILLS else False

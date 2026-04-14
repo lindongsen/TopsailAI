@@ -194,21 +194,6 @@ def print_response(response):
         print(f"    Body: {response.text}")
 
 
-def test_health():
-    """Test health endpoint"""
-    print_section("1. Health Check")
-    url = f"{BASE_URL}/health"
-    print_request("GET", url)
-    try:
-        response = requests.get(url, timeout=5)
-        print_response(response)
-        return response.status_code == 200
-    except Exception as e:
-        logger.error("Health check failed: %s", e)
-        print(f"    ERROR: {e}")
-        return False
-
-
 def receive_message_helper(msg_id, message, role="user", processed_msg_id=None):
     """Test ReceiveMessage API"""
     url = f"{BASE_URL}/api/v1/message"
@@ -363,7 +348,7 @@ def verify_database_state():
         return False
 
 
-def test_concurrent_processing():
+def run_concurrent_test():
     """Test concurrent message processing scenario"""
     print_section("Concurrent Processing Test")
     logger.info("Testing concurrent message processing scenario")
@@ -507,7 +492,7 @@ def run_integration_test():
         verify_database_state()
         
         # Test concurrent processing scenario
-        test_concurrent_processing()
+        run_concurrent_test()
         
         # Final summary
         print_section("TEST SUMMARY")

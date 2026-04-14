@@ -91,7 +91,7 @@ if not WORKSPACE:
     TOOLS.clear()
 
 PROMPT = """
-## story_memory_tool
+# About story_memory_tool
 You can read historical contextual information as needed.
 You should start reading with the latest memory.
 """

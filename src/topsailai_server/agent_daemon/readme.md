@@ -3,7 +3,8 @@ maintainer: human
 # A markdown file's Maintainer can be `human` or `AI`, If it is human, you CANNOT modify this markdown file.
 
 workspace: /root/ai/TopsailAI/src/topsailai_server/agent_daemon
-ProjectFolder: /root/ai/TopsailAI
+ProjectRootFolder: /root/ai/TopsailAI
+programming_language: python
 
 TestsFolder: {workspace}/tests
 # tests subfolders:
@@ -18,10 +19,10 @@ IssuesFolder: {workspace}/issues
 # - `undo/`, the issues can be ignored;
 
 DocsFolder: {workspace}/docs
+# docs files:
+# - Code_Improvement_Proposal.md, AI as maintainer, Fully maintained by AI
 # docs subfolders:
 # - `cases/`, some test cases, Attention must be paid when conducting testing, especially integration testing
-
-programming_language: python
 
 Note:
   - The beginning of the markdown(md) file may define some information. When the maintainer is defined as human, this file will become a fact file, and you cannot modify any "fact file"
@@ -149,10 +150,24 @@ parameters:
 
 #### ProcessSession
 
-判断 session表中的processed_msg_id是否为最新的消息，如果不是，进入到执行 `TOPSAILAI_AGENT_DAEMON_PROCESSOR` 的流程。
+判断 session 表中的 processed_msg_id 是否为最新的消息，如果不是，进入到执行 `TOPSAILAI_AGENT_DAEMON_PROCESSOR` 的流程。
 
 parameters:
 - session_id: str, required
+
+response:
+- message: 说明是否有 "待处理消息"
+- data: dict
+```
+{
+  "processed_msg_id": 当前 session 表中的 processed_msg_id
+
+  # 当存在 "待处理消息" 需要被处理时, 有以下内容
+  "processing_msg_id": "待处理消息"中创建时间最新的 msg_id
+  "messages": list[dict], 该行为所发起的"待处理消息"的内容
+  "processor_pid": 调用processor的进程id
+}
+```
 
 ### message, uri_path:api/v1/message
 
@@ -224,9 +239,9 @@ response:
 
 ## 流程:`TOPSAILAI_AGENT_DAEMON_PROCESSOR`
 
-1. 如果 processed_msg_id 就是 最新消息，退出。
+1. 如果 processed_msg_id 就是 最新消息，打印日志提示信息并退出。
 2. 如果 processed_msg_id 到 最新消息 之间，不包括 processed_msg_id, 包括 最新消息，全都是role=assistant，则打印日志提示信息并退出。避免无限循环。
-3. 设置必要的、相关的环境变量去执行脚本`TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER`，返回idle则继续，返回processing表示该会话的消息正在处理中、就退出。
+3. 设置必要的、相关的环境变量去执行脚本`TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER`，返回idle则继续，返回processing表示该会话的消息正在处理中、就退出。对于脚本的返回结果要打印日志信息。
 4. 将最新消息ID作为 TOPSAILAI_MSG_ID, 设置必要的、相关的环境变量，执行processor脚本
 
 ## About log
