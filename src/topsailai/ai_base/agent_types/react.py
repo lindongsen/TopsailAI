@@ -25,6 +25,12 @@ AGENT_NAME = "AgentReAct"
 class Step4ReAct(StepCallTool):
     """Implementation of the ReAct (Reasoning and Acting) framework for AI agents"""
 
+    def __format_action_result(self, result):
+        return {
+            "step_name": "observation",
+            "raw_text": result,
+        }
+
     def _execute(self, step:dict, tools:dict, response:list, index:int, rsp_msg_obj=None, **_):
         """
         Execute a single step in the ReAct framework
@@ -57,18 +63,15 @@ class Step4ReAct(StepCallTool):
             return
 
         if step_name == 'action':
-            result = self.execute_step_action(
+            self.complete_action(
+                func_formatter_result=self.__format_action_result,
                 step=step,
                 tools=tools,
                 rsp_msg_obj=rsp_msg_obj,
+                # index=index,
+                # response=response,
+                **_
             )
-            if isinstance(result, Exception):
-                result = str(result)
-            self.tool_msg = {
-                "step_name": "observation",
-                "raw_text": result,
-            }
-            self.code = self.CODE_STEP_FINAL
         elif step_name == "thought":
             self.complete_step_thought(
                 response=response

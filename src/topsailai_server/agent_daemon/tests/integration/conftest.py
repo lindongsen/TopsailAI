@@ -59,6 +59,9 @@ def start_server():
     env = os.environ.copy()
     env["HOME"] = INTEGRATION_DIR
     
+    # Database path - use absolute path for the test database
+    db_url = f"sqlite:///{os.path.join(INTEGRATION_DIR, 'test.db')}"
+    
     # Start server
     proc = subprocess.Popen(
         [
@@ -67,7 +70,8 @@ def start_server():
             "start",
             "--processor", str(processor),
             "--summarizer", str(summarizer),
-            "--session_state_checker", str(state_checker)
+            "--session_state_checker", str(state_checker),
+            "--db_url", db_url
         ],
         env=env,
         stdout=subprocess.PIPE,

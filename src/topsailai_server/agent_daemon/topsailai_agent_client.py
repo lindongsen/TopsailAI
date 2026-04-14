@@ -10,22 +10,23 @@ import argparse
 import json
 import sys
 import socket
+import os
 import requests
 
 # Add the parent directory to the path for imports
 CWD = __file__
-import os
 CWD = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(CWD))
 
 from topsailai_server.agent_daemon import logger
 
-# Default values
-DEFAULT_HOST = "localhost"
-DEFAULT_PORT = 7373
+# Default values - support environment variable overrides
+DEFAULT_HOST = os.environ.get("TOPSAILAI_AGENT_DAEMON_HOST", "localhost")
+DEFAULT_PORT = int(os.environ.get("TOPSAILAI_AGENT_DAEMON_PORT", "7373"))
 DEFAULT_SESSION_ID = socket.gethostname()
 
 SPLIT_LINE = "\n" + "="*77
+
 
 def format_time(time_str):
     """Format time string to YYYY-MM-DD HH:MM:SS"""
@@ -446,13 +447,13 @@ def cli():
         '--host',
         type=str,
         default=DEFAULT_HOST,
-        help=f'Server host (default: {DEFAULT_HOST})'
+        help=f'Server host (default: {DEFAULT_HOST}, env: TOPSAILAI_AGENT_DAEMON_HOST)'
     )
     parser.add_argument(
         '--port',
         type=int,
         default=DEFAULT_PORT,
-        help=f'Server port (default: {DEFAULT_PORT})'
+        help=f'Server port (default: {DEFAULT_PORT}, env: TOPSAILAI_AGENT_DAEMON_PORT)'
     )
     parser.add_argument(
         '-v', '--verbose',

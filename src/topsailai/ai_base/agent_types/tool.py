@@ -99,7 +99,10 @@ class StepCallTool(StepCallBase):
     """
 
     def is_action_finish_task(self, action:str) -> bool:
-        return action.replace('.', '-') == "ctx_tool-finish_task"
+        """ The action will end task """
+        return False
+        #from topsailai.tools.collaboration_tool import ACTION_FINISH_TASK
+        #return action.endswith(ACTION_FINISH_TASK)
 
     def build_step_for_finish_task(self, step, rsp_msg_obj) -> dict|None:
         """ return new step """
@@ -108,9 +111,14 @@ class StepCallTool(StepCallBase):
             return None
         if not self.is_action_finish_task(tool_call_info.func_name):
             return None
+        content = ""
+        if len(tool_call_info.func_args) == 1:
+            content = list(tool_call_info.func_args.values())[0]
+        else:
+            content = str(tool_call_info.func_args)
         return {
             "step_name": "final_answer",
-            "raw_text": tool_call_info.func_args["final_answer"]
+            "raw_text": content
         }
 
     def hook_pre_step(self, step, rsp_msg_obj) -> dict|None:
@@ -150,7 +158,15 @@ class StepCallTool(StepCallBase):
             # LLM mistake, no found this tool
             return agent_exception.ToolError(f"no found such as tool: {tool}")
 
-        return exec_tool_func(tool_func, args)
+        try:
+            return exec_tool_func(tool_func, args)
+        except agent_exception.AgentFinalAnswer as e:
+            self.complete_final(
+                {
+                    "raw_text": str(e),
+                }
+            )
+            return e
 
     def execute_step_interactive(self):
         """
@@ -259,7 +275,7 @@ class StepCallTool(StepCallBase):
         self.code = self.CODE_STEP_FINAL
         return
 
-    def complete_action(self, step, tools, rsp_msg_obj, **_):
+    def complete_action(self, step, tools, rsp_msg_obj, func_formatter_result=None, **_):
         """
         Handle the completion of an action step.
 
@@ -278,8 +294,12 @@ class StepCallTool(StepCallBase):
             tools=tools,
             rsp_msg_obj=rsp_msg_obj,
         )
+        if isinstance(result, agent_exception.AgentFinalAnswer):
+            return
         if isinstance(result, Exception):
             result = str(result)
+        if func_formatter_result:
+            result = func_formatter_result(result)
         self.tool_msg = result
         self.code = self.CODE_STEP_FINAL
         return

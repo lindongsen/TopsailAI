@@ -17,6 +17,11 @@ class AgentNoCareResult(AgentToolCallException):
     """ No care result of tool call """
     pass
 
+class AgentFinalAnswer(AgentToolCallException):
+    """ current step is final answer """
+    pass
+
+
 class DataAgentRefreshSession(object):
     def __init__(self, tool_result, session_id):
 
