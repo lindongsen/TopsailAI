@@ -192,6 +192,31 @@ class MessageSQLAlchemy(MessageStorageBase):
                 return self._to_data(message)
             return None
 
+    def delete_by_session(self, session_id: str) -> bool:
+        """Delete all messages for a session (alias for delete_messages_by_session)"""
+        count = self.delete_messages_by_session(session_id)
+        return count >= 0
+
+    def delete_by_session_id(self, session_id: str) -> int:
+        """
+        Delete all messages for a session by session_id.
+
+        This method is used by the delete_sessions API endpoint to cascade delete
+        messages when a session is deleted.
+
+        Args:
+            session_id (str): The session identifier.
+
+        Returns:
+            int: Number of messages deleted.
+        """
+        with SQLSession(self.engine) as db:
+            count = db.query(Message).filter(
+                Message.session_id == session_id
+            ).delete()
+            db.commit()
+            return count
+
     def delete_messages_by_session(self, session_id: str) -> int:
         """Delete all messages for a session"""
         with SQLSession(self.engine) as db:
@@ -232,11 +257,6 @@ class MessageSQLAlchemy(MessageStorageBase):
     def get_recent_messages(self, since: datetime) -> List[MessageData]:
         """Get all messages created since the specified time (alias for get_messages_since)"""
         return self.get_messages_since(since)
-
-    def delete_by_session(self, session_id: str) -> bool:
-        """Delete all messages for a session (alias for delete_messages_by_session)"""
-        count = self.delete_messages_by_session(session_id)
-        return count >= 0
 
     def get_messages(
         self,

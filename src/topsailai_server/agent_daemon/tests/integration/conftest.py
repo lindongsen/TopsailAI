@@ -10,6 +10,7 @@ import tempfile
 import subprocess
 import time
 import signal
+import stat
 from datetime import datetime
 from pathlib import Path
 
@@ -44,16 +45,33 @@ def is_server_running():
         return False
 
 
+def ensure_script_executable(script_path):
+    """Ensure a script is executable"""
+    if os.path.exists(script_path):
+        current_mode = os.stat(script_path).st_mode
+        os.chmod(script_path, current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
 def start_server():
     """Start the agent daemon server"""
     workspace = Path(WORKSPACE_DIR)
     daemon_script = workspace / "topsailai_agent_daemon.py"
     scripts_dir = workspace / "scripts"
     
-    # Ensure scripts exist
+    # Ensure scripts exist and are executable
     processor = scripts_dir / "processor.sh"
     summarizer = scripts_dir / "summarizer.sh"
     state_checker = scripts_dir / "session_state_checker.py"
+    
+    # Also check integration test mock scripts
+    mock_processor = Path(INTEGRATION_DIR) / "mock_processor.sh"
+    mock_summarizer = Path(INTEGRATION_DIR) / "mock_summarizer.sh"
+    mock_state_checker = Path(INTEGRATION_DIR) / "mock_state_checker.sh"
+    
+    # Ensure mock scripts are executable
+    for script in [mock_processor, mock_summarizer, mock_state_checker]:
+        if script.exists():
+            ensure_script_executable(str(script))
     
     # Prepare environment
     env = os.environ.copy()
@@ -62,15 +80,20 @@ def start_server():
     # Database path - use absolute path for the test database
     db_url = f"sqlite:///{os.path.join(INTEGRATION_DIR, 'test.db')}"
     
+    # Use mock scripts from integration test directory
+    processor_path = str(mock_processor) if mock_processor.exists() else str(processor)
+    summarizer_path = str(mock_summarizer) if mock_summarizer.exists() else str(summarizer)
+    state_checker_path = str(mock_state_checker) if mock_state_checker.exists() else str(state_checker)
+    
     # Start server
     proc = subprocess.Popen(
         [
             sys.executable,
             str(daemon_script),
             "start",
-            "--processor", str(processor),
-            "--summarizer", str(summarizer),
-            "--session_state_checker", str(state_checker),
+            "--processor", processor_path,
+            "--summarizer", summarizer_path,
+            "--session_state_checker", state_checker_path,
             "--db_url", db_url
         ],
         env=env,
@@ -165,6 +188,30 @@ def require_server(request):
     # Cleanup is handled by addfinalizer
 
 
+@pytest.fixture(scope="function")
+def running_daemon():
+    """
+    Fixture to start/stop the daemon for integration tests.
+    Yields the server process and ensures cleanup after test.
+    """
+    # Ensure mock scripts are executable
+    mock_processor = Path(INTEGRATION_DIR) / "mock_processor.sh"
+    mock_summarizer = Path(INTEGRATION_DIR) / "mock_summarizer.sh"
+    mock_state_checker = Path(INTEGRATION_DIR) / "mock_state_checker.sh"
+    
+    for script in [mock_processor, mock_summarizer, mock_state_checker]:
+        if script.exists():
+            ensure_script_executable(str(script))
+    
+    # Start server
+    proc = start_server()
+    
+    yield proc
+    
+    # Cleanup
+    stop_server()
+
+
 @pytest.fixture
 def session_id():
     """Generate a unique session ID for testing"""
@@ -199,16 +246,52 @@ def temp_db_path():
 @pytest.fixture(scope='function')
 def mock_processor_script():
     """Path to mock processor script"""
-    return os.path.join(INTEGRATION_DIR, 'mock_processor.sh')
+    script_path = os.path.join(INTEGRATION_DIR, 'mock_processor.sh')
+    ensure_script_executable(script_path)
+    return script_path
 
 
 @pytest.fixture(scope='function')
 def mock_summarizer_script():
     """Path to mock summarizer script"""
-    return os.path.join(INTEGRATION_DIR, 'mock_summarizer.sh')
+    script_path = os.path.join(INTEGRATION_DIR, 'mock_summarizer.sh')
+    ensure_script_executable(script_path)
+    return script_path
 
 
 @pytest.fixture(scope='function')
 def mock_state_checker_script():
     """Path to mock state checker script"""
-    return os.path.join(INTEGRATION_DIR, 'mock_state_checker.sh')
+    script_path = os.path.join(INTEGRATION_DIR, 'mock_state_checker.sh')
+    ensure_script_executable(script_path)
+    return script_path
+
+
+@pytest.fixture(scope='function')
+def daemon_config(mock_processor_script, mock_summarizer_script, mock_state_checker_script):
+    """
+    Configuration for running the daemon in tests.
+    Sets up environment variables and returns a config dict.
+    """
+    # Set environment variables
+    os.environ['TOPSAILAI_AGENT_DAEMON_PROCESSOR'] = mock_processor_script
+    os.environ['TOPSAILAI_AGENT_DAEMON_SUMMARIZER'] = mock_summarizer_script
+    os.environ['TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER'] = mock_state_checker_script
+    
+    config = {
+        'processor': mock_processor_script,
+        'summarizer': mock_summarizer_script,
+        'session_state_checker': mock_state_checker_script,
+        'db_url': f"sqlite:///{os.path.join(INTEGRATION_DIR, 'test.db')}",
+        'host': '0.0.0.0',
+        'port': 7373
+    }
+    
+    yield config
+    
+    # Cleanup environment variables
+    for key in ['TOPSAILAI_AGENT_DAEMON_PROCESSOR', 
+                'TOPSAILAI_AGENT_DAEMON_SUMMARIZER',
+                'TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER']:
+        if key in os.environ:
+            del os.environ[key]

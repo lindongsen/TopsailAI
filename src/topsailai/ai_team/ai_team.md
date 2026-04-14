@@ -46,4 +46,9 @@ For example:
 List tasks all, without any omissions
 ```
 
-[Remember] Each member only handles a single task at a time
+[Remember] Each member only handles a single task at a time.
+When a certain stage or step or task is completed, member should output `final_answer` so that to await/transfer next task.
+Example Scenarios:
+    awaiting something from x;
+    execute the next step by x;
+    execute something by x;
