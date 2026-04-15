@@ -400,24 +400,24 @@ def do_client_delete_sessions(args):
 
     # Get session IDs from positional args or --session-ids option
     session_ids = []
-    if args.session_ids:
-        # Handle comma-separated string
-        if isinstance(args.session_ids, str):
-            session_ids = [s.strip() for s in args.session_ids.split(',') if s.strip()]
-        else:
-            session_ids = list(args.session_ids)
+    if hasattr(args, 'session_ids') and args.session_ids:
+        # Handle positional args
+        session_ids = list(args.session_ids)
+    elif hasattr(args, 'session_ids_str') and args.session_ids_str:
+        # Handle --session-ids option (comma-separated string)
+        session_ids = [s.strip() for s in args.session_ids_str.split(',') if s.strip()]
 
     if not session_ids:
         print("Error: At least one session ID is required")
         return False
 
-    data = {
-        "session_ids": session_ids,
+    params = {
+        "session_ids": ",".join(session_ids),
     }
 
     try:
         logger.info("Deleting %d session(s)", len(session_ids))
-        response = requests.delete(url, json=data, timeout=10)
+        response = requests.delete(url, params=params, timeout=10)
 
         if response.status_code == 200:
             result = response.json()
@@ -442,6 +442,54 @@ def do_client_delete_sessions(args):
         logger.exception("Failed to delete sessions: %s", e)
         print(f"Error: {e}")
         return False
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def cli():
@@ -556,7 +604,7 @@ def cli():
     # Delete sessions
     delete_sessions_parser = subparsers.add_parser('delete-sessions', help='Delete sessions')
     delete_sessions_parser.add_argument('session_ids', nargs='*', help='Session IDs to delete (positional args)')
-    delete_sessions_parser.add_argument('--session-ids', type=str, help='Comma-separated session IDs to delete')
+    delete_sessions_parser.add_argument('--session-ids', dest='session_ids_str', type=str, help='Comma-separated session IDs to delete')
     delete_sessions_parser.set_defaults(func=do_client_delete_sessions)
 
     # Parse arguments
@@ -568,7 +616,8 @@ def cli():
         sys.exit(1)
 
     # Execute the operation
-    args.func(args)
+    success = args.func(args)
+    sys.exit(0 if success else 1)
 
 
 if __name__ == '__main__':

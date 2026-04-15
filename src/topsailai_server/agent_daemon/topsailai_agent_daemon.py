@@ -4,6 +4,7 @@
   Email: lin_dongsen@126.com
   Created: 2026-04-12
   Purpose: CLI entry point for agent_daemon
+  Note: You can read this log file for detail /topsailai/log/agent_daemon.log
 '''
 
 import sys
@@ -25,9 +26,9 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = "7373"
 DEFAULT_DB_URL = "sqlite:///topsailai_agent_daemon.db"
 
-DEFAULT_PROCESSOR = CWD + "/scripts/processor.sh"
-DEFAULT_SUMMARIZER = CWD + "/scripts/summarizer.sh"
-DEFAULT_SESSION_STATE_CHECKER = CWD + "/scripts/session_state_checker.py"
+DEFAULT_PROCESSOR = CWD + "/scripts/test_processor.sh"
+DEFAULT_SUMMARIZER = CWD + "/scripts/test_summarizer.sh"
+DEFAULT_SESSION_STATE_CHECKER = CWD + "/scripts/test_session_state_checker.sh"
 
 # PID file location
 PID_FILE = os.path.join(WORK_FOLDER, "topsailai_agent_daemon.pid")
@@ -93,10 +94,10 @@ def cleanup():
 def daemonize():
     """
     Fork the current process into a daemon.
-    
+
     This function performs the classic Unix double-fork to create a daemon process.
     The daemon will run in the background, detached from the terminal.
-    
+
     Returns:
         bool: True if this is the parent process (should exit), False if child process (continue)
     """
@@ -144,13 +145,13 @@ def daemonize():
 def do_start(args):
     """
     Start the agent_daemon server in background mode.
-    
+
     This function:
     1. Checks if daemon is already running
     2. Validates required environment variables
     3. Daemonizes the process
     4. Starts the main application
-    
+
     Args:
         args: Parsed command-line arguments
     """
@@ -228,14 +229,14 @@ def do_start(args):
 def do_stop(args):
     """
     Stop the agent_daemon server gracefully.
-    
+
     This function:
     1. Reads the PID from file
     2. Sends SIGTERM for graceful shutdown
     3. Waits for process to terminate
     4. Force kills with SIGKILL if necessary
     5. Removes the PID file
-    
+
     Args:
         args: Parsed command-line arguments
     """
@@ -282,7 +283,7 @@ def do_stop(args):
 def do_status(args):
     """
     Check and display the status of the agent_daemon server.
-    
+
     Args:
         args: Parsed command-line arguments
     """
@@ -302,9 +303,9 @@ def do_status(args):
 def do_restart(args):
     """
     Restart the agent_daemon server.
-    
+
     This function stops the running daemon (if any) and starts a new one.
-    
+
     Args:
         args: Parsed command-line arguments
     """
@@ -325,7 +326,7 @@ def do_restart(args):
 def cli():
     """
     CLI entry point with argument parsing and command dispatch.
-    
+
     Supports the following commands:
     - start: Start the daemon in background mode
     - stop: Stop the running daemon
