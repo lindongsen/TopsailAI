@@ -15,6 +15,7 @@ from topsailai_server.agent_daemon.storage import Storage, MessageData
 from topsailai_server.agent_daemon.worker import WorkerManager
 from topsailai_server.agent_daemon.api.utils import ApiResponse, success_response, error_response
 from topsailai_server.agent_daemon.api.processor_helper import check_and_process_messages
+from topsailai_server.agent_daemon.validator import validate_session_id
 
 
 # Router

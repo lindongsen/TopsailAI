@@ -9,12 +9,19 @@ from typing import Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 
 from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.storage import Storage, MessageData, SessionData
 from topsailai_server.agent_daemon.worker import WorkerManager
 from topsailai_server.agent_daemon.api.utils import ApiResponse, success_response, error_response
 from topsailai_server.agent_daemon.api.processor_helper import check_and_process_messages
+from topsailai_server.agent_daemon.validator import (
+    validate_session_id,
+    validate_message_content,
+    validate_role,
+    validate_msg_id,
+)
 
 
 # Router
@@ -87,6 +94,11 @@ async def receive_message(
     """
     msg_id = None
     try:
+        # Validate inputs
+        validate_session_id(request.session_id)
+        validate_message_content(request.message)
+        validate_role(request.role)
+        
         # Create message data
         now = datetime.now()
         message_data = MessageData(
@@ -126,6 +138,15 @@ async def receive_message(
 
         return success_response(data={"msg_id": msg_id}, message="Message received")
 
+    except IntegrityError as e:
+        logger.exception("Database integrity error receiving message: %s", e)
+        return error_response(
+            message="Database constraint violation: unable to save message. "
+                    "Please check if the session exists and data is valid."
+        )
+    except ValueError as e:
+        logger.warning("Validation error in receive_message: %s", e)
+        return error_response(message=str(e))
     except Exception as e:
         logger.exception("Error receiving message: %s", e)
         return error_response(message=f"Failed to receive message: {str(e)}")
@@ -155,6 +176,9 @@ async def retrieve_messages(
         order_by: Sort order (asc or desc)
     """
     try:
+        # Validate session_id
+        validate_session_id(session_id)
+        
         # Parse datetime strings if provided
         start_dt = None
         end_dt = None
@@ -191,6 +215,15 @@ async def retrieve_messages(
 
         return success_response(data=message_list)
 
+    except IntegrityError as e:
+        logger.exception("Database integrity error retrieving messages: %s", e)
+        return error_response(
+            message="Database constraint violation: unable to retrieve messages. "
+                    "Please check if the session exists."
+        )
+    except ValueError as e:
+        logger.warning("Validation error in retrieve_messages: %s", e)
+        return error_response(message=str(e))
     except Exception as e:
         logger.exception("Error retrieving messages: %s", e)
         return error_response(message=f"Failed to retrieve messages: {str(e)}")

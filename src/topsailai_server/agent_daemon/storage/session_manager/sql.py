@@ -6,8 +6,8 @@
 '''
 
 from datetime import datetime
-from typing import Optional, List
-from sqlalchemy import Column, String, Text, DateTime, Index
+from typing import Optional, List, Dict
+from sqlalchemy import Column, String, Text, DateTime, Index, inspect
 from sqlalchemy.orm import Session as SQLSession
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import asc, desc
@@ -28,6 +28,11 @@ class Session(Base, SessionStorageBase):
     create_time = Column(DateTime, nullable=False, default=datetime.now)
     update_time = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
     processed_msg_id = Column(String(32), nullable=True, index=True)
+
+    # Composite index for cleanup queries (get_sessions_older_than)
+    __table_args__ = (
+        Index('idx_session_update_create_time', 'update_time', 'create_time'),
+    )
 
     def __init__(self, **kwargs):
         # Extract engine if provided (for SQLAlchemy initialization)
@@ -183,6 +188,28 @@ class SessionSQLAlchemy(SessionStorageBase):
     def get_engine(self):
         """Get the SQLAlchemy engine"""
         return self.engine
+
+    def verify_indexes(self) -> Dict[str, bool]:
+        """Verify that all required indexes exist on the session table.
+
+        Returns:
+            Dict mapping index names to their existence status.
+        """
+        inspector = inspect(self.engine)
+        indexes = inspector.get_indexes(SessionStorageBase.tb_session)
+        index_names = {idx['name'] for idx in indexes}
+
+        required_indexes = {
+            'idx_session_update_create_time': 'Composite index for cleanup queries',
+            'processed_msg_id': 'Index on processed_msg_id column'
+        }
+
+        result = {}
+        for idx_name, description in required_indexes.items():
+            exists = idx_name in index_names
+            result[idx_name] = exists
+
+        return result
 
     def list_sessions(
         self,

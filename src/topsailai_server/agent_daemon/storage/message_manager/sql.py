@@ -6,8 +6,8 @@
 '''
 
 from datetime import datetime
-from typing import Optional, List
-from sqlalchemy import Column, String, Text, DateTime, Index, asc
+from typing import Optional, List, Dict
+from sqlalchemy import Column, String, Text, DateTime, Index, inspect, asc
 from sqlalchemy.orm import Session as SQLSession
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import desc
@@ -33,15 +33,16 @@ class Message(Base, MessageStorageBase):
     msg_id = Column(String(32), primary_key=True)
     session_id = Column(String(32), primary_key=True)
     message = Column(Text, nullable=False)
-    role = Column(String(32), nullable=False, default="user")
-    create_time = Column(DateTime, nullable=False, default=datetime.now)
+    role = Column(String(32), nullable=False, default="user", index=True)
+    create_time = Column(DateTime, nullable=False, default=datetime.now, index=True)
     update_time = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
     task_id = Column(String(32), nullable=True, index=True)
     task_result = Column(Text, nullable=True)
 
-    # Index for efficient queries
+    # Composite indexes for efficient queries
     __table_args__ = (
         Index('idx_message_session_create', 'session_id', 'create_time'),
+        Index('idx_message_session_role', 'session_id', 'role'),
     )
 
 
@@ -397,3 +398,28 @@ class MessageSQLAlchemy(MessageStorageBase):
             count = query.delete()
             db.commit()
             return count
+
+    def verify_indexes(self) -> Dict[str, bool]:
+        """Verify that all required indexes exist on the message table.
+
+        Returns:
+            Dict mapping index names to their existence status.
+        """
+        inspector = inspect(self.engine)
+        indexes = inspector.get_indexes(MessageStorageBase.tb_message)
+        index_names = {idx['name'] for idx in indexes}
+
+        required_indexes = {
+            'idx_message_session_create': 'Composite index for message retrieval queries',
+            'idx_message_session_role': 'Composite index for filtering by role',
+            'task_id': 'Index on task_id column',
+            'role': 'Index on role column',
+            'create_time': 'Index on create_time column'
+        }
+
+        result = {}
+        for idx_name, description in required_indexes.items():
+            exists = idx_name in index_names
+            result[idx_name] = exists
+
+        return result

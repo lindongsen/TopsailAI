@@ -5,6 +5,7 @@
   Purpose:
 '''
 
+import threading
 from datetime import datetime
 
 def get_current_date(with_t=False, include_ms=False):
@@ -48,9 +49,11 @@ def parse_time_seconds(ts: int) -> str:
     """
     return datetime.fromtimestamp(ts).strftime('%Y-%m-%dT%H:%M:%S')
 
+g_rlock = threading.RLock()
 def get_now_hex_str() -> str:
     """ get time-based uuid """
-    dt = datetime.now()
+    with g_rlock:
+        dt = datetime.now()
     _part1 = dt.strftime("%Y%m%d%H%M%S")
     _part2 = dt.strftime(f"{dt.microsecond // 1000:03d}")
 

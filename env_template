@@ -170,7 +170,20 @@ TOPSAILAI_SUMMARY_PROMPT_EXTRA_MAP="react_community=context/summary/memory.md;"
 # 1 is enabled, 0 is disabled
 TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION="0"
 
-TOPSAILAI_PROMPT_WHEN_NO_TOOL_CALL="ATTENTION: NO TOOLS WERE CALLED"
+TOPSAILAI_PROMPT_WHEN_NO_TOOL_CALL="
+CRITICAL SYSTEM ALERT: NO ACTION DETECTED
+
+**Status Check:** The previous turn resulted in **zero tool calls**.
+**Current State:** The user's request remains **unfulfilled**.
+
+**INSTRUCTIONS:**
+1.  **DO NOT** apologize or provide conversational filler.
+2.  **DO NOT** explain why you didn't act.
+3.  **IMMEDIATELY** invoke the necessary tool(s) to complete the user's original request.
+4.  If you are waiting for user input, explicitly ask for the specific missing parameter.
+
+**GOAL:** Execute the task now.
+"
 
 # =============================================================================
 # Feature Flags

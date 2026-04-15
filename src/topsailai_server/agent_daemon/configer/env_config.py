@@ -1,5 +1,5 @@
 '''
-  Author: DawsonLin
+  Author: Dawsonlin
   Email: lin_dongsen@126.com
   Created: 2026-04-12
   Purpose: Environment variable configuration for agent_daemon
@@ -32,7 +32,7 @@ class EnvConfig:
     def __init__(self, validate_scripts: bool = True):
         """
         Initialize the environment configuration.
-        
+
         Args:
             validate_scripts: If True, validate that script files exist and are executable.
                              Set to False for testing without scripts.
@@ -72,17 +72,40 @@ class EnvConfig:
         ]
 
         for env_name, script_path in scripts:
+            # Strip whitespace from path
+            script_path = script_path.strip()
+
+            # Handle empty or whitespace-only values
             if not script_path:
                 logger.warning("Script not configured: %s", env_name)
                 continue
-                
-            if not os.path.exists(script_path):
-                error_msg = f"Script not found: {env_name}={script_path}"
+
+            # Check for absolute path
+            if not os.path.isabs(script_path):
+                error_msg = f"Script path must be absolute: {env_name}={script_path}"
                 logger.error("Script validation failed: %s", error_msg)
                 raise ConfigError(error_msg)
 
-            if not os.access(script_path, os.X_OK):
-                error_msg = f"Script is not executable: {env_name}={script_path}"
+            # Resolve symlinks to get the actual file path
+            resolved_path = os.path.realpath(script_path)
+
+            # Check if path exists (follows symlinks)
+            if not os.path.exists(resolved_path):
+                error_msg = (f"Script not found: {env_name}={script_path}. "
+                             "Please ensure the file exists and the path is correct.")
+                logger.error("Script validation failed: %s", error_msg)
+                raise ConfigError(error_msg)
+
+            # Check if path is a file (not a directory)
+            if not os.path.isfile(resolved_path):
+                error_msg = f"Script path is not a file: {env_name}={script_path}"
+                logger.error("Script validation failed: %s", error_msg)
+                raise ConfigError(error_msg)
+
+            # Check if file is executable
+            if not os.access(resolved_path, os.X_OK):
+                error_msg = (f"Script is not executable: {env_name}={script_path}. "
+                             f"Please run: chmod +x {resolved_path}")
                 logger.error("Script validation failed: %s", error_msg)
                 raise ConfigError(error_msg)
 

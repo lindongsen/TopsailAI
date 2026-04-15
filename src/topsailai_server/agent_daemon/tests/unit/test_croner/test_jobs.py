@@ -21,7 +21,7 @@ from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.storage import Storage
 from topsailai_server.agent_daemon.storage.session_manager.base import SessionData
 from topsailai_server.agent_daemon.storage.message_manager.base import MessageData
-from topsailai_server.agent_daemon.croner.jobs.message_consumer import MessageConsumer
+from topsailai_server.agent_daemon.croner.jobs.message_consumer import MessageConsumer, _processor_circuit_breaker
 from topsailai_server.agent_daemon.croner.jobs.message_summarizer import MessageSummarizer
 from topsailai_server.agent_daemon.croner.jobs.session_cleaner import SessionCleaner
 from topsailai_server.agent_daemon.worker import WorkerManager
@@ -32,6 +32,9 @@ class TestMessageConsumer(unittest.TestCase):
 
     def setUp(self):
         """Set up each test with fresh database"""
+        # Reset circuit breaker before each test
+        _processor_circuit_breaker.reset()
+        
         # Create fresh in-memory database for each test
         self.engine = create_engine('sqlite:///:memory:')
         self.storage = Storage(self.engine)
