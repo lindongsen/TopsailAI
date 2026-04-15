@@ -95,6 +95,19 @@ msg3 是最近处理过的消息点，那么就会自动将 msg3 之后的消息
 如果某个消息中存在 task_id 和 task_result,要把它们也作为“待处理消息”的一部分，不可省略。
 ```
 
+”待处理消息“的内容格式是markdown：以"---"分隔，以”---“开头和结束。
+例如：
+```
+---
+msg4内容
+---
+msg5内容
+>>> task_id: msg5的task_id
+>>> task_result: msg5的task_result
+---
+```
+其中 task_id, task_result 仅存在值时才会加入到”待处理消息“当中
+
 ## Component: Configer
 
 These environment variables MUST exist, otherwise the service will fail to start:
