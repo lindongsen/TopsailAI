@@ -199,7 +199,7 @@ def generate_system_prompt():
     sys_prompt_content += (
         get_manager_prompt() +
         manager_prompt_content +
-        "\n\n---" +
+        "\n---\n" +
         collaboration_prompt
     ) + "\n"
 
