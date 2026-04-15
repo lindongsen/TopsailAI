@@ -310,7 +310,7 @@ def run_processor_test():
 # Pytest Test Functions (use assertions)
 # ============================================================================
 
-@pytest.mark.usefixtures("require_server")
+@pytest.mark.usefixtures("running_daemon")
 class TestCronIntegration:
     """Pytest-compatible cron integration tests"""
     

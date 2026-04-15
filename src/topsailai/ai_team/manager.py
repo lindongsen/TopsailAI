@@ -12,6 +12,7 @@ from topsailai.utils import (
     env_tool,
     file_tool,
 )
+from topsailai.prompt_hub import prompt_tool
 from topsailai.ai_team.role import (
     get_manager_prompt,
 )
@@ -191,11 +192,15 @@ def generate_system_prompt():
     # manager prompt
     _, manager_prompt_content = file_tool.get_file_content_fuzzy(PROMPT_FILE_AI_TEAM_MANAGER)
 
+    # collaboration prompt
+    collaboration_prompt = prompt_tool.read_prompt("work_mode/sop/collaboration.md")
+
     # team role info
     sys_prompt_content += (
         get_manager_prompt() +
         manager_prompt_content +
-        "\n\n---"
-    )
+        "\n\n---" +
+        collaboration_prompt
+    ) + "\n"
 
     return sys_prompt_content

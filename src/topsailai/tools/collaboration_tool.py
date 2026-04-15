@@ -5,9 +5,7 @@
   Purpose: hermit
 '''
 
-from topsailai.utils import (
-    env_tool,
-)
+from topsailai.prompt_hub import prompt_tool
 from topsailai.ai_base.agent_types.exception import (
     AgentFinalAnswer,
 )
@@ -44,3 +42,5 @@ TOOLS = dict(
 )
 
 FLAG_TOOL_ENABLED = False # env_tool.EnvReaderInstance.check_bool("TOPSAILAI_COLLABORATION_MODE", False)
+
+PROMPT = prompt_tool.read_prompt("work_mode/sop/collaboration.md")

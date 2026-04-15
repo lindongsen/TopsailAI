@@ -10,6 +10,7 @@ from topsailai.logger import logger
 from topsailai.tools import (
     skill_tool,
 )
+from topsailai.prompt_hub import prompt_tool
 from topsailai.workspace.task import task_tool
 
 
@@ -84,3 +85,5 @@ TOOLS = dict(
 )
 
 FLAG_TOOL_ENABLED = False
+
+PROMPT = prompt_tool.read_prompt("work_mode/sop/collaboration.md")
