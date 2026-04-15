@@ -218,6 +218,31 @@ def get_message(hook: HookInstruction = None, need_input=True) -> str:
         >>> print(message)
         'From stdin'
     """
+    # all of argvs are files
+    _flag_all_files = True if len(sys.argv) > 1 else False
+    for _arg in sys.argv[1:]:
+        _arg = _arg.strip()
+
+        if not _arg:
+            continue
+
+        if _arg[0] != '/':
+            _flag_all_files = False
+            break
+
+        if not os.path.exists(_arg):
+            _flag_all_files = False
+            break
+
+    message = ""
+    if _flag_all_files:
+        for _file_path in sys.argv[1:]:
+            with open(_file_path, encoding='utf-8') as fd:
+                message += fd.read().strip() + "\n---\n"
+        if message:
+            call_hook_get_message_for_task_from_file()
+            return message
+
     message = ' '.join(sys.argv[1:]) if len(sys.argv) > 1 else ""
 
     # message from file
