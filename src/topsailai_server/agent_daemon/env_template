@@ -63,6 +63,13 @@ TOPSAILAI_AGENT_DAEMON_PORT=7373
 TOPSAILAI_AGENT_DAEMON_DB_URL=sqlite:///topsailai_agent_daemon.db
 
 # =============================================================================
+# Message Control
+# =============================================================================
+
+# split by ';' or ','
+TOPSAILAI_AGENT_DAEMON_UNPROCESSED_MSG_INCLUDED_ROLES=""
+
+# =============================================================================
 # ADDITIONAL NOTES
 # =============================================================================
 

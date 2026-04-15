@@ -12,6 +12,10 @@ from sqlalchemy.orm import Session as SQLSession
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import desc
 
+from topsailai.utils import (
+    env_tool,
+)
+
 from .base import MessageStorageBase
 from .base import MessageData
 from .constants import (
@@ -174,11 +178,30 @@ class MessageSQLAlchemy(MessageStorageBase):
                     Message.session_id == session_id
                 ).order_by(asc(Message.create_time)).all()
             else:
+
+                # =============================================================================
+                # This is the factual logic (role_filtering) of human participation, you cannot remove it
+                # =============================================================================
+                # >>> START role_filtering
+
                 # From Human: The message that the assistant should be removed by default is the previous response
                 # From Human: This control role filtering method cannot be removed
-                roles = [MESSAGE_ROLE_USER, ""]
+                roles = set([MESSAGE_ROLE_USER, ""])
                 if to_include_role_assistant:
-                    roles.append(MESSAGE_ROLE_ASSISTANT)
+                    roles.add(MESSAGE_ROLE_ASSISTANT)
+                # roles from env
+                env_roles = env_tool.EnvReaderInstance.get_list_str(
+                    "TOPSAILAI_AGENT_DAEMON_UNPROCESSED_MSG_INCLUDED_ROLES",
+                    separator=None,
+                )
+                if env_roles:
+                    for _role in env_roles:
+                        roles.add(_role)
+
+                # roles is a list format
+                roles = list(roles)
+
+                # <<< END role_filtering
 
                 # Get ALL messages created after the processed message (regardless of role)
                 # Exclude processed_msg_id itself
@@ -186,7 +209,7 @@ class MessageSQLAlchemy(MessageStorageBase):
                     Message.session_id == session_id,
                     Message.msg_id != processed_msg_id,
                     Message.create_time >= processed_msg.create_time,
-                    Message.role.in_(roles),
+                    Message.role.in_(roles),    # role_filtering
                 ).order_by(asc(Message.create_time)).all()
 
             return [self._to_data(m) for m in messages]

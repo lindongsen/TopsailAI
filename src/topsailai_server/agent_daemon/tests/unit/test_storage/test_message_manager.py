@@ -253,7 +253,8 @@ class TestMessageManager(unittest.TestCase):
 
         # Get unprocessed messages after the first user message
         unprocessed = self.message_manager.get_unprocessed_messages(
-            self.test_session_id, 'msg-assistant-user-0'
+            self.test_session_id, 'msg-assistant-user-0',
+            to_include_role_assistant=True,
         )
 
         # Both the assistant message and the second user message should be returned
@@ -309,7 +310,8 @@ class TestMessageManager(unittest.TestCase):
 
         # Get unprocessed messages after the processed message
         unprocessed = self.message_manager.get_unprocessed_messages(
-            self.test_session_id, 'msg-task-proc-0'
+            self.test_session_id, 'msg-task-proc-0',
+            to_include_role_assistant=True,
         )
 
         # Both messages should be returned
