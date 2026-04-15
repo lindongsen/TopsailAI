@@ -158,7 +158,11 @@ def to_json_str(content, indent=2):
     Raises:
         Prints error message if conversion fails but returns string representation
     """
+    if content is None:
+        return ""
     if isinstance(content, str):
+        if not content:
+            return content
         content = fix_llm_mistakes_on_json(content)
         new_content = convert_code_block_to_json_str(content)
         if new_content:
