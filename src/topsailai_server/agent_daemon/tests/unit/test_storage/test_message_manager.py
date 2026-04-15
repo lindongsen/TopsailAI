@@ -210,6 +210,175 @@ class TestMessageManager(unittest.TestCase):
         self.assertEqual(len(unprocessed), 2)
         self.assertEqual(unprocessed[0].msg_id, 'msg-unproc-1')
 
+    def test_get_unprocessed_messages_includes_assistant_messages(self):
+        """Test that assistant messages are included in get_unprocessed_messages"""
+        # Create a user message as the processed message
+        user_msg = MessageData(
+            msg_id='msg-assistant-user-0',
+            session_id=self.test_session_id,
+            message='User message',
+            role='user',
+            create_time=datetime.now() - timedelta(minutes=3),
+            update_time=datetime.now(),
+            task_id=None,
+            task_result=None
+        )
+        self.message_manager.create(user_msg)
+
+        # Create an assistant message after the user message
+        assistant_msg = MessageData(
+            msg_id='msg-assistant-1',
+            session_id=self.test_session_id,
+            message='Assistant response',
+            role='assistant',
+            create_time=datetime.now() - timedelta(minutes=2),
+            update_time=datetime.now(),
+            task_id=None,
+            task_result=None
+        )
+        self.message_manager.create(assistant_msg)
+
+        # Create another user message after the assistant message
+        user_msg2 = MessageData(
+            msg_id='msg-assistant-user-2',
+            session_id=self.test_session_id,
+            message='Another user message',
+            role='user',
+            create_time=datetime.now() - timedelta(minutes=1),
+            update_time=datetime.now(),
+            task_id=None,
+            task_result=None
+        )
+        self.message_manager.create(user_msg2)
+
+        # Get unprocessed messages after the first user message
+        unprocessed = self.message_manager.get_unprocessed_messages(
+            self.test_session_id, 'msg-assistant-user-0'
+        )
+
+        # Both the assistant message and the second user message should be returned
+        self.assertEqual(len(unprocessed), 2)
+        msg_ids = [m.msg_id for m in unprocessed]
+        self.assertIn('msg-assistant-1', msg_ids)
+        self.assertIn('msg-assistant-user-2', msg_ids)
+
+        # Verify the assistant message role is preserved
+        assistant_result = [m for m in unprocessed if m.msg_id == 'msg-assistant-1'][0]
+        self.assertEqual(assistant_result.role, 'assistant')
+
+    def test_get_unprocessed_messages_includes_messages_with_task_id(self):
+        """Test that messages with task_id and task_result are included"""
+        # Create a processed message
+        processed_msg = MessageData(
+            msg_id='msg-task-proc-0',
+            session_id=self.test_session_id,
+            message='Processed message',
+            role='user',
+            create_time=datetime.now() - timedelta(minutes=3),
+            update_time=datetime.now(),
+            task_id=None,
+            task_result=None
+        )
+        self.message_manager.create(processed_msg)
+
+        # Create a message with task_id and task_result
+        task_msg = MessageData(
+            msg_id='msg-task-1',
+            session_id=self.test_session_id,
+            message='Message with task info',
+            role='assistant',
+            create_time=datetime.now() - timedelta(minutes=2),
+            update_time=datetime.now(),
+            task_id='task-abc-123',
+            task_result='Task completed successfully'
+        )
+        self.message_manager.create(task_msg)
+
+        # Create another message without task info
+        plain_msg = MessageData(
+            msg_id='msg-task-plain-2',
+            session_id=self.test_session_id,
+            message='Plain message',
+            role='user',
+            create_time=datetime.now() - timedelta(minutes=1),
+            update_time=datetime.now(),
+            task_id=None,
+            task_result=None
+        )
+        self.message_manager.create(plain_msg)
+
+        # Get unprocessed messages after the processed message
+        unprocessed = self.message_manager.get_unprocessed_messages(
+            self.test_session_id, 'msg-task-proc-0'
+        )
+
+        # Both messages should be returned
+        self.assertEqual(len(unprocessed), 2)
+        msg_ids = [m.msg_id for m in unprocessed]
+        self.assertIn('msg-task-1', msg_ids)
+        self.assertIn('msg-task-plain-2', msg_ids)
+
+        # Verify task info is preserved
+        task_result = [m for m in unprocessed if m.msg_id == 'msg-task-1'][0]
+        self.assertEqual(task_result.task_id, 'task-abc-123')
+        self.assertEqual(task_result.task_result, 'Task completed successfully')
+
+    def test_get_unprocessed_messages_with_none_processed_msg_id(self):
+        """Test that when processed_msg_id is None, all messages for the session are returned"""
+        # Create multiple messages with different roles
+        for i in range(3):
+            message_data = MessageData(
+                msg_id=f'msg-none-proc-{i}',
+                session_id=self.test_session_id,
+                message=f'Message {i}',
+                role='user' if i % 2 == 0 else 'assistant',
+                create_time=datetime.now() - timedelta(minutes=3-i),
+                update_time=datetime.now(),
+                task_id=None,
+                task_result=None
+            )
+            self.message_manager.create(message_data)
+
+        # Get unprocessed messages with None processed_msg_id
+        unprocessed = self.message_manager.get_unprocessed_messages(
+            self.test_session_id, None
+        )
+
+        # All messages should be returned
+        self.assertEqual(len(unprocessed), 3)
+        msg_ids = [m.msg_id for m in unprocessed]
+        self.assertIn('msg-none-proc-0', msg_ids)
+        self.assertIn('msg-none-proc-1', msg_ids)
+        self.assertIn('msg-none-proc-2', msg_ids)
+
+    def test_get_unprocessed_messages_with_empty_processed_msg_id(self):
+        """Test that when processed_msg_id is empty string, all messages for the session are returned"""
+        # Create multiple messages with different roles
+        for i in range(3):
+            message_data = MessageData(
+                msg_id=f'msg-empty-proc-{i}',
+                session_id=self.test_session_id,
+                message=f'Message {i}',
+                role='user' if i % 2 == 0 else 'assistant',
+                create_time=datetime.now() - timedelta(minutes=3-i),
+                update_time=datetime.now(),
+                task_id=None,
+                task_result=None
+            )
+            self.message_manager.create(message_data)
+
+        # Get unprocessed messages with empty string processed_msg_id
+        unprocessed = self.message_manager.get_unprocessed_messages(
+            self.test_session_id, ''
+        )
+
+        # All messages should be returned
+        self.assertEqual(len(unprocessed), 3)
+        msg_ids = [m.msg_id for m in unprocessed]
+        self.assertIn('msg-empty-proc-0', msg_ids)
+        self.assertIn('msg-empty-proc-1', msg_ids)
+        self.assertIn('msg-empty-proc-2', msg_ids)
+
     def test_update_task_info(self):
         """Test updating task info"""
         message_data = MessageData(

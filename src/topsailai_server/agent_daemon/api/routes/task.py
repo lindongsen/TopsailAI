@@ -14,6 +14,7 @@ from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.storage import Storage, MessageData
 from topsailai_server.agent_daemon.worker import WorkerManager
 from topsailai_server.agent_daemon.api.utils import ApiResponse, success_response, error_response
+from topsailai_server.agent_daemon.api.processor_helper import check_and_process_messages
 # Import from message module - they share the same globals set by app.py
 from topsailai_server.agent_daemon.api.routes.message import get_storage, get_worker_manager
 
@@ -94,17 +95,13 @@ async def set_task_result(
             return error_response(message="Message not found", code=404)
         
         # Update session's processed_msg_id
-        session = storage.session.get(request.session_id)
-        if session:
-            session.processed_msg_id = request.processed_msg_id
-            storage.session.update(session)
+        storage.session.update_processed_msg_id(request.session_id, request.processed_msg_id)
         
         logger.info("Task result set: session_id=%s, msg_id=%s, task_id=%s",
                    request.session_id, request.processed_msg_id, request.task_id)
         
         # Check if there are more messages to process
-        from topsailai_server.agent_daemon.api.routes.message import _check_and_process_messages
-        await _check_and_process_messages(request.session_id, storage, worker_manager)
+        check_and_process_messages(request.session_id, storage, worker_manager)
         
         return success_response(data={"task_id": request.task_id}, message="Task result saved")
     

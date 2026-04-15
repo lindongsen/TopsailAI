@@ -18,7 +18,7 @@ from datetime import datetime
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
-from topsailai_server.agent_daemon.storage import Storage, SessionData, MessageData
+from topsailai_server.agent_daemon.storage import Storage, SessionData, MessageData, SessionSQLAlchemy
 from topsailai_server.agent_daemon.worker import WorkerManager
 from topsailai_server.agent_daemon.configer import get_config
 
@@ -116,6 +116,54 @@ class TestMessageAPI(unittest.TestCase):
         response = self.client.get('/api/v1/message')
         
         self.assertEqual(response.status_code, 422)  # FastAPI returns 422 for missing required params
+
+    def test_receive_message_with_processed_msg_id_triggers_processing(self):
+        """Test that check_and_process_messages is called even when processed_msg_id is provided (Bug 3 fix)"""
+        from unittest.mock import patch
+        
+        with patch('topsailai_server.agent_daemon.api.routes.message.check_and_process_messages') as mock_check:
+            response = self.client.post('/api/v1/message', json={
+                'message': 'Hello with processed_msg_id!',
+                'session_id': 'test-session-proc-1',
+                'role': 'user',
+                'processed_msg_id': 'some-previous-msg-id'
+            })
+            
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data['code'], 0)
+            # Verify check_and_process_messages was called (Bug 3 fix: always check for more unprocessed messages)
+            mock_check.assert_called_once()
+            call_args = mock_check.call_args
+            self.assertEqual(call_args[0][0], 'test-session-proc-1')  # session_id
+    
+    def test_receive_message_with_processed_msg_id_updates_session(self):
+        """Test that session's processed_msg_id is updated when processed_msg_id is provided"""
+        from unittest.mock import patch
+        
+        with patch('topsailai_server.agent_daemon.api.routes.message.check_and_process_messages') as mock_check:
+            # First create a session by sending a message
+            self.client.post('/api/v1/message', json={
+                'message': 'Initial message',
+                'session_id': 'test-session-proc-2',
+                'role': 'user'
+            })
+            
+            # Now send a message with processed_msg_id
+            response = self.client.post('/api/v1/message', json={
+                'message': 'Follow-up message',
+                'session_id': 'test-session-proc-2',
+                'role': 'user',
+                'processed_msg_id': 'updated-msg-id-123'
+            })
+            
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data['code'], 0)
+            
+            # Verify the session's processed_msg_id was updated
+            session = self.storage.session.get('test-session-proc-2')
+            self.assertEqual(session.processed_msg_id, 'updated-msg-id-123')
 
 
 class TestTaskAPI(unittest.TestCase):
@@ -217,6 +265,65 @@ class TestTaskAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertIsInstance(data['data'], list)
+
+    def test_set_task_result_updates_processed_msg_id(self):
+        """Verify that SetTaskResult uses update_processed_msg_id instead of manual session update (Bug 4 fix)"""
+        from unittest.mock import patch
+        
+        # First create a message to get a valid msg_id
+        msg_response = self.client.post('/api/v1/message', json={
+            'message': 'Test message for processed_msg_id',
+            'session_id': 'test-session-bug4',
+            'role': 'user'
+        })
+        msg_id = msg_response.json()['data']['msg_id']
+        
+        # Patch at the class level since the route creates a new Storage instance via Depends(get_storage)
+        with patch.object(SessionSQLAlchemy, 'update_processed_msg_id') as mock_update:
+            # Set task result
+            response = self.client.post('/api/v1/task', json={
+                'session_id': 'test-session-bug4',
+                'processed_msg_id': msg_id,
+                'task_id': 'task-bug4',
+                'task_result': 'Bug 4 fix verification'
+            })
+            
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data['code'], 0)
+            
+            # Verify update_processed_msg_id was called with correct arguments (Bug 4 fix)
+            mock_update.assert_called_once_with('test-session-bug4', msg_id)
+    
+    def test_set_task_result_triggers_processing_check(self):
+        """Verify that SetTaskResult calls check_and_process_messages after setting the task result"""
+        from unittest.mock import patch
+        
+        # First create a message to get a valid msg_id
+        msg_response = self.client.post('/api/v1/message', json={
+            'message': 'Test message for processing check',
+            'session_id': 'test-session-proc-check',
+            'role': 'user'
+        })
+        msg_id = msg_response.json()['data']['msg_id']
+        
+        with patch('topsailai_server.agent_daemon.api.routes.task.check_and_process_messages') as mock_check:
+            # Set task result
+            response = self.client.post('/api/v1/task', json={
+                'session_id': 'test-session-proc-check',
+                'processed_msg_id': msg_id,
+                'task_id': 'task-proc-check',
+                'task_result': 'Processing check verification'
+            })
+            
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data['code'], 0)
+            
+            # Verify check_and_process_messages was called after setting task result
+            mock_check.assert_called_once()
+            call_args = mock_check.call_args
+            self.assertEqual(call_args[0][0], 'test-session-proc-check')  # session_id
 
 
 class TestHealthCheck(unittest.TestCase):

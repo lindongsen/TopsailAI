@@ -20,6 +20,7 @@ os.environ["TOPSAILAI_ENABLED_TOOLS"] = os.getenv("TOPSAILAI_ENABLED_TOOLS", "+"
 from topsailai.tools import (
     file_readonly_tool,
 )
+from topsailai.context.common import get_session_id
 from topsailai.workspace.agent_shell import get_agent_chat
 
 
@@ -62,6 +63,7 @@ def main():
     """
     # plan agent
     plan_agent = get_agent_chat(
+        session_id=get_session_id(),
         disabled_tools=["agent_tool"],
         enabled_tools=["story_memory_tool", "subagent_tool"],
         tool_map=get_tool_map(),

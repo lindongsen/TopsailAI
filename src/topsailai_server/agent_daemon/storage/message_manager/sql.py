@@ -14,6 +14,10 @@ from sqlalchemy import desc
 
 from .base import MessageStorageBase
 from .base import MessageData
+from .constants import (
+    MESSAGE_ROLE_USER,
+    MESSAGE_ROLE_ASSISTANT,
+)
 
 Base = declarative_base()
 
@@ -69,7 +73,7 @@ class MessageSQLAlchemy(MessageStorageBase):
                 msg_id=message_data.msg_id,
                 session_id=message_data.session_id,
                 message=message_data.message,
-                role=message_data.role or "user",
+                role=message_data.role or MESSAGE_ROLE_USER,
                 create_time=message_data.create_time or datetime.now(),
                 update_time=message_data.update_time or datetime.now(),
                 task_id=message_data.task_id,
@@ -139,9 +143,25 @@ class MessageSQLAlchemy(MessageStorageBase):
                 return self._to_data(message)
             return None
 
-    def get_unprocessed_messages(self, session_id: str, processed_msg_id: str) -> List[MessageData]:
-        """Get unprocessed messages after the processed_msg_id"""
+    def get_unprocessed_messages(self, session_id: str, processed_msg_id: str, to_include_role_assistant: bool=False) -> List[MessageData]:
+        """Get unprocessed messages after the processed_msg_id.
+
+        Returns ALL messages after processed_msg_id, regardless of role.
+        Role filtering is handled at the formatting level (format_pending_messages).
+
+        Args:
+            session_id: The session identifier
+            processed_msg_id: The last processed message ID. If None or empty, returns all messages.
+            to_include_role_assistant: # From Human: DONOT REMOVE THIS ARG
+        """
         with SQLSession(self.engine) as db:
+            # Handle None/empty processed_msg_id - return all messages for the session
+            if not processed_msg_id:
+                messages = db.query(Message).filter(
+                    Message.session_id == session_id
+                ).order_by(asc(Message.create_time)).all()
+                return [self._to_data(m) for m in messages]
+
             # First get the create_time of the processed message
             processed_msg = db.query(Message).filter(
                 Message.msg_id == processed_msg_id,
@@ -154,13 +174,19 @@ class MessageSQLAlchemy(MessageStorageBase):
                     Message.session_id == session_id
                 ).order_by(asc(Message.create_time)).all()
             else:
-                # Get messages created after the processed message
-                # Also explicitly exclude processed_msg_id to handle same-timestamp edge case
+                # From Human: The message that the assistant should be removed by default is the previous response
+                # From Human: This control role filtering method cannot be removed
+                roles = [MESSAGE_ROLE_USER, ""]
+                if to_include_role_assistant:
+                    roles.append(MESSAGE_ROLE_ASSISTANT)
+
+                # Get ALL messages created after the processed message (regardless of role)
+                # Exclude processed_msg_id itself
                 messages = db.query(Message).filter(
                     Message.session_id == session_id,
                     Message.msg_id != processed_msg_id,
-                    Message.role != "assistant",
-                    Message.create_time >= processed_msg.create_time
+                    Message.create_time >= processed_msg.create_time,
+                    Message.role.in_(roles),
                 ).order_by(asc(Message.create_time)).all()
 
             return [self._to_data(m) for m in messages]

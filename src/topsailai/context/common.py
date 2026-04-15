@@ -1,3 +1,4 @@
+
 '''
   Author: DawsonLin
   Email: lin_dongsen@126.com
@@ -5,7 +6,10 @@
   Purpose:
 '''
 
-from topsailai.context import common as ctx_common
+from topsailai.utils import (
+    time_tool,
+    env_tool,
+)
 
 
 def get_session_id() -> str:
@@ -22,4 +26,6 @@ def get_session_id() -> str:
         >>> get_session_id()
         '20260120123456'
     """
-    return ctx_common.get_session_id()
+    session_id = env_tool.get_session_id() or time_tool.get_current_date(with_t=True).replace('-', '')
+    session_id = session_id.replace(':', '')
+    return session_id

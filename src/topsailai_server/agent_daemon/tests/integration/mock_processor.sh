@@ -2,6 +2,7 @@
 # Mock processor script for integration testing
 # This script simulates the TOPSAILAI_AGENT_DAEMON_PROCESSOR
 # It calls back to the API to report results
+# Uses jq for proper JSON construction to avoid shell interpolation issues
 
 BASE_URL="${TOPSAILAI_AGENT_DAEMON_BASE_URL:-http://localhost:7373}"
 SESSION_ID="$TOPSAILAI_SESSION_ID"
@@ -29,15 +30,17 @@ if echo "$TASK" | grep -qi "task"; then
     echo "  task_id: $TASK_ID"
     echo "  task_result: $TASK_RESULT"
     
-    # Call SetTaskResult API
+    # Call SetTaskResult API using jq for proper JSON escaping
+    JSON_PAYLOAD=$(jq -n \
+        --arg sid "$SESSION_ID" \
+        --arg mid "$MSG_ID" \
+        --arg tid "$TASK_ID" \
+        --arg tr "$TASK_RESULT" \
+        '{session_id: $sid, processed_msg_id: $mid, task_id: $tid, task_result: $tr}')
+    
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/api/v1/task" \
         -H "Content-Type: application/json" \
-        -d "{
-            \"session_id\": \"$SESSION_ID\",
-            \"processed_msg_id\": \"$MSG_ID\",
-            \"task_id\": \"$TASK_ID\",
-            \"task_result\": \"$TASK_RESULT\"
-        }")
+        -d "$JSON_PAYLOAD")
     
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -52,15 +55,17 @@ else
     echo "Sending direct reply..."
     echo "  reply_message: $REPLY_MESSAGE"
     
-    # Call ReceiveMessage API with processed_msg_id to update the session
+    # Call ReceiveMessage API using jq for proper JSON escaping
+    JSON_PAYLOAD=$(jq -n \
+        --arg sid "$SESSION_ID" \
+        --arg msg "$REPLY_MESSAGE" \
+        --arg role "assistant" \
+        --arg pmid "$MSG_ID" \
+        '{session_id: $sid, message: $msg, role: $role, processed_msg_id: $pmid}')
+    
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/api/v1/message" \
         -H "Content-Type: application/json" \
-        -d "{
-            \"session_id\": \"$SESSION_ID\",
-            \"message\": \"$REPLY_MESSAGE\",
-            \"role\": \"assistant\",
-            \"processed_msg_id\": \"$MSG_ID\"
-        }")
+        -d "$JSON_PAYLOAD")
     
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')

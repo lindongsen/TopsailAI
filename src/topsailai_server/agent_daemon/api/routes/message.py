@@ -14,6 +14,7 @@ from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.storage import Storage, MessageData, SessionData
 from topsailai_server.agent_daemon.worker import WorkerManager
 from topsailai_server.agent_daemon.api.utils import ApiResponse, success_response, error_response
+from topsailai_server.agent_daemon.api.processor_helper import check_and_process_messages
 
 
 # Router
@@ -69,69 +70,6 @@ class MessageResponse(BaseModel):
     task_result: Optional[str] = None
 
 
-async def _check_and_process_messages(
-    session_id: str,
-    storage: Storage,
-    worker_manager: WorkerManager
-):
-    """
-    Check if there are unprocessed messages and start processor if needed.
-
-    This is called after receiving a message or setting a task result.
-    
-    Flow:
-    1. If processed_msg_id is the latest message -> exit
-    2. If all messages from processed_msg_id to latest are role=assistant -> log and exit (avoid infinite loop)
-    3. Run TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER -> if processing, exit
-    4. Start the processor
-    """
-    try:
-        # Get session
-        session = storage.session.get(session_id)
-        if not session:
-            logger.warning("Session not found: %s", session_id)
-            return
-
-        # Get latest message
-        latest_message = storage.message.get_latest_message(session_id)
-        if not latest_message:
-            logger.warning("No messages found for session: %s", session_id)
-            return
-
-        # Step 1: Check if processed_msg_id is at the latest message
-        if session.processed_msg_id == latest_message.msg_id:
-            logger.debug("Session %s is up to date", session_id)
-            return
-
-        # Get unprocessed messages
-        unprocessed = storage.message.get_unprocessed_messages(session_id, session.processed_msg_id)
-        if not unprocessed:
-            logger.debug("No unprocessed messages for session: %s", session_id)
-            return
-        
-        # Step 2: Check if ALL unprocessed messages are assistant (avoid infinite loop)
-        if all(msg.role == "assistant" for msg in unprocessed):
-            logger.info("All unprocessed messages are assistant, skipping session %s to avoid infinite loop", session_id)
-            return
-
-        # Step 3: Check if session is idle
-        if not worker_manager.is_session_idle(session_id):
-            logger.info("Session %s is processing, skipping", session_id)
-            return
-
-        # Step 4: Combine unprocessed messages into a task and start processor
-        task = "\n".join([msg.message for msg in unprocessed])
-        logger.info("Starting processor for session: %s, msg_id: %s", session_id, latest_message.msg_id)
-        worker_manager.start_processor(
-            session_id=session_id,
-            msg_id=latest_message.msg_id,  # Use latest message ID
-            task=task
-        )
-
-    except Exception as e:
-        logger.exception("Error checking/processing messages: %s", e)
-
-
 @router.post("", response_model=ApiResponse)
 async def receive_message(
     request: ReceiveMessageRequest,
@@ -178,18 +116,13 @@ async def receive_message(
         logger.info("Message received: session_id=%s, msg_id=%s", request.session_id, msg_id)
 
         # Update session's processed_msg_id if provided
-        # When processed_msg_id is provided, it means the caller is explicitly telling us
-        # that this message (or a previous message) has been processed. In this case,
-        # we should NOT automatically trigger the processor again, as that would cause
-        # a loop or duplicate processing.
         if request.processed_msg_id:
             storage.session.update_processed_msg_id(request.session_id, request.processed_msg_id)
             logger.info("Updated processed_msg_id for session %s: %s",
                        request.session_id, request.processed_msg_id)
-        else:
-            # Only check for automatic processing when processed_msg_id is NOT provided
-            # (i.e., when a new user message comes in that needs processing)
-            await _check_and_process_messages(request.session_id, storage, worker_manager)
+
+        # Always check for more unprocessed messages after any update
+        check_and_process_messages(request.session_id, storage, worker_manager)
 
         return success_response(data={"msg_id": msg_id}, message="Message received")
 
