@@ -6,6 +6,7 @@
 '''
 
 from topsailai.logger import logger
+from topsailai.context import tool_stat
 from topsailai.ai_base.tool_call import (
     StepCallBase,
 )
@@ -58,7 +59,7 @@ def get_tool_func(tool_map: dict, tool_name: str):
 
     return None
 
-def exec_tool_func(tool_func, args):
+def exec_tool_func(tool_func, args, tool_name:str=None):
     """
     Execute a tool function with the given arguments.
 
@@ -75,13 +76,22 @@ def exec_tool_func(tool_func, args):
         any: The result of the tool function execution, or a string representation
             of the error if an exception occurred (except for AgentEndProcess).
     """
+    error = None
     try:
         result = tool_func(**args)
     except (agent_exception.AgentToolCallException) as e:
         raise e
     except Exception as e:
+        error = e
         result = str(e)
         logger.exception(e)
+    finally:
+        tool_stat.record_tool_call(
+            tool_call=tool_name or tool_func.__name__,
+            tool_args=args,
+            error=error,
+            metadata={"result": result},
+        )
     return result
 
 
@@ -159,7 +169,7 @@ class StepCallTool(StepCallBase):
             return agent_exception.ToolError(f"no found such as tool: {tool}")
 
         try:
-            return exec_tool_func(tool_func, args)
+            return exec_tool_func(tool_func, args, tool_name=tool)
         except agent_exception.AgentFinalAnswer as e:
             self.complete_final(
                 {

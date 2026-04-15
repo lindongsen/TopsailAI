@@ -56,6 +56,7 @@ TOPSAILAI_AGENT_NAME="TopsailAI"
 # Human name
 TOPSAILAI_HUMAN_NAME = "Topsail"
 
+
 # =============================================================================
 # LLM Parameters
 # =============================================================================
@@ -355,3 +356,8 @@ TOPSAILAI_MEMORY_WORKSPACE=""
 # Runtime Configuration, DONOT SETTING THEM
 # =============================================================================
 # TOPSAILAI_FINAL_ANSWER=""
+
+# =============================================================================
+# Observation Configuration
+# =============================================================================
+TOPSAILAI_ENABLE_TOOL_STAT=1
