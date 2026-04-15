@@ -90,7 +90,7 @@ def exec_tool_func(tool_func, args, tool_name:str=None):
             tool_call=tool_name or tool_func.__name__,
             tool_args=args,
             error=error,
-            metadata={"result": result},
+            result=result,
         )
     return result
 

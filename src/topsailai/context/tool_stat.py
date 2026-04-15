@@ -157,6 +157,7 @@ class ToolStat:
         tool_call: str,
         tool_args: Any = None,
         error: Optional[str] = None,
+        result: Any = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> int:
         """
@@ -166,6 +167,7 @@ class ToolStat:
             tool_call: Name of the tool being called
             tool_args: Arguments passed to the tool (can be any serializable type)
             error: Error message if the call failed, None otherwise
+            result: Result returned by the tool if the call succeeded, None otherwise
             metadata: Optional additional metadata to store with the call
 
         Returns:
@@ -177,6 +179,7 @@ class ToolStat:
                 "tool_call": tool_call,
                 "tool_args": tool_args,
                 "error": error,
+                "result": result,
                 "timestamp": datetime.now().isoformat(),
                 "sequence": self._call_sequence,
             }
@@ -430,8 +433,9 @@ class ToolStat:
             >>> with stat.track("curl", {"url": "example.com"}) as result:
             ...     # Your tool call here
             ...     result["success"] = True
+            ...     result["data"] = {"status": 200}
         """
-        result = {"success": False, "error": None}
+        result = {"success": False, "error": None, "data": None}
         try:
             yield result
             result["success"] = True
@@ -443,6 +447,7 @@ class ToolStat:
                 tool_call=tool_call,
                 tool_args=tool_args,
                 error=result.get("error"),
+                result=result.get("data"),
                 metadata={"success": result.get("success", False)}
             )
 
@@ -498,6 +503,7 @@ def record_tool_call(
     tool_call: str,
     tool_args: Any = None,
     error: Optional[str] = None,
+    result: Any = None,
     metadata: Any = None,
 ) -> int:
     """
@@ -507,14 +513,16 @@ def record_tool_call(
         tool_call: Name of the tool being called
         tool_args: Arguments passed to the tool
         error: Error message if the call failed
+        result: Result returned by the tool if the call succeeded
+        metadata: Optional additional metadata to store with the call
 
     Returns:
         The sequence number assigned to this call
     """
-    if os.getenv("TOPSAILAI_ENABLE_TOOL_STAT") not in ["1", "true"]:
-        return 0
-    return get_default_stat().record(tool_call, tool_args, error, metadata)
-
+    if os.getenv("TOPSAILAI_ENABLE_TOOL_STAT") in ["1", "true"] or \
+        os.getenv("DEBUG") in ["1", "true"]:
+        return get_default_stat().record(tool_call, tool_args, error, result, metadata)
+    return 0
 
 
 # =============================================================================
