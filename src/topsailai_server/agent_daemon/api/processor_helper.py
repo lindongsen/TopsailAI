@@ -28,18 +28,26 @@ def format_pending_messages(unprocessed_messages: list) -> str:
     - task_id and task_result are only included when they have values
     - Assistant messages WITHOUT task_id are EXCLUDED
     - Assistant messages WITH task_id are INCLUDED
+    - User messages are always INCLUDED
+    - If all messages are filtered out, returns empty string
+    
+    Args:
+        unprocessed_messages: List of MessageData objects to format
+        
+    Returns:
+        str: Formatted pending messages string, or empty string if no valid messages
     """
     parts = []
     
     for msg in unprocessed_messages:
-        # Skip assistant messages without task_id
+        # Skip assistant messages without task_id (they are responses, not user input)
         if msg.role == "assistant" and not msg.task_id:
             continue
         
         msg_parts = []
         msg_parts.append(msg.message)
         
-        # Include task_id if present
+        # Include task_id if present (only for assistant messages with tasks)
         if msg.task_id:
             msg_parts.append(">>> task_id: %s" % msg.task_id)
         
@@ -49,7 +57,9 @@ def format_pending_messages(unprocessed_messages: list) -> str:
         
         parts.append("\n".join(msg_parts))
     
+    # Handle edge case: all messages were filtered out
     if not parts:
+        logger.debug("All unprocessed messages were filtered out (no valid content)")
         return ""
     
     return "---\n" + "\n---\n".join(parts) + "\n---"
@@ -96,17 +106,24 @@ def check_and_process_messages(
             logger.debug("Session %s is up to date", session_id)
             return None
 
-        # Get unprocessed messages (includes ALL roles now)
+        # Get unprocessed messages (include assistant messages for filtering at formatting level)
+        # We must include assistant messages because they may have task_id/task_result
+        # that need to be included in the pending messages
         unprocessed = storage.message.get_unprocessed_messages(
-            session_id, session.processed_msg_id
+            session_id, session.processed_msg_id, to_include_role_assistant=True
         )
         if not unprocessed:
             logger.debug("No unprocessed messages for session: %s", session_id)
             return None
 
-        # Step 2: Check if ALL unprocessed messages are assistant (avoid infinite loop)
-        if all(msg.role == "assistant" for msg in unprocessed):
-            logger.info("All unprocessed messages are assistant, skipping session %s to avoid infinite loop", session_id)
+        # Step 2: Check if ALL unprocessed messages are assistant without task_id
+        # (avoid infinite loop - no user input to process)
+        all_filtered_out = all(
+            msg.role == "assistant" and not msg.task_id 
+            for msg in unprocessed
+        )
+        if all_filtered_out:
+            logger.info("All unprocessed messages are assistant without task_id, skipping session %s to avoid infinite loop", session_id)
             return None
 
         # Step 3: Check if session is idle
