@@ -6,14 +6,8 @@
 '''
 
 from topsailai.tools import file_tool
+from topsailai.tools.file_tool import FILE_RO_TOOLS
 
-FILE_RO_TOOLS = dict(
-    read_file=file_tool.read_file,
-    read_lines=file_tool.read_lines,
-    check_files_existing=file_tool.check_files_existing,
-    list_dirs=file_tool.list_dirs,
-    read_files=file_tool.read_files,
-)
 
 TOOLS = {}
 TOOLS.update(FILE_RO_TOOLS)
