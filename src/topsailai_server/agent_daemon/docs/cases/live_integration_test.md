@@ -1,4 +1,6 @@
-# Construct actual testing scenarios to ensure successful functional testing
+# Live Integration Test
+
+Construct actual testing scenarios to ensure successful functional testing
 
 Steps:
 1. Startup agent_daemon server; `export HOME=/path/to/tests/integration; nohup ./topsailai_agent_daemon.py start --processor ,,, --summarizer ... > /tmp/topsailai_agent_daemon.log 2>&1 &`
