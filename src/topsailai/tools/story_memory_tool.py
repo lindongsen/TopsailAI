@@ -7,14 +7,17 @@
 
 import os
 
-from topsailai.workspace.folder_constants import FOLDER_MEMORY_STORY
+from topsailai.workspace.folder_constants import FOLDER_MEMORY
 from .story_tool import (
     StoryFileInstance,
     build_story_id,
 )
 
+# memory workspace folder, save memory data to it
+WORKSPACE = os.getenv("TOPSAILAI_STORY_WORKSPACE") or \
+    os.getenv("TOPSAILAI_MEMORY_WORKSPACE") or \
+    FOLDER_MEMORY
 
-WORKSPACE = os.getenv("TOPSAILAI_STORY_WORKSPACE") or os.getenv("TOPSAILAI_MEMORY_WORKSPACE") or FOLDER_MEMORY_STORY
 if WORKSPACE:
     # If set it to ' ', disable this memory tool.
     WORKSPACE = WORKSPACE.strip()
