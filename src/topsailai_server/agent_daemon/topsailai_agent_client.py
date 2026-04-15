@@ -396,7 +396,7 @@ def do_client_process_session(args):
 def do_client_delete_sessions(args):
     """Delete sessions"""
     base_url = f"http://{args.host}:{args.port}"
-    url = f"{base_url}/api/v1/session/delete"
+    url = f"{base_url}/api/v1/session"
 
     # Get session IDs from positional args or --session-ids option
     session_ids = []
@@ -417,19 +417,14 @@ def do_client_delete_sessions(args):
 
     try:
         logger.info("Deleting %d session(s)", len(session_ids))
-        response = requests.post(url, json=data, timeout=10)
+        response = requests.delete(url, json=data, timeout=10)
 
         if response.status_code == 200:
             result = response.json()
             if result.get("code") == 0:
                 data = result.get("data", {})
-                deleted_sessions = data.get("deleted_sessions", 0)
-                deleted_messages = data.get("deleted_messages", 0)
-                deleted_ids = data.get("session_ids", [])
-
-                print(f"Deleted {deleted_sessions} session(s)")
-                print(f"Deleted {deleted_messages} message(s)")
-                print(f"Session IDs: {', '.join(deleted_ids)}")
+                deleted_count = data.get("deleted_count", 0)
+                print(f"Deleted {deleted_count} session(s)")
 
                 if args.verbose:
                     print(f"Response: {json.dumps(result, indent=2)}")

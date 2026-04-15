@@ -425,7 +425,7 @@ def insert_data_to_file(file_path: str, data: str, line_num: int, before_or_afte
 
     return new_content
 
-def read_lines(file_path:str, start_num:int, end_num:int):
+def read_lines(file_path:str, start_num:int, end_num:int, need_print_line_number:int=0) -> str:
     """Read specific lines from a file and return them as a string.
 
     This function reads a range of lines from a file using 1-based line numbering,
@@ -436,7 +436,8 @@ def read_lines(file_path:str, start_num:int, end_num:int):
         start_num (int): The starting line number (1-based). Lines before this number
                         will be excluded. Must be >= 1.
         end_num (int): The ending line number (1-based). Lines at and beyond this
-                      number will be excluded.
+                      number will be excluded. 0 for no end.
+        need_print_line_number (int): 1 to print line number with output lines(format is "{num}:{line_content}"), default 0 (no print)
 
     Returns:
         str: The concatenated content of the specified lines as a single string.
@@ -449,12 +450,15 @@ def read_lines(file_path:str, start_num:int, end_num:int):
         # Read lines 1-10 from a file
         content = read_lines("example.txt", 1, 10)
 
-        # Read lines 5-15 from a file
-        content = read_lines("example.txt", 5, 15)
+        # Read all of content from a file
+        content = read_lines("example.txt", 1, 0)
     """
     try:
         start_num = int(start_num)
         end_num = int(end_num)
+        need_print_line_number = int(need_print_line_number)
+        if not start_num:
+            start_num = 1
         with open(file_path, encoding='utf-8') as fd:
             lines = fd.readlines()
             if not lines:
@@ -462,7 +466,21 @@ def read_lines(file_path:str, start_num:int, end_num:int):
             # Convert 1-based line numbers to 0-based indices
             # start_num-1: convert to 0-based start index
             # end_num: slice end is exclusive, so end_num gives us correct slice
-            return ''.join(lines[start_num-1:end_num])
+            result = []
+            if end_num:
+                result = lines[start_num-1:end_num]
+            else:
+                result = lines[start_num-1:]
+            if not result:
+                return ''
+
+            if need_print_line_number:
+                new_result = []
+                for i, line in enumerate(result):
+                    new_result.append(f"{i+1}:{line}")
+                result = new_result
+
+            return ''.join(result)
     except Exception as e:
         return str(e)
 
