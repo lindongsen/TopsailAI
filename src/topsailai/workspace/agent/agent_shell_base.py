@@ -10,6 +10,7 @@
 
 import time
 
+from topsailai.logger import logger
 from topsailai.utils import (
     env_tool,
     time_tool,
@@ -17,6 +18,7 @@ from topsailai.utils import (
 from topsailai.utils.print_tool import (
     print_step,
 )
+from topsailai.context import tool_stat
 from topsailai.ai_base.constants import (
     ROLE_ASSISTANT,
 )
@@ -226,6 +228,11 @@ class AgentChat(AgentChatBase):
                 print(f"start_time      : {time_tool.parse_time_seconds(start_time)}")
                 print(f"end_time(now)   : {time_tool.parse_time_seconds(end_time)}")
                 print(f"elapsed_time    : {end_time-start_time}")
+
+            if env_tool.is_debug_mode():
+                tool_call_stat = tool_stat.get_default_stat()
+                __content = tool_call_stat.export_json()
+                logger.info("ToolStat of tool_calls:\n [%s]", __content)
 
             # next time
             func_print_pre_input_message()
