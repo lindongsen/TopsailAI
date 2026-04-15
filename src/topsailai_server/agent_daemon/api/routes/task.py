@@ -20,7 +20,7 @@ from topsailai_server.agent_daemon.validator import (
     validate_msg_id,
 )
 from topsailai_server.agent_daemon.api.utils import ApiResponse, success_response, error_response
-from topsailai_server.agent_daemon.api.processor_helper import check_and_process_messages
+from topsailai_server.agent_daemon.storage.processor_helper import check_and_process_messages
 # Import from message module - they share the same globals set by app.py
 from topsailai_server.agent_daemon.api.routes.message import get_storage, get_worker_manager
 
