@@ -36,6 +36,7 @@ DOUBLE_LINE = "=" * TERM_WIDTH
 MSG_SEPARATOR = "-" * TERM_WIDTH
 
 DEFAULT_LIMIT = 17
+DEFAULT_REFRESH_INTERVAL = 3
 
 def format_time(time_str):
     """Format time string to YYYY-MM-DD HH:MM:SS"""
@@ -401,8 +402,8 @@ def main():
     parser.add_argument(
         '--refresh-interval',
         type=int,
-        default=2,
-        help='Auto-refresh interval in seconds (default: 2)'
+        default=DEFAULT_REFRESH_INTERVAL,
+        help=f'Auto-refresh interval in seconds (default: {DEFAULT_REFRESH_INTERVAL})'
     )
     parser.add_argument(
         '--limit',

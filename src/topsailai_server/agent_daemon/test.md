@@ -22,6 +22,11 @@ refer to folders:
 - docs/
 - tests/
 
+guide files(Dynamically changing documents):
+- `docs/Code_Improvement_Proposal.md`
+- `docs/cases/test_cases.md`
+- `docs/Test_Execution_Checklist.md`
+
 NOTE: The execution time of integration testing is very long. It is recommended to set the tool_call timeout to 600 seconds when executing pytest.
 
 Read relevant folders and files to familiarize oneself with the project.
