@@ -1,386 +1,158 @@
----
-maintainer: AI
----
-
 # Test Execution Checklist
+
+**Project:** agent_daemon  
+**Created:** 2026-04-16  
+**Maintainer:** AI
+
+---
 
 ## Overview
 
-This document provides a structured checklist for executing all tests for the agent_daemon project. Tests are organized by priority and category to ensure systematic validation of all features.
+This document outlines the comprehensive test plan for the agent_daemon client modules and CLI.
 
-**Test Execution Order:**
-1. Unit Tests (Core Logic)
-2. Integration Tests (Business Flows)
-3. Edge Case & Exception Tests
+## Test Categories
 
----
+### 1. Unit Tests
 
-## Phase 1: Unit Tests - Core Logic
+#### 1.1 BaseClient Tests
+| Test ID | Test Name | Description | Expected Result | Status |
+|---------|-----------|-------------|-----------------|--------|
+| U-001 | test_base_client_init | Initialize BaseClient with default and custom base_url | Client created successfully | ⬜ |
+| U-002 | test_base_client_get | Test GET request with params | Returns parsed JSON response | ⬜ |
+| U-003 | test_base_client_post | Test POST request with JSON data | Returns parsed JSON response | ⬜ |
+| U-004 | test_base_client_post_json_str | Test POST with JSON string | Returns parsed JSON response | ⬜ |
+| U-005 | test_base_client_error_handling | Test API error response (code != 0) | Raises APIError with message | ⬜ |
+| U-006 | test_base_client_http_error | Test HTTP error (404, 500) | Raises APIError with status code | ⬜ |
+| U-007 | test_base_client_connection_error | Test connection failure | Raises APIError with connection message | ⬜ |
+| U-008 | test_format_time | Test time formatting function | Returns YYYY-MM-DD HH:MM:SS format | ⬜ |
+| U-009 | test_format_time_none | Test format_time with None input | Returns "N/A" | ⬜ |
 
-### 1.1 API Routes Tests
+#### 1.2 SessionClient Tests
+| Test ID | Test Name | Description | Expected Result | Status |
+|---------|-----------|-------------|-----------------|--------|
+| U-010 | test_session_client_health_check | Test health check endpoint | Returns True for healthy server | ⬜ |
+| U-011 | test_session_client_list_sessions | Test listing sessions | Returns list of session dicts | ⬜ |
+| U-012 | test_session_client_list_sessions_with_filters | Test listing with session_ids filter | Returns filtered sessions | ⬜ |
+| U-013 | test_session_client_list_sessions_empty | Test listing with no sessions | Returns empty list | ⬜ |
+| U-014 | test_session_client_get_session | Test getting single session | Returns session dict with status | ⬜ |
+| U-015 | test_session_client_get_session_not_found | Test getting non-existent session | Handles error gracefully | ⬜ |
+| U-016 | test_session_client_delete_sessions | Test deleting sessions | Returns success response | ⬜ |
+| U-017 | test_session_client_process_session | Test processing session | Returns processing info | ⬜ |
+| U-018 | test_session_client_process_session_no_messages | Test processing with no pending messages | Returns appropriate message | ⬜ |
+| U-019 | test_print_session_same_id_name | Test display when session_id == session_name | Shows only one identifier | ⬜ |
+| U-020 | test_print_session_different_id_name | Test display when session_id != session_name | Shows both identifiers | ⬜ |
+| U-021 | test_print_session_with_task | Test display with task content | Shows task information | ⬜ |
 
-**File:** `tests/unit/test_api/test_routes.py`
+#### 1.3 MessageClient Tests
+| Test ID | Test Name | Description | Expected Result | Status |
+|---------|-----------|-------------|-----------------|--------|
+| U-022 | test_message_client_send_message | Test sending message | Returns success response | ⬜ |
+| U-023 | test_message_client_send_message_with_processed_id | Test sending with processed_msg_id | Returns success response | ⬜ |
+| U-024 | test_message_client_list_messages | Test listing messages | Returns list of message dicts | ⬜ |
+| U-025 | test_message_client_list_messages_with_task | Test listing messages with task_id/task_result | Shows task info in output | ⬜ |
+| U-026 | test_message_client_list_messages_empty | Test listing with no messages | Returns empty list | ⬜ |
+| U-027 | test_print_message_user_role | Test display for user message | Shows correct role formatting | ⬜ |
+| U-028 | test_print_message_assistant_role | Test display for assistant message | Shows correct role formatting | ⬜ |
+| U-029 | test_print_message_with_task | Test display with task_id and task_result | Shows >>> task_id and >>> task_result | ⬜ |
+| U-030 | test_print_message_full_content | Test that full message content is displayed | No truncation or ellipsis | ⬜ |
 
-| # | Test Case | Expected Result | Status |
-|---|-----------|-----------------|--------|
-| 1.1.1 | `test_receive_message_success` | Returns 200, msg_id in response | ⬜ |
-| 1.1.2 | `test_receive_message_missing_message` | Returns 422 validation error | ⬜ |
-| 1.1.3 | `test_receive_message_missing_session_id` | Returns 422 validation error | ⬜ |
-| 1.1.4 | `test_retrieve_messages` | Returns 200, list of messages | ⬜ |
-| 1.1.5 | `test_retrieve_messages_missing_session_id` | Returns 422 validation error | ⬜ |
-| 1.1.6 | `test_set_task_result_success` | Returns 200, code=0 | ⬜ |
-| 1.1.7 | `test_set_task_result_missing_fields` | Returns 422 validation error | ⬜ |
-| 1.1.8 | `test_retrieve_tasks` | Returns 200, list of tasks | ⬜ |
-| 1.1.9 | `test_health_check` | Returns 200, code=0 | ⬜ |
+#### 1.4 TaskClient Tests
+| Test ID | Test Name | Description | Expected Result | Status |
+|---------|-----------|-------------|-----------------|--------|
+| U-031 | test_task_client_set_task_result | Test setting task result | Returns success response | ⬜ |
+| U-032 | test_task_client_list_tasks | Test listing tasks | Returns list of task dicts | ⬜ |
+| U-033 | test_task_client_list_tasks_with_filters | Test listing with task_ids filter | Returns filtered tasks | ⬜ |
+| U-034 | test_task_client_list_tasks_empty | Test listing with no tasks | Returns empty list | ⬜ |
+| U-035 | test_print_task | Test task display formatting | Shows correct format with all fields | ⬜ |
+| U-036 | test_print_task_with_result | Test task display with result | Shows --- separator and result | ⬜ |
+| U-037 | test_print_task_full_message | Test that full message content is displayed | No truncation or ellipsis | ⬜ |
 
-**Pass Criteria:** All 9 tests pass
+### 2. Integration Tests
 
----
+#### 2.1 End-to-End Workflows
+| Test ID | Test Name | Description | Expected Result | Status |
+|---------|-----------|-------------|-----------------|--------|
+| I-001 | test_full_session_lifecycle | Create session → Send messages → Process → Get results | Complete workflow succeeds | ⬜ |
+| I-002 | test_message_processing_flow | Send message → Trigger processing → Verify task created | Task created and result set | ⬜ |
+| I-003 | test_multiple_messages_batch | Send multiple messages → Process batch → Verify all handled | All messages processed | ⬜ |
+| I-004 | test_session_cleanup | Create old session → Run cleanup cron → Verify deleted | Session and messages removed | ⬜ |
+| I-005 | test_concurrent_session_access | Multiple clients accessing same session | No race conditions | ⬜ |
 
-### 1.2 Storage Tests - Session Manager
+#### 2.2 CLI Integration Tests
+| Test ID | Test Name | Description | Expected Result | Status |
+|---------|-----------|-------------|-----------------|--------|
+| I-006 | test_cli_health_check | Run `topsailai_agent_client health` | Shows server status | ⬜ |
+| I-007 | test_cli_list_sessions | Run `topsailai_agent_client list-sessions` | Shows formatted session list | ⬜ |
+| I-008 | test_cli_get_session | Run `topsailai_agent_client get-session --session-id xxx` | Shows session details | ⬜ |
+| I-009 | test_cli_send_message | Run `topsailai_agent_client send-message --message "test"` | Message sent successfully | ⬜ |
+| I-010 | test_cli_list_messages | Run `topsailai_agent_client list-messages --session-id xxx` | Shows formatted message list | ⬜ |
+| I-011 | test_cli_list_tasks | Run `topsailai_agent_client list-tasks --session-id xxx` | Shows formatted task list | ⬜ |
+| I-012 | test_cli_set_task_result | Run `topsailai_agent_client set-task-result ...` | Task result set successfully | ⬜ |
+| I-013 | test_cli_process_session | Run `topsailai_agent_client process-session --session-id xxx` | Session processed | ⬜ |
+| I-014 | test_cli_delete_sessions | Run `topsailai_agent_client delete-sessions xxx yyy` | Sessions deleted | ⬜ |
+| I-015 | test_cli_verbose_mode | Run commands with `-v` flag | Shows full JSON output | ⬜ |
 
-**File:** `tests/unit/test_storage/test_session_manager.py`
+### 3. Edge Case & Exception Tests
 
-| # | Test Case | Expected Result | Status |
-|---|-----------|-----------------|--------|
-| 1.2.1 | `test_create_session` | Session created successfully | ⬜ |
-| 1.2.2 | `test_get_session` | Returns session data | ⬜ |
-| 1.2.3 | `test_update_session` | Session updated successfully | ⬜ |
-| 1.2.4 | `test_update_processed_msg_id` | processed_msg_id updated | ⬜ |
-| 1.2.5 | `test_delete_session` | Session deleted successfully | ⬜ |
-| 1.2.6 | `test_get_or_create` | Creates new or returns existing | ⬜ |
-| 1.2.7 | `test_get_sessions_older_than` | Returns filtered sessions | ⬜ |
+| Test ID | Test Name | Description | Expected Result | Status |
+|---------|-----------|-------------|-----------------|--------|
+| E-001 | test_empty_session_id | Use empty string as session_id | Handles gracefully with error | ⬜ |
+| E-002 | test_invalid_session_id | Use non-existent session_id | Returns appropriate error | ⬜ |
+| E-003 | test_malformed_time_filter | Use invalid time format | Handles or rejects appropriately | ⬜ |
+| E-004 | test_negative_pagination | Use negative offset/limit | Handles or rejects appropriately | ⬜ |
+| E-005 | test_very_long_message | Send message with 10MB content | Handles without crash | ⬜ |
+| E-006 | test_special_characters | Send message with special chars/emoji | Preserves content correctly | ⬜ |
+| E-007 | test_server_unavailable | Client when server is down | Shows connection error | ⬜ |
+| E-008 | test_timeout_handling | Slow server response | Handles timeout appropriately | ⬜ |
+| E-009 | test_duplicate_task_result | Set result for same task twice | Handles appropriately | ⬜ |
+| E-010 | test_empty_task_result | Set empty string as task result | Stores empty result | ⬜ |
 
-**Pass Criteria:** All 7 tests pass
+### 4. Display Format Tests
 
----
-
-### 1.3 Storage Tests - Message Manager
-
-**File:** `tests/unit/test_storage/test_message_manager.py`
-
-| # | Test Case | Expected Result | Status |
-|---|-----------|-----------------|--------|
-| 1.3.1 | `test_create_message` | Message created successfully | ⬜ |
-| 1.3.2 | `test_get_message` | Returns message data | ⬜ |
-| 1.3.3 | `test_update_message` | Message updated successfully | ⬜ |
-| 1.3.4 | `test_delete_message` | Message deleted successfully | ⬜ |
-| 1.3.5 | `test_get_by_session` | Returns session messages | ⬜ |
-| 1.3.6 | `test_get_latest_message` | Returns latest message | ⬜ |
-| 1.3.7 | `test_get_unprocessed_messages` | Returns unprocessed messages | ⬜ |
-| 1.3.8 | `test_update_task_info` | Task info updated | ⬜ |
-| 1.3.9 | `test_get_recent_messages` | Returns recent messages | ⬜ |
-| 1.3.10 | `test_delete_by_session` | All messages deleted for session | ⬜ |
-
-**Pass Criteria:** All 10 tests pass
-
----
-
-### 1.4 Croner Tests - Message Consumer
-
-**File:** `tests/unit/test_croner/jobs/test_message_consumer.py`
-
-| # | Test Case | Expected Result | Status |
-|---|-----------|-----------------|--------|
-| 1.4.1 | `test_message_consumer_initialization` | Object created successfully | ⬜ |
-| 1.4.2 | `test_message_consumer_get_recent_messages` | Returns filtered messages | ⬜ |
-| 1.4.3 | `test_message_consumer_get_unique_sessions` | Returns unique session IDs | ⬜ |
-| 1.4.4 | `test_message_consumer_triggers_processor` | Processor triggered | ⬜ |
-| 1.4.5 | `test_message_consumer_skips_processed_session` | Skips already processed | ⬜ |
-| 1.4.6 | `test_full_message_consumption_flow` | All messages processed | ⬜ |
-
-**Pass Criteria:** All 6 tests pass
-
----
-
-### 1.5 Croner Tests - Message Summarizer
-
-**File:** `tests/unit/test_croner/jobs/test_message_summarizer.py`
-
-| # | Test Case | Expected Result | Status |
-|---|-----------|-----------------|--------|
-| 1.5.1 | `test_message_summarizer_initialization` | Object created successfully | ⬜ |
-| 1.5.2 | `test_message_summarizer_get_last_24h_messages` | Returns 24h messages | ⬜ |
-| 1.5.3 | `test_message_summarizer_group_by_session` | Groups correctly | ⬜ |
-| 1.5.4 | `test_message_summarizer_order_by_create_time` | Messages ordered correctly | ⬜ |
-| 1.5.5 | `test_message_summarizer_calls_worker` | Worker called successfully | ⬜ |
-| 1.5.6 | `test_full_summarization_flow` | All sessions summarized | ⬜ |
-
-**Pass Criteria:** All 6 tests pass
-
----
-
-### 1.6 Croner Tests - Session Cleaner
-
-**File:** `tests/unit/test_croner/jobs/test_session_cleaner.py`
-
-| # | Test Case | Expected Result | Status |
-|---|-----------|-----------------|--------|
-| 1.6.1 | `test_session_cleaner_initialization` | Object created successfully | ⬜ |
-| 1.6.2 | `test_session_cleaner_finds_old_sessions` | Returns old sessions | ⬜ |
-| 1.6.3 | `test_session_cleaner_deletes_session_messages` | Messages deleted | ⬜ |
-| 1.6.4 | `test_session_cleaner_deletes_session` | Session deleted | ⬜ |
-| 1.6.5 | `test_session_cleaner_full_cleanup_flow` | Old sessions deleted | ⬜ |
-| 1.6.6 | `test_session_cleaner_preserves_recent_sessions` | Recent sessions preserved | ⬜ |
-| 1.6.7 | `test_session_cleaner_handles_empty_database` | No error thrown | ⬜ |
-| 1.6.8 | `test_session_cleaner_handles_session_without_messages` | Handled gracefully | ⬜ |
-| 1.6.9 | `test_multiple_old_sessions_cleanup` | All old sessions cleaned | ⬜ |
-
-**Pass Criteria:** All 9 tests pass
+| Test ID | Test Name | Description | Expected Result | Status |
+|---------|-----------|-------------|-----------------|--------|
+| D-001 | test_time_format_seconds_only | Verify time shows only to seconds | Format: YYYY-MM-DD HH:MM:SS | ⬜ |
+| D-002 | test_session_display_same_id_name | session_id == session_name | Shows only one identifier | ⬜ |
+| D-003 | test_message_display_task_info | Message with task_id/task_result | Shows >>> task_id and >>> task_result | ⬜ |
+| D-004 | test_task_display_format | Task display format | `[time] task=[id] session=[id] msg=[id]` | ⬜ |
+| D-005 | test_task_result_separator | Task with result | Shows `---` before result | ⬜ |
+| D-006 | test_split_line_usage | Verify SPLIT_LINE used correctly | `===...===` (80 chars) | ⬜ |
+| D-007 | test_no_truncation | Long content in messages/tasks | Full content displayed | ⬜ |
 
 ---
 
-### 1.7 Worker Tests - Processor
+## Test Execution Order
 
-**File:** `tests/unit/test_worker/test_processor.py`
+### Phase 1: Unit Tests (U-001 to U-037)
+1. Run all BaseClient tests first
+2. Run SessionClient tests
+3. Run MessageClient tests
+4. Run TaskClient tests
 
-| # | Test Case | Expected Result | Status |
-|---|-----------|-----------------|--------|
-| 1.7.1 | `test_scenario1_direct_reply` | Reply message created | ⬜ |
-| 1.7.2 | `test_scenario1_retrieve_messages` | Messages retrieved correctly | ⬜ |
-| 1.7.3 | `test_scenario2_task_generation` | Task created successfully | ⬜ |
-| 1.7.4 | `test_scenario2_task_result` | Task result set correctly | ⬜ |
-| 1.7.5 | `test_start_processor` | Processor started | ⬜ |
-| 1.7.6 | `test_processor_environment_variables` | Correct env vars passed | ⬜ |
-| 1.7.7 | `test_processor_script_exists` | Script exists (may skip) | ⬜ |
-| 1.7.8 | `test_processor_script_executable` | Script is executable (may skip) | ⬜ |
+### Phase 2: Integration Tests (I-001 to I-015)
+1. Start test server with test database
+2. Run end-to-end workflow tests
+3. Run CLI integration tests
 
-**Pass Criteria:** 6-8 tests pass (2 may skip)
+### Phase 3: Edge Case Tests (E-001 to E-010)
+1. Run boundary condition tests
+2. Run error handling tests
 
----
-
-### 1.8 Worker Tests - Summarizer
-
-**File:** `tests/unit/test_worker/test_summarizer.py`
-
-| # | Test Case | Expected Result | Status |
-|---|-----------|-----------------|--------|
-| 1.8.1 | `test_summarizer_environment_variables` | Correct env vars passed | ⬜ |
-| 1.8.2 | `test_summarizer_script_executable` | Script is executable (may skip) | ⬜ |
-| 1.8.3 | `test_summarizer_env_command` | Env vars accessible | ⬜ |
-| 1.8.4 | `test_summarizer_with_worker_manager` | WorkerManager works | ⬜ |
-| 1.8.5 | `test_summarizer_script_exists` | Script exists (may skip) | ⬜ |
-| 1.8.6 | `test_summarizer_script_permissions` | Correct permissions (may skip) | ⬜ |
-
-**Pass Criteria:** 3-6 tests pass (3 may skip)
+### Phase 4: Display Format Tests (D-001 to D-007)
+1. Verify all output formatting matches specification
 
 ---
 
-### 1.9 Worker Tests - Session State Checker
+## Success Criteria
 
-**File:** `tests/unit/test_worker/test_session_state_checker.py`
-
-| # | Test Case | Expected Result | Status |
-|---|-----------|-----------------|--------|
-| 1.9.1 | `test_state_checker_idle_output` | Returns "idle" | ⬜ |
-| 1.9.2 | `test_state_checker_processing_output` | Returns "processing" | ⬜ |
-| 1.9.3 | `test_state_checker_environment_variable` | TOPSAILAI_SESSION_ID passed | ⬜ |
-| 1.9.4 | `test_state_checker_script_executable` | Script is executable (may skip) | ⬜ |
-| 1.9.5 | `test_worker_manager_check_session_state_idle` | Returns "idle" | ⬜ |
-| 1.9.6 | `test_worker_manager_check_session_state_processing` | Returns "processing" | ⬜ |
-| 1.9.7 | `test_worker_manager_is_session_idle` | Returns True/False | ⬜ |
-| 1.9.8 | `test_state_checker_script_exists` | Script exists (may skip) | ⬜ |
-| 1.9.9 | `test_state_checker_script_permissions` | Correct permissions (may skip) | ⬜ |
-
-**Pass Criteria:** 6-9 tests pass (3 may skip)
-
----
-
-## Phase 2: Integration Tests - Business Flows
-
-### 2.1 End-to-End Message Flow Tests
-
-**File:** `tests/integration/test_integration.py`
-
-| # | Test Case | Expected Result | Status |
-|---|-----------|-----------------|--------|
-| 2.1.1 | `test_receive_message_process_session_check_result` | Complete flow successful | ⬜ |
-| 2.1.2 | `test_direct_message_without_task` | Message processed without task | ⬜ |
-
-**Pass Criteria:** All 2 tests pass
-
----
-
-### 2.2 Session Lifecycle Tests
-
-**File:** `tests/integration/test_integration.py`
-
-| # | Test Case | Expected Result | Status |
-|---|-----------|-----------------|--------|
-| 2.2.1 | `test_session_lifecycle` | Complete lifecycle successful | ⬜ |
-| 2.2.2 | `test_session_with_unprocessed_messages` | Unprocessed messages identified | ⬜ |
-
-**Pass Criteria:** All 2 tests pass
-
----
-
-### 2.3 Cron Job Integration Tests
-
-**File:** `tests/integration/test_integration.py`
-
-| # | Test Case | Expected Result | Status |
-|---|-----------|-----------------|--------|
-| 2.3.1 | `test_message_consumer_job` | Processor triggered | ⬜ |
-| 2.3.2 | `test_message_summarizer_job` | Summarizer triggered | ⬜ |
-
-**Pass Criteria:** All 2 tests pass
-
----
-
-### 2.4 Error Handling Tests
-
-**File:** `tests/integration/test_integration.py`
-
-| # | Test Case | Expected Result | Status |
-|---|-----------|-----------------|--------|
-| 2.4.1 | `test_invalid_session_id` | Returns None gracefully | ⬜ |
-| 2.4.2 | `test_missing_required_parameters` | Handled gracefully | ⬜ |
-| 2.4.3 | `test_database_errors` | Errors handled gracefully | ⬜ |
-| 2.4.4 | `test_message_not_found` | Returns None gracefully | ⬜ |
-
-**Pass Criteria:** All 4 tests pass
-
----
-
-### 2.5 Worker Manager Integration Tests
-
-**File:** `tests/integration/test_integration.py`
-
-| # | Test Case | Expected Result | Status |
-|---|-----------|-----------------|--------|
-| 2.5.1 | `test_start_processor` | Processor started successfully | ⬜ |
-| 2.5.2 | `test_session_state_check` | Returns correct state | ⬜ |
-
-**Pass Criteria:** All 2 tests pass
-
----
-
-## Phase 3: Edge Case & Exception Tests
-
-### 3.1 Edge Cases - Storage
-
-| # | Test Scenario | Expected Behavior | Status |
-|---|---------------|-------------------|--------|
-| 3.1.1 | Empty session list query | Returns empty list, no error | ⬜ |
-| 3.1.2 | Message with very long content | Handled correctly | ⬜ |
-| 3.1.3 | Special characters in message | Preserved correctly | ⬜ |
-| 3.1.4 | Concurrent message creation | No data corruption | ⬜ |
-| 3.1.5 | Delete non-existent session | Handled gracefully | ⬜ |
-
----
-
-### 3.2 Edge Cases - API
-
-| # | Test Scenario | Expected Behavior | Status |
-|---|---------------|-------------------|--------|
-| 3.2.1 | Very large offset/limit values | Handled gracefully | ⬜ |
-| 3.2.2 | Invalid date formats | Returns validation error | ⬜ |
-| 3.2.3 | Empty request body | Returns validation error | ⬜ |
-| 3.2.4 | Unicode content in messages | Handled correctly | ⬜ |
-| 3.2.5 | Session with 1000+ messages | Pagination works correctly | ⬜ |
-
----
-
-### 3.3 Edge Cases - Croner
-
-| # | Test Scenario | Expected Behavior | Status |
-|---|---------------|-------------------|--------|
-| 3.3.1 | No messages in last 10 minutes | No action taken | ⬜ |
-| 3.3.2 | All sessions already processed | No duplicate processing | ⬜ |
-| 3.3.3 | Processor script fails | Error logged, continues | ⬜ |
-| 3.3.4 | No sessions older than 1 year | No deletion performed | ⬜ |
-| 3.3.5 | Database locked during cleanup | Retry or skip gracefully | ⬜ |
-
----
-
-### 3.4 Edge Cases - Worker
-
-| # | Test Scenario | Expected Behavior | Status |
-|---|---------------|-------------------|--------|
-| 3.4.1 | Processor script not found | Error logged | ⬜ |
-| 3.4.2 | Processor script not executable | Error logged | ⬜ |
-| 3.4.3 | Processor timeout | Process terminated | ⬜ |
-| 3.4.4 | State checker returns unexpected output | Handled gracefully | ⬜ |
-| 3.4.5 | Environment variables not set | Clear error message | ⬜ |
-
----
-
-## Test Execution Commands
-
-### Run All Tests
-
-```bash
-cd /root/ai/TopsailAI/src/topsailai_server/agent_daemon
-python -m pytest tests/ -v
-```
-
-### Run Unit Tests Only
-
-```bash
-cd /root/ai/TopsailAI/src/topsailai_server/agent_daemon
-python -m pytest tests/unit/ -v
-```
-
-### Run Integration Tests Only
-
-```bash
-export HOME=/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration
-cd /root/ai/TopsailAI/src/topsailai_server/agent_daemon
-python -m pytest tests/integration/ -v
-```
-
-### Run Specific Test File
-
-```bash
-cd /root/ai/TopsailAI/src/topsailai_server/agent_daemon
-python -m pytest tests/unit/test_storage/test_session_manager.py -v
-```
-
-### Run with Coverage
-
-```bash
-cd /root/ai/TopsailAI/src/topsailai_server/agent_daemon
-python -m pytest tests/ --cov=topsailai_server.agent_daemon --cov-report=html
-```
-
----
-
-## Success Criteria Summary
-
-| Category | Total Tests | Expected Pass | Status |
-|----------|-------------|---------------|--------|
-| Unit Tests - API Routes | 9 | 9 | ⬜ |
-| Unit Tests - Storage | 17 | 17 | ⬜ |
-| Unit Tests - Croner | 21 | 21 | ⬜ |
-| Unit Tests - Worker | 23 | 15-23 | ⬜ |
-| **Unit Tests Total** | **70** | **62-70** | ⬜ |
-| Integration Tests | 12 | 12 | ⬜ |
-| Edge Case Tests | 20 | 20 | ⬜ |
-| **Grand Total** | **102** | **94-102** | ⬜ |
-
----
-
-## Sign-off
-
-| Role | Name | Date | Signature |
-|------|------|------|-----------|
-| Reviewer | km-k25 | | |
-| Developer | mm-m25 | | |
-
----
+- All unit tests pass (37/37)
+- All integration tests pass (15/15)
+- All edge case tests pass (10/10)
+- All display format tests pass (7/7)
+- Total: 69/69 tests passing
 
 ## Notes
 
-1. **Test Environment:** Ensure all environment variables are set before running tests
-2. **Mock Scripts:** Integration tests require mock scripts to be executable
-3. **Database:** Each test uses isolated temporary databases
-4. **Timeouts:** Default timeout is 120 seconds per test
-5. **Cleanup:** Temporary files are automatically cleaned up after tests
-
----
-
-## Revision History
-
-| Version | Date | Author | Changes |
-|---------|------|--------|---------|
-| 1.0 | 2026-04-14 | km-k25 | Initial creation |
+- Use `export HOME=/path/to/tests/integration` when running integration tests
+- Check `/topsailai/log/agent_daemon.log` for server-side logs during testing
+- Run tests with `-v` flag for verbose output when debugging

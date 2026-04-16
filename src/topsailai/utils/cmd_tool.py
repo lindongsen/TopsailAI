@@ -18,6 +18,9 @@ def format_cmd(cmd, remote=None):
     if isinstance(cmd, str):
         if remote:
             cmd = cmd.replace('$', r'\$')
+    elif isinstance(cmd, list):
+        if len(cmd) == 1:
+            return cmd[0]
     return cmd
 
 def build_env(d:dict=None, keys:list=None):

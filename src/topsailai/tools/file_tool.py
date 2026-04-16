@@ -308,16 +308,16 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
     """
     Replace specific lines in a file based on line numbers (start from 1).
 
+    IMPORTANT LOGIC:
+    To ensure code integrity and indentation, do not replace lines individually
+    if they are part of a logical block (e.g., a function, a loop, or a class).
+    Instead, replace the entire block containing the change in a single operation.
+
     Args:
         file_path (str): Path to the file to modify
         lines (list[tuple[int, str]]): List of tuples where each tuple contains:
             - line_number (int): The 1-based line number to replace
             - content (str): The new content for that line, pass null str will delete this line
-
-            >>> Insert
-            If you want to insert a row of data, you can add content on top of the original row.
-            For example, if the line 5 is "#hello" and you want to insert a line of data "#world" after it, you can do the following:
-            lines=[(5, "#hello\n#world")]
 
     Returns:
         str: file content on success, error message on failure

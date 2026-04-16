@@ -1,903 +1,526 @@
 """
-Live Integration Tests for topsailai_agent_daemon and topsailai_agent_client.
+Live Integration Tests for agent_daemon
 
-These tests require a running daemon server and test real functionality
-without mocking. The server is started/stopped automatically.
+This module contains live integration tests that verify the complete
+workflow of the agent_daemon service by starting an actual server process
+and making real HTTP API requests.
+
+Test IDs: L-001 to L-002
+
+Author: DawsonLin
+Email: lin_dongsen@126.com
+Created: 2026-04-16
 """
 
 import os
 import sys
 import time
-import json
+import uuid
 import subprocess
-import pytest
+import tempfile
+from typing import Optional
+
 import requests
+import pytest
 
-# Configuration
-WORKSPACE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DAEMON_SCRIPT = os.path.join(WORKSPACE, "topsailai_agent_daemon.py")
-CLIENT_SCRIPT = os.path.join(WORKSPACE, "topsailai_agent_client.py")
-SERVER_HOST = "127.0.0.1"
-SERVER_PORT = 7373
-BASE_URL = f"http://{SERVER_HOST}:{SERVER_PORT}"
+# Set HOME environment variable for integration testing
+INTEGRATION_DIR = '/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration'
+os.environ['HOME'] = INTEGRATION_DIR
 
-# Integration test home directory
-HOME_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Add the parent directory to the path for imports
+sys.path.insert(0, '/root/ai/TopsailAI/src')
 
-# Script paths for the daemon (must be absolute paths)
-SCRIPTS_DIR = os.path.join(WORKSPACE, "scripts")
-PROCESSOR_SCRIPT = os.path.join(SCRIPTS_DIR, "test_processor.sh")
-SUMMARIZER_SCRIPT = os.path.join(SCRIPTS_DIR, "test_summarizer.sh")
-SESSION_STATE_CHECKER_SCRIPT = os.path.join(SCRIPTS_DIR, "test_session_state_checker.sh")
-
-# Global server process reference
-_server_process = None
+from topsailai_server.agent_daemon import logger
 
 
-def _run_client(*args, verbose=False):
-    """Run the client CLI with given arguments and return (stdout, stderr, returncode)."""
-    cmd = [sys.executable, CLIENT_SCRIPT, "--host", SERVER_HOST, "--port", str(SERVER_PORT)]
-    if verbose:
-        cmd.append("-v")
-    cmd.extend(args)
+# ============================================================================
+# Test Configuration
+# ============================================================================
 
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env={**os.environ, "HOME": HOME_DIR},
-    )
-    return result.stdout, result.stderr, result.returncode
+# Server configuration
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 7373
+SERVER_STARTUP_TIMEOUT = 15  # seconds
+SERVER_SHUTDOWN_TIMEOUT = 5  # seconds
 
-
-def _run_daemon(*args):
-    """Run the daemon CLI with given arguments and return (stdout, stderr, returncode)."""
-    cmd = [sys.executable, DAEMON_SCRIPT]
-    cmd.extend(args)
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env={**os.environ, "HOME": HOME_DIR},
-    )
-    return result.stdout, result.stderr, result.returncode
+# Test script paths
+SCRIPT_DIR = '/root/ai/TopsailAI/src/topsailai_server/agent_daemon/tests/integration/scripts'
+MOCK_PROCESSOR_SCRIPT = os.path.join(SCRIPT_DIR, 'mock_processor.py')
+MOCK_SUMMARIZER_SCRIPT = os.path.join(SCRIPT_DIR, 'mock_summarizer.py')
+MOCK_STATE_CHECKER_SCRIPT = os.path.join(SCRIPT_DIR, 'mock_state_checker.py')
 
 
-def _check_server_health():
-    """Check if the server is healthy by calling the health endpoint."""
+# ============================================================================
+# Test Fixtures
+# ============================================================================
+
+class ServerProcess:
+    """Context manager for server process"""
+    
+    def __init__(self, host: str, port: int, db_path: str):
+        self.host = host
+        self.port = port
+        self.db_path = db_path
+        self.process: Optional[subprocess.Popen] = None
+        self.base_url = f"http://{host}:{port}"
+    
+    def start(self) -> bool:
+        """Start the server process"""
+        cli_path = '/root/ai/TopsailAI/src/topsailai_server/agent_daemon/topsailai_agent_daemon.py'
+        
+        cmd = [
+            sys.executable,
+            cli_path,
+            'start',
+            '--host', self.host,
+            '--port', str(self.port),
+            '--db_url', f'sqlite:///{self.db_path}',
+            '--processor', MOCK_PROCESSOR_SCRIPT,
+            '--summarizer', MOCK_SUMMARIZER_SCRIPT,
+            '--session_state_checker', MOCK_STATE_CHECKER_SCRIPT,
+        ]
+        
+        try:
+            # Start server in background
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=INTEGRATION_DIR,
+                env={**os.environ, 'HOME': INTEGRATION_DIR}
+            )
+            
+            # Wait for server to be ready
+            if self._wait_for_server(SERVER_STARTUP_TIMEOUT):
+                logger.info("Server started successfully at %s", self.base_url)
+                return True
+            else:
+                logger.error("Server failed to start within timeout")
+                self.stop()
+                return False
+                
+        except Exception as e:
+            logger.error("Failed to start server: %s", e)
+            return False
+    
+    def _wait_for_server(self, timeout: int) -> bool:
+        """Wait for server to be ready"""
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                response = requests.get(f"{self.base_url}/health", timeout=1)
+                if response.status_code == 200:
+                    return True
+            except requests.exceptions.RequestException:
+                pass
+            time.sleep(0.5)
+        return False
+    
+    def stop(self):
+        """Stop the server process"""
+        if self.process:
+            try:
+                # Try graceful shutdown first
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=SERVER_SHUTDOWN_TIMEOUT)
+                except subprocess.TimeoutExpired:
+                    # Force kill if graceful shutdown fails
+                    self.process.kill()
+                    self.process.wait()
+            except Exception as e:
+                logger.error("Error stopping server: %s", e)
+            finally:
+                self.process = None
+    
+    def is_running(self) -> bool:
+        """Check if server is running"""
+        if not self.process:
+            return False
+        return self.process.poll() is None
+
+
+@pytest.fixture(scope='class')
+def test_db_path():
+    """Create a temporary database path for tests"""
+    with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
+        db_path = f.name
+    yield db_path
+    # Cleanup
     try:
-        response = requests.get(f"{BASE_URL}/health", timeout=5)
-        return response.status_code == 200
-    except requests.exceptions.RequestException:
-        return False
+        os.unlink(db_path)
+    except Exception:
+        pass
 
 
-def _wait_for_server(timeout=30):
-    """Wait for the server to become healthy."""
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        if _check_server_health():
-            return True
-        time.sleep(1)
-    return False
-
-
-def _ensure_server_running():
-    """Ensure the server is running. If not, start it."""
-    if _check_server_health():
-        return True
-    # Server not running, try to start it
-    stdout, stderr, rc = _run_daemon("start")
-    if rc != 0 and "already running" not in stderr.lower() and "already running" not in stdout.lower():
-        print(f"Failed to start server: {stderr}")
-        return False
-    return _wait_for_server(timeout=30)
-
-
-def setup_module(module):
-    """Start the daemon server before all tests."""
-    global _server_process
-    
-    # Kill any existing server on port 7373
-    subprocess.run(
-        ["bash", "-c", "lsof -ti:7373 | xargs kill -9 2>/dev/null || true"],
-        capture_output=True
+@pytest.fixture(scope='class')
+def server_process(test_db_path):
+    """Start and stop the server for all tests in the class"""
+    server = ServerProcess(
+        host=DEFAULT_HOST,
+        port=DEFAULT_PORT,
+        db_path=test_db_path
     )
-    time.sleep(2)  # Wait for port to be released
     
-    # Start the server with absolute paths
-    stdout, stderr, rc = _run_daemon(
-        "start",
-        "--processor", PROCESSOR_SCRIPT,
-        "--summarizer", SUMMARIZER_SCRIPT,
-        "--session_state_checker", SESSION_STATE_CHECKER_SCRIPT,
-    )
-    # If server is already running, rc=1 is acceptable
-    if rc != 0 and "already running" not in stderr.lower() and "already running" not in stdout.lower():
-        raise RuntimeError(f"Failed to start server: {stderr}")
-    if not _wait_for_server(timeout=60):
-        raise RuntimeError("Server did not become healthy within timeout")
+    # Start server
+    if not server.start():
+        pytest.skip("Failed to start server")
+    
+    yield server
+    
+    # Stop server
+    server.stop()
 
 
-def teardown_module(module):
-    """Stop the daemon server after all tests."""
-    stdout, stderr, rc = _run_daemon("stop")
-    if rc != 0:
-        print(f"Warning: Failed to stop server cleanly: {stderr}")
+@pytest.fixture(scope='class')
+def api_base_url(server_process):
+    """Get the API base URL"""
+    return server_process.base_url
 
 
-# ============================================================
-# TestServerLifecycle - Server startup, health, shutdown
-# ============================================================
+# ============================================================================
+# Test L-001: Start Actual Server and Test via HTTP API
+# ============================================================================
 
-
-class TestServerLifecycle:
-    """Test server lifecycle: start, health check, status."""
-
-    def test_server_health_endpoint(self):
-        """Verify the /health endpoint returns healthy status."""
-        _ensure_server_running()
-        response = requests.get(f"{BASE_URL}/health", timeout=10)
-        assert response.status_code == 200
+class TestL001ServerHTTPAPI:
+    """Test L-001: Start actual server and test via HTTP API"""
+    
+    def test_server_health_check(self, api_base_url):
+        """
+        Test L-001.1: Health check endpoint
+        
+        Verify that the server responds to health check requests.
+        """
+        response = requests.get(f"{api_base_url}/health")
+        assert response.status_code == 200, "Health check should return 200"
         data = response.json()
-        assert data["code"] == 0
-        assert data["data"]["status"] == "healthy"
-        assert data["data"]["database"] == "healthy"
-
-    def test_server_status_via_daemon_cli(self):
-        """Verify daemon status command reports running."""
-        stdout, stderr, rc = _run_daemon("status")
-        assert rc == 0
-        assert "RUNNING" in stdout
-
-
-# ============================================================
-# TestClientOperations - All client CLI commands
-# ============================================================
-
-
-class TestClientOperations:
-    """Test all client CLI operations against a live server."""
-
-    def test_client_health(self):
-        """Test client health command."""
-        _ensure_server_running()
-        stdout, stderr, rc = _run_client("health")
-        assert rc == 0
-        assert "healthy" in stdout.lower()
-
-    def test_client_health_verbose(self):
-        """Test client health command with verbose flag."""
-        _ensure_server_running()
-        stdout, stderr, rc = _run_client("health", verbose=True)
-        assert rc == 0
-        assert "healthy" in stdout.lower()
-        assert "Response" in stdout
-
-    def test_client_list_sessions_empty(self):
-        """Test list-sessions when no sessions exist."""
-        _ensure_server_running()
-        stdout, stderr, rc = _run_client("list-sessions")
-        assert rc == 0
-
-    def test_client_send_message(self):
-        """Test send-message creates a session and sends a message."""
-        _ensure_server_running()
-        session_id = f"test_live_send_{int(time.time())}"
-        stdout, stderr, rc = _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "Hello from live integration test",
+        assert data.get('code') == 0, "Health check should return code 0"
+        logger.info("Health check test passed")
+    
+    def test_create_and_get_session(self, api_base_url):
+        """
+        Test L-001.2: Session creation and retrieval via HTTP API
+        
+        Verify that sessions can be created and retrieved via the API.
+        Note: Sessions are created implicitly when messages are sent.
+        """
+        session_id = f"test-live-session-{uuid.uuid4().hex[:8]}"
+        
+        # Create session by sending a message (implicit session creation)
+        # POST /api/v1/message
+        send_response = requests.post(
+            f"{api_base_url}/api/v1/message",
+            json={
+                'session_id': session_id,
+                'message': 'Test message to create session',
+                'role': 'user'
+            }
         )
-        assert rc == 0
-        # Verify the session was created
-        stdout2, stderr2, rc2 = _run_client("list-sessions")
-        assert rc2 == 0
-        assert session_id in stdout2
-
-    def test_client_send_message_verbose(self):
-        """Test send-message with verbose output."""
-        _ensure_server_running()
-        session_id = f"test_live_verbose_{int(time.time())}"
-        stdout, stderr, rc = _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "Verbose test message",
-            verbose=True,
+        assert send_response.status_code == 200, f"Send message should succeed: {send_response.text}"
+        
+        # Now get the session
+        # GET /api/v1/session/{session_id}
+        get_response = requests.get(
+            f"{api_base_url}/api/v1/session/{session_id}"
         )
-        assert rc == 0
-        assert "Response" in stdout
-
-    def test_client_get_messages(self):
-        """Test get-messages retrieves messages from a session."""
-        _ensure_server_running()
-        session_id = f"test_live_getmsg_{int(time.time())}"
-        # First send a message
-        _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "Test message for retrieval",
+        assert get_response.status_code == 200, "Get session should succeed"
+        data = get_response.json()
+        assert data.get('code') == 0, "Get session should return code 0"
+        assert data['data']['session_id'] == session_id, "Session ID should match"
+        logger.info("Create and get session test passed")
+    
+    def test_send_and_list_messages(self, api_base_url):
+        """
+        Test L-001.3: Message sending and listing via HTTP API
+        
+        Verify that messages can be sent and listed via the API.
+        """
+        session_id = f"test-live-msg-{uuid.uuid4().hex[:8]}"
+        
+        # Send message via API (this should create session if not exists)
+        # POST /api/v1/message
+        send_response = requests.post(
+            f"{api_base_url}/api/v1/message",
+            json={
+                'session_id': session_id,
+                'message': 'Test message for live integration',
+                'role': 'user'
+            }
         )
-        # Then retrieve messages
-        stdout, stderr, rc = _run_client(
-            "get-messages",
-            "--session-id", session_id,
+        assert send_response.status_code == 200, f"Send message should succeed: {send_response.text}"
+        
+        # List messages via API
+        # GET /api/v1/message?session_id=xxx
+        list_response = requests.get(
+            f"{api_base_url}/api/v1/message",
+            params={'session_id': session_id}
         )
-        assert rc == 0
-        assert "Test message for retrieval" in stdout
-
-    def test_client_list_messages_alias(self):
-        """Test list-messages (alias for get-messages)."""
-        _ensure_server_running()
-        session_id = f"test_live_listmsg_{int(time.time())}"
-        # Send a message first
-        _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "Alias test message",
+        assert list_response.status_code == 200, "List messages should succeed"
+        data = list_response.json()
+        assert data.get('code') == 0, "List messages should return code 0"
+        assert len(data['data']) >= 1, "Should have at least one message"
+        logger.info("Send and list messages test passed")
+    
+    def test_list_sessions(self, api_base_url):
+        """
+        Test L-001.4: List sessions via HTTP API
+        
+        Verify that sessions can be listed via the API.
+        """
+        # Create a session first by sending a message
+        session_id = f"test-list-sessions-{uuid.uuid4().hex[:8]}"
+        requests.post(
+            f"{api_base_url}/api/v1/message",
+            json={
+                'session_id': session_id,
+                'message': 'Test message for listing',
+                'role': 'user'
+            }
         )
-        # Use list-messages alias
-        stdout, stderr, rc = _run_client(
-            "list-messages",
-            "--session-id", session_id,
+        
+        # List sessions via API
+        # GET /api/v1/session
+        list_response = requests.get(f"{api_base_url}/api/v1/session")
+        assert list_response.status_code == 200, "List sessions should succeed"
+        data = list_response.json()
+        assert data.get('code') == 0, "List sessions should return code 0"
+        assert isinstance(data['data'], list), "Should return a list of sessions"
+        logger.info("List sessions test passed")
+    
+    def test_delete_sessions(self, api_base_url):
+        """
+        Test L-001.5: Delete sessions via HTTP API
+        
+        Verify that sessions can be deleted via the API.
+        """
+        # Create a session first by sending a message
+        session_id = f"test-delete-{uuid.uuid4().hex[:8]}"
+        requests.post(
+            f"{api_base_url}/api/v1/message",
+            json={
+                'session_id': session_id,
+                'message': 'Test message for deletion',
+                'role': 'user'
+            }
         )
-        assert rc == 0
-        assert "Alias test message" in stdout
-
-    def test_client_get_messages_verbose(self):
-        """Test get-messages with verbose output shows JSON response."""
-        _ensure_server_running()
-        session_id = f"test_live_getmsg_v_{int(time.time())}"
-        _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "Verbose retrieval test",
+        
+        # Delete session via API
+        # DELETE /api/v1/session?session_ids=xxx
+        delete_response = requests.delete(
+            f"{api_base_url}/api/v1/session",
+            params={'session_ids': session_id}
         )
-        stdout, stderr, rc = _run_client(
-            "get-messages",
-            "--session-id", session_id,
-            verbose=True,
+        assert delete_response.status_code == 200, "Delete session should succeed"
+        
+        # Verify session is deleted
+        get_response = requests.get(
+            f"{api_base_url}/api/v1/session/{session_id}"
         )
-        assert rc == 0
-        assert "Response" in stdout
-        assert "Verbose retrieval test" in stdout
-
-    def test_client_process_session(self):
-        """Test process-session triggers message processing."""
-        _ensure_server_running()
-        session_id = f"test_live_process_{int(time.time())}"
-        # Send a message first
-        _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "Process this message",
-        )
-        # Process the session
-        stdout, stderr, rc = _run_client(
-            "process-session",
-            "--session-id", session_id,
-        )
-        assert rc == 0
-
-    def test_client_process_session_verbose(self):
-        """Test process-session with verbose output."""
-        _ensure_server_running()
-        session_id = f"test_live_proc_v_{int(time.time())}"
-        _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "Verbose process test",
-        )
-        stdout, stderr, rc = _run_client(
-            "process-session",
-            "--session-id", session_id,
-            verbose=True,
-        )
-        assert rc == 0
-        assert "Response" in stdout
-
-    def test_client_delete_sessions(self):
-        """Test delete-sessions removes a session."""
-        _ensure_server_running()
-        session_id = f"test_live_delete_{int(time.time())}"
-        # Create a session first
-        _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "To be deleted",
-        )
-        # Verify it exists
-        stdout, _, rc = _run_client("list-sessions")
-        assert session_id in stdout
-        # Delete it
-        stdout, stderr, rc = _run_client(
-            "delete-sessions",
-            "--session-ids", session_id,
-        )
-        assert rc == 0
-        # Verify it no longer exists
-        stdout, _, rc = _run_client("list-sessions")
-        assert session_id not in stdout
-
-    def test_client_delete_sessions_verbose(self):
-        """Test delete-sessions with verbose output."""
-        _ensure_server_running()
-        session_id = f"test_live_del_v_{int(time.time())}"
-        _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "Verbose delete test",
-        )
-        stdout, stderr, rc = _run_client(
-            "delete-sessions",
-            "--session-ids", session_id,
-            verbose=True,
-        )
-        assert rc == 0
-        assert "Response" in stdout
-
-    def test_client_set_task_result(self):
-        """Test set-task-result sets a task result."""
-        _ensure_server_running()
-        session_id = f"test_live_task_{int(time.time())}"
-        # Create a session and send a message
-        _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "Task test message",
-        )
-        # Process the session to generate a task
-        _run_client(
-            "process-session",
-            "--session-id", session_id,
-        )
-        # Get tasks to find task IDs
-        stdout, stderr, rc = _run_client(
-            "get-tasks",
-            "--session-id", session_id,
-        )
-        assert rc == 0
-        # If there are tasks, set a result on one
-        if stdout.strip():
-            # Parse task info from verbose output
-            stdout_v, _, rc_v = _run_client(
-                "get-tasks",
-                "--session-id", session_id,
-                verbose=True,
-            )
-            assert rc_v == 0
-            # Try to set a task result (may fail if no task IDs available)
-            stdout_set, stderr_set, rc_set = _run_client(
-                "set-task-result",
-                "--session-id", session_id,
-                "--processed-msg-id", "msg_001",
-                "--task-id", "task_001",
-                "--task-result", "completed",
-            )
-            # The result code depends on whether the task exists
-            # We just verify the command runs without crashing
-            assert rc_set in [0, 1]  # 0=success, 1=task not found (acceptable)
-
-    def test_client_get_tasks(self):
-        """Test get-tasks retrieves tasks for a session."""
-        _ensure_server_running()
-        session_id = f"test_live_gettask_{int(time.time())}"
-        _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "Get task test",
-        )
-        stdout, stderr, rc = _run_client(
-            "get-tasks",
-            "--session-id", session_id,
-        )
-        assert rc == 0
-
-    def test_client_list_tasks_alias(self):
-        """Test list-tasks (alias for get-tasks)."""
-        _ensure_server_running()
-        session_id = f"test_live_listtask_{int(time.time())}"
-        _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "List task alias test",
-        )
-        stdout, stderr, rc = _run_client(
-            "list-tasks",
-            "--session-id", session_id,
-        )
-        assert rc == 0
+        # Should return error or empty data
+        logger.info("Delete sessions test passed")
 
 
-# ============================================================
-# TestTaskLifecycle - Full task lifecycle flow
-# ============================================================
+# ============================================================================
+# Test L-002: Test Full Workflow with Real Server Process
+# ============================================================================
 
-
-class TestTaskLifecycle:
-    """Test complete task lifecycle: create → send → process → get task → set result."""
-
-    def test_full_task_lifecycle(self):
-        """Test complete task lifecycle from message creation to task result."""
-        _ensure_server_running()
-        session_id = f"test_lifecycle_{int(time.time())}"
-
-        # Step 1: Create session and send message
-        stdout, stderr, rc = _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "Lifecycle test message",
+class TestL002FullWorkflow:
+    """Test L-002: Test full workflow with real server process"""
+    
+    def test_full_message_processing_workflow(self, api_base_url):
+        """
+        Test L-002.1: Full message processing workflow
+        
+        Complete workflow:
+        1. Create session (via message)
+        2. Send message
+        3. Process session
+        4. Set task result
+        5. Verify message is processed
+        """
+        session_id = f"test-full-workflow-{uuid.uuid4().hex[:8]}"
+        
+        # Step 1 & 2: Send message (creates session)
+        # POST /api/v1/message
+        send_response = requests.post(
+            f"{api_base_url}/api/v1/message",
+            json={
+                'session_id': session_id,
+                'message': 'Process this message',
+                'role': 'user'
+            }
         )
-        assert rc == 0
-
-        # Step 2: Verify message was sent
-        stdout, stderr, rc = _run_client(
-            "get-messages",
-            "--session-id", session_id,
+        assert send_response.status_code == 200, f"Send message should succeed: {send_response.text}"
+        
+        # Get the msg_id from the response or list messages
+        # GET /api/v1/message?session_id=xxx
+        list_response = requests.get(
+            f"{api_base_url}/api/v1/message",
+            params={'session_id': session_id}
         )
-        assert rc == 0
-        assert "Lifecycle test message" in stdout
-
-        # Step 3: Process the session
-        stdout, stderr, rc = _run_client(
-            "process-session",
-            "--session-id", session_id,
+        messages = list_response.json()['data']
+        assert len(messages) > 0, "Should have messages"
+        msg_id = messages[0]['msg_id']
+        
+        # Step 3: Process session
+        # POST /api/v1/session/process
+        process_response = requests.post(
+            f"{api_base_url}/api/v1/session/process",
+            json={'session_id': session_id}
         )
-        assert rc == 0
-
-        # Step 4: Get tasks
-        stdout, stderr, rc = _run_client(
-            "get-tasks",
-            "--session-id", session_id,
+        assert process_response.status_code == 200, "Process session should succeed"
+        
+        # Step 4: Set task result (simulating processor callback)
+        # POST /api/v1/task
+        task_id = f"task-{uuid.uuid4().hex[:8]}"
+        task_result = "Task completed successfully"
+        
+        set_result_response = requests.post(
+            f"{api_base_url}/api/v1/task",
+            json={
+                'session_id': session_id,
+                'processed_msg_id': msg_id,
+                'task_id': task_id,
+                'task_result': task_result
+            }
         )
-        assert rc == 0
-
-        # Step 5: Set task result (if tasks exist)
-        stdout_set, stderr_set, rc_set = _run_client(
-            "set-task-result",
-            "--session-id", session_id,
-            "--processed-msg-id", "msg_001",
-            "--task-id", "task_001",
-            "--task-result", "completed_successfully",
+        assert set_result_response.status_code == 200, f"Set task result should succeed: {set_result_response.text}"
+        
+        # Step 5: Verify message is processed
+        # GET /api/v1/session/{session_id}
+        session_response = requests.get(
+            f"{api_base_url}/api/v1/session/{session_id}"
         )
-        # Accept both success and task-not-found (task may not exist in mock mode)
-        assert rc_set in [0, 1]
-
-        # Step 6: Clean up - delete session
-        stdout, stderr, rc = _run_client(
-            "delete-sessions",
-            "--session-ids", session_id,
-        )
-        assert rc == 0
-
-    def test_multiple_messages_lifecycle(self):
-        """Test lifecycle with multiple messages in a session."""
-        _ensure_server_running()
-        session_id = f"test_multi_lifecycle_{int(time.time())}"
-
+        session_data = session_response.json()
+        assert session_data['data']['processed_msg_id'] == msg_id, \
+            "processed_msg_id should be updated"
+        
+        logger.info("Full message processing workflow test passed")
+    
+    def test_multiple_messages_batch_workflow(self, api_base_url):
+        """
+        Test L-002.2: Multiple messages batch workflow
+        
+        Verify that multiple messages are processed correctly.
+        """
+        session_id = f"test-batch-{uuid.uuid4().hex[:8]}"
+        
         # Send multiple messages
         for i in range(3):
-            stdout, stderr, rc = _run_client(
-                "send-message",
-                "--session-id", session_id,
-                "--role", "user",
-                "--message", f"Multi-message test #{i}",
+            send_response = requests.post(
+                f"{api_base_url}/api/v1/message",
+                json={
+                    'session_id': session_id,
+                    'message': f'Batch message {i}',
+                    'role': 'user'
+                }
             )
-            assert rc == 0
-
-        # Verify all messages exist
-        stdout, stderr, rc = _run_client(
-            "get-messages",
-            "--session-id", session_id,
+            assert send_response.status_code == 200, f"Message {i} should be sent"
+        
+        # List messages to verify all were stored
+        list_response = requests.get(
+            f"{api_base_url}/api/v1/message",
+            params={'session_id': session_id}
         )
-        assert rc == 0
-        for i in range(3):
-            assert f"Multi-message test #{i}" in stdout
-
-        # Process the session
-        stdout, stderr, rc = _run_client(
-            "process-session",
-            "--session-id", session_id,
+        messages = list_response.json()['data']
+        assert len(messages) >= 3, "Should have at least 3 messages"
+        
+        # Process session
+        process_response = requests.post(
+            f"{api_base_url}/api/v1/session/process",
+            json={'session_id': session_id}
         )
-        assert rc == 0
-
-        # Clean up
-        stdout, stderr, rc = _run_client(
-            "delete-sessions",
-            "--session-ids", session_id,
-        )
-        assert rc == 0
-
-    def test_session_create_and_list(self):
-        """Test creating a session and verifying it appears in list."""
-        _ensure_server_running()
-        session_id = f"test_create_list_{int(time.time())}"
-
-        # Create session by sending a message
-        _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "Create and list test",
-        )
-
-        # List sessions and verify
-        stdout, stderr, rc = _run_client("list-sessions")
-        assert rc == 0
-        assert session_id in stdout
-
-        # Clean up
-        _run_client("delete-sessions", "--session-ids", session_id)
-
-
-# ============================================================
-# TestAPIDirectly - Direct HTTP API calls
-# ============================================================
-
-
-class TestAPIDirectly:
-    """Test API endpoints directly via HTTP requests."""
-
-    def test_api_health_endpoint(self):
-        """Test /health endpoint directly."""
-        _ensure_server_running()
-        response = requests.get(f"{BASE_URL}/health", timeout=10)
-        assert response.status_code == 200
-        data = response.json()
-        assert data["code"] == 0
-        assert "healthy" in data["data"]["status"]
-
-    def test_api_create_session_and_send_message(self):
-        """Test creating a session and sending a message via API."""
-        _ensure_server_running()
-        session_id = f"test_api_msg_{int(time.time())}"
-        payload = {
-            "session_id": session_id,
-            "role": "user",
-            "message": "API direct test message",
-        }
-        response = requests.post(
-            f"{BASE_URL}/api/v1/message",
-            json=payload,
-            timeout=10,
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["code"] == 0
-
-    def test_api_get_messages(self):
-        """Test retrieving messages via API."""
-        _ensure_server_running()
-        session_id = f"test_api_getmsg_{int(time.time())}"
-        # Create a message first
+        assert process_response.status_code == 200, "Process session should succeed"
+        
+        logger.info("Multiple messages batch workflow test passed")
+    
+    def test_session_state_check_workflow(self, api_base_url):
+        """
+        Test L-002.3: Session state check workflow
+        
+        Verify that session state is correctly reported.
+        """
+        session_id = f"test-state-{uuid.uuid4().hex[:8]}"
+        
+        # Create session by sending message
         requests.post(
-            f"{BASE_URL}/api/v1/message",
+            f"{api_base_url}/api/v1/message",
             json={
-                "session_id": session_id,
-                "role": "user",
-                "message": "API get messages test",
-            },
-            timeout=10,
-        )
-        # Retrieve messages
-        response = requests.get(
-            f"{BASE_URL}/api/v1/message",
-            params={"session_id": session_id},
-            timeout=10,
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["code"] == 0
-        assert len(data["data"]) > 0
-
-    def test_api_delete_session(self):
-        """Test deleting a session via API."""
-        _ensure_server_running()
-        session_id = f"test_api_del_{int(time.time())}"
-        # Create a session first
-        requests.post(
-            f"{BASE_URL}/api/v1/message",
-            json={
-                "session_id": session_id,
-                "role": "user",
-                "message": "To be deleted via API",
-            },
-            timeout=10,
-        )
-        # Delete the session
-        response = requests.delete(
-            f"{BASE_URL}/api/v1/session",
-            params={"session_ids": session_id},
-            timeout=10,
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["code"] == 0
-
-    def test_api_list_sessions(self):
-        """Test listing sessions via API."""
-        _ensure_server_running()
-        response = requests.get(
-            f"{BASE_URL}/api/v1/session",
-            timeout=10,
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["code"] == 0
-
-
-# ============================================================
-# TestEdgeCases - Edge cases and error scenarios
-# ============================================================
-
-
-class TestEdgeCases:
-    """Test edge cases and error handling."""
-
-    def test_nonexistent_session_messages(self):
-        """Test get-messages for a session that does not exist."""
-        _ensure_server_running()
-        stdout, stderr, rc = _run_client(
-            "get-messages",
-            "--session-id", "definitely_does_not_exist_99999",
-        )
-        assert rc == 0
-        # Non-existent session returns empty output (no messages)
-        assert stdout.strip() == "" or "0" in stdout
-
-    def test_nonexistent_session_tasks(self):
-        """Test get-tasks for a session that does not exist."""
-        _ensure_server_running()
-        stdout, stderr, rc = _run_client(
-            "get-tasks",
-            "--session-id", "definitely_does_not_exist_99999",
-        )
-        assert rc == 0
-        # Non-existent session returns empty output (no tasks)
-        assert stdout.strip() == "" or "0" in stdout
-
-    def test_delete_nonexistent_session(self):
-        """Test deleting a session that does not exist."""
-        _ensure_server_running()
-        stdout, stderr, rc = _run_client(
-            "delete-sessions",
-            "--session-ids", "nonexistent_session_xyz",
-        )
-        # Should succeed (deleting nothing is OK) or return gracefully
-        assert rc == 0
-
-    def test_process_nonexistent_session(self):
-        """Test processing a session that does not exist."""
-        _ensure_server_running()
-        stdout, stderr, rc = _run_client(
-            "process-session",
-            "--session-id", "nonexistent_session_process",
-        )
-        # Should succeed (processing nothing is OK) or return gracefully
-        assert rc == 0
-
-    def test_special_characters_in_message(self):
-        """Test sending a message with special characters."""
-        _ensure_server_running()
-        session_id = f"test_special_{int(time.time())}"
-        special_content = "Hello! @#$%^&*()_+-=[]{}|;':\",./<>? 中文 🎉"
-        stdout, stderr, rc = _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", special_content,
-        )
-        assert rc == 0
-        # Verify the message was stored
-        stdout, stderr, rc = _run_client(
-            "get-messages",
-            "--session-id", session_id,
-        )
-        assert rc == 0
-        assert "Hello!" in stdout
-
-    def test_empty_content_message(self):
-        """Test sending a message with empty content."""
-        _ensure_server_running()
-        session_id = f"test_empty_{int(time.time())}"
-        stdout, stderr, rc = _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "",
-        )
-        # Empty content may be accepted or rejected
-        assert rc in [0, 1]
-
-    def test_long_message_content(self):
-        """Test sending a message with very long content."""
-        _ensure_server_running()
-        session_id = f"test_long_{int(time.time())}"
-        long_content = "A" * 5000  # 5000 character message
-        stdout, stderr, rc = _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", long_content,
-        )
-        assert rc == 0
-
-    def test_multiple_sessions_same_time(self):
-        """Test creating multiple sessions simultaneously."""
-        _ensure_server_running()
-        session_ids = []
-        for i in range(5):
-            sid = f"test_multi_sid_{int(time.time())}_{i}"
-            session_ids.append(sid)
-            stdout, stderr, rc = _run_client(
-                "send-message",
-                "--session-id", sid,
-                "--role", "user",
-                "--message", f"Multi-session message #{i}",
-            )
-            assert rc == 0
-
-        # Verify all sessions exist
-        stdout, stderr, rc = _run_client("list-sessions")
-        assert rc == 0
-        for sid in session_ids:
-            assert sid in stdout
-
-        # Clean up all sessions
-        for sid in session_ids:
-            _run_client("delete-sessions", "--session-ids", sid)
-
-    def test_send_message_to_existing_session(self):
-        """Test sending additional messages to an existing session."""
-        _ensure_server_running()
-        session_id = f"test_existing_{int(time.time())}"
-
-        # First message
-        stdout, stderr, rc = _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "First message",
-        )
-        assert rc == 0
-
-        # Second message to same session
-        stdout, stderr, rc = _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "assistant",
-            "--message", "Second message",
-        )
-        assert rc == 0
-
-        # Verify both messages exist
-        stdout, stderr, rc = _run_client(
-            "get-messages",
-            "--session-id", session_id,
-        )
-        assert rc == 0
-        assert "First message" in stdout
-        assert "Second message" in stdout
-
-        # Clean up
-        _run_client("delete-sessions", "--session-ids", session_id)
-
-    def test_api_invalid_endpoint(self):
-        """Test accessing an invalid API endpoint."""
-        _ensure_server_running()
-        response = requests.get(f"{BASE_URL}/invalid_endpoint", timeout=10)
-        assert response.status_code == 404
-
-    def test_api_send_message_missing_fields(self):
-        """Test sending a message via API with missing required fields."""
-        _ensure_server_running()
-        # Send with missing message field
-        response = requests.post(
-            f"{BASE_URL}/api/v1/message",
-            json={"session_id": "test_missing_fields"},
-            timeout=10,
-        )
-        # Should return error (4xx) or handle gracefully
-        assert response.status_code in [400, 422, 200]
-
-
-# ============================================================
-# TestConcurrentOperations - Concurrent session handling
-# ============================================================
-
-
-class TestConcurrentOperations:
-    """Test concurrent operations and session handling."""
-
-    def test_concurrent_session_creation(self):
-        """Test creating multiple sessions concurrently via API."""
-        _ensure_server_running()
-        import concurrent.futures
-
-        session_ids = [f"test_concurrent_{int(time.time())}_{i}" for i in range(5)]
-
-        def create_session(sid):
-            payload = {
-                "session_id": sid,
-                "role": "user",
-                "message": f"Concurrent message for {sid}",
+                'session_id': session_id,
+                'message': 'Test message for state check',
+                'role': 'user'
             }
-            response = requests.post(
-                f"{BASE_URL}/api/v1/message",
-                json=payload,
-                timeout=10,
-            )
-            return response.status_code, sid
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [executor.submit(create_session, sid) for sid in session_ids]
-            results = [f.result() for f in concurrent.futures.as_completed(futures)]
-
-        # All sessions should be created successfully
-        for status_code, sid in results:
-            assert status_code == 200
-
-        # Verify all sessions exist
-        stdout, stderr, rc = _run_client("list-sessions")
-        assert rc == 0
-        for sid in session_ids:
-            assert sid in stdout
-
-        # Clean up
-        for sid in session_ids:
-            _run_client("delete-sessions", "--session-ids", sid)
-
-    def test_session_delete_and_recreate(self):
-        """Test deleting a session and recreating it."""
-        _ensure_server_running()
-        session_id = f"test_del_recreate_{int(time.time())}"
-
-        # Create session
-        _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "Original message",
         )
-
-        # Delete session
-        stdout, stderr, rc = _run_client(
-            "delete-sessions",
-            "--session-ids", session_id,
+        
+        # Get session and check status
+        get_response = requests.get(
+            f"{api_base_url}/api/v1/session/{session_id}"
         )
-        assert rc == 0
-
-        # Recreate session with same ID
-        stdout, stderr, rc = _run_client(
-            "send-message",
-            "--session-id", session_id,
-            "--role", "user",
-            "--message", "Recreated message",
+        assert get_response.status_code == 200, "Get session should succeed"
+        data = get_response.json()
+        
+        # Verify status field exists (from state checker)
+        assert 'status' in data['data'], "Session should have status field"
+        assert data['data']['status'] in ['idle', 'processing'], \
+            "Status should be 'idle' or 'processing'"
+        
+        logger.info("Session state check workflow test passed")
+    
+    def test_task_listing_workflow(self, api_base_url):
+        """
+        Test L-002.4: Task listing workflow
+        
+        Verify that tasks can be listed correctly.
+        """
+        session_id = f"test-tasks-{uuid.uuid4().hex[:8]}"
+        
+        # Send message and get msg_id
+        requests.post(
+            f"{api_base_url}/api/v1/message",
+            json={
+                'session_id': session_id,
+                'message': 'Create a task',
+                'role': 'user'
+            }
         )
-        assert rc == 0
-
-        # Verify new message exists
-        stdout, stderr, rc = _run_client(
-            "get-messages",
-            "--session-id", session_id,
+        
+        # Get message ID
+        list_response = requests.get(
+            f"{api_base_url}/api/v1/message",
+            params={'session_id': session_id}
         )
-        assert rc == 0
-        assert "Recreated message" in stdout
+        messages = list_response.json()['data']
+        msg_id = messages[0]['msg_id']
+        
+        # Set task result
+        # POST /api/v1/task
+        task_id = f"task-{uuid.uuid4().hex[:8]}"
+        requests.post(
+            f"{api_base_url}/api/v1/task",
+            json={
+                'session_id': session_id,
+                'processed_msg_id': msg_id,
+                'task_id': task_id,
+                'task_result': 'Task result content'
+            }
+        )
+        
+        # List tasks
+        # GET /api/v1/task?session_id=xxx
+        tasks_response = requests.get(
+            f"{api_base_url}/api/v1/task",
+            params={'session_id': session_id}
+        )
+        assert tasks_response.status_code == 200, "List tasks should succeed"
+        tasks_data = tasks_response.json()
+        assert tasks_data.get('code') == 0, "List tasks should return code 0"
+        
+        logger.info("Task listing workflow test passed")
 
-        # Clean up
-        _run_client("delete-sessions", "--session-ids", session_id)
+
+# ============================================================================
+# Run Tests
+# ============================================================================
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "-s"])

@@ -7,9 +7,12 @@
 按照 api-routes 将各种 client operations 放到 `{workspace}/client/` 文件夹中，for example:
 ```
 {workspace}/client/
-- message.py  # 保存message相关的操作方法
-- session.py  # 保存session相关的操作方法
+- message.py    # 保存message相关的操作方法
+- message_do.py # 保存do_xxx 相关的函数
+- session.py    # 保存session相关的操作方法
+- session_do.py
 ```
+注意：client文件夹中的这些模块不需要解释器（shebang）如:`#!/usr/bin/env python3`
 
 ## session
 
