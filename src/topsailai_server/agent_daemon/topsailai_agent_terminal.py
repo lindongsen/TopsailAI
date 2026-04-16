@@ -357,7 +357,7 @@ class AgentTerminal:
                         logger.warning("Failed to send message: %s", msg)
 
                     # Refresh display after sending
-                    time.sleep(0.5)  # Brief delay to allow server to process
+                    time.sleep(0.2)  # Brief delay to allow server to process
                     self.refresh_display()
                 else:
                     # Empty input - just refresh (force refresh on Enter key)
