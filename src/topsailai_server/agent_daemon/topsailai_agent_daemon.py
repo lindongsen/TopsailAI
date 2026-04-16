@@ -16,8 +16,8 @@ import atexit
 
 # Add the parent directory to the path for imports
 CWD = os.path.dirname(os.path.abspath(__file__))
-CWD = os.path.dirname(CWD)
-sys.path.insert(0, os.path.dirname(CWD))
+PROJECT_FOLDER = os.path.dirname(CWD)
+sys.path.insert(0, os.path.dirname(PROJECT_FOLDER))
 
 from topsailai import WORK_FOLDER
 from topsailai_server.agent_daemon import logger
