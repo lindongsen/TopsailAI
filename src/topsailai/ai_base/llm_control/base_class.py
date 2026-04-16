@@ -30,6 +30,10 @@ from topsailai.context.token import (
 from .message import (
     format_messages,
 )
+from .exception import (
+    ModelServiceError,
+)
+
 
 class ContentSender(object):
     """
@@ -341,8 +345,12 @@ class LLMModelBase(object):
         if current_tokens >= max_tokens:
             repetition_result = text_tool.check_repetition(txt_content)
             if repetition_result.get("has_severe_repetition"):
-                print_critical(f"LLM makes a mistake: Severe repetition loop pattern detected! {repetition_result}")
-
+                error_msg = "LLM makes a mistake: Severe repetition loop pattern detected!"
+                print_critical(f"{error_msg} {repetition_result}")
+                if env_tool.EnvReaderInstance.check_bool(
+                    "TOPSAILAI_REFUSE_SEVERE_REPETITION", False
+                ):
+                    raise ModelServiceError(error_msg, repetition_result)
         return
 
     def format_null_response_content(self, rsp_obj, rsp_content:str) -> str:

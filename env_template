@@ -170,6 +170,7 @@ TOPSAILAI_SUMMARY_PROMPT_EXTRA_MAP="react_community=context/summary/memory.md;"
 # 1 is enabled, 0 is disabled
 TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION="0"
 
+# This prompt will be embedded at the end of the response
 TOPSAILAI_PROMPT_WHEN_NO_TOOL_CALL="
 CRITICAL SYSTEM ALERT: NO ACTION DETECTED
 
@@ -184,6 +185,9 @@ CRITICAL SYSTEM ALERT: NO ACTION DETECTED
 
 **GOAL:** Execute the task now.
 "
+
+# If has severe repetiton, raise error. 1 for enabled, 0 for disabled
+TOPSAILAI_REFUSE_SEVERE_REPETITION=1
 
 # =============================================================================
 # Feature Flags
