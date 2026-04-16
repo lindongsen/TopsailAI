@@ -403,7 +403,7 @@ class TestPrintRepetitionReport:
             }],
             "has_severe_repetition": True
         }
-        output = self._capture_print_output(print_repetition_report, result, similarity_threshold=0.7)
+        output = self._capture_print_output(print_repetition_report, result)
         assert "Analysis Started" in output
 
 
