@@ -114,12 +114,12 @@ async def get_session(
         session = storage.session.get(session_id)
 
         if not session:
-            logger.info("Session not found: %s", session_id)
+            logger.debug("Session not found: %s", session_id)
             return error_response(message="Session not found", code=404)
 
         # Get session status using the session state checker
         status = worker_manager.check_session_state(session_id)
-        logger.info("Session %s status: %s", session_id, status)
+        logger.debug("Session %s status: %s", session_id, status)
 
         # Build response data
         session_data = SessionDetailResponse(
@@ -132,7 +132,7 @@ async def get_session(
             status=status
         )
 
-        logger.info("Retrieved session: %s", session_id)
+        logger.debug("Retrieved session: %s", session_id)
         return success_response(data=session_data.model_dump())
 
     except HTTPException:
@@ -203,7 +203,7 @@ async def list_sessions(
                 processed_msg_id=session.processed_msg_id
             ))
 
-        logger.info("Listed %d sessions", len(session_list))
+        logger.debug("Listed %d sessions", len(session_list))
         return success_response(data=session_list)
 
     except Exception as e:

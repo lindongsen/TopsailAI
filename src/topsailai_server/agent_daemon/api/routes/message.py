@@ -213,6 +213,9 @@ async def retrieve_messages(
                 task_result=msg.task_result
             ))
 
+        # DEBUG: Log query operation at debug level
+        logger.debug("Retrieved %d messages for session: %s", len(message_list), session_id)
+
         return success_response(data=message_list)
 
     except IntegrityError as e:

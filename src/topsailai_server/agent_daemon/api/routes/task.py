@@ -206,6 +206,9 @@ async def retrieve_tasks(
                 update_time=msg.update_time
             ))
 
+        # DEBUG: Log query operation at debug level
+        logger.debug("Retrieved %d tasks for session: %s", len(task_list), session_id)
+
         return success_response(data=task_list)
 
     except ValueError as e:
