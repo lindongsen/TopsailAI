@@ -5,6 +5,11 @@
   Purpose:
 '''
 
+from topsailai.utils import (
+    env_tool,
+    json_tool,
+)
+from topsailai.tools.base.common import get_tools_for_chat
 from topsailai.workspace.plugin_instruction.base.cache import get_ai_agent
 
 def get_system_prompt() -> str:
@@ -31,7 +36,13 @@ def get_tool_prompt() -> str:
     """
     agent = get_ai_agent()
     if agent:
+        if env_tool.is_use_tool_calls():
+            content = get_tools_for_chat(agent.available_tools)
+            content = json_tool.safe_json_dump(content, indent=2)
+            print(content)
+            print("\n---\n")
         print(agent.messages[2]["content"])
+
     return
 
 def get_tools() -> list[str]:
