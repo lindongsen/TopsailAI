@@ -172,11 +172,11 @@ def do_start(args):
     if args.db_url:
         os.environ['TOPSAILAI_AGENT_DAEMON_DB_URL'] = args.db_url
     if args.processor:
-        os.environ['TOPSAILAI_AGENT_DAEMON_PROCESSOR'] = args.processor
+        os.environ["TOPSAILAI_AGENT_DAEMON_PROCESSOR"] = os.path.abspath(args.processor)
     if args.summarizer:
-        os.environ['TOPSAILAI_AGENT_DAEMON_SUMMARIZER'] = args.summarizer
+        os.environ["TOPSAILAI_AGENT_DAEMON_SUMMARIZER"] = os.path.abspath(args.summarizer)
     if args.session_state_checker:
-        os.environ['TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER'] = args.session_state_checker
+        os.environ["TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER"] = os.path.abspath(args.session_state_checker)
 
     # Log the configuration using os.getenv to reflect actual values being used
     logger.info("Starting agent_daemon with configuration:")

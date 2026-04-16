@@ -1,0 +1,133 @@
+#!/bin/bash
+#
+# topsailai_check_log.sh - Check logs based on LOG_ATTENTION keywords from readme.md
+#
+# Author: topsailai
+# Date: 2025-04-16
+# Version: 1.0.0
+#
+
+# =============================================================================
+# Script Self-Location & Environment Initialization (MANDATORY)
+# =============================================================================
+EXE_FILE=$(readlink -f "$0")
+EXE_FOLDER=$(dirname "${EXE_FILE}")
+cd "${EXE_FOLDER}"
+
+# =============================================================================
+# Strict Mode & Error Handling
+# =============================================================================
+set -euo pipefail
+
+# =============================================================================
+# Global Variables
+# =============================================================================
+README_FILE="${EXE_FOLDER}/../src/topsailai/readme.md"
+[ -e "${README_FILE}" ] || README_FILE="${EXE_FOLDER}/../topsailai/readme.md"
+LOG_FILE="/topsailai/log/chat.log"
+
+# =============================================================================
+# Help Information & Documentation
+# =============================================================================
+show_help() {
+    cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Check logs based on LOG_ATTENTION keywords from readme.md
+
+Options:
+    -h, --help      Display this help message and exit
+
+Exit Codes:
+    0   Success
+    1   General error
+    2   Missing required files
+
+Examples:
+    $(basename "$0")              # Run log check
+    $(basename "$0") -h           # Show help
+
+EOF
+}
+
+# =============================================================================
+# Main Logic
+# =============================================================================
+main() {
+    # Check if files exist
+    if [[ ! -f "${README_FILE}" ]]; then
+        echo "Error: readme.md not found at ${README_FILE}"
+        exit 2
+    fi
+
+    if [[ ! -f "${LOG_FILE}" ]]; then
+        echo "Error: Log file not found at ${LOG_FILE}"
+        exit 2
+    fi
+
+    # Extract LOG_ATTENTION content from readme.md
+
+    # The fact information From Human:
+    # The content in [] in the following cases is the original content
+    # case1: [# LOG_ATTENTION: hello world] -> [hello world]
+    # case2: [# LOG_ATTENTION: 'hello world'] -> [hello world]
+    # case3: [# LOG_ATTENTION: "hello world"] -> [hello world]
+    # case4: [# LOG_ATTENTION: " hello world "] -> [ hello world ]
+
+    local keywords
+    keywords=$(grep -oP '(?<=# LOG_ATTENTION:).*' "${README_FILE}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed "s/^['\"]//; s/['\"]$//")
+
+    if [[ -z "${keywords}" ]]; then
+        echo "No LOG_ATTENTION keywords found in readme.md"
+        exit 0
+    fi
+
+    echo ">>> Checking logs for keywords:"
+    echo "${keywords}" | cat -n
+    echo "========================================"
+
+    # Search logs based on each keyword (process line by line)
+    local found=0
+    while IFS= read -r keyword; do
+        echo ""
+        echo ">>> Searching for keyword: [${keyword}]"
+        echo "----------------------------------------"
+        if grep --color=yes "${keyword}" "${LOG_FILE}"; then
+            found=1
+        else
+            echo "No matches found for [${keyword}]"
+        fi
+    done <<< "${keywords}" | more
+
+    echo ""
+    echo "========================================"
+    if [[ ${found} -eq 1 ]]; then
+        echo "Log check completed. Matches found."
+    else
+        echo "Log check completed. No matches found."
+    fi
+
+    return 0
+}
+
+# =============================================================================
+# Argument Parsing
+# =============================================================================
+if [[ $# -gt 0 ]]; then
+    case "$1" in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown option: $1"
+            show_help
+            exit 1
+            ;;
+    esac
+fi
+
+# =============================================================================
+# Execute Main Function
+# =============================================================================
+main "$@"

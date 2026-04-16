@@ -1,7 +1,10 @@
 *.log
 *.log.1
 *.db
+*.db-shm
+*.db-wal
 .env
 .venv
 __pycache__/
 *.pyc
+.topsailai
