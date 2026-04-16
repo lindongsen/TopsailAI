@@ -15,7 +15,7 @@ import requests
 from typing import Optional
 
 CWD = os.path.dirname(__file__)
-for _ in range(3):
+for _ in range(4):
     if os.path.exists(f"{CWD}/topsailai"):
         break
     CWD = os.path.dirname(CWD)
