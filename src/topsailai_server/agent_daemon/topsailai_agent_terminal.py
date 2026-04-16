@@ -226,10 +226,10 @@ class AgentTerminal:
             # Display task info if exists
             if task_id:
                 print()
-                print(f"{self.COLOR_DIM}  >> task_id: {task_id[:16]}...{self.COLOR_RESET}")
+                print(f"{self.COLOR_DIM}  >> task_id: {task_id}{self.COLOR_RESET}")
             if task_result:
                 # Truncate task result for display
-                result_preview = task_result[:200] + "..." if len(task_result) > 200 else task_result
+                result_preview = task_result
                 print(f"{self.COLOR_DIM}  >> result: {result_preview}{self.COLOR_RESET}")
 
         print(MSG_SEPARATOR)
@@ -240,7 +240,7 @@ class AgentTerminal:
         print(SPLIT_LINE)
         status = f"Messages: {msg_count}"
         if processed_msg_id:
-            status += f" | Processed: {processed_msg_id[:32]}..."
+            status += f" | Processed: {processed_msg_id}"
         print(f"  {status}".ljust(self.term_width))
         print(f"  Type your message and press Ctrl+D to send | Ctrl+C to exit".ljust(self.term_width))
         print(SPLIT_LINE)
