@@ -156,12 +156,11 @@ def check_repetition(text: str, similarity_threshold: float = 0.8) -> dict:
     }
 
 
-def print_repetition_report(result: dict, similarity_threshold: float = 0.8) -> None:
+def print_repetition_report(result: dict) -> None:
     """Print a formatted repetition analysis report.
 
     Args:
         result: The dictionary returned by check_repetition()
-        similarity_threshold: The similarity threshold used for fuzzy matching
     """
     if result["status"] == "no_content":
         print("No content to analyze.")

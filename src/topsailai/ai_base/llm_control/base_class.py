@@ -15,12 +15,17 @@ from topsailai.logger import logger
 from topsailai.utils import (
     env_tool,
     format_tool,
+    text_tool,
 )
 from topsailai.utils.print_tool import (
     print_debug,
     print_error,
+    print_critical,
 )
-from topsailai.context.token import TokenStat
+from topsailai.context.token import (
+    TokenStat,
+    count_tokens,
+)
 
 from .message import (
     format_messages,
@@ -328,6 +333,15 @@ class LLMModelBase(object):
 
         if not rsp_content:
             raise TypeError("null of response")
+
+        # exceed max tokens
+        txt_content = str(rsp_content)
+        max_tokens = self.max_tokens
+        current_tokens = count_tokens(txt_content)
+        if current_tokens >= max_tokens:
+            repetition_result = text_tool.check_repetition(txt_content)
+            if repetition_result.get("has_severe_repetition"):
+                print_critical(f"LLM makes a mistake: Severe repetition loop pattern detected! {repetition_result}")
 
         return
 
