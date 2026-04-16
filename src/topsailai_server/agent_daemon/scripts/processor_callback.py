@@ -17,12 +17,13 @@ import socket
 from typing import Optional, Dict, Any, Callable
 
 CWD = os.path.dirname(__file__)
+PROJECT_FOLDER = CWD
 for _ in range(4):
-    if os.path.exists(f"{CWD}/topsailai"):
+    if os.path.exists(f"{PROJECT_FOLDER}/topsailai"):
         break
-    CWD = os.path.dirname(CWD)
-if os.path.exists(f"{CWD}/topsailai"):
-    sys.path.insert(0, CWD)
+    PROJECT_FOLDER = os.path.dirname(PROJECT_FOLDER)
+if os.path.exists(f"{PROJECT_FOLDER}/topsailai"):
+    sys.path.insert(0, PROJECT_FOLDER)
 
 from topsailai.utils.thread_local_tool import set_thread_name
 from topsailai_server.agent_daemon import logger

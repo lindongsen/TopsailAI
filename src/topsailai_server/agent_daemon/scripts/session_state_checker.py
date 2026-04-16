@@ -10,6 +10,15 @@
 import os
 import sys
 
+CWD = os.path.dirname(__file__)
+PROJECT_FOLDER = CWD
+for _ in range(4):
+    if os.path.exists(f"{PROJECT_FOLDER}/topsailai"):
+        break
+    PROJECT_FOLDER = os.path.dirname(PROJECT_FOLDER)
+if os.path.exists(f"{PROJECT_FOLDER}/topsailai"):
+    sys.path.insert(0, PROJECT_FOLDER)
+
 from topsailai.workspace.lock_tool import (
     ctxm_try_session_lock,
 )
