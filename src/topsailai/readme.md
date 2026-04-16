@@ -6,7 +6,7 @@ H3 title format: `LOG_ATTENTION: {content}`
 
 Use command `topsailai_check_log` to review log content.
 
-### LOG_ATTENTION: "CRITICAL -"
+### LOG_ATTENTION: " CRITICAL -"
 
 Some critical logs
 

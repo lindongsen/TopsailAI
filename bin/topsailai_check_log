@@ -31,7 +31,7 @@ LOG_FILE="/topsailai/log/chat.log"
 # =============================================================================
 show_help() {
     cat << EOF
-Usage: $(basename "$0") [OPTIONS]
+Usage: $(basename "$0") [OPTIONS] [file=]
 
 Check logs based on LOG_ATTENTION keywords from readme.md
 
@@ -86,25 +86,28 @@ main() {
     echo "${keywords}" | cat -n
     echo "========================================"
 
+
     # Search logs based on each keyword (process line by line)
-    local found=0
+    local no_matched_keywords=""
     while IFS= read -r keyword; do
         echo ""
         echo ">>> Searching for keyword: [${keyword}]"
         echo "----------------------------------------"
         if grep --color=yes "${keyword}" "${LOG_FILE}"; then
-            found=1
+            echo ""
         else
             echo "No matches found for [${keyword}]"
+            no_matched_keywords="${keyword}\n${no_matched_keywords}"
         fi
-    done <<< "${keywords}" | more
+    done <<< "${keywords}"
 
     echo ""
     echo "========================================"
-    if [[ ${found} -eq 1 ]]; then
+    if [[ -z "${no_matched_keywords}" ]]; then
         echo "Log check completed. Matches found."
     else
         echo "Log check completed. No matches found."
+        echo -e "${no_matched_keywords}" | cat -n
     fi
 
     return 0
@@ -114,20 +117,25 @@ main() {
 # Argument Parsing
 # =============================================================================
 if [[ $# -gt 0 ]]; then
-    case "$1" in
-        -h|--help)
-            show_help
-            exit 0
-            ;;
-        *)
-            echo "Error: Unknown option: $1"
-            show_help
-            exit 1
-            ;;
-    esac
+    for P in $*; do
+        case "$P" in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            file=*)
+                LOG_FILE=${P#file=}
+                ;;
+            *)
+                echo "Error: Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
 fi
 
 # =============================================================================
 # Execute Main Function
 # =============================================================================
-main "$@"
+main "$@" | more
