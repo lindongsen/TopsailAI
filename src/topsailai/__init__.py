@@ -1,13 +1,14 @@
 '''
-  Author: DawsonLin
-  Email: lin_dongsen@126.com
-  Created: 2026-03-26
-  Purpose:
+Author: DawsonLin
+Email: lin_dongsen@126.com
+Created: 2026-03-26
+Purpose:
 '''
 
 import os
 from dotenv import load_dotenv
 
+from topsailai.logger import logger
 from topsailai.workspace import folder_constants
 
 HOME_FOLDER = os.getenv("HOME") or ""
@@ -25,6 +26,31 @@ for WORK_FOLDER in [
         load_dotenv(env_file)
         break
 
+_env_topsailai_use_tool_calls = os.getenv("TOPSAILAI_USE_TOOL_CALLS")
+def customize_for_llm():
+    """ Customize according to the large model """
+
+    # case: TOPSAILAI_USE_TOOL_CALLS
+    if _env_topsailai_use_tool_calls is None:
+        model_name = os.getenv("OPENAI_MODEL", "").lower()
+        for _key in [
+            "minimax",
+        ]:
+            if not model_name:
+                break
+
+            if model_name.startswith(_key):
+                os.environ["TOPSAILAI_USE_TOOL_CALLS"] = "1"
+                logger.warning("Force to set TOPSAILAI_USE_TOOL_CALLS=1 due to LLM Model is [%s]", model_name)
+
+    return
+
+def init_after_loading_dotenv():
+    """ Init something """
+    customize_for_llm()
+
 # init
 os.makedirs(folder_constants.FOLDER_LOG, exist_ok=True)
 load_dotenv()
+
+init_after_loading_dotenv()
