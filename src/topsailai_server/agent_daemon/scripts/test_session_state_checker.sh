@@ -11,7 +11,7 @@ min=1
 max=10
 random_number=$((RANDOM % (max - min + 1) + min))
 
-sleep ${random_number}
+sleep 0.${random_number}
 
 if [ ${random_number} -gt 5 ]; then
   echo ${STATUS_IDLE}

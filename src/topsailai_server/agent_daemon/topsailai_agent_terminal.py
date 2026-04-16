@@ -145,6 +145,23 @@ class AgentTerminal:
             logger.exception("Error sending message: %s", e)
             return False, str(e)
 
+    def get_session(self):
+        """Get session status using GetSession API"""
+        url = f"{self.base_url}/api/v1/session/{self.session_id}"
+
+        try:
+            response = requests.get(url, timeout=3)
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("code") == 0:
+                    return result.get("data", {})
+            logger.debug("Failed to get session status: %s", result.get('message', 'Unknown error'))
+        except requests.exceptions.ConnectionError:
+            logger.debug("Cannot connect to server at %s", self.base_url)
+        except Exception as e:
+            logger.debug("Error getting session status: %s", e)
+        return {}
+
     def get_session_info(self):
         """Get session information"""
         url = f"{self.base_url}/api/v1/session"
@@ -177,7 +194,7 @@ class AgentTerminal:
         print(self.COLOR_RESET)
         print()
 
-    def display_messages(self, messages):
+    def display_messages(self, messages, processed_msg_id):
         """Display messages in chat format (messages already sorted by create_time desc)"""
         if not messages:
             print(self.COLOR_DIM + "  No messages yet..." + self.COLOR_RESET)
@@ -202,9 +219,11 @@ class AgentTerminal:
                 role_label = role.upper()
                 color = self.COLOR_SYSTEM
 
+            flag_processed = " -> *PROCESSED*" if processed_msg_id == msg_id else ""
+
             # Display message header with full timestamp and msg_id
             print(MSG_SEPARATOR)
-            print(f"{color}{self.COLOR_BOLD}[{create_time}] [{msg_id}] {role_label}{self.COLOR_RESET}")
+            print(f"{color}{self.COLOR_BOLD}[{create_time}] [{msg_id}] {role_label}{self.COLOR_RESET}{self.COLOR_SYSTEM}{flag_processed}{self.COLOR_RESET}")
 
             # Word wrap the message content
             max_content_width = self.term_width - 2
@@ -234,13 +253,16 @@ class AgentTerminal:
 
         print(MSG_SEPARATOR)
 
-    def display_status_bar(self, msg_count, processed_msg_id):
+    def display_status_bar(self, msg_count, processed_msg_id, status=None):
         """Display status bar at the bottom"""
         print()
         print(SPLIT_LINE)
-        status = f"Messages: {msg_count}"
+        status_parts = [f"Messages: {msg_count}"]
         if processed_msg_id:
-            status += f" | Processed: {processed_msg_id}"
+            status_parts.append(f"Processed: {processed_msg_id}")
+        if status:
+            status_parts.append(f"Status: {self.COLOR_ASSISTANT}{status}{self.COLOR_RESET}")
+        status = " | ".join(status_parts)
         print(f"  {status}".ljust(self.term_width))
         print(f"  Type your message and press Ctrl+D to send | Ctrl+C to exit".ljust(self.term_width))
         print(SPLIT_LINE)
@@ -260,9 +282,13 @@ class AgentTerminal:
         messages = self.get_messages()
         messages.reverse()
 
-        # Get session info for processed_msg_id
+        # Get session info for processed_msg_id and status
         session_info = self.get_session_info()
         processed_msg_id = session_info.get('processed_msg_id') if session_info else None
+
+        # Get session status using get_session API
+        session = self.get_session()
+        status = session.get('status')
 
         # Generate content fingerprint and compare with last content
         current_fingerprint = self._generate_content_fingerprint(messages, processed_msg_id)
@@ -276,8 +302,8 @@ class AgentTerminal:
         # Content changed, perform the actual refresh
         clear_screen()
         self.display_header()
-        self.display_messages(messages)
-        self.display_status_bar(len(messages), processed_msg_id)
+        self.display_messages(messages, processed_msg_id)
+        self.display_status_bar(len(messages), processed_msg_id, status)
 
         # Update state
         self.last_msg_count = len(messages)
@@ -320,6 +346,7 @@ class AgentTerminal:
                     break
 
                 if user_input.strip():
+                    print(f"{self.COLOR_DIM}  Sending message...{self.COLOR_RESET}")
                     # Send the message
                     success, msg = self.send_message(user_input.strip())
                     if success:
