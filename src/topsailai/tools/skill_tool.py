@@ -24,6 +24,7 @@ from topsailai.utils import (
     format_tool,
 )
 from topsailai.utils.cmd_tool import exec_cmd
+from topsailai.prompt_hub import prompt_tool
 from topsailai.ai_base.agent_types.exception import (
     AgentNeedRefreshSession,
 )
@@ -67,7 +68,7 @@ def call_skill(
 
     Args:
         folder_path (str): required, a skill folder.
-        script_path (str): required, The executable file must be in folder_path, otherwise it cannot be called.
+        script_path (str): required, The executable file (MUST EXIST) in folder_path, otherwise it cannot be called.
         script_parameters (str|list): optional
 
         no_need_stderr (int): If 1, stderr will be returned as empty string.
@@ -210,7 +211,7 @@ def call_skill(
         return format_return(cmd, result)
 
 def overview_skill(folder_path:str):
-    """ Every time you want to use a skill you MUST call `overview_skill` for entire details.
+    """ To retrieve entire details of skill.
     Args:
         folder_path (str): required, skill folder.
     """
@@ -244,23 +245,16 @@ TOOLS = dict(
     read_skill_file=read_skill_file,
 )
 
-PROMPT_SKILL = """
-# SKILLS
+PROMPT_SKILL_TOOL_RULE = """
+## Mandatory Skill Inspection
+- **Trigger:** Whenever a task is related to a skill, you **MUST** call the `overview_skill` tool immediately.
+- **Purpose:** To retrieve the **full, up-to-date details** (parameters, constraints, dependencies) required for execution.
+- **Constraint:** The skill information provided in the system prompt is **only a summary** for identification purposes. It is **strictly forbidden** to execute a skill based solely on this summary. You must rely on the output from `overview_skill` for all execution logic.
+---
 
-When your task is related to a skill, you MUST call `overview_skill` for detail.
-The following skill information is merely a summary, Every time you want to use a skill you MUST call `overview_skill` for entire details.
-When skill refers to a file with a relative_path, you should use `{folder}/{relative_path}` to construct an absolute_path to access it.
-
-common folder structure:
-```
-folder-name/
-- SKILL.md    # [core] document
-- scripts/    # [tool] executable scripts
-- references/ # [knowledge] domain expertise
-- assets/     # [resource] static files
-- config/     # [variable] config file can be updated
-```
 """
+
+PROMPT_SKILL = prompt_tool.read_prompt("skills/skill.md") + PROMPT_SKILL_TOOL_RULE
 
 PROMPT_PLUGIN_SKILLS = ""
 PROMPT = ""

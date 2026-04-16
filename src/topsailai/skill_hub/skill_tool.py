@@ -36,7 +36,22 @@ from topsailai.workspace.folder_constants import FOLDER_SKILL
 
 g_skills = {} # key is folder, value is SkillInfo
 
-PROMPT_SKILL = prompt_tool.read_prompt("skills/skill.md")
+PROMPT_SKILL_FORMAT = """
+# Skill Registry
+
+The following section contains the **Skill Information**.
+Parse this data according to the format below:
+
+```markdown
+## {SkillName} folder={SkillFolder}
+Skill Summary
+
+(May include preliminary Overview Content)
+>>> [SKILL_OVERVIEW_START:{SkillFolder}]
+Overview Content
+<<< [SKILL_OVERVIEW_END:{SkillFolder}]
+```
+"""
 
 
 def is_matched_skill(skill_folder:str, keys:list[str]) -> bool:
@@ -275,7 +290,7 @@ def get_skill_markdown(skill_folders=None) -> str:
                 result += get_skill_markdown_with_subfolders(skill_folder, recursion_depth=max_recursion_depth)
 
     if result:
-        return PROMPT_SKILL + result
+        return PROMPT_SKILL_FORMAT + result
     return ""
 
 
