@@ -245,6 +245,42 @@ def write_text(file_path:str, file_content:str):
         fp.flush()
     return
 
+def get_all_files(args:list[str]) -> tuple[bool, list[str]]:
+    """
+    Get all of files from args.
+
+    Args:
+        args (list[str]):
+
+    Returns:
+        tuple: (all_of_args_are_file, all_files_from_args)
+    """
+    if not args:
+        return (False, [])
+
+    _flag_all_files = True
+    all_files = []
+    for _arg in args:
+        _arg = _arg.strip()
+
+        if not _arg:
+            continue
+
+        if _arg[0] != '/':
+            _flag_all_files = False
+            continue
+
+        if not os.path.exists(_arg):
+            _flag_all_files = False
+            continue
+
+        all_files.append(_arg)
+
+    if not all_files:
+        return (False, [])
+
+    return (_flag_all_files, all_files)
+
 
 ##########################################################
 # Lock Shell

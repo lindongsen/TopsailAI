@@ -11,7 +11,10 @@ import sys
 # DONOT DELETE THIS FOR FUNCTION 'input'
 import readline
 
-from topsailai.utils import env_tool
+from topsailai.utils import (
+    env_tool,
+    file_tool,
+)
 from topsailai.workspace.hook_instruction import (
     HookInstruction,
     TRIGGER_CHARS,
@@ -219,24 +222,10 @@ def get_message(hook: HookInstruction = None, need_input=True) -> str:
         'From stdin'
     """
     # all of argvs are files
-    _flag_all_files = True if len(sys.argv) > 1 else False
-    for _arg in sys.argv[1:]:
-        _arg = _arg.strip()
-
-        if not _arg:
-            continue
-
-        if _arg[0] != '/':
-            _flag_all_files = False
-            break
-
-        if not os.path.exists(_arg):
-            _flag_all_files = False
-            break
-
+    _flag_all_files, all_files = file_tool.get_all_files(sys.argv[1:])
     message = ""
-    if _flag_all_files:
-        for _file_path in sys.argv[1:]:
+    if _flag_all_files and all_files:
+        for _file_path in all_files:
             with open(_file_path, encoding='utf-8') as fd:
                 message += fd.read().strip() + "\n---\n"
         if message:
