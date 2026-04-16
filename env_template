@@ -239,6 +239,12 @@ TOPSAILAI_TOOL_CONN_CHAR="-"
 # White list for file extensions do not truncate, split by ';'
 TOPSAILAI_FILE_WHITE_LIST_NO_TRUNCATE_EXT=""
 
+# Script for obtaining system prompt
+TOPSAILAI_OBTAIN_SYSTEM_PROMPT_SCRIPT=""
+
+# Script for obtaining tool prompt
+TOPSAILAI_OBTAIN_TOOL_PROMPT_SCRIPT=""
+
 
 # =============================================================================
 # Skill Configuration

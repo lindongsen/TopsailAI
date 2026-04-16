@@ -21,6 +21,7 @@ from topsailai.utils.json_tool import (
 )
 from topsailai.utils import (
     time_tool,
+    cmd_tool,
 )
 from topsailai.utils.thread_local_tool import (
     get_agent_name,
@@ -29,6 +30,28 @@ from topsailai.utils.thread_local_tool import get_session_id
 from topsailai.context.token import count_tokens
 from topsailai.context.ctx_manager import get_managers_by_env
 from topsailai.context.prompt_env import generate_prompt_for_env
+
+
+def get_prompt_by_cmd(cmd:str) -> str:
+    """ Execute a command to get stdout """
+    assert cmd, "missing command"
+    ret = cmd_tool.exec_cmd(cmd, timeout=60)
+    if ret and ret[0] == 0 and ret[1]:
+        content = ret[1].strip()
+        if content:
+            return content
+    return ""
+
+def get_prompt_by_script(env_key:str) -> str:
+    """ Execute a script from env to get prompt
+
+    Args:
+        env_key (str): TOPSAILAI_OBTAIN_SYSTEM_PROMPT_SCRIPT, TOPSAILAI_OBTAIN_TOOL_PROMPT_SCRIPT
+    """
+    script_file = os.getenv(env_key)
+    if not script_file:
+        return ""
+    return get_prompt_by_cmd(script_file)
 
 
 class ThresholdContextHistory(object):
@@ -124,10 +147,17 @@ class PromptBase(object):
             tool_prompt (str, optional): Tool prompt provided by user. Defaults to "".
         """
         assert system_prompt, "missing system_prompt"
+
         self.system_prompt = system_prompt
+        prompt_from_script = get_prompt_by_script("TOPSAILAI_OBTAIN_SYSTEM_PROMPT_SCRIPT")
+        if prompt_from_script:
+            self.system_prompt += "\n---\n" + prompt_from_script
 
         # Only write it in AI Agent
         self.tool_prompt = tool_prompt or ""
+        prompt_from_script = get_prompt_by_script("TOPSAILAI_OBTAIN_TOOL_PROMPT_SCRIPT")
+        if prompt_from_script:
+            self.tool_prompt += "\n---\n" + prompt_from_script
 
         # context history messages
         self.threshold_ctx_history = ThresholdContextHistory()
