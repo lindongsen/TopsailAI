@@ -8,6 +8,9 @@ Purpose:
 import os
 from dotenv import load_dotenv
 
+# Original Environ
+_env_topsailai_use_tool_calls = os.getenv("TOPSAILAI_USE_TOOL_CALLS")
+
 from topsailai.logger import logger
 from topsailai.workspace import folder_constants
 
@@ -26,7 +29,6 @@ for WORK_FOLDER in [
         load_dotenv(env_file)
         break
 
-_env_topsailai_use_tool_calls = os.getenv("TOPSAILAI_USE_TOOL_CALLS")
 def customize_for_llm():
     """ Customize according to the large model """
 
