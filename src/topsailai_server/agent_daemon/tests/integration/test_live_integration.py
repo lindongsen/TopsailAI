@@ -3,18 +3,6 @@ Live Integration Tests for topsailai_agent_daemon and topsailai_agent_client.
 
 These tests require a running daemon server and test real functionality
 without mocking. The server is started/stopped automatically.
-
-Timeout: 600 seconds recommended for pytest execution. -> From Human: this is a MISTAKE
-
-From Human: The script itself does not need to set a timeout, but the tool that executes the script needs to set a longer timeout, such as exec_cmd
-
-Test Categories:
-- TestServerLifecycle: Server startup, health check, shutdown
-- TestClientOperations: All client CLI commands
-- TestTaskLifecycle: Full task lifecycle flow
-- TestAPIDirectly: Direct HTTP API calls
-- TestEdgeCases: Edge cases and error scenarios
-- TestConcurrentOperations: Concurrent session handling
 """
 
 import os
@@ -29,10 +17,18 @@ import requests
 WORKSPACE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DAEMON_SCRIPT = os.path.join(WORKSPACE, "topsailai_agent_daemon.py")
 CLIENT_SCRIPT = os.path.join(WORKSPACE, "topsailai_agent_client.py")
-SERVER_HOST = "localhost"
+SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 7373
 BASE_URL = f"http://{SERVER_HOST}:{SERVER_PORT}"
-HOME_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Integration test home directory
+HOME_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Script paths for the daemon (must be absolute paths)
+SCRIPTS_DIR = os.path.join(WORKSPACE, "scripts")
+PROCESSOR_SCRIPT = os.path.join(SCRIPTS_DIR, "test_processor.sh")
+SUMMARIZER_SCRIPT = os.path.join(SCRIPTS_DIR, "test_summarizer.sh")
+SESSION_STATE_CHECKER_SCRIPT = os.path.join(SCRIPTS_DIR, "test_session_state_checker.sh")
 
 # Global server process reference
 _server_process = None
@@ -40,10 +36,11 @@ _server_process = None
 
 def _run_client(*args, verbose=False):
     """Run the client CLI with given arguments and return (stdout, stderr, returncode)."""
-    cmd = [sys.executable, CLIENT_SCRIPT]
+    cmd = [sys.executable, CLIENT_SCRIPT, "--host", SERVER_HOST, "--port", str(SERVER_PORT)]
     if verbose:
         cmd.append("-v")
     cmd.extend(args)
+
     result = subprocess.run(
         cmd,
         capture_output=True,
@@ -93,21 +90,32 @@ def _ensure_server_running():
         return True
     # Server not running, try to start it
     stdout, stderr, rc = _run_daemon("start")
-    if rc != 0:
+    if rc != 0 and "already running" not in stderr.lower() and "already running" not in stdout.lower():
         print(f"Failed to start server: {stderr}")
         return False
-    return _wait_for_server()
+    return _wait_for_server(timeout=30)
 
 
 def setup_module(module):
     """Start the daemon server before all tests."""
     global _server_process
-    # First check if server is already running
-    if _check_server_health():
-        print("Server is already running, skipping start.")
-        return
-    stdout, stderr, rc = _run_daemon("start")
-    if rc != 0:
+    
+    # Kill any existing server on port 7373
+    subprocess.run(
+        ["bash", "-c", "lsof -ti:7373 | xargs kill -9 2>/dev/null || true"],
+        capture_output=True
+    )
+    time.sleep(2)  # Wait for port to be released
+    
+    # Start the server with absolute paths
+    stdout, stderr, rc = _run_daemon(
+        "start",
+        "--processor", PROCESSOR_SCRIPT,
+        "--summarizer", SUMMARIZER_SCRIPT,
+        "--session_state_checker", SESSION_STATE_CHECKER_SCRIPT,
+    )
+    # If server is already running, rc=1 is acceptable
+    if rc != 0 and "already running" not in stderr.lower() and "already running" not in stdout.lower():
         raise RuntimeError(f"Failed to start server: {stderr}")
     if not _wait_for_server(timeout=60):
         raise RuntimeError("Server did not become healthy within timeout")
@@ -314,7 +322,7 @@ class TestClientOperations:
         # Delete it
         stdout, stderr, rc = _run_client(
             "delete-sessions",
-            "--session-id", session_id,
+            "--session-ids", session_id,
         )
         assert rc == 0
         # Verify it no longer exists
@@ -333,7 +341,7 @@ class TestClientOperations:
         )
         stdout, stderr, rc = _run_client(
             "delete-sessions",
-            "--session-id", session_id,
+            "--session-ids", session_id,
             verbose=True,
         )
         assert rc == 0
@@ -473,7 +481,7 @@ class TestTaskLifecycle:
         # Step 6: Clean up - delete session
         stdout, stderr, rc = _run_client(
             "delete-sessions",
-            "--session-id", session_id,
+            "--session-ids", session_id,
         )
         assert rc == 0
 
@@ -511,7 +519,7 @@ class TestTaskLifecycle:
         # Clean up
         stdout, stderr, rc = _run_client(
             "delete-sessions",
-            "--session-id", session_id,
+            "--session-ids", session_id,
         )
         assert rc == 0
 
@@ -561,10 +569,10 @@ class TestAPIDirectly:
         payload = {
             "session_id": session_id,
             "role": "user",
-            "content": "API direct test message",
+            "message": "API direct test message",
         }
         response = requests.post(
-            f"{BASE_URL}/message/send",
+            f"{BASE_URL}/api/v1/message",
             json=payload,
             timeout=10,
         )
@@ -578,17 +586,17 @@ class TestAPIDirectly:
         session_id = f"test_api_getmsg_{int(time.time())}"
         # Create a message first
         requests.post(
-            f"{BASE_URL}/message/send",
+            f"{BASE_URL}/api/v1/message",
             json={
                 "session_id": session_id,
                 "role": "user",
-                "content": "API get messages test",
+                "message": "API get messages test",
             },
             timeout=10,
         )
         # Retrieve messages
         response = requests.get(
-            f"{BASE_URL}/message/list",
+            f"{BASE_URL}/api/v1/message",
             params={"session_id": session_id},
             timeout=10,
         )
@@ -603,18 +611,18 @@ class TestAPIDirectly:
         session_id = f"test_api_del_{int(time.time())}"
         # Create a session first
         requests.post(
-            f"{BASE_URL}/message/send",
+            f"{BASE_URL}/api/v1/message",
             json={
                 "session_id": session_id,
                 "role": "user",
-                "content": "To be deleted via API",
+                "message": "To be deleted via API",
             },
             timeout=10,
         )
         # Delete the session
         response = requests.delete(
-            f"{BASE_URL}/session/delete",
-            params={"session_id": session_id},
+            f"{BASE_URL}/api/v1/session",
+            params={"session_ids": session_id},
             timeout=10,
         )
         assert response.status_code == 200
@@ -625,7 +633,7 @@ class TestAPIDirectly:
         """Test listing sessions via API."""
         _ensure_server_running()
         response = requests.get(
-            f"{BASE_URL}/session/list",
+            f"{BASE_URL}/api/v1/session",
             timeout=10,
         )
         assert response.status_code == 200
@@ -646,7 +654,7 @@ class TestEdgeCases:
         _ensure_server_running()
         stdout, stderr, rc = _run_client(
             "get-messages",
-            "--session-ids", "definitely_does_not_exist_99999",
+            "--session-id", "definitely_does_not_exist_99999",
         )
         assert rc == 0
         # Non-existent session returns empty output (no messages)
@@ -657,7 +665,7 @@ class TestEdgeCases:
         _ensure_server_running()
         stdout, stderr, rc = _run_client(
             "get-tasks",
-            "--session-ids", "definitely_does_not_exist_99999",
+            "--session-id", "definitely_does_not_exist_99999",
         )
         assert rc == 0
         # Non-existent session returns empty output (no tasks)
@@ -678,7 +686,7 @@ class TestEdgeCases:
         _ensure_server_running()
         stdout, stderr, rc = _run_client(
             "process-session",
-            "--session-ids", "nonexistent_session_process",
+            "--session-id", "nonexistent_session_process",
         )
         # Should succeed (processing nothing is OK) or return gracefully
         assert rc == 0
@@ -738,7 +746,7 @@ class TestEdgeCases:
             session_ids.append(sid)
             stdout, stderr, rc = _run_client(
                 "send-message",
-                "--session-ids", sid,
+                "--session-id", sid,
                 "--role", "user",
                 "--message", f"Multi-session message #{i}",
             )
@@ -798,9 +806,9 @@ class TestEdgeCases:
     def test_api_send_message_missing_fields(self):
         """Test sending a message via API with missing required fields."""
         _ensure_server_running()
-        # Send with missing content field
+        # Send with missing message field
         response = requests.post(
-            f"{BASE_URL}/message/send",
+            f"{BASE_URL}/api/v1/message",
             json={"session_id": "test_missing_fields"},
             timeout=10,
         )
@@ -827,10 +835,10 @@ class TestConcurrentOperations:
             payload = {
                 "session_id": sid,
                 "role": "user",
-                "content": f"Concurrent message for {sid}",
+                "message": f"Concurrent message for {sid}",
             }
             response = requests.post(
-                f"{BASE_URL}/message/send",
+                f"{BASE_URL}/api/v1/message",
                 json=payload,
                 timeout=10,
             )
@@ -870,7 +878,7 @@ class TestConcurrentOperations:
         # Delete session
         stdout, stderr, rc = _run_client(
             "delete-sessions",
-            "--session-id", session_id,
+            "--session-ids", session_id,
         )
         assert rc == 0
 

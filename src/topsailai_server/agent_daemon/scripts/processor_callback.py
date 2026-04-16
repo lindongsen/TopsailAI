@@ -12,17 +12,26 @@
 import os
 import sys
 import requests
+from typing import Optional
 
 from topsailai.utils.thread_local_tool import set_thread_name
 from topsailai_server.agent_daemon import logger
 
 
-def get_env(key, required=True):
-    """Get environment variable, optionally required"""
+def get_env(key: str, required: bool = True) -> Optional[str]:
+    """Get environment variable.
+    
+    Args:
+        key: Environment variable name
+        required: If True, return None when variable is missing or empty
+        
+    Returns:
+        Environment variable value or None if not required or missing
+    """
     value = os.environ.get(key)
     if required and not value:
         logger.error("Missing required environment variable: %s", key)
-        sys.exit(1)
+        return None
     return value
 
 
@@ -78,15 +87,23 @@ def main():
 
     # Get required environment variables
     session_id = get_env("TOPSAILAI_SESSION_ID")
-    set_thread_name(session_id)
     msg_id = get_env("TOPSAILAI_MSG_ID")
     final_answer = get_env("TOPSAILAI_FINAL_ANSWER")
 
+    # Check if any required env var is missing
+    if not session_id or not msg_id or not final_answer:
+        sys.exit(1)
+    
+    set_thread_name(session_id)
+    
     # Get optional environment variables
     task_id = os.environ.get("TOPSAILAI_TASK_ID")
 
     # Construct base URL from host and port
+    # Note: 0.0.0.0 is for listening, not for making outbound connections
     host = os.environ.get("TOPSAILAI_AGENT_DAEMON_HOST", "localhost")
+    if host == "0.0.0.0":
+        host = "localhost"
     port = os.environ.get("TOPSAILAI_AGENT_DAEMON_PORT", "7373")
     base_url = f"http://{host}:{port}"
 

@@ -201,7 +201,7 @@ class SessionSQLAlchemy(SessionStorageBase):
 
         required_indexes = {
             'idx_session_update_create_time': 'Composite index for cleanup queries',
-            'processed_msg_id': 'Index on processed_msg_id column'
+            'ix_session_processed_msg_id': 'Index on processed_msg_id column'
         }
 
         result = {}

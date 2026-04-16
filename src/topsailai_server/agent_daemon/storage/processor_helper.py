@@ -4,6 +4,7 @@
   Purpose: Shared processor helper - message formatting and processing logic
 '''
 
+import threading
 from typing import Optional, List
 from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.storage import Storage
@@ -65,10 +66,41 @@ def format_pending_messages(unprocessed_messages: list) -> str:
     return "---\n" + "\n---\n".join(parts) + "\n---"
 
 
+def _async_processor_worker(
+    session_id: str,
+    msg_id: str,
+    task: str,
+    worker_manager
+):
+    """
+    Background worker to run the processor asynchronously.
+    
+    Args:
+        session_id: The session ID
+        msg_id: The message ID being processed
+        task: The formatted task content
+        worker_manager: WorkerManager instance
+    """
+    try:
+        logger.info("Starting async processor for session: %s, msg_id: %s", session_id, msg_id)
+        success = worker_manager.start_processor(
+            session_id=session_id,
+            msg_id=msg_id,
+            task=task
+        )
+        if success:
+            logger.info("Async processor completed for session: %s, msg_id: %s", session_id, msg_id)
+        else:
+            logger.warning("Async processor failed for session: %s, msg_id: %s", session_id, msg_id)
+    except Exception as e:
+        logger.exception("Error in async processor for session %s: %s", session_id, e)
+
+
 def check_and_process_messages(
     session_id: str,
     storage: Storage,
-    worker_manager
+    worker_manager,
+    async_mode: bool = True
 ) -> Optional[dict]:
     """
     Check if there are unprocessed messages and start processor if needed.
@@ -84,6 +116,7 @@ def check_and_process_messages(
         session_id: The session ID to check
         storage: Storage instance for database operations
         worker_manager: WorkerManager instance for process management
+        async_mode: If True, run processor in background thread (default: True)
         
     Returns:
         dict with processing info, or None if no processing needed
@@ -131,7 +164,7 @@ def check_and_process_messages(
             logger.info("Session %s is processing, skipping", session_id)
             return None
 
-        # Step 4: Format pending messages and start processor
+        # Step 4: Format pending messages
         task = format_pending_messages(unprocessed)
         if not task:
             logger.info("No pending messages to process after formatting for session: %s", session_id)
@@ -139,32 +172,48 @@ def check_and_process_messages(
 
         logger.info("Starting processor for session: %s, msg_id: %s", session_id, latest_message.msg_id)
 
-        success = worker_manager.start_processor(
-            session_id=session_id,
-            msg_id=latest_message.msg_id,
-            task=task
-        )
+        # Build response info
+        response_info = {
+            "processed_msg_id": session.processed_msg_id,
+            "processing_msg_id": latest_message.msg_id,
+            "messages": [
+                {
+                    "msg_id": msg.msg_id,
+                    "session_id": msg.session_id,
+                    "message": msg.message,
+                    "role": msg.role,
+                    "create_time": msg.create_time.isoformat() if msg.create_time else None,
+                    "update_time": msg.update_time.isoformat() if msg.update_time else None,
+                    "task_id": msg.task_id,
+                    "task_result": msg.task_result
+                }
+                for msg in unprocessed
+            ],
+            "processor_pid": None
+        }
 
-        if success:
-            return {
-                "processed_msg_id": session.processed_msg_id,
-                "processing_msg_id": latest_message.msg_id,
-                "messages": [
-                    {
-                        "msg_id": msg.msg_id,
-                        "session_id": msg.session_id,
-                        "message": msg.message,
-                        "role": msg.role,
-                        "create_time": msg.create_time.isoformat() if msg.create_time else None,
-                        "update_time": msg.update_time.isoformat() if msg.update_time else None,
-                        "task_id": msg.task_id,
-                        "task_result": msg.task_result
-                    }
-                    for msg in unprocessed
-                ],
-                "processor_pid": worker_manager.running_processes.get(session_id).pid if session_id in worker_manager.running_processes else None
-            }
-        return None
+        # Start processor asynchronously in background thread
+        if async_mode:
+            thread = threading.Thread(
+                target=_async_processor_worker,
+                args=(session_id, latest_message.msg_id, task, worker_manager),
+                daemon=True
+            )
+            thread.start()
+            logger.info("Processor started in background thread for session: %s", session_id)
+            # Return immediately with processing info
+            return response_info
+        else:
+            # Synchronous mode (for testing)
+            success = worker_manager.start_processor(
+                session_id=session_id,
+                msg_id=latest_message.msg_id,
+                task=task
+            )
+            if success:
+                response_info["processor_pid"] = worker_manager.running_processes.get(session_id).pid if session_id in worker_manager.running_processes else None
+                return response_info
+            return None
 
     except Exception as e:
         logger.exception("Error checking/processing messages: %s", e)

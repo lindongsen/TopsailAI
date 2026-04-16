@@ -8,7 +8,7 @@
 import signal
 import sys
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.configer import get_config
@@ -40,14 +40,36 @@ class AgentDaemon:
         logger.info("Configuration loaded")
 
         # Create database engine with connection pooling
-        self.engine = create_engine(
-            self.config.db_url,
-            pool_size=10,
-            max_overflow=20,
-            pool_timeout=30,
-            pool_recycle=3600,
-            pool_pre_ping=True
-        )
+        # For SQLite, add special settings for better concurrency
+        if self.config.db_url.startswith('sqlite'):
+            # Enable WAL mode and timeout for SQLite
+            self.engine = create_engine(
+                self.config.db_url,
+                connect_args={
+                    'timeout': 30,  # 30 second timeout for locked database
+                    'check_same_thread': False  # Allow multi-threaded access
+                },
+                pool_size=5,
+                max_overflow=10,
+                pool_timeout=30,
+                pool_recycle=3600,
+                pool_pre_ping=True,
+                echo=False
+            )
+            # Enable WAL mode for better concurrency
+            with self.engine.connect() as conn:
+                conn.execute(text("PRAGMA journal_mode=WAL"))
+                conn.execute(text("PRAGMA busy_timeout=30000"))  # 30 second busy timeout
+                conn.commit()
+        else:
+            self.engine = create_engine(
+                self.config.db_url,
+                pool_size=10,
+                max_overflow=20,
+                pool_timeout=30,
+                pool_recycle=3600,
+                pool_pre_ping=True
+            )
         logger.info("Database engine created: %s", self.config.db_url)
 
         # Initialize storage

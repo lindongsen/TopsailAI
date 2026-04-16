@@ -8,13 +8,11 @@ echo "MSG_ID: $TOPSAILAI_MSG_ID"
 echo "SESSION_ID: $TOPSAILAI_SESSION_ID"
 echo "TASK: $TOPSAILAI_TASK"
 
-# wait amoment
+# wait a short moment (0.1-0.5 seconds)
 min=1
-max=10
+max=5
 random_number=$((RANDOM % (max - min + 1) + min))
-echo ${random_number}
-
-sleep ${random_number}
+sleep 0.${random_number}
 
 # Simulate processing - generate a task result
 # This will call processor_callback.py to report the result

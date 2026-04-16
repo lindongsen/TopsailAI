@@ -76,7 +76,6 @@ class CronScheduler:
         self._running = True
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
-        logger.info("Cron scheduler started with %d jobs", len(self.jobs))
 
     def stop(self):
         """Stop the scheduler"""

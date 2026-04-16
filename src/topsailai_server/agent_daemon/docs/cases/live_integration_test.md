@@ -38,3 +38,5 @@ NOTE: You MUST use these scripts for Integration Testing,
 folder `scripts/`: test_processor.sh  test_session_state_checker.sh  test_summarizer.sh
 
 Focus on this log file for errors: /topsailai/log/agent_daemon.log
+
+执行这个测试脚本必须设置重定向输出日志到文件，日志内容会很长: tests/integration/test_live_integration.py

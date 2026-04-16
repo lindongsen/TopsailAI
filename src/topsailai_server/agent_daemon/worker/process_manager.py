@@ -151,6 +151,9 @@ class WorkerManager:
             env['TOPSAILAI_MSG_ID'] = msg_id
             env['TOPSAILAI_TASK'] = task
             env['TOPSAILAI_SESSION_ID'] = session_id
+            # Add host and port for processor callback
+            env['TOPSAILAI_AGENT_DAEMON_HOST'] = self.config.host
+            env['TOPSAILAI_AGENT_DAEMON_PORT'] = str(self.config.port)
 
             logger.info("Starting processor for session: %s, msg_id: %s", session_id, msg_id)
 
@@ -199,6 +202,9 @@ class WorkerManager:
             env = os.environ.copy()
             env['TOPSAILAI_SESSION_ID'] = session_id
             env['TOPSAILAI_TASK'] = task
+            # Add host and port for summarizer callback
+            env['TOPSAILAI_AGENT_DAEMON_HOST'] = self.config.host
+            env['TOPSAILAI_AGENT_DAEMON_PORT'] = str(self.config.port)
             
             logger.info("Starting summarizer for session: %s", session_id)
             

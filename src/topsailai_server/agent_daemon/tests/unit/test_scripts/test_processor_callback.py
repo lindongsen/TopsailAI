@@ -61,11 +61,10 @@ class TestGetEnv:
         with patch.dict(os.environ, {"TEST_KEY": "test_value"}):
             assert get_env("TEST_KEY", required=True) == "test_value"
 
-    def test_required_env_var_missing_calls_sys_exit(self, mock_sys_exit, mock_logger):
-        """Test get_env calls sys.exit(1) when required env var is missing."""
+    def test_required_env_var_missing_returns_none(self, mock_logger):
+        """Test get_env returns None when required env var is missing (exit handled by main)."""
         with patch.dict(os.environ, {}, clear=True):
             result = get_env("MISSING_KEY", required=True)
-            mock_sys_exit.assert_called_once_with(1)
             mock_logger.error.assert_called()
             assert result is None
 
@@ -80,12 +79,12 @@ class TestGetEnv:
             assert get_env("MISSING_OPT", required=False) is None
             mock_sys_exit.assert_not_called()
 
-    def test_required_empty_string_calls_sys_exit(self, mock_sys_exit, mock_logger):
-        """Test get_env calls sys.exit(1) when required env var is empty string."""
+    def test_required_empty_string_returns_none(self, mock_logger):
+        """Test get_env returns None when required env var is empty string (exit handled by main)."""
         with patch.dict(os.environ, {"EMPTY_KEY": ""}):
-            get_env("EMPTY_KEY", required=True)
-            mock_sys_exit.assert_called_once_with(1)
+            result = get_env("EMPTY_KEY", required=True)
             mock_logger.error.assert_called()
+            assert result is None
 
     def test_optional_empty_string_returns_empty(self):
         """Test get_env returns empty string when optional env var is empty."""
@@ -97,7 +96,7 @@ class TestGetEnv:
         with patch.dict(os.environ, {"WS_KEY": "  value  "}):
             assert get_env("WS_KEY", required=True) == "  value  "
 
-    def test_logs_error_with_key_name(self, mock_logger, mock_sys_exit):
+    def test_logs_error_with_key_name(self, mock_logger):
         """Test that get_env logs error message with key name when required var is missing."""
         with patch.dict(os.environ, {}, clear=True):
             get_env("MY_VAR", required=True)
@@ -476,7 +475,7 @@ class TestMain:
         with patch.dict(os.environ, env, clear=True):
             with patch("topsailai_server.agent_daemon.scripts.processor_callback.set_thread_name"):
                 main()
-                mock_sys_exit.assert_called_once_with(1)
+                mock_sys_exit.assert_called_with(1)
 
     def test_missing_msg_id_exits_with_one(self, mock_logger, mock_sys_exit):
         """Test main exits when TOPSAILAI_MSG_ID is missing."""
@@ -487,7 +486,7 @@ class TestMain:
         with patch.dict(os.environ, env, clear=True):
             with patch("topsailai_server.agent_daemon.scripts.processor_callback.set_thread_name"):
                 main()
-                mock_sys_exit.assert_called_once_with(1)
+                mock_sys_exit.assert_called_with(1)
 
     def test_missing_final_answer_exits_with_one(self, mock_logger, mock_sys_exit):
         """Test main exits when TOPSAILAI_FINAL_ANSWER is missing."""
@@ -498,7 +497,7 @@ class TestMain:
         with patch.dict(os.environ, env, clear=True):
             with patch("topsailai_server.agent_daemon.scripts.processor_callback.set_thread_name"):
                 main()
-                mock_sys_exit.assert_called_once_with(1)
+                mock_sys_exit.assert_called_with(1)
 
     def test_default_host_and_port(self, mock_logger, mock_sys_exit):
         """Test main uses default host (localhost) and port (7373) when env vars are missing."""
@@ -559,7 +558,7 @@ class TestMain:
         with patch.dict(os.environ, {}, clear=True):
             with patch("topsailai_server.agent_daemon.scripts.processor_callback.set_thread_name"):
                 main()
-                mock_sys_exit.assert_called_once_with(1)
+                mock_sys_exit.assert_called_with(1)
 
     def test_unicode_final_answer(self, mock_logger, mock_sys_exit):
         """Test main handles unicode characters in FINAL_ANSWER env var."""

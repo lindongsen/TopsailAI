@@ -442,8 +442,8 @@ class TestSessionManager(unittest.TestCase):
     def test_verify_indexes_processed_msg_id_index_exists(self):
         """Test verify_indexes detects the index on processed_msg_id column."""
         result = self.session_manager.verify_indexes()
-        self.assertIn('processed_msg_id', result)
-        self.assertTrue(result['processed_msg_id'])
+        self.assertIn('ix_session_processed_msg_id', result)
+        self.assertTrue(result['ix_session_processed_msg_id'])
 
     def test_verify_indexes_all_indexes_present(self):
         """Test verify_indexes confirms all required indexes are present."""
