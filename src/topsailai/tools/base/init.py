@@ -25,10 +25,11 @@ DISABLED_TOOLS = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_DISABLED_TOO
 
 def is_tool_enabled(tool_mod):
     """ checking if enables the tool by variable: FLAG_TOOL_ENABLED """
+    tool_name = tool_mod.__name__.split('.')[-1]
+
     # disabled
     if DISABLED_TOOLS:
         try:
-            tool_name = tool_mod.__name__.split('.')[-1]
             if tool_name in DISABLED_TOOLS:
                 return False
         except:
@@ -38,15 +39,27 @@ def is_tool_enabled(tool_mod):
     if ENABLED_TOOLS:
         if '*' in ENABLED_TOOLS:
             return True
+
+        if tool_name in ENABLED_TOOLS:
+            return True
+
     try:
         if getattr(tool_mod, "FLAG_TOOL_ENABLED") is False:
             if not ENABLED_TOOLS:
                 return False
-            tool_name = tool_mod.__name__.split('.')[-1]
             return tool_name in ENABLED_TOOLS
     except:
         pass
-    return True
+
+    if ENABLED_TOOLS:
+        # more tools
+        if '+' in ENABLED_TOOLS:
+            return True
+    else:
+        # no config, default is enabled
+        return True
+
+    return False
 
 # key is tool_name, value is function
 TOOLS = module_tool.get_function_map(
