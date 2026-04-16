@@ -4,6 +4,13 @@
 
 要将所有支持的操作（Client operations）都测试一遍，确保集成测试通过，确保所有功能正常可用
 
+按照 api-routes 将各种 client operations 放到 `{workspace}/client/` 文件夹中，for example:
+```
+{workspace}/client/
+- message.py  # 保存message相关的操作方法
+- session.py  # 保存session相关的操作方法
+```
+
 ## session
 
 ### list-sessions

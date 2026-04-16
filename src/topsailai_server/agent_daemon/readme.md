@@ -142,6 +142,16 @@ restful api
 
 ### session, uri_path:api/v1/session
 
+#### GetSession
+
+parameters:
+- session_id: str, required
+
+response:
+- data: dict
+
+此接口还要去调用 `TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER` 以得到session状态(status)，将状态信息填入 data 中。
+
 #### ListSessions
 
 parameters:

@@ -129,6 +129,61 @@ def do_client_list_sessions(args):
         return False
 
 
+def do_client_get_session(args):
+    """Get a single session by ID"""
+    base_url = f"http://{args.host}:{args.port}"
+    url = f"{base_url}/api/v1/session/{args.session_id}"
+
+    try:
+        logger.info("Getting session %s", args.session_id)
+        response = requests.get(url, timeout=10)
+
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("code") == 0:
+                session = result.get("data", {})
+                create_time = format_time(session.get('create_time'))
+                update_time = format_time(session.get('update_time'))
+                session_id = session.get('session_id')
+                session_name = session.get('session_name', 'N/A')
+                task = session.get('task', 'N/A')
+                processed_msg_id = session.get('processed_msg_id', 'N/A')
+                status = session.get('status', 'N/A')
+
+                print(SPLIT_LINE)
+                print(f"Session Details")
+                print(SPLIT_LINE)
+                print(f"Session ID: {session_id}")
+                print(f"Session Name: {session_name}")
+                print(f"Status: {status}")
+                print(f"Task: {task}")
+                print(f">>> Processed: {processed_msg_id}")
+                print(f"Created: {create_time}")
+                print(f"Updated: {update_time}")
+
+                if args.verbose:
+                    print("")
+                    print(f"Full Response: {json.dumps(result, indent=2)}")
+                return True
+            else:
+                print(f"Error: {result.get('message', 'Unknown error')}")
+                return False
+        elif response.status_code == 404:
+            result = response.json()
+            print(f"Error: Session not found - {result.get('message', 'Session does not exist')}")
+            return False
+        else:
+            print(f"Error: HTTP {response.status_code} - {response.text}")
+            return False
+    except requests.exceptions.ConnectionError:
+        print(f"Error: Cannot connect to server at {base_url}")
+        return False
+    except Exception as e:
+        logger.exception("Failed to get session: %s", e)
+        print(f"Error: {e}")
+        return False
+
+
 def do_client_send_message(args):
     """Send a message to a session"""
     base_url = f"http://{args.host}:{args.port}"
@@ -445,54 +500,6 @@ def do_client_delete_sessions(args):
         return False
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def cli():
     """Client CLI entry point"""
     parser = argparse.ArgumentParser(
@@ -534,6 +541,11 @@ def cli():
     list_sessions_parser.add_argument('--sort-key', type=str, default='create_time', help='Sort key (default: create_time)')
     list_sessions_parser.add_argument('--order-by', type=str, default='desc', choices=['asc', 'desc'], help='Order by (default: desc)')
     list_sessions_parser.set_defaults(func=do_client_list_sessions)
+
+    # Get session
+    get_session_parser = subparsers.add_parser('get-session', help='Get a single session by ID')
+    get_session_parser.add_argument('--session-id', type=str, required=True, help='Session ID (required)')
+    get_session_parser.set_defaults(func=do_client_get_session)
 
     # Send message
     send_msg_parser = subparsers.add_parser('send-message', help='Send a message to a session')

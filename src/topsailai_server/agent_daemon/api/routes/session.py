@@ -1,5 +1,5 @@
 '''
-  Author: DawsonLin
+  Author: Dawsonlin
   Email: lin_dongsen@126.com
   Created: 2026-04-14
   Purpose: Session API routes - FastAPI implementation
@@ -7,7 +7,7 @@
 
 from typing import Optional, List
 from datetime import datetime
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from topsailai_server.agent_daemon import logger
@@ -60,6 +60,17 @@ class SessionResponse(BaseModel):
     processed_msg_id: Optional[str] = None
 
 
+class SessionDetailResponse(BaseModel):
+    """Response model for session detail with status"""
+    session_id: str
+    session_name: str
+    task: Optional[str] = None
+    create_time: datetime
+    update_time: datetime
+    processed_msg_id: Optional[str] = None
+    status: str  # idle or processing
+
+
 class ProcessSessionRequest(BaseModel):
     """Request model for processing a session"""
     session_id: str
@@ -71,6 +82,64 @@ class ProcessSessionResponse(BaseModel):
     processing_msg_id: Optional[str] = None
     messages: Optional[List[dict]] = None
     processor_pid: Optional[int] = None
+
+
+@router.get("/{session_id}", response_model=ApiResponse)
+async def get_session(
+    session_id: str,
+    storage: Storage = Depends(get_storage),
+    worker_manager: WorkerManager = Depends(get_worker_manager)
+) -> ApiResponse:
+    """
+    Get a session by ID with its current processing status.
+
+    This endpoint:
+    1. Validates the session_id format
+    2. Retrieves the session from storage
+    3. Calls TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER to get status (idle/processing)
+    4. Returns the session data with status
+
+    Args:
+        session_id: The session ID to retrieve
+    """
+    try:
+        # Validate session_id format
+        try:
+            validate_session_id(session_id)
+        except ValueError as e:
+            logger.warning("Invalid session_id format: %s, error: %s", session_id, e)
+            return error_response(message=f"Invalid session_id format: {e}")
+
+        # Get session from storage
+        session = storage.session.get(session_id)
+
+        if not session:
+            logger.info("Session not found: %s", session_id)
+            return error_response(message="Session not found", code=404)
+
+        # Get session status using the session state checker
+        status = worker_manager.check_session_state(session_id)
+        logger.info("Session %s status: %s", session_id, status)
+
+        # Build response data
+        session_data = SessionDetailResponse(
+            session_id=session.session_id,
+            session_name=session.session_name,
+            task=session.task,
+            create_time=session.create_time,
+            update_time=session.update_time,
+            processed_msg_id=session.processed_msg_id,
+            status=status
+        )
+
+        logger.info("Retrieved session: %s", session_id)
+        return success_response(data=session_data.model_dump())
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error getting session: %s", e)
+        return error_response(message=f"Failed to get session: {str(e)}")
 
 
 @router.get("", response_model=ApiResponse)

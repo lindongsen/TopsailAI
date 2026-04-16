@@ -23,291 +23,150 @@ maintainer: AI
 |-----------|--------|----------|
 | Storage | ✅ Complete | `storage/session_manager/`, `storage/message_manager/` |
 | Configer | ✅ Complete | `configer/env_config.py` |
-| Http API | ✅ Complete | `api/routes/session.py`, `api/routes/message.py`, `api/routes/task.py` |
+| Http API | ⚠️ Partial | `api/routes/session.py`, `api/routes/message.py`, `api/routes/task.py` |
 | Croner | ✅ Complete | `croner/scheduler.py`, `croner/jobs/*.py` |
 | Worker | ✅ Complete | `worker/process_manager.py` |
 | CLI Tools | ✅ Complete | `topsailai_agent_daemon.py`, `topsailai_agent_client.py` |
-| Scripts | ✅ Complete | `scripts/processor_callback.py` |
+| Scripts | ✅ Complete | `scripts/processor_callback.py`, `scripts/session_state_checker.py` |
 | Logger | ✅ Complete | `logger.py` |
 
+**⚠️ CRITICAL MISSING:** GetSession API endpoint is NOT implemented.
+
 ---
 
-## 2. Improvements Implemented
+## 2. Required Implementation
 
-### 2.1 Configuration Validation
+### 2.1 GetSession API Endpoint
 
-**File:** `configer/env_config.py`
+**File to Modify:** `/root/ai/TopsailAI/src/topsailai_server/agent_daemon/api/routes/session.py`
 
-**Improvements:**
+**Specification:**
+```
+### session, uri_path:api/v1/session
 
-| Feature | Description |
-|---------|-------------|
-| Processor Script Validation | Validates `TOPSAILAI_AGENT_DAEMON_PROCESSOR` script exists and is executable |
-| Summarizer Script Validation | Validates `TOPSAILAI_AGENT_DAEMON_SUMMARIZER` script exists and is executable |
-| Session State Checker Validation | Validates `TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER` script exists and is executable |
-| FileNotFoundError Handling | Provides clear error messages when required scripts are missing |
+#### GetSession
+parameters:
+- session_id: str, required
 
-**Code Example:**
+response:
+- data: dict
 
-```python
-def _validate_script_path(script_path: str, env_var_name: str) -> None:
-    """Validate that a script path exists and is executable."""
-    if not os.path.exists(script_path):
-        raise FileNotFoundError(
-            f"Script not found: {script_path} "
-            f"(configured via {env_var_name})"
-        )
-    if not os.access(script_path, os.X_OK):
-        raise PermissionError(
-            f"Script is not executable: {script_path} "
-            f"(configured via {env_var_name})"
-        )
+此接口还要去调用 `TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER` 以得到session状态(status)，将状态信息填入 data 中。
 ```
 
-**Benefits:**
-- Prevents runtime errors from missing scripts
-- Provides clear error messages during startup
-- Ensures all required worker scripts are available before service starts
+**Implementation Requirements:**
+
+1. **Route:** `GET /api/v1/session/{session_id}`
+2. **Parameters:**
+   - `session_id` (path parameter, required): The session identifier
+3. **Behavior:**
+   - Validate session_id format using `validate_session_id()`
+   - Retrieve session data from storage
+   - Call `worker_manager.check_session_state(session_id)` to get status (idle/processing)
+   - Include status in the response data
+   - Return 404 if session not found
+4. **Response Format:**
+   ```json
+   {
+     "code": 0,
+     "data": {
+       "session_id": "...",
+       "session_name": "...",
+       "task": "...",
+       "create_time": "...",
+       "update_time": "...",
+       "processed_msg_id": "...",
+       "status": "idle"  // or "processing"
+     },
+     "message": "OK"
+   }
+   ```
+
+**Reference Implementation Pattern:**
+Look at existing endpoints in `session.py`:
+- Use `validate_session_id()` from `topsailai_server.agent_daemon.validator`
+- Use `storage.session.get(session_id)` to retrieve session
+- Use `worker_manager.check_session_state(session_id)` to get status
+- Use `success_response()` and `error_response()` from `api.utils`
 
 ---
 
-### 2.2 Cron Job Resilience
+## 3. Implementation Checklist
 
-**Files:** `croner/jobs/message_consumer.py`, `croner/jobs/message_summarizer.py`
+### Phase 1: GetSession API Implementation
 
-**Improvements:**
+| # | Task | File | Priority |
+|---|------|------|----------|
+| 1 | Add GetSession endpoint | `api/routes/session.py` | 🔴 High |
+| 2 | Add GetSession client command | `topsailai_agent_client.py` | 🟡 Medium |
+| 3 | Add unit tests for GetSession | `tests/unit/test_api/` | 🟡 Medium |
 
-| Feature | Description |
-|---------|-------------|
-| Retry Mechanism | Exponential backoff for failed worker executions |
-| Circuit Breaker Pattern | Prevents cascading failures when external scripts fail repeatedly |
-| Execution Metrics | Logging for job execution duration |
-| MAX_RETRIES Constant | Configurable maximum retry attempts |
-| RETRY_DELAY Constant | Base delay between retries |
+### Phase 2: Testing
 
-**Code Example:**
+| # | Task | Description |
+|---|------|-------------|
+| 1 | Unit Test | Test GetSession with valid session_id |
+| 2 | Unit Test | Test GetSession with invalid session_id format |
+| 3 | Unit Test | Test GetSession with non-existent session_id |
+| 4 | Integration Test | Test status field returns idle/processing correctly |
+| 5 | Client Test | Test topsailai_agent_client get-session command |
 
+---
+
+## 4. Implementation Notes
+
+### 4.1 Session Status Logic
+
+The session status is determined by:
+1. First checking local `running_processes` in WorkerManager
+2. If not found locally, calling `TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER` script
+3. The script returns "idle" or "processing"
+
+### 4.2 Client CLI Addition
+
+Add to `topsailai_agent_client.py`:
 ```python
-# Constants for retry mechanism
-MAX_RETRIES = 3
-RETRY_DELAY = 5  # seconds
-CIRCUIT_BREAKER_THRESHOLD = 5  # failures before circuit opens
+def do_client_get_session(args):
+    """Get a single session by ID"""
+    base_url = f"http://{args.host}:{args.port}"
+    url = f"{base_url}/api/v1/session/{args.session_id}"
+    # ... implementation
 
-class CircuitBreaker:
-    """Circuit breaker pattern for external script failures."""
-    
-    def __init__(self, threshold: int = CIRCUIT_BREAKER_THRESHOLD):
-        self.failure_count = 0
-        self.threshold = threshold
-        self.is_open = False
-    
-    def record_failure(self) -> None:
-        """Record a failure and open circuit if threshold reached."""
-        self.failure_count += 1
-        if self.failure_count >= self.threshold:
-            self.is_open = True
-    
-    def record_success(self) -> None:
-        """Reset failure count on success."""
-        self.failure_count = 0
-        self.is_open = False
-
-def execute_with_retry(script_path: str, env: dict, max_retries: int = MAX_RETRIES) -> tuple:
-    """Execute script with exponential backoff retry."""
-    for attempt in range(max_retries):
-        try:
-            result = subprocess.run(
-                [script_path],
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=300
-            )
-            return result.returncode, result.stdout, result.stderr
-        except subprocess.TimeoutExpired:
-            logger.warning("Script execution timeout on attempt %d", attempt + 1)
-            if attempt < max_retries - 1:
-                sleep_time = RETRY_DELAY * (2 ** attempt)
-                time.sleep(sleep_time)
-        except Exception as e:
-            logger.exception("Script execution failed on attempt %d", attempt + 1)
-            if attempt < max_retries - 1:
-                sleep_time = RETRY_DELAY * (2 ** attempt)
-                time.sleep(sleep_time)
-    return -1, "", "Max retries exceeded"
+# Add subparser:
+get_session_parser = subparsers.add_parser('get-session', help='Get a session by ID')
+get_session_parser.add_argument('--session-id', type=str, required=True, help='Session ID')
+get_session_parser.set_defaults(func=do_client_get_session)
 ```
 
-**Benefits:**
-- Improves stability of periodic jobs
-- Prevents infinite retry loops
-- Provides visibility into job execution health
-- Circuit breaker prevents cascading failures
-
 ---
 
-### 2.3 Edge Case Handling
-
-**Files:** `api/routes/session.py`, `api/routes/message.py`, `api/routes/task.py`
-
-**Improvements:**
-
-| Validation Function | Description | Applied To |
-|---------------------|-------------|------------|
-| `_validate_session_id()` | Validates UUID format or alphanumeric (letters, numbers, underscores, hyphens) | All endpoints |
-| `_validate_message_content()` | Ensures message is non-empty string | message.py |
-| `_validate_role()` | Validates role is "user" or "assistant" | message.py |
-| `_validate_task_id()` | Validates task_id format (UUID or alphanumeric) | task.py |
-| `_validate_msg_id()` | Validates msg_id format (UUID or alphanumeric) | task.py |
-| IntegrityError Handling | User-friendly messages for database constraint violations | All endpoints |
-
-**Code Example:**
-
-```python
-import uuid
-import re
-
-def _validate_session_id(session_id: str) -> None:
-    """Validate session_id format (UUID or alphanumeric)."""
-    if not session_id:
-        raise ValueError("session_id is required")
-    
-    # Try UUID format first
-    try:
-        uuid.UUID(session_id)
-        return
-    except ValueError:
-        pass
-    
-    # Try alphanumeric format
-    if re.match(r'^[a-zA-Z0-9_-]+$', session_id):
-        return
-    
-    raise ValueError(
-        "session_id must be a valid UUID or alphanumeric string "
-        "(letters, numbers, underscores, hyphens)"
-    )
-
-def _validate_message_content(message: str) -> None:
-    """Validate message content is non-empty string."""
-    if not isinstance(message, str):
-        raise ValueError("message must be a string")
-    if not message.strip():
-        raise ValueError("message content cannot be empty")
-
-def _validate_role(role: str) -> None:
-    """Validate role is 'user' or 'assistant'."""
-    valid_roles = ['user', 'assistant']
-    if role not in valid_roles:
-        raise ValueError(f"role must be one of: {', '.join(valid_roles)}")
-```
-
-**Benefits:**
-- Prevents invalid data from entering the database
-- Provides clear error messages to API consumers
-- Reduces debugging time for integration issues
-- Improves API robustness
-
----
-
-## 3. Architecture Decisions
-
-### 3.1 Validation Functions Duplicated in Each Route File
-
-**Decision:** Each route file (`session.py`, `message.py`, `task.py`) contains its own copy of validation functions.
-
-**Rationale:**
-- **Avoids circular imports**: If validation functions were in a shared module, importing them could cause circular dependency issues with the Flask app and database models.
-- **Single responsibility**: Each route file is self-contained and can be modified independently.
-- **Minimal dependencies**: Route files don't need to import from other route files.
-
-**Alternative Considered:**
-- Creating a `validators.py` module - rejected due to potential circular import issues.
-
-### 3.2 Exponential Backoff for Retry Mechanism
-
-**Decision:** Use exponential backoff with base delay of 5 seconds.
-
-**Rationale:**
-- **Prevents thundering herd**: Exponential backoff distributes retry attempts over time.
-- **Reduces load on external services**: Each retry attempt puts load on external scripts; exponential backoff reduces this load.
-- **Industry standard**: Exponential backoff is a widely accepted pattern for retry mechanisms.
-
-**Formula:** `delay = base_delay * (2 ^ attempt)`
-
-### 3.3 Circuit Breaker Pattern
-
-**Decision:** Implement circuit breaker with threshold of 5 failures.
-
-**Rationale:**
-- **Prevents cascading failures**: When external scripts consistently fail, the circuit breaker opens and stops sending requests.
-- **Fail fast**: Instead of repeatedly failing, the system quickly indicates it's unavailable.
-- **Self-healing**: After a cooldown period, the circuit breaker can be reset to allow requests again.
-
-**States:**
-- **Closed**: Normal operation, requests pass through
-- **Open**: Failures exceeded threshold, requests are blocked
-- **Half-Open**: Testing if the service has recovered
-
----
-
-## 4. Testing Status
-
-### 4.1 Test Results
-
-| Test Suite | Passed | Skipped | Failed |
-|------------|--------|---------|--------|
-| Unit Tests | 115 | 6 | 0 |
-| Integration Tests | 12 | 0 | 0 |
-| E2E Tests | 7 | 0 | 0 |
-| Cron Integration Tests | 7 | 0 | 0 |
-
-### 4.2 Test Coverage
-
-| Component | Coverage |
-|-----------|----------|
-| Storage | ✅ Session and message CRUD operations |
-| API Routes | ✅ All endpoints with valid and invalid inputs |
-| Croner | ✅ Message consumption, summarization, cleanup |
-| Worker | ✅ Process spawning and lifecycle management |
-| Validation | ✅ All validation functions |
-
-### 4.3 Edge Cases Tested
-
-- Invalid session_id formats (UUID and alphanumeric validation)
-- Empty message content
-- Invalid role values
-- Database constraint violations (IntegrityError)
-- Concurrent message processing
-- Worker script failures and retries
-
----
-
-## 5. Future Recommendations
-
-### 5.1 Database Optimization
-
-- Add composite indexes for common query patterns (e.g., `session_id` + `create_time`)
-- Consider connection pooling configuration for high-load scenarios
-
-### 5.2 Monitoring and Observability
-
-- Add Prometheus metrics for API request latency
-- Add health check endpoint for container orchestration
-- Add structured logging with correlation IDs
-
-### 5.3 Security Enhancements
-
-- Add API authentication (JWT or API key)
-- Add rate limiting per session
-- Add input sanitization for XSS prevention
-
----
-
-## 6. Changelog
+## 5. Changelog
 
 | Date | Change | Author |
 |------|--------|--------|
-| 2026-04-15 | Initial Code Improvement Proposal | km-k25 |
-| 2026-04-15 | Documented configuration validation | mm-m25 |
-| 2026-04-15 | Documented cron job resilience | mm-m25 |
-| 2026-04-15 | Documented edge case handling | mm-m25 |
+| 2026-04-16 | Identified missing GetSession API | km-k25 |
+| 2026-04-16 | Created implementation checklist | km-k25 |
+
+---
+
+## Appendix: Existing Improvements (Already Implemented)
+
+### A.1 Configuration Validation
+
+**File:** `configer/env_config.py`
+
+Validates `TOPSAILAI_AGENT_DAEMON_PROCESSOR`, `TOPSAILAI_AGENT_DAEMON_SUMMARIZER`, `TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER` scripts exist and are executable.
+
+### A.2 Cron Job Resilience
+
+**Files:** `croner/jobs/message_consumer.py`, `croner/jobs/message_summarizer.py`
+
+- Retry mechanism with exponential backoff
+- Circuit breaker pattern for external script failures
+- Execution metrics logging
+
+### A.3 Edge Case Handling
+
+**Files:** `api/routes/session.py`, `api/routes/message.py`, `api/routes/task.py`
+
+Validation functions for session_id, message_content, role, task_id, msg_id with proper error handling.
