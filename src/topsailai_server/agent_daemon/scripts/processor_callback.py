@@ -14,17 +14,25 @@ import sys
 import requests
 from typing import Optional
 
+CWD = os.path.dirname(__file__)
+for _ in range(3):
+    if os.path.exists(f"{CWD}/topsailai"):
+        break
+    CWD = os.path.dirname(CWD)
+if os.path.exists(f"{CWD}/topsailai"):
+    sys.path.insert(0, CWD)
+
 from topsailai.utils.thread_local_tool import set_thread_name
 from topsailai_server.agent_daemon import logger
 
 
 def get_env(key: str, required: bool = True) -> Optional[str]:
     """Get environment variable.
-    
+
     Args:
         key: Environment variable name
         required: If True, return None when variable is missing or empty
-        
+
     Returns:
         Environment variable value or None if not required or missing
     """
@@ -93,9 +101,9 @@ def main():
     # Check if any required env var is missing
     if not session_id or not msg_id or not final_answer:
         sys.exit(1)
-    
+
     set_thread_name(session_id)
-    
+
     # Get optional environment variables
     task_id = os.environ.get("TOPSAILAI_TASK_ID")
 
