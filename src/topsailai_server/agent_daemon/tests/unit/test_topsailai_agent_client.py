@@ -90,10 +90,10 @@ class TestCLIArgumentParsing(unittest.TestCase):
 class TestCLICommandExecution(unittest.TestCase):
     """Test CLI command execution (U-030)"""
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.SessionClient')
+    @patch('topsailai_server.agent_daemon.client.session_do.SessionClient')
     def test_do_client_health_success(self, mock_session_client_class):
         """U-030-01: Test health check command execution - success"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_health
+        from topsailai_server.agent_daemon.client import do_client_health
         
         # Setup mock
         mock_client = MagicMock()
@@ -112,10 +112,10 @@ class TestCLICommandExecution(unittest.TestCase):
         self.assertTrue(result)
         mock_client.health_check.assert_called_once()
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.SessionClient')
+    @patch('topsailai_server.agent_daemon.client.session_do.SessionClient')
     def test_do_client_health_failure(self, mock_session_client_class):
         """U-030-02: Test health check command execution - failure"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_health
+        from topsailai_server.agent_daemon.client import do_client_health
         
         # Setup mock
         mock_client = MagicMock()
@@ -133,10 +133,10 @@ class TestCLICommandExecution(unittest.TestCase):
         # Verify
         self.assertFalse(result)
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.SessionClient')
+    @patch('topsailai_server.agent_daemon.client.session_do.SessionClient')
     def test_do_client_list_sessions(self, mock_session_client_class):
         """U-030-03: Test list-sessions command execution"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_list_sessions
+        from topsailai_server.agent_daemon.client import do_client_list_sessions
         
         # Setup mock
         mock_client = MagicMock()
@@ -163,10 +163,10 @@ class TestCLICommandExecution(unittest.TestCase):
         self.assertTrue(result)
         mock_client.list_sessions.assert_called_once()
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.SessionClient')
+    @patch('topsailai_server.agent_daemon.client.session_do.SessionClient')
     def test_do_client_get_session(self, mock_session_client_class):
         """U-030-04: Test get-session command execution"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_get_session
+        from topsailai_server.agent_daemon.client import do_client_get_session
         
         # Setup mock
         mock_client = MagicMock()
@@ -186,10 +186,10 @@ class TestCLICommandExecution(unittest.TestCase):
         self.assertTrue(result)
         mock_client.get_session.assert_called_once_with('test-session-123', verbose=False)
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.MessageClient')
+    @patch('topsailai_server.agent_daemon.client.message_do.MessageClient')
     def test_do_client_send_message(self, mock_message_client_class):
         """U-030-05: Test send-message command execution"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_send_message
+        from topsailai_server.agent_daemon.client import do_client_send_message
         
         # Setup mock
         mock_client = MagicMock()
@@ -212,10 +212,10 @@ class TestCLICommandExecution(unittest.TestCase):
         self.assertTrue(result)
         mock_client.send_message.assert_called_once()
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.MessageClient')
+    @patch('topsailai_server.agent_daemon.client.message_do.MessageClient')
     def test_do_client_get_messages(self, mock_message_client_class):
         """U-030-06: Test get-messages command execution"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_get_messages
+        from topsailai_server.agent_daemon.client import do_client_get_messages
         
         # Setup mock
         mock_client = MagicMock()
@@ -241,10 +241,10 @@ class TestCLICommandExecution(unittest.TestCase):
         self.assertTrue(result)
         mock_client.list_messages.assert_called_once()
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.TaskClient')
+    @patch('topsailai_server.agent_daemon.client.task_do.TaskClient')
     def test_do_client_set_task_result(self, mock_task_client_class):
         """U-030-07: Test set-task-result command execution"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_set_task_result
+        from topsailai_server.agent_daemon.client import do_client_set_task_result
         
         # Setup mock
         mock_client = MagicMock()
@@ -267,10 +267,10 @@ class TestCLICommandExecution(unittest.TestCase):
         self.assertTrue(result)
         mock_client.set_task_result.assert_called_once()
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.TaskClient')
+    @patch('topsailai_server.agent_daemon.client.task_do.TaskClient')
     def test_do_client_get_tasks(self, mock_task_client_class):
         """U-030-08: Test get-tasks command execution"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_get_tasks
+        from topsailai_server.agent_daemon.client import do_client_get_tasks
         
         # Setup mock
         mock_client = MagicMock()
@@ -297,10 +297,10 @@ class TestCLICommandExecution(unittest.TestCase):
         self.assertTrue(result)
         mock_client.list_tasks.assert_called_once()
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.SessionClient')
+    @patch('topsailai_server.agent_daemon.client.session_do.SessionClient')
     def test_do_client_process_session(self, mock_session_client_class):
         """U-030-09: Test process-session command execution"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_process_session
+        from topsailai_server.agent_daemon.client import do_client_process_session
         
         # Setup mock
         mock_client = MagicMock()
@@ -320,10 +320,10 @@ class TestCLICommandExecution(unittest.TestCase):
         self.assertTrue(result)
         mock_client.process_session.assert_called_once_with('test-session-123', verbose=False)
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.SessionClient')
+    @patch('topsailai_server.agent_daemon.client.session_do.SessionClient')
     def test_do_client_delete_sessions(self, mock_session_client_class):
         """U-030-10: Test delete-sessions command execution"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_delete_sessions
+        from topsailai_server.agent_daemon.client import do_client_delete_sessions
         
         # Setup mock
         mock_client = MagicMock()
@@ -344,10 +344,10 @@ class TestCLICommandExecution(unittest.TestCase):
         self.assertTrue(result)
         mock_client.delete_sessions.assert_called_once()
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.SessionClient')
+    @patch('topsailai_server.agent_daemon.client.session_do.SessionClient')
     def test_do_client_delete_sessions_with_comma_separated(self, mock_session_client_class):
         """U-030-11: Test delete-sessions with comma-separated IDs"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_delete_sessions
+        from topsailai_server.agent_daemon.client import do_client_delete_sessions
         
         # Setup mock
         mock_client = MagicMock()
@@ -368,10 +368,10 @@ class TestCLICommandExecution(unittest.TestCase):
         self.assertTrue(result)
         mock_client.delete_sessions.assert_called_once()
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.SessionClient')
+    @patch('topsailai_server.agent_daemon.client.session_do.SessionClient')
     def test_do_client_delete_sessions_no_ids(self, mock_session_client_class):
         """U-030-12: Test delete-sessions with no session IDs - should fail"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_delete_sessions
+        from topsailai_server.agent_daemon.client import do_client_delete_sessions
         
         # Setup mock
         mock_client = MagicMock()
@@ -392,10 +392,10 @@ class TestCLICommandExecution(unittest.TestCase):
         self.assertFalse(result)
         mock_client.delete_sessions.assert_not_called()
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.SessionClient')
+    @patch('topsailai_server.agent_daemon.client.session_do.SessionClient')
     def test_do_client_list_sessions_with_session_ids_filter(self, mock_session_client_class):
         """U-030-13: Test list-sessions with session_ids filter"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_list_sessions
+        from topsailai_server.agent_daemon.client import do_client_list_sessions
         
         # Setup mock
         mock_client = MagicMock()
@@ -424,10 +424,10 @@ class TestCLICommandExecution(unittest.TestCase):
         call_kwargs = mock_client.list_sessions.call_args[1]
         self.assertEqual(call_kwargs['session_ids'], ['session-1', 'session-2'])
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.SessionClient')
+    @patch('topsailai_server.agent_daemon.client.session_do.SessionClient')
     def test_do_client_health_exception(self, mock_session_client_class):
         """U-030-14: Test health check with exception"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_health
+        from topsailai_server.agent_daemon.client import do_client_health
         
         # Setup mock to raise exception
         mock_client = MagicMock()
@@ -445,10 +445,10 @@ class TestCLICommandExecution(unittest.TestCase):
         # Verify - should return False on exception
         self.assertFalse(result)
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.MessageClient')
+    @patch('topsailai_server.agent_daemon.client.message_do.MessageClient')
     def test_do_client_send_message_with_processed_msg_id(self, mock_message_client_class):
         """U-030-15: Test send-message with processed_msg_id"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_send_message
+        from topsailai_server.agent_daemon.client import do_client_send_message
         
         # Setup mock
         mock_client = MagicMock()
@@ -478,10 +478,10 @@ class TestCLICommandExecution(unittest.TestCase):
 class TestCLIErrorHandling(unittest.TestCase):
     """Test CLI error handling (U-030 Error Handling)"""
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.SessionClient')
+    @patch('topsailai_server.agent_daemon.client.session_do.SessionClient')
     def test_list_sessions_api_error(self, mock_session_client_class):
         """U-030-ERR-01: Test list-sessions with API error"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_list_sessions
+        from topsailai_server.agent_daemon.client import do_client_list_sessions
         
         # Setup mock to raise exception
         mock_client = MagicMock()
@@ -507,10 +507,10 @@ class TestCLIErrorHandling(unittest.TestCase):
         # Verify - should return False on exception
         self.assertFalse(result)
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.MessageClient')
+    @patch('topsailai_server.agent_daemon.client.message_do.MessageClient')
     def test_send_message_api_error(self, mock_message_client_class):
         """U-030-ERR-02: Test send-message with API error"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_send_message
+        from topsailai_server.agent_daemon.client import do_client_send_message
         
         # Setup mock to raise exception
         mock_client = MagicMock()
@@ -533,10 +533,10 @@ class TestCLIErrorHandling(unittest.TestCase):
         # Verify - should return False on exception
         self.assertFalse(result)
     
-    @patch('topsailai_server.agent_daemon.topsailai_agent_client.TaskClient')
+    @patch('topsailai_server.agent_daemon.client.task_do.TaskClient')
     def test_set_task_result_api_error(self, mock_task_client_class):
         """U-030-ERR-03: Test set-task-result with API error"""
-        from topsailai_server.agent_daemon.topsailai_agent_client import do_client_set_task_result
+        from topsailai_server.agent_daemon.client import do_client_set_task_result
         
         # Setup mock to raise exception
         mock_client = MagicMock()

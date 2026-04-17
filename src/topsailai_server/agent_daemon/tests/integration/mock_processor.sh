@@ -1,79 +1,43 @@
 #!/bin/bash
+#
 # Mock processor script for integration testing
-# This script simulates the TOPSAILAI_AGENT_DAEMON_PROCESSOR
-# It calls back to the API to report results
-# Uses jq for proper JSON construction to avoid shell interpolation issues
+# This script simulates the TOPSAILAI_AGENT_DAEMON_PROCESSOR functionality
+#
+# It processes the message and calls the callback API to update processed_msg_id
+#
 
-BASE_URL="${TOPSAILAI_AGENT_DAEMON_BASE_URL:-http://localhost:7373}"
-SESSION_ID="$TOPSAILAI_SESSION_ID"
-MSG_ID="$TOPSAILAI_MSG_ID"
-TASK="$TOPSAILAI_TASK"
+echo "=== Mock Processor Started ==="
+echo "Session ID: ${TOPSAILAI_SESSION_ID:-N/A}"
+echo "Message ID: ${TOPSAILAI_MSG_ID:-N/A}"
+echo "Task: ${TOPSAILAI_TASK:-N/A}"
+echo "=== Processing Complete ==="
 
-echo "Processor called with:"
-echo "  TOPSAILAI_MSG_ID: $MSG_ID"
-echo "  TOPSAILAI_TASK: $TASK"
-echo "  TOPSAILAI_SESSION_ID: $SESSION_ID"
-echo "  BASE_URL: $BASE_URL"
+# Generate a mock result that matches test expectations
+# The test expects "Direct reply to:" or "Direct answer to:" in the response
+RESULT="Direct reply to: ${TOPSAILAI_TASK:-Task completed successfully}"
 
-# Simulate processing time
-sleep 1
+# Set the final answer for callback
+export TOPSAILAI_FINAL_ANSWER="$RESULT"
 
-# Determine behavior based on message content
-# If message contains "task" keyword, generate a task result
-# Otherwise, reply directly
-if echo "$TASK" | grep -qi "task"; then
-    # Generate a task result
-    TASK_ID="task-$(date +%s)-$$"
-    TASK_RESULT="Task completed for: $TASK"
-    
-    echo "Generating task result..."
-    echo "  task_id: $TASK_ID"
-    echo "  task_result: $TASK_RESULT"
-    
-    # Call SetTaskResult API using jq for proper JSON escaping
-    JSON_PAYLOAD=$(jq -n \
-        --arg sid "$SESSION_ID" \
-        --arg mid "$MSG_ID" \
-        --arg tid "$TASK_ID" \
-        --arg tr "$TASK_RESULT" \
-        '{session_id: $sid, processed_msg_id: $mid, task_id: $tid, task_result: $tr}')
-    
-    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/api/v1/task" \
-        -H "Content-Type: application/json" \
-        -d "$JSON_PAYLOAD")
-    
-    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | sed '$d')
-    
-    echo "SetTaskResult API response:"
-    echo "  HTTP Code: $HTTP_CODE"
-    echo "  Body: $BODY"
+# Call the processor callback script to update processed_msg_id
+# The script is located at: tests/integration/mock_processor.sh
+# We need to go up 2 levels: integration -> agent_daemon -> scripts
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CALLBACK_SCRIPT="$SCRIPT_DIR/../../scripts/processor_callback.py"
+
+if [ -f "$CALLBACK_SCRIPT" ]; then
+    echo "Calling processor callback..."
+    python3 "$CALLBACK_SCRIPT"
+    EXIT_CODE=$?
+    if [ $EXIT_CODE -eq 0 ]; then
+        echo "Callback successful"
+    else
+        echo "Callback failed with exit code: $EXIT_CODE"
+    fi
 else
-    # Reply directly with a message
-    REPLY_MESSAGE="Direct reply to: $TASK"
-    
-    echo "Sending direct reply..."
-    echo "  reply_message: $REPLY_MESSAGE"
-    
-    # Call ReceiveMessage API using jq for proper JSON escaping
-    JSON_PAYLOAD=$(jq -n \
-        --arg sid "$SESSION_ID" \
-        --arg msg "$REPLY_MESSAGE" \
-        --arg role "assistant" \
-        --arg pmid "$MSG_ID" \
-        '{session_id: $sid, message: $msg, role: $role, processed_msg_id: $pmid}')
-    
-    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/api/v1/message" \
-        -H "Content-Type: application/json" \
-        -d "$JSON_PAYLOAD")
-    
-    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | sed '$d')
-    
-    echo "ReceiveMessage API response:"
-    echo "  HTTP Code: $HTTP_CODE"
-    echo "  Body: $BODY"
+    echo "Callback script not found: $CALLBACK_SCRIPT"
+    echo "Result: $RESULT"
 fi
 
-# Exit successfully
+echo "Result: $RESULT"
 exit 0

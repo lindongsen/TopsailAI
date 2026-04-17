@@ -3,6 +3,7 @@
 Client Operations Integration Tests for agent_daemon
 
 Tests all CLI operations of topsailai_agent_client comprehensively.
+These tests require the server to be running. Use --start-server flag to auto-start.
 """
 
 import subprocess
@@ -35,13 +36,13 @@ def run_client_command(args, check=True):
 class TestClientBasicOperations:
     """Test basic client operations"""
 
-    def test_health_check(self):
+    def test_health_check(self, require_server):
         """Test health command"""
         result = run_client_command(['health'])
         assert result.returncode == 0
         assert 'healthy' in result.stdout.lower() or 'health' in result.stdout.lower()
 
-    def test_list_sessions_empty(self):
+    def test_list_sessions_empty(self, require_server):
         """Test list-sessions with no sessions"""
         result = run_client_command(['list-sessions'])
         assert result.returncode == 0
@@ -51,7 +52,7 @@ class TestClientBasicOperations:
 class TestClientSessionManagement:
     """Test session management operations"""
 
-    def test_send_message_creates_session(self):
+    def test_send_message_creates_session(self, require_server):
         """Test send-message creates a new session"""
         session_id = f"test-session-{uuid.uuid4().hex[:8]}"
         
@@ -71,7 +72,7 @@ class TestClientSessionManagement:
         # Cleanup
         run_client_command(['delete-sessions', session_id], check=False)
 
-    def test_send_message_with_assistant_role(self):
+    def test_send_message_with_assistant_role(self, require_server):
         """Test send-message with assistant role"""
         session_id = f"test-session-{uuid.uuid4().hex[:8]}"
         
@@ -87,7 +88,7 @@ class TestClientSessionManagement:
         # Cleanup
         run_client_command(['delete-sessions', session_id], check=False)
 
-    def test_get_messages(self):
+    def test_get_messages(self, require_server):
         """Test get-messages command"""
         session_id = f"test-session-{uuid.uuid4().hex[:8]}"
         
@@ -108,7 +109,7 @@ class TestClientSessionManagement:
         # Cleanup
         run_client_command(['delete-sessions', session_id], check=False)
 
-    def test_list_messages(self):
+    def test_list_messages(self, require_server):
         """Test list-messages command"""
         session_id = f"test-session-{uuid.uuid4().hex[:8]}"
         
@@ -129,7 +130,7 @@ class TestClientSessionManagement:
         # Cleanup
         run_client_command(['delete-sessions', session_id], check=False)
 
-    def test_send_message_with_processed_msg_id(self):
+    def test_send_message_with_processed_msg_id(self, require_server):
         """Test send-message with processed-msg-id"""
         session_id = f"test-session-{uuid.uuid4().hex[:8]}"
         
@@ -172,7 +173,7 @@ class TestClientSessionManagement:
 class TestClientTaskManagement:
     """Test task management operations"""
 
-    def test_set_task_result(self):
+    def test_set_task_result(self, require_server):
         """Test set-task-result command"""
         session_id = f"test-session-{uuid.uuid4().hex[:8]}"
         
@@ -211,7 +212,7 @@ class TestClientTaskManagement:
         # Cleanup
         run_client_command(['delete-sessions', session_id], check=False)
 
-    def test_get_tasks(self):
+    def test_get_tasks(self, require_server):
         """Test get-tasks command"""
         session_id = f"test-session-{uuid.uuid4().hex[:8]}"
         
@@ -231,7 +232,7 @@ class TestClientTaskManagement:
         # Cleanup
         run_client_command(['delete-sessions', session_id], check=False)
 
-    def test_list_tasks(self):
+    def test_list_tasks(self, require_server):
         """Test list-tasks command"""
         session_id = f"test-session-{uuid.uuid4().hex[:8]}"
         
@@ -255,7 +256,7 @@ class TestClientTaskManagement:
 class TestClientSessionProcessing:
     """Test session processing operations"""
 
-    def test_process_session(self):
+    def test_process_session(self, require_server):
         """Test process-session command"""
         session_id = f"test-session-{uuid.uuid4().hex[:8]}"
         
@@ -275,7 +276,7 @@ class TestClientSessionProcessing:
         # Cleanup
         run_client_command(['delete-sessions', session_id], check=False)
 
-    def test_delete_single_session(self):
+    def test_delete_single_session(self, require_server):
         """Test delete-sessions with single session"""
         session_id = f"test-session-{uuid.uuid4().hex[:8]}"
         
@@ -300,7 +301,7 @@ class TestClientSessionProcessing:
         result = run_client_command(['list-sessions'])
         assert session_id not in result.stdout
 
-    def test_delete_multiple_sessions(self):
+    def test_delete_multiple_sessions(self, require_server):
         """Test delete-sessions with multiple sessions"""
         session_ids = [f"test-session-{uuid.uuid4().hex[:8]}" for _ in range(3)]
         
@@ -327,7 +328,7 @@ class TestClientSessionProcessing:
 class TestClientEdgeCases:
     """Test edge cases and error handling"""
 
-    def test_send_message_special_characters(self):
+    def test_send_message_special_characters(self, require_server):
         """Test send-message with special characters"""
         session_id = f"test-session-{uuid.uuid4().hex[:8]}"
         
@@ -347,7 +348,7 @@ class TestClientEdgeCases:
         # Cleanup
         run_client_command(['delete-sessions', session_id], check=False)
 
-    def test_send_message_unicode(self):
+    def test_send_message_unicode(self, require_server):
         """Test send-message with unicode content"""
         session_id = f"test-session-{uuid.uuid4().hex[:8]}"
         
@@ -363,7 +364,7 @@ class TestClientEdgeCases:
         # Cleanup
         run_client_command(['delete-sessions', session_id], check=False)
 
-    def test_send_message_long_content(self):
+    def test_send_message_long_content(self, require_server):
         """Test send-message with long content"""
         session_id = f"test-session-{uuid.uuid4().hex[:8]}"
         
@@ -379,7 +380,7 @@ class TestClientEdgeCases:
         # Cleanup
         run_client_command(['delete-sessions', session_id], check=False)
 
-    def test_get_messages_nonexistent_session(self):
+    def test_get_messages_nonexistent_session(self, require_server):
         """Test get-messages with non-existent session"""
         result = run_client_command([
             'get-messages',
@@ -388,7 +389,7 @@ class TestClientEdgeCases:
         # Should handle gracefully
         assert result.returncode == 0
 
-    def test_process_session_nonexistent(self):
+    def test_process_session_nonexistent(self, require_server):
         """Test process-session with non-existent session"""
         result = run_client_command([
             'process-session',
@@ -397,7 +398,7 @@ class TestClientEdgeCases:
         # Should handle gracefully
         assert result.returncode == 0
 
-    def test_delete_nonexistent_session(self):
+    def test_delete_nonexistent_session(self, require_server):
         """Test delete-sessions with non-existent session"""
         result = run_client_command([
             'delete-sessions',
@@ -411,7 +412,7 @@ class TestClientEdgeCases:
 class TestClientConcurrentOperations:
     """Test concurrent operations"""
 
-    def test_multiple_sessions_independent(self):
+    def test_multiple_sessions_independent(self, require_server):
         """Test that multiple sessions are independent"""
         session_ids = [f"test-session-{uuid.uuid4().hex[:8]}" for _ in range(5)]
         

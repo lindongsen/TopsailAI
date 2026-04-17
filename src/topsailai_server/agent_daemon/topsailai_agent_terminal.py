@@ -268,10 +268,10 @@ class AgentTerminal:
         print(f"  Type your message and press Ctrl+D to send | Ctrl+C to exit".ljust(self.term_width))
         print(SPLIT_LINE)
 
-    def _generate_content_fingerprint(self, messages, processed_msg_id):
+    def _generate_content_fingerprint(self, messages, processed_msg_id, session_status):
         """Generate a fingerprint of the current content for comparison"""
         # Create a fingerprint based on message count, last message id, and processed_msg_id
-        parts = [str(len(messages))]
+        parts = [session_status, str(len(messages))]
         if messages:
             parts.append(messages[-1].get('msg_id', ''))
         if processed_msg_id:
@@ -292,7 +292,7 @@ class AgentTerminal:
         status = session.get('status')
 
         # Generate content fingerprint and compare with last content
-        current_fingerprint = self._generate_content_fingerprint(messages, processed_msg_id)
+        current_fingerprint = self._generate_content_fingerprint(messages, processed_msg_id, status)
         if not force and current_fingerprint == self.last_messages_content:
             # Content unchanged, no need to refresh
             return False

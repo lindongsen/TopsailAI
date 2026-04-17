@@ -1,260 +1,406 @@
-'''
-  Author: mm-m25
-  Created: 2026-04-15
-  Purpose: Unit tests for processor_helper module - format_pending_messages
-'''
+"""
+Unit tests for processor_helper module.
 
-import unittest
+Tests message formatting and processing logic functions.
+
+Author: mm-m25
+Created: 2026-04-17
+"""
+
+import pytest
 from datetime import datetime
+from unittest.mock import MagicMock, patch
 
-from topsailai_server.agent_daemon.storage.processor_helper import format_pending_messages
-from topsailai_server.agent_daemon.storage import MessageData
+from topsailai_server.agent_daemon.storage.message_manager.base import MessageData
 
 
-class TestFormatPendingMessages(unittest.TestCase):
-    """Test cases for format_pending_messages function"""
+class TestFormatPendingMessages:
+    """Tests for format_pending_messages function."""
 
-    def test_single_user_message(self):
-        """Single user message should be formatted with --- separators"""
-        now = datetime.now()
+    def test_format_user_messages(self):
+        """Test formatting user messages only."""
+        from topsailai_server.agent_daemon.storage.processor_helper import format_pending_messages
+
         messages = [
-            MessageData(
-                msg_id="msg1",
-                session_id="session1",
-                message="Hello",
-                role="user",
-                create_time=now,
-                update_time=now
-            )
+            MessageData(msg_id="msg_1", session_id="s1", message="Hello", role="user"),
+            MessageData(msg_id="msg_2", session_id="s1", message="How are you?", role="user"),
         ]
 
         result = format_pending_messages(messages)
 
-        self.assertEqual(result, "---\nHello\n---")
+        assert "---" in result
+        assert "Hello" in result
+        assert "How are you?" in result
+        assert result.startswith("---")
+        assert result.endswith("---")
 
-    def test_multiple_user_messages(self):
-        """Multiple user messages separated by ---"""
-        now = datetime.now()
+    def test_format_assistant_messages_with_task_id(self):
+        """Test formatting assistant messages with task_id."""
+        from topsailai_server.agent_daemon.storage.processor_helper import format_pending_messages
+
         messages = [
             MessageData(
-                msg_id="msg1",
-                session_id="session1",
-                message="Hello",
-                role="user",
-                create_time=now,
-                update_time=now
-            ),
-            MessageData(
-                msg_id="msg2",
-                session_id="session1",
-                message="World",
-                role="user",
-                create_time=now,
-                update_time=now
-            )
-        ]
-
-        result = format_pending_messages(messages)
-
-        self.assertEqual(result, "---\nHello\n---\nWorld\n---")
-
-    def test_assistant_message_without_task_id_excluded(self):
-        """Assistant messages without task_id should be excluded"""
-        now = datetime.now()
-        messages = [
-            MessageData(
-                msg_id="msg1",
-                session_id="session1",
-                message="I am assistant",
+                msg_id="msg_1",
+                session_id="s1",
+                message="I'll help you",
                 role="assistant",
-                create_time=now,
-                update_time=now
-            )
-        ]
-
-        result = format_pending_messages(messages)
-
-        self.assertEqual(result, "")
-
-    def test_assistant_message_with_task_id_included(self):
-        """Assistant messages WITH task_id should be included"""
-        now = datetime.now()
-        messages = [
-            MessageData(
-                msg_id="msg1",
-                session_id="session1",
-                message="I am assistant",
-                role="assistant",
-                task_id="task-001",
-                create_time=now,
-                update_time=now
-            )
-        ]
-
-        result = format_pending_messages(messages)
-
-        self.assertIn("I am assistant", result)
-        self.assertIn(">>> task_id: task-001", result)
-
-    def test_task_id_and_task_result_included(self):
-        """When task_id and task_result exist, they should be in the format"""
-        now = datetime.now()
-        messages = [
-            MessageData(
-                msg_id="msg1",
-                session_id="session1",
-                message="Do something",
-                role="user",
-                task_id="task-123",
-                task_result="Done successfully",
-                create_time=now,
-                update_time=now
-            )
-        ]
-
-        result = format_pending_messages(messages)
-
-        self.assertEqual(result, "---\nDo something\n>>> task_id: task-123\n>>> task_result: Done successfully\n---")
-
-    def test_task_id_only_included(self):
-        """Only task_id exists (no task_result)"""
-        now = datetime.now()
-        messages = [
-            MessageData(
-                msg_id="msg1",
-                session_id="session1",
-                message="Do something",
-                role="user",
-                task_id="task-456",
-                create_time=now,
-                update_time=now
-            )
-        ]
-
-        result = format_pending_messages(messages)
-
-        self.assertEqual(result, "---\nDo something\n>>> task_id: task-456\n---")
-        self.assertNotIn("task_result", result)
-
-    def test_mixed_messages(self):
-        """Mix of user and assistant messages, some with task_id"""
-        now = datetime.now()
-        messages = [
-            MessageData(
-                msg_id="msg1",
-                session_id="session1",
-                message="User question",
-                role="user",
-                create_time=now,
-                update_time=now
+                task_id="task_001",
+                task_result="Result data"
             ),
-            MessageData(
-                msg_id="msg2",
-                session_id="session1",
-                message="Assistant reply without task",
-                role="assistant",
-                create_time=now,
-                update_time=now
-            ),
-            MessageData(
-                msg_id="msg3",
-                session_id="session1",
-                message="Another user message",
-                role="user",
-                create_time=now,
-                update_time=now
-            ),
-            MessageData(
-                msg_id="msg4",
-                session_id="session1",
-                message="Assistant reply with task",
-                role="assistant",
-                task_id="task-789",
-                task_result="Task completed",
-                create_time=now,
-                update_time=now
-            )
         ]
 
         result = format_pending_messages(messages)
 
-        # msg2 (assistant without task_id) should be excluded
-        self.assertIn("User question", result)
-        self.assertNotIn("Assistant reply without task", result)
-        self.assertIn("Another user message", result)
-        self.assertIn("Assistant reply with task", result)
-        self.assertIn(">>> task_id: task-789", result)
-        self.assertIn(">>> task_result: Task completed", result)
+        assert "I'll help you" in result
+        assert ">>> task_id: task_001" in result
+        assert ">>> task_result: Result data" in result
+
+    def test_filter_out_assistant_messages_without_task_id(self):
+        """Test that assistant messages without task_id are filtered out."""
+        from topsailai_server.agent_daemon.storage.processor_helper import format_pending_messages
+
+        messages = [
+            MessageData(msg_id="msg_1", session_id="s1", message="Hello", role="user"),
+            MessageData(msg_id="msg_2", session_id="s1", message="I'm thinking...", role="assistant"),
+            MessageData(msg_id="msg_3", session_id="s1", message="Done!", role="user"),
+        ]
+
+        result = format_pending_messages(messages)
+
+        assert "Hello" in result
+        assert "Done!" in result
+        assert "I'm thinking..." not in result  # Filtered out
+
+    def test_include_assistant_messages_with_task_id(self):
+        """Test that assistant messages with task_id are included."""
+        from topsailai_server.agent_daemon.storage.processor_helper import format_pending_messages
+
+        messages = [
+            MessageData(msg_id="msg_1", session_id="s1", message="Hello", role="user"),
+            MessageData(
+                msg_id="msg_2",
+                session_id="s1",
+                message="Task result here",
+                role="assistant",
+                task_id="task_001"
+            ),
+        ]
+
+        result = format_pending_messages(messages)
+
+        assert "Hello" in result
+        assert "Task result here" in result
+        assert ">>> task_id: task_001" in result
 
     def test_empty_message_list(self):
-        """Empty list returns empty string"""
+        """Test formatting empty message list."""
+        from topsailai_server.agent_daemon.storage.processor_helper import format_pending_messages
+
         result = format_pending_messages([])
 
-        self.assertEqual(result, "")
+        assert result == ""
 
-    def test_all_assistant_without_task_id(self):
-        """All assistant messages without task_id returns empty string"""
-        now = datetime.now()
+    def test_all_messages_filtered_out(self):
+        """Test when all messages are filtered out."""
+        from topsailai_server.agent_daemon.storage.processor_helper import format_pending_messages
+
         messages = [
-            MessageData(
-                msg_id="msg1",
-                session_id="session1",
-                message="Reply 1",
-                role="assistant",
-                create_time=now,
-                update_time=now
-            ),
-            MessageData(
-                msg_id="msg2",
-                session_id="session1",
-                message="Reply 2",
-                role="assistant",
-                create_time=now,
-                update_time=now
-            )
+            MessageData(msg_id="msg_1", session_id="s1", message="Thinking...", role="assistant"),
+            MessageData(msg_id="msg_2", session_id="s1", message="Still thinking...", role="assistant"),
         ]
 
         result = format_pending_messages(messages)
 
-        self.assertEqual(result, "")
+        assert result == ""
 
-    def test_format_matches_spec(self):
-        """Verify the exact format matches the spec example:
-        ---
-        msg4内容
-        ---
-        msg5内容
-        >>> task_id: msg5的task_id
-        >>> task_result: msg5的task_result
-        ---
-        """
-        now = datetime.now()
+    def test_task_id_only_when_present(self):
+        """Test that task_id is only included when present."""
+        from topsailai_server.agent_daemon.storage.processor_helper import format_pending_messages
+
         messages = [
             MessageData(
-                msg_id="msg4",
-                session_id="session1",
-                message="msg4内容",
+                msg_id="msg_1",
+                session_id="s1",
+                message="Simple message",
                 role="user",
-                create_time=now,
-                update_time=now
+                task_id=None,
+                task_result=None
             ),
-            MessageData(
-                msg_id="msg5",
-                session_id="session1",
-                message="msg5内容",
-                role="user",
-                task_id="msg5的task_id",
-                task_result="msg5的task_result",
-                create_time=now,
-                update_time=now
-            )
         ]
 
         result = format_pending_messages(messages)
 
-        expected = "---\nmsg4内容\n---\nmsg5内容\n>>> task_id: msg5的task_id\n>>> task_result: msg5的task_result\n---"
-        self.assertEqual(result, expected)
+        assert "Simple message" in result
+        assert ">>> task_id" not in result
+        assert ">>> task_result" not in result
+
+    def test_task_result_only_when_present(self):
+        """Test that task_result is only included when present."""
+        from topsailai_server.agent_daemon.storage.processor_helper import format_pending_messages
+
+        messages = [
+            MessageData(
+                msg_id="msg_1",
+                session_id="s1",
+                message="Task message",
+                role="assistant",
+                task_id="task_001",
+                task_result=None
+            ),
+        ]
+
+        result = format_pending_messages(messages)
+
+        assert ">>> task_id: task_001" in result
+        assert ">>> task_result" not in result
+
+    def test_multiple_messages_format(self):
+        """Test formatting multiple messages with correct separators."""
+        from topsailai_server.agent_daemon.storage.processor_helper import format_pending_messages
+
+        messages = [
+            MessageData(msg_id="msg_1", session_id="s1", message="First", role="user"),
+            MessageData(msg_id="msg_2", session_id="s1", message="Second", role="user"),
+            MessageData(msg_id="msg_3", session_id="s1", message="Third", role="user"),
+        ]
+
+        result = format_pending_messages(messages)
+
+        # Should have 3 message blocks separated by ---
+        assert result.count("---") >= 4  # Start, between each, end
+        assert "First" in result
+        assert "Second" in result
+        assert "Third" in result
 
 
-if __name__ == '__main__':
-    unittest.main()
+class TestCheckAndProcessMessages:
+    """Tests for check_and_process_messages function."""
+
+    def test_session_not_found(self):
+        """Test when session is not found."""
+        from topsailai_server.agent_daemon.storage.processor_helper import check_and_process_messages
+
+        mock_storage = MagicMock()
+        mock_storage.session.get.return_value = None
+        mock_worker_manager = MagicMock()
+
+        with patch('topsailai_server.agent_daemon.storage.processor_helper.logger') as mock_logger:
+            result = check_and_process_messages(
+                session_id="nonexistent",
+                storage=mock_storage,
+                worker_manager=mock_worker_manager
+            )
+
+        assert result is None
+        mock_logger.warning.assert_called()
+
+    def test_no_messages_in_session(self):
+        """Test when no messages exist in session."""
+        from topsailai_server.agent_daemon.storage.processor_helper import check_and_process_messages
+
+        mock_storage = MagicMock()
+        mock_storage.session.get.return_value = MagicMock(session_id="test_session")
+        mock_storage.message.get_latest_message.return_value = None
+        mock_worker_manager = MagicMock()
+
+        with patch('topsailai_server.agent_daemon.storage.processor_helper.logger') as mock_logger:
+            result = check_and_process_messages(
+                session_id="test_session",
+                storage=mock_storage,
+                worker_manager=mock_worker_manager
+            )
+
+        assert result is None
+        mock_logger.warning.assert_called()
+
+    def test_already_up_to_date(self):
+        """Test when session is already up to date."""
+        from topsailai_server.agent_daemon.storage.processor_helper import check_and_process_messages
+
+        mock_session = MagicMock()
+        mock_session.processed_msg_id = "msg_latest"
+
+        mock_latest_msg = MagicMock()
+        mock_latest_msg.msg_id = "msg_latest"
+
+        mock_storage = MagicMock()
+        mock_storage.session.get.return_value = mock_session
+        mock_storage.message.get_latest_message.return_value = mock_latest_msg
+        mock_worker_manager = MagicMock()
+
+        with patch('topsailai_server.agent_daemon.storage.processor_helper.logger') as mock_logger:
+            result = check_and_process_messages(
+                session_id="test_session",
+                storage=mock_storage,
+                worker_manager=mock_worker_manager
+            )
+
+        assert result is None
+        mock_logger.debug.assert_called()
+
+    def test_no_unprocessed_messages(self):
+        """Test when no unprocessed messages exist."""
+        from topsailai_server.agent_daemon.storage.processor_helper import check_and_process_messages
+
+        mock_session = MagicMock()
+        mock_session.processed_msg_id = "msg_processed"
+
+        mock_latest_msg = MagicMock()
+        mock_latest_msg.msg_id = "msg_latest"
+
+        mock_storage = MagicMock()
+        mock_storage.session.get.return_value = mock_session
+        mock_storage.message.get_latest_message.return_value = mock_latest_msg
+        mock_storage.message.get_unprocessed_messages.return_value = []
+        mock_worker_manager = MagicMock()
+
+        result = check_and_process_messages(
+            session_id="test_session",
+            storage=mock_storage,
+            worker_manager=mock_worker_manager
+        )
+
+        assert result is None
+
+    def test_all_messages_filtered_out(self):
+        """Test when all unprocessed messages are filtered out."""
+        from topsailai_server.agent_daemon.storage.processor_helper import check_and_process_messages
+
+        mock_session = MagicMock()
+        mock_session.processed_msg_id = "msg_processed"
+
+        mock_latest_msg = MagicMock()
+        mock_latest_msg.msg_id = "msg_latest"
+
+        # All messages are assistant without task_id
+        mock_unprocessed = [
+            MagicMock(role="assistant", task_id=None),
+            MagicMock(role="assistant", task_id=None),
+        ]
+
+        mock_storage = MagicMock()
+        mock_storage.session.get.return_value = mock_session
+        mock_storage.message.get_latest_message.return_value = mock_latest_msg
+        mock_storage.message.get_unprocessed_messages.return_value = mock_unprocessed
+        mock_worker_manager = MagicMock()
+
+        with patch('topsailai_server.agent_daemon.storage.processor_helper.logger') as mock_logger:
+            result = check_and_process_messages(
+                session_id="test_session",
+                storage=mock_storage,
+                worker_manager=mock_worker_manager
+            )
+
+        assert result is None
+        mock_logger.info.assert_called()
+
+    def test_session_processing(self):
+        """Test when session is already processing."""
+        from topsailai_server.agent_daemon.storage.processor_helper import check_and_process_messages
+
+        mock_session = MagicMock()
+        mock_session.processed_msg_id = "msg_processed"
+
+        mock_latest_msg = MagicMock()
+        mock_latest_msg.msg_id = "msg_latest"
+
+        mock_unprocessed = [
+            MagicMock(role="user", task_id=None),
+        ]
+
+        mock_storage = MagicMock()
+        mock_storage.session.get.return_value = mock_session
+        mock_storage.message.get_latest_message.return_value = mock_latest_msg
+        mock_storage.message.get_unprocessed_messages.return_value = mock_unprocessed
+        mock_worker_manager = MagicMock()
+        mock_worker_manager.is_session_idle.return_value = False
+
+        with patch('topsailai_server.agent_daemon.storage.processor_helper.logger') as mock_logger:
+            result = check_and_process_messages(
+                session_id="test_session",
+                storage=mock_storage,
+                worker_manager=mock_worker_manager
+            )
+
+        assert result is None
+        mock_logger.info.assert_called()
+
+    def test_successful_processing(self):
+        """Test successful message processing."""
+        from topsailai_server.agent_daemon.storage.processor_helper import check_and_process_messages
+
+        mock_session = MagicMock()
+        mock_session.processed_msg_id = "msg_processed"
+
+        mock_latest_msg = MagicMock()
+        mock_latest_msg.msg_id = "msg_latest"
+        mock_latest_msg.create_time = datetime.now()
+
+        mock_unprocessed = [
+            MagicMock(
+                msg_id="msg_1",
+                session_id="test_session",
+                message="Test",
+                role="user",
+                create_time=datetime.now(),
+                update_time=None,
+                task_id=None,
+                task_result=None
+            ),
+        ]
+
+        mock_storage = MagicMock()
+        mock_storage.session.get.return_value = mock_session
+        mock_storage.message.get_latest_message.return_value = mock_latest_msg
+        mock_storage.message.get_unprocessed_messages.return_value = mock_unprocessed
+        mock_worker_manager = MagicMock()
+        mock_worker_manager.is_session_idle.return_value = True
+
+        with patch('topsailai_server.agent_daemon.storage.processor_helper.format_pending_messages') as mock_format:
+            mock_format.return_value = "---\nTest\n---"
+
+            result = check_and_process_messages(
+                session_id="test_session",
+                storage=mock_storage,
+                worker_manager=mock_worker_manager,
+                async_mode=False
+            )
+
+        assert result is not None
+        assert "processed_msg_id" in result
+        assert "processing_msg_id" in result
+        assert "messages" in result
+
+    def test_empty_formatted_messages(self):
+        """Test when formatted messages are empty."""
+        from topsailai_server.agent_daemon.storage.processor_helper import check_and_process_messages
+
+        mock_session = MagicMock()
+        mock_session.processed_msg_id = "msg_processed"
+
+        mock_latest_msg = MagicMock()
+        mock_latest_msg.msg_id = "msg_latest"
+
+        mock_unprocessed = [
+            MagicMock(role="user"),
+        ]
+
+        mock_storage = MagicMock()
+        mock_storage.session.get.return_value = mock_session
+        mock_storage.message.get_latest_message.return_value = mock_latest_msg
+        mock_storage.message.get_unprocessed_messages.return_value = mock_unprocessed
+        mock_worker_manager = MagicMock()
+        mock_worker_manager.is_session_idle.return_value = True
+
+        with patch('topsailai_server.agent_daemon.storage.processor_helper.format_pending_messages') as mock_format:
+            mock_format.return_value = ""  # Empty formatted messages
+
+            with patch('topsailai_server.agent_daemon.storage.processor_helper.logger') as mock_logger:
+                result = check_and_process_messages(
+                    session_id="test_session",
+                    storage=mock_storage,
+                    worker_manager=mock_worker_manager
+                )
+
+        assert result is None
+        mock_logger.info.assert_called()

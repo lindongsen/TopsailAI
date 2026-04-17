@@ -138,7 +138,7 @@ def get_env(key: str, required: bool = True) -> Optional[str]:
 
 
 def call_set_task_result(session_id, processed_msg_id, task_id, task_result, base_url):
-    """Call SetTaskResult API to report task completion"""
+    """Call SetTaskResult API to report task completion."""
     url = f"{base_url}/api/v1/task"
     payload = {
         "session_id": session_id,
@@ -163,12 +163,12 @@ def call_set_task_result(session_id, processed_msg_id, task_id, task_result, bas
         logger.info("SetTaskResult response: %s", response.text)
         return True
     else:
-        logger.error("SetTaskResult API call failed after retries")
+        logger.exception("SetTaskResult API call failed after retries")
         return False
 
 
 def call_receive_message(session_id, processed_msg_id, message, role, base_url):
-    """Call ReceiveMessage API to send direct reply"""
+    """Call ReceiveMessage API to send direct reply."""
     url = f"{base_url}/api/v1/message"
     payload = {
         "session_id": session_id,
@@ -193,12 +193,12 @@ def call_receive_message(session_id, processed_msg_id, message, role, base_url):
         logger.info("ReceiveMessage response: %s", response.text)
         return True
     else:
-        logger.error("ReceiveMessage API call failed after retries")
+        logger.exception("ReceiveMessage API call failed after retries")
         return False
 
 
 def main():
-    """Main entry point for processor callback"""
+    """Main entry point for processor callback."""
     logger.info("Processor callback started")
 
     # Get required environment variables

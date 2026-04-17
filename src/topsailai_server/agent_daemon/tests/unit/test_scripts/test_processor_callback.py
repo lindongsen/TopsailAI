@@ -26,21 +26,18 @@ def mock_logger():
 
 
 @pytest.fixture
-def mock_post_success():
-    """Mock requests.post to return a successful response."""
+def mock_request_success():
+    """Mock request_with_retry to return a successful response."""
     resp = MagicMock(status_code=200, text="OK")
-    resp.raise_for_status = MagicMock()
-    with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post", return_value=resp):
+    with patch("topsailai_server.agent_daemon.scripts.processor_callback.request_with_retry", return_value=resp):
         yield resp
 
 
 @pytest.fixture
-def mock_post_failure():
-    """Mock requests.post to raise an HTTP error."""
-    resp = MagicMock(status_code=500, text="Internal Server Error")
-    resp.raise_for_status = MagicMock(side_effect=requests.exceptions.HTTPError("500 Server Error"))
-    with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post", return_value=resp):
-        yield resp
+def mock_request_failure():
+    """Mock request_with_retry to return None (failure)."""
+    with patch("topsailai_server.agent_daemon.scripts.processor_callback.request_with_retry", return_value=None):
+        yield None
 
 
 @pytest.fixture
@@ -62,7 +59,7 @@ class TestGetEnv:
             assert get_env("TEST_KEY", required=True) == "test_value"
 
     def test_required_env_var_missing_returns_none(self, mock_logger):
-        """Test get_env returns None when required env var is missing (exit handled by main)."""
+        """Test get_env returns None when required env var is missing."""
         with patch.dict(os.environ, {}, clear=True):
             result = get_env("MISSING_KEY", required=True)
             mock_logger.error.assert_called()
@@ -80,7 +77,7 @@ class TestGetEnv:
             mock_sys_exit.assert_not_called()
 
     def test_required_empty_string_returns_none(self, mock_logger):
-        """Test get_env returns None when required env var is empty string (exit handled by main)."""
+        """Test get_env returns None when required env var is empty string."""
         with patch.dict(os.environ, {"EMPTY_KEY": ""}):
             result = get_env("EMPTY_KEY", required=True)
             mock_logger.error.assert_called()
@@ -112,7 +109,7 @@ class TestGetEnv:
 class TestCallSetTaskResult:
     """Tests for call_set_task_result function."""
 
-    def test_success_returns_true(self, mock_post_success, mock_logger, base_url):
+    def test_success_returns_true(self, mock_request_success, mock_logger, base_url):
         """Test call_set_task_result returns True on successful API call."""
         assert call_set_task_result(
             session_id="s1", processed_msg_id="m1",
@@ -121,40 +118,41 @@ class TestCallSetTaskResult:
 
     def test_correct_url(self, mock_logger, base_url):
         """Test call_set_task_result calls correct API endpoint URL."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post") as mp:
-            mp.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
+        with patch("topsailai_server.agent_daemon.scripts.processor_callback.request_with_retry") as mock_request:
+            mock_request.return_value = MagicMock(status_code=200)
             call_set_task_result(
                 session_id="s1", processed_msg_id="m1",
                 task_id="t1", task_result="Done", base_url=base_url
             )
-            assert mp.call_args[0][0] == f"{base_url}/api/v1/task"
+            call_kwargs = mock_request.call_args[1]
+            assert call_kwargs["url"] == f"{base_url}/api/v1/task"
 
     def test_correct_payload(self, mock_logger, base_url):
         """Test call_set_task_result sends correct payload structure."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post") as mp:
-            mp.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
+        with patch("topsailai_server.agent_daemon.scripts.processor_callback.request_with_retry") as mock_request:
+            mock_request.return_value = MagicMock(status_code=200)
             call_set_task_result(
                 session_id="s-abc", processed_msg_id="m-xyz",
                 task_id="t-123", task_result="Result data", base_url=base_url
             )
-            payload = mp.call_args.kwargs.get("json") or mp.call_args[1].get("json")
-            assert payload == {
+            call_kwargs = mock_request.call_args[1]
+            assert call_kwargs["payload"] == {
                 "session_id": "s-abc", "processed_msg_id": "m-xyz",
                 "task_id": "t-123", "task_result": "Result data"
             }
 
     def test_timeout_30_seconds(self, mock_logger, base_url):
         """Test call_set_task_result uses 30 second timeout."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post") as mp:
-            mp.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
+        with patch("topsailai_server.agent_daemon.scripts.processor_callback.request_with_retry") as mock_request:
+            mock_request.return_value = MagicMock(status_code=200)
             call_set_task_result(
                 session_id="s1", processed_msg_id="m1",
                 task_id="t1", task_result="R", base_url=base_url
             )
-            timeout = mp.call_args.kwargs.get("timeout") or mp.call_args[1].get("timeout")
-            assert timeout == 30
+            call_kwargs = mock_request.call_args[1]
+            assert call_kwargs["timeout"] == 30
 
-    def test_http_5xx_returns_false(self, mock_post_failure, mock_logger, base_url):
+    def test_http_5xx_returns_false(self, mock_request_failure, mock_logger, base_url):
         """Test call_set_task_result returns False on HTTP 5xx error."""
         assert call_set_task_result(
             session_id="s1", processed_msg_id="m1",
@@ -162,46 +160,41 @@ class TestCallSetTaskResult:
         ) is False
         mock_logger.exception.assert_called()
 
-    def test_http_4xx_returns_false(self, mock_logger, base_url):
+    def test_http_4xx_returns_false(self, mock_request_failure, mock_logger, base_url):
         """Test call_set_task_result returns False on HTTP 4xx error."""
-        resp = MagicMock(status_code=400)
-        resp.raise_for_status = MagicMock(side_effect=requests.exceptions.HTTPError("400 Bad Request"))
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post", return_value=resp):
-            assert call_set_task_result(
-                session_id="s1", processed_msg_id="m1",
-                task_id="t1", task_result="R", base_url=base_url
-            ) is False
+        result = call_set_task_result(
+            session_id="s1", processed_msg_id="m1",
+            task_id="t1", task_result="R", base_url=base_url
+        )
+        assert result is False
 
-    def test_connection_error_returns_false(self, mock_logger, base_url):
+    def test_connection_error_returns_false(self, mock_request_failure, mock_logger, base_url):
         """Test call_set_task_result returns False on connection error."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post",
-                    side_effect=requests.exceptions.ConnectionError("refused")):
-            assert call_set_task_result(
-                session_id="s1", processed_msg_id="m1",
-                task_id="t1", task_result="R", base_url=base_url
-            ) is False
-            mock_logger.exception.assert_called()
+        result = call_set_task_result(
+            session_id="s1", processed_msg_id="m1",
+            task_id="t1", task_result="R", base_url=base_url
+        )
+        assert result is False
+        mock_logger.exception.assert_called()
 
-    def test_timeout_error_returns_false(self, mock_logger, base_url):
+    def test_timeout_error_returns_false(self, mock_request_failure, mock_logger, base_url):
         """Test call_set_task_result returns False on timeout error."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post",
-                    side_effect=requests.exceptions.Timeout("timed out")):
-            assert call_set_task_result(
-                session_id="s1", processed_msg_id="m1",
-                task_id="t1", task_result="R", base_url=base_url
-            ) is False
-            mock_logger.exception.assert_called()
+        result = call_set_task_result(
+            session_id="s1", processed_msg_id="m1",
+            task_id="t1", task_result="R", base_url=base_url
+        )
+        assert result is False
+        mock_logger.exception.assert_called()
 
-    def test_generic_request_exception_returns_false(self, mock_logger, base_url):
+    def test_generic_request_exception_returns_false(self, mock_request_failure, mock_logger, base_url):
         """Test call_set_task_result returns False on generic RequestException."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post",
-                    side_effect=requests.exceptions.RequestException("generic")):
-            assert call_set_task_result(
-                session_id="s1", processed_msg_id="m1",
-                task_id="t1", task_result="R", base_url=base_url
-            ) is False
+        result = call_set_task_result(
+            session_id="s1", processed_msg_id="m1",
+            task_id="t1", task_result="R", base_url=base_url
+        )
+        assert result is False
 
-    def test_logs_info_on_success(self, mock_post_success, mock_logger, base_url):
+    def test_logs_info_on_success(self, mock_request_success, mock_logger, base_url):
         """Test that call_set_task_result logs info on success."""
         call_set_task_result(
             session_id="s1", processed_msg_id="m1",
@@ -209,7 +202,7 @@ class TestCallSetTaskResult:
         )
         mock_logger.info.assert_called()
 
-    def test_logs_exception_on_failure(self, mock_post_failure, mock_logger, base_url):
+    def test_logs_exception_on_failure(self, mock_request_failure, mock_logger, base_url):
         """Test that call_set_task_result logs exception on failure."""
         call_set_task_result(
             session_id="s1", processed_msg_id="m1",
@@ -220,18 +213,19 @@ class TestCallSetTaskResult:
     def test_custom_base_url(self, mock_logger):
         """Test call_set_task_result uses custom base URL."""
         custom = "http://custom-host:9999"
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post") as mp:
-            mp.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
+        with patch("topsailai_server.agent_daemon.scripts.processor_callback.request_with_retry") as mock_request:
+            mock_request.return_value = MagicMock(status_code=200)
             call_set_task_result(
                 session_id="s1", processed_msg_id="m1",
                 task_id="t1", task_result="R", base_url=custom
             )
-            assert mp.call_args[0][0] == f"{custom}/api/v1/task"
+            call_kwargs = mock_request.call_args[1]
+            assert call_kwargs["url"] == f"{custom}/api/v1/task"
 
     def test_empty_task_result(self, mock_logger, base_url):
         """Test call_set_task_result with empty task_result string."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post") as mp:
-            mp.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
+        with patch("topsailai_server.agent_daemon.scripts.processor_callback.request_with_retry") as mock_request:
+            mock_request.return_value = MagicMock(status_code=200)
             assert call_set_task_result(
                 session_id="s1", processed_msg_id="m1",
                 task_id="t1", task_result="", base_url=base_url
@@ -239,8 +233,8 @@ class TestCallSetTaskResult:
 
     def test_unicode_task_result(self, mock_logger, base_url):
         """Test call_set_task_result with unicode characters in task_result."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post") as mp:
-            mp.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
+        with patch("topsailai_server.agent_daemon.scripts.processor_callback.request_with_retry") as mock_request:
+            mock_request.return_value = MagicMock(status_code=200)
             assert call_set_task_result(
                 session_id="s1", processed_msg_id="m1",
                 task_id="t1", task_result="\u4efb\u52a1\u5b8c\u6210", base_url=base_url
@@ -254,7 +248,7 @@ class TestCallSetTaskResult:
 class TestCallReceiveMessage:
     """Tests for call_receive_message function."""
 
-    def test_success_returns_true(self, mock_post_success, mock_logger, base_url):
+    def test_success_returns_true(self, mock_request_success, mock_logger, base_url):
         """Test call_receive_message returns True on successful API call."""
         assert call_receive_message(
             session_id="s1", processed_msg_id="m1",
@@ -263,40 +257,41 @@ class TestCallReceiveMessage:
 
     def test_correct_url(self, mock_logger, base_url):
         """Test call_receive_message calls correct API endpoint URL."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post") as mp:
-            mp.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
+        with patch("topsailai_server.agent_daemon.scripts.processor_callback.request_with_retry") as mock_request:
+            mock_request.return_value = MagicMock(status_code=200)
             call_receive_message(
                 session_id="s1", processed_msg_id="m1",
                 message="Reply", role="assistant", base_url=base_url
             )
-            assert mp.call_args[0][0] == f"{base_url}/api/v1/message"
+            call_kwargs = mock_request.call_args[1]
+            assert call_kwargs["url"] == f"{base_url}/api/v1/message"
 
     def test_correct_payload(self, mock_logger, base_url):
         """Test call_receive_message sends correct payload structure."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post") as mp:
-            mp.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
+        with patch("topsailai_server.agent_daemon.scripts.processor_callback.request_with_retry") as mock_request:
+            mock_request.return_value = MagicMock(status_code=200)
             call_receive_message(
                 session_id="s-abc", processed_msg_id="m-xyz",
                 message="Direct reply", role="assistant", base_url=base_url
             )
-            payload = mp.call_args.kwargs.get("json") or mp.call_args[1].get("json")
-            assert payload == {
+            call_kwargs = mock_request.call_args[1]
+            assert call_kwargs["payload"] == {
                 "session_id": "s-abc", "processed_msg_id": "m-xyz",
                 "message": "Direct reply", "role": "assistant"
             }
 
     def test_timeout_30_seconds(self, mock_logger, base_url):
         """Test call_receive_message uses 30 second timeout."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post") as mp:
-            mp.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
+        with patch("topsailai_server.agent_daemon.scripts.processor_callback.request_with_retry") as mock_request:
+            mock_request.return_value = MagicMock(status_code=200)
             call_receive_message(
                 session_id="s1", processed_msg_id="m1",
                 message="Reply", role="assistant", base_url=base_url
             )
-            timeout = mp.call_args.kwargs.get("timeout") or mp.call_args[1].get("timeout")
-            assert timeout == 30
+            call_kwargs = mock_request.call_args[1]
+            assert call_kwargs["timeout"] == 30
 
-    def test_http_5xx_returns_false(self, mock_post_failure, mock_logger, base_url):
+    def test_http_5xx_returns_false(self, mock_request_failure, mock_logger, base_url):
         """Test call_receive_message returns False on HTTP 5xx error."""
         assert call_receive_message(
             session_id="s1", processed_msg_id="m1",
@@ -304,45 +299,41 @@ class TestCallReceiveMessage:
         ) is False
         mock_logger.exception.assert_called()
 
-    def test_http_4xx_returns_false(self, mock_logger, base_url):
+    def test_http_4xx_returns_false(self, mock_request_failure, mock_logger, base_url):
         """Test call_receive_message returns False on HTTP 4xx error."""
-        resp = MagicMock(status_code=404)
-        resp.raise_for_status = MagicMock(side_effect=requests.exceptions.HTTPError("404 Not Found"))
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post", return_value=resp):
-            assert call_receive_message(
-                session_id="s1", processed_msg_id="m1",
-                message="Reply", role="assistant", base_url=base_url
-            ) is False
+        result = call_receive_message(
+            session_id="s1", processed_msg_id="m1",
+            message="Reply", role="assistant", base_url=base_url
+        )
+        assert result is False
 
-    def test_connection_error_returns_false(self, mock_logger, base_url):
+    def test_connection_error_returns_false(self, mock_request_failure, mock_logger, base_url):
         """Test call_receive_message returns False on connection error."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post",
-                    side_effect=requests.exceptions.ConnectionError("refused")):
-            assert call_receive_message(
-                session_id="s1", processed_msg_id="m1",
-                message="Reply", role="assistant", base_url=base_url
-            ) is False
-            mock_logger.exception.assert_called()
+        result = call_receive_message(
+            session_id="s1", processed_msg_id="m1",
+            message="Reply", role="assistant", base_url=base_url
+        )
+        assert result is False
+        mock_logger.exception.assert_called()
 
-    def test_timeout_error_returns_false(self, mock_logger, base_url):
+    def test_timeout_error_returns_false(self, mock_request_failure, mock_logger, base_url):
         """Test call_receive_message returns False on timeout error."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post",
-                    side_effect=requests.exceptions.Timeout("timed out")):
-            assert call_receive_message(
-                session_id="s1", processed_msg_id="m1",
-                message="Reply", role="assistant", base_url=base_url
-            ) is False
+        result = call_receive_message(
+            session_id="s1", processed_msg_id="m1",
+            message="Reply", role="assistant", base_url=base_url
+        )
+        assert result is False
+        mock_logger.exception.assert_called()
 
-    def test_generic_request_exception_returns_false(self, mock_logger, base_url):
+    def test_generic_request_exception_returns_false(self, mock_request_failure, mock_logger, base_url):
         """Test call_receive_message returns False on generic RequestException."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post",
-                    side_effect=requests.exceptions.RequestException("generic")):
-            assert call_receive_message(
-                session_id="s1", processed_msg_id="m1",
-                message="Reply", role="assistant", base_url=base_url
-            ) is False
+        result = call_receive_message(
+            session_id="s1", processed_msg_id="m1",
+            message="Reply", role="assistant", base_url=base_url
+        )
+        assert result is False
 
-    def test_logs_info_on_success(self, mock_post_success, mock_logger, base_url):
+    def test_logs_info_on_success(self, mock_request_success, mock_logger, base_url):
         """Test that call_receive_message logs info on success."""
         call_receive_message(
             session_id="s1", processed_msg_id="m1",
@@ -350,7 +341,7 @@ class TestCallReceiveMessage:
         )
         mock_logger.info.assert_called()
 
-    def test_logs_exception_on_failure(self, mock_post_failure, mock_logger, base_url):
+    def test_logs_exception_on_failure(self, mock_request_failure, mock_logger, base_url):
         """Test that call_receive_message logs exception on failure."""
         call_receive_message(
             session_id="s1", processed_msg_id="m1",
@@ -360,8 +351,8 @@ class TestCallReceiveMessage:
 
     def test_unicode_message(self, mock_logger, base_url):
         """Test call_receive_message with unicode characters in message."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post") as mp:
-            mp.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
+        with patch("topsailai_server.agent_daemon.scripts.processor_callback.request_with_retry") as mock_request:
+            mock_request.return_value = MagicMock(status_code=200)
             assert call_receive_message(
                 session_id="s1", processed_msg_id="m1",
                 message="\u3053\u3093\u306b\u3061\u306f", role="assistant", base_url=base_url
@@ -369,8 +360,8 @@ class TestCallReceiveMessage:
 
     def test_empty_message(self, mock_logger, base_url):
         """Test call_receive_message with empty message string."""
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post") as mp:
-            mp.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
+        with patch("topsailai_server.agent_daemon.scripts.processor_callback.request_with_retry") as mock_request:
+            mock_request.return_value = MagicMock(status_code=200)
             assert call_receive_message(
                 session_id="s1", processed_msg_id="m1",
                 message="", role="assistant", base_url=base_url
@@ -379,13 +370,14 @@ class TestCallReceiveMessage:
     def test_custom_base_url(self, mock_logger):
         """Test call_receive_message uses custom base URL."""
         custom = "http://custom-host:9999"
-        with patch("topsailai_server.agent_daemon.scripts.processor_callback.requests.post") as mp:
-            mp.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
+        with patch("topsailai_server.agent_daemon.scripts.processor_callback.request_with_retry") as mock_request:
+            mock_request.return_value = MagicMock(status_code=200)
             call_receive_message(
                 session_id="s1", processed_msg_id="m1",
                 message="Reply", role="assistant", base_url=custom
             )
-            assert mp.call_args[0][0] == f"{custom}/api/v1/message"
+            call_kwargs = mock_request.call_args[1]
+            assert call_kwargs["url"] == f"{custom}/api/v1/message"
 
 
 # =============================================================================

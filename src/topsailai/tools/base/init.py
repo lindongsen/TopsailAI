@@ -29,11 +29,14 @@ def is_tool_enabled(tool_mod):
 
     # disabled
     if DISABLED_TOOLS:
-        try:
-            if tool_name in DISABLED_TOOLS:
+        if tool_name in DISABLED_TOOLS:
+            return False
+
+        for _disabled_tool in DISABLED_TOOLS:
+            # disabled_tool=ai_team
+            # tool_name=ai_team_tool
+            if tool_name.startswith(_disabled_tool):
                 return False
-        except:
-            pass
 
     # enabled
     if ENABLED_TOOLS:
@@ -42,6 +45,12 @@ def is_tool_enabled(tool_mod):
 
         if tool_name in ENABLED_TOOLS:
             return True
+
+        for _enabled_tool in ENABLED_TOOLS:
+            # enabled_tool=ai_team
+            # tool_name=ai_team_tool
+            if tool_name.startswith(_enabled_tool):
+                return True
 
     try:
         if getattr(tool_mod, "FLAG_TOOL_ENABLED") is False:
