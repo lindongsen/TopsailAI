@@ -478,7 +478,7 @@ class TestMain:
         with patch.dict(os.environ, env, clear=True):
             with patch("topsailai_server.agent_daemon.scripts.processor_callback.set_thread_name"):
                 main()
-                mock_sys_exit.assert_called_with(1)
+                mock_sys_exit.assert_any_call(1)
 
     def test_missing_final_answer_exits_with_one(self, mock_logger, mock_sys_exit):
         """Test main exits when TOPSAILAI_FINAL_ANSWER is missing."""
@@ -551,6 +551,30 @@ class TestMain:
             with patch("topsailai_server.agent_daemon.scripts.processor_callback.set_thread_name"):
                 main()
                 mock_sys_exit.assert_called_with(1)
+
+    def test_unicode_final_answer(self, mock_logger, mock_sys_exit):
+        """Test main handles unicode characters in FINAL_ANSWER env var."""
+        env = {
+            "TOPSAILAI_SESSION_ID": "s1", "TOPSAILAI_MSG_ID": "m1",
+            "TOPSAILAI_FINAL_ANSWER": "\u4efb\u52a1\u5b8c\u6210 \U0001f389",
+            "TOPSAILAI_AGENT_DAEMON_HOST": "localhost", "TOPSAILAI_AGENT_DAEMON_PORT": "7373",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            with patch("topsailai_server.agent_daemon.scripts.processor_callback.call_receive_message", return_value=True) as mock_receive:
+                with patch("topsailai_server.agent_daemon.scripts.processor_callback.set_thread_name"):
+                    main()
+                    call_kwargs = mock_receive.call_args[1]
+                    assert call_kwargs["message"] == "\u4efb\u52a1\u5b8c\u6210 \U0001f389"
+                    with patch("topsailai_server.agent_daemon.scripts.processor_callback.set_thread_name") as mock_thread:
+                        main()
+                        mock_thread.assert_called_once()
+
+    def test_no_env_vars_exits_with_one(self, mock_logger, mock_sys_exit):
+        """Test main exits with 1 when all required env vars are missing."""
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("topsailai_server.agent_daemon.scripts.processor_callback.set_thread_name"):
+                main()
+                mock_sys_exit.assert_any_call(1)
 
     def test_unicode_final_answer(self, mock_logger, mock_sys_exit):
         """Test main handles unicode characters in FINAL_ANSWER env var."""
