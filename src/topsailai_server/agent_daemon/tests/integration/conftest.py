@@ -295,3 +295,19 @@ def daemon_config(mock_processor_script, mock_summarizer_script, mock_state_chec
                 'TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER']:
         if key in os.environ:
             del os.environ[key]
+
+
+
+@pytest.fixture(scope="session")
+def api_base_url():
+    """
+    Base URL for the agent daemon API.
+    Assumes server is running on localhost:7373.
+    """
+    return "http://127.0.0.1:7373"
+
+
+@pytest.fixture
+def unique_session_id():
+    """Generate a unique session ID for testing"""
+    return f"test-session-{uuid.uuid4().hex[:12]}"

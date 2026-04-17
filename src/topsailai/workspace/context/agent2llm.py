@@ -108,7 +108,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             logger.warning("no need summarize due to messages too short: [%s]", msg_len)
             return None
 
-        # if need keep session messages
+        # if need keep session messages, user2agent session
         need_session_messages = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES", True)
 
         session_msg_len = len(self.messages)
@@ -123,7 +123,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         if need_session_messages:
             # the messages too short
             if msg_len < (session_msg_len + 17):
-                logger.warning("no need summarize due to messages too short: [%s]", msg_len)
+                logger.info("no need summarize due to messages too short: [%s]", msg_len)
                 return None
 
         # print info
