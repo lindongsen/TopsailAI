@@ -38,12 +38,12 @@ validate_env() {
         log_error "Missing required environment variable: TOPSAILAI_SESSION_ID"
         exit 1
     fi
-    
+
     if [ -z "${TASK}" ]; then
         log_error "Missing required environment variable: TOPSAILAI_TASK"
         exit 1
     fi
-    
+
     log_info "Session ID: ${SESSION_ID}"
     log_info "Base URL: ${BASE_URL}"
 }
@@ -52,26 +52,27 @@ validate_env() {
 # This is a placeholder - in production, this would call an AI service
 summarize_messages() {
     log_info "Starting message summarization for session: ${SESSION_ID}"
-    
+
     # The summarization result would typically be stored or sent somewhere
     # For now, we just log the task content
     log_info "Message content to summarize: ${TASK}"
-    
+
     # Placeholder: In a real implementation, you would:
     # 1. Call an AI service to summarize the messages
     # 2. Store the summary in the database
     # 3. Or send it to another API endpoint
-    
+    TOPSAILAI_INTERACTIVE_MODE=0 topsailai_agent_call_instruction -i "/ctx.summarize" -p "0 0"
+
     log_info "Summarization completed for session: ${SESSION_ID}"
 }
 
 # Main entry point
 main() {
     log_info "Summarizer script started"
-    
+
     validate_env
     summarize_messages
-    
+
     log_info "Summarizer script completed successfully"
     exit 0
 }
