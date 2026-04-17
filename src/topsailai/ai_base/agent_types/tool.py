@@ -6,7 +6,10 @@
 '''
 
 from topsailai.logger import logger
-from topsailai.context import tool_stat
+from topsailai.context import (
+    tool_stat,
+    ctx_safe,
+)
 from topsailai.ai_base.tool_call import (
     StepCallBase,
 )
@@ -18,6 +21,7 @@ from topsailai.utils.thread_local_tool import (
 )
 from topsailai.utils import (
     print_tool,
+    env_tool,
 )
 
 from . import context as agent_ctx
@@ -76,6 +80,9 @@ def exec_tool_func(tool_func, args, tool_name:str=None):
         any: The result of the tool function execution, or a string representation
             of the error if an exception occurred (except for AgentEndProcess).
     """
+    if not tool_name:
+        tool_name = tool_func.__name__
+
     error = None
     try:
         result = tool_func(**args)
@@ -87,11 +94,19 @@ def exec_tool_func(tool_func, args, tool_name:str=None):
         logger.exception(e)
     finally:
         tool_stat.record_tool_call(
-            tool_call=tool_name or tool_func.__name__,
+            tool_call=tool_name,
             tool_args=args,
             error=error,
             result=result,
         )
+
+    # safe
+    result_str = str(result)
+    maximum_bytes = env_tool.EnvReaderInstance.get("TOPSAILAI_TOOL_CALL_MAXIMUM_RETURN", 300000, formatter=int)
+    if len(result_str) > maximum_bytes:
+        logger.warning("tool_call result exceeds maximum_bytes: [%s], tool=[%s], args=[%s]", maximum_bytes, tool_name, args)
+        return ctx_safe.truncate_text(result_str, maximum_bytes)
+
     return result
 
 

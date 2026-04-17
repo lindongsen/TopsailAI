@@ -32,6 +32,7 @@ WHITE_LIST_NO_TRUNCATE_EXT = [
     "tpl",
     # devlang
     "py", "go", "c", "c++", "sh", "cmd",
+    "ts",
 ] + (
         env_tool.EnvReaderInstance.get_list_str(
             "TOPSAILAI_FILE_WHITE_LIST_NO_TRUNCATE_EXT",
