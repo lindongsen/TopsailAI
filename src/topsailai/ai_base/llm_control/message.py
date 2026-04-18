@@ -368,4 +368,4 @@ def format_response(response, rsp_obj=None, messages=None):
 
             return format_response(step_name + "\n" + response, rsp_obj=rsp_obj)
 
-    raise JsonError("invalid json string")
+    raise JsonError("LLM mistake: invalid json string")

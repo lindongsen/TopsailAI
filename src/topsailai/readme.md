@@ -35,3 +35,7 @@ Some critical logs
 
 - LLM Lazy execution
 - LLM Make mistake in the final
+
+### LOG_ATTENTION: "\- LLM mistake: invalid json string"
+
+LLM output unexpected content
