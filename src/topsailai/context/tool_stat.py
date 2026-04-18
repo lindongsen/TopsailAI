@@ -407,7 +407,12 @@ class ToolStat:
         Returns:
             JSON string representation of all data
         """
-        return json.dumps(self.export(), indent=indent, default=str)
+        return json.dumps(
+            self.export(),
+            indent=indent,
+            default=str,
+            ensure_ascii=False,
+        )
 
     def save_to_file(self, filepath: str):
         """
