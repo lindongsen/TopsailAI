@@ -107,7 +107,7 @@ main() {
         echo "Log check completed. Matches found."
     else
         echo "Log check completed. No matches found."
-        echo -e "${no_matched_keywords}" | cat -n
+        echo -e "${no_matched_keywords}" | sed -z 's/\n*$//; s/[[:space:]]*$//; s/^\n*//; s/^[[:space:]]*//' | cat -n
     fi
 
     return 0
