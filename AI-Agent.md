@@ -1,26 +1,19 @@
-# AgentReAct
-一个能执行命令行的AI-Agent，基于ReAct模式运行。
+# Project Information
 
+## Project: `src/topsailai`
 
-# AgentPlanAndExecute
-一个能调用AgentReAct的AI-Agent，基于Plan-And-Execute模式运行。
+AI-Agent Core, Agent Workers.
 
-
-# 运行方法
-1. 设置环境
+Options:
 ```
-cp env_template .env
-编辑 .env 文件
+workspace is `{ProjectRootFolder}` (src/../)
 ```
 
-2. 运行命令
-设置环境变量“DEBUG=1”会打印出每个步骤，不设置就不打印。
+## project: `src/topsailai_server/agent_daemon`
 
-举例：
+User Session Layer, It can be used to schedule agent workers.
+
+Options:
 ```
-~# DEBUG=1 uv run cli/AgentPlanAndExecute.py
-Welcome to the Plan-And-Execute AI Agent. Type 'exit' to quit.
-
->>> Please enter your task:
-...
+workspace is itself
 ```
