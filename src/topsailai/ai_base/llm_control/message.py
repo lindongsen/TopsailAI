@@ -25,6 +25,7 @@ from .exception import (
     JsonError,
     ModelServiceError,
 )
+from .llm_mistakes.base.init import check_or_fix_mistakes
 
 
 def _to_list(obj):
@@ -140,6 +141,10 @@ def get_tool_calls_of_rsp(rsp_obj):
 def fix_llm_mistakes(response:list, rsp_obj=None):
     if not response:
         return response
+
+    new_response = check_or_fix_mistakes(response, rsp_obj=rsp_obj)
+    if new_response and new_response is not response:
+        return new_response
 
     # case: only tool_call and tool_args, missing step_name
     if len(response) == 1:
