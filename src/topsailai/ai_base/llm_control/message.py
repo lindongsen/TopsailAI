@@ -267,7 +267,8 @@ def format_response(response, rsp_obj=None, messages=None):
         if not response:
             raise JsonError("null of response")
 
-    for count in range(3):
+    max_count = 3
+    for count in range(max_count):
         try:
             if response.startswith(format_tool.TOPSAILAI_FORMAT_PREFIX) \
                 or f"\n{format_tool.TOPSAILAI_FORMAT_PREFIX}" in response \
@@ -286,7 +287,9 @@ def format_response(response, rsp_obj=None, messages=None):
 
             response = json_tool.to_json_str(response)
             response = _to_list(simplejson.loads(response))
-            fix_llm_mistakes(response)
+            new_response = fix_llm_mistakes(response)
+            if new_response and new_response is not response:
+                response = new_response
 
             # model service have errors. example: Model tpm limit exceeded
             assert_model_service_error(response)
@@ -296,8 +299,12 @@ def format_response(response, rsp_obj=None, messages=None):
             raise e
         except Exception as e:
             print_error(f"parsing response: {e}\n>>>\n{response}\n<<<\nretrying times: {count}")
+            if count == (max_count-1):
+                logger.exception(e)
         finally:
-            fix_llm_mistakes(response, rsp_obj)
+            new_response = fix_llm_mistakes(response, rsp_obj)
+            if new_response and new_response is not response:
+                response = new_response
 
             # hook after chat
             if isinstance(response, list):
@@ -331,7 +338,8 @@ def format_response(response, rsp_obj=None, messages=None):
             return response
 
     # only thought
-    if response and format_tool.TOPSAILAI_FORMAT_PREFIX not in response \
+    # response is string
+    if response \
         and response[0] not in "[]{}" \
         and (response[-1] not in "[]{}" or response[:5] not in "[{"):
             # case: <FunctionCall>
