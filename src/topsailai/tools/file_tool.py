@@ -17,6 +17,7 @@ from topsailai.utils import (
     env_tool,
     format_tool,
     json_tool,
+    file_tool as _file_tool,
 )
 
 from topsailai.tools.file_tool_utils import (
@@ -120,19 +121,16 @@ def write_file(file_path:str, content:str, seek:int=0, to_insert:bool=False):
                 # Insert the content
                 new_content = existing_content[:position] + content + existing_content[position:]
 
-                with open(file_path, "w") as fd:
-                    fd.write(new_content)
+                _file_tool.write_text(file_path, new_content)
             else:
                 # File doesn't exist, create with content
-                with open(file_path, "w") as fd:
-                    fd.write(content)
+                _file_tool.write_text(file_path, content)
         else:
             # Overwrite mode: simple approach - just write the content
             # For complex positioning, we'll handle it differently
             if seek == 0:
                 # Simple overwrite from beginning
-                with open(file_path, "w") as fd:
-                    fd.write(content)
+                _file_tool.write_text(file_path, content)
             else:
                 # For non-zero seek, we need to handle positioning
                 if os.path.exists(file_path):
@@ -152,12 +150,10 @@ def write_file(file_path:str, content:str, seek:int=0, to_insert:bool=False):
                         # Extend the file with the new content
                         new_content = existing_content[:position] + content
 
-                    with open(file_path, "w") as fd:
-                        fd.write(new_content)
+                    _file_tool.write_text(file_path, new_content)
                 else:
                     # For overwrite mode on non-existent file, just write content at position 0
-                    with open(file_path, "w") as fd:
-                        fd.write(content)
+                    _file_tool.write_text(file_path, content)
     except Exception as e:
         return str(e)
     return ""
@@ -244,21 +240,16 @@ read_file.__doc__ = read_file.__doc__.format(
     WHITE_LIST_NO_TRUNCATE_EXT=WHITE_LIST_NO_TRUNCATE_EXT,
 )
 
-def append_file(file_path: str, content: str):
+def append_file(file_path: str, content: str) -> bool:
     """ append content to file.
 
     Args:
         file_path: string, the file path;
         content: string
 
-    Return (str): null for ok
+    Return (bool): True for ok
     """
-    try:
-        with open(file_path, "a+") as fd:
-            fd.write(content)
-    except Exception as e:
-        return str(e)
-    return ""
+    return _file_tool.append_data(file_path, content)
 
 def exists_file(file_path:str):
     """ check the file or folder if exists.

@@ -245,6 +245,46 @@ def write_text(file_path:str, file_content:str):
         fp.flush()
     return
 
+def append_data(file_path: str, data: any) -> bool:
+    """
+    Append data to a file (supports both text and binary).
+
+    Args:
+        file_path: Path to the file
+        data: Data to append (str, bytes, or any serializable type)
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Create directory if it doesn't exist
+        directory = os.path.dirname(file_path)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
+
+        # Determine mode based on data type
+        if isinstance(data, bytes):
+            mode = 'ab'  # Append binary
+            # Don't convert bytes to string
+        elif isinstance(data, str):
+            mode = 'a'   # Append text
+        else:
+            # For other types, try bytes first, fallback to string
+            mode = 'ab'
+            data = str(data).encode('utf-8')
+
+        # Append data to file
+        with open(file_path, mode, encoding='utf-8' if 'b' not in mode else None) as file:
+            file.write(data)
+            file.flush()
+
+        return True
+
+    except (IOError, OSError, PermissionError, UnicodeEncodeError) as e:
+        logger.error("Error appending to file: %s", e)
+        return False
+
+
 def get_all_files(args:list[str]) -> tuple[bool, list[str]]:
     """
     Get all of files from args.
