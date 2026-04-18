@@ -2,7 +2,17 @@
 
 AI-Agent Core, Agent Workers
 
+## Logical Components
+
+1. Common Utils
+2. Agent Core
+3. Agent Workers
+
+Folder details can be got from `test.md`
+
 ## Logs that need attention
+
+LogFile: `/topsailai/log/chat.log`
 
 H3 title format: `LOG_ATTENTION: {content}`
 
@@ -14,5 +24,5 @@ Some critical logs
 
 ### LOG_ATTENTION: give final due to duplicate to
 
-- Lazy execution
-- Make mistake in the final
+- LLM Lazy execution
+- LLM Make mistake in the final
