@@ -1,3 +1,7 @@
+---
+workspace: /root/ai/TopsailAI/src/topsailai
+---
+
 # Topsailai Agent
 
 AI-Agent Core, Agent Workers

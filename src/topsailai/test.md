@@ -4,7 +4,7 @@ maintainer: human
 ---
 # Test
 
-GOAL: 发挥你的想象力，Enhance tests.
+GOAL: 发挥你的想象力，Enhance unit tests.
 
 ## Test Priority
 
