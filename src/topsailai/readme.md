@@ -1,5 +1,7 @@
 ---
 workspace: /root/ai/TopsailAI/src/topsailai
+reviewer: km-k25
+developer: mm-m25
 ---
 
 # Topsailai Agent
@@ -16,17 +18,20 @@ Folder details can be got from `test.md`
 
 ## Logs that need attention
 
+How to retrieve log:
+```
 LogFile: `/topsailai/log/chat.log`
+Use command `topsailai_check_log` to review log content.
+Use command `grep -C 10 "{time}" {LogFile}` to print NUM lines of output context for log
+```
 
 H3 title format: `LOG_ATTENTION: {content}`
 
-Use command `topsailai_check_log` to review log content.
-
-### LOG_ATTENTION: " CRITICAL -"
+### LOG_ATTENTION: "[0-9] CRITICAL -"
 
 Some critical logs
 
-### LOG_ATTENTION: give final due to duplicate to
+### LOG_ATTENTION: "\- LLM mistake: give final due to duplicate to"
 
 - LLM Lazy execution
 - LLM Make mistake in the final
