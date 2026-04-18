@@ -1,5 +1,7 @@
 # Topsailai Agent
 
+AI-Agent Core, Agent Workers
+
 ## Logs that need attention
 
 H3 title format: `LOG_ATTENTION: {content}`
