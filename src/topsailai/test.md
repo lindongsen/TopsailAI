@@ -6,7 +6,7 @@ maintainer: human
 
 GOAL: 发挥你的想象力，Enhance unit tests.
 
-## Test Priority
+## Test Sequence
 
 - Common Utils
   - logger/
