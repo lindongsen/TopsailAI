@@ -40,3 +40,8 @@ Some critical logs
 ### LOG_ATTENTION: "[0-9]\- LLM mistake: invalid json string"
 
 LLM output unexpected content
+
+### LOG_ATTENTION: '"raw_text": "missing tool_call"'
+
+- LLM make mistake
+- MAX_TOKENS is too small

@@ -271,7 +271,7 @@ class AgentTerminal:
     def _generate_content_fingerprint(self, messages, processed_msg_id, session_status):
         """Generate a fingerprint of the current content for comparison"""
         # Create a fingerprint based on message count, last message id, and processed_msg_id
-        parts = [session_status, str(len(messages))]
+        parts = [session_status or "", str(len(messages))]
         if messages:
             parts.append(messages[-1].get('msg_id', ''))
         if processed_msg_id:
