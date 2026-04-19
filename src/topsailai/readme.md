@@ -11,8 +11,8 @@ AI-Agent Core, Agent Workers
 ## Logical Components
 
 1. Common Utils
-2. Agent Core
-3. Agent Workers
+2. Agent Core       -> Agent Enginering Framework
+3. Agent Workers    -> Worker Entry
 
 Folder details can be got from `test.md`
 

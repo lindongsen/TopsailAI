@@ -6,4 +6,4 @@ Supported keys:
 
 ## Key Format
 
-`class.action`, example: `ctx.del_msg`, `ctx.del_msgs`
+`module_name.action`, example: `ctx.del_msg`, `ctx.del_msgs`, `env.get`

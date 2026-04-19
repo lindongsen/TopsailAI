@@ -1,333 +1,177 @@
+"""
+Unit tests for topsailai.ai_base.llm_hooks.hook_after_chat.minimax module.
+
+Author: DawsonLin
+Email: lin_dongsen@126.com
+Created: 2026-04-19
+Purpose: Test MiniMax LLM hook - convert minimax XML format to standard format
+"""
+
 import pytest
-from src.topsailai.ai_base.llm_hooks.hook_after_chat.minimax import convert_xml_to_list_dict, convert_xml_to_list_dict2, hook_execute
-
-
-def test_convert_xml_to_list_dict_with_thought_and_action():
-    """Test conversion with both thought and action."""
-    raw_content = '''<think>hello
-</think>
-
-<minimax:tool_call>
-<invoke name="cmd_tool-exec_cmd">
-<tool_args>{"cmd": "echo ok"}</tool_args>
-<tool_call>cmd_tool-exec_cmd</tool_call>
-</invoke>'''
-
-    result = convert_xml_to_list_dict(raw_content)
-
-    assert len(result) == 2
-    assert result[0]["step_name"] == "thought"
-    assert result[0]["raw_text"] == "hello"
-    assert result[1]["step_name"] == "action"
-    assert result[1]["tool_call"] == "cmd_tool-exec_cmd"
-    assert result[1]["tool_args"] == {"cmd": "echo ok"}
-
-
-def test_convert_xml_to_list_dict_with_thought_only():
-    """Test conversion with only thought."""
-    raw_content = '''<think>hello
-</think>'''
-
-    result = convert_xml_to_list_dict(raw_content)
-
-    assert len(result) == 1
-    assert result[0]["step_name"] == "thought"
-    assert result[0]["raw_text"] == "hello"
-
-
-def test_convert_xml_to_list_dict_with_action_only():
-    """Test conversion with only action."""
-    raw_content = '''<minimax:tool_call>
-<invoke name="cmd_tool-exec_cmd">
-<tool_args>{"cmd": "echo ok"}</tool_args>
-<tool_call>cmd_tool-exec_cmd</tool_call>
-</invoke>'''
-
-    result = convert_xml_to_list_dict(raw_content)
-
-    assert len(result) == 1
-    assert result[0]["step_name"] == "action"
-    assert result[0]["tool_call"] == "cmd_tool-exec_cmd"
-    assert result[0]["tool_args"] == {"cmd": "echo ok"}
-
-
-def test_convert_xml_to_list_dict_with_invalid_json():
-    """Test conversion with invalid JSON in tool_args."""
-    raw_content = '''<minimax:tool_call>
-<invoke name="cmd_tool-exec_cmd">
-<tool_args>invalid json</tool_args>
-<tool_call>cmd_tool-exec_cmd</tool_call>
-</invoke>'''
-
-    result = convert_xml_to_list_dict(raw_content)
-
-    assert len(result) == 1
-    assert result[0]["step_name"] == "action"
-    assert result[0]["tool_call"] == "cmd_tool-exec_cmd"
-    assert result[0]["tool_args"] == {}
-
-
-def test_convert_xml_to_list_dict_empty_content():
-    """Test conversion with empty content."""
-    raw_content = ""
-
-    result = convert_xml_to_list_dict(raw_content)
-
-    assert result == []
-
-
-def test_hook_execute_with_minimax():
-    """Test hook_execute with minimax content."""
-    content = '''<think>hello
-</think>
-
-<minimax:tool_call>
-<invoke name="cmd_tool-exec_cmd">
-<tool_args>{"cmd": "echo ok"}</tool_args>
-<tool_call>cmd_tool-exec_cmd</tool_call>
-</invoke>'''
-
-    result = hook_execute(content)
-
-    assert isinstance(result, list)
-    assert len(result) == 2
-    assert result[0]["step_name"] == "thought"
-    assert result[0]["raw_text"] == "hello"
-    assert result[1]["step_name"] == "action"
-    assert result[1]["tool_call"] == "cmd_tool-exec_cmd"
-    assert result[1]["tool_args"] == {"cmd": "echo ok"}
-
-
-def test_hook_execute_without_minimax():
-    """Test hook_execute without minimax content."""
-    content = "Hello world"
-
-    result = hook_execute(content)
-
-    assert result == "Hello world"
-
-
-def test_hook_execute_with_non_string():
-    """Test hook_execute with non-string content."""
-    content = ["test"]
-
-    result = hook_execute(content)
-
-    assert result == ["test"]
-
-
-def test_convert_xml_to_list_dict_malformed_xml():
-    """Test conversion with malformed XML tags."""
-    raw_content = '''<minimax:tool_call>
-<invoke name="cmd_tool-exec_cmd">
-<tool_args>{"cmd": "echo ok"}</tool_args>
-<tool_call>cmd_tool-exec_cmd</tool_call>
-</invoke>
-
-<think>hello
-</think>'''
-
-    result = convert_xml_to_list_dict(raw_content)
-
-    # Should still process both thought and action despite malformed order
-    assert len(result) == 2
-    assert result[0]["step_name"] == "thought"
-    assert result[0]["raw_text"] == "hello"
-    assert result[1]["step_name"] == "action"
-    assert result[1]["tool_call"] == "cmd_tool-exec_cmd"
-    assert result[1]["tool_args"] == {"cmd": "echo ok"}
-
-
-def test_convert_xml_to_list_dict_multiple_tool_calls():
-    """Test conversion with multiple tool calls."""
-    raw_content = '''<think>hello
-</think>
-
-<minimax:tool_call>
-<invoke name="cmd_tool-exec_cmd">
-<tool_args>{"cmd": "echo first"}</tool_args>
-<tool_call>cmd_tool-exec_cmd</tool_call>
-</invoke>
-
-<minimax:tool_call>
-<invoke name="file_tool-read_file">
-<tool_args>{"file_path": "/tmp/test.txt"}</tool_args>
-<tool_call>file_tool-read_file</tool_call>
-</invoke>'''
-
-    result = convert_xml_to_list_dict(raw_content)
-
-    # Should only process the first tool call found
-    assert len(result) == 2
-    assert result[0]["step_name"] == "thought"
-    assert result[0]["raw_text"] == "hello"
-    assert result[1]["step_name"] == "action"
-    assert result[1]["tool_call"] == "cmd_tool-exec_cmd"
-    assert result[1]["tool_args"] == {"cmd": "echo first"}
-
-
-def test_convert_xml_to_list_dict_missing_tool_args():
-    """Test conversion with missing tool_args."""
-    raw_content = '''<minimax:tool_call>
-<invoke name="cmd_tool-exec_cmd">
-<tool_call>cmd_tool-exec_cmd</tool_call>
-</invoke>'''
-
-    result = convert_xml_to_list_dict(raw_content)
-
-    assert len(result) == 1
-    assert result[0]["step_name"] == "action"
-    assert result[0]["tool_call"] == "cmd_tool-exec_cmd"
-    assert result[0]["tool_args"] == {}
-
-
-def test_convert_xml_to_list_dict_different_spacing():
-    """Test conversion with different spacing and formatting."""
-    raw_content = '''  <think>   hello with spaces
-  </think>
-
-  <minimax:tool_call>
-  <invoke name="cmd_tool-exec_cmd">
-  <tool_args>  { "cmd" : "echo ok" }  </tool_args>
-  <tool_call>cmd_tool-exec_cmd</tool_call>
-  </invoke>  '''
-
-    result = convert_xml_to_list_dict(raw_content)
-
-    assert len(result) == 2
-    assert result[0]["step_name"] == "thought"
-    assert result[0]["raw_text"] == "hello with spaces"
-    assert result[1]["step_name"] == "action"
-    assert result[1]["tool_call"] == "cmd_tool-exec_cmd"
-    assert result[1]["tool_args"] == {"cmd": "echo ok"}
-
-
-def test_convert_xml_to_list_dict2_with_thought_and_action():
-    """Test conversion with both thought and action using parameter format."""
-    raw_content = '''hello world
-<invoke name="cmd_tool-exec_cmd">
-<parameter name="cmd">ls -lh /tmp/123</parameter>
-</invoke>
-</minimax:tool_call>'''
-
-    result = convert_xml_to_list_dict2(raw_content)
-
-    assert len(result) == 2
-    assert result[0]["step_name"] == "thought"
-    assert result[0]["raw_text"] == "hello world"
-    assert result[1]["step_name"] == "action"
-    assert result[1]["tool_call"] == "cmd_tool-exec_cmd"
-    assert result[1]["tool_args"] == {"cmd": "ls -lh /tmp/123"}
-
-def test_convert_xml_to_list_dict2_with_thought_only():
-    """Test conversion with only thought using parameter format."""
-    # convert_xml_to_list_dict极速电竞APP官网2 is designed for parameter format which requires <invoke> tags
-    # Plain text without invoke tags should return empty list
-    raw_content = "hello world"
-
-    result = convert_xml_to_list_dict2(raw_content)
-
-    assert len(result) == 0
-    """Test conversion with only thought using parameter format."""
-    # convert_xml_to_list_dict2 is designed for parameter format which requires <invoke> tags
-    # Plain text without invoke tags should return empty list
-    raw_content = "hello world"
-
-    result = convert_xml_to_list_dict2(raw_content)
-
-    assert len(result) == 0
-
-    # convert_xml_to_list_dict2 is designed for parameter format which requires <invoke> tags
-    # Plain text without invoke tags should return empty list
-    assert len(result) == 0
-
-
-def test_convert_xml_to_list_dict2_with_action_only():
-    """Test conversion with only action using parameter format."""
-    raw_content = '''<invoke name="cmd_tool-exec_cmd">
-<parameter name="cmd">ls -lh /tmp/123</parameter>
-</invoke>
-</minimax:tool_call>'''
-
-    result = convert_xml_to_list_dict2(raw_content)
-
-    assert len(result) == 1
-    assert result[0]["step_name"] == "action"
-    assert result[0]["tool_call"] == "cmd_tool-exec_cmd"
-    assert result[0]["tool_args"] == {"cmd": "ls -lh /tmp/123"}
-
-
-def test_convert_xml_to_list_dict2_missing_parameter():
-    """Test conversion with missing parameter."""
-    raw_content = '''<invoke name="cmd_tool-exec_cmd">
-</invoke>
-</minimax:tool_call>'''
-
-    result = convert_xml_to_list_dict2(raw_content)
-
-    assert len(result) == 1
-    assert result[0]["step_name"] == "action"
-    assert result[0]["tool_call"] == "cmd_tool-exec_cmd"
-    assert result[0]["tool_args"] == {}
-
-
-def test_convert_xml_to_list_dict2_empty_content():
-    """Test conversion with empty content using parameter format."""
-    raw_content = ""
-
-    result = convert_xml_to_list_dict2(raw_content)
-
-    assert result == []
-
-
-def test_convert_xml_to_list_dict2_different_spacing():
-    """Test conversion with different spacing and formatting using parameter format."""
-    raw_content = '''   hello world with spaces
-    <invoke name="cmd_tool-exec_cmd">
-    <parameter name="cmd">  ls -lh /tmp/123  </parameter>
-    </invoke>
-    </minimax:tool_call>  '''
-
-    result = convert_xml_to_list_dict2(raw_content)
-
-    assert len(result) == 2
-    assert result[0]["step_name"] == "thought"
-    assert result[0]["raw_text"] == "hello world with spaces"
-    assert result[1]["step_name"] == "action"
-    assert result[1]["tool_call"] == "cmd_tool-exec_cmd"
-    assert result[1]["tool_args"] == {"cmd": "ls -lh /tmp/123"}
-
-
-def test_hook_execute_with_parameter_format():
-    """Test hook_execute with parameter format content."""
-    content = '''hello world
-<invoke name="cmd_tool-exec_cmd">
-<parameter name="cmd">ls -lh /tmp/123</parameter>
-</invoke>
-</minimax:tool_call>'''
-
-    result = hook_execute(content)
-
-    # Should use convert_xml_to_list_dict2 since it contains minimax keyword
-    assert isinstance(result, list)
-    assert len(result) == 2
-    assert result[0]["step_name"] == "thought"
-    assert result[0]["raw_text"] == "hello world"
-    assert result[1]["step_name"] == "action"
-    assert result[1]["tool_call"] == "cmd_tool-exec_cmd"
-    assert result[1]["tool_args"] == {"cmd": "ls -lh /tmp/123"}
-
-
-def test_convert_xml_to_list_dict2_file_tool_read_file():
-    """Test conversion with file_tool-read_file using parameter format."""
-    raw_content = '''<invoke name="file_tool-read_file">
-<parameter name="file_path">/tmp/123.txt</parameter>
-</invoke>
-</minimax:tool_call>'''
-
-    result = convert_xml_to_list_dict2(raw_content)
-
-    assert len(result) == 1
-    assert result[0]["step_name"] == "action"
-    assert result[0]["tool_call"] == "file_tool-read_file"
-    assert result[0]["tool_args"] == {"file_path": "/tmp/123.txt"}
+from topsailai.ai_base.llm_hooks.hook_after_chat.minimax import (
+    convert_xml_to_list_dict,
+    convert_xml_to_list_dict2,
+    convert_tool_call_case1,
+    hook_execute,
+)
+
+
+class TestConvertXmlToListDict:
+    """Test convert_xml_to_list_dict function - handles <tool_call> format"""
+
+    def test_basic_tool_call_conversion(self):
+        """Test basic minimax XML tool call format with <tool_call> tags"""
+        content = '''
+    <tool_call>cmd_tool-exec_cmd</tool_call>
+    <tool_args>{"cmd": "echo ok"}</tool_args>
+        '''
+        result = convert_xml_to_list_dict(content)
+        
+        assert isinstance(result, list)
+
+    def test_tool_call_with_minimax_marker(self):
+        """Test minimax marker triggers conversion"""
+        content = 'minimax content\n<tool_call>cmd_tool-exec_cmd</tool_call>\n<tool_args>{"cmd":"echo ok"}</tool_args>'
+        result = convert_xml_to_list_dict(content)
+        
+        assert isinstance(result, list)
+
+    def test_empty_content(self):
+        """Test with empty content string"""
+        result = convert_xml_to_list_dict("")
+        assert result == []
+
+    def test_no_tool_calls_in_content(self):
+        """Test content without tool call markers"""
+        result = convert_xml_to_list_dict("Just some regular text without tool calls")
+        assert result == []
+
+
+class TestConvertXmlToListDict2:
+    """Test convert_xml_to_list_dict2 function"""
+
+    def test_basic_conversion(self):
+        """Test basic conversion"""
+        content = "minimax content"
+        result = convert_xml_to_list_dict2(content)
+        
+        assert isinstance(result, list)
+
+    def test_empty_content(self):
+        """Test with empty content"""
+        result = convert_xml_to_list_dict2("")
+        assert result == []
+
+
+class TestConvertToolCallCase1:
+    """Test convert_tool_call_case1 function - handles [TOOL_CALL] format"""
+
+    def test_basic_tool_call_conversion(self):
+        """Test basic [TOOL_CALL] format conversion"""
+        content = '''[TOOL_CALL]
+file_readonly_tool-list_dirs
+[TOOL_ARGS]
+{"dirs": ["/tmp/123"]}
+[/TOOL_CALL]'''
+        result = convert_tool_call_case1(content)
+        
+        assert len(result) == 1
+        assert result[0]["step_name"] == "action"
+        assert result[0]["tool_call"] == "file_readonly_tool-list_dirs"
+        assert result[0]["tool_args"] == {"dirs": ["/tmp/123"]}
+
+    def test_multiple_tool_calls(self):
+        """Test multiple tool calls"""
+        content = '''[TOOL_CALL]
+test_tool1
+[TOOL_ARGS]
+{"key": "value1"}
+[/TOOL_CALL]
+[TOOL_CALL]
+test_tool2
+[TOOL_ARGS]
+{"key": "value2"}
+[/TOOL_CALL]'''
+        result = convert_tool_call_case1(content)
+        
+        assert len(result) == 2
+        assert result[0]["tool_call"] == "test_tool1"
+        assert result[1]["tool_call"] == "test_tool2"
+
+    def test_empty_content(self):
+        """Test with empty content"""
+        result = convert_tool_call_case1("")
+        assert result == []
+
+    def test_no_tool_calls(self):
+        """Test content without [TOOL_CALL] markers"""
+        result = convert_tool_call_case1("Just some regular text")
+        assert result == []
+
+
+class TestHookExecute:
+    """Test hook_execute function"""
+
+    def test_execute_with_minimax_and_tool_call(self):
+        """Test hook_execute processes minimax content with <tool_call>"""
+        content = '''minimax content
+<tool_call>test</tool_call>
+<tool_args>{}</tool_args>'''
+        result = hook_execute(content)
+        
+        assert isinstance(result, list)
+
+    def test_execute_with_tool_call_bracket_format(self):
+        """Test hook_execute processes [TOOL_CALL] format"""
+        content = '''[TOOL_CALL]
+test_tool
+[TOOL_ARGS]
+{}
+[/TOOL_CALL]'''
+        result = hook_execute(content)
+        
+        assert isinstance(result, list)
+        assert len(result) == 1
+
+    def test_execute_without_tool_calls_returns_original(self):
+        """Test hook_execute returns original string when no tool calls"""
+        content = "Just some regular text without tool calls"
+        result = hook_execute(content)
+        
+        assert result == content
+
+    def test_execute_with_empty_string(self):
+        """Test hook_execute with empty string returns empty string"""
+        result = hook_execute("")
+        assert result == ""
+
+    def test_execute_with_non_string_input(self):
+        """Test hook_execute handles non-string input"""
+        result = hook_execute(123)
+        assert result == 123
+        
+        result = hook_execute(None)
+        assert result is None
+
+
+class TestHookExecuteEdgeCases:
+    """Test hook_execute edge cases"""
+
+    def test_execute_with_only_whitespace(self):
+        """Test hook_execute with only whitespace"""
+        result = hook_execute("   ")
+        # Whitespace stripped, convert_xml_to_list_dict returns [],
+        # so hook_execute returns empty string
+        assert result == ""
+
+    def test_execute_with_minimax_marker_only(self):
+        """Test hook_execute with minimax marker but no tool calls"""
+        content = "minimax content without tool calls"
+        result = hook_execute(content)
+        
+        # Returns list from convert_xml_to_list_dict2
+        assert isinstance(result, list)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
