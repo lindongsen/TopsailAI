@@ -7,6 +7,7 @@ Purpose: Comprehensive unit tests for ToolStat class functionality
 """
 
 import unittest
+from unittest.mock import patch
 import threading
 import time
 import json
@@ -547,7 +548,7 @@ class TestModuleFunctions(unittest.TestCase):
         stat2 = get_default_stat()
 
         self.assertIs(stat1, stat2)
-
+    @patch.dict(os.environ, {"TOPSAILAI_ENABLE_TOOL_STAT": "1"})
     def test_record_tool_call(self):
         """Test record_tool_call convenience function."""
         # Get fresh default stat

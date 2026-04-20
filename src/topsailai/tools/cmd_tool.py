@@ -2,6 +2,8 @@ from topsailai.utils.text_tool import safe_decode
 from topsailai.utils.cmd_tool import exec_cmd as exec_command
 from topsailai.utils.json_tool import safe_json_load
 from topsailai.context import ctx_safe
+from topsailai.prompt_hub import prompt_tool
+
 
 def format_text(s, need_truncate=True):
     """ decode and truncate
@@ -92,3 +94,5 @@ def exec_cmd(
 TOOLS = dict(
     exec_cmd=exec_cmd,
 )
+
+PROMPT = prompt_tool.read_prompt("search/cmd_text.md")
