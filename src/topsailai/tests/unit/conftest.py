@@ -26,8 +26,9 @@ def clean_env():
     
     This fixture ensures test isolation by:
     1. Saving original environment variables before the test
-    2. Restoring them after the test completes
-    3. Cleaning up any test-specific environment changes
+    2. Clearing non-preserved variables before the test runs
+    3. Restoring them after the test completes
+    4. Cleaning up any test-specific environment changes
     """
     original_env = os.environ.copy()
     
@@ -37,6 +38,11 @@ def clean_env():
         'PYTHONPATH', 'PYTHONHOME', 'VIRTUAL_ENV',
         'PYTEST_CURRENT_TEST',  # Required by pytest during teardown
     }
+    
+    # Clear non-preserved environment variables BEFORE the test
+    for key in list(os.environ.keys()):
+        if key not in preserved_vars:
+            os.environ.pop(key, None)
     
     yield
     
@@ -206,3 +212,23 @@ def sample_config():
         "frequency_penalty": 0.0,
         "presence_penalty": 0.0
     }
+
+
+@pytest.fixture(autouse=True)
+def clean_thread_local():
+    """
+    Automatically clean up thread-local storage before and after each test.
+    
+    This fixture ensures test isolation by clearing thread-local variables
+    that might persist between tests, particularly the agent object.
+    """
+    # Import here to avoid circular imports
+    from topsailai.utils import thread_local_tool
+    
+    # Clear thread-local storage before test
+    thread_local_tool.rid_all_thread_vars()
+    
+    yield
+    
+    # Clear thread-local storage after test
+    thread_local_tool.rid_all_thread_vars()

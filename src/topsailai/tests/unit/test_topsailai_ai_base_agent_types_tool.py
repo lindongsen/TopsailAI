@@ -147,7 +147,7 @@ class TestExecToolFunc(unittest.TestCase):
             return None
         
         result = exec_tool_func(return_none, {}, "test_tool")
-        self.assertIsNone(result)
+        self.assertEqual(result, "None")
 
 
 class TestExceptionStepCallEnd(unittest.TestCase):

@@ -23,7 +23,7 @@ def convert_to_list_dict(content: str) -> list[dict]:
     # Pattern to match kimi function calls with flexible whitespace
     # Matches:  <|tool_calls_section_begin|>   <|tool_call_begin|>  functions.tool_name:id  <|tool_call_argument_begin|>  {json_args}  <|tool_call_end|>    <|tool_calls_section_end|>
     # Whitespace around markers is now optional/variable using \s*
-    pattern = r'\s*<\|tool_calls_section_begin\|>\s*<\|tool_call_begin\|>\s*functions\.([\w-]+):(\w+)\s*<\|tool_call_argument_begin\|>\s*(\{[^}]*\})\s*<\|tool_call_end\|>\s*<\|tool_calls_section_end\|>\s*'
+    pattern = r'\s*<\|tool_call_begin\|>\s*functions\.([\w-]+):(\w+)\s*<\|tool_call_argument_begin\|>\s*(\{[^}]*\})\s*'
 
     matches = re.findall(pattern, content)
 
