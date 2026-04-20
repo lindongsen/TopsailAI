@@ -40,8 +40,8 @@ class TestAddTool(unittest.TestCase):
         
         add_tool("", my_sample_function)
         from topsailai.tools.base.common import TOOLS
-        self.assertIn("aiagent.my_sample_function", TOOLS)
-        self.assertEqual(TOOLS["aiagent.my_sample_function"], my_sample_function)
+        self.assertIn("aiagent_tool.my_sample_function", TOOLS)
+        self.assertEqual(TOOLS["aiagent_tool.my_sample_function"], my_sample_function)
 
     @patch('topsailai.tools.base.common.TOOLS', {})
     def test_add_tool_invalid_not_callable(self):
@@ -70,9 +70,9 @@ class TestAddTool(unittest.TestCase):
 class TestGetToolsByModule(unittest.TestCase):
     """Tests for get_tools_by_module() function."""
 
+    @patch('topsailai.tools.base.common.CONN_CHAR', '.')
     @patch('topsailai.tools.base.common.module_tool')
     def test_get_tools_by_module_success(self, mock_module_tool):
-        """Test successfully getting tools from a module."""
         from topsailai.tools.base.common import get_tools_by_module, CONN_CHAR
         
         mock_module = MagicMock()
@@ -85,9 +85,9 @@ class TestGetToolsByModule(unittest.TestCase):
         self.assertIn("example.func1", result)
         self.assertIn("example.func2", result)
 
+    @patch('topsailai.tools.base.common.CONN_CHAR', '.')
     @patch('topsailai.tools.base.common.module_tool')
     def test_get_tools_by_module_with_prefix(self, mock_module_tool):
-        """Test that tool names are prefixed correctly."""
         from topsailai.tools.base.common import get_tools_by_module
         
         mock_module = MagicMock()

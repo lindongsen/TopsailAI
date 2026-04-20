@@ -200,7 +200,7 @@ def read_file(file_path:str, seek:int=0, size:int=-1):
         size: int, bytes, -1 for all, default is -1;
 
     Return:
-        string for ok, None for failed.
+        file content or error message
 
     Attention:
     - When it is explicitly required to read the complete file, these parameters are not needed: seek, size.
@@ -213,32 +213,30 @@ def read_file(file_path:str, seek:int=0, size:int=-1):
     file_path_lower = file_path.lower()
     file_ext = file_path_lower.rsplit('.', 1)[-1]
 
-    try:
-        with open(file_path, "rb") as fd:
-            if seek < 0:
-                fd.seek(seek, 2)
-            else:
-                fd.seek(seek)
+    with open(file_path, "rb") as fd:
+        if seek < 0:
+            fd.seek(seek, 2)
+        else:
+            fd.seek(seek)
 
-            if is_need_truncate(file_ext):
-                content = _do_step_read_bytes(fd, size)
-                content = ctx_safe.truncate_message(content)
-            else:
-                content = fd.read(size)
-            content = text_tool.safe_decode(content)
+        if is_need_truncate(file_ext):
+            content = _do_step_read_bytes(fd, size)
+            content = ctx_safe.truncate_message(content)
+        else:
+            content = fd.read(size)
+        content = text_tool.safe_decode(content)
 
-            # context limit
-            if is_need_truncate(file_ext):
-                content = ctx_safe.truncate_message(content)
+        # context limit
+        if is_need_truncate(file_ext):
+            content = ctx_safe.truncate_message(content)
 
-            return content
-    except Exception:
-        print_tool.print_error(traceback.format_exc())
-        return None
+        return content
+
 # finish doc
 read_file.__doc__ = read_file.__doc__.format(
     WHITE_LIST_NO_TRUNCATE_EXT=WHITE_LIST_NO_TRUNCATE_EXT,
 )
+
 
 def append_file(file_path: str, content: str) -> bool:
     """ append content to file.

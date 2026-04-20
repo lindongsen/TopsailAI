@@ -91,7 +91,7 @@ def exec_tool_func(tool_func, args, tool_name:str=None):
     except Exception as e:
         error = e
         result = str(e)
-        logger.exception(e)
+        print_tool.print_error(e, exception=True)
     finally:
         tool_stat.record_tool_call(
             tool_call=tool_name,
@@ -106,6 +106,11 @@ def exec_tool_func(tool_func, args, tool_name:str=None):
     if len(result_str) > maximum_bytes:
         logger.warning("tool_call result exceeds maximum_bytes: [%s], tool=[%s], args=[%s]", maximum_bytes, tool_name, args)
         return ctx_safe.truncate_text(result_str, maximum_bytes)
+
+    if result is None:
+        # tool should give a clear result
+        logger.warning("tool_call result is None: [%s]", tool_name)
+        return result_str
 
     return result
 
