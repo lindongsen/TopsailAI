@@ -245,7 +245,9 @@ class ContextManager(MessageStorageBase):
             max_size (int, optional): Maximum size threshold for archiving. Defaults to 1024.
         """
         # Process messages in the specified range
-        for msg in messages[index_start:index_end]:
+        # Handle negative index_end by converting to positive index
+        end_idx = len(messages) + index_end + 1 if index_end < 0 else index_end
+        for msg in messages[index_start:end_idx]:
             # Skip ignored roles (except for user messages with tool calls)
             if msg["role"] in self.ignored_roles:
                 if msg["role"] == ROLE_USER and "tool_call_id" in msg:

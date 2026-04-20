@@ -71,10 +71,8 @@ class TestIsMatchedSkill(unittest.TestCase):
     def test_empty_keys_returns_false(self):
         """Test that empty keys list returns False."""
         self.assertFalse(skill_tool.is_matched_skill("any/folder", []))
-        # Note: to_list(None) returns [None], which causes TypeError in startswith
-        # This is a bug in the source code, but we test actual behavior
-        with self.assertRaises(TypeError):
-            skill_tool.is_matched_skill("any/folder", None)
+        # None is filtered out by the function, so it returns False
+        self.assertFalse(skill_tool.is_matched_skill("any/folder", None))
 
     def test_prefix_match(self):
         """Test prefix matching."""

@@ -4,7 +4,9 @@
 
 # OpenAI Model Configuration
 # Default model used for LLM interactions
-OPENAI_MODEL="DeepSeek-V3.1-Terminus"
+#OPENAI_MODEL="DeepSeek-V3.1-Terminus"
+#OPENAI_MODEL="MiniMax-M2.5"
+OPENAI_MODEL="Kimi-K2.5"
 
 # OpenAI API Key
 # Required for accessing OpenAI-compatible API endpoints
@@ -63,7 +65,7 @@ TOPSAILAI_HUMAN_NAME = "Topsail"
 
 # Maximum Tokens
 # Maximum number of tokens to generate in each LLM response
-MAX_TOKENS=8000
+MAX_TOKENS=30000
 
 # Temperature
 # Controls randomness: 0.0 = deterministic, 1.0 = creative
@@ -139,10 +141,10 @@ CONTEXT_HISTORY_MANAGERS="sql.ChatHistorySQLAlchemy conn=sqlite:///memory.db;"
 # Length longer than this threshold will be automatically slimmed
 CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH=43
 # Tokens longer than this threshold will be automatically slimmed
-CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS=10000
+CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS=23000
 
 # When the number of messages reaches a threshold, they will be summarized to limit the message length
-# TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD=97
+TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD=97
 # TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP=0
 
 # Keep session messages after summarizing, 1 is enabled(default), 0 is disabled

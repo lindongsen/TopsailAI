@@ -413,6 +413,8 @@ def convert_tool_call_case1(content) -> List[Dict[str, Any]]:
 def hook_execute(content: Any) -> Union[List[Dict[str, Any]], str, Any]:
     if not isinstance(content, str):
         return content
+    if not content or not content.strip():
+        return ""
     if 'minimax' in content:
         if '<tool_call>' in content:
             return convert_xml_to_list_dict(content)

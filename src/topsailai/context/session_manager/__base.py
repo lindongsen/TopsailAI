@@ -40,6 +40,10 @@ class SessionData(object):
         self.session_name = None
         self.create_time = None
 
+    def __str__(self):
+        """Return string representation of SessionData."""
+        return f"SessionData(session_id={self.session_id}, task={self.task})"
+
 class SessionStorageBase(object):
     """
     Abstract base class for session storage implementations.

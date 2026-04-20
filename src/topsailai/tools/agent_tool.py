@@ -310,7 +310,7 @@ def async_multitasks_agent_writer2(
     Return final answer.
     """
     tasks_content = tasks_file_or_json
-    if tasks_file_or_json[0] in ["/", "."]:
+    if tasks_file_or_json and tasks_file_or_json[0] in ["/", "."]:
         with open(tasks_file_or_json, encoding="utf-8") as fd:
             tasks_content = fd.read()
     assert tasks_content
