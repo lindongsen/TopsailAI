@@ -27,6 +27,7 @@ from topsailai.utils import (
 
 from .constants import (
     ROLE_ASSISTANT,
+    LLM_KEYWORD_SERVICE,
 )
 from .llm_control.exception import (
     JsonError,
@@ -266,7 +267,7 @@ class LLMModel(LLMModelBase):
                 time.sleep(sec)
 
             try:
-                with qos_tool.log_if_slow(30, "LLM: slow chat"):
+                with qos_tool.log_if_slow(30, f"{LLM_KEYWORD_SERVICE}: slow chat"):
                     if for_stream:
                         rsp_obj, rsp_content = self.call_llm_model_by_stream(
                             messages,
@@ -373,7 +374,7 @@ class LLMModel(LLMModelBase):
                     if key in e_str:
                         sec = 1
 
-                print_error(f"!!! [{i}] ModelServiceError, {e}")
+                print_error(f"!!! [{i}] {LLM_KEYWORD_SERVICE}: {e}")
                 print_error(f"blocking chat {sec}s ...")
                 time.sleep(sec)
                 continue

@@ -32,14 +32,18 @@ H3 title format: `LOG_ATTENTION: {content}`
 
 Some critical logs
 
-### LOG_ATTENTION: "[0-9]\- LLM mistake: give final due to duplicate to"
+### LOG_ATTENTION: "[0-9]\- LLM Mistake: give final due to duplicate to"
 
 - LLM Lazy execution
 - LLM Make mistake in the final
 
-### LOG_ATTENTION: "[0-9]\- LLM mistake: invalid json string"
+### LOG_ATTENTION: "[0-9]\- LLM Mistake: invalid json string"
 
 LLM output unexpected content
+
+### LOG_ATTENTION: "[0-9]\- LLM Service:"
+
+LLM service errors
 
 ### LOG_ATTENTION: '"raw_text": "missing tool_call"'
 

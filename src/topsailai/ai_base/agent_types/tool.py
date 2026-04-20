@@ -23,6 +23,9 @@ from topsailai.utils import (
     print_tool,
     env_tool,
 )
+from topsailai.ai_base.constants import (
+    LLM_KEYWORD_MISTAKE,
+)
 
 from . import context as agent_ctx
 from . import exception as agent_exception
@@ -366,13 +369,13 @@ class StepCallTool(StepCallBase):
                     and self._last_step_count == 1:
                     # only thought, duplicate found
                     step_name = "final"
-                    print_tool.print_error(f"LLM mistake: give final due to duplicate to [{ori_step_name}] only")
+                    print_tool.print_error(f"{LLM_KEYWORD_MISTAKE}: give final due to duplicate to [{ori_step_name}] only")
 
                 if step_name in keys:
                     if len(response) == 1:
                         if step.get("raw_text") and 'final_answer' in step["raw_text"]:
                             step_name = "final"
-                            print_tool.print_error("LLM mistake: give final due to found 'final_answer'")
+                            print_tool.print_error(f"{LLM_KEYWORD_MISTAKE}: give final due to found 'final_answer'")
 
         self._last_step_name = step_name
         self._last_step_count = len(response)

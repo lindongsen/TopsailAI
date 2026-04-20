@@ -14,6 +14,9 @@ from topsailai.logger.log_chat import logger
 from topsailai.utils.print_tool import (
     print_error,
 )
+from topsailai.ai_base.constants import (
+    LLM_KEYWORD_MISTAKE,
+)
 from topsailai.utils import (
     format_tool,
     json_tool,
@@ -151,11 +154,11 @@ def fix_llm_mistakes(response:list, rsp_obj=None):
         item = response[0]
         if len(item) == 2:
             if 'tool_call' in item and 'tool_args' in item:
-                print_error("fix llm mistake: missing step_name")
+                print_error(f"{LLM_KEYWORD_MISTAKE}: missing step_name")
                 item["step_name"] = "action"
         elif len(item) == 1:
             if 'tool_call' in item:
-                print_error("fix llm mistake: missing step_name")
+                print_error(f"{LLM_KEYWORD_MISTAKE}: missing step_name")
                 item["step_name"] = "action"
 
     # case: tool_calls in rsp_obj
@@ -174,7 +177,7 @@ def fix_llm_mistakes(response:list, rsp_obj=None):
             if "step_name" in item0 \
                 and item0["step_name"] != "action" \
                 and rsp_msg.tool_calls:
-                    print_error("fix llm mistake: missing step_name=action")
+                    print_error(f"{LLM_KEYWORD_MISTAKE}: missing step_name=action")
                     response.append(
                         {"step_name": "action"}
                     )
@@ -232,7 +235,7 @@ def update_response_item(item:dict) -> dict:
     if item.get("step_name") == "action" and item.get("raw_text"):
         item_extra = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", item["raw_text"])
         if item_extra and isinstance(item_extra, list) and len(item_extra) == 1:
-            print_error("fix llm mistake: TOPSAILAI_HOOK_AFTER_LLM_CHAT, action content format is unexpected")
+            print_error(f"{LLM_KEYWORD_MISTAKE}: TOPSAILAI_HOOK_AFTER_LLM_CHAT, action content format is unexpected")
             item.update(item_extra[0])
     return item
 
@@ -318,7 +321,7 @@ def format_response(response, rsp_obj=None, messages=None):
                             if not get_tool_calls_of_rsp(rsp_obj):
                                 action_count = get_count_of_action(messages)
                                 if action_count > 0:
-                                    print_error(f"fix llm mistake: maybe final answer due to found action count [{action_count}]")
+                                    print_error(f"{LLM_KEYWORD_MISTAKE}: maybe final answer due to found action count [{action_count}]")
                                     item["step_name"] = "final_answer"
                         except Exception as e:
                             logger.exception(e)
@@ -332,7 +335,7 @@ def format_response(response, rsp_obj=None, messages=None):
     # hook after chat
     new_response = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", response)
     if new_response and new_response != response:
-        print_error("fix llm mistake: TOPSAILAI_HOOK_AFTER_LLM_CHAT")
+        print_error(f"{LLM_KEYWORD_MISTAKE}: TOPSAILAI_HOOK_AFTER_LLM_CHAT")
         response = new_response
         if not isinstance(response, str):
             return response
@@ -350,14 +353,14 @@ def format_response(response, rsp_obj=None, messages=None):
                     print_error(_msg)
                     response += "\n---\n" + _msg
 
-            print_error("fix llm mistake: maybe only thought")
+            print_error(f"{LLM_KEYWORD_MISTAKE}: maybe only thought")
             step_name = format_tool.TOPSAILAI_STEP_THINK
 
             try:
                 if not get_tool_calls_of_rsp(rsp_obj):
                     action_count = get_count_of_action(messages)
                     if action_count > 0:
-                        print_error(f"fix llm mistake: change step to final answer due to found action count [{action_count}]")
+                        print_error(f"{LLM_KEYWORD_MISTAKE}: change step to final answer due to found action count [{action_count}]")
                         step_name = format_tool.TOPSAILAI_STEP_FINAL
                     else:
                         no_tool_call_prompt = env_tool.EnvReaderInstance.get("TOPSAILAI_PROMPT_WHEN_NO_TOOL_CALL")

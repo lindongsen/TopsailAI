@@ -10,6 +10,11 @@ from topsailai.utils import (
     print_tool,
 )
 
+from topsailai.ai_base.constants import (
+    LLM_KEYWORD_MISTAKE,
+)
+
+
 BASE_PATH = __name__.rsplit('.', 2)[0]
 
 MISTAKES = module_tool.get_function_map(
@@ -39,7 +44,7 @@ def check_or_fix_mistakes(response, rsp_obj=None, **kwargs):
         if new_response is response:
             continue
 
-        print_tool.print_error(f"LLM make mistakes (fixed): [{name}], origin=[{response}], new=[{new_response}]")
+        print_tool.print_error(f"{LLM_KEYWORD_MISTAKE}: fixed by [{name}], origin=[{response}], new=[{new_response}]")
         break
 
     return new_response

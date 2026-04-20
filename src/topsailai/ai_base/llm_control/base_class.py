@@ -23,6 +23,9 @@ from topsailai.utils.print_tool import (
     print_error,
     print_critical,
 )
+from topsailai.ai_base.constants import (
+    LLM_KEYWORD_MISTAKE,
+)
 from topsailai.context.token import (
     TokenStat,
     count_tokens,
@@ -346,7 +349,7 @@ class LLMModelBase(object):
         if current_tokens >= max_tokens:
             repetition_result = text_tool.check_repetition(txt_content)
             if repetition_result.get("has_severe_repetition"):
-                error_msg = "LLM makes a mistake: Severe repetition loop pattern detected!"
+                error_msg = f"{LLM_KEYWORD_MISTAKE}: Severe repetition loop pattern detected!"
                 print_critical(f"{error_msg} {repetition_result}")
                 if EnvReaderInstance.check_bool(
                     "TOPSAILAI_REFUSE_SEVERE_REPETITION", False
@@ -360,7 +363,7 @@ class LLMModelBase(object):
 
         ccm = self.get_response_message(rsp_obj)
         if ccm.tool_calls:
-            print_error("LLM makes a mistake, fix it: missing action")
+            print_error(f"{LLM_KEYWORD_MISTAKE}: missing action")
             return format_tool.TOPSAILAI_STEP_ACTION
         return rsp_content
 
