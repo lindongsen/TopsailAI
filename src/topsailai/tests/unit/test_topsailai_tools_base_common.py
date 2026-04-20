@@ -70,7 +70,7 @@ class TestAddTool(unittest.TestCase):
 class TestGetToolsByModule(unittest.TestCase):
     """Tests for get_tools_by_module() function."""
 
-    @patch('topsailai.tools.base.common.CONN_CHAR', '.')
+    @patch('topsailai.tools.base.common.CONN_CHAR', '-')
     @patch('topsailai.tools.base.common.module_tool')
     def test_get_tools_by_module_success(self, mock_module_tool):
         from topsailai.tools.base.common import get_tools_by_module, CONN_CHAR
@@ -82,10 +82,10 @@ class TestGetToolsByModule(unittest.TestCase):
         result = get_tools_by_module("topsailai.tools.example")
         
         self.assertEqual(len(result), 2)
-        self.assertIn("example.func1", result)
-        self.assertIn("example.func2", result)
+        self.assertIn("example-func1", result)
+        self.assertIn("example-func2", result)
 
-    @patch('topsailai.tools.base.common.CONN_CHAR', '.')
+    @patch('topsailai.tools.base.common.CONN_CHAR', '-')
     @patch('topsailai.tools.base.common.module_tool')
     def test_get_tools_by_module_with_prefix(self, mock_module_tool):
         from topsailai.tools.base.common import get_tools_by_module
@@ -97,7 +97,7 @@ class TestGetToolsByModule(unittest.TestCase):
         result = get_tools_by_module("topsailai.tools.mytools")
         
         tool_name = list(result.keys())[0]
-        self.assertTrue(tool_name.startswith("mytools."))
+        self.assertTrue(tool_name.startswith("mytools-"))
 
     @patch('topsailai.tools.base.common.module_tool')
     def test_get_tools_by_module_empty(self, mock_module_tool):
@@ -123,7 +123,7 @@ class TestGetToolsByModule(unittest.TestCase):
         
         result = get_tools_by_module("topsailai.tools.custom", key="CUSTOM_KEY")
         
-        self.assertIn("custom.custom_func", result)
+        self.assertIn("custom-custom_func", result)
 
 
 class TestGetToolPrompt(unittest.TestCase):

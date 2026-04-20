@@ -55,5 +55,5 @@ run_cli="uv run"
 [ "${UV_NO_DEV}" == "1" ] && run_cli="python"
 
 [ "${ENABLED_TOOLS}" == "" ] && export ENABLED_TOOLS="*" # default to enable all tools
-[ "${DISABLED_TOOLS}" == "" ] && export DISABLED_TOOLS="sandbox_tool,hook_tool"
+[ "${DISABLED_TOOLS}" == "" ] && export DISABLED_TOOLS="sandbox_tool,hook_tool,subagent_tool"
 DEBUG=${DEBUG} ${run_cli} cli/AgentReAct.py -t "${task} ${task_ex}" ${ext_options}

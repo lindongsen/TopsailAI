@@ -38,7 +38,6 @@ def finish_task(final_answer:str):
 
 
 TOOLS = dict(
-    await_or_transfer_task=await_or_transfer_task,
 )
 
 FLAG_TOOL_ENABLED = False # env_tool.EnvReaderInstance.check_bool("TOPSAILAI_COLLABORATION_MODE", False)
