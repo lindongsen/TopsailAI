@@ -398,7 +398,7 @@ class TestEdgeCases(unittest.TestCase):
         mock_hook.return_value = mock_hook_instance
         mock_exec_cmd.return_value = (0, 'unicode output: 你好世界', '')
         
-        result = call_skill('/test/folder', 'test.py', '参数 --name 中文')
+        result = call_skill('/test/skill/folder', 'test.py', '参数 --name 中文')
         
         self.assertIsNotNone(result)
 

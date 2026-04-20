@@ -70,7 +70,7 @@ class TestContentStdout:
 class TestParseModelSettings:
     """Tests for parse_model_settings function."""
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
+    @patch('topsailai.ai_base.llm_control.base_class.EnvReaderInstance')
     def test_parse_model_settings_with_topsailai_prefix(self, mock_env_reader):
         """Test parsing MODEL_SETTINGS with TOPSAILAI_ prefix."""
         mock_env_reader.get_list_str.return_value = ["api_key=key1,api_base=base1"]
@@ -79,7 +79,7 @@ class TestParseModelSettings:
         assert result[0]["api_key"] == "key1"
         assert result[0]["api_base"] == "base1"
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
+    @patch('topsailai.ai_base.llm_control.base_class.EnvReaderInstance')
     def test_parse_model_settings_with_model_prefix(self, mock_env_reader):
         """Test parsing MODEL_SETTINGS with MODEL_ prefix."""
         mock_env_reader.get_list_str.return_value = None
@@ -89,14 +89,16 @@ class TestParseModelSettings:
         assert result[0]["key1"] == "val1"
         assert result[0]["key2"] == "val2"
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
+    @patch('topsailai.ai_base.llm_control.base_class.EnvReaderInstance')
+    @patch('topsailai.utils.env_tool.EnvReaderInstance')
     def test_parse_model_settings_empty(self, mock_env_reader):
         """Test parsing with no environment variable set."""
         mock_env_reader.get_list_str.return_value = None
         result = parse_model_settings()
         assert result == []
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
+    @patch('topsailai.ai_base.llm_control.base_class.EnvReaderInstance')
+    @patch('topsailai.utils.env_tool.EnvReaderInstance')
     def test_parse_model_settings_multiple_items(self, mock_env_reader):
         """Test parsing multiple model settings."""
         mock_env_reader.get_list_str.return_value = [
@@ -108,7 +110,7 @@ class TestParseModelSettings:
         assert result[0]["api_key"] == "k1"
         assert result[1]["api_key"] == "k2"
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
+    @patch('topsailai.utils.env_tool.EnvReaderInstance')
     def test_parse_model_settings_with_spaces(self, mock_env_reader):
         """Test parsing with spaces around values."""
         mock_env_reader.get_list_str.return_value = ["api_key= key1 ,api_base= base1 "]

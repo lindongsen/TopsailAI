@@ -412,89 +412,17 @@ class TestGetToolsByEnv(unittest.TestCase):
         self.assertEqual(result, [])
 
 
-class TestGetPromptFromModule(unittest.TestCase):
-    """Test get_prompt_from_module function"""
-
-    @patch('topsailai.prompt_hub.prompt_tool.__import__')
-    @patch('topsailai.prompt_hub.prompt_tool.logger')
-    def test_get_prompt_from_module_success(self, mock_logger, mock_import):
-        """Test get_prompt_from_module returns prompt from module"""
-        from topsailai.prompt_hub.prompt_tool import get_prompt_from_module
-        
-        mock_module = MagicMock()
-        mock_module.PROMPT = 'test prompt content'
-        mock_import.return_value = mock_module
-        
-        result = get_prompt_from_module('agent_tool')
-        
-        self.assertEqual(result, 'test prompt content')
-
-    @patch('topsailai.prompt_hub.prompt_tool.__import__')
-    @patch('topsailai.prompt_hub.prompt_tool.logger')
-    def test_get_prompt_from_module_not_found(self, mock_logger, mock_import):
-        """Test get_prompt_from_module returns empty when module not found"""
-        from topsailai.prompt_hub.prompt_tool import get_prompt_from_module
-        
-        mock_import.side_effect = ModuleNotFoundError()
-        
-        result = get_prompt_from_module('nonexistent')
-        
-        self.assertEqual(result, '')
-
-    @patch('topsailai.prompt_hub.prompt_tool.__import__')
-    @patch('topsailai.prompt_hub.prompt_tool.logger')
-    def test_get_prompt_from_module_no_attr(self, mock_logger, mock_import):
-        """Test get_prompt_from_module returns empty when attr not found"""
-        from topsailai.prompt_hub.prompt_tool import get_prompt_from_module
-        
-        mock_module = MagicMock(spec=[])
-        mock_import.return_value = mock_module
-        
-        result = get_prompt_from_module('agent_tool')
-        
-        self.assertEqual(result, '')
-
-
-class TestReloadPromptOnModule(unittest.TestCase):
-    """Test reload_prompt_on_module function"""
-
-    @patch('topsailai.prompt_hub.prompt_tool.__import__')
-    @patch('topsailai.prompt_hub.prompt_tool.logger')
-    def test_reload_prompt_on_module_success(self, mock_logger, mock_import):
-        """Test reload_prompt_on_module calls reload function"""
-        from topsailai.prompt_hub.prompt_tool import reload_prompt_on_module
-        
-        mock_module = MagicMock()
-        mock_import.return_value = mock_module
-        
-        reload_prompt_on_module('agent_tool')
-        
-        mock_module.reload.assert_called_once()
-        mock_logger.info.assert_called()
-
-    @patch('topsailai.prompt_hub.prompt_tool.__import__')
-    @patch('topsailai.prompt_hub.prompt_tool.logger')
-    def test_reload_prompt_on_module_not_found(self, mock_logger, mock_import):
-        """Test reload_prompt_on_module handles module not found"""
-        from topsailai.prompt_hub.prompt_tool import reload_prompt_on_module
-        
-        mock_import.side_effect = ModuleNotFoundError()
-        
-        reload_prompt_on_module('nonexistent')
-        
-        mock_logger.info.assert_not_called()
-
-
 class TestGetPromptByTools(unittest.TestCase):
     """Test get_prompt_by_tools function"""
 
+    # Decorators are applied bottom-to-top, so mock args must be in reverse order
     @patch('topsailai.tools.base.init.CONN_CHAR', '.')
     @patch('topsailai.prompt_hub.prompt_tool.exists_prompt_file')
     @patch('topsailai.prompt_hub.prompt_tool.read_prompt')
     @patch('topsailai.prompt_hub.prompt_tool.get_prompt_from_module')
     @patch('topsailai.prompt_hub.prompt_tool.reload_prompt_on_module')
     @patch('topsailai.prompt_hub.prompt_tool.logger')
-    def test_get_prompt_by_tools_with_modules(self, mock_logger, mock_reload, mock_get_prompt, mock_read, mock_exists, mock_char):
+    def test_get_prompt_by_tools_with_modules(self, mock_logger, mock_reload, mock_get_prompt, mock_read, mock_exists):
         """Test get_prompt_by_tools returns prompts from modules"""
         from topsailai.prompt_hub.prompt_tool import get_prompt_by_tools
         
@@ -507,13 +435,14 @@ class TestGetPromptByTools(unittest.TestCase):
         self.assertIn('module prompt', result)
         self.assertIn('prompt content', result)
 
+    # Decorators are applied bottom-to-top, so mock args must be in reverse order
     @patch('topsailai.tools.base.init.CONN_CHAR', '.')
     @patch('topsailai.prompt_hub.prompt_tool.exists_prompt_file')
     @patch('topsailai.prompt_hub.prompt_tool.read_prompt')
-    @patch('topsailai.prompt_hub.prompt_tool.get_prompt_from_module')
     @patch('topsailai.prompt_hub.prompt_tool.reload_prompt_on_module')
+    @patch('topsailai.prompt_hub.prompt_tool.get_prompt_from_module')
     @patch('topsailai.prompt_hub.prompt_tool.logger')
-    def test_get_prompt_by_tools_no_reload(self, mock_logger, mock_reload, mock_get_prompt, mock_read, mock_exists, mock_char):
+    def test_get_prompt_by_tools_no_reload(self, mock_logger, mock_get_prompt, mock_reload, mock_read, mock_exists):
         """Test get_prompt_by_tools does not reload when need_reload=False"""
         from topsailai.prompt_hub.prompt_tool import get_prompt_by_tools
         

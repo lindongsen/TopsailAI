@@ -5,8 +5,6 @@
   Purpose:
 '''
 
-import os
-
 from topsailai.tools.base.init import (
     TOOLS,
     TOOLS_INFO,
@@ -26,7 +24,7 @@ def add_tool(name:str, func):
     """ add a tool before creating agent instance. """
     assert callable(func), f"invalid function: {func}"
     if not name:
-        name = "aiagent" + CONN_CHAR + func.__name__
+        name = "aiagent_tool" + CONN_CHAR + func.__name__
     TOOLS[name] = func
     return
 
@@ -78,7 +76,7 @@ def expand_plugin_tools(tools=None, tools_info=None):
     # Use provided dicts or fall back to global TOOLS/TOOLS_INFO
     _tools = tools if tools is not None else TOOLS
     _tools_info = tools_info if tools_info is not None else TOOLS_INFO
-    
+
     env_plugin_tools = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_PLUGIN_TOOLS", separator='') or \
         env_tool.EnvReaderInstance.get_list_str("PLUGIN_TOOLS", separator='')
     if not env_plugin_tools:

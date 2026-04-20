@@ -86,7 +86,7 @@ class TestGetToolsByModule(unittest.TestCase):
         self.assertIn("example.func2", result)
 
     @patch('topsailai.tools.base.common.module_tool')
-    def test_get_tools_by_module_with_prefix(self):
+    def test_get_tools_by_module_with_prefix(self, mock_module_tool):
         """Test that tool names are prefixed correctly."""
         from topsailai.tools.base.common import get_tools_by_module
         
@@ -100,7 +100,7 @@ class TestGetToolsByModule(unittest.TestCase):
         self.assertTrue(tool_name.startswith("mytools."))
 
     @patch('topsailai.tools.base.common.module_tool')
-    def test_get_tools_by_module_empty(self):
+    def test_get_tools_by_module_empty(self, mock_module_tool):
         """Test handling module with no tools."""
         from topsailai.tools.base.common import get_tools_by_module
         
@@ -113,7 +113,7 @@ class TestGetToolsByModule(unittest.TestCase):
         self.assertEqual(result, {})
 
     @patch('topsailai.tools.base.common.module_tool')
-    def test_get_tools_by_module_custom_key(self):
+    def test_get_tools_by_module_custom_key(self, mock_module_tool):
         """Test using custom key parameter."""
         from topsailai.tools.base.common import get_tools_by_module
         
@@ -129,10 +129,10 @@ class TestGetToolsByModule(unittest.TestCase):
 class TestGetToolPrompt(unittest.TestCase):
     """Tests for get_tool_prompt() function."""
 
-    @patch('topsailai.tools.base.common.TOOLS', {"tool1": MagicMock(__doc__="Tool 1 doc")})
     @patch('topsailai.tools.base.common.format_tool')
     @patch('topsailai.tools.base.common.print_tool')
     @patch('topsailai.tools.base.common.TOOL_PROMPT', "Tools:\n{__TOOLS__}")
+    @patch('topsailai.tools.base.common.TOOLS', {"tool1": MagicMock(__doc__="Tool 1 doc")})
     def test_get_tool_prompt_with_tools_name(self, mock_print, mock_format):
         """Test generating prompt from tool names."""
         from topsailai.tools.base.common import get_tool_prompt, TOOLS
@@ -153,28 +153,30 @@ class TestGetToolPrompt(unittest.TestCase):
         
         mock_func = MagicMock(__doc__="Map tool doc")
         mock_format.to_list.return_value = []
+        mock_print.format_dict_to_md.return_value = "Map tool doc"
         
         result = get_tool_prompt(tools_map={"map_tool": mock_func})
         
         self.assertIn("Map tool doc", result)
 
-    @patch('topsailai.tools.base.common.TOOLS', {"tool1": MagicMock(__doc__="Tool 1 doc")})
     @patch('topsailai.tools.base.common.format_tool')
     @patch('topsailai.tools.base.common.print_tool')
     @patch('topsailai.tools.base.common.TOOL_PROMPT', "Tools:\n{__TOOLS__}")
+    @patch('topsailai.tools.base.common.TOOLS', {"tool1": MagicMock(__doc__="Tool 1 doc")})
     def test_get_tool_prompt_both_params(self, mock_print, mock_format):
         """Test combining both tools_name and tools_map parameters."""
         from topsailai.tools.base.common import get_tool_prompt, TOOLS
         
         mock_format.to_list.return_value = ["tool1"]
         mock_func = MagicMock(__doc__="Map tool doc")
+        mock_print.format_dict_to_md.return_value = "formatted_tools"
         
         result = get_tool_prompt(tools_name=["tool1"], tools_map={"map_tool": mock_func})
         
         self.assertIn("formatted_tools", result)
 
-    @patch('topsailai.tools.base.common.TOOLS', {})
     @patch('topsailai.tools.base.common.format_tool')
+    @patch('topsailai.tools.base.common.TOOLS', {})
     def test_get_tool_prompt_empty(self, mock_format):
         """Test returning empty string when no tools provided."""
         from topsailai.tools.base.common import get_tool_prompt, TOOLS
@@ -189,11 +191,11 @@ class TestGetToolPrompt(unittest.TestCase):
 class TestExpandPluginTools(unittest.TestCase):
     """Tests for expand_plugin_tools() function."""
 
-    @patch('topsailai.tools.base.common.TOOLS', {})
-    @patch('topsailai.tools.base.common.TOOLS_INFO', {})
     @patch('topsailai.tools.base.common.module_tool')
     @patch('topsailai.tools.base.common.env_tool.EnvReaderInstance')
-    def test_expand_plugin_tools_with_env_var(self, mock_env, mock_module_tool, mock_tools_info, mock_tools):
+    @patch('topsailai.tools.base.common.TOOLS', {})
+    @patch('topsailai.tools.base.common.TOOLS_INFO', {})
+    def test_expand_plugin_tools_with_env_var(self, mock_env, mock_module_tool):
         """Test loading tools from environment variable."""
         from topsailai.tools.base.common import expand_plugin_tools
         
@@ -204,11 +206,11 @@ class TestExpandPluginTools(unittest.TestCase):
         
         mock_module_tool.get_external_function_map.assert_called()
 
-    @patch('topsailai.tools.base.common.TOOLS', {})
-    @patch('topsailai.tools.base.common.TOOLS_INFO', {})
     @patch('topsailai.tools.base.common.module_tool')
     @patch('topsailai.tools.base.common.env_tool.EnvReaderInstance')
-    def test_expand_plugin_tools_no_env_var(self, mock_env, mock_module_tool, mock_tools_info, mock_tools):
+    @patch('topsailai.tools.base.common.TOOLS', {})
+    @patch('topsailai.tools.base.common.TOOLS_INFO', {})
+    def test_expand_plugin_tools_no_env_var(self, mock_env, mock_module_tool):
         """Test that nothing happens when no env var is set."""
         from topsailai.tools.base.common import expand_plugin_tools
         
@@ -218,13 +220,13 @@ class TestExpandPluginTools(unittest.TestCase):
         
         mock_module_tool.get_external_function_map.assert_not_called()
 
-    @patch('topsailai.tools.base.common.TOOLS', {})
-    @patch('topsailai.tools.base.common.TOOLS_INFO', {})
     @patch('topsailai.tools.base.common.module_tool')
     @patch('topsailai.tools.base.common.env_tool.EnvReaderInstance')
-    def test_expand_plugin_tools_updates_tools(self, mock_env, mock_module_tool, mock_tools_info, mock_tools):
+    @patch('topsailai.tools.base.common.TOOLS', {})
+    @patch('topsailai.tools.base.common.TOOLS_INFO', {})
+    def test_expand_plugin_tools_updates_tools(self, mock_env, mock_module_tool):
         """Test that TOOLS dict is updated with plugin tools."""
-        from topsailai.tools.base.common import expand_plugin_tools
+        from topsailai.tools.base.common import expand_plugin_tools, TOOLS
         
         mock_env.get_list_str.return_value = ["plugin.path"]
         mock_module_tool.get_external_function_map.side_effect = [
@@ -234,15 +236,15 @@ class TestExpandPluginTools(unittest.TestCase):
         
         expand_plugin_tools()
         
-        self.assertIn("new_tool", mock_tools)
+        self.assertIn("new_tool", TOOLS)
 
-    @patch('topsailai.tools.base.common.TOOLS', {})
-    @patch('topsailai.tools.base.common.TOOLS_INFO', {})
     @patch('topsailai.tools.base.common.module_tool')
     @patch('topsailai.tools.base.common.env_tool.EnvReaderInstance')
-    def test_expand_plugin_tools_updates_tools_info(self, mock_env, mock_module_tool, mock_tools_info, mock_tools):
+    @patch('topsailai.tools.base.common.TOOLS', {})
+    @patch('topsailai.tools.base.common.TOOLS_INFO', {})
+    def test_expand_plugin_tools_updates_tools_info(self, mock_env, mock_module_tool):
         """Test that TOOLS_INFO dict is updated with plugin tools info."""
-        from topsailai.tools.base.common import expand_plugin_tools
+        from topsailai.tools.base.common import expand_plugin_tools, TOOLS_INFO
         
         mock_env.get_list_str.return_value = ["plugin.path"]
         mock_module_tool.get_external_function_map.side_effect = [
@@ -252,7 +254,7 @@ class TestExpandPluginTools(unittest.TestCase):
         
         expand_plugin_tools()
         
-        self.assertIn("new_tool_info", mock_tools_info)
+        self.assertIn("new_tool_info", TOOLS_INFO)
 
 
 class TestGenerateToolInfo(unittest.TestCase):
@@ -291,8 +293,8 @@ class TestGenerateToolInfo(unittest.TestCase):
 class TestGetToolsForChat(unittest.TestCase):
     """Tests for get_tools_for_chat() function."""
 
-    @patch('topsailai.tools.base.common.TOOLS_INFO', {"info_tool": {"function": {"name": "info_tool"}}})
     @patch('topsailai.tools.base.common.TOOLS', {})
+    @patch('topsailai.tools.base.common.TOOLS_INFO', {"info_tool": {"function": {"name": "info_tool"}}})
     def test_get_tools_for_chat_with_tools_info(self):
         """Test using TOOLS_INFO when available."""
         from topsailai.tools.base.common import get_tools_for_chat
@@ -302,8 +304,8 @@ class TestGetToolsForChat(unittest.TestCase):
         self.assertIn("info_tool", result)
         self.assertEqual(result["info_tool"]["function"]["name"], "info_tool")
 
-    @patch('topsailai.tools.base.common.TOOLS_INFO', {})
     @patch('topsailai.tools.base.common.TOOLS', {"fallback_tool": MagicMock(__doc__="Fallback doc")})
+    @patch('topsailai.tools.base.common.TOOLS_INFO', {})
     def test_get_tools_for_chat_fallback_to_tools(self):
         """Test fallback to TOOLS docstring when TOOLS_INFO not available."""
         from topsailai.tools.base.common import get_tools_for_chat
@@ -313,8 +315,8 @@ class TestGetToolsForChat(unittest.TestCase):
         self.assertIn("fallback_tool", result)
         self.assertEqual(result["fallback_tool"]["function"]["description"], "Fallback doc")
 
-    @patch('topsailai.tools.base.common.TOOLS_INFO', {"info_tool": {"function": {"name": "original"}}})
     @patch('topsailai.tools.base.common.TOOLS', {})
+    @patch('topsailai.tools.base.common.TOOLS_INFO', {"info_tool": {"function": {"name": "original"}}})
     def test_get_tools_for_chat_name_override(self):
         """Test that function name is overridden in result."""
         from topsailai.tools.base.common import get_tools_for_chat
@@ -323,8 +325,8 @@ class TestGetToolsForChat(unittest.TestCase):
         
         self.assertEqual(result["info_tool"]["function"]["name"], "info_tool")
 
-    @patch('topsailai.tools.base.common.TOOLS_INFO', {})
     @patch('topsailai.tools.base.common.TOOLS', {})
+    @patch('topsailai.tools.base.common.TOOLS_INFO', {})
     def test_get_tools_for_chat_empty(self):
         """Test handling empty tools map."""
         from topsailai.tools.base.common import get_tools_for_chat

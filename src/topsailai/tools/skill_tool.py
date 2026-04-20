@@ -126,6 +126,9 @@ def call_skill(
     cmd_exe_file = cmd
     if isinstance(cmd, list):
         cmd_exe_file = cmd[0]
+    else:
+        # For string commands, extract just the executable path (first word)
+        cmd_exe_file = cmd.split()[0] if cmd else cmd
 
     if not cmd_exe_file:
         raise Exception("illegal cmd: [%s]" % raw_cmd)

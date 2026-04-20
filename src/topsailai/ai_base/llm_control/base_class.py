@@ -17,6 +17,7 @@ from topsailai.utils import (
     format_tool,
     text_tool,
 )
+from topsailai.utils.env_tool import EnvReaderInstance  # For test compatibility
 from topsailai.utils.print_tool import (
     print_debug,
     print_error,
@@ -88,8 +89,8 @@ def parse_model_settings():
         Returns: [{"k1_a": "v1_a", "k2_a": "v2_a"}, {"k1_b": "v1_b", "k2_b": "v2_b"}]
 
     """
-    items = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_MODEL_SETTINGS", separator=';') or \
-        env_tool.EnvReaderInstance.get_list_str("MODEL_SETTINGS", separator=';')
+    items = EnvReaderInstance.get_list_str("TOPSAILAI_MODEL_SETTINGS", separator=';') or \
+        EnvReaderInstance.get_list_str("MODEL_SETTINGS", separator=';')
     result = []
     if not items:
         return result
@@ -347,7 +348,7 @@ class LLMModelBase(object):
             if repetition_result.get("has_severe_repetition"):
                 error_msg = "LLM makes a mistake: Severe repetition loop pattern detected!"
                 print_critical(f"{error_msg} {repetition_result}")
-                if env_tool.EnvReaderInstance.check_bool(
+                if EnvReaderInstance.check_bool(
                     "TOPSAILAI_REFUSE_SEVERE_REPETITION", False
                 ):
                     raise ModelServiceError(error_msg, repetition_result)
