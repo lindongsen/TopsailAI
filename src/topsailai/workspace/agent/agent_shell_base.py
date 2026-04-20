@@ -35,9 +35,14 @@ from topsailai.workspace.input_tool import (
 from topsailai.workspace import lock_tool
 from topsailai.workspace.agent.agent_chat_base import AgentChatBase
 from topsailai.workspace.task import task_tool
+from topsailai.workspace.print_tool import (
+    decorator_tee_output_by_session,
+)
 
 
 class AgentChat(AgentChatBase):
+
+    @decorator_tee_output_by_session()
     def run(
             self,
             message:str=None,

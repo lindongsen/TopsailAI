@@ -186,10 +186,12 @@ class TestEdgeCases:
     def test_check_mistake1_with_kwargs_passed(self):
         """Test check_mistake1 handles kwargs correctly."""
         from ai_base.llm_control.llm_mistakes.bad_request_error import check_mistake1
+        from ai_base.llm_control.exception import ModelServiceError
 
         message = [{"type": "BadRequestError", "error": {}}]
-        result = check_mistake1(message, extra_param="test")
-        assert result is None or isinstance(result, type(None))
+        # Function raises ModelServiceError when type is BadRequestError, even with kwargs
+        with pytest.raises(ModelServiceError):
+            check_mistake1(message, extra_param="test")
 
     def test_check_mistake1_with_error_nested_type(self):
         """Test check_mistake1 behavior when type is nested inside error dict (not at top level)."""
