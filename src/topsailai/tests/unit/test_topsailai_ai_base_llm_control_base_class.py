@@ -7,6 +7,7 @@ Purpose: Unit tests for ai_base/llm_control/base_class.py
 
 import pytest
 import sys
+import os
 from io import StringIO
 from unittest.mock import patch, MagicMock
 
@@ -120,11 +121,9 @@ class TestParseModelSettings:
 class TestLLMModelBase:
     """Tests for LLMModelBase class."""
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_base.llm_control.base_class.logger')
-    def test_init_default_values(self, mock_logger, mock_env_reader):
+    def test_init_default_values(self, monkeypatch):
         """Test initialization with default values."""
-        mock_env_reader.get_list_str.return_value = None
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
         
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -142,11 +141,9 @@ class TestLLMModelBase:
         assert model.top_p == 0.97
         assert model.frequency_penalty == 0.0
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_base.llm_control.base_class.logger')
-    def test_init_with_model_name(self, mock_logger, mock_env_reader):
+    def test_init_with_model_name(self, monkeypatch):
         """Test initialization with custom model_name."""
-        mock_env_reader.get_list_str.return_value = None
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
         
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -161,11 +158,9 @@ class TestLLMModelBase:
         model = TestModel(model_name="custom-model")
         assert model.model_name == "custom-model"
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_base.llm_control.base_class.logger')
-    def test_send_content(self, mock_logger, mock_env_reader):
+    def test_send_content(self, monkeypatch):
         """Test send_content method."""
-        mock_env_reader.get_list_str.return_value = None
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
         
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -183,11 +178,9 @@ class TestLLMModelBase:
         model.send_content("test content")
         mock_sender.send.assert_called_once_with("test content")
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_base.llm_control.base_class.logger')
-    def test_send_content_multiple_senders(self, mock_logger, mock_env_reader):
+    def test_send_content_multiple_senders(self, monkeypatch):
         """Test send_content with multiple senders."""
-        mock_env_reader.get_list_str.return_value = None
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
         
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -207,11 +200,9 @@ class TestLLMModelBase:
         mock_sender1.send.assert_called_once_with("test content")
         mock_sender2.send.assert_called_once_with("test content")
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_base.llm_control.base_class.logger')
-    def test_chat_model_property_single_model(self, mock_logger, mock_env_reader):
+    def test_chat_model_property_single_model(self, monkeypatch):
         """Test chat_model property with single model."""
-        mock_env_reader.get_list_str.return_value = None
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
         
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -229,11 +220,9 @@ class TestLLMModelBase:
         model.models = []
         assert model.chat_model == mock_model
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_base.llm_control.base_class.logger')
-    def test_chat_model_property_multiple_models(self, mock_logger, mock_env_reader):
+    def test_chat_model_property_multiple_models(self, monkeypatch):
         """Test chat_model property with multiple models."""
-        mock_env_reader.get_list_str.return_value = None
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
         
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -256,11 +245,9 @@ class TestLLMModelBase:
         result = model.chat_model
         assert result in [mock_model1, mock_model2]
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_base.llm_control.base_class.logger')
-    def test_build_parameters_for_chat(self, mock_logger, mock_env_reader):
+    def test_build_parameters_for_chat(self, monkeypatch):
         """Test build_parameters_for_chat method."""
-        mock_env_reader.get_list_str.return_value = None
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
         
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -281,11 +268,9 @@ class TestLLMModelBase:
         assert params["max_tokens"] == 8000
         assert params["stream"] == False
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_base.llm_control.base_class.logger')
-    def test_build_parameters_for_chat_with_tools(self, mock_logger, mock_env_reader):
+    def test_build_parameters_for_chat_with_tools(self, monkeypatch):
         """Test build_parameters_for_chat with tools parameter."""
-        mock_env_reader.get_list_str.return_value = None
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
         
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -305,11 +290,9 @@ class TestLLMModelBase:
         assert "tools" in params
         assert params["tool_choice"] == "auto"
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_base.llm_control.base_class.logger')
-    def test_check_response_content_none(self, mock_logger, mock_env_reader):
+    def test_check_response_content_none(self, monkeypatch):
         """Test check_response_content with None content."""
-        mock_env_reader.get_list_str.return_value = None
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
         
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -325,11 +308,9 @@ class TestLLMModelBase:
         with pytest.raises(TypeError, match="no response"):
             model.check_response_content(MagicMock(), None)
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_base.llm_control.base_class.logger')
-    def test_check_response_content_empty(self, mock_logger, mock_env_reader):
+    def test_check_response_content_empty(self, monkeypatch):
         """Test check_response_content with empty content."""
-        mock_env_reader.get_list_str.return_value = None
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
         
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -345,11 +326,9 @@ class TestLLMModelBase:
         with pytest.raises(TypeError, match="null of response"):
             model.check_response_content(MagicMock(), "   ")
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_base.llm_control.base_class.logger')
-    def test_format_null_response_content_with_tool_calls(self, mock_logger, mock_env_reader):
+    def test_format_null_response_content_with_tool_calls(self, monkeypatch):
         """Test format_null_response_content when tool_calls exist."""
-        mock_env_reader.get_list_str.return_value = None
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
         
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -367,11 +346,9 @@ class TestLLMModelBase:
         result = model.format_null_response_content(MagicMock(), None)
         assert result == "topsailai.action"
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_base.llm_control.base_class.logger')
-    def test_fix_response_content_with_content(self, mock_logger, mock_env_reader):
+    def test_fix_response_content_with_content(self, monkeypatch):
         """Test fix_response_content when content exists."""
-        mock_env_reader.get_list_str.return_value = None
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
         
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -387,11 +364,9 @@ class TestLLMModelBase:
         result = model.fix_response_content(MagicMock(), "existing content")
         assert result == "existing content"
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_base.llm_control.base_class.logger')
-    def test_get_llm_models_empty_settings(self, mock_logger, mock_env_reader):
+    def test_get_llm_models_empty_settings(self, monkeypatch):
         """Test get_llm_models with no model settings."""
-        mock_env_reader.get_list_str.return_value = None
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
         
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -407,11 +382,9 @@ class TestLLMModelBase:
         result = model.get_llm_models()
         assert result is None or result == []
 
-    @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_base.llm_control.base_class.logger')
-    def test_rebuild_llm_models(self, mock_logger, mock_env_reader):
+    def test_rebuild_llm_models(self, monkeypatch):
         """Test rebuild_llm_models method."""
-        mock_env_reader.get_list_str.return_value = None
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
         
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):

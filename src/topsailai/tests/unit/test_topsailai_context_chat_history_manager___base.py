@@ -8,6 +8,7 @@ Author: DawsonLin
 Created: 2025-10-29
 """
 
+import json
 import unittest
 from unittest.mock import patch, MagicMock
 from topsailai.context.chat_history_manager.__base import (
@@ -230,9 +231,8 @@ class TestContextManager(unittest.TestCase):
         self.manager.add_message = MagicMock()
         self.manager._link_msg_id(content_dict)
 
-        self.assertNotIn("raw_text", content_dict)
-        self.assertNotIn("role", content_dict)
         self.assertEqual(content_dict["step_name"], "archive")
+        self.assertIn("retrieve_msg by msg_id=", content_dict["raw_text"])
 
     @patch('topsailai.context.chat_history_manager.__base.json_tool')
     @patch('topsailai.context.chat_history_manager.__base.format_tool')
@@ -254,13 +254,14 @@ class TestContextManager(unittest.TestCase):
     def test_link_messages_processes_user_with_tool_calls(self, mock_format_tool, mock_json_tool):
         """Test that user messages with tool_call_id are processed."""
         mock_format_tool.to_list.side_effect = lambda x: x if isinstance(x, list) else [x]
-        mock_json_tool.json_load.return_value = [{"step_name": "action", "raw_text": "test"}]
+        mock_json_tool.json_load.return_value = [{"step_name": "action", "raw_text": "x" * 2000}]
 
+        large_content = json.dumps([{"step_name": "action", "raw_text": "x" * 2000}])
         messages = [
-            {"role": ROLE_USER, "content": '[{"step_name": "action", "raw_text": "test"}]', "tool_call_id": "call_123"},
+            {"role": ROLE_USER, "content": large_content, "tool_call_id": "call_123"},
         ]
         self.manager._link_msg_id = MagicMock()
-        self.manager.link_messages(messages, index_start=0, index_end=-1, max_size=1)
+        self.manager.link_messages(messages, index_start=0, index_end=-1, max_size=100)
 
         self.manager._link_msg_id.assert_called()
 
@@ -303,12 +304,13 @@ class TestContextManager(unittest.TestCase):
         """Test archiving content exceeding max_size threshold."""
         mock_format_tool.to_list.side_effect = lambda x: x if isinstance(x, list) else [x]
         mock_json_tool.json_load.return_value = [{"step_name": "action", "raw_text": "x" * 2000}]
-        mock_json_tool.json_dump.side_effect = lambda x, **kwargs: str(x)
+        mock_json_tool.json_dump.side_effect = lambda x, **kwargs: json.dumps(x)
         mock_get_session_id.return_value = "test_session"
         mock_count_tokens.return_value = 100
 
+        large_content = json.dumps([{"step_name": "action", "raw_text": "x" * 2000}])
         messages = [
-            {"role": "assistant", "content": '[{"step_name": "action", "raw_text": "x" * 2000}]'},
+            {"role": "assistant", "content": large_content},
         ]
         self.manager.add_message = MagicMock()
         self.manager.link_messages(messages, index_start=0, index_end=-1, max_size=100)
@@ -320,15 +322,16 @@ class TestContextManager(unittest.TestCase):
     def test_link_messages_respects_index_range(self, mock_format_tool, mock_json_tool):
         """Test that only messages in index_start:index_end range are processed."""
         mock_format_tool.to_list.side_effect = lambda x: x if isinstance(x, list) else [x]
-        mock_json_tool.json_load.return_value = [{"step_name": "action", "raw_text": "test"}]
+        mock_json_tool.json_load.return_value = [{"step_name": "action", "raw_text": "x" * 2000}]
 
+        large_content = json.dumps([{"step_name": "action", "raw_text": "x" * 2000}])
         messages = [
             {"role": "system", "content": "skip"},
-            {"role": "assistant", "content": "process"},
+            {"role": "assistant", "content": large_content},
             {"role": "user", "content": "skip"},
         ]
         self.manager._link_msg_id = MagicMock()
-        self.manager.link_messages(messages, index_start=1, index_end=2, max_size=1)
+        self.manager.link_messages(messages, index_start=1, index_end=2, max_size=100)
 
         self.manager._link_msg_id.assert_called_once()
 
@@ -341,23 +344,24 @@ class TestContextManager(unittest.TestCase):
         """Test that message content is updated after archiving."""
         mock_format_tool.to_list.side_effect = lambda x: x if isinstance(x, list) else [x]
         mock_json_tool.json_load.return_value = [{"step_name": "action", "raw_text": "x" * 2000}]
-        mock_json_tool.json_dump.side_effect = lambda x, **kwargs: str(x)
+        mock_json_tool.json_dump.side_effect = lambda x, **kwargs: json.dumps(x)
         mock_get_session_id.return_value = "test_session"
         mock_count_tokens.return_value = 100
 
+        large_content = json.dumps([{"step_name": "action", "raw_text": "x" * 2000}])
         messages = [
-            {"role": "assistant", "content": '[{"step_name": "action", "raw_text": "x" * 2000}]'},
+            {"role": "assistant", "content": large_content},
         ]
         self.manager.add_message = MagicMock()
-        self.manager.link_messages(messages, index_start=0, index_end=-1, max_size=1)
+        self.manager.link_messages(messages, index_start=0, index_end=-1, max_size=100)
 
-        self.assertNotEqual(messages[0]["content"], '[{"step_name": "action", "raw_text": "x" * 2000}]')
+        self.assertNotEqual(messages[0]["content"], large_content)
 
     def test_retrieve_message_returns_content(self):
         """Test that retrieve_message returns message content."""
         mock_msg = MagicMock()
         mock_msg.message = "Test message content"
-        self.mock_storage.get_message.return_value = mock_msg
+        self.manager.get_message = MagicMock(return_value=mock_msg)
 
         result = self.manager.retrieve_message("test_msg_id")
         self.assertEqual(result, "Test message content")
@@ -366,10 +370,10 @@ class TestContextManager(unittest.TestCase):
         """Test that get_message is called with correct msg_id."""
         mock_msg = MagicMock()
         mock_msg.message = "Test"
-        self.mock_storage.get_message.return_value = mock_msg
+        self.manager.get_message = MagicMock(return_value=mock_msg)
 
         self.manager.retrieve_message("test_msg_id")
-        self.mock_storage.get_message.assert_called_once_with("test_msg_id")
+        self.manager.get_message.assert_called_once_with("test_msg_id")
 
     @patch('topsailai.context.chat_history_manager.__base.json_tool')
     def test_retrieve_messages_returns_parsed_json(self, mock_json_tool):
@@ -378,7 +382,7 @@ class TestContextManager(unittest.TestCase):
         mock_msg1.message = '{"content": "msg1"}'
         mock_msg2 = MagicMock()
         mock_msg2.message = '{"content": "msg2"}'
-        self.mock_storage.get_messages_by_session.return_value = [mock_msg1, mock_msg2]
+        self.manager.get_messages_by_session = MagicMock(return_value=[mock_msg1, mock_msg2])
         mock_json_tool.json_load.side_effect = lambda x: {"parsed": x}
 
         result = self.manager.retrieve_messages("test_session")
@@ -389,7 +393,7 @@ class TestContextManager(unittest.TestCase):
     @patch('topsailai.context.chat_history_manager.__base.json_tool')
     def test_retrieve_messages_empty_session(self, mock_json_tool):
         """Test handling of empty session."""
-        self.mock_storage.get_messages_by_session.return_value = []
+        self.manager.get_messages_by_session = MagicMock(return_value=[])
 
         result = self.manager.retrieve_messages("empty_session")
         self.assertEqual(result, [])

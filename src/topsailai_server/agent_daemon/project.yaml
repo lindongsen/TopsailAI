@@ -1,0 +1,5 @@
+# Project Options for AI
+workspace: /root/ai/TopsailAI/src/topsailai_server/agent_daemon
+ProjectRootFolder: /root/ai/TopsailAI
+programming_language: python
+
