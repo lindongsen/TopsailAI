@@ -1,178 +1,164 @@
 """
-Unit tests for topsailai.human.role module.
+Unit tests for the human.role module.
 
-Author: DawsonLin
-Email: lin_dongsen@126.com
-Created: 2026-04-18
-Purpose: Test human role name resolution logic
+This module tests the get_human_name function to ensure proper
+human name handling and environment variable integration.
+
+Author: AI (Unit Test Enhancement)
+Purpose: Comprehensive test coverage for human role module
 """
 
 import os
-import pytest
-from unittest.mock import patch
+import unittest
+from unittest.mock import patch, MagicMock
 
-from src.topsailai.human.role import (
-    get_human_name,
-    HUMAN_STARTSWITH
-)
+from topsailai.human.role import get_human_name, HUMAN_STARTSWITH
 
 
-class TestHumanStartsWith:
-    """Test HUMAN_STARTSWITH constant"""
-    
-    def test_human_startswith_value(self):
-        """Test HUMAN_STARTSWITH constant value is 'Human.'"""
-        assert HUMAN_STARTSWITH == "Human."
+class TestGetHumanName(unittest.TestCase):
+    """Test cases for get_human_name function."""
 
+    def test_human_startswith_constant(self):
+        """Test that HUMAN_STARTSWITH constant is correctly defined."""
+        self.assertEqual(HUMAN_STARTSWITH, "Human.")
 
-class TestGetHumanNameWithParameter:
-    """Test get_human_name function with explicit parameter"""
-    
-    def test_with_explicit_name_no_prefix(self):
-        """Test get_human_name with explicit name without prefix"""
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_get_human_name_with_explicit_name(self, mock_env):
+        """Test get_human_name with explicit name parameter."""
         result = get_human_name("Alice")
-        assert result == "Human.Alice"
-    
-    def test_with_explicit_name_with_prefix(self):
-        """Test get_human_name with explicit name that already has prefix"""
+        self.assertEqual(result, "Human.Alice")
+
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_get_human_name_already_has_prefix(self, mock_env):
+        """Test get_human_name when name already has Human. prefix."""
         result = get_human_name("Human.Bob")
-        assert result == "Human.Bob"
-    
-    def test_with_explicit_name_empty_string(self):
-        """Test get_human_name with empty string parameter"""
+        self.assertEqual(result, "Human.Bob")
+
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_get_human_name_from_env_variable(self, mock_env):
+        """Test get_human_name when name comes from environment variable."""
+        mock_env.get.return_value = "Charlie"
+        
+        result = get_human_name()
+        
+        mock_env.get.assert_called_once_with("TOPSAILAI_HUMAN_NAME")
+        self.assertEqual(result, "Human.Charlie")
+
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_get_human_name_default_when_env_empty(self, mock_env):
+        """Test get_human_name defaults to DawsonLin when env is empty."""
+        mock_env.get.return_value = None
+        
+        result = get_human_name()
+        
+        self.assertEqual(result, "Human.DawsonLin")
+
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_get_human_name_explicit_overrides_env(self, mock_env):
+        """Test that explicit name parameter overrides environment variable."""
+        mock_env.get.return_value = "EnvName"
+        
+        result = get_human_name("ExplicitName")
+        
+        # Env should not be called when explicit name is provided
+        mock_env.get.assert_not_called()
+        self.assertEqual(result, "Human.ExplicitName")
+
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_get_human_name_empty_string_explicit(self, mock_env):
+        """Test get_human_name with empty string as explicit name."""
+        mock_env.get.return_value = "FromEnv"
+        
         result = get_human_name("")
-        # Empty string is falsy, should fall back to env var or default
-        assert result == "Human.DawsonLin"
-    
-    def test_with_explicit_name_none(self):
-        """Test get_human_name with None parameter"""
+        
+        # Empty string is falsy, so should fall back to env
+        mock_env.get.assert_called_once()
+        self.assertEqual(result, "Human.FromEnv")
+
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_get_human_name_none_explicit(self, mock_env):
+        """Test get_human_name with None as explicit name."""
+        mock_env.get.return_value = "FromEnv"
+        
         result = get_human_name(None)
-        # None is falsy, should fall back to env var or default
-        assert result == "Human.DawsonLin"
+        
+        # None is falsy, so should fall back to env
+        mock_env.get.assert_called_once()
+        self.assertEqual(result, "Human.FromEnv")
 
-
-class TestGetHumanNameWithEnvVar:
-    """Test get_human_name function with environment variable"""
-    
-    def test_with_env_var_no_prefix(self):
-        """Test get_human_name reads from env var without prefix"""
-        with patch.dict(os.environ, {"TOPSAILAI_HUMAN_NAME": "Charlie"}):
-            result = get_human_name()
-            assert result == "Human.Charlie"
-    
-    def test_with_env_var_with_prefix(self):
-        """Test get_human_name reads from env var with existing prefix"""
-        with patch.dict(os.environ, {"TOPSAILAI_HUMAN_NAME": "Human.Dave"}):
-            result = get_human_name()
-            assert result == "Human.Dave"
-    
-    def test_with_env_var_empty_string(self):
-        """Test get_human_name with empty env var falls back to default"""
-        with patch.dict(os.environ, {"TOPSAILAI_HUMAN_NAME": ""}):
-            result = get_human_name()
-            assert result == "Human.DawsonLin"
-    
-    def test_with_env_var_not_set(self):
-        """Test get_human_name when env var is not set"""
-        with patch.dict(os.environ, {}, clear=True):
-            result = get_human_name()
-            assert result == "Human.DawsonLin"
-
-
-class TestGetHumanNameDefaultValue:
-    """Test get_human_name function default value behavior"""
-    
-    def test_default_value(self):
-        """Test default value is 'Human.DawsonLin' when no input provided"""
-        with patch.dict(os.environ, {}, clear=True):
-            result = get_human_name()
-            assert result == "Human.DawsonLin"
-    
-    def test_default_value_with_empty_env(self):
-        """Test default value when env var is empty string"""
-        with patch.dict(os.environ, {"TOPSAILAI_HUMAN_NAME": ""}):
-            result = get_human_name()
-            assert result == "Human.DawsonLin"
-
-
-class TestGetHumanNamePrefixHandling:
-    """Test get_human_name function prefix handling logic"""
-    
-    def test_prefix_added_when_missing(self):
-        """Test 'Human.' prefix is added when not present"""
-        result = get_human_name("Eve")
-        assert result.startswith(HUMAN_STARTSWITH)
-        assert result == "Human.Eve"
-    
-    def test_prefix_not_duplicated(self):
-        """Test 'Human.' prefix is not duplicated if already present"""
-        result = get_human_name("Human.Frank")
-        assert result.count("Human.") == 1
-        assert result == "Human.Frank"
-    
-    def test_prefix_case_sensitive(self):
-        """Test prefix matching is case sensitive"""
-        result = get_human_name("human.Gina")
-        # Should add prefix because 'human.' != 'Human.'
-        assert result == "Human.human.Gina"
-
-
-class TestGetHumanNameEdgeCases:
-    """Test get_human_name function edge cases"""
-    
-    def test_special_characters_in_name(self):
-        """Test get_human_name with special characters in name"""
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_get_human_name_special_characters(self, mock_env):
+        """Test get_human_name with special characters in name."""
         result = get_human_name("John_Doe-123")
-        assert result == "Human.John_Doe-123"
-    
-    def test_unicode_characters(self):
-        """Test get_human_name with unicode characters"""
+        self.assertEqual(result, "Human.John_Doe-123")
+
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_get_human_name_unicode(self, mock_env):
+        """Test get_human_name with unicode characters."""
         result = get_human_name("张三")
-        assert result == "Human.张三"
-    
-    def test_long_name(self):
-        """Test get_human_name with long name"""
-        long_name = "A" * 100
+        self.assertEqual(result, "Human.张三")
+
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_get_human_name_long_name(self, mock_env):
+        """Test get_human_name with a long name."""
+        long_name = "A" * 1000
         result = get_human_name(long_name)
-        assert result == "Human." + long_name
-    
-    def test_numeric_name(self):
-        """Test get_human_name with numeric string"""
-        result = get_human_name("12345")
-        assert result == "Human.12345"
-    
-    def test_whitespace_name(self):
-        """Test get_human_name with whitespace in name"""
-        result = get_human_name("  Space  ")
-        assert result == "Human.  Space  "
-    
-    def test_parameter_overrides_env_var(self):
-        """Test explicit parameter takes precedence over env var"""
-        with patch.dict(os.environ, {"TOPSAILAI_HUMAN_NAME": "EnvName"}):
-            result = get_human_name("ExplicitName")
-            assert result == "Human.ExplicitName"
+        self.assertEqual(result, f"Human.{long_name}")
+
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_get_human_name_already_has_prefix_different_case(self, mock_env):
+        """Test get_human_name when name has 'human.' lowercase prefix."""
+        result = get_human_name("human.Alice")
+        # Should NOT match because it's case-sensitive
+        self.assertEqual(result, "Human.human.Alice")
+
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_get_human_name_whitespace_handling(self, mock_env):
+        """Test get_human_name with whitespace in name."""
+        result = get_human_name("  Alice  ")
+        self.assertEqual(result, "Human.  Alice  ")
+
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_get_human_name_multiple_human_prefixes(self, mock_env):
+        """Test get_human_name when name already starts with Human.Human."""
+        result = get_human_name("Human.Human.Alice")
+        # Already starts with Human., so no prefix added
+        self.assertEqual(result, "Human.Human.Alice")
 
 
-class TestGetHumanNameIntegration:
-    """Integration tests for get_human_name function"""
-    
-    def test_full_workflow_no_input(self):
-        """Test complete workflow with no input provided"""
-        with patch.dict(os.environ, {}, clear=True):
-            result = get_human_name()
-            assert result == "Human.DawsonLin"
-    
-    def test_full_workflow_with_env(self):
-        """Test complete workflow with env var set"""
-        with patch.dict(os.environ, {"TOPSAILAI_HUMAN_NAME": "TestUser"}):
-            result = get_human_name()
-            assert result == "Human.TestUser"
-    
-    def test_full_workflow_with_param(self):
-        """Test complete workflow with explicit parameter"""
-        result = get_human_name("CustomUser")
-        assert result == "Human.CustomUser"
+class TestGetHumanNameEdgeCases(unittest.TestCase):
+    """Edge case tests for get_human_name function."""
+
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_env_reader_returns_empty_string(self, mock_env):
+        """Test when EnvReaderInstance.get returns empty string."""
+        mock_env.get.return_value = ""
+        
+        result = get_human_name()
+        
+        # Empty string is falsy, should fall back to default
+        self.assertEqual(result, "Human.DawsonLin")
+
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_env_reader_returns_whitespace(self, mock_env):
+        """Test when EnvReaderInstance.get returns only whitespace."""
+        mock_env.get.return_value = "   "
+        
+        result = get_human_name()
+        
+        # Whitespace is truthy in Python, so it will be used as-is
+        self.assertEqual(result, "Human.   ")
+
+    @patch('topsailai.human.role.env_tool.EnvReaderInstance')
+    def test_explicit_name_whitespace_only(self, mock_env):
+        """Test when explicit name is only whitespace."""
+        mock_env.get.return_value = "FromEnv"
+        
+        result = get_human_name("   ")
+        
+        # Whitespace is truthy in Python, so it will be used as-is
+        self.assertEqual(result, "Human.   ")
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+if __name__ == '__main__':
+    unittest.main()

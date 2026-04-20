@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from src.topsailai.utils.env_tool import (
+from topsailai.utils.env_tool import (
     is_debug_mode,
     is_use_tool_calls,
     is_chat_multi_line,
@@ -226,7 +226,7 @@ class TestEnvReaderInstance:
     
     def test_singleton_instance(self):
         """Test that EnvReaderInstance is a singleton"""
-        from src.topsailai.utils.env_tool import EnvReaderInstance
+        from topsailai.utils.env_tool import EnvReaderInstance
         reader1 = EnvReaderInstance
         reader2 = EnvReaderInstance
         assert reader1 is reader2

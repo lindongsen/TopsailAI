@@ -14,7 +14,7 @@ import os
 from logging.handlers import RotatingFileHandler
 from unittest.mock import patch, MagicMock
 
-from src.topsailai.logger.base_logger import setup_logger, AgentFormatter
+from topsailai.logger.base_logger import setup_logger, AgentFormatter
 
 
 # ============================================================================

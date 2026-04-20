@@ -2,7 +2,7 @@ import pytest
 import chardet
 from io import StringIO
 import sys
-from src.topsailai.utils.text_tool import safe_decode, check_repetition, print_repetition_report
+from topsailai.utils.text_tool import safe_decode, check_repetition, print_repetition_report
 
 
 def test_safe_decode_string_input():

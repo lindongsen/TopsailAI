@@ -146,6 +146,59 @@ class TestRole(unittest.TestCase):
         result = get_member_prompt("NoValuesMember")
         self.assertIn("YOUR ROLE IS Member", result)
 
+    def test_get_member_prompt_values_file_empty(self):
+        """Test get_member_prompt handles empty values file gracefully"""
+        values_path = os.path.join(self.temp_dir, "EmptyMember.values")
+        with open(values_path, 'w') as f:
+            f.write("")
+        
+        from topsailai.ai_team.role import get_member_prompt
+        result = get_member_prompt("EmptyMember")
+        self.assertIn("YOUR ROLE IS Member", result)
+        self.assertIn("AIMember.EmptyMember", result)
+
+    def test_get_member_prompt_values_file_permission_error(self):
+        """Test get_member_prompt raises PermissionError when file cannot be read"""
+        values_path = os.path.join(self.temp_dir, "PermMember.values")
+        with open(values_path, 'w') as f:
+            f.write("Some content")
+        
+        # Mock os.path.exists to return True and open to raise PermissionError
+        with patch('os.path.exists', return_value=True):
+            with patch('builtins.open', side_effect=PermissionError("Access denied")):
+                from topsailai.ai_team.role import get_member_prompt
+                # Source code does not handle PermissionError, it propagates
+                with self.assertRaises(PermissionError):
+                    get_member_prompt("PermMember")
+
+    def test_get_member_prompt_values_file_unicode_content(self):
+        """Test get_member_prompt handles unicode/special characters in values file"""
+        values_path = os.path.join(self.temp_dir, "UnicodeMember.values")
+        unicode_content = "中文内容 🚀 émojis & special <chars>"  
+        with open(values_path, 'w', encoding='utf-8') as f:
+            f.write(unicode_content)
+        
+        from topsailai.ai_team.role import get_member_prompt
+        result = get_member_prompt("UnicodeMember")
+        self.assertIn(unicode_content, result)
+
+    def test_get_manager_name_env_var_override(self):
+        """Test explicit name overrides environment variable"""
+        with patch.dict(os.environ, {"TOPSAILAI_TEAM_MANAGER_NAME": "EnvManager"}):
+            from topsailai.ai_team.role import get_manager_name
+            result = get_manager_name("ExplicitManager")
+            self.assertEqual(result, "AIManager.ExplicitManager")
+
+    def test_get_member_name_both_env_vars(self):
+        """Test TOPSAILAI_TEAM_MEMBER_NAME takes precedence over TOPSAILAI_AGENT_NAME"""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT_NAME": "AgentName",
+            "TOPSAILAI_TEAM_MEMBER_NAME": "MemberName"
+        }):
+            from topsailai.ai_team.role import get_member_name
+            result = get_member_name(None)
+            self.assertEqual(result, "AIMember.MemberName")
+
 
 class TestManagerFunctions(unittest.TestCase):
     """Test cases for ai_team/manager.py functions"""

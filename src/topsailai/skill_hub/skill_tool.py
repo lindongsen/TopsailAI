@@ -58,6 +58,9 @@ def is_matched_skill(skill_folder:str, keys:list[str]) -> bool:
     """ return True for matched """
     keys = to_list(keys)
 
+    # Filter out None values
+    keys = [k for k in keys if k is not None]
+
     if keys:
         if '*' in keys:
             return True

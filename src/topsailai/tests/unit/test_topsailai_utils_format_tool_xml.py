@@ -8,7 +8,7 @@ Author: mm-m25
 """
 
 import pytest
-from src.topsailai.utils.format_tool_xml import format_xml
+from topsailai.utils.format_tool_xml import format_xml
 
 
 class TestFormatXml:

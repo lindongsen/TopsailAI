@@ -1,7 +1,7 @@
 import os
 import unittest
 from unittest.mock import patch, MagicMock
-from src.topsailai.utils import print_tool
+from topsailai.utils import print_tool
 
 
 class TestPrintTool(unittest.TestCase):
@@ -155,10 +155,10 @@ class TestPrintTool(unittest.TestCase):
 
         # The flag should be set based on DEBUG env var when accessed
         # For this test, we'll just verify the environment is set correctly
-        self.assertEqual(os.getenv('DEBUG'), '1')
+        self.assertEqual(os.environ.get('DEBUG'), '1')
 
-    @patch('src.topsailai.utils.print_tool.print_with_time')
-    @patch('src.topsailai.utils.print_tool.thread_local_tool.get_thread_var')
+    @patch('topsailai.utils.print_tool.print_with_time')
+    @patch('topsailai.utils.print_tool.thread_local_tool.get_thread_var')
     def test_print_debug_with_debug_env(self, mock_get_thread_var, mock_print_with_time):
         """Test print_debug when DEBUG environment variable is set."""
         # Set DEBUG environment variable
@@ -176,8 +176,8 @@ class TestPrintTool(unittest.TestCase):
         # Verify get_thread_var was called
         mock_get_thread_var.assert_called_once_with('flag_debug')
 
-    @patch('src.topsailai.utils.print_tool.print_with_time')
-    @patch('src.topsailai.utils.print_tool.thread_local_tool.get_thread_var')
+    @patch('topsailai.utils.print_tool.print_with_time')
+    @patch('topsailai.utils.print_tool.thread_local_tool.get_thread_var')
     def test_print_debug_with_flag_debug(self, mock_get_thread_var, mock_print_with_time):
         """Test print_debug when flag_debug is set in thread local."""
         # Ensure DEBUG environment variable is not set
@@ -198,8 +198,8 @@ class TestPrintTool(unittest.TestCase):
         # Verify get_thread_var was called
         mock_get_thread_var.assert_called_once_with('flag_debug')
 
-    @patch('src.topsailai.utils.print_tool.print_with_time')
-    @patch('src.topsailai.utils.print_tool.thread_local_tool.get_thread_var')
+    @patch('topsailai.utils.print_tool.print_with_time')
+    @patch('topsailai.utils.print_tool.thread_local_tool.get_thread_var')
     def test_print_debug_no_output(self, mock_get_thread_var, mock_print_with_time):
         """Test print_debug when neither DEBUG env nor flag_debug is set."""
         # Ensure DEBUG environment variable is not set
@@ -218,7 +218,7 @@ class TestPrintTool(unittest.TestCase):
         # Verify get_thread_var was called
         mock_get_thread_var.assert_called_once_with('flag_debug')
 
-    @patch('src.topsailai.utils.print_tool.print_with_time')
+    @patch('topsailai.utils.print_tool.print_with_time')
     def test_print_step(self, mock_print_with_time):
         """Test print_step function."""
         # Enable the flag
@@ -230,7 +230,7 @@ class TestPrintTool(unittest.TestCase):
         # Verify print_with_time was called
         mock_print_with_time.assert_called_once_with('test message', need_format=True)
 
-    @patch('src.topsailai.utils.print_tool.print_with_time')
+    @patch('topsailai.utils.print_tool.print_with_time')
     def test_print_step_disabled(self, mock_print_with_time):
         """Test print_step function when flag is disabled."""
         # Disable the flag
@@ -242,7 +242,7 @@ class TestPrintTool(unittest.TestCase):
         # Verify print_with_time was NOT called
         mock_print_with_time.assert_not_called()
 
-    @patch('src.topsailai.utils.print_tool.print_with_time')
+    @patch('topsailai.utils.print_tool.print_with_time')
     def test_print_error(self, mock_print_with_time):
         """Test print_error function."""
         print_tool.print_error('error message')
@@ -250,7 +250,7 @@ class TestPrintTool(unittest.TestCase):
         # Verify print_with_time was called with error prefix
         mock_print_with_time.assert_called_once_with('Error: error message', need_format=False)
 
-    @patch('src.topsailai.utils.print_tool.print_with_time')
+    @patch('topsailai.utils.print_tool.print_with_time')
     def test_print_critical(self, mock_print_with_time):
         """Test print_critical function."""
         print_tool.print_critical('critical message')
@@ -278,6 +278,22 @@ class TestPrintTool(unittest.TestCase):
         self.assertIn('nested', result)
         self.assertIn('subkey', result)
         self.assertIn('subvalue', result)
+
+    def test_add_indent_to_lines(self):
+        """Test add_indent_to_lines function."""
+        test_str = "line1\nline2\nline3"
+        result = print_tool.add_indent_to_lines(test_str, indent=4)
+        
+        expected = "    line1\n    line2\n    line3\n"
+        self.assertEqual(result, expected)
+
+    def test_add_indent_to_lines_custom_indent(self):
+        """Test add_indent_to_lines with custom indent."""
+        test_str = "line1\nline2"
+        result = print_tool.add_indent_to_lines(test_str, indent=2)
+        
+        expected = "  line1\n  line2\n"
+        self.assertEqual(result, expected)
 
 
 if __name__ == '__main__':

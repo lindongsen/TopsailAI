@@ -1,6 +1,6 @@
 import pytest
 import simplejson
-from src.topsailai.utils.json_tool import (
+from topsailai.utils.json_tool import (
     convert_code_block_to_json_str,
     fix_llm_mistakes_on_json,
     to_json_str,

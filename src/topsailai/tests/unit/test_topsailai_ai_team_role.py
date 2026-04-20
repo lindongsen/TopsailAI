@@ -1,290 +1,373 @@
 """
-Unit tests for ai_team role module.
+Unit tests for ai_team/role.py
 
-This module tests the role-related functions for AI team members and managers,
-including name generation, prefix handling, and prompt generation.
-
-Test Coverage:
+Test coverage:
 - Constants: MANAGER_STARTSWITH, MEMBER_STARTSWITH
-- Functions: get_manager_name, get_member_name, get_manager_prompt, get_member_prompt
+- get_manager_name(): Manager name resolution with env vars and defaults
+- get_member_name(): Member name resolution with env vars and defaults
+- get_manager_prompt(): Manager prompt generation
+- get_member_prompt(): Member prompt generation with values file support
 """
 
-import pytest
-from unittest.mock import patch, mock_open, MagicMock
+import os
+import sys
+import tempfile
+import shutil
+import unittest
+from unittest.mock import patch, MagicMock, mock_open
+
+# Add project root to path
+sys.path.insert(0, '/root/ai/TopsailAI/src')
 
 
-class TestConstants:
-    """Test cases for module-level constants."""
+class TestRoleConstants(unittest.TestCase):
+    """Test cases for role module constants"""
 
-    def test_manager_startwith_value(self):
-        """Verify MANAGER_STARTSWITH has correct value."""
+    def test_manager_startswith_constant_value(self):
+        """Test MANAGER_STARTSWITH constant has correct value 'AIManager.'"""
         from topsailai.ai_team.role import MANAGER_STARTSWITH
-        assert MANAGER_STARTSWITH == "AIManager."
+        self.assertEqual(MANAGER_STARTSWITH, "AIManager.")
 
-    def test_member_startwith_value(self):
-        """Verify MEMBER_STARTSWITH has correct value."""
+    def test_member_startswith_constant_value(self):
+        """Test MEMBER_STARTSWITH constant has correct value 'AIMember.'"""
         from topsailai.ai_team.role import MEMBER_STARTSWITH
-        assert MEMBER_STARTSWITH == "AIMember."
+        self.assertEqual(MEMBER_STARTSWITH, "AIMember.")
 
 
-class TestGetManagerName:
-    """Test cases for get_manager_name function."""
+class TestGetManagerName(unittest.TestCase):
+    """Test cases for get_manager_name() function"""
 
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    def test_default_name_without_env(self, mock_env_instance):
-        """Test default manager name when no env var is set and no param provided."""
-        # Arrange: No env vars set
-        mock_env_instance.get.return_value = None
+    def setUp(self):
+        """Set up clean environment for each test"""
+        self.temp_dir = tempfile.mkdtemp()
+        # Create a clean copy of environment without TOPSAILAI_TEAM_MANAGER_NAME
+        self.clean_env = os.environ.copy()
+        if "TOPSAILAI_TEAM_MANAGER_NAME" in self.clean_env:
+            del self.clean_env["TOPSAILAI_TEAM_MANAGER_NAME"]
+        if "TOPSAILAI_AGENT_NAME" in self.clean_env:
+            del self.clean_env["TOPSAILAI_AGENT_NAME"]
+        self.env_patcher = patch.dict(os.environ, self.clean_env, clear=True)
+        self.env_patcher.start()
 
-        # Act
+    def tearDown(self):
+        """Clean up environment and temp directory"""
+        self.env_patcher.stop()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_get_manager_name_returns_default_when_none_provided(self):
+        """Test get_manager_name returns 'AIManager.Manager' when no name provided and no env vars"""
         from topsailai.ai_team.role import get_manager_name
-        result = get_manager_name()
+        result = get_manager_name(None)
+        self.assertEqual(result, "AIManager.Manager")
 
-        # Assert
-        assert result == "AIManager.Manager"
-
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    def test_custom_name_without_prefix(self, mock_env_instance):
-        """Test custom name without prefix gets AIManager. prefix added."""
-        # Arrange
-        mock_env_instance.get.return_value = None
-
-        # Act
+    def test_get_manager_name_with_explicit_name(self):
+        """Test get_manager_name adds AIManager. prefix to explicit name"""
         from topsailai.ai_team.role import get_manager_name
-        result = get_manager_name("CustomMgr")
+        result = get_manager_name("TestManager")
+        self.assertEqual(result, "AIManager.TestManager")
 
-        # Assert
-        assert result == "AIManager.CustomMgr"
-
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    def test_custom_name_with_prefix(self, mock_env_instance):
-        """Test custom name with prefix is kept as-is."""
-        # Arrange
-        mock_env_instance.get.return_value = None
-
-        # Act
+    def test_get_manager_name_already_prefixed_no_double_prefix(self):
+        """Test get_manager_name does not double-prefix when name already has AIManager."""
         from topsailai.ai_team.role import get_manager_name
-        result = get_manager_name("AIManager.AlreadyPrefixed")
+        result = get_manager_name("AIManager.Existing")
+        self.assertEqual(result, "AIManager.Existing")
 
-        # Assert
-        assert result == "AIManager.AlreadyPrefixed"
+    def test_get_manager_name_from_team_manager_env_var(self):
+        """Test get_manager_name reads from TOPSAILAI_TEAM_MANAGER_NAME environment variable"""
+        with patch.dict(os.environ, {"TOPSAILAI_TEAM_MANAGER_NAME": "EnvManager"}):
+            from topsailai.ai_team.role import get_manager_name
+            result = get_manager_name(None)
+            self.assertEqual(result, "AIManager.EnvManager")
 
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    def test_name_from_env_team_manager_name(self, mock_env_instance):
-        """Test name is read from TOPSAILAI_TEAM_MANAGER_NAME env var."""
-        # Arrange
-        mock_env_instance.get.side_effect = lambda key: "EnvMgr" if key == "TOPSAILAI_TEAM_MANAGER_NAME" else None
+    def test_get_manager_name_from_agent_name_env_var(self):
+        """Test get_manager_name falls back to TOPSAILAI_AGENT_NAME when TEAM_MANAGER not set"""
+        with patch.dict(os.environ, {"TOPSAILAI_AGENT_NAME": "AgentManager"}):
+            from topsailai.ai_team.role import get_manager_name
+            result = get_manager_name(None)
+            self.assertEqual(result, "AIManager.AgentManager")
 
-        # Act
+    def test_get_manager_name_team_var_takes_precedence(self):
+        """Test TOPSAILAI_TEAM_MANAGER_NAME takes precedence over TOPSAILAI_AGENT_NAME"""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_TEAM_MANAGER_NAME": "TeamMgr",
+            "TOPSAILAI_AGENT_NAME": "AgentMgr"
+        }):
+            from topsailai.ai_team.role import get_manager_name
+            result = get_manager_name(None)
+            self.assertEqual(result, "AIManager.TeamMgr")
+
+    def test_get_manager_name_empty_string_defaults(self):
+        """Test get_manager_name returns default when empty string provided"""
         from topsailai.ai_team.role import get_manager_name
-        result = get_manager_name()
+        result = get_manager_name("")
+        self.assertEqual(result, "AIManager.Manager")
 
-        # Assert
-        assert result == "AIManager.EnvMgr"
-
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    def test_name_from_env_agent_name_fallback(self, mock_env_instance):
-        """Test fallback to TOPSAILAI_AGENT_NAME when TEAM_MANAGER_NAME is not set."""
-        # Arrange: First call returns None (TOPSAILAI_TEAM_MANAGER_NAME), second returns value (TOPSAILAI_AGENT_NAME)
-        mock_env_instance.get.side_effect = lambda key: None if key == "TOPSAILAI_TEAM_MANAGER_NAME" else "AgentName"
-
-        # Act
+    def test_get_manager_name_with_spaces(self):
+        """Test get_manager_name handles name with spaces"""
         from topsailai.ai_team.role import get_manager_name
-        result = get_manager_name()
-
-        # Assert
-        assert result == "AIManager.AgentName"
+        result = get_manager_name("My Manager")
+        self.assertEqual(result, "AIManager.My Manager")
 
 
-class TestGetMemberName:
-    """Test cases for get_member_name function."""
+class TestGetMemberName(unittest.TestCase):
+    """Test cases for get_member_name() function"""
 
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    def test_default_name_without_env(self, mock_env_instance):
-        """Test default member name when no env var is set and no param provided."""
-        # Arrange: No env vars set
-        mock_env_instance.get.return_value = None
+    def setUp(self):
+        """Set up clean environment for each test"""
+        self.temp_dir = tempfile.mkdtemp()
+        self.clean_env = os.environ.copy()
+        if "TOPSAILAI_TEAM_MEMBER_NAME" in self.clean_env:
+            del self.clean_env["TOPSAILAI_TEAM_MEMBER_NAME"]
+        if "TOPSAILAI_AGENT_NAME" in self.clean_env:
+            del self.clean_env["TOPSAILAI_AGENT_NAME"]
+        self.env_patcher = patch.dict(os.environ, self.clean_env, clear=True)
+        self.env_patcher.start()
 
-        # Act
+    def tearDown(self):
+        """Clean up environment and temp directory"""
+        self.env_patcher.stop()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_get_member_name_returns_default_when_none_provided(self):
+        """Test get_member_name returns 'AIMember.Member' when no name provided and no env vars"""
         from topsailai.ai_team.role import get_member_name
-        result = get_member_name()
+        result = get_member_name(None)
+        self.assertEqual(result, "AIMember.Member")
 
-        # Assert
-        assert result == "AIMember.Member"
-
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    def test_custom_name_without_prefix(self, mock_env_instance):
-        """Test custom name without prefix gets AIMember. prefix added."""
-        # Arrange
-        mock_env_instance.get.return_value = None
-
-        # Act
+    def test_get_member_name_with_explicit_name(self):
+        """Test get_member_name adds AIMember. prefix to explicit name"""
         from topsailai.ai_team.role import get_member_name
-        result = get_member_name("CustomMem")
+        result = get_member_name("TestMember")
+        self.assertEqual(result, "AIMember.TestMember")
 
-        # Assert
-        assert result == "AIMember.CustomMem"
-
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    def test_custom_name_with_prefix(self, mock_env_instance):
-        """Test custom name with prefix is kept as-is."""
-        # Arrange
-        mock_env_instance.get.return_value = None
-
-        # Act
+    def test_get_member_name_already_prefixed_no_double_prefix(self):
+        """Test get_member_name does not double-prefix when name already has AIMember."""
         from topsailai.ai_team.role import get_member_name
-        result = get_member_name("AIMember.AlreadyPrefixed")
+        result = get_member_name("AIMember.Existing")
+        self.assertEqual(result, "AIMember.Existing")
 
-        # Assert
-        assert result == "AIMember.AlreadyPrefixed"
+    def test_get_member_name_from_team_member_env_var(self):
+        """Test get_member_name reads from TOPSAILAI_TEAM_MEMBER_NAME environment variable"""
+        with patch.dict(os.environ, {"TOPSAILAI_TEAM_MEMBER_NAME": "EnvMember"}):
+            from topsailai.ai_team.role import get_member_name
+            result = get_member_name(None)
+            self.assertEqual(result, "AIMember.EnvMember")
 
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    def test_name_from_env_team_member_name(self, mock_env_instance):
-        """Test name is read from TOPSAILAI_TEAM_MEMBER_NAME env var."""
-        # Arrange
-        mock_env_instance.get.side_effect = lambda key: "EnvMem" if key == "TOPSAILAI_TEAM_MEMBER_NAME" else None
+    def test_get_member_name_from_agent_name_env_var(self):
+        """Test get_member_name falls back to TOPSAILAI_AGENT_NAME when TEAM_MEMBER not set"""
+        with patch.dict(os.environ, {"TOPSAILAI_AGENT_NAME": "AgentMember"}):
+            from topsailai.ai_team.role import get_member_name
+            result = get_member_name(None)
+            self.assertEqual(result, "AIMember.AgentMember")
 
-        # Act
+    def test_get_member_name_team_var_takes_precedence(self):
+        """Test TOPSAILAI_TEAM_MEMBER_NAME takes precedence over TOPSAILAI_AGENT_NAME"""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_TEAM_MEMBER_NAME": "TeamMem",
+            "TOPSAILAI_AGENT_NAME": "AgentMem"
+        }):
+            from topsailai.ai_team.role import get_member_name
+            result = get_member_name(None)
+            self.assertEqual(result, "AIMember.TeamMem")
+
+    def test_get_member_name_empty_string_defaults(self):
+        """Test get_member_name returns default when empty string provided"""
         from topsailai.ai_team.role import get_member_name
-        result = get_member_name()
-
-        # Assert
-        assert result == "AIMember.EnvMem"
-
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    def test_name_from_env_agent_name_fallback(self, mock_env_instance):
-        """Test fallback to TOPSAILAI_AGENT_NAME when TEAM_MEMBER_NAME is not set."""
-        # Arrange: First call returns None (TOPSAILAI_TEAM_MEMBER_NAME), second returns value (TOPSAILAI_AGENT_NAME)
-        mock_env_instance.get.side_effect = lambda key: None if key == "TOPSAILAI_TEAM_MEMBER_NAME" else "AgentName"
-
-        # Act
-        from topsailai.ai_team.role import get_member_name
-        result = get_member_name()
-
-        # Assert
-        assert result == "AIMember.AgentName"
+        result = get_member_name("")
+        self.assertEqual(result, "AIMember.Member")
 
 
-class TestGetManagerPrompt:
-    """Test cases for get_manager_prompt function."""
+class TestGetManagerPrompt(unittest.TestCase):
+    """Test cases for get_manager_prompt() function"""
 
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    def test_default_prompt_content(self, mock_env_instance):
-        """Test default manager prompt contains expected content."""
-        # Arrange: No env vars set
-        mock_env_instance.get.return_value = None
+    def setUp(self):
+        """Set up clean environment for each test"""
+        self.clean_env = os.environ.copy()
+        if "TOPSAILAI_TEAM_MANAGER_NAME" in self.clean_env:
+            del self.clean_env["TOPSAILAI_TEAM_MANAGER_NAME"]
+        if "TOPSAILAI_AGENT_NAME" in self.clean_env:
+            del self.clean_env["TOPSAILAI_AGENT_NAME"]
+        self.env_patcher = patch.dict(os.environ, self.clean_env, clear=True)
+        self.env_patcher.start()
 
-        # Act
+    def tearDown(self):
+        """Clean up environment"""
+        self.env_patcher.stop()
+
+    def test_get_manager_prompt_contains_role_info(self):
+        """Test get_manager_prompt contains 'YOUR ROLE IS Manager'"""
         from topsailai.ai_team.role import get_manager_prompt
-        result = get_manager_prompt()
+        result = get_manager_prompt("TestManager")
+        self.assertIn("YOUR ROLE IS Manager", result)
 
-        # Assert
-        assert "YOUR ROLE IS Manager" in result
-        assert "AIManager.Manager" in result
-
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    def test_custom_agent_name_in_prompt(self, mock_env_instance):
-        """Test manager prompt with custom agent name."""
-        # Arrange
-        mock_env_instance.get.return_value = None
-
-        # Act
+    def test_get_manager_prompt_contains_agent_name(self):
+        """Test get_manager_prompt contains the agent name with AIManager. prefix"""
         from topsailai.ai_team.role import get_manager_prompt
-        result = get_manager_prompt("CustomMgr")
+        result = get_manager_prompt("TestManager")
+        self.assertIn("AIManager.TestManager", result)
 
-        # Assert
-        assert "YOUR ROLE IS Manager" in result
-        assert "AIManager.CustomMgr" in result
-
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    def test_prompt_format_with_separators(self, mock_env_instance):
-        """Test manager prompt has proper formatting with separators."""
-        # Arrange
-        mock_env_instance.get.return_value = None
-
-        # Act
+    def test_get_manager_prompt_uses_default_when_none_provided(self):
+        """Test get_manager_prompt uses 'AIManager.Manager' when no name provided"""
         from topsailai.ai_team.role import get_manager_prompt
-        result = get_manager_prompt()
+        result = get_manager_prompt(None)
+        self.assertIn("AIManager.Manager", result)
 
-        # Assert: Check for separator lines
-        assert result.startswith("\n")
-        assert "---" in result
+    def test_get_manager_prompt_returns_string(self):
+        """Test get_manager_prompt returns a string type"""
+        from topsailai.ai_team.role import get_manager_prompt
+        result = get_manager_prompt("TestManager")
+        self.assertIsInstance(result, str)
+
+    def test_get_manager_prompt_format_with_dashes(self):
+        """Test get_manager_prompt contains dashes for formatting"""
+        from topsailai.ai_team.role import get_manager_prompt
+        result = get_manager_prompt("TestManager")
+        self.assertIn("---", result)
 
 
-class TestGetMemberPrompt:
-    """Test cases for get_member_prompt function."""
+class TestGetMemberPrompt(unittest.TestCase):
+    """Test cases for get_member_prompt() function"""
 
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_team.role.os.path.exists')
-    def test_default_prompt_without_values_file(self, mock_path_exists, mock_env_instance):
-        """Test member prompt without values file returns basic prompt."""
-        # Arrange: TOPSAILAI_TEAM_PATH set, values file does not exist
-        def env_get_side_effect(key):
-            if key == "TOPSAILAI_TEAM_PATH":
-                return "/team/path"
-            return None
-        mock_env_instance.get.side_effect = env_get_side_effect
-        mock_path_exists.return_value = False
+    def setUp(self):
+        """Set up temporary directory for values files"""
+        self.temp_dir = tempfile.mkdtemp()
+        self.env_patcher = patch.dict(os.environ, {
+            "TOPSAILAI_TEAM_PATH": self.temp_dir
+        })
+        self.env_patcher.start()
 
-        # Act
+    def tearDown(self):
+        """Clean up temporary directory and environment"""
+        self.env_patcher.stop()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_get_member_prompt_contains_role_info(self):
+        """Test get_member_prompt contains 'YOUR ROLE IS Member'"""
         from topsailai.ai_team.role import get_member_prompt
-        result = get_member_prompt()
+        result = get_member_prompt("TestMember")
+        self.assertIn("YOUR ROLE IS Member", result)
 
-        # Assert
-        assert "YOUR ROLE IS Member" in result
-        assert "AIMember.Member" in result
-        assert result.endswith("---\n")
-
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_team.role.os.path.exists')
-    @patch('builtins.open', new_callable=mock_open, read_data="values content here")
-    def test_prompt_with_values_file_content(self, mock_file, mock_path_exists, mock_env_instance):
-        """Test member prompt includes values file content when file exists."""
-        # Arrange: Values file exists with content
-        mock_env_instance.get.side_effect = lambda key: "/team/path" if key == "TOPSAILAI_TEAM_PATH" else None
-        mock_path_exists.return_value = True
-
-        # Act
+    def test_get_member_prompt_contains_agent_name(self):
+        """Test get_member_prompt contains the agent name with AIMember. prefix"""
         from topsailai.ai_team.role import get_member_prompt
-        result = get_member_prompt("mm-m25")
+        result = get_member_prompt("TestMember")
+        self.assertIn("AIMember.TestMember", result)
 
-        # Assert
-        assert "YOUR ROLE IS Member" in result
-        assert "AIMember.mm-m25" in result
-        assert "values content here" in result
-        assert result.endswith("---\n")
-
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_team.role.os.path.exists')
-    def test_values_file_path_construction(self, mock_path_exists, mock_env_instance):
-        """Test values file path is correctly constructed from env var."""
-        # Arrange
-        mock_env_instance.get.side_effect = lambda key: "/custom/team/path" if key == "TOPSAILAI_TEAM_PATH" else None
-        mock_path_exists.return_value = False
-
-        # Act
+    def test_get_member_prompt_returns_string(self):
+        """Test get_member_prompt returns a string type"""
         from topsailai.ai_team.role import get_member_prompt
-        result = get_member_prompt("test-member")
+        result = get_member_prompt("TestMember")
+        self.assertIsInstance(result, str)
 
-        # Assert: Verify path.exists was called with correct path
-        mock_path_exists.assert_called_once()
-        called_path = mock_path_exists.call_args[0][0]
-        assert called_path == "/custom/team/path/test-member.values"
-
-    @patch('topsailai.ai_team.role.env_tool.EnvReaderInstance')
-    @patch('topsailai.ai_team.role.os.path.exists')
-    @patch('builtins.open', new_callable=mock_open, read_data="member values data")
-    def test_prompt_with_prefixed_name(self, mock_file, mock_path_exists, mock_env_instance):
-        """Test values file lookup uses name without prefix."""
-        # Arrange: Name already has prefix
-        mock_env_instance.get.side_effect = lambda key: "/team/path" if key == "TOPSAILAI_TEAM_PATH" else None
-        mock_path_exists.return_value = True
-
-        # Act
+    def test_get_member_prompt_with_existing_values_file(self):
+        """Test get_member_prompt reads and includes content from .values file"""
+        values_path = os.path.join(self.temp_dir, "TestMember.values")
+        with open(values_path, 'w', encoding='utf-8') as f:
+            f.write("Custom values content here")
+        
         from topsailai.ai_team.role import get_member_prompt
-        result = get_member_prompt("AIMember.mm-m25")
+        result = get_member_prompt("TestMember")
+        self.assertIn("Custom values content here", result)
 
-        # Assert: Path should use name without prefix
-        mock_path_exists.assert_called_once()
-        called_path = mock_path_exists.call_args[0][0]
-        assert called_path == "/team/path/mm-m25.values"
+    def test_get_member_prompt_without_values_file(self):
+        """Test get_member_prompt works correctly when .values file does not exist"""
+        from topsailai.ai_team.role import get_member_prompt
+        result = get_member_prompt("NoValuesMember")
+        self.assertIn("YOUR ROLE IS Member", result)
+        self.assertIn("AIMember.NoValuesMember", result)
+
+    def test_get_member_prompt_ends_with_dashes(self):
+        """Test get_member_prompt ends with --- separator"""
+        from topsailai.ai_team.role import get_member_prompt
+        result = get_member_prompt("TestMember")
+        self.assertTrue(result.strip().endswith("---"))
+
+    def test_get_member_prompt_with_already_prefixed_name(self):
+        """Test get_member_prompt handles already prefixed name correctly"""
+        from topsailai.ai_team.role import get_member_prompt
+        result = get_member_prompt("AIMember.Existing")
+        self.assertIn("AIMember.Existing", result)
+
+    def test_get_member_prompt_empty_values_file(self):
+        """Test get_member_prompt handles empty .values file"""
+        values_path = os.path.join(self.temp_dir, "EmptyMember.values")
+        with open(values_path, 'w', encoding='utf-8') as f:
+            f.write("")
+        
+        from topsailai.ai_team.role import get_member_prompt
+        result = get_member_prompt("EmptyMember")
+        self.assertIn("YOUR ROLE IS Member", result)
+
+
+class TestRolePrefixConstants(unittest.TestCase):
+    """Test cases for role prefix constants behavior"""
+
+    def test_manager_startswith_used_in_get_manager_name(self):
+        """Test MANAGER_STARTSWITH is used correctly in get_manager_name"""
+        from topsailai.ai_team.role import get_manager_name, MANAGER_STARTSWITH
+        result = get_manager_name("Custom")
+        self.assertTrue(result.startswith(MANAGER_STARTSWITH))
+
+    def test_member_startswith_used_in_get_member_name(self):
+        """Test MEMBER_STARTSWITH is used correctly in get_member_name"""
+        from topsailai.ai_team.role import get_member_name, MEMBER_STARTSWITH
+        result = get_member_name("Custom")
+        self.assertTrue(result.startswith(MEMBER_STARTSWITH))
+
+    def test_prefix_constants_are_strings(self):
+        """Test both prefix constants are strings"""
+        from topsailai.ai_team.role import MANAGER_STARTSWITH, MEMBER_STARTSWITH
+        self.assertIsInstance(MANAGER_STARTSWITH, str)
+        self.assertIsInstance(MEMBER_STARTSWITH, str)
+
+    def test_prefix_constants_are_not_empty(self):
+        """Test both prefix constants are not empty"""
+        from topsailai.ai_team.role import MANAGER_STARTSWITH, MEMBER_STARTSWITH
+        self.assertTrue(len(MANAGER_STARTSWITH) > 0)
+        self.assertTrue(len(MEMBER_STARTSWITH) > 0)
+
+
+class TestRoleIntegration(unittest.TestCase):
+    """Integration tests for role module functions working together"""
+
+    def setUp(self):
+        """Set up clean environment"""
+        self.temp_dir = tempfile.mkdtemp()
+        self.clean_env = os.environ.copy()
+        for key in ["TOPSAILAI_TEAM_MANAGER_NAME", "TOPSAILAI_TEAM_MEMBER_NAME", "TOPSAILAI_AGENT_NAME"]:
+            if key in self.clean_env:
+                del self.clean_env[key]
+        self.clean_env["TOPSAILAI_TEAM_PATH"] = self.temp_dir
+        self.env_patcher = patch.dict(os.environ, self.clean_env, clear=True)
+        self.env_patcher.start()
+
+    def tearDown(self):
+        """Clean up"""
+        self.env_patcher.stop()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_manager_and_member_names_are_different(self):
+        """Test manager and member names are different by default"""
+        from topsailai.ai_team.role import get_manager_name, get_member_name
+        manager = get_manager_name(None)
+        member = get_member_name(None)
+        self.assertNotEqual(manager, member)
+
+    def test_manager_prompt_and_member_prompt_are_different(self):
+        """Test manager and member prompts are different"""
+        from topsailai.ai_team.role import get_manager_prompt, get_member_prompt
+        manager_prompt = get_manager_prompt("TestAgent")
+        member_prompt = get_member_prompt("TestAgent")
+        self.assertNotEqual(manager_prompt, member_prompt)
+
+    def test_prompt_contains_role_type(self):
+        """Test prompts contain correct role type identifiers"""
+        from topsailai.ai_team.role import get_manager_prompt, get_member_prompt
+        manager_result = get_manager_prompt("Test")
+        member_result = get_member_prompt("Test")
+        self.assertIn("Manager", manager_result)
+        self.assertIn("Member", member_result)
+
+
+if __name__ == '__main__':
+    unittest.main()

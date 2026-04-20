@@ -2,7 +2,7 @@ import threading
 import time
 import pytest
 
-from src.topsailai.utils.thread_tool import wait_thrs, is_main_thread
+from topsailai.utils.thread_tool import wait_thrs, is_main_thread
 
 
 def test_wait_thrs_basic():

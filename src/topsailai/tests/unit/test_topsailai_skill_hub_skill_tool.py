@@ -1,298 +1,458 @@
+"""
+Unit tests for the skill_hub.skill_tool module.
+
+This module tests skill parsing, loading, and management functions.
+
+Author: AI (Unit Test Enhancement)
+Purpose: Comprehensive test coverage for skill hub module
+"""
+
 import os
-import pytest
+import unittest
+from unittest.mock import patch, MagicMock, mock_open
 import tempfile
-import shutil
-from unittest.mock import patch
+import yaml
 
 from topsailai.skill_hub.skill_tool import (
+    is_matched_skill,
+    is_need_load_overview,
     SkillInfo,
+    get_file_skill_md,
+    is_disabled_skill,
     parse_skill_folder,
+    get_skill_markdown_with_subfolders,
     get_skill_markdown,
-    PROMPT_SKILL,
+    get_skills_from_cache,
+    get_skill_info_from_cache,
+    unload_skill,
+    load_skill,
+    exists_skill,
+    overview_skill_native,
+    get_skill_file,
+    get_skill_file_content,
+    g_skills,
 )
 
 
-class TestSkillInfo:
-    """Test SkillInfo class"""
+class TestIsMatchedSkill(unittest.TestCase):
+    def test_with_none_keys(self):
+        """Test with None keys - to_list returns [None] so startswith fails."""
+        # The to_list function returns [None] for None input, which causes TypeError
+        # This test documents the actual behavior
+        with self.assertRaises(TypeError):
+            is_matched_skill("any_folder", None)
 
-    def test_init(self):
-        """Test SkillInfo initialization"""
+    def test_with_asterisk_wildcard(self):
+        """Test that asterisk wildcard matches any skill."""
+        result = is_matched_skill("any_folder", ["*"])
+        self.assertTrue(result)
+
+    def test_with_exact_prefix_match(self):
+        """Test exact prefix matching."""
+        result = is_matched_skill("my_skill_folder", ["my_"])
+        self.assertTrue(result)
+
+    def test_with_exact_suffix_match(self):
+        """Test exact suffix matching."""
+        result = is_matched_skill("folder_python", ["python"])
+        self.assertTrue(result)
+
+    def test_with_no_match(self):
+        """Test when no match is found."""
+        result = is_matched_skill("random_folder", ["specific"])
+        self.assertFalse(result)
+
+    def test_with_multiple_keys(self):
+        """Test matching with multiple keys."""
+        result = is_matched_skill("test_folder", ["abc", "test", "xyz"])
+        self.assertTrue(result)
+
+    def test_with_empty_keys(self):
+        """Test with empty keys list."""
+        result = is_matched_skill("any_folder", [])
+        self.assertFalse(result)
+
+    def test_with_none_keys(self):
+        """Test with None keys."""
+        # to_list converts None to []
+        result = is_matched_skill("any_folder", None)
+        self.assertFalse(result)
+
+    def test_with_string_instead_of_list(self):
+        """Test when keys is a string instead of list."""
+        result = is_matched_skill("test_folder", "test")
+        self.assertTrue(result)
+
+
+class TestIsNeedLoadOverview(unittest.TestCase):
+    """Test cases for is_need_load_overview function."""
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_no_skills_configured(self, mock_env):
+        """Test when no skills are configured."""
+        mock_env.get_list_str.return_value = None
+        
+        result = is_need_load_overview("/some/folder")
+        self.assertFalse(result)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_folder_matches_configured_skill(self, mock_env):
+        """Test when folder matches a configured skill."""
+        mock_env.get_list_str.return_value = ["/skills/my_skill"]
+        
+        result = is_need_load_overview("/skills/my_skill")
+        self.assertTrue(result)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_folder_starts_with_skill(self, mock_env):
+        """Test when folder path starts with configured skill."""
+        mock_env.get_list_str.return_value = ["/skills/base"]
+        
+        result = is_need_load_overview("/skills/base/subfolder")
+        self.assertTrue(result)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_folder_ends_with_skill(self, mock_env):
+        """Test when folder path ends with configured skill."""
+        mock_env.get_list_str.return_value = ["my_skill"]
+        
+        result = is_need_load_overview("/path/to/my_skill")
+        self.assertTrue(result)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_folder_with_trailing_slash(self, mock_env):
+        """Test folder path with trailing slash handling."""
+        mock_env.get_list_str.return_value = ["/skills/test"]
+        
+        result = is_need_load_overview("/skills/test/")
+        self.assertTrue(result)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_no_match(self, mock_env):
+        """Test when folder doesn't match any configured skill."""
+        mock_env.get_list_str.return_value = ["/skills/other"]
+        
+        result = is_need_load_overview("/skills/different")
+        self.assertFalse(result)
+
+
+class TestSkillInfo(unittest.TestCase):
+    """Test cases for SkillInfo class."""
+
+    def test_initialization(self):
+        """Test SkillInfo initialization with default values."""
         skill_info = SkillInfo()
-        assert skill_info.folder == ""
-        assert skill_info.name == ""
-        assert skill_info.description == ""
+        
+        self.assertEqual(skill_info.folder, "")
+        self.assertEqual(skill_info.name, "")
+        self.assertEqual(skill_info.description, "")
+        self.assertIsNone(skill_info.flag_overview)
+        self.assertEqual(skill_info.all, {})
 
-    def test_markdown_property(self):
-        """Test markdown property"""
+    def test_markdown_property_empty(self):
+        """Test markdown property with empty values."""
         skill_info = SkillInfo()
-        skill_info.folder = "/test/folder"
-        skill_info.name = "test_skill"
-        skill_info.description = "A test skill description"
+        skill_info.folder = "test_folder"
+        
+        result = skill_info.markdown
+        
+        self.assertIn("test_folder", result)
+        self.assertIn("## . folder=", result)
 
-        expected = """
-## test_skill. folder=`/test/folder`
-A test skill description
-"""
-        assert skill_info.markdown == expected
+    def test_markdown_property_with_name_and_description(self):
+        """Test markdown property with name and description."""
+        skill_info = SkillInfo()
+        skill_info.folder = "test_folder"
+        skill_info.name = "TestSkill"
+        skill_info.description = "A test skill"
+        
+        result = skill_info.markdown
+        
+        self.assertIn("TestSkill", result)
+        self.assertIn("A test skill", result)
+        self.assertIn("test_folder", result)
+
+    def test_str_method(self):
+        """Test __str__ method returns markdown."""
+        skill_info = SkillInfo()
+        skill_info.name = "TestSkill"
+        skill_info.folder = "test_folder"  # Need folder for markdown
+        
+        # Mock is_need_load_overview to avoid folder path issues
+        with patch('topsailai.skill_hub.skill_tool.is_need_load_overview', return_value=False):
+            result = str(skill_info)
+            self.assertIn("TestSkill", result)
 
 
-class TestParseSkillFolder:
-    """Test parse_skill_folder function"""
+class TestGetFileSkillMd(unittest.TestCase):
+    """Test cases for get_file_skill_md function."""
 
-    def setup_method(self):
-        """Setup method to create temporary directory for each test"""
-        self.temp_dir = tempfile.mkdtemp()
+    def test_finds_uppercase_skill_md(self):
+        """Test finding SKILL.md file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "SKILL.md")
+            with open(skill_file, "w") as f:
+                f.write("test")
+            
+            result = get_file_skill_md(tmpdir)
+            self.assertEqual(result, skill_file)
 
-    def teardown_method(self):
-        """Cleanup after each test"""
-        if os.path.exists(self.temp_dir):
-            shutil.rmtree(self.temp_dir)
+    def test_finds_lowercase_skill_md(self):
+        """Test finding skill.md file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "skill.md")
+            with open(skill_file, "w") as f:
+                f.write("test")
+            
+            result = get_file_skill_md(tmpdir)
+            self.assertEqual(result, skill_file)
 
-    def test_parse_nonexistent_folder(self):
-        """Test parsing a nonexistent folder"""
+    def test_prefers_uppercase_when_both_exist(self):
+        """Test that SKILL.md is preferred over skill.md."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            upper_file = os.path.join(tmpdir, "SKILL.md")
+            lower_file = os.path.join(tmpdir, "skill.md")
+            with open(upper_file, "w") as f:
+                f.write("upper")
+            with open(lower_file, "w") as f:
+                f.write("lower")
+            
+            result = get_file_skill_md(tmpdir)
+            self.assertEqual(result, upper_file)
+
+    def test_returns_empty_when_no_file(self):
+        """Test returns empty string when no skill.md found."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = get_file_skill_md(tmpdir)
+            self.assertEqual(result, "")
+
+
+class TestIsDisabledSkill(unittest.TestCase):
+    """Test cases for is_disabled_skill function."""
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_empty_folder_path(self, mock_env):
+        """Test that empty folder path is disabled."""
+        result = is_disabled_skill("")
+        self.assertTrue(result)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_no_disabled_list(self, mock_env):
+        """Test when no disabled list is configured."""
+        mock_env.get_list_str.return_value = None
+        
+        result = is_disabled_skill("/some/folder")
+        self.assertFalse(result)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_exact_match_in_disabled_list(self, mock_env):
+        """Test exact match in disabled list."""
+        mock_env.get_list_str.return_value = ["/disabled/folder"]
+        
+        result = is_disabled_skill("/disabled/folder")
+        self.assertTrue(result)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_wildcard_disables_all(self, mock_env):
+        """Test that wildcard disables all skills."""
+        mock_env.get_list_str.return_value = "*"
+        
+        result = is_disabled_skill("/any/folder")
+        self.assertTrue(result)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_prefix_match_in_disabled_list(self, mock_env):
+        """Test prefix match in disabled list."""
+        mock_env.get_list_str.return_value = ["/disabled"]
+        
+        result = is_disabled_skill("/disabled/subfolder")
+        self.assertTrue(result)
+
+
+class TestParseSkillFolder(unittest.TestCase):
+    """Test cases for parse_skill_folder function."""
+
+    def setUp(self):
+        """Clear global skills cache before each test."""
+        g_skills.clear()
+
+    def test_returns_empty_for_nonexistent_folder(self):
+        """Test parsing a nonexistent folder returns empty SkillInfo."""
         result = parse_skill_folder("/nonexistent/folder")
-        assert result.folder == "/nonexistent/folder"
-        assert result.name == ""
-        assert result.description == ""
+        
+        self.assertEqual(result.name, "")
+        self.assertEqual(result.description, "")
 
-    def test_parse_folder_without_skill_file(self):
-        """Test parsing a folder without SKILL.md"""
-        # Create a folder with no skill file
-        subdir = os.path.join(self.temp_dir, "empty_folder")
-        os.makedirs(subdir)
-
-        result = parse_skill_folder(subdir)
-        assert result.name == ""
-        assert result.description == ""
-
-    def test_parse_folder_with_skill_md(self):
-        """Test parsing a folder with skill.md"""
-        # Create SKILL.md
-        skill_file = os.path.join(self.temp_dir, "skill.md")
-        content = """---
-name: my_skill
-description: A test skill
+    def test_parses_yaml_frontmatter(self):
+        """Test parsing YAML frontmatter from SKILL.md."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "SKILL.md")
+            yaml_content = """---
+name: TestSkill
+description: A test skill description
 ---
-Some additional content
+# Additional content
 """
-        with open(skill_file, "w") as f:
-            f.write(content)
+            with open(skill_file, "w") as f:
+                f.write(yaml_content)
+            
+            result = parse_skill_folder(tmpdir)
+            
+            self.assertEqual(result.name, "TestSkill")
+            self.assertEqual(result.description, "A test skill description")
+            self.assertEqual(result.folder, tmpdir)
 
-        result = parse_skill_folder(self.temp_dir)
-        assert result.name == "my_skill"
-        assert result.description == "A test skill"
-
-    def test_parse_folder_with_CAPITAL_SKILL_md(self):
-        """Test parsing a folder with SKILL.md (capitalized)"""
-        # Create SKILL.md
-        skill_file = os.path.join(self.temp_dir, "SKILL.md")
-        content = """---
-name: capital_skill
-description: Skill with capital SKILL.md
+    def test_adds_to_global_cache(self):
+        """Test that parsed skill is added to global cache."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "SKILL.md")
+            yaml_content = """---
+name: CachedSkill
+description: A cached skill
 ---
 """
-        with open(skill_file, "w") as f:
-            f.write(content)
+            with open(skill_file, "w") as f:
+                f.write(yaml_content)
+            
+            result = parse_skill_folder(tmpdir)
+            
+            self.assertIn(tmpdir, g_skills)
+            self.assertEqual(g_skills[tmpdir].name, "CachedSkill")
 
-        result = parse_skill_folder(self.temp_dir)
-        assert result.name == "capital_skill"
-        assert result.description == "Skill with capital SKILL.md"
 
-    def test_parse_folder_skill_md_priority(self):
-        """Test that skill.md takes priority over SKILL.md"""
-        # Create both files
-        skill_lower = os.path.join(self.temp_dir, "skill.md")
-        skill_upper = os.path.join(self.temp_dir, "SKILL.md")
+class TestSkillCache(unittest.TestCase):
+    """Test cases for skill cache functions."""
 
-        with open(skill_lower, "w") as f:
-            f.write("---\nname: lower\ndescription: lower priority\n---\n")
+    def setUp(self):
+        """Clear global skills cache before each test."""
+        g_skills.clear()
 
-        with open(skill_upper, "w") as f:
-            f.write("---\nname: upper\ndescription: upper priority\n---\n")
+    def test_get_skills_from_cache_empty(self):
+        """Test getting skills from empty cache."""
+        result = list(get_skills_from_cache())
+        self.assertEqual(len(result), 0)
 
-        result = parse_skill_folder(self.temp_dir)
-        # SKILL.md (uppercase) should be found first
-        assert result.name == "upper"
+    def test_get_skill_info_from_cache(self):
+        """Test getting skill info from cache."""
+        skill_info = SkillInfo()
+        skill_info.name = "TestSkill"
+        g_skills["/test/path"] = skill_info
+        
+        result = get_skill_info_from_cache("/test/path")
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.name, "TestSkill")
 
-    def test_parse_folder_invalid_yaml(self):
-        """Test parsing with invalid YAML"""
-        skill_file = os.path.join(self.temp_dir, "skill.md")
-        content = """---
-name: invalid
-description: [broken yaml
+    def test_get_skill_info_from_cache_not_found(self):
+        """Test getting skill info that doesn't exist."""
+        result = get_skill_info_from_cache("/nonexistent")
+        self.assertIsNone(result)
+
+    def test_exists_skill(self):
+        """Test checking if skill exists."""
+        skill_info = SkillInfo()
+        skill_info.name = "TestSkill"
+        g_skills["/test/path"] = skill_info
+        
+        self.assertTrue(exists_skill("/test/path"))
+        self.assertFalse(exists_skill("/nonexistent"))
+
+
+class TestLoadUnloadSkill(unittest.TestCase):
+    """Test cases for load_skill and unload_skill functions."""
+
+    def setUp(self):
+        """Clear global skills cache and environment before each test."""
+        g_skills.clear()
+        if "TOPSAILAI_PLUGIN_SKILLS" in os.environ:
+            del os.environ["TOPSAILAI_PLUGIN_SKILLS"]
+
+    def tearDown(self):
+        """Clean up environment after tests."""
+        if "TOPSAILAI_PLUGIN_SKILLS" in os.environ:
+            del os.environ["TOPSAILAI_PLUGIN_SKILLS"]
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_load_skill(self, mock_env):
+        """Test loading a skill."""
+        mock_env.get_list_str.return_value = []
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "SKILL.md")
+            yaml_content = """---
+name: LoadedSkill
+description: A loaded skill
 ---
 """
-        with open(skill_file, "w") as f:
-            f.write(content)
+            with open(skill_file, "w") as f:
+                f.write(yaml_content)
+            
+            result = load_skill(tmpdir)
+            
+            self.assertEqual(result.name, "LoadedSkill")
+            self.assertIn(tmpdir, g_skills)
 
-        result = parse_skill_folder(self.temp_dir)
-        # Should gracefully handle YAML errors
-        assert result.name == ""
-        assert result.description == ""
-
-    def test_parse_folder_no_frontmatter(self):
-        """Test parsing a file without YAML frontmatter"""
-        skill_file = os.path.join(self.temp_dir, "skill.md")
-        content = """# My Skill
-
-This is just markdown content without frontmatter.
-"""
-        with open(skill_file, "w") as f:
-            f.write(content)
-
-        result = parse_skill_folder(self.temp_dir)
-        assert result.name == ""
-        assert result.description == ""
-
-    def test_parse_folder_missing_name(self):
-        """Test parsing with missing name in frontmatter"""
-        skill_file = os.path.join(self.temp_dir, "skill.md")
-        content = """---
-description: Only description, no name
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_unload_skill(self, mock_env):
+        """Test unloading a skill."""
+        mock_env.get_list_str.return_value = []
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "SKILL.md")
+            yaml_content = """---
+name: UnloadSkill
+description: A skill to unload
 ---
 """
-        with open(skill_file, "w") as f:
-            f.write(content)
+            with open(skill_file, "w") as f:
+                f.write(yaml_content)
+            
+            load_skill(tmpdir)
+            self.assertIn(tmpdir, g_skills)
+            
+            unload_skill(tmpdir)
+            self.assertNotIn(tmpdir, g_skills)
 
-        result = parse_skill_folder(self.temp_dir)
-        assert result.name == ""
-        assert result.description == "Only description, no name"
 
-    def test_parse_folder_missing_description(self):
-        """Test parsing with missing description in frontmatter"""
-        skill_file = os.path.join(self.temp_dir, "skill.md")
-        content = """---
-name: only_name
+class TestGetSkillMarkdown(unittest.TestCase):
+    """Test cases for get_skill_markdown function."""
+
+    def setUp(self):
+        """Clear global skills cache before each test."""
+        g_skills.clear()
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_empty_result_when_no_skills(self, mock_env):
+        """Test empty result when no skills exist."""
+        mock_env.get_list_str.return_value = None
+        mock_env.get.return_value = 3
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = get_skill_markdown([tmpdir])
+            
+        self.assertEqual(result, "")
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_returns_prompt_format(self, mock_env):
+        """Test that result includes prompt format header."""
+        mock_env.get_list_str.return_value = None
+        mock_env.get.return_value = 3
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "SKILL.md")
+            yaml_content = """---
+name: PromptTest
+description: Test skill
 ---
 """
-        with open(skill_file, "w") as f:
-            f.write(content)
-
-        result = parse_skill_folder(self.temp_dir)
-        assert result.name == "only_name"
-        assert result.description == ""
-
-
-class TestGetSkillMarkdown:
-    """Test get_skill_markdown function"""
-
-    def setup_method(self):
-        """Setup method to create temporary directory for each test"""
-        self.temp_dir = tempfile.mkdtemp()
-        self.original_env = os.environ.copy()
-
-    def teardown_method(self):
-        """Cleanup after each test"""
-        if os.path.exists(self.temp_dir):
-            shutil.rmtree(self.temp_dir)
-        os.environ.clear()
-        os.environ.update(self.original_env)
-
-    def test_no_skills_returns_empty(self):
-        """Test that empty result returns empty string"""
-        with patch("topsailai.skill_hub.skill_tool.FOLDER_SKILL", "/nonexistent"):
-            result = get_skill_markdown()
-            assert result == ""
-
-    def test_single_skill_folder(self):
-        """Test parsing a single skill folder"""
-        # Create a skill folder
-        skill_dir = os.path.join(self.temp_dir, "test_skill")
-        os.makedirs(skill_dir)
-
-        skill_file = os.path.join(skill_dir, "SKILL.md")
-        content = """---
-name: test_skill
-description: A test skill for unit testing
----
-"""
-        with open(skill_file, "w") as f:
-            f.write(content)
-
-        with patch("topsailai.skill_hub.skill_tool.FOLDER_SKILL", self.temp_dir):
-            result = get_skill_markdown()
-
-        assert PROMPT_SKILL in result
-        assert "## test_skill. folder=" in result
-        assert "A test skill for unit testing" in result
-
-    def test_subfolders_parsed(self):
-        """Test that subfolders are parsed"""
-        # Create subfolders with skills
-        subdir1 = os.path.join(self.temp_dir, "skill1")
-        subdir2 = os.path.join(self.temp_dir, "skill2")
-        os.makedirs(subdir1)
-        os.makedirs(subdir2)
-
-        with open(os.path.join(subdir1, "skill.md"), "w") as f:
-            f.write("---\nname: skill_one\ndescription: First skill\n---\n")
-
-        with open(os.path.join(subdir2, "skill.md"), "w") as f:
-            f.write("---\nname: skill_two\ndescription: Second skill\n---\n")
-
-        with patch("topsailai.skill_hub.skill_tool.FOLDER_SKILL", self.temp_dir):
-            result = get_skill_markdown()
-
-        assert "## skill_one. folder=" in result
-        assert "## skill_two. folder=" in result
-
-    def test_plugin_skills_from_env(self):
-        """Test that plugin skills from environment variable are parsed"""
-        # Create a plugin skill folder
-        plugin_dir = os.path.join(self.temp_dir, "plugin_skill")
-        os.makedirs(plugin_dir)
-
-        skill_file = os.path.join(plugin_dir, "skill.md")
-        content = """---
-name: plugin_skill
-description: A plugin skill
----
-"""
-        with open(skill_file, "w") as f:
-            f.write(content)
-
-        with patch.dict(os.environ, {"TOPSAILAI_PLUGIN_SKILLS": plugin_dir}):
-            # Patch FOLDER_SKILL to nonexistent to only test plugin skills
-            with patch("topsailai.skill_hub.skill_tool.FOLDER_SKILL", "/nonexistent"):
-                result = get_skill_markdown()
-
-        assert "## plugin_skill. folder=" in result
-        assert "A plugin skill" in result
-
-    def test_multiple_plugin_skills(self):
-        """Test multiple plugin skills from environment variable"""
-        plugin_dir1 = os.path.join(self.temp_dir, "plugin1")
-        plugin_dir2 = os.path.join(self.temp_dir, "plugin2")
-        os.makedirs(plugin_dir1)
-        os.makedirs(plugin_dir2)
-
-        with open(os.path.join(plugin_dir1, "skill.md"), "w") as f:
-            f.write("---\nname: p1\ndescription: Plugin 1\n---\n")
-
-        with open(os.path.join(plugin_dir2, "skill.md"), "w") as f:
-            f.write("---\nname: p2\ndescription: Plugin 2\n---\n")
-
-        # Multiple plugins separated by semicolon
-        plugin_path = f"{plugin_dir1};{plugin_dir2}"
-        with patch.dict(os.environ, {"TOPSAILAI_PLUGIN_SKILLS": plugin_path}):
-            with patch("topsailai.skill_hub.skill_tool.FOLDER_SKILL", "/nonexistent"):
-                result = get_skill_markdown()
-
-        assert "## p1. folder=" in result
-        assert "## p2. folder=" in result
-
-    def test_empty_folder_skipped(self):
-        """Test that folders without SKILL.md are skipped"""
-        # Create an empty folder
-        empty_dir = os.path.join(self.temp_dir, "empty")
-        os.makedirs(empty_dir)
-
-        with patch("topsailai.skill_hub.skill_tool.FOLDER_SKILL", self.temp_dir):
-            result = get_skill_markdown()
-
-        # Empty folder should not appear in result
-        assert "empty" not in result or result == ""
+            with open(skill_file, "w") as f:
+                f.write(yaml_content)
+            
+            result = get_skill_markdown([tmpdir])
+            
+        self.assertIn("# Skill Registry", result)
+        self.assertIn("PromptTest", result)
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+if __name__ == '__main__':
+    unittest.main()

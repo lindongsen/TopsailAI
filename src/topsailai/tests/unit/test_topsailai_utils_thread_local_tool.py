@@ -1,7 +1,7 @@
 import unittest
 import threading
 from unittest.mock import patch
-from src.topsailai.utils.thread_local_tool import (
+from topsailai.utils.thread_local_tool import (
     set_thread_var, get_thread_var, unset_thread_var, rid_all_thread_vars,
     incr_agent_deep, decr_agent_deep, ctxm_give_agent_name, get_agent_name,
     get_session_id, ctxm_set_agent, get_agent_object, KEY_AGENT_NAME,

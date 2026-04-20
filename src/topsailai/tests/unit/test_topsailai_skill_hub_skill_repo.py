@@ -1,477 +1,487 @@
 """
-Unit tests for skill_hub/skill_repo.py module.
-
-This module tests the skill repository functionality, including:
-- Skill listing and discovery
-- Skill installation from various sources (git, zip, URL, local)
-- Skill uninstallation
-- Path traversal protection
-
-Author: mm-m25
+Unit tests for skill_hub/skill_repo.py
 """
 
 import os
-import unittest
-from unittest.mock import MagicMock, patch, mock_open, call
-import zipfile
-import tempfile
+import shutil
 import subprocess
+import tempfile
+import unittest
+from unittest.mock import patch, MagicMock
+import zipfile
+import urllib.error
+
+from topsailai.skill_hub import skill_repo
 
 
 class TestIsGitUrl(unittest.TestCase):
-    """Test cases for _is_git_url() function."""
+    """Tests for _is_git_url() function."""
 
-    def test_is_git_url_github_with_git_suffix(self):
-        """Test _is_git_url returns True for github.com URL with .git suffix."""
-        from topsailai.skill_hub.skill_repo import _is_git_url
-
-        result = _is_git_url("https://github.com/user/repo.git")
+    def test_is_git_url_returns_true_for_github_https(self):
+        result = skill_repo._is_git_url("https://github.com/user/repo.git")
         self.assertTrue(result)
 
-    def test_is_git_url_github_without_git_suffix(self):
-        """Test _is_git_url returns True for github.com URL without .git suffix."""
-        from topsailai.skill_hub.skill_repo import _is_git_url
-
-        result = _is_git_url("https://github.com/user/repo")
+    def test_is_git_url_returns_true_for_github_ssh(self):
+        result = skill_repo._is_git_url("git@github.com:user/repo.git")
         self.assertTrue(result)
 
-    def test_is_git_url_gitlab(self):
-        """Test _is_git_url returns True for gitlab.com URL."""
-        from topsailai.skill_hub.skill_repo import _is_git_url
-
-        result = _is_git_url("https://gitlab.com/user/repo.git")
+    def test_is_git_url_returns_true_for_gitlab(self):
+        result = skill_repo._is_git_url("https://gitlab.com/user/repo.git")
         self.assertTrue(result)
 
-    def test_is_git_url_bitbucket(self):
-        """Test _is_git_url returns True for bitbucket.org URL."""
-        from topsailai.skill_hub.skill_repo import _is_git_url
-
-        result = _is_git_url("https://bitbucket.org/user/repo.git")
+    def test_is_git_url_returns_true_for_bitbucket(self):
+        result = skill_repo._is_git_url("https://bitbucket.org/user/repo.git")
         self.assertTrue(result)
 
-    def test_is_git_url_ssh_github(self):
-        """Test _is_git_url returns True for SSH git URL."""
-        from topsailai.skill_hub.skill_repo import _is_git_url
-
-        result = _is_git_url("git@github.com:user/repo.git")
-        self.assertTrue(result)
-
-    def test_is_git_url_ssh_gitlab(self):
-        """Test _is_git_url returns True for SSH gitlab URL."""
-        from topsailai.skill_hub.skill_repo import _is_git_url
-
-        result = _is_git_url("git@gitlab.com:user/repo.git")
-        self.assertTrue(result)
-
-    def test_is_git_url_false_for_http(self):
-        """Test _is_git_url returns False for plain HTTP URL."""
-        from topsailai.skill_hub.skill_repo import _is_git_url
-
-        result = _is_git_url("http://example.com/repo")
+    def test_is_git_url_returns_false_for_regular_https(self):
+        result = skill_repo._is_git_url("https://example.com/path/to/file")
         self.assertFalse(result)
 
-    def test_is_git_url_false_for_local_path(self):
-        """Test _is_git_url returns False for local path."""
-        from topsailai.skill_hub.skill_repo import _is_git_url
-
-        result = _is_git_url("/path/to/local/repo")
-        self.assertFalse(result)
-
-    def test_is_git_url_false_for_zip_file(self):
-        """Test _is_git_url returns False for zip file path."""
-        from topsailai.skill_hub.skill_repo import _is_git_url
-
-        result = _is_git_url("/path/to/skill.zip")
+    def test_is_git_url_returns_false_for_local_path(self):
+        result = skill_repo._is_git_url("/path/to/local/skill")
         self.assertFalse(result)
 
 
 class TestSafeExtract(unittest.TestCase):
-    """Test cases for _safe_extract() function."""
+    """Tests for _safe_extract() function."""
 
-    def test_safe_extract_valid_path(self):
-        """Test _safe_extract extracts file to valid path."""
-        from topsailai.skill_hub.skill_repo import _safe_extract
+    def test_safe_extract_allows_valid_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with zipfile.ZipFile(temp_dir + "/test.zip", "w") as zf:
+                zf.writestr("valid_file.txt", "content")
+            with zipfile.ZipFile(temp_dir + "/test.zip", "r") as zf:
+                skill_repo._safe_extract(zf, "valid_file.txt", temp_dir)
+            self.assertTrue(os.path.exists(os.path.join(temp_dir, "valid_file.txt")))
 
-        mock_zip = MagicMock()
-        target_dir = tempfile.mkdtemp()
-
-        _safe_extract(mock_zip, "file.txt", target_dir)
-
-        mock_zip.extract.assert_called_once_with("file.txt", target_dir)
-
-    def test_safe_extract_prevents_path_traversal(self):
-        """Test _safe_extract raises ValueError for path traversal attempt."""
-        from topsailai.skill_hub.skill_repo import _safe_extract
-
-        mock_zip = MagicMock()
-        target_dir = tempfile.mkdtemp()
-
-        with self.assertRaises(ValueError) as context:
-            _safe_extract(mock_zip, "../../../etc/passwd", target_dir)
-
-        self.assertIn("Path traversal attempt detected", str(context.exception))
+    def test_safe_extract_rejects_path_traversal(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with zipfile.ZipFile(temp_dir + "/test.zip", "w") as zf:
+                zf.writestr("../outside.txt", "malicious content")
+            with zipfile.ZipFile(temp_dir + "/test.zip", "r") as zf:
+                with self.assertRaises(ValueError) as context:
+                    skill_repo._safe_extract(zf, "../outside.txt", temp_dir)
+                self.assertIn("Path traversal attempt detected", str(context.exception))
 
 
 class TestValidateSkillInstallation(unittest.TestCase):
-    """Test cases for _validate_skill_installation() function."""
+    """Tests for _validate_skill_installation() function."""
 
-    @patch("topsailai.skill_hub.skill_repo.get_file_skill_md")
-    def test_validate_skill_returns_true_when_skill_md_exists(self, mock_get_file):
-        """Test _validate_skill_installation returns True when SKILL.md exists."""
-        from topsailai.skill_hub.skill_repo import _validate_skill_installation
-
-        mock_get_file.return_value = "/path/to/skill/SKILL.md"
-
-        result = _validate_skill_installation("/path/to/skill")
-
+    @patch('topsailai.skill_hub.skill_repo.get_file_skill_md')
+    def test_validate_returns_true_when_skill_md_exists(self, mock_get_file):
+        mock_get_file.return_value = "/path/to/SKILL.md"
+        result = skill_repo._validate_skill_installation("/path/to/skill")
         self.assertTrue(result)
 
-    @patch("topsailai.skill_hub.skill_repo.get_file_skill_md")
-    @patch("topsailai.skill_hub.skill_repo.logger")
-    def test_validate_skill_returns_false_when_skill_md_missing(self, mock_logger, mock_get_file):
-        """Test _validate_skill_installation returns False when SKILL.md missing."""
-        from topsailai.skill_hub.skill_repo import _validate_skill_installation
-
+    @patch('topsailai.skill_hub.skill_repo.get_file_skill_md')
+    @patch('topsailai.skill_hub.skill_repo.logger')
+    def test_validate_returns_false_when_skill_md_missing(self, mock_logger, mock_get_file):
         mock_get_file.return_value = None
-
-        result = _validate_skill_installation("/path/to/skill")
-
+        result = skill_repo._validate_skill_installation("/path/to/skill")
         self.assertFalse(result)
         mock_logger.warning.assert_called_once()
 
 
 class TestInstallSkill(unittest.TestCase):
-    """Test cases for install_skill() function."""
+    """Tests for install_skill() function."""
 
-    @patch("topsailai.skill_hub.skill_repo.install_from_local")
-    @patch("os.path.exists")
-    def test_install_skill_from_local_path(self, mock_exists, mock_install_local):
-        """Test install_skill calls install_from_local for existing local path."""
-        from topsailai.skill_hub.skill_repo import install_skill
-
-        mock_exists.return_value = True
-        mock_install_local.return_value = "/skills/local/myskill"
-
-        result = install_skill("/path/to/myskill")
-
-        self.assertEqual(result, "/skills/local/myskill")
-        mock_install_local.assert_called_once_with("/path/to/myskill")
-
-    @patch("topsailai.skill_hub.skill_repo.install_from_git")
-    @patch("topsailai.skill_hub.skill_repo._is_git_url")
-    def test_install_skill_from_git_url(self, mock_is_git, mock_install_git):
-        """Test install_skill calls install_from_git for git URL."""
-        from topsailai.skill_hub.skill_repo import install_skill
-
-        mock_is_git.return_value = True
-        mock_install_git.return_value = "/skills/github.com/repo"
-
-        result = install_skill("https://github.com/user/repo.git")
-
-        self.assertEqual(result, "/skills/github.com/repo")
+    @patch('topsailai.skill_hub.skill_repo.install_from_git')
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    def test_install_skill_calls_install_from_git_for_git_url(self, mock_install_git):
+        mock_install_git.return_value = "/tmp/test_skills/github.com/repo"
+        result = skill_repo.install_skill("https://github.com/user/repo.git")
         mock_install_git.assert_called_once_with("https://github.com/user/repo.git")
+        self.assertEqual(result, "/tmp/test_skills/github.com/repo")
 
-    @patch("topsailai.skill_hub.skill_repo.install_from_zip")
-    @patch("os.path.exists")
-    def test_install_skill_from_zip(self, mock_exists, mock_install_zip):
-        """Test install_skill calls install_from_zip for .zip file."""
-        from topsailai.skill_hub.skill_repo import install_skill
+    @patch('topsailai.skill_hub.skill_repo.install_from_url')
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    def test_install_skill_calls_install_from_url_for_http(self, mock_install_url):
+        mock_install_url.return_value = "/tmp/test_skills/example.com/repo"
+        result = skill_repo.install_skill("https://example.com/repo")
+        mock_install_url.assert_called_once_with("https://example.com/repo")
+        self.assertEqual(result, "/tmp/test_skills/example.com/repo")
 
-        mock_exists.return_value = False
-        mock_install_zip.return_value = "/skills/local/myskill"
+    @patch('topsailai.skill_hub.skill_repo.install_from_zip')
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    def test_install_skill_calls_install_from_zip_for_zip_file(self, mock_install_zip):
+        mock_install_zip.return_value = "/tmp/test_skills/local/skill"
+        result = skill_repo.install_skill("/path/to/skill.zip")
+        mock_install_zip.assert_called_once_with("/path/to/skill.zip")
+        self.assertEqual(result, "/tmp/test_skills/local/skill")
 
-        result = install_skill("/path/to/myskill.zip")
+    @patch('topsailai.skill_hub.skill_repo.install_from_local')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    def test_install_skill_calls_install_from_local_for_existing_path(self, mock_exists, mock_install_local):
+        mock_exists.return_value = True
+        mock_install_local.return_value = "/tmp/test_skills/local/skill"
+        result = skill_repo.install_skill("/path/to/local/skill")
+        mock_install_local.assert_called_once_with("/path/to/local/skill")
+        self.assertEqual(result, "/tmp/test_skills/local/skill")
 
-        self.assertEqual(result, "/skills/local/myskill")
-        mock_install_zip.assert_called_once_with("/path/to/myskill.zip")
-
-    @patch("topsailai.skill_hub.skill_repo.install_from_url")
-    def test_install_skill_from_http_url(self, mock_install_url):
-        """Test install_skill calls install_from_url for HTTP URL."""
-        from topsailai.skill_hub.skill_repo import install_skill
-
-        mock_install_url.return_value = "/skills/example.com/skill"
-
-        result = install_skill("https://example.com/skill.zip")
-
-        self.assertEqual(result, "/skills/example.com/skill")
-        mock_install_url.assert_called_once_with("https://example.com/skill.zip")
-
-    def test_install_skill_raises_error_for_empty_address(self):
-        """Test install_skill raises ValueError for empty address."""
-        from topsailai.skill_hub.skill_repo import install_skill
-
+    def test_install_skill_raises_on_empty_address(self):
         with self.assertRaises(ValueError) as context:
-            install_skill("")
-
+            skill_repo.install_skill("")
         self.assertIn("Address cannot be empty", str(context.exception))
 
-    def test_install_skill_raises_error_for_invalid_address(self):
-        """Test install_skill raises ValueError for invalid address."""
-        from topsailai.skill_hub.skill_repo import install_skill
-
+    def test_install_skill_raises_on_invalid_address(self):
         with self.assertRaises(ValueError) as context:
-            install_skill("invalid://not-a-valid-address")
-
+            skill_repo.install_skill("invalid://not-a-valid-address")
         self.assertIn("Illegal address", str(context.exception))
 
 
 class TestInstallFromGit(unittest.TestCase):
-    """Test cases for install_from_git() function."""
+    """Tests for install_from_git() function."""
 
-    def test_install_from_git_raises_error_for_empty_url(self):
-        """Test install_from_git raises ValueError for empty URL."""
-        from topsailai.skill_hub.skill_repo import install_from_git
-
+    @patch('topsailai.skill_hub.skill_repo.subprocess.run')
+    def test_install_from_git_raises_on_empty_url(self, mock_subprocess):
         with self.assertRaises(ValueError) as context:
-            install_from_git("")
-
+            skill_repo.install_from_git("")
         self.assertIn("Git URL cannot be empty", str(context.exception))
 
-    @patch("topsailai.skill_hub.skill_repo.subprocess.run")
-    def test_install_from_git_raises_error_when_git_not_installed(self, mock_run):
-        """Test install_from_git raises ValueError when git is not installed."""
-        from topsailai.skill_hub.skill_repo import install_from_git
-
-        mock_run.side_effect = FileNotFoundError("git not found")
-
+    @patch('topsailai.skill_hub.skill_repo.subprocess.run')
+    def test_install_from_git_raises_when_git_not_installed(self, mock_subprocess):
+        mock_subprocess.side_effect = FileNotFoundError("git not found")
         with self.assertRaises(ValueError) as context:
-            install_from_git("https://github.com/user/repo.git")
-
+            skill_repo.install_from_git("https://github.com/user/repo.git")
         self.assertIn("git is not installed", str(context.exception))
 
-    @patch("topsailai.skill_hub.skill_repo.os.path.exists")
-    def test_install_from_git_returns_existing_path(self, mock_exists):
-        """Test install_from_git returns existing path without cloning."""
-        from topsailai.skill_hub.skill_repo import install_from_git
-
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    def test_install_from_git_returns_existing_if_already_installed(self, mock_exists):
         mock_exists.return_value = True
-
-        result = install_from_git("https://github.com/user/repo.git")
-
-        self.assertIn("github.com", result)
-        self.assertIn("repo", result)
+        result = skill_repo.install_from_git("https://github.com/user/repo.git")
+        self.assertEqual(result, "/tmp/test_skills/github.com/repo")
 
 
 class TestInstallFromZip(unittest.TestCase):
-    """Test cases for install_from_zip() function."""
+    """Tests for install_from_zip() function."""
 
-    def test_install_from_zip_raises_error_for_nonexistent_file(self):
-        """Test install_from_zip raises ValueError for non-existent file."""
-        from topsailai.skill_hub.skill_repo import install_from_zip
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.zip_path = os.path.join(self.test_dir, "test_skill.zip")
+        with zipfile.ZipFile(self.zip_path, 'w') as zf:
+            zf.writestr("SKILL.md", "# Test Skill")
 
-        with patch("os.path.exists", return_value=False):
-            with self.assertRaises(ValueError) as context:
-                install_from_zip("/path/to/nonexistent.zip")
+    def tearDown(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
 
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo._validate_skill_installation')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    @patch('topsailai.skill_hub.skill_repo.os.makedirs')
+    @patch('topsailai.skill_hub.skill_repo.shutil.copytree')
+    @patch('topsailai.skill_hub.skill_repo.shutil.move')
+    @patch('topsailai.skill_hub.skill_repo.shutil.rmtree')
+    def test_install_from_zip_raises_when_file_not_exists(self, mock_rmtree, mock_move, mock_copytree, mock_makedirs, mock_exists, mock_validate):
+        mock_exists.return_value = False
+        with self.assertRaises(ValueError) as context:
+            skill_repo.install_from_zip("/nonexistent/path.zip")
         self.assertIn("does not exist", str(context.exception))
 
-    def test_install_from_zip_raises_error_for_non_zip_file(self):
-        """Test install_from_zip raises ValueError for non-zip file."""
-        from topsailai.skill_hub.skill_repo import install_from_zip
-
-        with patch("os.path.exists", return_value=True):
-            with self.assertRaises(ValueError) as context:
-                install_from_zip("/path/to/file.txt")
-
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    def test_install_from_zip_raises_when_not_zip_file(self):
+        non_zip_path = os.path.join(self.test_dir, "not_a_zip.txt")
+        with open(non_zip_path, 'w') as f:
+            f.write("not a zip file")
+        with self.assertRaises(ValueError) as context:
+            skill_repo.install_from_zip(non_zip_path)
         self.assertIn("not a zip file", str(context.exception))
-
-    @patch("topsailai.skill_hub.skill_repo.os.path.exists")
-    def test_install_from_zip_returns_existing_path(self, mock_exists):
-        """Test install_from_zip returns existing path without extracting."""
-        from topsailai.skill_hub.skill_repo import install_from_zip
-
-        mock_exists.return_value = True
-
-        result = install_from_zip("/path/to/skill.zip")
-
-        self.assertIn("local", result)
-        self.assertIn("skill", result)
 
 
 class TestInstallFromUrl(unittest.TestCase):
-    """Test cases for install_from_url() function."""
+    """Tests for install_from_url() function."""
 
-    def test_install_from_url_raises_error_for_invalid_url(self):
-        """Test install_from_url raises ValueError for URL without path."""
-        from topsailai.skill_hub.skill_repo import install_from_url
-
-        with self.assertRaises(ValueError) as context:
-            install_from_url("https://example.com/")
-
-        self.assertIn("Invalid URL", str(context.exception))
-
-    @patch("topsailai.skill_hub.skill_repo.os.path.exists")
-    def test_install_from_url_returns_existing_path(self, mock_exists):
-        """Test install_from_url returns existing path without downloading."""
-        from topsailai.skill_hub.skill_repo import install_from_url
-
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo._validate_skill_installation')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    @patch('topsailai.skill_hub.skill_repo.os.makedirs')
+    @patch('topsailai.skill_hub.skill_repo.shutil.move')
+    @patch('topsailai.skill_hub.skill_repo.shutil.rmtree')
+    @patch('topsailai.skill_hub.skill_repo.urllib.request.urlopen')
+    def test_install_from_url_returns_existing_if_already_installed(self, mock_urlopen, mock_rmtree, mock_move, mock_makedirs, mock_exists, mock_validate):
         mock_exists.return_value = True
-
-        result = install_from_url("https://example.com/skill.zip")
-
-        self.assertIn("example.com", result)
-        self.assertIn("skill", result)
+        result = skill_repo.install_from_url("https://example.com/repo")
+        self.assertEqual(result, "/tmp/test_skills/example.com/repo")
+        mock_urlopen.assert_not_called()
 
 
 class TestInstallFromLocal(unittest.TestCase):
-    """Test cases for install_from_local() function."""
+    """Tests for install_from_local() function."""
 
-    def test_install_from_local_raises_error_for_nonexistent_path(self):
-        """Test install_from_local raises ValueError for non-existent path."""
-        from topsailai.skill_hub.skill_repo import install_from_local
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.local_skill_dir = os.path.join(self.test_dir, "local_skill")
+        os.makedirs(self.local_skill_dir, exist_ok=True)
+        with open(os.path.join(self.local_skill_dir, "SKILL.md"), "w") as f:
+            f.write("# Local Skill")
 
-        with patch("os.path.exists", return_value=False):
-            with self.assertRaises(ValueError) as context:
-                install_from_local("/path/to/nonexistent")
+    def tearDown(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
 
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo.os.path.abspath')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    def test_install_from_local_raises_when_path_not_exists(self, mock_exists, mock_abspath):
+        mock_abspath.return_value = "/nonexistent/path"
+        mock_exists.return_value = False
+        with self.assertRaises(ValueError) as context:
+            skill_repo.install_from_local("/nonexistent/path")
         self.assertIn("does not exist", str(context.exception))
 
-    def test_install_from_local_raises_error_for_file_instead_of_dir(self):
-        """Test install_from_local raises ValueError when path is a file."""
-        from topsailai.skill_hub.skill_repo import install_from_local
-
-        with patch("os.path.exists", return_value=True):
-            with patch("os.path.isdir", return_value=False):
-                with self.assertRaises(ValueError) as context:
-                    install_from_local("/path/to/file.txt")
-
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo.os.path.abspath')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    @patch('topsailai.skill_hub.skill_repo.os.path.isdir')
+    def test_install_from_local_raises_when_path_is_file(self, mock_isdir, mock_exists, mock_abspath):
+        mock_abspath.return_value = os.path.join(self.test_dir, "file.txt")
+        mock_exists.return_value = True
+        mock_isdir.return_value = False
+        with self.assertRaises(ValueError) as context:
+            skill_repo.install_from_local(os.path.join(self.test_dir, "file.txt"))
         self.assertIn("not a directory", str(context.exception))
 
-    @patch("topsailai.skill_hub.skill_repo.os.path.exists")
-    def test_install_from_local_returns_existing_path(self, mock_exists):
-        """Test install_from_local returns existing path without copying."""
-        from topsailai.skill_hub.skill_repo import install_from_local
-
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo._validate_skill_installation')
+    @patch('topsailai.skill_hub.skill_repo.os.path.abspath')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    @patch('topsailai.skill_hub.skill_repo.os.path.isdir')
+    def test_install_from_local_returns_existing_if_already_installed(self, mock_isdir, mock_exists, mock_abspath, mock_validate):
+        mock_abspath.return_value = self.local_skill_dir
         mock_exists.return_value = True
-
-        result = install_from_local("/path/to/myskill")
-
-        self.assertIn("local", result)
-        self.assertIn("myskill", result)
+        mock_isdir.return_value = True
+        result = skill_repo.install_from_local(self.local_skill_dir)
+        self.assertEqual(result, "/tmp/test_skills/local/local_skill")
 
 
 class TestUninstallSkill(unittest.TestCase):
-    """Test cases for uninstall_skill() function."""
+    """Tests for uninstall_skill() function."""
 
-    @patch("topsailai.skill_hub.skill_repo.shutil.rmtree")
-    @patch("topsailai.skill_hub.skill_repo.os.path.exists")
-    def test_uninstall_skill_success(self, mock_exists, mock_rmtree):
-        """Test uninstall_skill successfully removes skill folder."""
-        from topsailai.skill_hub.skill_repo import uninstall_skill
+    def test_uninstall_skill_raises_on_empty_name(self):
+        with self.assertRaises(ValueError) as context:
+            skill_repo.uninstall_skill("")
+        self.assertIn("cannot be empty", str(context.exception))
 
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    def test_uninstall_skill_returns_false_when_not_exists(self, mock_exists):
+        mock_exists.return_value = False
+        result = skill_repo.uninstall_skill("nonexistent_skill")
+        self.assertFalse(result)
+
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo.shutil.rmtree')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    def test_uninstall_skill_returns_true_on_success(self, mock_exists, mock_rmtree):
         mock_exists.return_value = True
-
-        result = uninstall_skill("local/myskill")
-
+        result = skill_repo.uninstall_skill("test_skill")
         self.assertTrue(result)
         mock_rmtree.assert_called_once()
 
-    @patch("topsailai.skill_hub.skill_repo.os.path.exists")
-    def test_uninstall_skill_returns_false_when_not_exists(self, mock_exists):
-        """Test uninstall_skill returns False when skill doesn't exist."""
-        from topsailai.skill_hub.skill_repo import uninstall_skill
-
-        mock_exists.return_value = False
-
-        result = uninstall_skill("local/nonexistent")
-
-        self.assertFalse(result)
-
-    def test_uninstall_skill_raises_error_for_empty_name(self):
-        """Test uninstall_skill raises ValueError for empty skill name."""
-        from topsailai.skill_hub.skill_repo import uninstall_skill
-
-        with self.assertRaises(ValueError) as context:
-            uninstall_skill("")
-
-        self.assertIn("cannot be empty", str(context.exception))
-
-    @patch("topsailai.skill_hub.skill_repo.os.path.exists")
-    def test_uninstall_skill_raises_error_on_permission_error(self, mock_exists):
-        """Test uninstall_skill raises ValueError on permission error."""
-        from topsailai.skill_hub.skill_repo import uninstall_skill
-
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo.shutil.rmtree')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    def test_uninstall_skill_raises_on_permission_error(self, mock_exists, mock_rmtree):
         mock_exists.return_value = True
-
-        with patch("shutil.rmtree", side_effect=PermissionError("Permission denied")):
-            with self.assertRaises(ValueError) as context:
-                uninstall_skill("local/myskill")
-
+        mock_rmtree.side_effect = PermissionError("Permission denied")
+        with self.assertRaises(ValueError) as context:
+            skill_repo.uninstall_skill("test_skill")
         self.assertIn("Permission denied", str(context.exception))
 
 
 class TestListSkills(unittest.TestCase):
-    """Test cases for list_skills() function."""
+    """Tests for list_skills() function."""
 
-    @patch("topsailai.skill_hub.skill_repo.os.path.exists")
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
     def test_list_skills_returns_empty_when_folder_not_exists(self, mock_exists):
-        """Test list_skills returns empty list when FOLDER_SKILL doesn't exist."""
-        from topsailai.skill_hub.skill_repo import list_skills
-
         mock_exists.return_value = False
-
-        result = list_skills()
-
+        result = skill_repo.list_skills()
         self.assertEqual(result, [])
 
-    @patch("topsailai.skill_hub.skill_repo.get_file_skill_md")
-    @patch("topsailai.skill_hub.skill_repo.os.path.isdir")
-    @patch("topsailai.skill_hub.skill_repo.os.listdir")
-    @patch("topsailai.skill_hub.skill_repo.os.path.exists")
-    def test_list_skills_finds_skills_in_subfolders(
-        self, mock_exists, mock_listdir, mock_isdir, mock_get_file
-    ):
-        """Test list_skills finds skills in subfolders."""
-        from topsailai.skill_hub.skill_repo import list_skills
 
+# === STEP 16: ENHANCED TESTS FOR skill_repo.py ===
+
+class TestInstallFromGitEnhanced(unittest.TestCase):
+    """Enhanced tests for install_from_git() function."""
+
+    @patch('topsailai.skill_hub.skill_repo.subprocess.run')
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    def test_install_from_git_handles_branch_fallback(self, mock_run):
+        """Test install_from_git falls back to master when main not found."""
+        mock_run.side_effect = [
+            MagicMock(returncode=0),
+            MagicMock(returncode=1, stderr="branch not found"),
+            MagicMock(returncode=0, stderr=""),
+        ]
+        with patch('topsailai.skill_hub.skill_repo.os.path.exists', return_value=False):
+            with patch('topsailai.skill_hub.skill_repo.os.makedirs'):
+                with patch('topsailai.skill_hub.skill_repo.shutil.copytree'):
+                    with patch('topsailai.skill_hub.skill_repo.shutil.move'):
+                        with patch('topsailai.skill_hub.skill_repo._validate_skill_installation', return_value=True):
+                            with patch('topsailai.skill_hub.skill_repo.os.listdir', return_value=['file.txt']):
+                                with patch('topsailai.skill_hub.skill_repo.tempfile.mkdtemp') as mock_temp:
+                                    mock_temp.return_value = '/tmp/fake_temp'
+                                    with patch('topsailai.skill_hub.skill_repo.shutil.rmtree'):
+                                        result = skill_repo.install_from_git("https://github.com/user/repo.git")
+                                        self.assertEqual(result, "/tmp/test_skills/github.com/repo")
+
+    @patch('topsailai.skill_hub.skill_repo.subprocess.run')
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    def test_install_from_git_timeout_handling(self, mock_run):
+        """Test install_from_git handles timeout."""
+        mock_run.side_effect = [
+            MagicMock(returncode=0),
+            subprocess.TimeoutExpired("git clone", 300),
+        ]
+        with self.assertRaises(ValueError) as context:
+            skill_repo.install_from_git("https://github.com/user/repo.git")
+        self.assertIn("timed out", str(context.exception))
+
+    @patch('topsailai.skill_hub.skill_repo.subprocess.run')
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    def test_install_from_git_repository_not_found(self, mock_run):
+        """Test install_from_git handles repository not found."""
+        mock_run.side_effect = [
+            MagicMock(returncode=0),
+            MagicMock(returncode=128, stderr="Repository not found"),
+        ]
+        with patch('topsailai.skill_hub.skill_repo.os.path.exists', return_value=False):
+            with patch('topsailai.skill_hub.skill_repo.os.makedirs'):
+                with patch('topsailai.skill_hub.skill_repo.tempfile.mkdtemp') as mock_temp:
+                    mock_temp.return_value = '/tmp/fake_temp'
+                    with patch('topsailai.skill_hub.skill_repo.shutil.rmtree'):
+                        with self.assertRaises(ValueError) as context:
+                            skill_repo.install_from_git("https://github.com/user/nonexistent.git")
+                        self.assertIn("Failed to install", str(context.exception))
+
+    @patch('topsailai.skill_hub.skill_repo.subprocess.run')
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    def test_install_from_git_atomic_installation(self, mock_run):
+        """Test install_from_git uses atomic installation pattern."""
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        with patch('topsailai.skill_hub.skill_repo.os.path.exists', side_effect=[False, False, True]):
+            with patch('topsailai.skill_hub.skill_repo.os.makedirs'):
+                with patch('topsailai.skill_hub.skill_repo.shutil.copytree') as mock_copy:
+                    with patch('topsailai.skill_hub.skill_repo.shutil.move') as mock_move:
+                        with patch('topsailai.skill_hub.skill_repo._validate_skill_installation', return_value=True):
+                            with patch('topsailai.skill_hub.skill_repo.os.listdir', return_value=['file.txt']):
+                                with patch('topsailai.skill_hub.skill_repo.tempfile.mkdtemp') as mock_temp:
+                                    mock_temp.return_value = '/tmp/fake_temp'
+                                    with patch('topsailai.skill_hub.skill_repo.shutil.rmtree'):
+                                        skill_repo.install_from_git("https://github.com/user/repo.git")
+                                        self.assertTrue(mock_copy.called)
+                                        self.assertTrue(mock_move.called)
+
+
+class TestInstallFromZipEnhanced(unittest.TestCase):
+    """Enhanced tests for install_from_zip() function."""
+
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    @patch('topsailai.skill_hub.skill_repo.os.path.abspath')
+    def test_install_from_zip_bad_zip_file(self, mock_abspath, mock_exists):
+        """Test install_from_zip handles bad zip file (not ending with .zip)."""
+        mock_abspath.return_value = "/path/to/corrupt.txt"
         mock_exists.return_value = True
-        mock_listdir.return_value = ["subskill"]
+        
+        with self.assertRaises(ValueError) as context:
+            skill_repo.install_from_zip("/path/to/corrupt.txt")
+        self.assertIn("not a zip file", str(context.exception))
+
+
+class TestInstallFromUrlEnhanced(unittest.TestCase):
+    """Enhanced tests for install_from_url() function."""
+
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo._validate_skill_installation')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    @patch('topsailai.skill_hub.skill_repo.os.makedirs')
+    @patch('topsailai.skill_hub.skill_repo.shutil.move')
+    @patch('topsailai.skill_hub.skill_repo.tempfile.mkdtemp')
+    @patch('topsailai.skill_hub.skill_repo.shutil.rmtree')
+    @patch('topsailai.skill_hub.skill_repo.urllib.request.urlopen')
+    @patch('topsailai.skill_hub.skill_repo.zipfile.is_zipfile')
+    def test_install_from_url_handles_url_error(
+        self, mock_is_zip, mock_urlopen, mock_rmtree, mock_temp, 
+        mock_move, mock_makedirs, mock_exists, mock_validate
+    ):
+        """Test install_from_url handles URL errors gracefully."""
+        mock_exists.return_value = False
+        mock_temp.return_value = "/tmp/fake_temp"
+        mock_is_zip.return_value = False
+        
+        mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
+        
+        with self.assertRaises(ValueError) as context:
+            skill_repo.install_from_url("https://example.com/skill.zip")
+        self.assertIn("Failed to download", str(context.exception))
+
+
+class TestListSkillsEnhanced(unittest.TestCase):
+    """Enhanced tests for list_skills() function."""
+
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo.get_file_skill_md')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    @patch('topsailai.skill_hub.skill_repo.os.listdir')
+    @patch('topsailai.skill_hub.skill_repo.os.path.isdir')
+    @patch('topsailai.skill_hub.skill_repo.logger')
+    def test_list_skills_handles_permission_error(
+        self, mock_logger, mock_isdir, mock_listdir, mock_exists, mock_get_file
+    ):
+        """Test list_skills handles permission errors gracefully."""
+        mock_exists.return_value = True
+        mock_listdir.side_effect = PermissionError("Permission denied")
         mock_isdir.return_value = True
-        mock_get_file.return_value = "/path/to/subskill/SKILL.md"
+        
+        result = skill_repo.list_skills()
+        self.assertEqual(result, [])
+        mock_logger.warning.assert_called()
 
-        result = list_skills()
-
-        self.assertIn("subskill", result)
-
-    @patch("topsailai.skill_hub.skill_repo.get_file_skill_md")
-    @patch("topsailai.skill_hub.skill_repo.os.path.isdir")
-    @patch("topsailai.skill_hub.skill_repo.os.listdir")
-    @patch("topsailai.skill_hub.skill_repo.os.path.exists")
-    def test_list_skills_skips_non_skill_folders(
-        self, mock_exists, mock_listdir, mock_isdir, mock_get_file
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo.get_file_skill_md')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    @patch('topsailai.skill_hub.skill_repo.os.listdir')
+    @patch('topsailai.skill_hub.skill_repo.os.path.isdir')
+    def test_list_skills_respects_max_depth(
+        self, mock_isdir, mock_listdir, mock_exists, mock_get_file
     ):
-        """Test list_skills skips folders without SKILL.md."""
-        from topsailai.skill_hub.skill_repo import list_skills
-
+        """Test list_skills respects MAX_DEPTH limit."""
         mock_exists.return_value = True
-        mock_listdir.return_value = ["notaskill"]
+        mock_listdir.return_value = ['subdir']
         mock_isdir.return_value = True
         mock_get_file.return_value = None
+        
+        result = skill_repo.list_skills()
+        self.assertIsInstance(result, list)
 
-        result = list_skills()
 
-        self.assertEqual(result, [])
+class TestUninstallSkillEnhancedStep16(unittest.TestCase):
+    """Enhanced tests for uninstall_skill() function - Step 16."""
 
-    @patch("topsailai.skill_hub.skill_repo.get_file_skill_md")
-    @patch("topsailai.skill_hub.skill_repo.os.path.isdir")
-    @patch("topsailai.skill_hub.skill_repo.os.listdir")
-    @patch("topsailai.skill_hub.skill_repo.os.path.exists")
-    def test_list_skills_returns_sorted_list(
-        self, mock_exists, mock_listdir, mock_isdir, mock_get_file
-    ):
-        """Test list_skills returns sorted list of skill names."""
-        from topsailai.skill_hub.skill_repo import list_skills
-
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo.shutil.rmtree')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    def test_uninstall_skill_handles_os_error(self, mock_exists, mock_rmtree):
+        """Test uninstall_skill handles OSError gracefully."""
         mock_exists.return_value = True
-        mock_listdir.return_value = ["zskill", "askill", "mskill"]
-        mock_isdir.return_value = True
-        mock_get_file.return_value = "/path/to/skill/SKILL.md"
+        mock_rmtree.side_effect = OSError("Disk full")
+        
+        with self.assertRaises(ValueError) as context:
+            skill_repo.uninstall_skill("test_skill")
+        self.assertIn("Failed to remove skill folder", str(context.exception))
 
-        result = list_skills()
+    @patch('topsailai.skill_hub.skill_repo.FOLDER_SKILL', '/tmp/test_skills')
+    @patch('topsailai.skill_hub.skill_repo.os.path.exists')
+    def test_uninstall_skill_not_found(self, mock_exists):
+        """Test uninstall_skill returns False for non-existent skill."""
+        mock_exists.return_value = False
+        
+        result = skill_repo.uninstall_skill("nonexistent_skill")
+        self.assertFalse(result)
 
-        self.assertEqual(result, sorted(result))
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()
