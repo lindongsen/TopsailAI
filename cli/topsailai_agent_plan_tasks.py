@@ -15,7 +15,7 @@ sys.path.insert(0, project_root + "/src")
 os.chdir(project_root)
 
 # init env
-os.environ["TOPSAILAI_ENABLED_TOOLS"] = os.getenv("TOPSAILAI_ENABLED_TOOLS", "+") + ";" + "subagent_tool"
+os.environ["TOPSAILAI_ENABLED_TOOLS"] = (os.getenv("TOPSAILAI_ENABLED_TOOLS", "+") or "+") + ";" + "subagent_tool;"
 
 from topsailai.tools import (
     file_readonly_tool,
