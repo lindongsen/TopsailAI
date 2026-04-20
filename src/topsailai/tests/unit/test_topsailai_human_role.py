@@ -37,12 +37,12 @@ class TestGetHumanName(unittest.TestCase):
     @patch('topsailai.human.role.env_tool.EnvReaderInstance')
     def test_get_human_name_from_env_variable(self, mock_env):
         """Test get_human_name when name comes from environment variable."""
-        mock_env.get.return_value = "Charlie"
+        mock_env.get.return_value = "Alice"
         
         result = get_human_name()
         
         mock_env.get.assert_called_once_with("TOPSAILAI_HUMAN_NAME")
-        self.assertEqual(result, "Human.Charlie")
+        self.assertEqual(result, "Human.Alice")
 
     @patch('topsailai.human.role.env_tool.EnvReaderInstance')
     def test_get_human_name_default_when_env_empty(self, mock_env):

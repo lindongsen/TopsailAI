@@ -189,6 +189,22 @@ def _safe_extract(zip_ref, member, path):
     zip_ref.extract(member, path)
 
 
+def _get_git_clone_env() -> dict:
+    """
+    Get environment variables for git clone to ensure non-interactive operation.
+    
+    Returns:
+        dict: Environment variables with git terminal prompts disabled
+    """
+    env = os.environ.copy()
+    # Disable git interactive prompts - if authentication is needed, it will fail immediately
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    # Also set common git credential helpers to empty to prevent any credential prompts
+    env["GIT_ASKPASS"] = "echo"
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
 def install_from_git(git_url: str, branch: str = "main") -> str:
     """
     Install a skill from a git repository.
@@ -254,13 +270,17 @@ def install_from_git(git_url: str, branch: str = "main") -> str:
         branches_to_try = [branch, "main", "master"] if branch == "main" else [branch]
         clone_success = False
         last_error = None
+        git_env = _get_git_clone_env()
 
         for try_branch in branches_to_try:
             clone_result = subprocess.run(
-                ["git", "clone", "--branch", try_branch, "--single-branch", "--depth", "1", git_url, temp_dir],
+                ["git", "clone", "--branch", try_branch, "--single-branch", "--depth", "1",
+                 "-c", "GIT_TERMINAL_PROMPT=0",  # Disable interactive prompts via git config
+                 git_url, temp_dir],
                 capture_output=True,
                 text=True,
-                timeout=GIT_CLONE_TIMEOUT
+                timeout=GIT_CLONE_TIMEOUT,
+                env=git_env  # Use non-interactive environment
             )
 
             if clone_result.returncode == 0:
@@ -280,13 +300,14 @@ def install_from_git(git_url: str, branch: str = "main") -> str:
                 raise ValueError(f"Branch not found in repository. Tried: {', '.join(branches_to_try)}")
             elif "not found" in error_msg.lower() or "repository" in error_msg.lower():
                 raise ValueError(f"Repository not found: {git_url}")
+            elif "could not read" in error_msg.lower() and "Username" in error_msg.lower():
+                raise ValueError(f"Authentication required for git repository: {git_url}")
             else:
                 raise ValueError(f"Failed to clone repository: {error_msg}")
 
         # Create destination folder
         os.makedirs(os.path.dirname(dest_folder), exist_ok=True)
 
-        # Move cloned content to destination
         # The temp_dir contains the cloned repo, we need to move its contents
         temp_contents = os.listdir(temp_dir)
         if len(temp_contents) == 1 and os.path.isdir(os.path.join(temp_dir, temp_contents[0])):

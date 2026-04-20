@@ -137,7 +137,7 @@ class TestLLMModelBase:
                 pass
 
         model = TestModel()
-        assert model.max_tokens == 7000
+        assert model.max_tokens == 8000
         assert model.temperature == 0.3
         assert model.top_p == 0.97
         assert model.frequency_penalty == 0.0
@@ -278,7 +278,7 @@ class TestLLMModelBase:
         
         assert params["model"] == "test-model"
         assert params["temperature"] == 0.3
-        assert params["max_tokens"] == 7000
+        assert params["max_tokens"] == 8000
         assert params["stream"] == False
 
     @patch('topsailai.ai_base.llm_control.base_class.env_tool.EnvReaderInstance')

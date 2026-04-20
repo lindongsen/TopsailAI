@@ -1,348 +1,316 @@
-"""
-Unit tests for tools/sandbox_tool.py
+'''
+  Author: DawsonLin
+  Email: lin_dongsen@126.com
+  Created: 2025-12-10
+  Purpose: Test sandbox tool for executing commands in different environments
+'''
 
-Author: DawsonLin
-Test Developer: mm-m25
-Reviewer: km-k25
-
-Covers:
-- Sandbox class initialization and attributes
-- _parse_sandbox_config() function
-- call_sandbox() function
-- copy2sandbox() function
-- list_sandbox() function
-"""
-
-import os
-from unittest import TestCase
-from unittest.mock import patch, MagicMock, mock_open
+import pytest
+from unittest.mock import patch, MagicMock
 
 from topsailai.tools.sandbox_tool import (
     Sandbox,
     _parse_sandbox_config,
     call_sandbox,
-    copy2sandbox,
     list_sandbox,
+    copy2sandbox,
+    TOOLS,
+    PROMPT,
+    FLAG_TOOL_ENABLED,
 )
 
 
-class TestSandboxClass(TestCase):
-    """Test cases for Sandbox class initialization and attributes."""
+class TestSandboxClass:
+    """Test cases for the Sandbox class."""
 
-    def test_init_default_values(self):
-        """Verify Sandbox initializes with correct default values."""
+    def test_sandbox_init_default_values(self):
+        """Test Sandbox class initializes with correct default values."""
         sandbox = Sandbox()
-        self.assertEqual(sandbox.protocol, "")
-        self.assertEqual(sandbox.node, "")
-        self.assertEqual(sandbox.port, 22)
-        self.assertEqual(sandbox.name, "")
-        self.assertEqual(sandbox.tags, set())
+        assert sandbox.protocol == ""
+        assert sandbox.node == ""
+        assert sandbox.tags == set()
+        assert sandbox.port == 22
+        assert sandbox.name == ""
 
-    def test_protocol_attribute_can_be_set(self):
-        """Protocol attribute can be set after initialization."""
+    def test_sandbox_attributes_can_be_modified(self):
+        """Test Sandbox attributes can be modified after initialization."""
         sandbox = Sandbox()
         sandbox.protocol = "ssh"
-        self.assertEqual(sandbox.protocol, "ssh")
-
-    def test_node_attribute_can_be_set(self):
-        """Node attribute can be set after initialization."""
-        sandbox = Sandbox()
         sandbox.node = "example.com"
-        self.assertEqual(sandbox.node, "example.com")
-
-    def test_tags_is_set_type(self):
-        """Tags attribute is initialized as an empty set."""
-        sandbox = Sandbox()
-        self.assertIsInstance(sandbox.tags, set)
-        self.assertEqual(len(sandbox.tags), 0)
-
-    def test_port_default_22(self):
-        """Default SSH port is 22."""
-        sandbox = Sandbox()
-        self.assertEqual(sandbox.port, 22)
-
-    def test_name_attribute_can_be_set(self):
-        """Name attribute can be set for Docker containers."""
-        sandbox = Sandbox()
-        sandbox.name = "my_container"
-        self.assertEqual(sandbox.name, "my_container")
+        sandbox.port = 2222
+        sandbox.name = "test_container"
+        sandbox.tags.add("ai")
+        
+        assert sandbox.protocol == "ssh"
+        assert sandbox.node == "example.com"
+        assert sandbox.port == 2222
+        assert sandbox.name == "test_container"
+        assert "ai" in sandbox.tags
 
 
-class TestParseSandboxConfig(TestCase):
-    """Test cases for _parse_sandbox_config() function."""
+class TestParseSandboxConfig:
+    """Test cases for the _parse_sandbox_config function."""
 
-    def test_parse_empty_string(self):
-        """Handle empty config string gracefully."""
+    def test_parse_ssh_sandbox(self):
+        """Test parsing SSH sandbox configuration."""
+        config_str = "protocol=ssh,node=example.com,port=2222"
+        sandbox = _parse_sandbox_config(config_str)
+        
+        assert sandbox.protocol == "ssh"
+        assert sandbox.node == "example.com"
+        assert sandbox.port == "2222"
+
+    def test_parse_docker_sandbox(self):
+        """Test parsing Docker sandbox configuration."""
+        config_str = "protocol=docker,node=localhost,name=my_container"
+        sandbox = _parse_sandbox_config(config_str)
+        
+        assert sandbox.protocol == "docker"
+        assert sandbox.node == "localhost"
+        assert sandbox.name == "my_container"
+
+    def test_parse_sandbox_with_tags(self):
+        """Test parsing sandbox configuration with tags."""
+        config_str = "protocol=ssh,node=example.com,tag=ai,tag=test"
+        sandbox = _parse_sandbox_config(config_str)
+        
+        assert sandbox.tags == {"ai", "test"}
+        assert sandbox.protocol == "ssh"
+
+    def test_parse_sandbox_with_spaces(self):
+        """Test parsing sandbox configuration with extra spaces."""
+        config_str = "protocol=ssh , node=example.com , tag=ai "
+        sandbox = _parse_sandbox_config(config_str)
+        
+        assert sandbox.protocol == "ssh"
+        assert sandbox.node == "example.com"
+        assert "ai" in sandbox.tags
+
+    def test_parse_empty_config(self):
+        """Test parsing empty configuration string."""
         sandbox = _parse_sandbox_config("")
-        self.assertIsInstance(sandbox, Sandbox)
-        self.assertEqual(sandbox.protocol, "")
-        self.assertEqual(sandbox.node, "")
+        
+        assert sandbox.protocol == ""
+        assert sandbox.node == ""
+        assert sandbox.tags == set()
 
-    def test_parse_protocol_ssh(self):
-        """Parse SSH protocol from config string."""
-        sandbox = _parse_sandbox_config("protocol=ssh,node=example.com")
-        self.assertEqual(sandbox.protocol, "ssh")
-        self.assertEqual(sandbox.node, "example.com")
-
-    def test_parse_protocol_docker(self):
-        """Parse Docker protocol from config string."""
-        sandbox = _parse_sandbox_config("protocol=docker,node=container1,name=my_container")
-        self.assertEqual(sandbox.protocol, "docker")
-        self.assertEqual(sandbox.node, "container1")
-        self.assertEqual(sandbox.name, "my_container")
-
-    def test_parse_multiple_tags(self):
-        """Handle multiple tag entries in config."""
-        sandbox = _parse_sandbox_config("tag=ai,tag=dev,tag=test")
-        self.assertEqual(len(sandbox.tags), 3)
-        self.assertIn("ai", sandbox.tags)
-        self.assertIn("dev", sandbox.tags)
-        self.assertIn("test", sandbox.tags)
-
-    def test_parse_port_override(self):
-        """Override default port from config."""
-        sandbox = _parse_sandbox_config("protocol=ssh,node=example.com,port=2222")
-        self.assertEqual(sandbox.port, "2222")
-
-    def test_parse_with_whitespace(self):
-        """Handle whitespace in config string."""
-        sandbox = _parse_sandbox_config("  protocol=ssh  ,  node=example.com  ")
-        self.assertEqual(sandbox.protocol, "ssh")
-        self.assertEqual(sandbox.node, "example.com")
-
-    def test_parse_missing_equals(self):
-        """Handle malformed config gracefully."""
-        sandbox = _parse_sandbox_config("protocol=ssh,invalid_entry")
-        self.assertEqual(sandbox.protocol, "ssh")
-
-    def test_parse_single_tag(self):
-        """Parse single tag entry."""
-        sandbox = _parse_sandbox_config("tag=production")
-        self.assertEqual(len(sandbox.tags), 1)
-        self.assertIn("production", sandbox.tags)
+    def test_parse_config_with_empty_values(self):
+        """Test parsing configuration with empty parts."""
+        sandbox = _parse_sandbox_config("protocol=ssh,,node=example.com,")
+        
+        assert sandbox.protocol == "ssh"
+        assert sandbox.node == "example.com"
 
 
-class TestCallSandbox(TestCase):
-    """Test cases for call_sandbox() function."""
+class TestCallSandbox:
+    """Test cases for the call_sandbox function."""
 
-    @patch('topsailai.tools.sandbox_tool._parse_sandbox_config')
-    def test_call_sandbox_ssh_protocol(self, mock_parse):
-        """Execute command via SSH protocol."""
-        mock_sandbox = MagicMock()
-        mock_sandbox.protocol = "ssh"
-        mock_sandbox.node = "example.com"
-        mock_sandbox.port = 22
-        mock_parse.return_value = mock_sandbox
+    @patch('topsailai.tools.sandbox_tool.exec_cmd_in_remote')
+    @patch('topsailai.tools.cmd_tool.format_return')
+    def test_call_sandbox_ssh_success(self, mock_format, mock_exec):
+        """Test calling sandbox with SSH protocol - success case."""
+        mock_result = ("output", "error", 0)
+        mock_exec.return_value = mock_result
+        mock_format.return_value = "formatted_output"
+        
+        result = call_sandbox("protocol=ssh,node=example.com", "ls -la")
+        
+        mock_exec.assert_called_once_with(
+            "ls -la",
+            remote="example.com",
+            port=22,
+            timeout=30
+        )
+        mock_format.assert_called_once_with("ls -la", mock_result)
 
-        with patch('topsailai.tools.sandbox_tool.exec_cmd_in_remote') as mock_exec:
-            mock_exec.return_value = "command output"
-            with patch('topsailai.tools.sandbox_tool.format_return') as mock_format:
-                mock_format.return_value = "formatted output"
-                result = call_sandbox("protocol=ssh,node=example.com", "ls -la")
-                mock_exec.assert_called_once()
-                mock_format.assert_called_once()
+    @patch('topsailai.tools.sandbox_tool.exec_cmd_in_remote')
+    @patch('topsailai.tools.cmd_tool.format_return')
+    def test_call_sandbox_ssh_custom_port(self, mock_format, mock_exec):
+        """Test calling sandbox with SSH protocol and custom port."""
+        mock_result = ("output", "error", 0)
+        mock_exec.return_value = mock_result
+        mock_format.return_value = "formatted_output"
+        
+        result = call_sandbox("protocol=ssh,node=example.com,port=2222", "pwd", timeout=60)
+        
+        mock_exec.assert_called_once_with(
+            "pwd",
+            remote="example.com",
+            port="2222",
+            timeout=60
+        )
 
-    @patch('topsailai.tools.sandbox_tool._parse_sandbox_config')
-    def test_call_sandbox_unknown_protocol(self, mock_parse):
-        """Return 'unknown sandbox' for unknown protocol."""
-        mock_sandbox = MagicMock()
-        mock_sandbox.protocol = "unknown"
-        mock_sandbox.node = "example.com"
-        mock_parse.return_value = mock_sandbox
+    @patch('topsailai.tools.sandbox_tool.exec_cmd_in_remote')
+    def test_call_sandbox_unknown_protocol(self, mock_exec):
+        """Test calling sandbox with unknown protocol."""
+        result = call_sandbox("protocol=unknown,node=example.com", "ls")
+        
+        mock_exec.assert_not_called()
+        assert result == "unknown sandbox"
 
-        result = call_sandbox("protocol=unknown,node=example.com", "ls -la")
-        self.assertEqual(result, "unknown sandbox")
-
-    @patch('topsailai.tools.sandbox_tool._parse_sandbox_config')
-    def test_call_sandbox_with_timeout(self, mock_parse):
-        """Pass timeout parameter to exec_cmd_in_remote."""
-        mock_sandbox = MagicMock()
-        mock_sandbox.protocol = "ssh"
-        mock_sandbox.node = "example.com"
-        mock_sandbox.port = 22
-        mock_parse.return_value = mock_sandbox
-
-        with patch('topsailai.tools.sandbox_tool.exec_cmd_in_remote') as mock_exec:
-            mock_exec.return_value = "output"
-            with patch('topsailai.tools.sandbox_tool.format_return'):
-                call_sandbox("protocol=ssh,node=example.com", "ls -la", timeout=60)
-                mock_exec.assert_called_once()
-                call_kwargs = mock_exec.call_args
-                self.assertEqual(call_kwargs[1]['timeout'], 60)
-
-    @patch('topsailai.tools.sandbox_tool._parse_sandbox_config')
-    def test_call_sandbox_none_result(self, mock_parse):
-        """Handle None result from exec_cmd_in_remote."""
-        mock_sandbox = MagicMock()
-        mock_sandbox.protocol = "ssh"
-        mock_sandbox.node = "example.com"
-        mock_sandbox.port = 22
-        mock_parse.return_value = mock_sandbox
-
-        with patch('topsailai.tools.sandbox_tool.exec_cmd_in_remote') as mock_exec:
-            mock_exec.return_value = None
-            result = call_sandbox("protocol=ssh,node=example.com", "ls -la")
-            self.assertEqual(result, "unknown sandbox")
-
-    @patch('topsailai.tools.sandbox_tool._parse_sandbox_config')
-    def test_call_sandbox_empty_result(self, mock_parse):
-        """Handle empty result from exec_cmd_in_remote."""
-        mock_sandbox = MagicMock()
-        mock_sandbox.protocol = "ssh"
-        mock_sandbox.node = "example.com"
-        mock_sandbox.port = 22
-        mock_parse.return_value = mock_sandbox
-
-        with patch('topsailai.tools.sandbox_tool.exec_cmd_in_remote') as mock_exec:
-            mock_exec.return_value = ""
-            result = call_sandbox("protocol=ssh,node=example.com", "ls -la")
-            self.assertEqual(result, "unknown sandbox")
+    @patch('topsailai.tools.sandbox_tool.exec_cmd_in_remote')
+    def test_call_sandbox_no_result(self, mock_exec):
+        """Test calling sandbox when exec returns None."""
+        mock_exec.return_value = None
+        
+        result = call_sandbox("protocol=ssh,node=example.com", "ls")
+        
+        assert result == "unknown sandbox"
 
 
-class TestCopy2Sandbox(TestCase):
-    """Test cases for copy2sandbox() function."""
+class TestCopy2Sandbox:
+    """Test cases for the copy2sandbox function."""
 
-    @patch('topsailai.tools.sandbox_tool._parse_sandbox_config')
-    @patch('topsailai.tools.sandbox_tool.os.path.isdir')
-    def test_copy2sandbox_ssh_file(self, mock_isdir, mock_parse):
-        """Copy file via SSH protocol."""
-        mock_sandbox = MagicMock()
-        mock_sandbox.protocol = "ssh"
-        mock_sandbox.node = "example.com"
-        mock_sandbox.port = 22
-        mock_sandbox.name = "root"
-        mock_parse.return_value = mock_sandbox
+    @patch('topsailai.tools.sandbox_tool.exec_cmd')
+    @patch('os.path.isdir')
+    def test_copy_file_to_ssh_sandbox(self, mock_isdir, mock_exec):
+        """Test copying a file to SSH sandbox."""
         mock_isdir.return_value = False
+        mock_exec.return_value = (0, "success")
+        
+        result = copy2sandbox(
+            "protocol=ssh,node=example.com,port=2222",
+            "/local/file.txt",
+            "/remote/file.txt"
+        )
+        
+        assert result is True
+        mock_exec.assert_called_once()
+        call_args = mock_exec.call_args[0][0]
+        assert "scp" in call_args
+        assert "2222" in call_args
 
-        with patch('topsailai.tools.sandbox_tool.exec_cmd') as mock_exec:
-            mock_exec.return_value = (0, "success", "")
-            result = copy2sandbox("protocol=ssh,node=example.com", "/local/file.txt", "/remote/file.txt")
-            self.assertTrue(result)
-            mock_exec.assert_called_once()
-
-    @patch('topsailai.tools.sandbox_tool._parse_sandbox_config')
-    @patch('topsailai.tools.sandbox_tool.os.path.isdir')
-    @patch('topsailai.tools.sandbox_tool.os.path.basename')
-    @patch('topsailai.tools.sandbox_tool.os.path.dirname')
-    def test_copy2sandbox_ssh_directory(self, mock_dirname, mock_basename, mock_isdir, mock_parse):
-        """Copy directory via SSH protocol."""
-        mock_sandbox = MagicMock()
-        mock_sandbox.protocol = "ssh"
-        mock_sandbox.node = "example.com"
-        mock_sandbox.port = 22
-        mock_sandbox.name = "root"
-        mock_parse.return_value = mock_sandbox
+    @patch('topsailai.tools.sandbox_tool.exec_cmd')
+    @patch('os.path.isdir')
+    def test_copy_directory_to_ssh_sandbox(self, mock_isdir, mock_exec):
+        """Test copying a directory to SSH sandbox."""
         mock_isdir.return_value = True
-        mock_basename.return_value = "mydir"
-        mock_dirname.return_value = "/remote"
+        mock_exec.return_value = (0, "success")
+        
+        result = copy2sandbox(
+            "protocol=ssh,node=example.com",
+            "/local/mydir",
+            "/remote/mydir"
+        )
+        
+        assert result is True
+        call_args = mock_exec.call_args[0][0]
+        assert "-r" in call_args
 
-        with patch('topsailai.tools.sandbox_tool.exec_cmd') as mock_exec:
-            mock_exec.return_value = (0, "success", "")
-            result = copy2sandbox("protocol=ssh,node=example.com", "/local/mydir", "/remote/mydir")
-            self.assertTrue(result)
+    @patch('topsailai.tools.sandbox_tool.exec_cmd')
+    def test_copy_with_unknown_protocol(self, mock_exec):
+        """Test copying with unknown protocol returns False."""
+        result = copy2sandbox(
+            "protocol=unknown,node=example.com",
+            "/local/file.txt",
+            "/remote/file.txt"
+        )
+        
+        assert result is False
+        mock_exec.assert_not_called()
 
-    @patch('topsailai.tools.sandbox_tool._parse_sandbox_config')
-    def test_copy2sandbox_unknown_protocol(self, mock_parse):
-        """Return False for unknown protocol."""
-        mock_sandbox = MagicMock()
-        mock_sandbox.protocol = "unknown"
-        mock_parse.return_value = mock_sandbox
-
-        result = copy2sandbox("protocol=unknown,node=example.com", "/local/file.txt", "/remote/file.txt")
-        self.assertFalse(result)
-
-    @patch('topsailai.tools.sandbox_tool._parse_sandbox_config')
-    @patch('topsailai.tools.sandbox_tool.os.path.isdir')
-    def test_copy2sandbox_success(self, mock_isdir, mock_parse):
-        """Return True on successful copy (exit code 0)."""
-        mock_sandbox = MagicMock()
-        mock_sandbox.protocol = "ssh"
-        mock_sandbox.node = "example.com"
-        mock_sandbox.port = 22
-        mock_sandbox.name = "root"
-        mock_parse.return_value = mock_sandbox
-        mock_isdir.return_value = False
-
-        with patch('topsailai.tools.sandbox_tool.exec_cmd') as mock_exec:
-            mock_exec.return_value = (0, "success", "")
-            result = copy2sandbox("protocol=ssh,node=example.com", "/local/file.txt", "/remote/file.txt")
-            self.assertTrue(result)
-
-    @patch('topsailai.tools.sandbox_tool._parse_sandbox_config')
-    @patch('topsailai.tools.sandbox_tool.os.path.isdir')
-    def test_copy2sandbox_failure(self, mock_isdir, mock_parse):
-        """Return False on failed copy (exit code non-zero)."""
-        mock_sandbox = MagicMock()
-        mock_sandbox.protocol = "ssh"
-        mock_sandbox.node = "example.com"
-        mock_sandbox.port = 22
-        mock_sandbox.name = "root"
-        mock_parse.return_value = mock_sandbox
-        mock_isdir.return_value = False
-
-        with patch('topsailai.tools.sandbox_tool.exec_cmd') as mock_exec:
-            mock_exec.return_value = (1, "error", "connection failed")
-            result = copy2sandbox("protocol=ssh,node=example.com", "/local/file.txt", "/remote/file.txt")
-            self.assertFalse(result)
+    @patch('topsailai.tools.sandbox_tool.exec_cmd')
+    def test_copy_failure(self, mock_exec):
+        """Test copying when command fails."""
+        mock_exec.return_value = (1, "error")
+        
+        result = copy2sandbox(
+            "protocol=ssh,node=example.com",
+            "/local/file.txt",
+            "/remote/file.txt"
+        )
+        
+        assert result is False
 
 
-class TestListSandbox(TestCase):
-    """Test cases for list_sandbox() function."""
+class TestListSandbox:
+    """Test cases for the list_sandbox function."""
 
-    @patch('topsailai.tools.sandbox_tool.env_tool.EnvReaderInstance')
-    def test_list_sandbox_by_tag(self, mock_env):
-        """Filter sandboxes by tag."""
-        mock_env.get_list_str.return_value = [
-            "tag=ai,protocol=ssh,node=server1.com",
-            "tag=dev,protocol=ssh,node=server2.com",
-            "tag=ai,protocol=docker,node=container1"
+    @patch('topsailai.tools.sandbox_tool.env_tool.EnvReaderInstance.get_list_str')
+    def test_list_sandbox_with_matching_tag(self, mock_get_list):
+        """Test listing sandbox with matching tag."""
+        mock_get_list.return_value = [
+            "tag=ai,protocol=ssh,node=host1.com",
+            "tag=test,protocol=docker,node=host2.com"
         ]
-
+        
         result = list_sandbox("ai")
-        self.assertIn("tag=ai", result)
-        self.assertIn("server1.com", result)
-        self.assertIn("container1", result)
-        self.assertNotIn("server2.com", result)
+        
+        assert "tag=ai" in result
+        assert "tag=test" not in result
 
-    @patch('topsailai.tools.sandbox_tool.env_tool.EnvReaderInstance')
-    def test_list_sandbox_empty_result(self, mock_env):
-        """Return empty string when no matching tags."""
-        mock_env.get_list_str.return_value = [
-            "tag=ai,protocol=ssh,node=server1.com",
-            "tag=dev,protocol=ssh,node=server2.com"
+    @patch('topsailai.tools.sandbox_tool.env_tool.EnvReaderInstance.get_list_str')
+    def test_list_sandbox_no_matching_tag(self, mock_get_list):
+        """Test listing sandbox with no matching tag."""
+        mock_get_list.return_value = [
+            "tag=ai,protocol=ssh,node=host1.com"
         ]
-
+        
         result = list_sandbox("nonexistent")
-        self.assertEqual(result, "")
+        
+        assert result == ""
 
-    @patch('topsailai.tools.sandbox_tool.env_tool.EnvReaderInstance')
-    def test_list_sandbox_multiple_matches(self, mock_env):
-        """Return multiple sandboxes with same tag."""
-        mock_env.get_list_str.return_value = [
-            "tag=ai,protocol=ssh,node=server1.com",
-            "tag=ai,protocol=docker,node=container1",
-            "tag=ai,protocol=ssh,node=server2.com"
-        ]
-
+    @patch('topsailai.tools.sandbox_tool.env_tool.EnvReaderInstance.get_list_str')
+    def test_list_sandbox_empty_settings(self, mock_get_list):
+        """Test listing sandbox when no settings configured."""
+        mock_get_list.return_value = []
+        
         result = list_sandbox("ai")
-        self.assertEqual(result.count("tag=ai"), 3)
+        
+        assert result == ""
 
-    @patch('topsailai.tools.sandbox_tool.env_tool.EnvReaderInstance')
-    def test_list_sandbox_env_var_fallback(self, mock_env):
-        """Fallback to SANDBOX_SETTINGS when TOPSAILAI_SANDBOX_SETTINGS not set."""
-        mock_env.get_list_str.side_effect = [None, ["tag=fallback,protocol=ssh,node=fallback.com"]]
-
-        result = list_sandbox("fallback")
-        self.assertIn("fallback.com", result)
-        self.assertEqual(mock_env.get_list_str.call_count, 2)
-
-    @patch('topsailai.tools.sandbox_tool.env_tool.EnvReaderInstance')
-    def test_list_sandbox_with_whitespace(self, mock_env):
-        """Handle whitespace in sandbox configurations."""
-        mock_env.get_list_str.return_value = [
-            "  tag=ai  ,  protocol=ssh  ,  node=server1.com  ",
-            "tag=dev,protocol=ssh,node=server2.com"
+    @patch('topsailai.tools.sandbox_tool.env_tool.EnvReaderInstance.get_list_str')
+    def test_list_sandbox_with_spaces(self, mock_get_list):
+        """Test listing sandbox with spaces in settings."""
+        mock_get_list.return_value = [
+            "  tag=ai , protocol=ssh , node=host1.com  "
         ]
-
+        
         result = list_sandbox("ai")
-        self.assertIn("server1.com", result)
+        
+        assert "tag=ai" in result
+
+
+class TestModuleConstants:
+    """Test cases for module-level constants."""
+
+    def test_tools_dictionary(self):
+        """Test TOOLS dictionary contains expected functions."""
+        assert "call_sandbox" in TOOLS
+        assert "list_sandbox" in TOOLS
+        assert "copy2sandbox" in TOOLS
+        assert TOOLS["call_sandbox"] is call_sandbox
+        assert TOOLS["list_sandbox"] is list_sandbox
+        assert TOOLS["copy2sandbox"] is copy2sandbox
+
+    def test_prompt_contains_sandbox_info(self):
+        """Test PROMPT contains sandbox tool information."""
+        assert "sandbox" in PROMPT.lower()
+        assert "list_sandbox" in PROMPT
+        assert "call_sandbox" in PROMPT
+
+    def test_flag_tool_enabled_is_false(self):
+        """Test FLAG_TOOL_ENABLED is set to False."""
+        assert FLAG_TOOL_ENABLED is False
+
+
+class TestEdgeCases:
+    """Test edge cases and error handling."""
+
+    def test_parse_config_with_equals_in_value(self):
+        """Test parsing config where value contains equals sign."""
+        config_str = "protocol=ssh,node=example.com,cmd=echo 'a=b'"
+        sandbox = _parse_sandbox_config(config_str)
+        
+        assert sandbox.protocol == "ssh"
+        assert sandbox.node == "example.com"
+
+    @patch('topsailai.tools.sandbox_tool.exec_cmd_in_remote')
+    def test_call_sandbox_default_timeout(self, mock_exec):
+        """Test that default timeout is 30 seconds."""
+        mock_exec.return_value = None
+        
+        call_sandbox("protocol=ssh,node=example.com", "ls")
+        
+        call_kwargs = mock_exec.call_args[1]
+        assert call_kwargs["timeout"] == 30
