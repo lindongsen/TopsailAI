@@ -22,6 +22,7 @@ from topsailai.utils.print_tool import (
 from topsailai.utils import (
     env_tool,
     thread_tool,
+    qos_tool,
 )
 
 from .constants import (
@@ -265,16 +266,17 @@ class LLMModel(LLMModelBase):
                 time.sleep(sec)
 
             try:
-                if for_stream:
-                    rsp_obj, rsp_content = self.call_llm_model_by_stream(
-                        messages,
-                        tools=tools, tool_choice=tool_choice,
-                    )
-                else:
-                    rsp_obj, rsp_content = self.call_llm_model(
-                        messages,
-                        tools=tools, tool_choice=tool_choice,
-                    )
+                with qos_tool.log_if_slow(30, "LLM: slow chat"):
+                    if for_stream:
+                        rsp_obj, rsp_content = self.call_llm_model_by_stream(
+                            messages,
+                            tools=tools, tool_choice=tool_choice,
+                        )
+                    else:
+                        rsp_obj, rsp_content = self.call_llm_model(
+                            messages,
+                            tools=tools, tool_choice=tool_choice,
+                        )
 
                 if for_raw:
                     return rsp_content

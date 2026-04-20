@@ -73,7 +73,7 @@ class TestGetToolsByModule(unittest.TestCase):
     @patch('topsailai.tools.base.common.module_tool')
     def test_get_tools_by_module_success(self, mock_module_tool):
         """Test successfully getting tools from a module."""
-        from topsailai.tools.base.common import get_tools_by_module
+        from topsailai.tools.base.common import get_tools_by_module, CONN_CHAR
         
         mock_module = MagicMock()
         mock_module.TOOLS = {"func1": lambda: None, "func2": lambda: None}
@@ -135,7 +135,7 @@ class TestGetToolPrompt(unittest.TestCase):
     @patch('topsailai.tools.base.common.TOOL_PROMPT', "Tools:\n{__TOOLS__}")
     def test_get_tool_prompt_with_tools_name(self, mock_print, mock_format):
         """Test generating prompt from tool names."""
-        from topsailai.tools.base.common import get_tool_prompt
+        from topsailai.tools.base.common import get_tool_prompt, TOOLS
         
         mock_format.to_list.return_value = ["tool1"]
         mock_print.format_dict_to_md.return_value = "formatted_tools"
@@ -149,7 +149,7 @@ class TestGetToolPrompt(unittest.TestCase):
     @patch('topsailai.tools.base.common.TOOL_PROMPT', "Tools:\n{__TOOLS__}")
     def test_get_tool_prompt_with_tools_map(self, mock_print, mock_format):
         """Test generating prompt from tools map."""
-        from topsailai.tools.base.common import get_tool_prompt
+        from topsailai.tools.base.common import get_tool_prompt, TOOLS
         
         mock_func = MagicMock(__doc__="Map tool doc")
         mock_format.to_list.return_value = []
@@ -164,7 +164,7 @@ class TestGetToolPrompt(unittest.TestCase):
     @patch('topsailai.tools.base.common.TOOL_PROMPT', "Tools:\n{__TOOLS__}")
     def test_get_tool_prompt_both_params(self, mock_print, mock_format):
         """Test combining both tools_name and tools_map parameters."""
-        from topsailai.tools.base.common import get_tool_prompt
+        from topsailai.tools.base.common import get_tool_prompt, TOOLS
         
         mock_format.to_list.return_value = ["tool1"]
         mock_func = MagicMock(__doc__="Map tool doc")
@@ -177,7 +177,7 @@ class TestGetToolPrompt(unittest.TestCase):
     @patch('topsailai.tools.base.common.format_tool')
     def test_get_tool_prompt_empty(self, mock_format):
         """Test returning empty string when no tools provided."""
-        from topsailai.tools.base.common import get_tool_prompt
+        from topsailai.tools.base.common import get_tool_prompt, TOOLS
         
         mock_format.to_list.return_value = []
         

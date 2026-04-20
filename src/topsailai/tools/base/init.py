@@ -14,6 +14,7 @@ from topsailai.utils import (
     env_tool,
 )
 
+# default is '-'
 CONN_CHAR = env_tool.EnvReaderInstance.get("TOPSAILAI_TOOL_CONN_CHAR", "-") or "-"
 
 ENABLED_TOOLS = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_ENABLED_TOOLS", separator='') or \
