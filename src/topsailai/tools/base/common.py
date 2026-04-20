@@ -73,30 +73,34 @@ def get_tool_prompt(tools_name:list=None, tools_map:dict=None):
         __TOOLS__=print_tool.format_dict_to_md(tools_doc)
     )
 
-def expand_plugin_tools():
+def expand_plugin_tools(tools=None, tools_info=None):
     """ expand tools by external plugins """
+    # Use provided dicts or fall back to global TOOLS/TOOLS_INFO
+    _tools = tools if tools is not None else TOOLS
+    _tools_info = tools_info if tools_info is not None else TOOLS_INFO
+    
     env_plugin_tools = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_PLUGIN_TOOLS", separator='') or \
         env_tool.EnvReaderInstance.get_list_str("PLUGIN_TOOLS", separator='')
     if not env_plugin_tools:
         return
     for plugin_path in env_plugin_tools:
-        _tools = module_tool.get_external_function_map(
+        _new_tools = module_tool.get_external_function_map(
             plugin_path, "TOOLS",
             conn_char=CONN_CHAR,
             hook_check=is_tool_enabled,
             need_module_log=False,
         )
-        if _tools:
-            TOOLS.update(_tools)
+        if _new_tools:
+            _tools.update(_new_tools)
 
-        _tools_info = module_tool.get_external_function_map(
+        _new_tools_info = module_tool.get_external_function_map(
             plugin_path, "TOOLS_INFO",
             conn_char=CONN_CHAR,
             hook_check=is_tool_enabled,
             need_module_log=False,
         )
-        if _tools_info:
-            TOOLS_INFO.update(_tools_info)
+        if _new_tools_info:
+            _tools_info.update(_new_tools_info)
 
     return
 

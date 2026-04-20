@@ -119,7 +119,7 @@ def decorator_tee_output(filename, mode='a', encoding='utf-8', logrotate_max_fil
     return decorator
 
 
-def decorator_tee_output_by_session(mode='a', encoding='utf-8', logrotate_max_file_bytes=100 * 1024 * 1024):
+def decorator_tee_output_by_session(mode='a+', encoding='utf-8', logrotate_max_file_bytes=100 * 1024 * 1024):
     def decorator(func):
         def wrapper(*args, **kwargs):
             file_path = os.path.join(FOLDER_WORKSPACE_TASK, f"session.stdout")
