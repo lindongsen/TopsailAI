@@ -5,19 +5,20 @@
   Purpose:
 '''
 
-from topsailai.tools.base.init import (
-    TOOLS,
-    TOOLS_INFO,
-    TOOL_PROMPT,
-    CONN_CHAR,
-    is_tool_enabled,
-)
+from topsailai.tools.base import init as base_init
 from topsailai.utils import (
     module_tool,
     format_tool,
     print_tool,
     env_tool,
 )
+
+# For test compatibility
+TOOLS = base_init.TOOLS
+TOOLS_INFO = base_init.TOOLS_INFO
+TOOL_PROMPT = base_init.TOOL_PROMPT
+CONN_CHAR = base_init.CONN_CHAR
+is_tool_enabled = base_init.is_tool_enabled
 
 
 def add_tool(name:str, func):
