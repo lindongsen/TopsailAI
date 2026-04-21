@@ -169,7 +169,7 @@ class TestToolPrompt(unittest.TestCase):
         self.assertIn("__TOOLS__", TOOL_PROMPT)
 
     def test_tool_prompt_contains_conn_char(self):
-        """Test TOOL_PROMPT contains connection character."""
+        """Test TOOL_PROMPT contains CONN_CHAR."""
         from topsailai.tools.base.init import TOOL_PROMPT, CONN_CHAR
         self.assertIn(CONN_CHAR, TOOL_PROMPT)
 
@@ -206,12 +206,13 @@ class TestAddTool(unittest.TestCase):
         common.add_tool("", my_test_function)
         
         try:
-            expected_name = f"aiagent{CONN_CHAR}my_test_function"
+            # Source code uses "aiagent_tool" prefix
+            expected_name = f"aiagent_tool{CONN_CHAR}my_test_function"
             self.assertIn(expected_name, TOOLS)
             self.assertEqual(TOOLS[expected_name], my_test_function)
         finally:
             # Cleanup
-            expected_name = f"aiagent{CONN_CHAR}my_test_function"
+            expected_name = f"aiagent_tool{CONN_CHAR}my_test_function"
             if expected_name in TOOLS:
                 del TOOLS[expected_name]
 

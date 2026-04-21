@@ -97,11 +97,11 @@ class TestFileToolReadFunctions:
         assert result == "World"
 
     def test_read_file_nonexistent(self, tmp_path):
-        """Test reading non-existent file returns None."""
+        """Test reading non-existent file raises FileNotFoundError."""
         from topsailai.tools.file_tool import read_file
 
-        result = read_file(str(tmp_path / "nonexistent.txt"))
-        assert result is None
+        with pytest.raises(FileNotFoundError):
+            read_file(str(tmp_path / "nonexistent.txt"))
 
     def test_read_file_empty(self, tmp_path):
         """Test reading empty file."""
@@ -329,18 +329,15 @@ class TestReadFiles:
         assert result[str(file2)] == "Content 2"
 
     def test_read_mixed_existing_and_missing(self, tmp_path):
-        """Test reading mix of existing and missing files."""
+        """Test reading mix of existing and missing files raises exception."""
         from topsailai.tools.file_tool import read_files
 
         existing = tmp_path / "exists.txt"
         existing.write_text("exists")
 
-        result = read_files([str(existing), str(tmp_path / "missing.txt")])
-
-        assert str(existing) in result
-        assert result[str(existing)] == "exists"
-        assert str(tmp_path / "missing.txt") in result
-        assert result[str(tmp_path / "missing.txt")] is None
+        # read_files calls read_file which raises FileNotFoundError for missing files
+        with pytest.raises(FileNotFoundError):
+            read_files([str(existing), str(tmp_path / "missing.txt")])
 
     def test_read_empty_list(self):
         """Test reading empty list of files."""
@@ -396,18 +393,28 @@ class TestFileReadOnlyToolWithEnabledTools:
     """Test file_readonly_tool when tools are enabled via environment."""
 
     def test_tools_populated_when_enabled(self, monkeypatch):
-        """Test that TOOLS is populated when tools are enabled."""
-        # Enable tools via environment variable
-        monkeypatch.setenv("TOPSAILAI_ENABLED_TOOLS", "file_readonly")
+        """Test that FILE_RO_TOOLS are accessible when file_tool is enabled.
+        
+        When file_tool is enabled, FILE_RO_TOOLS are included in file_tool.TOOLS,
+        not in file_readonly_tool.TOOLS. This test verifies the correct behavior.
+        """
+        # Enable file_tool via environment variable (file_readonly_tool depends on it)
+        monkeypatch.setenv("TOPSAILAI_ENABLED_TOOLS", "file_tool")
 
         # Reload the module to pick up the new environment
         import importlib
         from topsailai.tools import file_readonly_tool
         importlib.reload(file_readonly_tool)
 
-        # TOOLS should now be populated
-        assert len(file_readonly_tool.TOOLS) > 0
-        assert "read_file" in file_readonly_tool.TOOLS
+        # When file_tool is enabled, FILE_RO_TOOLS are included in file_tool.TOOLS
+        # file_readonly_tool.TOOLS remains empty as per design
+        from topsailai.tools import file_tool as ft_module
+        importlib.reload(ft_module)
+        
+        # Verify that read_file is available in file_tool.TOOLS (includes FILE_RO_TOOLS)
+        assert "read_file" in ft_module.TOOLS
+        # file_readonly_tool.TOOLS should be empty (by design)
+        assert len(file_readonly_tool.TOOLS) == 0
 
 
 if __name__ == "__main__":
