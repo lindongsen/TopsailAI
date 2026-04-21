@@ -10,6 +10,7 @@ import sys
 import os
 import socket
 import io
+import traceback
 from sqlalchemy import create_engine, text
 
 from topsailai_server.agent_daemon import logger

@@ -75,6 +75,7 @@ class MessageResponse(BaseModel):
     update_time: datetime
     task_id: Optional[str] = None
     task_result: Optional[str] = None
+    processed_msg_id: Optional[str] = None
 
 
 @router.post("", response_model=ApiResponse)
@@ -107,7 +108,8 @@ async def receive_message(
             message=request.message,
             role=request.role,
             create_time=now,
-            update_time=now
+            update_time=now,
+            processed_msg_id=request.processed_msg_id
         )
         msg_id = message_data.msg_id
 
@@ -213,7 +215,8 @@ async def retrieve_messages(
                 create_time=msg.create_time,
                 update_time=msg.update_time,
                 task_id=msg.task_id,
-                task_result=msg.task_result
+                task_result=msg.task_result,
+                processed_msg_id=msg.processed_msg_id
             ))
 
         # DEBUG: Log query operation at debug level
