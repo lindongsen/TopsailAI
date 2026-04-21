@@ -11,5 +11,5 @@
 
 ## absolute path
 
-- Your descriptions of all files and folders must use (absolute path).
+- All files/folders MUST use absolute paths.
   - For example, this is right: `/workspace/1.md`, cannot like this: `1.md` or `./1.md`, nor should you omit the file path entirely.
