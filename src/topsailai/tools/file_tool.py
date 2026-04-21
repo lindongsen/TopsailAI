@@ -294,7 +294,7 @@ def mkdirs(dirs):
         os.makedirs(d, exist_ok=True)
     return True
 
-def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
+def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]], **_):
     """
     Replace specific lines in a file based on line numbers (start from 1).
 

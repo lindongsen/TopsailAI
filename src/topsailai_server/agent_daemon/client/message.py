@@ -93,6 +93,7 @@ class MessageClient(BaseClient):
         limit: int = 1000,
         sort_key: str = "create_time",
         order_by: str = "desc",
+        processed_msg_id: Optional[str] = None,
         verbose: bool = False
     ) -> List[Dict[str, Any]]:
         """
@@ -106,6 +107,7 @@ class MessageClient(BaseClient):
             limit: Maximum number of messages to return (default: 1000).
             sort_key: Field to sort by (default: "create_time").
             order_by: Sort order, "asc" or "desc" (default: "desc").
+            processed_msg_id: Filter messages by processed_msg_id field.
             verbose: If True, print full JSON response.
 
         Returns:
@@ -126,6 +128,8 @@ class MessageClient(BaseClient):
             params["start_time"] = start_time
         if end_time:
             params["end_time"] = end_time
+        if processed_msg_id:
+            params["processed_msg_id"] = processed_msg_id
 
         messages = self.get("/api/v1/message", params=params)
 

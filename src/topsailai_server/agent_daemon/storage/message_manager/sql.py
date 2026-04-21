@@ -118,9 +118,21 @@ class MessageSQLAlchemy(MessageStorageBase):
         sort_key: str = "create_time",
         order_by: str = "desc",
         offset: int = 0,
-        limit: int = 1000
+        limit: int = 1000,
+        processed_msg_id: Optional[str] = None
     ) -> List[MessageData]:
-        """Get messages for a session with sorting and filtering"""
+        """Get messages for a session with sorting and filtering
+
+        Args:
+            session_id: The session identifier
+            start_time: Filter messages created after this time
+            end_time: Filter messages created before this time
+            sort_key: Field to sort by (default: create_time)
+            order_by: Sort order, asc or desc (default: desc)
+            offset: Pagination offset (default: 0)
+            limit: Maximum number of messages to return (default: 1000)
+            processed_msg_id: Filter messages by processed_msg_id field
+        """
         with SQLSession(self.engine) as db:
             query = db.query(Message).filter(Message.session_id == session_id)
 
@@ -129,6 +141,10 @@ class MessageSQLAlchemy(MessageStorageBase):
                 query = query.filter(Message.create_time >= start_time)
             if end_time:
                 query = query.filter(Message.create_time <= end_time)
+
+            # Apply processed_msg_id filter
+            if processed_msg_id:
+                query = query.filter(Message.processed_msg_id == processed_msg_id)
 
             # Apply sorting
             sort_column = getattr(Message, sort_key, Message.create_time)
@@ -323,7 +339,8 @@ class MessageSQLAlchemy(MessageStorageBase):
         offset: int = 0,
         limit: int = 1000,
         sort_key: str = "create_time",
-        order_by: str = "desc"
+        order_by: str = "desc",
+        processed_msg_id: Optional[str] = None
     ) -> List[MessageData]:
         """Get messages for a session with filtering, sorting, and pagination"""
         return self.get_by_session_sorted(
@@ -333,7 +350,8 @@ class MessageSQLAlchemy(MessageStorageBase):
             sort_key=sort_key,
             order_by=order_by,
             offset=offset,
-            limit=limit
+            limit=limit,
+            processed_msg_id=processed_msg_id
         )
 
     def add_message(self, msg: MessageData):

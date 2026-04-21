@@ -161,6 +161,7 @@ async def retrieve_messages(
     limit: int = 1000,
     sort_key: str = "create_time",
     order_by: str = "desc",
+    processed_msg_id: Optional[str] = None,
     storage: Storage = Depends(get_storage)
 ) -> ApiResponse:
     """
@@ -174,6 +175,7 @@ async def retrieve_messages(
         limit: Maximum number of messages to return
         sort_key: Field to sort by
         order_by: Sort order (asc or desc)
+        processed_msg_id: Filter messages by processed_msg_id field
     """
     try:
         # Validate session_id
@@ -196,7 +198,8 @@ async def retrieve_messages(
             offset=offset,
             limit=limit,
             sort_key=sort_key,
-            order_by=order_by
+            order_by=order_by,
+            processed_msg_id=processed_msg_id
         )
 
         # Convert to response format
