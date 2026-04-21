@@ -38,6 +38,7 @@ class Message(Base, MessageStorageBase):
     update_time = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
     task_id = Column(String(32), nullable=True, index=True)
     task_result = Column(Text, nullable=True)
+    processed_msg_id = Column(String(32), nullable=True, index=True)
 
     # Composite indexes for efficient queries
     __table_args__ = (
@@ -68,7 +69,8 @@ class MessageSQLAlchemy(MessageStorageBase):
             create_time=message.create_time,
             update_time=message.update_time,
             task_id=message.task_id,
-            task_result=message.task_result
+            task_result=message.task_result,
+            processed_msg_id=message.processed_msg_id
         )
 
     def create(self, message_data: MessageData) -> bool:
@@ -82,7 +84,8 @@ class MessageSQLAlchemy(MessageStorageBase):
                 create_time=message_data.create_time or datetime.now(),
                 update_time=message_data.update_time or datetime.now(),
                 task_id=message_data.task_id,
-                task_result=message_data.task_result
+                task_result=message_data.task_result,
+                processed_msg_id=message_data.processed_msg_id
             )
             db.add(message)
             db.commit()
@@ -302,6 +305,7 @@ class MessageSQLAlchemy(MessageStorageBase):
                 message.role = message_data.role
                 message.task_id = message_data.task_id
                 message.task_result = message_data.task_result
+                message.processed_msg_id = message_data.processed_msg_id
                 message.update_time = datetime.now()
                 db.commit()
                 return True
@@ -350,7 +354,8 @@ class MessageSQLAlchemy(MessageStorageBase):
                     create_time=msg.create_time or datetime.now(),
                     update_time=msg.update_time or datetime.now(),
                     task_id=msg.task_id,
-                    task_result=msg.task_result
+                    task_result=msg.task_result,
+                    processed_msg_id=msg.processed_msg_id
                 )
                 db.add(message)
                 db.commit()
@@ -414,7 +419,8 @@ class MessageSQLAlchemy(MessageStorageBase):
             'idx_message_session_role': 'Composite index for filtering by role',
             'task_id': 'Index on task_id column',
             'role': 'Index on role column',
-            'create_time': 'Index on create_time column'
+            'create_time': 'Index on create_time column',
+            'ix_message_processed_msg_id': 'Index on processed_msg_id column'
         }
 
         result = {}

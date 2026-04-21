@@ -185,3 +185,43 @@ class TestTaskAPI(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+    def test_set_task_result_with_processed_msg_id(self):
+        """Test SetTaskResult with processed_msg_id updates session's processed_msg_id"""
+        from unittest.mock import patch
+
+        # First create a session and message
+        self.client.post('/api/v1/message', json={
+            'message': 'Initial message for task',
+            'session_id': 'test-session-task-proc-1',
+            'role': 'user'
+        })
+
+        # Get the message ID from the response
+        msg_response = self.client.post('/api/v1/message', json={
+            'message': 'Task request message',
+            'session_id': 'test-session-task-proc-1',
+            'role': 'user'
+        })
+        msg_id = msg_response.json()['data']['msg_id']
+
+        with patch('topsailai_server.agent_daemon.api.routes.task.check_and_process_messages') as mock_check:
+            # Call SetTaskResult with processed_msg_id
+            response = self.client.post('/api/v1/task', json={
+                'session_id': 'test-session-task-proc-1',
+                'processed_msg_id': msg_id,
+                'task_id': 'task_proc_001',
+                'task_result': 'Task completed successfully'
+            })
+
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data['code'], 0)
+
+            # Verify the session's processed_msg_id was updated
+            session = self.storage.session.get('test-session-task-proc-1')
+            self.assertEqual(session.processed_msg_id, msg_id)
+
+            # Verify check_and_process_messages was called
+            mock_check.assert_called_once()

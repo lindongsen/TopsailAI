@@ -65,6 +65,7 @@ table_name: message
 columns:
     - msg_id, text;
     - session_id, text, Identifier for the session.
+    - processed_msg_id, text, The row of data comes from `processed_msg_id` processing results, When a new message has this value, it is also necessary to update the processed_msg_id in the session table; need index
     - role, text, user/assistant; need index;
     - message, text, the message content;
     - create_time, the creation time of this record;
@@ -354,8 +355,7 @@ There are many places worth referencing in this folder: `{workspace}/docs/`
 
 You need to establish a clear development and testing workflow/workplan.
 
-@km-k25 Review the content and documents and give some suggestions to mm-m25, let mm-m25 finish it
-@km-k25 Reviewer
-@mm-m25 Developer, Finish each module/file (one by one), and after each modification, provide km-k25 with a review
+@AI-Reviewer, Review the content and documents and give some suggestions to Developer, let Developer finish it
+@AI-Developer, Finish each module/file (one by one), and after each modification, provide Kimi with a review
 
 Task objective: Ensure that all of features are fully functional and usable, passing both unit testing and basic functionality testing.

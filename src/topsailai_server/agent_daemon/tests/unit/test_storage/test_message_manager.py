@@ -560,3 +560,200 @@ class TestMessageSQLAlchemyIndexes:
         assert isinstance(result, dict)
         assert "idx_message_session_create" in result
         assert "idx_message_session_role" in result
+
+
+class TestMessageSQLAlchemyProcessedMsgId:
+    """Tests for MessageSQLAlchemy processed_msg_id field."""
+
+    def test_create_message_with_processed_msg_id(self):
+        """Test creating a message with processed_msg_id."""
+        engine = create_engine("sqlite:///:memory:")
+        storage = MessageSQLAlchemy(engine)
+
+        message_data = MessageData(
+            msg_id="proc_msg_001",
+            session_id="session_001",
+            message="Message with processed_msg_id",
+            role="assistant",
+            processed_msg_id="parent_msg_001"
+        )
+
+        result = storage.create(message_data)
+
+        assert result is True
+        created = storage.get("proc_msg_001", "session_001")
+        assert created is not None
+        assert created.processed_msg_id == "parent_msg_001"
+
+    def test_create_message_without_processed_msg_id(self):
+        """Test creating a message without processed_msg_id (should be None)."""
+        engine = create_engine("sqlite:///:memory:")
+        storage = MessageSQLAlchemy(engine)
+
+        message_data = MessageData(
+            msg_id="no_proc_msg_001",
+            session_id="session_001",
+            message="Message without processed_msg_id"
+        )
+
+        storage.create(message_data)
+        created = storage.get("no_proc_msg_001", "session_001")
+
+        assert created is not None
+        assert created.processed_msg_id is None
+
+    def test_update_message_processed_msg_id(self):
+        """Test updating a message's processed_msg_id."""
+        engine = create_engine("sqlite:///:memory:")
+        storage = MessageSQLAlchemy(engine)
+
+        # Create message without processed_msg_id
+        storage.create(MessageData(
+            msg_id="update_proc_001",
+            session_id="session_001",
+            message="Original message"
+        ))
+
+        # Update with processed_msg_id
+        updated_data = MessageData(
+            msg_id="update_proc_001",
+            session_id="session_001",
+            message="Original message",
+            processed_msg_id="parent_001"
+        )
+        result = storage.update(updated_data)
+
+        assert result is True
+        updated = storage.get("update_proc_001", "session_001")
+        assert updated.processed_msg_id == "parent_001"
+
+    def test_get_unprocessed_messages_excludes_processed_msg_id(self):
+        """Test that get_unprocessed_messages excludes the processed_msg_id itself."""
+        engine = create_engine("sqlite:///:memory:")
+        storage = MessageSQLAlchemy(engine)
+
+        session_id = "session_excl_001"
+        now = datetime.now()
+
+        # Create processed message
+        storage.create(MessageData(
+            msg_id="excl_proc_001",
+            session_id=session_id,
+            message="Processed message",
+            role="user",
+            create_time=now - timedelta(minutes=10)
+        ))
+
+        # Create unprocessed message
+        storage.create(MessageData(
+            msg_id="excl_unproc_001",
+            session_id=session_id,
+            message="Unprocessed message",
+            role="user",
+            create_time=now - timedelta(minutes=5)
+        ))
+
+        result = storage.get_unprocessed_messages(session_id, "excl_proc_001")
+
+        # Should only return unprocessed message, not the processed one
+        assert len(result) == 1
+        assert result[0].msg_id == "excl_unproc_001"
+
+    def test_add_message_with_processed_msg_id(self):
+        """Test add_message with processed_msg_id."""
+        engine = create_engine("sqlite:///:memory:")
+        storage = MessageSQLAlchemy(engine)
+
+        message = MessageData(
+            msg_id="add_proc_001",
+            session_id="session_001",
+            message="Added message with processed_msg_id",
+            processed_msg_id="parent_add_001"
+        )
+
+        storage.add_message(message)
+
+        result = storage.get("add_proc_001", "session_001")
+        assert result is not None
+        assert result.processed_msg_id == "parent_add_001"
+
+    def test_get_by_session_includes_processed_msg_id(self):
+        """Test that get_by_session returns messages with processed_msg_id."""
+        engine = create_engine("sqlite:///:memory:")
+        storage = MessageSQLAlchemy(engine)
+
+        session_id = "session_with_proc"
+        storage.create(MessageData(
+            msg_id="by_sess_proc_001",
+            session_id=session_id,
+            message="Message with proc",
+            processed_msg_id="parent_by_sess"
+        ))
+
+        result = storage.get_by_session(session_id)
+
+        assert len(result) == 1
+        assert result[0].processed_msg_id == "parent_by_sess"
+
+    def test_get_by_session_sorted_includes_processed_msg_id(self):
+        """Test that get_by_session_sorted returns processed_msg_id."""
+        engine = create_engine("sqlite:///:memory:")
+        storage = MessageSQLAlchemy(engine)
+
+        session_id = "session_sorted_proc"
+        storage.create(MessageData(
+            msg_id="sorted_proc_001",
+            session_id=session_id,
+            message="Sorted message with proc",
+            processed_msg_id="parent_sorted"
+        ))
+
+        result = storage.get_by_session_sorted(session_id)
+
+        assert len(result) == 1
+        assert result[0].processed_msg_id == "parent_sorted"
+
+    def test_get_latest_message_includes_processed_msg_id(self):
+        """Test that get_latest_message returns processed_msg_id."""
+        engine = create_engine("sqlite:///:memory:")
+        storage = MessageSQLAlchemy(engine)
+
+        session_id = "session_latest_proc"
+        storage.create(MessageData(
+            msg_id="latest_proc_001",
+            session_id=session_id,
+            message="Latest message with proc",
+            processed_msg_id="parent_latest"
+        ))
+
+        result = storage.get_latest_message(session_id)
+
+        assert result is not None
+        assert result.processed_msg_id == "parent_latest"
+
+    def test_get_message_by_id_includes_processed_msg_id(self):
+        """Test that get_message returns processed_msg_id."""
+        engine = create_engine("sqlite:///:memory:")
+        storage = MessageSQLAlchemy(engine)
+
+        storage.create(MessageData(
+            msg_id="get_id_proc_001",
+            session_id="session_001",
+            message="Message with proc",
+            processed_msg_id="parent_get_id"
+        ))
+
+        result = storage.get_message("get_id_proc_001")
+
+        assert result is not None
+        assert result.processed_msg_id == "parent_get_id"
+
+    def test_processed_msg_id_index_exists(self):
+        """Test that processed_msg_id index is created."""
+        engine = create_engine("sqlite:///:memory:")
+        storage = MessageSQLAlchemy(engine)
+
+        result = storage.verify_indexes()
+
+        # The processed_msg_id index should be tracked
+        assert "ix_message_processed_msg_id" in result

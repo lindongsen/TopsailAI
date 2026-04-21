@@ -27,6 +27,7 @@ class MessageData(object):
         update_time (datetime or None): Timestamp when the message was last updated.
         task_id (str or None): Task ID generated at this message point.
         task_result (str or None): Result of the task.
+        processed_msg_id (str or None): The row of data comes from processed_msg_id processing results.
 
     primary_keys: (msg_id, session_id)
     """
@@ -40,7 +41,8 @@ class MessageData(object):
         create_time: Optional[datetime] = None,
         update_time: Optional[datetime] = None,
         task_id: Optional[str] = None,
-        task_result: Optional[str] = None
+        task_result: Optional[str] = None,
+        processed_msg_id: Optional[str] = None
     ):
         """
         Initialize a MessageData instance.
@@ -54,6 +56,7 @@ class MessageData(object):
             update_time (datetime or None): Timestamp when the message was last updated.
             task_id (str or None): Task ID generated at this message point.
             task_result (str or None): Result of the task.
+            processed_msg_id (str or None): The row of data comes from processed_msg_id processing results.
         """
         self.msg_id = msg_id or time_tool.get_now_hex_str()
         self.session_id = session_id
@@ -63,6 +66,7 @@ class MessageData(object):
         self.update_time = update_time
         self.task_id = task_id
         self.task_result = task_result
+        self.processed_msg_id = processed_msg_id
 
 
 class MessageStorageBase(object):
