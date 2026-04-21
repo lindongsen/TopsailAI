@@ -127,11 +127,16 @@ class StepCallBase(object):
                 # Function arguments
                 func_args = None
                 if tool_call.function.arguments:
+                    args_content = tool_call.function.arguments
                     try:
-                        func_args = json_tool.json_load(tool_call.function.arguments)
+                        func_args = json_tool.json_load(args_content)
                     except Exception as e:
-                        logger.exception(e)
-                        return None
+                        args_content = json_tool.to_json_str(args_content)
+                        try:
+                            func_args = json_tool.json_load(args_content)
+                        except Exception as e:
+                            logger.exception(e)
+                            return None
 
                 if func_name:
                     result = ToolCallInfo()

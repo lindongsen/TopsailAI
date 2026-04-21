@@ -70,6 +70,14 @@ def fix_llm_mistakes_on_json(content):
                     return _new_content
             break
 
+    # case: {[[ ]} or {"x": "y", "a": [[..]}
+    if content[0] == '{' and content[-1] == '}':
+        if content.endswith(']}'):
+            _new_content = content[:-2] + "]]}"
+            if safe_json_load(_new_content):
+                print_error("LLM Mistake: json error")
+                return _new_content
+
     # LLM can make mistakes
 
     # case: "\n  }\n  }\n"
