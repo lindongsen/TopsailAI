@@ -21,12 +21,26 @@ def check_mistake1(message, **kwargs):
                 }
             }
         ]
+
+    case2:
+        [
+            {
+                "object": "error",
+                "message": "unexpected character: line 1 column 108 (char 107)",
+                "type": "BadRequest",
+                "param": null,
+                "code": 400
+            }
+        ]
     """
     if isinstance(message, list) and len(message) == 1 and isinstance(message[0], dict):
         d = message[0]
         if "error" in d and isinstance(d["error"], dict):
             if str(d.get("type", "")).startswith("BadRequest"):
                 raise ModelServiceError(d)
+
+        if "type" in d and str(d.get("type")).startswith("BadRequest"):
+            raise ModelServiceError(d)
 
     return None
 
