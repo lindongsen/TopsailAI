@@ -25,7 +25,7 @@ def check_mistake1(message, **kwargs):
     if isinstance(message, list) and len(message) == 1 and isinstance(message[0], dict):
         d = message[0]
         if "error" in d and isinstance(d["error"], dict):
-            if d.get("type") == "BadRequestError":
+            if str(d.get("type", "")).startswith("BadRequest"):
                 raise ModelServiceError(d)
 
     return None
