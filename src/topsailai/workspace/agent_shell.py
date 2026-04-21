@@ -108,6 +108,7 @@ def get_agent_chat(
 
         need_print_session:bool=None,
         need_input_message:bool=True,
+        need_set_agent_name_to_thread_local:bool=True,
     ) -> AgentChat:
     """Create and return an AgentChat instance with all required components.
 
@@ -141,7 +142,7 @@ def get_agent_chat(
         need_input_message = False
 
     # set agent name to thread local
-    if agent_name:
+    if agent_name and need_set_agent_name_to_thread_local:
         thread_local_tool.set_thread_var(thread_local_tool.KEY_AGENT_NAME, agent_name)
     if session_id:
         thread_local_tool.set_thread_name(session_id)

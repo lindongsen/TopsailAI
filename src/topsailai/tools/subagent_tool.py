@@ -77,6 +77,7 @@ def call_assistant(task:str, llm:str=None) -> str:
         disabled_tools=disabled_tools,
         need_input_message=False,
         agent_name=agent_name,
+        need_set_agent_name_to_thread_local=False,
     )
     if llm:
         task_agent.ai_agent.llm_model.model_name = llm

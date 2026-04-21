@@ -33,10 +33,12 @@ def create_app(session_storage, message_storage, worker_manager, scheduler) -> F
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        """Lifespan context manager for startup/shutdown."""
+        """Lifespan context manager for startup/shutdown.
+        
+        Note: The scheduler is started in main.py before uvicorn runs.
+        Here we only handle shutdown to avoid duplicate start warnings.
+        """
         logger.info("Starting agent_daemon API server")
-        if scheduler:
-            scheduler.start()
         yield
         # Shutdown
         logger.info("Shutting down agent_daemon API server")
