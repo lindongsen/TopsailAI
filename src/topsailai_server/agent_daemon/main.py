@@ -8,6 +8,8 @@
 import signal
 import sys
 import os
+import socket
+import io
 from sqlalchemy import create_engine, text
 
 from topsailai_server.agent_daemon import logger
@@ -101,20 +103,86 @@ class AgentDaemon:
         )
         logger.info("FastAPI application created")
 
+    def _check_port_available(self, host: str, port: int) -> bool:
+        """Check if the port is available for binding"""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+            sock.close()
+            return True
+        except OSError as e:
+            sock.close()
+            logger.error("Port %d is already in use: %s", port, e)
+            return False
+
+    def _start_server(self):
+        """Start the uvicorn server with proper error capture"""
+        import uvicorn
+
+        # Capture uvicorn's stderr to ensure errors are logged
+        # Uvicorn prints errors to stderr, which might not be captured by our logger
+        old_stderr = sys.stderr
+        old_stdout = sys.stdout
+        captured_stderr = io.StringIO()
+        captured_stdout = io.StringIO()
+
+        try:
+            # Redirect stderr/stdout to capture uvicorn output
+            sys.stderr = captured_stderr
+            sys.stdout = captured_stdout
+
+            uvicorn.run(
+                self.app,
+                host=self.config.host,
+                port=self.config.port,
+                log_level=self.config.log_level.lower()
+            )
+        finally:
+            # Restore stderr/stdout
+            sys.stderr = old_stderr
+            sys.stdout = old_stdout
+
+            # Log any captured output
+            stderr_output = captured_stderr.getvalue()
+            stdout_output = captured_stdout.getvalue()
+
+            if stderr_output:
+                logger.error("Uvicorn stderr output:\n%s", stderr_output)
+            if stdout_output:
+                logger.info("Uvicorn stdout output:\n%s", stdout_output)
+
     def run(self):
         """Run the application"""
         logger.info("Starting agent_daemon on %s:%d", self.config.host, self.config.port)
 
+        # Check if port is available before starting
+        if not self._check_port_available(self.config.host, self.config.port):
+            logger.error("Cannot start server - port %d is already in use", self.config.port)
+            raise OSError(f"Port {self.config.port} is already in use")
+
         # Start the scheduler
         self.scheduler.start()
+        logger.info("Cron scheduler started")
 
-        import uvicorn
-        uvicorn.run(
-            self.app,
-            host=self.config.host,
-            port=self.config.port,
-            log_level=self.config.log_level.lower()
-        )
+        try:
+            self._start_server()
+        except KeyboardInterrupt:
+            logger.info("Server interrupted by user")
+        except SystemExit as e:
+            # Handle sys.exit() calls from uvicorn
+            if e.code != 0:
+                logger.error("Server exited with code: %d", e.code)
+            else:
+                logger.info("Server exited normally")
+        except OSError as e:
+            # Handle port binding errors specifically
+            logger.exception("Server startup failed (OSError): %s", e)
+            raise
+        except Exception as e:
+            # Catch any other unexpected errors
+            logger.exception("Unexpected error during server startup: %s", e)
+            raise
 
     def shutdown(self):
         """Shutdown the application gracefully"""
@@ -122,15 +190,27 @@ class AgentDaemon:
 
         # Stop scheduler
         if self.scheduler:
-            self.scheduler.stop()
+            try:
+                self.scheduler.stop()
+                logger.info("Scheduler stopped")
+            except Exception as e:
+                logger.exception("Error stopping scheduler: %s", e)
 
         # Stop all workers
         if self.worker_manager:
-            self.worker_manager.stop_all()
+            try:
+                self.worker_manager.stop_all()
+                logger.info("Worker manager stopped")
+            except Exception as e:
+                logger.exception("Error stopping worker manager: %s", e)
 
         # Close database connections
         if self.engine:
-            self.engine.dispose()
+            try:
+                self.engine.dispose()
+                logger.info("Database connections closed")
+            except Exception as e:
+                logger.exception("Error closing database connections: %s", e)
 
         logger.info("Shutdown complete")
 
@@ -168,8 +248,14 @@ def main():
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received")
         _daemon.shutdown()
+    except OSError as e:
+        logger.exception("Fatal error (OSError): %s", e)
+        _daemon.shutdown()
+        sys.exit(1)
     except Exception as e:
         logger.exception("Fatal error: %s", e)
+        if _daemon:
+            _daemon.shutdown()
         sys.exit(1)
 
 
