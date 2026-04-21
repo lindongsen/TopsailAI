@@ -129,11 +129,11 @@ def send_and_wait(
         )
 
         # Extract the new message ID from the result
+        # Note: client.send_message() returns the 'data' field from API response,
+        # which is already {"msg_id": "..."}, not {"data": {"msg_id": "..."}}
         new_msg_id = None
         if result and isinstance(result, dict):
-            data = result.get('data', {})
-            if isinstance(data, dict):
-                new_msg_id = data.get('msg_id')
+            new_msg_id = result.get('msg_id')
 
         if not new_msg_id:
             logger.error("Failed to get new message ID from response")
