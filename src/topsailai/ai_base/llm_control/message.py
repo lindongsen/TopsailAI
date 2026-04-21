@@ -120,7 +120,7 @@ def format_messages(messages, key_name, value_name):
         return messages
 
     for msg in messages[2:]:
-        if msg["content"][0] in ["[", "{"]:
+        if msg["content"] and msg["content"][0] in ["[", "{"]:
             new_content = func_format(
                 msg["content"],
                 key_name=key_name,
