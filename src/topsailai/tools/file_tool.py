@@ -337,6 +337,11 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
         else:
             last_line_no_ending = False
 
+        # Track which lines have been modified to handle last_line_no_ending correctly
+        modified_last_line = False
+        # Collect indices of lines to delete (where content is empty string or None)
+        lines_to_delete = set()
+
         # Replace the specified lines
         for line_item in lines:
             if isinstance(line_item, dict):
@@ -348,17 +353,44 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]]):
             line_num = int(line_num)
             # Convert to 0-based index
             index = line_num - 1
-            if new_content == "" or new_content is None:
-                # remove this line
-                new_content = ""
-            if 0 <= index < len(lines_content):
-                # Preserve the line ending from the original line
-                original_line_ending = lines_content[index][len(lines_content[index].rstrip()):]
-                lines_content[index] = new_content + original_line_ending
 
-        # If last line originally didn't have ending, remove the temporary one
+            if 0 <= index < len(lines_content):
+                # Track if we're modifying the last line
+                if index == len(lines_content) - 1:
+                    modified_last_line = True
+
+                # Handle empty/None content - mark for deletion
+                if new_content == "" or new_content is None:
+                    lines_to_delete.add(index)
+                else:
+                    # Get the original line ending from the original content (before we added temporary \n)
+                    original_line = lines_content[index]
+                    original_line_ending = original_line[len(original_line.rstrip()):]
+
+                    # Check if new_content already has a line ending
+                    if new_content.endswith(('\n', '\r\n', '\r')):
+                        # New content already has line ending, use it as is
+                        # Don't add original_line_ending to avoid double line endings
+                        lines_content[index] = new_content
+                    else:
+                        # new_content has no line ending, preserve the original line ending
+                        lines_content[index] = new_content + original_line_ending
+
+        # Remove lines marked for deletion
+        for index in lines_to_delete:
+            lines_content[index] = ""
+
+        # If last line originally didn't have ending, handle the temporary newline we added
         if last_line_no_ending and lines_content:
-            lines_content[-1] = lines_content[-1].rstrip('\n\r')
+            if modified_last_line:
+                # The last line was modified, check if it ends with \n
+                # If it does, we need to remove it because the original had no ending
+                if lines_content[-1].endswith('\n'):
+                    lines_content[-1] = lines_content[-1][:-1]
+            else:
+                # The last line was not modified, remove the temporary newline we added
+                if lines_content[-1].endswith('\n'):
+                    lines_content[-1] = lines_content[-1][:-1]
 
         # Write the modified content back to the file
         new_content = ''.join(lines_content)

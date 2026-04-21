@@ -94,9 +94,9 @@ class TestReadFile:
             os.unlink(temp_path)
 
     def test_read_file_nonexistent(self):
-        """Verify read_file returns None for nonexistent file."""
-        result = read_file("/nonexistent/path/to/file.txt")
-        assert result is None
+        """Verify read_file raises FileNotFoundError for nonexistent file."""
+        with pytest.raises(FileNotFoundError):
+            read_file("/nonexistent/path/to/file.txt")
 
     def test_read_file_whitelist_extension(self):
         """Verify read_file does not truncate whitelist extensions."""
@@ -161,12 +161,12 @@ class TestReadFiles:
             os.unlink(temp_path)
 
     def test_read_files_nonexistent(self):
-        """Verify read_files handles nonexistent files."""
-        result = read_files(["/nonexistent/file1.txt", "/nonexistent/file2.txt"])
-        assert "/nonexistent/file1.txt" in result
-        assert "/nonexistent/file2.txt" in result
-        assert result["/nonexistent/file1.txt"] is None
-        assert result["/nonexistent/file2.txt"] is None
+        """Verify read_files raises FileNotFoundError for nonexistent files."""
+        with pytest.raises(FileNotFoundError):
+            read_files(["/nonexistent/file1.txt", "/nonexistent/file2.txt"])
+
+
+
 
 
 class TestWriteFile:
