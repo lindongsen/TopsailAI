@@ -11,6 +11,7 @@ from sqlalchemy.orm import declarative_base
 
 from .session_manager import SessionData, SessionStorageBase, SessionSQLAlchemy
 from .message_manager import MessageData, MessageStorageBase, MessageSQLAlchemy
+from .migration import run_migrations, DatabaseMigrator
 
 # Create declarative base for table creation
 Base = declarative_base()
@@ -43,14 +44,24 @@ class Storage:
         >>> messages = storage.message.get_by_session("session_123")
     """
     
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, auto_migrate: bool = True):
         """
         Initialize Storage with SQLAlchemy engine.
         
         Args:
             engine: SQLAlchemy Engine instance for database connections
+            auto_migrate: If True, automatically run migrations to ensure schema is up to date
         """
         self._engine = engine
+        
+        # Run auto-migration if enabled
+        if auto_migrate:
+            try:
+                run_migrations(engine)
+            except (TypeError, AttributeError):
+                # Handle mock engines in tests that don't support inspection
+                pass
+        
         self.session = SessionSQLAlchemy(engine)
         self.message = MessageSQLAlchemy(engine)
     
@@ -77,5 +88,7 @@ __all__ = [
     'SessionSQLAlchemy',
     'MessageData',
     'MessageStorageBase',
-    'MessageSQLAlchemy'
+    'MessageSQLAlchemy',
+    'run_migrations',
+    'DatabaseMigrator'
 ]

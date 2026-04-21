@@ -14,6 +14,7 @@ from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.configer import get_config
 from topsailai_server.agent_daemon.storage.session_manager import SessionSQLAlchemy
 from topsailai_server.agent_daemon.storage.message_manager import MessageSQLAlchemy
+from topsailai_server.agent_daemon.storage.migration import run_migrations
 from topsailai_server.agent_daemon.worker import WorkerManager
 from topsailai_server.agent_daemon.croner import create_scheduler
 from topsailai_server.agent_daemon.api import create_app
@@ -39,7 +40,7 @@ class AgentDaemon:
         self.config = get_config()
         logger.info("Configuration loaded")
 
-        # Create database engine with connection pooling
+        # Create database engine
         # For SQLite, add special settings for better concurrency
         if self.config.db_url.startswith('sqlite'):
             # Enable WAL mode and timeout for SQLite
@@ -50,9 +51,7 @@ class AgentDaemon:
                     'check_same_thread': False  # Allow multi-threaded access
                 },
                 pool_size=5,
-                max_overflow=10,
                 pool_timeout=30,
-                pool_recycle=3600,
                 pool_pre_ping=True,
                 echo=False
             )
@@ -71,6 +70,9 @@ class AgentDaemon:
                 pool_pre_ping=True
             )
         logger.info("Database engine created: %s", self.config.db_url)
+
+        # Run database migrations to ensure schema is up to date
+        run_migrations(self.engine)
 
         # Initialize storage
         self.session_storage = SessionSQLAlchemy(self.engine)
