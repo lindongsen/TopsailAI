@@ -13,6 +13,10 @@ from topsailai.utils import (
     format_tool,
     json_tool,
 )
+from topsailai.utils.env_tool import (
+    EnvReaderInstance,
+    get_session_id,
+)
 from topsailai.context.chat_history_manager.__base import (
     ChatHistoryMessageData,
 )
@@ -122,8 +126,12 @@ def decorator_tee_output(filename, mode='a', encoding='utf-8', logrotate_max_fil
 def decorator_tee_output_by_session(mode='a+', encoding='utf-8', logrotate_max_file_bytes=100 * 1024 * 1024):
     def decorator(func):
         def wrapper(*args, **kwargs):
+
+            if not EnvReaderInstance.check_bool("TOPSAILAI_ENABLE_SESSION_TEE_OUT", False):
+                return func(*args, **kwargs)
+
             file_path = os.path.join(FOLDER_WORKSPACE_TASK, f"session.stdout")
-            session_id = os.getenv("TOPSAILAI_SESSION_ID")
+            session_id = get_session_id()
             if session_id:
                 file_path = os.path.join(FOLDER_WORKSPACE_TASK, f"{session_id}.session.stdout")
             with TeeOutput(file_path, mode, encoding, logrotate_max_file_bytes):

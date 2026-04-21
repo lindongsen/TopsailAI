@@ -58,6 +58,8 @@ TOPSAILAI_AGENT_NAME="TopsailAI"
 # Human name
 TOPSAILAI_HUMAN_NAME = "Topsail"
 
+# tee out to log file, 1 to enabled
+TOPSAILAI_ENABLE_SESSION_TEE_OUT=0
 
 # =============================================================================
 # LLM Parameters
@@ -249,6 +251,10 @@ TOPSAILAI_OBTAIN_TOOL_PROMPT_SCRIPT=""
 
 # The maximum return result of a tool call, default 300KB
 TOPSAILAI_TOOL_CALL_MAXIMUM_RETURN=300000
+
+# subagent_tool
+TOPSAILAI_SUBAGENT_TOOL_AVAILABLE_LLMS=""
+TOPSAILAI_SUBAGENT_TOOL_PROMPT=""
 
 # =============================================================================
 # Skill Configuration

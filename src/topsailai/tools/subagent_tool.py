@@ -6,7 +6,11 @@
 '''
 
 import os
+
 from topsailai.logger import logger
+from topsailai.utils.env_tool import (
+    EnvReaderInstance,
+)
 from topsailai.tools import (
     skill_tool,
 )
@@ -46,7 +50,7 @@ def get_task_id():
     return gen_task_id()
 
 
-def call_assistant(task:str) -> str:
+def call_assistant(task:str, llm:str=None) -> str:
     """
     This is a versatile AI assistant. Leave everything you can't solve to it.
 
@@ -55,6 +59,7 @@ def call_assistant(task:str) -> str:
 
     Args:
         task (str): content
+        llm (str, optional): large language model
 
     Returns:
         str: final_answer
@@ -73,6 +78,8 @@ def call_assistant(task:str) -> str:
         need_input_message=False,
         agent_name=agent_name,
     )
+    if llm:
+        task_agent.ai_agent.llm_model.model_name = llm
     task_agent.hooks_for_final_answer.clear()
 
     task_id = get_task_id()
@@ -82,7 +89,18 @@ def call_assistant(task:str) -> str:
         need_session_lock=False,
         task_id=task_id,
     )
-call_assistant.__doc__ += "\n>>> SKILL START\n" + skill_tool.PROMPT_PLUGIN_SKILLS + "\n<<< SKILL END"
+
+def init_doc():
+    models = EnvReaderInstance.get_list_str("TOPSAILAI_SUBAGENT_TOOL_AVAILABLE_LLMS", separator="")
+    if models:
+        call_assistant.__doc__ += f"\nSupported LLM: {models}\n"
+
+    if skill_tool.PROMPT_PLUGIN_SKILLS:
+        call_assistant.__doc__ += "\n>>> SKILL START\n" + skill_tool.PROMPT_PLUGIN_SKILLS + "\n<<< SKILL END"
+
+    return
+
+init_doc()
 
 TOOLS = dict(
     call_assistant=call_assistant,
@@ -90,4 +108,5 @@ TOOLS = dict(
 
 FLAG_TOOL_ENABLED = False
 
-PROMPT = prompt_tool.read_prompt("work_mode/sop/collaboration.md")
+PROMPT = prompt_tool.read_prompt("work_mode/sop/collaboration.md") + \
+    EnvReaderInstance.get("TOPSAILAI_SUBAGENT_TOOL_PROMPT", "")
