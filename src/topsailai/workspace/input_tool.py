@@ -230,7 +230,12 @@ def get_message(hook: HookInstruction = None, need_input=True) -> str:
                 message += fd.read().strip() + "\n---\n"
         if message:
             call_hook_get_message_for_task_from_file()
-            return message
+
+            msg_more = ""
+            if env_tool.is_interactive_mode():
+                msg_more = input_message("", hook=hook)
+
+            return message + msg_more
 
     message = ' '.join(sys.argv[1:]) if len(sys.argv) > 1 else ""
 
