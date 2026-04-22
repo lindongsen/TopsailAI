@@ -233,6 +233,8 @@ def get_message(hook: HookInstruction = None, need_input=True) -> str:
 
             msg_more = ""
             if env_tool.is_interactive_mode():
+                print(message)
+                print("")
                 msg_more = input_message("", hook=hook)
 
             return message + msg_more
