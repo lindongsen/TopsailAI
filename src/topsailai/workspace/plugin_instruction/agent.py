@@ -54,10 +54,39 @@ def get_tools() -> list[str]:
         print(sorted(list(agent.available_tools.keys())))
     return
 
+def set_llm(llm:str) -> str:
+    """
+    Change LLM
+
+    Args:
+        llm (str): model name
+    """
+    agent = get_ai_agent()
+    if not agent:
+        return
+
+    old_model_name = agent.llm_model.model_name
+    agent.llm_model.model_name = llm
+    result = f"old={old_model_name}, new={llm}, now={agent.llm_model.model_name}"
+    return result
+
+def get_llm() -> str:
+    """
+    Print LLM name
+    """
+    agent = get_ai_agent()
+    if not agent:
+        return
+
+    llm = agent.llm_model.model_name
+    return llm
+
 
 INSTRUCTIONS = dict(
     system_prompt=get_system_prompt,
     env_prompt = get_env_prompt,
     tool_prompt=get_tool_prompt,
     tools=get_tools,
+    set_llm=set_llm,
+    llm=get_llm,
 )
