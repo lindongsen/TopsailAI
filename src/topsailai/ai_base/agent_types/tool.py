@@ -182,7 +182,7 @@ class StepCallTool(StepCallBase):
         tool_call_info = self.get_tool_call_info(step, rsp_msg_obj)
         if tool_call_info is None:
             # LLM mistake, missing argv
-            return agent_exception.ToolError("missing tool_call")
+            return agent_exception.ToolError("missing tool_call or arguments error")
 
         tool = tool_call_info.func_name
         args = tool_call_info.func_args or {}
