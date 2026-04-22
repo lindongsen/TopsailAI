@@ -1,4 +1,4 @@
-# wait_for_message_result
+# topsailai_send_message (wait_for_message_result)
 
 A Go CLI client for the agent_daemon HTTP API. It sends a message to a session and waits for the processing result.
 
