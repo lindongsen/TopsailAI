@@ -87,6 +87,7 @@ def exec_tool_func(tool_func, args, tool_name:str=None):
         tool_name = tool_func.__name__
 
     error = None
+    result = None
     try:
         result = tool_func(**args)
     except (agent_exception.AgentToolCallException) as e:
