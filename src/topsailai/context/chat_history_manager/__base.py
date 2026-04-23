@@ -25,7 +25,7 @@ from topsailai.ai_base.constants import ROLE_SYSTEM, ROLE_USER
 class ChatHistoryMessageData(object):
     """
     Data structure for a chat history message.
-    
+
     This class represents a single message in the chat history with all its metadata.
     It is used to pass message data between different components of the system.
 
@@ -51,14 +51,14 @@ class ChatHistoryMessageData(object):
         self.msg_id = msg_id
         self.session_id = session_id
         self.message = message
-        
+
         # Generate msg_id from message content if not provided
         if not self.msg_id and message:
             self.msg_id = md5sum(message)
 
         # Calculate message size
         self.msg_size = len(message) if message else 0
-        
+
         # Initialize metadata fields
         self.create_time = None
         self.access_time = None
@@ -68,7 +68,7 @@ class ChatHistoryMessageData(object):
 class MessageStorageBase(object):
     """
     Abstract base class for chat history message storage implementations.
-    
+
     This class defines the interface that all concrete storage implementations
     must follow. Subclasses should implement all abstract methods.
     """
@@ -78,7 +78,7 @@ class MessageStorageBase(object):
     def add_session_message(self, last_message: dict):
         """
         Add a message for a session.
-        
+
         This method should be implemented by subclasses to handle adding
         session-specific messages to storage.
 
@@ -168,24 +168,24 @@ class MessageStorageBase(object):
 class ContextManager(MessageStorageBase):
     """
     Context manager for handling chat history messages.
-    
+
     This class provides functionality to link large messages to storage,
     archive them, and retrieve them when needed to manage context size.
     """
 
     # Roles that should be ignored when processing messages
     ignored_roles = set([ROLE_SYSTEM, ROLE_USER])
-    
+
     # Step names that should be considered for archiving
     attention_step_names = set(["action", "observation"])
-    
+
     # Prefix for archived message references
     prefix_raw_text_retrieve_msg = "retrieve_msg by msg_id="
 
     def _link_msg_id(self, content_dict: dict):
         """
         Link content to a message ID by archiving large content.
-        
+
         This method archives large message content by storing it in the database
         and replaces the original content with a reference to the archived message.
 
@@ -202,17 +202,17 @@ class ContextManager(MessageStorageBase):
         else:
             # Convert entire content to JSON string
             message = json_tool.json_dump(content_dict, indent=0)
-        
+
         # Create a new message data object
         msg_obj = ChatHistoryMessageData(
             message=message,
             session_id=get_session_id(),
             msg_id=None,
         )
-        
+
         # Add the message to storage
         self.add_message(msg_obj)
-        
+
         # Replace original content with archive reference
         content_dict.clear()
         content_dict.update(
@@ -221,7 +221,7 @@ class ContextManager(MessageStorageBase):
                 raw_text=f"{self.prefix_raw_text_retrieve_msg}{msg_obj.msg_id}"
             )
         )
-        
+
         # Log the archiving operation
         logger.info(
             f"message is archived: "
@@ -231,10 +231,39 @@ class ContextManager(MessageStorageBase):
         )
         return
 
+    def __get_content_object(self, msg:dict):
+        content = msg["content"]
+
+        if 'tool_call_id' in msg:
+            return {
+                "content": content,
+                "tool_call_id": msg["tool_call_id"],
+            }
+
+        if 'tool_calls' in msg:
+            return {
+                "content": content,
+                "tool_calls": str(msg["tool_calls"])
+            }
+
+        # Skip non-JSON content
+        if content[0] not in ["{", "["]:
+            return None
+
+        # Parse JSON content
+        content_obj = None
+        try:
+            content_obj = json_tool.json_load(content)
+        except Exception as _:
+            return None
+
+        return content_obj
+
+
     def link_messages(self, messages, index_start=3, index_end=-11, max_size=1024):
         """
         Link large messages to storage by archiving them.
-        
+
         This method processes a list of messages and archives any large content
         that exceeds the specified size limit, replacing it with references.
 
@@ -255,18 +284,8 @@ class ContextManager(MessageStorageBase):
                     pass
                 else:
                     continue
-            
-            content = msg["content"]
-            # Skip non-JSON content
-            if content[0] not in ["{", "["]:
-                continue
-            
-            # Parse JSON content
-            content_obj = None
-            try:
-                content_obj = json_tool.json_load(content)
-            except Exception as _:
-                continue
+
+            content_obj = self.__get_content_object(msg)
 
             if not content_obj:
                 continue
@@ -276,7 +295,7 @@ class ContextManager(MessageStorageBase):
             flag_changed = False
             for content_dict in format_tool.to_list(content_obj):
                 new_content_obj.append(content_dict)
-                
+
                 # Check if this content should be considered for archiving
                 if "step_name" not in content_dict:
                     continue
@@ -292,6 +311,10 @@ class ContextManager(MessageStorageBase):
             # Update message content if any changes were made
             if flag_changed:
                 msg["content"] = json_tool.json_dump(new_content_obj)
+                if "tool_call_id" in msg:
+                    del msg["tool_call_id"]
+                if "tool_calls" in msg:
+                    del msg["tool_calls"]
 
         return
 
@@ -325,7 +348,7 @@ class ContextManager(MessageStorageBase):
     def __call__(self, messages: list):
         """
         Make the context manager callable to process messages.
-        
+
         This allows the context manager to be used as a function that processes
         a list of messages to reduce context size.
 
@@ -339,7 +362,7 @@ class ContextManager(MessageStorageBase):
     def add_session_message(self, last_message: dict, session_id: str = None):
         """
         Add a message to a session.
-        
+
         This method adds the last message of a session to storage with proper
         metadata and logging.
 
@@ -366,7 +389,7 @@ class ContextManager(MessageStorageBase):
             session_id=session_id,
             msg_id=None,
         )
-        
+
         # Add message to storage
         self.add_message(msg_data)
         logger.info(f"add message for session: session_id={session_id}, msg_id={msg_data.msg_id}")
