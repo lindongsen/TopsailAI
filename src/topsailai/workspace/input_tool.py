@@ -14,6 +14,7 @@ import readline
 from topsailai.utils import (
     env_tool,
     file_tool,
+    thread_local_tool,
 )
 from topsailai.workspace.hook_instruction import (
     HookInstruction,
@@ -221,6 +222,10 @@ def get_message(hook: HookInstruction = None, need_input=True) -> str:
         >>> print(message)
         'From stdin'
     """
+    # check if sub_agent
+    if thread_local_tool.get_agent_object():
+        return ""
+
     # all of argvs are files
     _flag_all_files, all_files = file_tool.get_all_files(sys.argv[1:])
     message = ""
@@ -232,7 +237,7 @@ def get_message(hook: HookInstruction = None, need_input=True) -> str:
             call_hook_get_message_for_task_from_file()
 
             msg_more = ""
-            if env_tool.is_interactive_mode():
+            if env_tool.is_interactive_mode() and need_input:
                 print(message)
                 print("")
                 msg_more = input_message("", hook=hook)
