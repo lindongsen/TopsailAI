@@ -1,5 +1,7 @@
 #!/bin/bash
 
+#set -x
+
 # Script: ai_query_msg
 # Description: Query chat history messages from SQLite database by message ID
 # Usage: ai_query_msg <message_id> or ai_query_msg -h for help
@@ -23,9 +25,12 @@ CWD=$(dirname "$(command -v ai_agent)")
 # Change to the parent directory (assumes memory.db is in the parent directory)
 cd ${CWD}/..
 
+[ -f "${HOME}/.topsailai/.env" ] && cd "${HOME}/.topsailai"
+
 # Query the SQLite database for messages with the specified message ID
 # - Use json format for output
 # - Pretty-print the JSON output using json_pp
 # - Convert escaped newlines to actual newlines for better readability
-sqlite3 -json memory.db  "select * from chat_history_messages where msg_id = '$1';" \
-	| json_pp | sed s/'\\\\n'/'\n'/g
+msg=$(sqlite3 -json memory.db  "select * from chat_history_messages where msg_id = '$1';")
+echo ${msg} | json_pp | sed s/'\\\\n'/'\n'/g || echo ${msg}
+
