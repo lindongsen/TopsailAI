@@ -198,7 +198,7 @@ class TokenStat(threading.Thread):
             )
 
         # Format and output the statistics
-        msg = f"[token_stat] {info}"
+        msg = f"[TokenStat] {info}"
         print_step(msg, need_format=False)      # Output to console/step display
         logger.info(msg)     # Output to log file
         return
