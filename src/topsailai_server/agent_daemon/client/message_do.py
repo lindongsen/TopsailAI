@@ -53,6 +53,7 @@ def do_client_get_messages(args):
             limit=args.limit or 1000,
             sort_key=args.sort_key or "create_time",
             order_by=args.order_by or "desc",
+            processed_msg_id=args.processed_msg_id,
             verbose=args.verbose
         )
         return True
@@ -85,6 +86,7 @@ def add_message_parsers(subparsers):
     get_msgs_parser.add_argument('--limit', type=int, default=1000, help='Limit (default: 1000)')
     get_msgs_parser.add_argument('--sort-key', type=str, default='create_time', help='Sort key (default: create_time)')
     get_msgs_parser.add_argument('--order-by', type=str, default='desc', choices=['asc', 'desc'], help='Order by (default: desc)')
+    get_msgs_parser.add_argument('--processed-msg-id', type=str, help='Filter messages by processed_msg_id')
     get_msgs_parser.set_defaults(func=do_client_get_messages)
     
     # List messages (alias for get-messages)
@@ -96,4 +98,5 @@ def add_message_parsers(subparsers):
     list_msgs_parser.add_argument('--limit', type=int, default=1000, help='Limit (default: 1000)')
     list_msgs_parser.add_argument('--sort-key', type=str, default='create_time', help='Sort key (default: create_time)')
     list_msgs_parser.add_argument('--order-by', type=str, default='desc', choices=['asc', 'desc'], help='Order by (default: desc)')
+    list_msgs_parser.add_argument('--processed-msg-id', type=str, help='Filter messages by processed_msg_id')
     list_msgs_parser.set_defaults(func=do_client_get_messages)
