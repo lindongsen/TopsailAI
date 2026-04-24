@@ -156,9 +156,13 @@ func receiveMessage(cfg *Config, processedMsgID string) (string, error) {
 	return msgID, nil
 }
 
-// listMessages retrieves messages after the given message ID
-func listMessages(cfg *Config, afterMsgID string) ([]Message, error) {
-	url := cfg.baseURL() + "/api/v1/message?session_id=" + cfg.SessionID + "&sort_key=create_time&order_by=asc&limit=100"
+// listMessages retrieves messages filtered by processed_msg_id via the API.
+// When processedMsgID is provided, the API returns only messages whose
+// processed_msg_id matches the given value.
+func listMessages(cfg *Config, processedMsgID string) ([]Message, error) {
+	url := cfg.baseURL() + "/api/v1/message?session_id=" + cfg.SessionID +
+		"&processed_msg_id=" + processedMsgID +
+		"&sort_key=create_time&order_by=asc&limit=100"
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -190,20 +194,7 @@ func listMessages(cfg *Config, afterMsgID string) ([]Message, error) {
 		return nil, fmt.Errorf("failed to parse messages: %w", err)
 	}
 
-	// Filter messages that come after afterMsgID
-	var result []Message
-	found := false
-	for _, msg := range messages {
-		if msg.MsgID == afterMsgID {
-			found = true
-			continue
-		}
-		if found {
-			result = append(result, msg)
-		}
-	}
-
-	return result, nil
+	return messages, nil
 }
 
 // formatMessage formats a single message for output
@@ -242,7 +233,8 @@ func main() {
 	// Output new message ID
 	fmt.Printf("new_msg_id: %s\n", newMsgID)
 
-	// Wait for result
+	// Wait for result by querying messages whose processed_msg_id equals newMsgID.
+	// The API handles the filtering, so we only get result messages for our request.
 	waitInterval := time.Duration(cfg.WaitInterval) * time.Second
 	maxWaitTime := time.Duration(cfg.MaxWaitTime) * time.Second
 	startTime := time.Now()
@@ -256,19 +248,10 @@ func main() {
 			continue
 		}
 
-		// Filter messages that have processed_msg_id equal to newMsgID,
-		// which means the message has been processed and we can return the result
-		var resultMessages []Message
-		for _, msg := range messages {
-			if msg.ProcessedMsgID == newMsgID {
-				resultMessages = append(resultMessages, msg)
-			}
-		}
-
-		if len(resultMessages) > 0 {
+		if len(messages) > 0 {
 			if cfg.ResultOnly {
 				// Only output the result (task_result or message)
-				for _, msg := range resultMessages {
+				for _, msg := range messages {
 					if msg.TaskResult != "" {
 						fmt.Println(msg.TaskResult)
 					} else if msg.Message != "" {
@@ -277,7 +260,7 @@ func main() {
 				}
 			} else {
 				// Output full message format
-				for _, msg := range resultMessages {
+				for _, msg := range messages {
 					fmt.Println("---")
 					fmt.Print(formatMessage(msg))
 					fmt.Println()

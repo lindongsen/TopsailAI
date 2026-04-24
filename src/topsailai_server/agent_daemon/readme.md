@@ -211,6 +211,7 @@ parameters:
 
 parameters:
 - session_id: str, required
+- processed_msg_id: str
 - start_time: if null, no limit it
 - end_time: if null, no limit it
 - offset: int, default 0
