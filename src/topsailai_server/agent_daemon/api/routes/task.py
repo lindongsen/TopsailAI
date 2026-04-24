@@ -84,7 +84,7 @@ async def set_task_result(
     Set task result for a processed message.
 
     This endpoint:
-    1. Updates the message with task_id and task_result
+    1. Updates the message with task_id, task_result, and processed_msg_id
     2. Updates the session's processed_msg_id
     3. Checks if there are more unprocessed messages
     """
@@ -94,12 +94,13 @@ async def set_task_result(
         validate_msg_id(request.processed_msg_id)
         validate_task_id(request.task_id)
 
-        # Update message with task info
+        # Update message with task info (including processed_msg_id)
         message = storage.message.update_task_info(
             msg_id=request.processed_msg_id,
             session_id=request.session_id,
             task_id=request.task_id,
-            task_result=request.task_result
+            task_result=request.task_result,
+            processed_msg_id=request.processed_msg_id
         )
 
         if not message:

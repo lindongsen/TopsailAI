@@ -256,10 +256,19 @@ func main() {
 			continue
 		}
 
-		if len(messages) > 0 {
+		// Filter messages that have processed_msg_id equal to newMsgID,
+		// which means the message has been processed and we can return the result
+		var resultMessages []Message
+		for _, msg := range messages {
+			if msg.ProcessedMsgID == newMsgID {
+				resultMessages = append(resultMessages, msg)
+			}
+		}
+
+		if len(resultMessages) > 0 {
 			if cfg.ResultOnly {
 				// Only output the result (task_result or message)
-				for _, msg := range messages {
+				for _, msg := range resultMessages {
 					if msg.TaskResult != "" {
 						fmt.Println(msg.TaskResult)
 					} else if msg.Message != "" {
@@ -268,7 +277,7 @@ func main() {
 				}
 			} else {
 				// Output full message format
-				for _, msg := range messages {
+				for _, msg := range resultMessages {
 					fmt.Println("---")
 					fmt.Print(formatMessage(msg))
 					fmt.Println()

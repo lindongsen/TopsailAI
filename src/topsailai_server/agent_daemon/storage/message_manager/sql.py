@@ -1,5 +1,5 @@
 '''
-  Author: DawsonLin
+  Author: Dawsonlin
   Email: lin_dongsen@126.com
   Created: 2026-04-12
   Purpose: SQLAlchemy implementation for Message storage
@@ -247,9 +247,10 @@ class MessageSQLAlchemy(MessageStorageBase):
         msg_id: str,
         session_id: str,
         task_id: Optional[str],
-        task_result: Optional[str]
+        task_result: Optional[str],
+        processed_msg_id: Optional[str] = None
     ) -> Optional[MessageData]:
-        """Update task_id and task_result for a message"""
+        """Update task_id, task_result, and processed_msg_id for a message"""
         with SQLSession(self.engine) as db:
             message = db.query(Message).filter(
                 Message.msg_id == msg_id,
@@ -259,6 +260,8 @@ class MessageSQLAlchemy(MessageStorageBase):
             if message:
                 message.task_id = task_id
                 message.task_result = task_result
+                if processed_msg_id is not None:
+                    message.processed_msg_id = processed_msg_id
                 message.update_time = datetime.now()
                 db.commit()
                 return self._to_data(message)

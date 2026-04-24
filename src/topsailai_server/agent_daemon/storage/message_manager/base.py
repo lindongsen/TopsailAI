@@ -1,5 +1,5 @@
 '''
-  Author: DawsonLin
+  Author: Dawsonlin
   Email: lin_dongsen@126.com
   Created: 2026-04-12
   Purpose:
@@ -186,16 +186,18 @@ class MessageStorageBase(object):
         msg_id: str,
         session_id: str,
         task_id: Optional[str],
-        task_result: Optional[str]
+        task_result: Optional[str],
+        processed_msg_id: Optional[str] = None
     ) -> Optional[MessageData]:
         """
-        Update task_id and task_result for a message.
+        Update task_id, task_result, and processed_msg_id for a message.
 
         Args:
             msg_id (str): The message ID.
             session_id (str): The session ID.
             task_id (str or None): The task ID.
             task_result (str or None): The task result.
+            processed_msg_id (str or None): The processed message ID.
 
         Returns:
             MessageData: The updated message, or None if not found.
