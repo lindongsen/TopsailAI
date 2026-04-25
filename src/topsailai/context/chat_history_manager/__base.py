@@ -234,14 +234,14 @@ class ContextManager(MessageStorageBase):
     def __get_content_object(self, msg:dict):
         content = msg["content"]
 
-        if 'tool_call_id' in msg:
+        if 'tool_call_id' in msg and msg['tool_call_id']:
             return {
                 "step_name": "observation",
                 "content": content,
                 "tool_call_id": msg["tool_call_id"],
             }
 
-        if 'tool_calls' in msg:
+        if 'tool_calls' in msg and msg['tool_calls']:
             return {
                 "step_name": "action",
                 "content": content,
@@ -277,7 +277,12 @@ class ContextManager(MessageStorageBase):
         """
         # Process messages in the specified range
         # Handle negative index_end by converting to positive index
-        end_idx = len(messages) + index_end + 1 if index_end < 0 else index_end
+        end_idx = (len(messages) + index_end + 1) if index_end < 0 else index_end
+
+        logger.info(
+            "[LinkMessages] some messages will be archived: index=[%s:%s], messages_length=[%s]",
+            index_start, end_idx, len(messages)
+        )
         for msg in messages[index_start:end_idx]:
             # Skip ignored roles (except for user messages with tool calls)
             if msg["role"] in self.ignored_roles:
@@ -313,9 +318,9 @@ class ContextManager(MessageStorageBase):
             # Update message content if any changes were made
             if flag_changed:
                 msg["content"] = json_tool.json_dump(new_content_obj)
-                if "tool_call_id" in msg:
+                if "tool_call_id" in msg and msg['tool_call_id']:
                     del msg["tool_call_id"]
-                if "tool_calls" in msg:
+                if "tool_calls" in msg and msg['tool_calls']:
                     del msg["tool_calls"]
 
         return
