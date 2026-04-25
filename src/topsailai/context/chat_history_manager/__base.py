@@ -236,12 +236,14 @@ class ContextManager(MessageStorageBase):
 
         if 'tool_call_id' in msg:
             return {
+                "step_name": "observation",
                 "content": content,
                 "tool_call_id": msg["tool_call_id"],
             }
 
         if 'tool_calls' in msg:
             return {
+                "step_name": "action",
                 "content": content,
                 "tool_calls": str(msg["tool_calls"])
             }
