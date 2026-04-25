@@ -318,8 +318,9 @@ class ContextManager(MessageStorageBase):
             # Update message content if any changes were made
             if flag_changed:
                 msg["content"] = json_tool.json_dump(new_content_obj)
-                if "tool_call_id" in msg and msg['tool_call_id']:
-                    del msg["tool_call_id"]
+                # DONOT DELETE "tool_call_id" DUE TO MAY CAUSE bad_request_error
+                #if "tool_call_id" in msg and msg['tool_call_id']:
+                #    del msg["tool_call_id"]
                 if "tool_calls" in msg and msg['tool_calls']:
                     del msg["tool_calls"]
 
