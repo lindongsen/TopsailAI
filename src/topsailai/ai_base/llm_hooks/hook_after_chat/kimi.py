@@ -23,21 +23,46 @@ def convert_to_list_dict(content: str) -> list[dict]:
     # Pattern to match kimi function calls with flexible whitespace
     # Matches:  <|tool_calls_section_begin|>   <|tool_call_begin|>  functions.tool_name:id  <|tool_call_argument_begin|>  {json_args}  <|tool_call_end|>    <|tool_calls_section_end|>
     # Whitespace around markers is now optional/variable using \s*
-    pattern = r'\s*<\|tool_call_begin\|>\s*functions\.([\w-]+):(\w+)\s*<\|tool_call_argument_begin\|>\s*(\{[^}]*\})\s*'
+    #
+    # IMPORTANT: The JSON arguments may contain nested {} structures (e.g., Go code with struct{}, if{}, func(){}).
+    # Using non-greedy .*? between markers, then extract JSON by finding balanced braces.
+    pattern = r'\s*<\|tool_call_begin\|>\s*functions\.([\w-]+):(\w+)\s*<\|tool_call_argument_begin\|>\s*(.+?)\s*<\|tool_call_end\|>'
 
-    matches = re.findall(pattern, content)
+    matches = re.findall(pattern, content, re.DOTALL)
 
     for match in matches:
         tool_name = match[0].strip()
         if not tool_name:
             continue
 
-        json_str = match[2]
+        # The JSON args are captured between <|tool_call_argument_begin|> and <|tool_call_end|>
+        # We need to extract the JSON object from potentially nested content
+        raw_args = match[2].strip()
 
+        # Try to parse the raw content as JSON directly first
+        json_str = None
         try:
-            tool_args = json.loads(json_str)
+            # Try parsing the whole thing as JSON
+            parsed = json.loads(raw_args)
+            json_str = raw_args
+            tool_args = parsed
         except json.JSONDecodeError:
-            tool_args = {}
+            # If direct parsing fails, try to extract JSON object by finding balanced braces
+            # Find the first { and last } to extract the JSON object
+            first_brace = raw_args.find('{')
+            last_brace = raw_args.rfind('}')
+            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                potential_json = raw_args[first_brace:last_brace + 1]
+                try:
+                    tool_args = json.loads(potential_json)
+                    json_str = potential_json
+                except json.JSONDecodeError:
+                    tool_args = {}
+            else:
+                tool_args = {}
+
+        if json_str is None:
+            json_str = raw_args
 
         result.append({
             "step_name": "action",
