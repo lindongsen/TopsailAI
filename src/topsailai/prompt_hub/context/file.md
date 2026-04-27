@@ -2,6 +2,8 @@
 
 Core Principle: When calling tools or executing commands, efforts should be made to avoid generating large text content outputs.
 
+[ACTION] First, explore and understand the project's file structure. Do not read any file contents until you have a good understanding of the directory layout.
+
 ## Specific Optimization Strategies
 
 - [Attention] When the output content is too long, it will be forcibly truncated, and the flag information is "(force to truncate)". At this time, you should consider other ways for the data.
