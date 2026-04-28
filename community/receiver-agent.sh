@@ -44,6 +44,7 @@ ENV_FILE="${EXE_FILE%.*}.env"
 [ "${MESSENGER_RECEIVER}" == "${TOPSAILAI_AGENT_NAME}" ] || exit 1
 
 export SESSION_ID="${MESSENGER_RECEIVER}+${MESSENGER_SENDER}"
+export TOPSAILAI_SESSION_ID="${SESSION_ID}"
 export SYSTEM_PROMPT="${SYSTEM_PROMPT}\n\n---\nYour name is ${TOPSAILAI_AGENT_NAME}\n---\n\n"
 
 export DEBUG=0
@@ -66,11 +67,24 @@ done < "${ENV_FILE}"
 LOCK_DIR=/topsailai/lock/
 mkdir -p "${LOCK_DIR}"
 
-# start
 _HEAD_MSG="
 # AI-Community
 '${MESSENGER_SENDER}' Say: "
-flock -E 203 -w 0 -x "${LOCK_DIR}/receiver_${MESSENGER_MODE:-sync}.lock" agent_chat "${_HEAD_MSG}" "${MESSENGER_MESSAGE}"
+
+# CLI
+CLI="topsailai_agent_chat"
+ARGS="${_HEAD_MSG} ${MESSENGER_MESSAGE}"
+
+## Branch: yiqia
+if [ "${MESSENGER_SENDER}" == "APP-YiQia" ]; then
+  CLI="topsailai_send_message"
+  export TOPSAILAI_MESSAGE="${ARGS}"
+  ARGS=""
+fi
+
+# start
+
+flock -E 203 -w 0 -x "${LOCK_DIR}/receiver_${MESSENGER_MODE:-sync}.lock" "${CLI}" ${ARGS}
 RET_CODE=$?
 [ ${RET_CODE} -eq 203 ] && {
     echo "(${TOPSAILAI_AGENT_NAME}) is busy"
