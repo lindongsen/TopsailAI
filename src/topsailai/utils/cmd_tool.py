@@ -39,6 +39,7 @@ def build_env(d:dict=None, keys:list=None):
     """
     env = {}
     for k in [
+        "HOME",
         "PYTHONPATH", "PATH", "HOSTNAME", "SHELL",
         "GOCACHE", "GOPATH",
     ] + (
@@ -51,6 +52,10 @@ def build_env(d:dict=None, keys:list=None):
             env[k] = v
     if d:
         env.update(d)
+
+    if not env.get("HOME"):
+        env["HOME"] = os.path.abspath(os.curdir)
+
     return env
 
 
