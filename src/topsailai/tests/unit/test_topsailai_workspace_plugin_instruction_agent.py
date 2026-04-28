@@ -238,11 +238,21 @@ class TestInstructions(unittest.TestCase):
         """Test INSTRUCTIONS has 'tools' key"""
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
         self.assertIn("tools", INSTRUCTIONS)
+    def test_has_set_llm_key(self):
+        """Test INSTRUCTIONS has 'set_llm' key"""
+        from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
+        self.assertIn("set_llm", INSTRUCTIONS)
+
+    def test_has_llm_key(self):
+        """Test INSTRUCTIONS has 'llm' key"""
+        from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
+        self.assertIn("llm", INSTRUCTIONS)
+
 
     def test_correct_count(self):
         """Test INSTRUCTIONS has correct number of entries"""
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
-        self.assertEqual(len(INSTRUCTIONS), 4)
+        self.assertEqual(len(INSTRUCTIONS), 6)
 
     def test_values_are_callable(self):
         """Test all INSTRUCTIONS values are callable"""

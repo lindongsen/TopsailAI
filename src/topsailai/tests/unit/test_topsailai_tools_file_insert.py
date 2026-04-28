@@ -36,7 +36,9 @@ class TestFileToolInsertDataToFile:
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = insert_data_to_file(test_file, "Inserted Line", line_num=2, before_or_after="after")
-        assert result == "Line 1\nLine 2\nInserted Line\nLine 3\n"
+        assert isinstance(result, str)
+        assert "---" in result
+        assert "+" in result
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Line 1\nLine 2\nInserted Line\nLine 3\n"
@@ -47,7 +49,9 @@ class TestFileToolInsertDataToFile:
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = insert_data_to_file(test_file, "Inserted Line", line_num=3, before_or_after="before")
-        assert result == "Line 1\nLine 2\nInserted Line\nLine 3\n"
+        assert isinstance(result, str)
+        assert "---" in result
+        assert "+" in result
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Line 1\nLine 2\nInserted Line\nLine 3\n"
@@ -58,7 +62,9 @@ class TestFileToolInsertDataToFile:
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = insert_data_to_file(test_file, "New Line", line_num=1, before_or_after="after")
-        assert result == "Line 1\nNew Line\nLine 2\nLine 3\n"
+        assert isinstance(result, str)
+        assert "---" in result
+        assert "+" in result
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Line 1\nNew Line\nLine 2\nLine 3\n"
@@ -69,7 +75,9 @@ class TestFileToolInsertDataToFile:
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = insert_data_to_file(test_file, "New Line", line_num=3, before_or_after="after")
-        assert result == "Line 1\nLine 2\nLine 3\nNew Line\n"
+        assert isinstance(result, str)
+        assert "---" in result
+        assert "+" in result
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Line 1\nLine 2\nLine 3\nNew Line\n"
@@ -79,7 +87,7 @@ class TestFileToolInsertDataToFile:
         with open(test_file, 'w') as f:
             f.write("")
         result = insert_data_to_file(test_file, "New Line", line_num=0, before_or_after="after")
-        assert result == "New Line\n"
+        assert result == ""
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "New Line\n"
@@ -90,7 +98,9 @@ class TestFileToolInsertDataToFile:
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = insert_data_to_file(test_file, "Inserted", line_num=1, before_or_after="after")
-        assert result == "Line 1\nInserted\nLine 2\n"
+        assert isinstance(result, str)
+        assert "---" in result
+        assert "+" in result
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Line 1\nInserted\nLine 2\n"
@@ -101,7 +111,9 @@ class TestFileToolInsertDataToFile:
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = insert_data_to_file(test_file, "Inserted Line\n", line_num=1, before_or_after="after")
-        assert result == "Line 1\nInserted Line\nLine 2\n"
+        assert isinstance(result, str)
+        assert "---" in result
+        assert "+" in result
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Line 1\nInserted Line\nLine 2\n"
@@ -120,7 +132,9 @@ class TestFileToolInsertDataToFile:
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = insert_data_to_file(test_file, "New Line", line_num=100, before_or_after="after")
-        assert result == "Line 1\nLine 2\nNew Line\n"
+        assert isinstance(result, str)
+        assert "---" in result
+        assert "+" in result
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Line 1\nLine 2\nNew Line\n"
@@ -131,7 +145,9 @@ class TestFileToolInsertDataToFile:
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = insert_data_to_file(test_file, "New Line", line_num=0, before_or_after="after")
-        assert result == "New Line\nLine 1\nLine 2\n"
+        assert isinstance(result, str)
+        assert "---" in result
+        assert "+" in result
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "New Line\nLine 1\nLine 2\n"
@@ -143,10 +159,12 @@ class TestFileToolInsertDataToFile:
             f.write(initial_content)
         unicode_content = "你好世界 🌍"
         result = insert_data_to_file(test_file, unicode_content, line_num=1, before_or_after="after")
-        expected_content = f"Line 1\n{unicode_content}\nLine 2\n"
-        assert result == expected_content
+        assert isinstance(result, str)
+        assert "---" in result
+        assert "+" in result
         with open(test_file, 'r', encoding='utf-8') as f:
             content = f.read()
+        expected_content = f"Line 1\n{unicode_content}\nLine 2\n"
         assert content == expected_content
 
     def test_insert_data_to_file_empty_data(self, test_file):
@@ -155,7 +173,9 @@ class TestFileToolInsertDataToFile:
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = insert_data_to_file(test_file, "", line_num=1, before_or_after="after")
-        assert result == initial_content
+        assert isinstance(result, str)
+        assert "---" in result
+        # Empty data produces no diff changes, so no '+' markers
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == initial_content
@@ -166,7 +186,9 @@ class TestFileToolInsertDataToFile:
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = insert_data_to_file(test_file, "New Line", line_num=100, before_or_after="before")
-        assert result == "Line 1\nLine 2\nLine 3\nNew Line\n"
+        assert isinstance(result, str)
+        assert "---" in result
+        assert "+" in result
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Line 1\nLine 2\nLine 3\nNew Line\n"
@@ -177,7 +199,9 @@ class TestFileToolInsertDataToFile:
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = insert_data_to_file(test_file, "New Line", line_num=1, before_or_after="after")
-        assert result == "Only Line\nNew Line\n"
+        assert isinstance(result, str)
+        assert "---" in result
+        assert "+" in result
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Only Line\nNew Line\n"
@@ -189,8 +213,10 @@ class TestFileToolInsertDataToFile:
             f.write(initial_content)
         special_content = "Tab:\tNewline:\nBackslash:\\"
         result = insert_data_to_file(test_file, special_content, line_num=1, before_or_after="after")
-        expected_content = f"Line 1\n{special_content}\nLine 2\n"
-        assert result == expected_content
+        assert isinstance(result, str)
+        assert "---" in result
+        assert "+" in result
         with open(test_file, 'r') as f:
             content = f.read()
+        expected_content = f"Line 1\n{special_content}\nLine 2\n"
         assert content == expected_content

@@ -551,7 +551,7 @@ class TestDecoratorTeeOutputBySession(unittest.TestCase):
     def test_decorator_tee_output_by_session_without_session_id(self):
         """Test decorator_tee_output_by_session without session ID."""
         # Ensure no session ID is set
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {'TOPSAILAI_ENABLE_SESSION_TEE_OUT': '1'}, clear=True):
             @decorator_tee_output_by_session(mode='w')
             def my_function():
                 print("Hello from session function")
@@ -577,7 +577,7 @@ class TestDecoratorTeeOutputBySession(unittest.TestCase):
         """Test decorator_tee_output_by_session with session ID."""
         session_id = "test-session-123"
 
-        with patch.dict(os.environ, {'TOPSAILAI_SESSION_ID': session_id}):
+        with patch.dict(os.environ, {'TOPSAILAI_SESSION_ID': session_id, 'TOPSAILAI_ENABLE_SESSION_TEE_OUT': '1'}):
             @decorator_tee_output_by_session(mode='w')
             def my_function():
                 print("Hello from session function")
@@ -601,7 +601,7 @@ class TestDecoratorTeeOutputBySession(unittest.TestCase):
     @patch('topsailai.workspace.print_tool.FOLDER_WORKSPACE_TASK', '/tmp')
     def test_decorator_tee_output_by_session_multiple_prints(self):
         """Test decorator_tee_output_by_session with multiple print statements."""
-        with patch.dict(os.environ, {'TOPSAILAI_SESSION_ID': 'test-123'}):
+        with patch.dict(os.environ, {'TOPSAILAI_SESSION_ID': 'test-123', 'TOPSAILAI_ENABLE_SESSION_TEE_OUT': '1'}):
             @decorator_tee_output_by_session(mode='w')
             def my_function():
                 print("Line 1")

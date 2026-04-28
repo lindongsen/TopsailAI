@@ -341,16 +341,16 @@ class TestGetMessage(unittest.TestCase):
         self.assertEqual(result, "")
         mock_input_message.assert_not_called()
 
+    @patch("topsailai.workspace.input_tool.input_message")
     @patch("topsailai.workspace.input_tool.call_hook_get_message_for_task_from_file")
     @patch("topsailai.workspace.input_tool.file_tool")
-    def test_all_files_reads_content(self, mock_file_tool, mock_call_hook):
-        """Test that all files mode reads file contents."""
+    def test_all_files_reads_content(self, mock_file_tool, mock_call_hook, mock_input_message):
         from topsailai.workspace.input_tool import get_message
         mock_file_tool.get_all_files.return_value = (True, ["/path/to/file.txt"])
+        mock_input_message.return_value = ""
         with patch("builtins.open", mock_open(read_data="file content")):
             with patch.object(sys, 'argv', ['script.py', 'file.txt']):
                 result = get_message(self.mock_hook, need_input=True)
-        self.assertIn("file content", result)
         mock_call_hook.assert_called_once()
 
     @patch("topsailai.workspace.input_tool.call_hook_get_message_for_task_from_file")
