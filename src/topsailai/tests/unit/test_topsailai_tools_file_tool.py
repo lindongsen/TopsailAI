@@ -15,6 +15,8 @@ Test coverage:
 - list_dirs: Multiple directory listing
 - is_need_truncate: Truncation check
 - TOOLS dictionary
+- TOOLS_INFO dictionary
+- FILE_RO_TOOLS dictionary
 
 Author: mm-m25
 """
@@ -39,6 +41,8 @@ from topsailai.tools.file_tool import (
     list_dirs,
     is_need_truncate,
     TOOLS,
+    TOOLS_INFO,
+    FILE_RO_TOOLS,
 )
 
 
@@ -123,6 +127,32 @@ class TestReadFile:
         finally:
             os.unlink(temp_path)
 
+    def test_read_file_negative_seek(self):
+        """Verify read_file reads from end with negative seek."""
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+            f.write("Hello, World!")
+            temp_path = f.name
+        
+        try:
+            result = read_file(temp_path, seek=-3)
+            assert result == "ld!"
+        finally:
+            os.unlink(temp_path)
+
+    def test_read_file_non_whitelist_truncation(self):
+        """Verify read_file applies truncation for non-whitelist extensions."""
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.log') as f:
+            f.write("A" * 3000)
+            temp_path = f.name
+        
+        try:
+            with patch('topsailai.tools.file_tool.ctx_safe.is_need_truncate', return_value=True), \
+                 patch('topsailai.tools.file_tool.ctx_safe.truncate_message', return_value="TRUNCATED"):
+                result = read_file(temp_path)
+                assert result == "TRUNCATED"
+        finally:
+            os.unlink(temp_path)
+
 
 class TestReadFiles:
     """Test read_files function."""
@@ -164,9 +194,6 @@ class TestReadFiles:
         """Verify read_files raises FileNotFoundError for nonexistent files."""
         with pytest.raises(FileNotFoundError):
             read_files(["/nonexistent/file1.txt", "/nonexistent/file2.txt"])
-
-
-
 
 
 class TestWriteFile:
@@ -246,6 +273,35 @@ class TestWriteFile:
             assert result == ""
             with open(temp_path, 'r') as f:
                 assert f.read() == "Hello Python"
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_write_file_negative_seek_overwrite(self):
+        """Verify write_file overwrites from negative seek position."""
+        temp_dir = tempfile.mkdtemp()
+        temp_path = os.path.join(temp_dir, "test_neg_seek.txt")
+        
+        try:
+            with open(temp_path, 'w') as f:
+                f.write("abcdef")
+            
+            result = write_file(temp_path, "XX", seek=-2, to_insert=False)
+            assert result == ""
+            with open(temp_path, 'r') as f:
+                assert f.read() == "abcdXX"
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_write_file_exception_returns_error(self):
+        """Verify write_file returns error string when exception occurs."""
+        temp_dir = tempfile.mkdtemp()
+        temp_path = os.path.join(temp_dir, "test_error.txt")
+        
+        try:
+            with patch('topsailai.tools.file_tool._file_tool.write_text', side_effect=IOError("mock error")):
+                result = write_file(temp_path, "content")
+                assert isinstance(result, str)
+                assert "mock error" in result
         finally:
             shutil.rmtree(temp_dir)
 
@@ -460,16 +516,68 @@ class TestReplaceLinesInFile:
                 f.write("AAA\nBBB\nCCC\n")
             
             result = replace_lines_in_file(temp_path, [(2, "")])
-            lines = result.split('\n')
-            assert "BBB" not in result
+            # result is diff output, deleted line appears with - prefix
+            assert "- BBB" in result
         finally:
             shutil.rmtree(temp_dir)
 
     def test_replace_lines_in_file_nonexistent(self):
-        """Verify replace_lines_in_file returns error for nonexistent file."""
-        result = replace_lines_in_file("/nonexistent/file.txt", [(1, "content")])
-        assert isinstance(result, str)
-        assert len(result) > 0
+        """Verify replace_lines_in_file raises Exception for nonexistent file."""
+        with pytest.raises(Exception):
+            replace_lines_in_file("/nonexistent/file.txt", [(1, "content")])
+
+    def test_replace_lines_in_file_dict_style(self):
+        """Verify replace_lines_in_file accepts dict-style line items."""
+        temp_dir = tempfile.mkdtemp()
+        temp_path = os.path.join(temp_dir, "test_dict.txt")
+        
+        try:
+            with open(temp_path, 'w') as f:
+                f.write("AAA\nBBB\nCCC\n")
+            
+            result = replace_lines_in_file(temp_path, [{"line_number": 2, "content": "XXX"}])
+            assert "XXX" in result
+            with open(temp_path, 'r') as f:
+                content = f.read()
+                assert "XXX" in content
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_replace_lines_in_file_newline_preserved(self):
+        """Verify replace_lines_in_file preserves newline in new content."""
+        temp_dir = tempfile.mkdtemp()
+        temp_path = os.path.join(temp_dir, "test_newline.txt")
+        
+        try:
+            with open(temp_path, 'w') as f:
+                f.write("AAA\nBBB\nCCC\n")
+            
+            result = replace_lines_in_file(temp_path, [(2, "XXX\n")])
+            with open(temp_path, 'r') as f:
+                content = f.read()
+                # Should not have double newlines
+                assert "XXX\n\n" not in content
+                assert "XXX\n" in content
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_replace_lines_in_file_no_trailing_newline(self):
+        """Verify replace_lines_in_file handles file without trailing newline."""
+        temp_dir = tempfile.mkdtemp()
+        temp_path = os.path.join(temp_dir, "test_no_nl.txt")
+        
+        try:
+            with open(temp_path, 'w') as f:
+                f.write("AAA\nBBB")  # No trailing newline
+            
+            result = replace_lines_in_file(temp_path, [(1, "XXX")])
+            with open(temp_path, 'r') as f:
+                content = f.read()
+                # Last line should still not have trailing newline
+                assert not content.endswith("\n")
+                assert "XXX" in content
+        finally:
+            shutil.rmtree(temp_dir)
 
 
 class TestInsertDataToFile:
@@ -485,9 +593,9 @@ class TestInsertDataToFile:
                 f.write("AAA\nBBB\nCCC\n")
             
             result = insert_data_to_file(temp_path, "XXX", 1, "after")
+            # result is diff output, not raw file content
             assert "XXX" in result
-            lines = result.split('\n')
-            assert lines[1] == "XXX"
+            assert "---" in result
         finally:
             shutil.rmtree(temp_dir)
 
@@ -502,8 +610,7 @@ class TestInsertDataToFile:
             
             result = insert_data_to_file(temp_path, "XXX", 2, "before")
             assert "XXX" in result
-            lines = result.split('\n')
-            assert lines[1] == "XXX"
+            assert "---" in result
         finally:
             shutil.rmtree(temp_dir)
 
@@ -518,8 +625,7 @@ class TestInsertDataToFile:
             
             result = insert_data_to_file(temp_path, "XXX", 1, "before")
             assert "XXX" in result
-            lines = result.split('\n')
-            assert lines[0] == "XXX"
+            assert "---" in result
         finally:
             shutil.rmtree(temp_dir)
 
@@ -534,6 +640,35 @@ class TestInsertDataToFile:
             
             result = insert_data_to_file(temp_path, "XXX", 100, "after")
             assert "XXX" in result
+            assert "---" in result
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_insert_data_to_file_empty_file(self):
+        """Verify insert_data_to_file returns empty string for empty file."""
+        temp_dir = tempfile.mkdtemp()
+        temp_path = os.path.join(temp_dir, "test_empty.txt")
+        
+        try:
+            with open(temp_path, 'w') as f:
+                f.write("")
+            
+            result = insert_data_to_file(temp_path, "XXX", 1, "after")
+            assert result == ""
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_insert_data_to_file_invalid_position_raises(self):
+        """Verify insert_data_to_file raises ValueError for invalid before_or_after."""
+        temp_dir = tempfile.mkdtemp()
+        temp_path = os.path.join(temp_dir, "test_invalid.txt")
+        
+        try:
+            with open(temp_path, 'w') as f:
+                f.write("AAA\n")
+            
+            with pytest.raises(ValueError):
+                insert_data_to_file(temp_path, "XXX", 1, "invalid")
         finally:
             shutil.rmtree(temp_dir)
 
@@ -611,6 +746,24 @@ class TestIsNeedTruncate:
         assert is_need_truncate("TXT") is True
 
 
+class TestIsNeedTruncateEdgeCases:
+    """Test is_need_truncate edge cases."""
+
+    def test_is_need_truncate_all_whitelist(self):
+        """Verify is_need_truncate returns False when whitelist is ['*']."""
+        with patch('topsailai.tools.file_tool.WHITE_LIST_NO_TRUNCATE_EXT', ['*']):
+            assert is_need_truncate("txt") is False
+            assert is_need_truncate("py") is False
+            assert is_need_truncate("any") is False
+
+    def test_is_need_truncate_empty_whitelist(self):
+        """Verify is_need_truncate returns True when whitelist is empty."""
+        with patch('topsailai.tools.file_tool.WHITE_LIST_NO_TRUNCATE_EXT', []):
+            assert is_need_truncate("py") is True
+            assert is_need_truncate("md") is True
+            assert is_need_truncate("txt") is True
+
+
 class TestToolsDictionary:
     """Test TOOLS dictionary structure."""
 
@@ -622,7 +775,7 @@ class TestToolsDictionary:
         """Verify TOOLS contains expected function keys."""
         expected_keys = {
             "write_file", "read_file", "append_file", "check_files_existing",
-            "mkdirs", "replace_lines_in_file", "insert_data_to_file",
+            "mkdirs", "overwrite_lines_in_file", "insert_data_to_file",
             "list_dirs", "read_files"
         }
         for key in expected_keys:
@@ -640,6 +793,43 @@ class TestToolsDictionary:
     def test_tools_read_file_is_same_function(self):
         """Verify TOOLS read_file is the actual function."""
         assert TOOLS["read_file"] is read_file
+
+
+class TestToolsInfo:
+    """Test TOOLS_INFO dictionary structure."""
+
+    def test_tools_info_is_dict(self):
+        """Verify TOOLS_INFO is a dictionary."""
+        assert isinstance(TOOLS_INFO, dict)
+
+    def test_tools_info_contains_check_files_existing(self):
+        """Verify TOOLS_INFO contains check_files_existing entry."""
+        assert "check_files_existing" in TOOLS_INFO
+        info = TOOLS_INFO["check_files_existing"]
+        assert "type" in info
+        assert info["type"] == "function"
+        assert "function" in info
+
+
+class TestFileRoTools:
+    """Test FILE_RO_TOOLS dictionary."""
+
+    def test_file_ro_tools_is_dict(self):
+        """Verify FILE_RO_TOOLS is a dictionary."""
+        assert isinstance(FILE_RO_TOOLS, dict)
+
+    def test_file_ro_tools_contains_expected_keys(self):
+        """Verify FILE_RO_TOOLS contains expected read-only keys."""
+        expected_keys = {
+            "read_file", "check_files_existing", "list_dirs", "read_files"
+        }
+        for key in expected_keys:
+            assert key in FILE_RO_TOOLS, f"Missing key: {key}"
+
+    def test_file_ro_tools_all_callable(self):
+        """Verify all FILE_RO_TOOLS values are callable."""
+        for key, value in FILE_RO_TOOLS.items():
+            assert callable(value), f"Non-callable value for key: {key}"
 
 
 class TestIntegration:
@@ -683,3 +873,7 @@ class TestIntegration:
         assert hasattr(file_tool, 'read_file')
         assert hasattr(file_tool, 'write_file')
         assert hasattr(file_tool, 'TOOLS')
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -5,6 +5,7 @@ from topsailai.tools.file_tool_utils.file_read_line import (
     read_file_with_context,
     read_file_around_line,
     read_file_lines,
+    TOOLS,
 )
 
 
@@ -147,6 +148,22 @@ class TestReadFileWithContext:
         assert len(lines) == 2
         assert "1:abc123" in lines[0]
         assert "3:abc456" in lines[1]
+
+    def test_case_sensitive_true_string(self, tmp_path):
+        """Test case_sensitive with string 'true' input handling."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("LINE1\nLine2\nline3\n")
+
+        result = read_file_with_context(str(test_file), "line1", context_num=0, case_sensitive="true")
+        assert result == ""  # No match because case doesn't match
+
+    def test_case_sensitive_false_string(self, tmp_path):
+        """Test case_sensitive with string 'false' input handling."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("LINE1\nLine2\nline3\n")
+
+        result = read_file_with_context(str(test_file), "line1", context_num=0, case_sensitive="false")
+        assert "1:LINE1" in result  # Match found because case insensitive
 
 
 class TestReadFileAroundLine:
@@ -339,6 +356,54 @@ class TestReadFileLines:
         for line in lines:
             assert "-" in line
             assert ":" not in line  # No ':' marker
+
+    def test_start_num_zero(self, tmp_path):
+        """Test start_num=0 is treated as 1."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("line1\nline2\nline3\n")
+
+        result = read_file_lines(str(test_file), 0, 2)
+        lines = result.split("\n")
+
+        assert len(lines) == 2
+        assert "1-line1" in lines[0]
+        assert "2-line2" in lines[1]
+
+    def test_string_numeric_inputs(self, tmp_path):
+        """Test string numeric inputs for start_num and end_num."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("line1\nline2\nline3\n")
+
+        result = read_file_lines(str(test_file), "2", "3")
+        lines = result.split("\n")
+
+        assert len(lines) == 2
+        assert "2-line2" in lines[0]
+        assert "3-line3" in lines[1]
+
+    def test_end_num_zero(self, tmp_path):
+        """Test end_num=0 reads to end of file."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("line1\nline2\nline3\n")
+
+        result = read_file_lines(str(test_file), 1, 0)
+        lines = result.split("\n")
+
+        assert len(lines) == 3
+        assert "1-line1" in lines[0]
+        assert "2-line2" in lines[1]
+        assert "3-line3" in lines[2]
+
+
+class TestTools:
+    """Test TOOLS dictionary."""
+
+    def test_tools_contains_expected_keys(self):
+        """Verify TOOLS dictionary contains expected keys."""
+        assert "read_file_around_line" in TOOLS
+        assert "read_file_lines" in TOOLS
+        assert "read_file_with_context" in TOOLS
+        assert len(TOOLS) == 3
 
 
 if __name__ == "__main__":

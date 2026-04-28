@@ -22,6 +22,7 @@ from topsailai.utils import (
 
 from topsailai.tools.file_tool_utils import (
     file_read_line,
+    file_diff,
 )
 
 # lower of letter
@@ -310,9 +311,9 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]], **_):
             - content (str): The new content for that line, pass null str will delete this line
 
     Returns:
-        str: file content on success, error message on failure
+        str: diff content on success, error message on failure
     """
-    try:
+    with _file_tool.ctxm_temp_file("") as (tmp_file, fp):
         # Check if file exists
         if not os.path.exists(file_path):
             raise Exception(f"File not found: {file_path}")
@@ -324,6 +325,10 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]], **_):
         # Read the entire file content to preserve line endings
         with open(file_path, 'r', encoding='utf-8') as file:
             content = file.read()
+
+        if content:
+            fp.write(content)
+            fp.flush()
 
         # Split content into lines while preserving line endings
         lines_content = content.splitlines(keepends=True)
@@ -397,11 +402,12 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]], **_):
         with open(file_path, 'w', encoding='utf-8') as file:
             file.write(new_content)
             file.flush()
-        return new_content
-    except Exception as e:
-        return str(e)
 
-def insert_data_to_file(file_path: str, data: str, line_num: int, before_or_after: str = "after"):
+        diff_content = file_diff.compare_files_strived(tmp_file, file_path)
+        return diff_content
+
+
+def _insert_data_to_file(file_path: str, data: str, line_num: int, before_or_after: str = "after"):
     """
     Insert data(ends with newline) to file before/after line number.
 
@@ -450,6 +456,35 @@ def insert_data_to_file(file_path: str, data: str, line_num: int, before_or_afte
         f.flush()
 
     return new_content
+
+def insert_data_to_file(file_path: str, data: str, line_num: int, before_or_after: str = "after"):
+    """
+    Insert data(ends with newline) to file before/after line number.
+
+    Args:
+        file_path (str): Path to the file to modify
+        data (str): Data to insert
+        line_num (int): Line number to insert before/after (1-based)
+        before_or_after (str, optional): Whether to insert "before" or "after" the line. Defaults to "after".
+
+    Returns:
+        str: diff content on success, error message on failure
+    """
+    with _file_tool.ctxm_temp_file("") as (tmp_file, fp):
+        with open(file_path, encoding='utf-8') as f1:
+            content = f1.read()
+
+        if content:
+            fp.write(content)
+            fp.flush()
+
+        _insert_data_to_file(file_path=file_path, data=data, line_num=line_num, before_or_after=before_or_after)
+
+        if not content:
+            return ""
+
+        diff_content = file_diff.compare_files_strived(tmp_file, file_path)
+        return diff_content
 
 
 def list_dir(folder_path:str) -> list[str]:
