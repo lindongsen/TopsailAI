@@ -8,6 +8,7 @@
 import os
 import time
 import fcntl
+import shutil
 from pathlib import Path
 from contextlib import contextmanager
 
@@ -430,4 +431,44 @@ def ctxm_wait_flock(file_path, timeout=60, to_delete_lock_file=True):
     logger.warning("wait flock timeout: [%s] [%s]", file_path, timeout)
     yield None
 
+    return
+
+@contextmanager
+def ctxm_backup_file(file_path):
+    """Context manager that rotates backups and copies the given file to .bak0.
+
+    Rotates existing backup files (.bak0 through .bak8) upward by one index,
+    dropping the oldest .bak9 if it exists. Then copies the source file to
+    a fresh .bak0. Keeps at most 10 backup files per source file.
+
+    If the source file does not exist, yields None and skips backup.
+
+    Args:
+        file_path (str): Full path to the file to back up.
+
+    Yields:
+        str or None: Full path to the new .bak0 backup file, or None if the
+                     source file does not exist.
+
+    Examples:
+        >>> with ctxm_backup_file("/tmp/config.json") as bak:
+        ...     if bak:
+        ...         print(f"backup created: {bak}")
+        backup created: /tmp/config.json.bak0
+    """
+
+    if not os.path.exists(file_path):
+        yield None
+        return
+
+    # Rotate existing backups outward: bak8->bak9, ..., bak0->bak1
+    for i in range(8, -1, -1):
+        old_path = f"{file_path}.bak{i}"
+        new_path = f"{file_path}.bak{i + 1}"
+        if os.path.exists(old_path):
+            os.replace(old_path, new_path)
+
+    bak_file_path = f"{file_path}.bak0"
+    shutil.copy2(file_path, bak_file_path)
+    yield bak_file_path
     return
