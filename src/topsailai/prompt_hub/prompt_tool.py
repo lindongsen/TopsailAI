@@ -56,6 +56,12 @@ def get_prompt_file_path(relative_path):
         file_path = os.path.join(
             os.path.dirname(__file__), relative_path
         )
+    if not os.path.exists(file_path):
+        if relative_path[0] == '.':
+            file_path = os.path.join(
+                os.getenv("TOPSAILAI_WORK_FOLDER", ""),
+                relative_path,
+            )
     return file_path
 
 def exists_prompt_file(relative_path) -> bool:
