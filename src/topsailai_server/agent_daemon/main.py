@@ -240,8 +240,19 @@ def main():
             _daemon.shutdown()
         sys.exit(0)
 
+    def sigchld_handler(signum, frame):
+        """Reap terminated child processes to prevent zombie processes."""
+        while True:
+            try:
+                pid, status = os.waitpid(-1, os.WNOHANG)
+                if pid == 0:
+                    break
+            except ChildProcessError:
+                break
+
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGCHLD, sigchld_handler)
 
     try:
         _daemon.initialize()

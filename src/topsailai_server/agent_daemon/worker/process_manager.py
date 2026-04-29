@@ -172,6 +172,12 @@ class WorkerManager:
         finally:
             lock.release()
 
+    def _reap_finished_processes(self):
+        """Remove finished processes from running_processes to free resources."""
+        for session_id, process in list(self.running_processes.items()):
+            if process.poll() is not None:
+                del self.running_processes[session_id]
+
     def start_summarizer(self, session_id: str, task: str) -> Optional[subprocess.Popen]:
         """Start summarizer for a session.
         
@@ -183,6 +189,7 @@ class WorkerManager:
             subprocess.Popen object on success, None on failure
         """
         try:
+            self._reap_finished_processes()
             # Get summarizer script path from config
             summarizer_script = self.config.summarizer_script
             if not summarizer_script:
