@@ -3,7 +3,7 @@
   Email: lin_dongsen@126.com
   Created: 2025-12-11
   Purpose: Environment prompt generation module for TopsailAI context management
-  
+
   This module provides classes and functions to generate environment-related prompts
   including system information, current date, and custom environment prompts.
 '''
@@ -18,10 +18,10 @@ from topsailai.utils import (
 def get_system_info() -> dict:
     """
     Retrieve key system information including OS details.
-    
+
     This function collects system information by executing system commands
     and reading system files to gather details about the operating system.
-    
+
     Returns:
         dict: A dictionary containing system information with keys:
             - 'uname': Output from 'uname -a' command (system architecture and version)
@@ -45,12 +45,12 @@ def get_system_info() -> dict:
 class _Base(object):
     """
     Base class for prompt generators.
-    
+
     This abstract class defines the interface for all prompt generator classes.
     Subclasses must implement the 'prompt' property to provide specific
     prompt content.
     """
-    
+
     def __init__(self):
         """Initialize the base prompt generator."""
         pass
@@ -58,7 +58,7 @@ class _Base(object):
     def __str__(self):
         """
         String representation of the prompt generator.
-        
+
         Returns:
             str: The prompt content when object is converted to string
         """
@@ -68,10 +68,10 @@ class _Base(object):
     def prompt(self) -> str:
         """
         Abstract property for prompt content.
-        
+
         Returns:
             str: The generated prompt content
-            
+
         Raises:
             NotImplementedError: Must be implemented by subclasses
         """
@@ -81,29 +81,29 @@ class _Base(object):
 class CurrentDate(_Base):
     """
     Prompt generator for current date information.
-    
+
     This class generates a prompt containing the current date in ISO 8601 format.
     """
-    
+
     @property
     def prompt(self) -> str:
         """
         Generate prompt with current date.
-        
+
         Returns:
             str: Formatted string containing current date
         """
-        return f"""CurrentDate: {time_tool.get_current_date(True)}"""
+        return f"""CurrentDate: {time_tool.get_current_day()}"""
 
 
 class CurrentSystem(_Base):
     """
     Prompt generator for system information.
-    
+
     This class generates a prompt containing system information
     collected from the operating system.
     """
-    
+
     # Class-level system info to avoid repeated system calls
     system_info = get_system_info()
 
@@ -111,7 +111,7 @@ class CurrentSystem(_Base):
     def prompt(self) -> str:
         """
         Generate prompt with system information.
-        
+
         Returns:
             str: Formatted string containing system information
                  with each item on a separate line
@@ -124,31 +124,44 @@ class CurrentSystem(_Base):
         return result
 
 
+def get_prompt_file_path(relative_path:str) -> str:
+    file_path = relative_path
+    if not os.path.exists(file_path):
+        if relative_path[0] == '.' or relative_path[0] != '/':
+            file_path = os.path.join(
+                os.getenv("TOPSAILAI_WORK_FOLDER", ""),
+                relative_path,
+            )
+    if os.path.exists(file_path):
+        return file_path
+    return ""
+
+
 def generate_prompt_for_env() -> str:
     """
     Generate a comprehensive environment prompt for AI context.
-    
+
     This function combines date, system information, and optional
     custom environment prompts into a single formatted string.
-    
+
     The custom environment prompt can be provided via the ENV_PROMPT
     environment variable, which can be either:
     - A file path (if starts with '.' or '/') - content will be read
     - Direct text content
-    
+
     Returns:
         str: Complete environment prompt with header and all components
     """
-    
+
     # Get custom environment prompt from environment variable
     env_prompt = os.getenv("ENV_PROMPT") or ""
-    
+
     # If ENV_PROMPT is a file path, read its content
     if env_prompt:
-        # Check if it's a file path (starts with . or /)
-        if env_prompt[0] in ['.', '/']:
-            with open(env_prompt, encoding="utf-8") as fd:
-                env_prompt = fd.read()
+        env_prompt_file = get_prompt_file_path(env_prompt)
+        if env_prompt_file:
+            with open(env_prompt_file, encoding='utf-8') as fp:
+                env_prompt = fp.read()
 
     # Combine all prompt components with proper formatting
     return "# Environment\n" + "\n".join(
