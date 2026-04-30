@@ -1,3 +1,29 @@
 # Project Options for AI
 programming_language: python
 workspace: /root/ai/TopsailAI/src/topsailai
+
+workspace_project_structure: |
+  - features/ # FeaturesFolder, Store various factual feature information
+    - feature-xxx.md
+
+  - issues/ # IssuesFolder, Store various issue files, Put the processing results of the issue into the corresponding subfolders
+    - done/ # the issues have fixed
+    - undo/ # the issues can be ignored
+    - issue-xxx.md
+
+  - docs/ # DocsFolder, Store documents
+    - Environment_Variables.md # This document provides a comprehensive reference for all environment variables used
+    - cases/ # Store various test/use cases, When you are making a test plan, you MUST read all the files in this folder
+      - UserCase_xxx.md
+      - TestCase_xxx.md
+
+  - task/ # The last/current task info, The Folder's maintainer is AI
+    - Code_Improvement_Proposal.md
+    - Unit_Test_Improvement_Proposal.md
+    - Integration_Test_Improvement_Proposal.md
+    - Test_Execution_Checklist.md
+
+  - tests/ # TestsFolder, Store testing code files
+    - unit/ # Some unit tests should be placed in the same folder as the source code, such as golang
+    - integration/ # (integration test) or (live integration test)
+    - e2e/ # Complete or auxiliary scripts for E2E

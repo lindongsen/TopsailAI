@@ -1,8 +1,5 @@
 ---
 programming_language: python
-workspace: /root/ai/TopsailAI/src/topsailai
-reviewer: km-k25
-developer: mm-m25
 ---
 
 # Topsailai Agent
