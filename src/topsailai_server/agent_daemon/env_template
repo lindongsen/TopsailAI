@@ -51,7 +51,13 @@ TOPSAILAI_AGENT_DAEMON_HOST=0.0.0.0
 # Default: 7373
 # Example: 7373, 8080, 3000
 TOPSAILAI_AGENT_DAEMON_PORT=7373
-
+# TOPSAILAI_AGENT_DAEMON_DEFAULT_ADMIN_KEY
+# Description: Default admin API key for auto-initialization on first startup.
+#              If not set, a random admin API key will be generated automatically.
+#              This key has full admin privileges (all sessions access, API key management).
+# Default: None (auto-generated random key)
+# Example: your-secure-admin-key-12345
+#TOPSAILAI_AGENT_DAEMON_DEFAULT_ADMIN_KEY=
 # TOPSAILAI_AGENT_DAEMON_DB_URL
 # Description: Database connection URL for SQLAlchemy
 # Default: sqlite:///topsailai_agent_daemon.db (relative to working directory)
@@ -61,16 +67,11 @@ TOPSAILAI_AGENT_DAEMON_PORT=7373
 #   - PostgreSQL: postgresql://user:password@localhost:5432/dbname
 #   - MySQL: mysql+pymysql://user:password@localhost:3306/dbname
 TOPSAILAI_AGENT_DAEMON_DB_URL=sqlite:///topsailai_agent_daemon.db
-
 # =============================================================================
 # Message Control
 # =============================================================================
-
 # split by ';' or ','
 TOPSAILAI_AGENT_DAEMON_UNPROCESSED_MSG_INCLUDED_ROLES=""
-
-# =============================================================================
-# ADDITIONAL NOTES
 # =============================================================================
 
 # Worker Scripts Requirements:

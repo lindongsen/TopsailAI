@@ -5,12 +5,12 @@
   Purpose: Storage module for agent_daemon
 '''
 
-from typing import Optional
 from sqlalchemy import Engine
 from sqlalchemy.orm import declarative_base
 
 from .session_manager import SessionData, SessionStorageBase, SessionSQLAlchemy
 from .message_manager import MessageData, MessageStorageBase, MessageSQLAlchemy
+from .api_key_manager import ApiKeyData, ApiKeySessionData, RateLimitLogData, ApiKeyStorageBase, ApiKeySQLAlchemy
 from .migration import run_migrations, DatabaseMigrator
 
 # Create declarative base for table creation
@@ -21,14 +21,15 @@ class Storage:
     """
     Storage Facade Class
     
-    Provides a unified interface for database operations by wrapping both
-    SessionSQLAlchemy and MessageSQLAlchemy.
+    Provides a unified interface for database operations by wrapping
+    SessionSQLAlchemy, MessageSQLAlchemy, and ApiKeySQLAlchemy.
     
     This class is used by API routes and cron jobs to access database operations.
     
     Attributes:
         session: SessionSQLAlchemy instance for session operations
         message: MessageSQLAlchemy instance for message operations
+        api_key: ApiKeySQLAlchemy instance for API key operations
     
     Example:
         >>> from sqlalchemy import create_engine
@@ -42,11 +43,14 @@ class Storage:
         >>> 
         >>> # Access message operations
         >>> messages = storage.message.get_by_session("session_123")
+        >>> 
+        >>> # Access API key operations
+        >>> api_key = storage.api_key.get_api_key_by_value("key_123")
     """
     
     def __init__(self, engine: Engine, auto_migrate: bool = True):
         """
-        Initialize Storage with SQLAlchemy engine.
+        Initialize the Storage facade.
         
         Args:
             engine: SQLAlchemy Engine instance for database connections
@@ -57,13 +61,17 @@ class Storage:
         # Run auto-migration if enabled
         if auto_migrate:
             try:
-                run_migrations(engine)
+                from .session_manager.sql import Session
+                from .message_manager.sql import Message
+                from .api_key_manager.sql import ApiKey, ApiKeySession, RateLimitLog
+                Base.metadata.create_all(self._engine)
             except (TypeError, AttributeError):
                 # Handle mock engines in tests that don't support inspection
                 pass
         
         self.session = SessionSQLAlchemy(engine)
         self.message = MessageSQLAlchemy(engine)
+        self.api_key = ApiKeySQLAlchemy(engine)
     
     @property
     def engine(self) -> Engine:
@@ -78,17 +86,24 @@ class Storage:
         """
         from .session_manager.sql import Session
         from .message_manager.sql import Message
+        from .api_key_manager.sql import ApiKey, ApiKeySession, RateLimitLog
         Base.metadata.create_all(self._engine)
 
 
 __all__ = [
     'Storage',
+    'Base',
     'SessionData',
     'SessionStorageBase',
     'SessionSQLAlchemy',
     'MessageData',
     'MessageStorageBase',
     'MessageSQLAlchemy',
+    'ApiKeyData',
+    'ApiKeySessionData',
+    'RateLimitLogData',
+    'ApiKeyStorageBase',
+    'ApiKeySQLAlchemy',
     'run_migrations',
     'DatabaseMigrator'
 ]

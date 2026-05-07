@@ -27,7 +27,10 @@ DEFAULT_SESSION_ID = socket.gethostname()
 
 def do_client_health(args):
     """Check server health"""
-    client = SessionClient(base_url=f"http://{args.host}:{args.port}")
+    client = SessionClient(
+        base_url=f"http://{args.host}:{args.port}",
+        api_key=getattr(args, 'api_key', None)
+    )
     
     try:
         if client.health_check():
@@ -44,7 +47,10 @@ def do_client_health(args):
 
 def do_client_list_sessions(args):
     """List sessions"""
-    client = SessionClient(base_url=f"http://{args.host}:{args.port}")
+    client = SessionClient(
+        base_url=f"http://{args.host}:{args.port}",
+        api_key=getattr(args, 'api_key', None)
+    )
     
     try:
         logger.info("Listing sessions")
@@ -74,7 +80,10 @@ def do_client_list_sessions(args):
 
 def do_client_get_session(args):
     """Get a single session by ID"""
-    client = SessionClient(base_url=f"http://{args.host}:{args.port}")
+    client = SessionClient(
+        base_url=f"http://{args.host}:{args.port}",
+        api_key=getattr(args, 'api_key', None)
+    )
     
     try:
         logger.info("Getting session %s", args.session_id)
@@ -88,7 +97,10 @@ def do_client_get_session(args):
 
 def do_client_delete_sessions(args):
     """Delete sessions"""
-    client = SessionClient(base_url=f"http://{args.host}:{args.port}")
+    client = SessionClient(
+        base_url=f"http://{args.host}:{args.port}",
+        api_key=getattr(args, 'api_key', None)
+    )
     
     # Get session IDs from positional args or --session-ids option
     session_ids = []
@@ -115,7 +127,10 @@ def do_client_delete_sessions(args):
 
 def do_client_process_session(args):
     """Process pending messages for a session"""
-    client = SessionClient(base_url=f"http://{args.host}:{args.port}")
+    client = SessionClient(
+        base_url=f"http://{args.host}:{args.port}",
+        api_key=getattr(args, 'api_key', None)
+    )
     
     try:
         logger.info("Processing session %s", args.session_id)

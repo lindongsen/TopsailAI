@@ -11,12 +11,14 @@ import os
 import socket
 import io
 import traceback
+import secrets
 from sqlalchemy import create_engine, text
 
 from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.configer import get_config
 from topsailai_server.agent_daemon.storage.session_manager import SessionSQLAlchemy
 from topsailai_server.agent_daemon.storage.message_manager import MessageSQLAlchemy
+from topsailai_server.agent_daemon.storage.api_key_manager import ApiKeySQLAlchemy
 from topsailai_server.agent_daemon.storage.migration import run_migrations
 from topsailai_server.agent_daemon.worker import WorkerManager
 from topsailai_server.agent_daemon.croner import create_scheduler
@@ -31,6 +33,7 @@ class AgentDaemon:
         self.engine = None
         self.session_storage = None
         self.message_storage = None
+        self.api_key_storage = None
         self.worker_manager = None
         self.scheduler = None
         self.app = None
@@ -80,7 +83,11 @@ class AgentDaemon:
         # Initialize storage
         self.session_storage = SessionSQLAlchemy(self.engine)
         self.message_storage = MessageSQLAlchemy(self.engine)
+        self.api_key_storage = ApiKeySQLAlchemy(self.engine)
         logger.info("Storage initialized")
+
+        # Initialize default admin API key if none exists
+        self._init_default_admin_key()
 
         # Initialize worker manager
         self.worker_manager = WorkerManager(self.config)
@@ -103,6 +110,48 @@ class AgentDaemon:
             self.scheduler
         )
         logger.info("FastAPI application created")
+
+    def _init_default_admin_key(self):
+        """
+        Initialize a default admin API key on first startup.
+
+        If no admin API key exists in the database, create one.
+        Uses TOPSAILAI_AGENT_DAEMON_DEFAULT_ADMIN_KEY env var if set,
+        otherwise generates a random secure key.
+        Logs the admin key so the administrator can see it.
+        """
+        try:
+            # Check if any admin API key already exists
+            admin_keys = self.api_key_storage.list_api_keys(role="admin", limit=1)
+            if admin_keys:
+                logger.info("Admin API key already exists, skipping default initialization")
+                return
+
+            # Get default admin key from environment or generate random one
+            default_key = os.getenv("TOPSAILAI_AGENT_DAEMON_DEFAULT_ADMIN_KEY")
+            if default_key:
+                api_key_value = default_key
+                logger.info("Using configured default admin API key from environment")
+            else:
+                # Generate a random 32-byte hex string (64 characters)
+                api_key_value = secrets.token_hex(32)
+                logger.info("Generated random default admin API key")
+
+            # Create the admin API key with unlimited rate limit
+            self.api_key_storage.create_api_key(
+                api_key=api_key_value,
+                name="Default Admin",
+                role="admin",
+                rate_limit=0,
+                is_active=True
+            )
+
+            logger.info("Default admin API key created successfully")
+            logger.info("Admin API Key: %s", api_key_value)
+            logger.info("Please save this key securely - it will not be shown again")
+
+        except Exception as e:
+            logger.exception("Failed to initialize default admin API key: %s", e)
 
     def _check_port_available(self, host: str, port: int) -> bool:
         """Check if the port is available for binding"""

@@ -441,7 +441,8 @@ class TestCLIMessageOperations:
             limit=1000,
             sort_key='create_time',
             order_by='desc',
-            verbose=False
+            verbose=False,
+            processed_msg_id=None
         )
         result = do_client_get_messages(args)
         
@@ -464,7 +465,8 @@ class TestCLIMessageOperations:
             limit=50,
             sort_key='update_time',
             order_by='asc',
-            verbose=True
+            verbose=True,
+            processed_msg_id=None
         )
         result = do_client_get_messages(args)
         
@@ -578,7 +580,7 @@ class TestCLIEdgeCases:
         result = do_client_health(args)
         
         assert result is True
-        mock_client_class.assert_called_once_with(base_url='http://192.168.1.100:8080')
+        mock_client_class.assert_called_once_with(base_url='http://192.168.1.100:8080', api_key=None)
     
     @patch('topsailai_server.agent_daemon.client.session_do.SessionClient')
     def test_list_sessions_empty_session_ids(self, mock_client_class):

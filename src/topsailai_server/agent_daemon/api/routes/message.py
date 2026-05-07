@@ -7,7 +7,7 @@
 
 from typing import Optional
 from datetime import datetime
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
@@ -22,6 +22,14 @@ from topsailai_server.agent_daemon.validator import (
     validate_role,
     validate_msg_id,
 )
+from topsailai_server.agent_daemon.api.middleware.auth import (
+    get_current_api_key,
+    check_rate_limit,
+    check_session_permission,
+    verify_session_permission,
+    verify_rate_limit,
+)
+from topsailai_server.agent_daemon.storage.api_key_manager.base import ApiKeyData
 
 
 # Router
@@ -81,6 +89,9 @@ class MessageResponse(BaseModel):
 @router.post("", response_model=ApiResponse)
 async def receive_message(
     request: ReceiveMessageRequest,
+    api_key: ApiKeyData = Depends(get_current_api_key),
+    _rate_limit: None = Depends(check_rate_limit),
+    _permission: None = Depends(check_session_permission),
     storage: Storage = Depends(get_storage),
     worker_manager: WorkerManager = Depends(get_worker_manager)
 ) -> ApiResponse:
@@ -88,10 +99,11 @@ async def receive_message(
     Receive a new message and process it if needed.
 
     This endpoint:
-    1. Saves the message to storage
-    2. Creates session if it doesn't exist
-    3. Checks if the session's processed_msg_id is at the latest message
-    4. If not, triggers the processor to handle unprocessed messages
+    1. Validates API key permission and rate limit for the target session
+    2. Saves the message to storage
+    3. Creates session if it doesn't exist
+    4. Checks if the session's processed_msg_id is at the latest message
+    5. If not, triggers the processor to handle unprocessed messages
     """
     msg_id = None
     try:
@@ -99,7 +111,11 @@ async def receive_message(
         validate_session_id(request.session_id)
         validate_message_content(request.message)
         validate_role(request.role)
-        
+
+        # Verify permission and rate limit for body-based session_id
+        verify_session_permission(api_key, request.session_id)
+        verify_rate_limit(api_key, request.session_id)
+
         # Create message data
         now = datetime.now()
         message_data = MessageData(
@@ -149,9 +165,11 @@ async def receive_message(
     except ValueError as e:
         logger.warning("Validation error in receive_message: %s", e)
         return error_response(message=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Error receiving message: %s", e)
-        return error_response(message=f"Failed to receive message: {str(e)}")
+        return error_response(message="Failed to receive message: %s" % str(e))
 
 
 @router.get("", response_model=ApiResponse)
@@ -164,6 +182,8 @@ async def retrieve_messages(
     sort_key: str = "create_time",
     order_by: str = "desc",
     processed_msg_id: Optional[str] = None,
+    api_key: ApiKeyData = Depends(get_current_api_key),
+    _permission: None = Depends(check_session_permission),
     storage: Storage = Depends(get_storage)
 ) -> ApiResponse:
     """
@@ -182,7 +202,7 @@ async def retrieve_messages(
     try:
         # Validate session_id
         validate_session_id(session_id)
-        
+
         # Parse datetime strings if provided
         start_dt = None
         end_dt = None
@@ -233,6 +253,8 @@ async def retrieve_messages(
     except ValueError as e:
         logger.warning("Validation error in retrieve_messages: %s", e)
         return error_response(message=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Error retrieving messages: %s", e)
-        return error_response(message=f"Failed to retrieve messages: {str(e)}")
+        return error_response(message="Failed to retrieve messages: %s" % str(e))

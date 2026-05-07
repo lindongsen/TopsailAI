@@ -9,10 +9,12 @@ from .__base import CronJobBase
 from .message_consumer import MessageConsumer
 from .message_summarizer import MessageSummarizer
 from .session_cleaner import SessionCleaner
+from .rate_limit_cleaner import RateLimitCleaner
 
 __all__ = [
     'CronJobBase',
     'MessageConsumer',
     'MessageSummarizer',
-    'SessionCleaner'
+    'SessionCleaner',
+    'RateLimitCleaner'
 ]

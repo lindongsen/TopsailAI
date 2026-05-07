@@ -150,4 +150,18 @@ def create_scheduler(session_storage, message_storage, worker_manager, config) -
 
     scheduler.add_job("session_cleaner", monthly_cleaner, interval_seconds=86400, run_at_start=False)
 
+    # Rate Limit Log Cleaner - hourly (3600 seconds)
+    from topsailai_server.agent_daemon.croner.jobs import RateLimitCleaner
+    rate_limit_cleaner_job = RateLimitCleaner(
+        interval_seconds=3600,
+        storage=storage,
+        worker_manager=worker_manager
+    )
+    scheduler.add_job(
+        "rate_limit_cleaner",
+        rate_limit_cleaner_job.run,
+        interval_seconds=3600,
+        run_at_start=False
+    )
+
     return scheduler

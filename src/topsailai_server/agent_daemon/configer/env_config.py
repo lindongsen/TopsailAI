@@ -146,6 +146,11 @@ class EnvConfig:
         """Get the session state checker script path"""
         return os.getenv('TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER')
 
+    @property
+    def default_admin_key(self) -> Optional[str]:
+        """Get the default admin API key for auto-initialization"""
+        return os.getenv('TOPSAILAI_AGENT_DAEMON_DEFAULT_ADMIN_KEY')
+
     def has_processor(self) -> bool:
         """Check if processor script is configured"""
         return bool(self.processor_script)

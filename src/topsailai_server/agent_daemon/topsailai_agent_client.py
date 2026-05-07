@@ -58,11 +58,16 @@ def cli():
         help=f'Server port (default: {DEFAULT_PORT}, env: TOPSAILAI_AGENT_DAEMON_PORT)'
     )
     parser.add_argument(
+        '--api-key',
+        type=str,
+        default=None,
+        help='API key for authentication (optional, env: TOPSAILAI_AGENT_DAEMON_API_KEY)'
+    )
+    parser.add_argument(
         '-v', '--verbose',
         action='store_true',
         help='Verbose output'
     )
-    
     # Client subcommands
     subparsers = parser.add_subparsers(dest='operation', help='Client operations')
     

@@ -210,6 +210,9 @@ TOPSAILAI_FLAG_DUMP_MESSAGES=0
 # Give 'tools' to chat, 0 for tool_prompt only.
 TOPSAILAI_USE_TOOL_CALLS=0
 
+# parallel_tool_calls
+TOPSAILAI_ENABLE_PARALLEL_TOOL_CALLS=0
+
 # Disabled Tools
 # Internal tools to disable (tools starting with these keywords)
 # Format: Tool names separated by semicolons (';')

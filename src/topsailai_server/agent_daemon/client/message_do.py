@@ -21,7 +21,10 @@ DEFAULT_SESSION_ID = socket.gethostname()
 
 def do_client_send_message(args):
     """Send a message to a session"""
-    client = MessageClient(base_url=f"http://{args.host}:{args.port}")
+    client = MessageClient(
+        base_url=f"http://{args.host}:{args.port}",
+        api_key=getattr(args, 'api_key', None)
+    )
     
     try:
         logger.info("Sending message to session %s", args.session_id)
@@ -41,7 +44,10 @@ def do_client_send_message(args):
 
 def do_client_get_messages(args):
     """Retrieve messages from a session"""
-    client = MessageClient(base_url=f"http://{args.host}:{args.port}")
+    client = MessageClient(
+        base_url=f"http://{args.host}:{args.port}",
+        api_key=getattr(args, 'api_key', None)
+    )
     
     try:
         logger.info("Retrieving messages for session %s", args.session_id)

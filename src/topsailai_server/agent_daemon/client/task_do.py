@@ -21,7 +21,10 @@ DEFAULT_SESSION_ID = socket.gethostname()
 
 def do_client_set_task_result(args):
     """Set a task result"""
-    client = TaskClient(base_url=f"http://{args.host}:{args.port}")
+    client = TaskClient(
+        base_url=f"http://{args.host}:{args.port}",
+        api_key=getattr(args, 'api_key', None)
+    )
     
     try:
         logger.info("Setting task result for session %s, task %s", args.session_id, args.task_id)
@@ -41,7 +44,10 @@ def do_client_set_task_result(args):
 
 def do_client_get_tasks(args):
     """Retrieve tasks"""
-    client = TaskClient(base_url=f"http://{args.host}:{args.port}")
+    client = TaskClient(
+        base_url=f"http://{args.host}:{args.port}",
+        api_key=getattr(args, 'api_key', None)
+    )
     
     try:
         logger.info("Retrieving tasks for session %s", args.session_id)

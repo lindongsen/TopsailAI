@@ -7,7 +7,7 @@
 
 from typing import Optional, List
 from datetime import datetime
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
@@ -23,6 +23,12 @@ from topsailai_server.agent_daemon.api.utils import ApiResponse, success_respons
 from topsailai_server.agent_daemon.storage.processor_helper import check_and_process_messages
 # Import from message module - they share the same globals set by app.py
 from topsailai_server.agent_daemon.api.routes.message import get_storage, get_worker_manager
+from topsailai_server.agent_daemon.api.middleware.auth import (
+    get_current_api_key,
+    check_session_permission,
+    verify_session_permission,
+)
+from topsailai_server.agent_daemon.storage.api_key_manager import ApiKeyData
 
 
 # Router
@@ -77,6 +83,7 @@ class TaskResponse(BaseModel):
 @router.post("", response_model=ApiResponse)
 async def set_task_result(
     request: SetTaskResultRequest,
+    api_key: ApiKeyData = Depends(get_current_api_key),
     storage: Storage = Depends(get_storage),
     worker_manager: WorkerManager = Depends(get_worker_manager)
 ) -> ApiResponse:
@@ -84,15 +91,19 @@ async def set_task_result(
     Set task result for a processed message.
 
     This endpoint:
-    1. Updates the message with task_id, task_result, and processed_msg_id
-    2. Updates the session's processed_msg_id
-    3. Checks if there are more unprocessed messages
+    1. Verifies API key has permission to access the session
+    2. Updates the message with task_id, task_result, and processed_msg_id
+    3. Updates the session's processed_msg_id
+    4. Checks if there are more unprocessed messages
     """
     try:
         # Validate inputs
         validate_session_id(request.session_id)
         validate_msg_id(request.processed_msg_id)
         validate_task_id(request.task_id)
+
+        # Verify API key has permission to access this session
+        verify_session_permission(api_key, request.session_id)
 
         # Update message with task info (including processed_msg_id)
         message = storage.message.update_task_info(
@@ -125,6 +136,8 @@ async def set_task_result(
         logger.exception("Database integrity error in set_task_result: %s", e)
         return error_response(message="Database constraint violation. Please check your input data.", code=409)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Error setting task result: %s", e)
         return error_response(message="Failed to set task result", code=500)
@@ -140,6 +153,8 @@ async def retrieve_tasks(
     limit: int = 1000,
     sort_key: str = "create_time",
     order_by: str = "desc",
+    api_key: ApiKeyData = Depends(get_current_api_key),
+    _permission: None = Depends(check_session_permission),
     storage: Storage = Depends(get_storage)
 ) -> ApiResponse:
     """

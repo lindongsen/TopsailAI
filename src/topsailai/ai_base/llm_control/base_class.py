@@ -260,7 +260,7 @@ class LLMModelBase(object):
         self.model = self.get_llm_model()
         return
 
-    def build_parameters_for_chat(self, messages, stream=False, tools=None, tool_choice="auto"):
+    def build_parameters_for_chat(self, messages, stream=False, tools=None, tool_choice="auto", **options):
         """
         Build parameters for the chat completion API call.
 
@@ -290,6 +290,12 @@ class LLMModelBase(object):
         if tools:
             params["tools"] = tools
             params["tool_choice"] = tool_choice
+
+        # parallel_tool_calls
+        if options.get("parallel_tool_calls") is not None:
+            params["parallel_tool_calls"] = options["parallel_tool_calls"]
+        if "parallel_tool_calls" not in params and not EnvReaderInstance.is_not_config("TOPSAILAI_ENABLE_PARALLEL_TOOL_CALLS"):
+            params["parallel_tool_calls"] = EnvReaderInstance.check_bool("TOPSAILAI_ENABLE_PARALLEL_TOOL_CALLS")
 
         return params
 

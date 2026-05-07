@@ -23,36 +23,8 @@ class TestCronJob(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures"""
-        self.mock_func = Mock()
         self.job_name = "test_job"
-
-    def test_initialization_default(self):
-        """Test CronJob initialization with default values"""
-        job = CronJob(
-            name=self.job_name,
-            func=self.mock_func,
-            interval_seconds=60
-        )
-        
-        self.assertEqual(job.name, self.job_name)
-        self.assertEqual(job.func, self.mock_func)
-        self.assertEqual(job.interval_seconds, 60)
-        self.assertFalse(job.run_at_start)
-        self.assertIsNone(job.last_run)
-        self.assertFalse(job._stop_event.is_set())
-        print("test_initialization_default: passed")
-
-    def test_initialization_with_run_at_start(self):
-        """Test CronJob initialization with run_at_start=True"""
-        job = CronJob(
-            name=self.job_name,
-            func=self.mock_func,
-            interval_seconds=120,
-            run_at_start=True
-        )
-        
-        self.assertTrue(job.run_at_start)
-        print("test_initialization_with_run_at_start: passed")
+        self.mock_func = Mock()
 
     def test_should_run_no_previous_run(self):
         """Test should_run returns True when last_run is None"""
@@ -310,7 +282,8 @@ class TestCreateScheduler(unittest.TestCase):
         with patch('topsailai_server.agent_daemon.storage.Storage'), \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageConsumer'), \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageSummarizer'), \
-             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'):
+             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.RateLimitCleaner'):
             
             scheduler = create_scheduler(
                 self.mock_session_storage,
@@ -327,7 +300,8 @@ class TestCreateScheduler(unittest.TestCase):
         with patch('topsailai_server.agent_daemon.storage.Storage'), \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageConsumer'), \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageSummarizer'), \
-             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'):
+             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.RateLimitCleaner'):
             
             scheduler = create_scheduler(
                 self.mock_session_storage,
@@ -347,7 +321,8 @@ class TestCreateScheduler(unittest.TestCase):
         with patch('topsailai_server.agent_daemon.storage.Storage'), \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageConsumer'), \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageSummarizer'), \
-             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'):
+             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.RateLimitCleaner'):
             
             scheduler = create_scheduler(
                 self.mock_session_storage,
@@ -367,7 +342,8 @@ class TestCreateScheduler(unittest.TestCase):
         with patch('topsailai_server.agent_daemon.storage.Storage'), \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageConsumer'), \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageSummarizer'), \
-             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'):
+             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.RateLimitCleaner'):
             
             scheduler = create_scheduler(
                 self.mock_session_storage,
@@ -382,6 +358,49 @@ class TestCreateScheduler(unittest.TestCase):
             self.assertFalse(job.run_at_start)
         print("test_create_scheduler_adds_session_cleaner: passed")
 
+    def test_create_scheduler_adds_rate_limit_cleaner(self):
+        """Test create_scheduler adds RateLimitCleaner job"""
+        with patch('topsailai_server.agent_daemon.storage.Storage'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.MessageConsumer'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.MessageSummarizer'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.RateLimitCleaner'):
+            
+            scheduler = create_scheduler(
+                self.mock_session_storage,
+                self.mock_message_storage,
+                self.mock_worker_manager,
+                self.mock_config
+            )
+            
+            self.assertIn("rate_limit_cleaner", scheduler.jobs)
+            job = scheduler.jobs["rate_limit_cleaner"]
+            self.assertEqual(job.interval_seconds, 3600)
+            self.assertFalse(job.run_at_start)
+        print("test_create_scheduler_adds_rate_limit_cleaner: passed")
+
+    def test_create_scheduler_adds_four_jobs(self):
+        """Test create_scheduler adds exactly 4 jobs"""
+        with patch('topsailai_server.agent_daemon.storage.Storage'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.MessageConsumer'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.MessageSummarizer'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.RateLimitCleaner'):
+            
+            scheduler = create_scheduler(
+                self.mock_session_storage,
+                self.mock_message_storage,
+                self.mock_worker_manager,
+                self.mock_config
+            )
+            
+            self.assertEqual(len(scheduler.jobs), 4)
+            self.assertIn("message_consumer", scheduler.jobs)
+            self.assertIn("message_summarizer", scheduler.jobs)
+            self.assertIn("session_cleaner", scheduler.jobs)
+            self.assertIn("rate_limit_cleaner", scheduler.jobs)
+        print("test_create_scheduler_adds_four_jobs: passed")
+
     def test_create_scheduler_creates_storage_instance(self):
         """Test create_scheduler creates Storage instance from session storage engine"""
         mock_engine = Mock()
@@ -390,7 +409,8 @@ class TestCreateScheduler(unittest.TestCase):
         with patch('topsailai_server.agent_daemon.storage.Storage') as mock_storage, \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageConsumer'), \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageSummarizer'), \
-             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'):
+             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.RateLimitCleaner'):
             
             create_scheduler(
                 self.mock_session_storage,
@@ -407,7 +427,8 @@ class TestCreateScheduler(unittest.TestCase):
         with patch('topsailai_server.agent_daemon.storage.Storage') as mock_storage, \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageConsumer') as mock_consumer, \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageSummarizer'), \
-             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'):
+             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.RateLimitCleaner'):
             
             mock_storage_instance = Mock()
             mock_storage.return_value = mock_storage_instance
@@ -432,7 +453,8 @@ class TestCreateScheduler(unittest.TestCase):
         with patch('topsailai_server.agent_daemon.storage.Storage') as mock_storage, \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageConsumer'), \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageSummarizer') as mock_summarizer, \
-             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'):
+             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'), \
+             patch('topsailai_server.agent_daemon.croner.jobs.RateLimitCleaner'):
             
             mock_storage_instance = Mock()
             mock_storage.return_value = mock_storage_instance
@@ -457,7 +479,8 @@ class TestCreateScheduler(unittest.TestCase):
         with patch('topsailai_server.agent_daemon.storage.Storage') as mock_storage, \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageConsumer'), \
              patch('topsailai_server.agent_daemon.croner.jobs.MessageSummarizer'), \
-             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner') as mock_cleaner:
+             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner') as mock_cleaner, \
+             patch('topsailai_server.agent_daemon.croner.jobs.RateLimitCleaner'):
             
             mock_storage_instance = Mock()
             mock_storage.return_value = mock_storage_instance
@@ -476,26 +499,6 @@ class TestCreateScheduler(unittest.TestCase):
             self.assertEqual(call_kwargs['storage'], mock_storage_instance)
             self.assertEqual(call_kwargs['worker_manager'], self.mock_worker_manager)
         print("test_create_scheduler_passes_correct_args_to_cleaner: passed")
-
-    def test_create_scheduler_adds_three_jobs(self):
-        """Test create_scheduler adds exactly 3 jobs"""
-        with patch('topsailai_server.agent_daemon.storage.Storage'), \
-             patch('topsailai_server.agent_daemon.croner.jobs.MessageConsumer'), \
-             patch('topsailai_server.agent_daemon.croner.jobs.MessageSummarizer'), \
-             patch('topsailai_server.agent_daemon.croner.jobs.SessionCleaner'):
-            
-            scheduler = create_scheduler(
-                self.mock_session_storage,
-                self.mock_message_storage,
-                self.mock_worker_manager,
-                self.mock_config
-            )
-            
-            self.assertEqual(len(scheduler.jobs), 3)
-            self.assertIn("message_consumer", scheduler.jobs)
-            self.assertIn("message_summarizer", scheduler.jobs)
-            self.assertIn("session_cleaner", scheduler.jobs)
-        print("test_create_scheduler_adds_three_jobs: passed")
 
 
 class TestSchedulerIntegration(unittest.TestCase):

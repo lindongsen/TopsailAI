@@ -16,6 +16,13 @@ from topsailai_server.agent_daemon.worker import WorkerManager
 from topsailai_server.agent_daemon.api.utils import ApiResponse, success_response, error_response
 from topsailai_server.agent_daemon.storage.processor_helper import check_and_process_messages
 from topsailai_server.agent_daemon.validator import validate_session_id
+from topsailai_server.agent_daemon.api.middleware.auth import (
+    get_current_api_key,
+    require_admin,
+    check_session_permission,
+    verify_session_permission,
+)
+from topsailai_server.agent_daemon.storage.api_key_manager.base import ApiKeyData
 
 
 # Router
@@ -88,16 +95,19 @@ class ProcessSessionResponse(BaseModel):
 async def get_session(
     session_id: str,
     storage: Storage = Depends(get_storage),
-    worker_manager: WorkerManager = Depends(get_worker_manager)
+    worker_manager: WorkerManager = Depends(get_worker_manager),
+    api_key: ApiKeyData = Depends(get_current_api_key),
+    _: None = Depends(check_session_permission)
 ) -> ApiResponse:
     """
     Get a session by ID with its current processing status.
 
     This endpoint:
     1. Validates the session_id format
-    2. Retrieves the session from storage
-    3. Calls TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER to get status (idle/processing)
-    4. Returns the session data with status
+    2. Checks API key permission for the session
+    3. Retrieves the session from storage
+    4. Calls TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER to get status (idle/processing)
+    5. Returns the session data with status
 
     Args:
         session_id: The session ID to retrieve
@@ -108,7 +118,7 @@ async def get_session(
             validate_session_id(session_id)
         except ValueError as e:
             logger.warning("Invalid session_id format: %s, error: %s", session_id, e)
-            return error_response(message=f"Invalid session_id format: {e}")
+            return error_response(message="Invalid session_id format: %s" % e)
 
         # Get session from storage
         session = storage.session.get(session_id)
@@ -139,7 +149,7 @@ async def get_session(
         raise
     except Exception as e:
         logger.exception("Error getting session: %s", e)
-        return error_response(message=f"Failed to get session: {str(e)}")
+        return error_response(message="Failed to get session: %s" % str(e))
 
 
 @router.get("", response_model=ApiResponse)
@@ -151,10 +161,14 @@ async def list_sessions(
     limit: int = 1000,
     sort_key: str = "create_time",
     order_by: str = "desc",
-    storage: Storage = Depends(get_storage)
+    storage: Storage = Depends(get_storage),
+    api_key: ApiKeyData = Depends(get_current_api_key)
 ) -> ApiResponse:
     """
     List sessions with optional filtering and pagination.
+
+    For user role API keys, only sessions bound to the key are returned.
+    Admin keys can list all sessions.
 
     Args:
         session_ids: Comma-separated list of session IDs to filter
@@ -179,6 +193,19 @@ async def list_sessions(
         session_id_list = None
         if session_ids:
             session_id_list = [s.strip() for s in session_ids.split(",") if s.strip()]
+
+        # For user role, restrict to bound sessions
+        if api_key.role != 'admin':
+            bound_sessions = storage.api_key.list_bound_sessions(api_key.api_key_id)
+            if session_id_list:
+                # Intersect with requested session_ids
+                session_id_list = [s for s in session_id_list if s in bound_sessions]
+            else:
+                session_id_list = bound_sessions
+
+            if not session_id_list:
+                logger.debug("No bound sessions for API key: %s", api_key.api_key_id)
+                return success_response(data=[])
 
         # Get sessions from storage
         sessions = storage.session.list_sessions(
@@ -206,18 +233,24 @@ async def list_sessions(
         logger.debug("Listed %d sessions", len(session_list))
         return success_response(data=session_list)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Error listing sessions: %s", e)
-        return error_response(message=f"Failed to list sessions: {str(e)}")
+        return error_response(message="Failed to list sessions: %s" % str(e))
 
 
 @router.delete("", response_model=ApiResponse)
 async def delete_sessions(
     session_ids: str,
-    storage: Storage = Depends(get_storage)
+    storage: Storage = Depends(get_storage),
+    api_key: ApiKeyData = Depends(get_current_api_key),
+    _: ApiKeyData = Depends(require_admin)
 ) -> ApiResponse:
     """
     Delete sessions and their related messages.
+
+    Only admin API keys can delete sessions.
 
     Args:
         session_ids: Comma-separated list of session IDs to delete
@@ -240,33 +273,39 @@ async def delete_sessions(
 
         return success_response(
             data={"deleted_count": deleted_count},
-            message=f"Deleted {deleted_count} session(s)"
+            message="Deleted %d session(s)" % deleted_count
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Error deleting sessions: %s", e)
-        return error_response(message=f"Failed to delete sessions: {str(e)}")
-
+        return error_response(message="Failed to delete sessions: %s" % str(e))
 
 @router.post("/process", response_model=ApiResponse)
 async def process_session(
     request: ProcessSessionRequest,
     storage: Storage = Depends(get_storage),
-    worker_manager: WorkerManager = Depends(get_worker_manager)
+    worker_manager: WorkerManager = Depends(get_worker_manager),
+    api_key: ApiKeyData = Depends(get_current_api_key)
 ) -> ApiResponse:
     """
     Process a session - check if there are unprocessed messages and start processor if needed.
 
     This endpoint:
-    1. Checks if processed_msg_id is the latest message
-    2. If not, triggers the processor to handle unprocessed messages
-    3. Returns information about the processing status
+    1. Checks API key permission for the session
+    2. Checks if processed_msg_id is the latest message
+    3. If not, triggers the processor to handle unprocessed messages
+    4. Returns information about the processing status
 
     Args:
         request: ProcessSessionRequest with session_id
     """
     try:
         session_id = request.session_id
+
+        # Verify session permission for body parameter
+        verify_session_permission(api_key, session_id)
 
         result = check_and_process_messages(session_id, storage, worker_manager)
 
@@ -284,6 +323,8 @@ async def process_session(
                 message="No processing needed"
             )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Error processing session: %s", e)
-        return error_response(message=f"Failed to process session: {str(e)}")
+        return error_response(message="Failed to process session: %s" % str(e))

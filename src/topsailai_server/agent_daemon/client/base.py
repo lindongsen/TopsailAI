@@ -40,34 +40,32 @@ class BaseClient:
 
     Attributes:
         base_url: The base URL of the agent_daemon API server.
-
-    Example:
-        >>> client = BaseClient()
-        >>> client.request("GET", "/api/v1/session")
+        timeout: Default timeout for HTTP requests in seconds.
+        api_key: Optional API key for authentication.
     """
-
     def __init__(
         self,
         base_url: Optional[str] = None,
-        timeout: int = 10
+        timeout: int = 10,
+        api_key: Optional[str] = None
     ):
-        """
-        Initialize the BaseClient.
-
+        """Initialize the BaseClient.
         Args:
             base_url: Base URL of the API server. If not provided,
                      uses environment variables or defaults to
                      "http://127.0.0.1:7373".
             timeout: Default timeout for HTTP requests in seconds.
                     Defaults to 10 seconds.
+            api_key: Optional API key for authentication.
+                    If provided, included in X-API-Key header.
         """
         if base_url is None:
             host = os.environ.get("TOPSAILAI_AGENT_DAEMON_HOST", "127.0.0.1")
             port = os.environ.get("TOPSAILAI_AGENT_DAEMON_PORT", "7373")
             base_url = f"http://{host}:{port}"
-
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.api_key = api_key
 
     @staticmethod
     def format_time(time_str: Optional[str]) -> str:
@@ -143,24 +141,25 @@ class BaseClient:
 
         try:
             logger.info("Request: %s %s", method, url)
-
+            # Build headers, include X-API-Key if provided
+            headers = {}
+            if self.api_key:
+                headers["X-API-Key"] = self.api_key
             response = requests.request(
                 method=method.upper(),
                 url=url,
                 params=params,
                 json=json_data,
+                headers=headers,
                 timeout=timeout
             )
-
-            if response.status_code != 200:
+            if response.status_code >= 400:
                 logger.error("HTTP Error: %s - %s", response.status_code, response.text)
                 raise APIError(response.status_code, response.text)
-
             result = response.json()
             code = result.get("code", -1)
             message = result.get("message", "Unknown error")
             data = result.get("data")
-
             if code != 0:
                 logger.error("API Error: %s - %s", code, message)
                 raise APIError(code, message)
