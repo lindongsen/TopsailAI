@@ -161,13 +161,17 @@ class LLMModel(LLMModelBase):
             prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=0),
         )
         for chunk in response:
-            delta_obj = chunk.choices[0].delta
+            delta_obj = None
+            if len(chunk.choices):
+                delta_obj = chunk.choices[0].delta
             try:
                 delta_usage = self.get_response_usage(chunk)
                 if delta_usage:
                     usage.prompt_tokens_details.cached_tokens += delta_usage.prompt_tokens_details.cached_tokens
             except Exception:
                 pass
+            if delta_obj is None:
+                continue
             # content
             delta_content = delta_obj.content
             if delta_content:
