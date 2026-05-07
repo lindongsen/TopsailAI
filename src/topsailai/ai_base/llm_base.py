@@ -14,6 +14,7 @@ from openai.types.chat import (
     ChatCompletionMessage,
     ChatCompletionMessageToolCall,
 )
+from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
 from topsailai.logger.log_chat import logger
 from topsailai.utils.print_tool import (
@@ -89,6 +90,13 @@ class LLMModel(LLMModelBase):
         """
         return get_response_message(response)
 
+    def get_response_usage(self, response) -> CompletionUsage:
+        try:
+            return response.usage
+        except Exception:
+            pass
+        return None
+
     def call_llm_model(self, messages, tools=None, tool_choice="auto"):
         """
         Call the LLM model with the provided messages and tools.
@@ -113,7 +121,7 @@ class LLMModel(LLMModelBase):
             )
         )
 
-        self.tokenStat.output_token_stat()
+        self.tokenStat.output_token_stat(self.get_response_usage(response))
 
         full_content = response.choices[0].message.content
 
@@ -148,9 +156,18 @@ class LLMModel(LLMModelBase):
 
         full_content = ""
         full_tool_calls_dict = {}
+        usage = CompletionUsage(
+            completion_tokens=0, prompt_tokens=0, total_tokens=0,
+            prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=0),
+        )
         for chunk in response:
             delta_obj = chunk.choices[0].delta
-
+            try:
+                delta_usage = self.get_response_usage(chunk)
+                if delta_usage:
+                    usage.prompt_tokens_details.cached_tokens += delta_usage.prompt_tokens_details.cached_tokens
+            except Exception:
+                pass
             # content
             delta_content = delta_obj.content
             if delta_content:
@@ -199,7 +216,7 @@ class LLMModel(LLMModelBase):
         if env_tool.is_debug_mode():
             print()
 
-        self.tokenStat.output_token_stat()
+        self.tokenStat.output_token_stat(usage)
 
         full_content = full_content.strip()
 

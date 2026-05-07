@@ -14,6 +14,7 @@ import time
 import threading
 
 import tiktoken
+from openai.types.completion_usage import CompletionUsage
 
 from topsailai.logger.log_chat import logger
 from topsailai.utils.print_tool import print_step
@@ -172,7 +173,7 @@ class TokenStat(threading.Thread):
         # Start the thread automatically
         self.start()
 
-    def output_token_stat(self):
+    def output_token_stat(self, usage:CompletionUsage=None):
         """
         Output current token statistics to the log.
 
@@ -190,12 +191,18 @@ class TokenStat(threading.Thread):
         # Use lock to ensure thread-safe access to statistics
         with self.rlock:
             info = dict(
-                total_count=self.total_count,
-                current_count=self.current_count,
+                total_tokens=self.total_count,
+                current_tokens=self.current_count,
                 total_text_len=self.total_text_len,
                 current_text_len=self.current_text_len,
                 msg_count=self.msg_count,
             )
+            if usage:
+                info.update(
+                    dict(
+                        cached_tokens=usage.prompt_tokens_details.cached_tokens,
+                    )
+                )
 
         # Format and output the statistics
         msg = f"[TokenStat] {info}"

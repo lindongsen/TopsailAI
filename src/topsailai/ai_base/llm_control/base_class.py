@@ -287,6 +287,13 @@ class LLMModelBase(object):
             stream=stream,
         )
 
+        if stream:
+            params.update(
+                dict(
+                    stream_options={"include_usage": True}
+                )
+            )
+
         if tools:
             params["tools"] = tools
             params["tool_choice"] = tool_choice
