@@ -254,4 +254,8 @@ class AgentChat(AgentChatBase):
         # hook answer
         self.hook_for_answer(answer)
 
+        # no limit times
+        if times == 0:
+            logger.info("agent loop run is exiting: current_count=[%s]", curr_count)
+
         return answer

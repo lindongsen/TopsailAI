@@ -33,6 +33,9 @@ TOPSAILAI_MODEL_SETTINGS=""
 # Application Settings
 # =============================================================================
 
+# Default home is /topsailai, see this: TopsailAI/src/topsailai/workspace/folder_constants.py
+TOPSAILAI_HOME=""
+
 # Debug Mode
 # 0 = Production mode (disabled)
 # 1 = Debug mode (enabled) - enables verbose logging and debugging features

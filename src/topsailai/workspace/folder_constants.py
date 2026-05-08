@@ -22,12 +22,15 @@ Usage:
     file_path = FOLDER_WORKSPACE + "/my_file.txt"
 """
 
+import os
+
 ###################################################################################
 # Layer 1: Root directory for the entire TopsailAI system
 # This is the top-level directory that contains all system components
 FOLDER_ROOT = "/topsailai"
 ###################################################################################
-
+if os.getenv("TOPSAILAI_HOME"):
+    FOLDER_ROOT = os.getenv("TOPSAILAI_HOME")
 
 ###################################################################################
 # Layer 2: Main system directories under the root
