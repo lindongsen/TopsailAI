@@ -170,7 +170,7 @@ class TestCron001MessageConsumer:
                 return msg2_s1
             return msg2_s2
 
-        def get_unprocessed(sid, processed_id):
+        def get_unprocessed(sid, processed_id, to_include_role_assistant=False):
             if sid == session1_id:
                 return [msg2_s1]
             return [msg2_s2]

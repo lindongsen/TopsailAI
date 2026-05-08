@@ -159,24 +159,49 @@ class TestMessageConsumerProcessSession:
         consumer._process_session_with_metrics("session1", "script.py", storage)
 
     def test_process_session_all_assistant_messages(self):
-        """Test processing a session where all unprocessed are assistant messages."""
+        """Test processing a session where all messages after processed_msg_id are assistant.
+
+        In production, get_unprocessed_messages filters out assistant messages by default.
+        The all-assistant check uses to_include_role_assistant=True to get ALL messages
+        after processed_msg_id for infinite loop protection.
+        """
         session = MockSession("session1", processed_msg_id="msg1")
         latest_msg = MockMessage("msg3", "session1", "assistant", "response")
-        unprocessed = [
+
+        # First call (with to_include_role_assistant=True) returns all messages
+        all_messages = [
             MockMessage("msg2", "session1", "assistant", "response1"),
             MockMessage("msg3", "session1", "assistant", "response2"),
         ]
-        
+        # Second call (default filtering) returns empty list
+        filtered_messages = []
+
         storage = Mock()
         storage.session.get.return_value = session
         storage.message.get_latest_message.return_value = latest_msg
-        storage.message.get_unprocessed_messages.return_value = unprocessed
-        
-        consumer = MessageConsumer(storage=storage)
+
+        def mock_get_unprocessed(session_id, processed_msg_id, to_include_role_assistant=False):
+            """Mock that returns different results based on role filtering flag."""
+            if to_include_role_assistant:
+                return all_messages
+            return filtered_messages
+
+        storage.message.get_unprocessed_messages.side_effect = mock_get_unprocessed
+
+        worker_manager = Mock()
+
+        consumer = MessageConsumer(storage=storage, worker_manager=worker_manager)
         consumer._process_session_with_metrics("session1", "script.py", storage)
-        
-        # Should not call worker_manager
-        assert consumer.worker_manager is None or not consumer.worker_manager.check_session_state.called
+
+        # Should call get_unprocessed_messages once (all-assistant check with to_include_role_assistant=True)
+        assert storage.message.get_unprocessed_messages.call_count == 1
+        # Should not start processor since all messages are assistant responses
+        worker_manager.start_processor.assert_not_called()
+        # Should call get_unprocessed_messages once (all-assistant check with to_include_role_assistant=True)
+        assert storage.message.get_unprocessed_messages.call_count == 1
+        # Should not start processor since all messages are assistant responses
+        worker_manager.start_processor.assert_not_called()
+        worker_manager.start_processor.assert_not_called()
 
     def test_process_session_already_processing(self):
         """Test processing a session that's already being processed."""

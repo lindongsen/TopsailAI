@@ -110,10 +110,27 @@ class MessageStorageBase(object):
         Retrieve all messages associated with a specific session.
 
         Args:
-            session_id (str): The session identifier to filter messages.
+            session_id (str): The session identifier.
 
         Returns:
             list[MessageData]: List of message data objects for the session.
+        """
+        raise NotImplementedError
+
+    def get_unprocessed_messages(self, session_id: str, processed_msg_id: str, to_include_role_assistant: bool = False) -> list[MessageData]:
+        """
+        Get unprocessed messages after the processed_msg_id.
+
+        By default, only messages with role 'user' or '' are returned.
+        Set to_include_role_assistant=True to also include assistant messages.
+
+        Args:
+            session_id (str): The session identifier.
+            processed_msg_id (str): The last processed message ID.
+            to_include_role_assistant (bool): Whether to include assistant role messages.
+
+        Returns:
+            list[MessageData]: List of unprocessed messages.
         """
         raise NotImplementedError
 
@@ -153,19 +170,6 @@ class MessageStorageBase(object):
 
         Returns:
             MessageData: The latest message, or None if not found.
-        """
-        raise NotImplementedError
-
-    def get_unprocessed_messages(self, session_id: str, processed_msg_id: str) -> list[MessageData]:
-        """
-        Get unprocessed messages after the processed_msg_id.
-
-        Args:
-            session_id (str): The session identifier.
-            processed_msg_id (str): The last processed message ID.
-
-        Returns:
-            list[MessageData]: List of unprocessed messages.
         """
         raise NotImplementedError
 
