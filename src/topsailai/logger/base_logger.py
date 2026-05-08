@@ -10,6 +10,14 @@ import logging
 from logging.handlers import RotatingFileHandler
 
 
+def get_log_folder():
+    try:
+        from topsailai.workspace.folder_constants import FOLDER_LOG
+        return FOLDER_LOG + "/"
+    except Exception:
+        pass
+    return "/topsailai/log/"
+
 class AgentFormatter(logging.Formatter):
     """
     Custom log formatter that adds agent and thread information to log records.
@@ -127,7 +135,7 @@ def setup_logger(name: str = None, log_file: str = None, level=logging.DEBUG):
     # Determine log file path if not explicitly provided
     if not log_file:
         if name:
-            log_folder = "/topsailai/log/"
+            log_folder = get_log_folder()
             if os.path.exists(log_folder) and os.path.isdir(log_folder):
                 pass
             else:

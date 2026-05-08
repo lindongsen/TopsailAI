@@ -178,12 +178,18 @@ def do_start(args):
         os.environ["TOPSAILAI_AGENT_DAEMON_SUMMARIZER"] = os.path.abspath(args.summarizer)
     if args.session_state_checker:
         os.environ["TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER"] = os.path.abspath(args.session_state_checker)
+    if args.api_key_enabled is not None:
+        os.environ["TOPSAILAI_AGENT_DAEMON_API_KEY_ENABLED"] = str(args.api_key_enabled)
+    if isinstance(getattr(args, 'default_admin_key', None), str):
+        os.environ["TOPSAILAI_AGENT_DAEMON_DEFAULT_ADMIN_KEY"] = args.default_admin_key
 
     # Log the configuration using os.getenv to reflect actual values being used
     logger.info("Starting agent_daemon with configuration:")
     logger.info("  host: %s", os.getenv('TOPSAILAI_AGENT_DAEMON_HOST', DEFAULT_HOST))
     logger.info("  port: %s", os.getenv('TOPSAILAI_AGENT_DAEMON_PORT', DEFAULT_PORT))
     logger.info("  db_url: %s", os.getenv('TOPSAILAI_AGENT_DAEMON_DB_URL', DEFAULT_DB_URL))
+    logger.info("  api_key_enabled: %s", os.getenv('TOPSAILAI_AGENT_DAEMON_API_KEY_ENABLED', 'false'))
+    logger.info("  default_admin_key: %s", "set" if os.getenv('TOPSAILAI_AGENT_DAEMON_DEFAULT_ADMIN_KEY') else "not set")
     logger.info("  processor: %s", os.getenv('TOPSAILAI_AGENT_DAEMON_PROCESSOR') or "not set")
     logger.info("  session_state_checker: %s", os.getenv('TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER') or "not set")
 
@@ -382,6 +388,18 @@ def cli():
         type=str,
         help='Script file path for TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER'
     )
+    start_parser.add_argument(
+        '--api-key-enabled',
+        type=str,
+        default=None,
+        help='Enable API key authentication (true/false)'
+    )
+    start_parser.add_argument(
+        '--default-admin-key',
+        type=str,
+        default=None,
+        help='Default admin API key (only used when api-key-enabled is true)'
+    )
     start_parser.set_defaults(func=do_start)
 
     # Stop command
@@ -415,16 +433,31 @@ def cli():
     restart_parser.add_argument(
         '--processor',
         type=str,
+        default=None,
         help='Script file path for TOPSAILAI_AGENT_DAEMON_PROCESSOR'
+    )
+    restart_parser.add_argument(
+        '--api-key-enabled',
+        type=str,
+        default=None,
+        help='Enable API key authentication (true/false)'
+    )
+    restart_parser.add_argument(
+        '--default-admin-key',
+        type=str,
+        default=None,
+        help='Default admin API key (only used when api-key-enabled is true)'
     )
     restart_parser.add_argument(
         '--summarizer',
         type=str,
+        default=None,
         help='Script file path for TOPSAILAI_AGENT_DAEMON_SUMMARIZER'
     )
     restart_parser.add_argument(
         '--session_state_checker',
         type=str,
+        default=None,
         help='Script file path for TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER'
     )
     restart_parser.set_defaults(func=do_restart)

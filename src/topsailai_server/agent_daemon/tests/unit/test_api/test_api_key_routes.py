@@ -8,7 +8,7 @@
 import unittest
 import os
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 os.environ['TOPSAILAI_AGENT_DAEMON_PROCESSOR'] = '/bin/echo'
 os.environ['TOPSAILAI_AGENT_DAEMON_SUMMARIZER'] = '/bin/echo'
 os.environ['TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER'] = '/bin/echo'
+os.environ['TOPSAILAI_AGENT_DAEMON_API_KEY_ENABLED'] = 'true'
 
 from topsailai_server.agent_daemon.api.routes import api_key
 from topsailai_server.agent_daemon.api.middleware import auth as auth_module
@@ -76,10 +77,8 @@ class TestApiKeyRoutes(unittest.TestCase):
         return {"X-API-Key": key_value}
 
     # Tests for CreateApiKey
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_create_api_key_success(self, MockStorage):
+    def test_create_api_key_success(self):
         """Test admin can create API key"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
         self.mock_api_key_storage.create_api_key.return_value = True
 
@@ -95,10 +94,8 @@ class TestApiKeyRoutes(unittest.TestCase):
         self.assertIn("api_key_id", data["data"])
         self.assertIn("api_key", data["data"])
 
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_create_api_key_with_sessions(self, MockStorage):
+    def test_create_api_key_with_sessions(self):
         """Test creating API key with session bindings"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
         self.mock_api_key_storage.create_api_key.return_value = True
         self.mock_api_key_storage.bind_sessions.return_value = True
@@ -118,10 +115,8 @@ class TestApiKeyRoutes(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["code"], 0)
 
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_create_api_key_non_admin_rejected(self, MockStorage):
+    def test_create_api_key_non_admin_rejected(self):
         """Test non-admin cannot create API key"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
 
         response = self.client.post(
@@ -132,10 +127,8 @@ class TestApiKeyRoutes(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_create_api_key_invalid_role(self, MockStorage):
+    def test_create_api_key_invalid_role(self):
         """Test creating API key with invalid role returns error"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
 
         response = self.client.post(
@@ -148,10 +141,8 @@ class TestApiKeyRoutes(unittest.TestCase):
         data = response.json()
         self.assertNotEqual(data["code"], 0)
 
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_create_api_key_missing_name(self, MockStorage):
+    def test_create_api_key_missing_name(self):
         """Test creating API key without name returns validation error"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
 
         response = self.client.post(
@@ -163,10 +154,8 @@ class TestApiKeyRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
 
     # Tests for ListApiKeys
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_list_api_keys_success(self, MockStorage):
+    def test_list_api_keys_success(self):
         """Test admin can list all API keys"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
         self.mock_api_key_storage.list_api_keys.return_value = [
             self.admin_key, self.user_key
@@ -183,13 +172,11 @@ class TestApiKeyRoutes(unittest.TestCase):
         self.assertEqual(len(data["data"]["api_keys"]), 2)
         self.assertEqual(data["data"]["total"], 2)
 
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_list_api_keys_pagination(self, MockStorage):
+    def test_list_api_keys_pagination(self):
         """Test listing API keys with pagination"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
         self.mock_api_key_storage.list_api_keys.return_value = [
-            self.admin_key, self.user_key
+            self.user_key
         ]
 
         response = self.client.get(
@@ -201,12 +188,10 @@ class TestApiKeyRoutes(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["code"], 0)
         self.assertEqual(len(data["data"]["api_keys"]), 1)
-        self.assertEqual(data["data"]["total"], 2)
+        self.assertEqual(data["data"]["total"], 1)
 
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_list_api_keys_non_admin_rejected(self, MockStorage):
+    def test_list_api_keys_non_admin_rejected(self):
         """Test non-admin cannot list API keys"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
 
         response = self.client.get(
@@ -217,10 +202,8 @@ class TestApiKeyRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
 
     # Tests for DeleteApiKey
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_delete_api_key_success(self, MockStorage):
+    def test_delete_api_key_success(self):
         """Test admin can delete API key"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
         self.mock_api_key_storage.get_api_key_by_id.return_value = self.user_key
         self.mock_api_key_storage.delete_api_key.return_value = True
@@ -234,10 +217,8 @@ class TestApiKeyRoutes(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["code"], 0)
 
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_delete_api_key_non_admin_rejected(self, MockStorage):
+    def test_delete_api_key_non_admin_rejected(self):
         """Test non-admin cannot delete API key"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
 
         response = self.client.delete(
@@ -247,10 +228,8 @@ class TestApiKeyRoutes(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_delete_nonexistent_api_key(self, MockStorage):
+    def test_delete_nonexistent_api_key(self):
         """Test deleting non-existent API key returns error"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
         self.mock_api_key_storage.get_api_key_by_id.return_value = None
 
@@ -263,13 +242,11 @@ class TestApiKeyRoutes(unittest.TestCase):
         data = response.json()
         self.assertNotEqual(data["code"], 0)
 
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_delete_last_admin_key_rejected(self, MockStorage):
+    def test_delete_last_admin_key_rejected(self):
         """Test deleting last admin key is rejected"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
         self.mock_api_key_storage.get_api_key_by_id.return_value = self.admin_key
-        self.mock_api_key_storage.list_api_keys.return_value = [self.admin_key]
+        self.mock_api_key_storage.count_admin_api_keys.return_value = 1
 
         response = self.client.delete(
             "/api/v1/apikey/ak_admin_001",
@@ -281,10 +258,8 @@ class TestApiKeyRoutes(unittest.TestCase):
         self.assertNotEqual(data["code"], 0)
 
     # Tests for BindSessions
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_bind_sessions_success(self, MockStorage):
+    def test_bind_sessions_success(self):
         """Test admin can bind sessions to API key"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
         self.mock_api_key_storage.get_api_key_by_id.return_value = self.user_key
         self.mock_api_key_storage.bind_sessions.return_value = True
@@ -299,10 +274,8 @@ class TestApiKeyRoutes(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["code"], 0)
 
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_bind_sessions_non_admin_rejected(self, MockStorage):
+    def test_bind_sessions_non_admin_rejected(self):
         """Test non-admin cannot bind sessions"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
 
         response = self.client.post(
@@ -313,10 +286,8 @@ class TestApiKeyRoutes(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_bind_sessions_nonexistent_key(self, MockStorage):
+    def test_bind_sessions_nonexistent_key(self):
         """Test binding sessions to non-existent API key returns 404"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
         self.mock_api_key_storage.get_api_key_by_id.return_value = None
 
@@ -330,10 +301,8 @@ class TestApiKeyRoutes(unittest.TestCase):
         data = response.json()
         self.assertNotEqual(data["code"], 0)
 
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_bind_sessions_to_admin_key_rejected(self, MockStorage):
+    def test_bind_sessions_to_admin_key_rejected(self):
         """Test binding sessions to admin API key is rejected"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
         self.mock_api_key_storage.get_api_key_by_id.return_value = self.admin_key
 
@@ -348,10 +317,8 @@ class TestApiKeyRoutes(unittest.TestCase):
         self.assertNotEqual(data["code"], 0)
 
     # Tests for UnbindSessions
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_unbind_sessions_success(self, MockStorage):
+    def test_unbind_sessions_success(self):
         """Test admin can unbind sessions from API key"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
         self.mock_api_key_storage.get_api_key_by_id.return_value = self.user_key
         self.mock_api_key_storage.unbind_sessions.return_value = True
@@ -367,10 +334,8 @@ class TestApiKeyRoutes(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["code"], 0)
 
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_unbind_sessions_non_admin_rejected(self, MockStorage):
+    def test_unbind_sessions_non_admin_rejected(self):
         """Test non-admin cannot unbind sessions"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
 
         response = self.client.request(
@@ -382,10 +347,8 @@ class TestApiKeyRoutes(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    @patch('topsailai_server.agent_daemon.api.routes.api_key.Storage')
-    def test_unbind_sessions_nonexistent_key(self, MockStorage):
+    def test_unbind_sessions_nonexistent_key(self):
         """Test unbinding sessions from non-existent API key returns 404"""
-        MockStorage.return_value = self.mock_storage
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
         self.mock_api_key_storage.get_api_key_by_id.return_value = None
 

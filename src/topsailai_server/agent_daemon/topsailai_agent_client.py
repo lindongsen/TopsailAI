@@ -37,6 +37,7 @@ from topsailai_server.agent_daemon.client import (
 # Default values - support environment variable overrides
 DEFAULT_HOST = os.environ.get("TOPSAILAI_AGENT_DAEMON_HOST", "localhost")
 DEFAULT_PORT = int(os.environ.get("TOPSAILAI_AGENT_DAEMON_PORT", "7373"))
+DEFAULT_API_KEY = os.environ.get("TOPSAILAI_AGENT_DAEMON_API_KEY", None)
 
 
 def cli():
@@ -60,7 +61,7 @@ def cli():
     parser.add_argument(
         '--api-key',
         type=str,
-        default=None,
+        default=DEFAULT_API_KEY,
         help='API key for authentication (optional, env: TOPSAILAI_AGENT_DAEMON_API_KEY)'
     )
     parser.add_argument(

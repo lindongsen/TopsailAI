@@ -6,21 +6,30 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.storage import Storage
+from topsailai_server.agent_daemon.api.middleware.auth import set_dependencies as set_auth_dependencies
+
 # Global references for dependency injection
 _storage: Optional[Storage] = None
 _worker_manager = None
 _scheduler = None
+
 class HealthResponse(BaseModel):
     """Health check response model."""
     status: str
     database: str
     timestamp: datetime
-def create_app(session_storage, message_storage, worker_manager, scheduler) -> FastAPI:
+
+def create_app(session_storage, message_storage, worker_manager, scheduler, api_key_storage=None) -> FastAPI:
     """Create and configure the FastAPI application."""
     global _storage, _worker_manager, _scheduler
     _storage = Storage(session_storage.engine)
     _worker_manager = worker_manager
     _scheduler = scheduler
+
+    # Set auth dependencies (api_key_storage may be None if auth is disabled)
+    if api_key_storage is not None:
+        set_auth_dependencies(api_key_storage)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         """Lifespan context manager for startup/shutdown.

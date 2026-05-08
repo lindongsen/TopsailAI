@@ -18,7 +18,7 @@ Folder details can be got from `test.md`
 
 How to retrieve log:
 ```
-LogFile: `/topsailai/log/chat.log`
+LogFile: `{TOPSAILAI_HOME}/log/chat.log`, TOPSAILAI_HOME is environment variable, default is `/topsailai`
 Use command `topsailai_check_log` to review log content.
 Use command `grep -C 10 "{time}" {LogFile}` to print NUM lines of output context for log
 ```

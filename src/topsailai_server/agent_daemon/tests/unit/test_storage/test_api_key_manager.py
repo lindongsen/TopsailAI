@@ -19,9 +19,9 @@ from topsailai_server.agent_daemon.storage.api_key_manager.base import (
 )
 from topsailai_server.agent_daemon.storage.api_key_manager.sql import (
     ApiKeySQLAlchemy,
-    ApiKey,
-    ApiKeySession,
-    RateLimitLog,
+    ApiKeyModel,
+    ApiKeySessionModel,
+    RateLimitLogModel,
 )
 
 

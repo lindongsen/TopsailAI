@@ -28,6 +28,7 @@ from topsailai_server.agent_daemon import logger
 DEFAULT_HOST = os.environ.get("TOPSAILAI_AGENT_DAEMON_HOST", "localhost")
 DEFAULT_PORT = int(os.environ.get("TOPSAILAI_AGENT_DAEMON_PORT", "7373"))
 DEFAULT_SESSION_ID = socket.gethostname()
+DEFAULT_API_KEY = os.environ.get("TOPSAILAI_AGENT_DAEMON_API_KEY", None)
 
 # Terminal display constants
 TERM_WIDTH = 80
@@ -78,12 +79,13 @@ def truncate_text(text, max_width):
 class AgentTerminal:
     """Interactive terminal for agent_daemon"""
 
-    def __init__(self, host, port, session_id, refresh_interval=2, limit=DEFAULT_LIMIT):
+    def __init__(self, host, port, session_id, refresh_interval=2, limit=DEFAULT_LIMIT, api_key=None):
         self.host = host
         self.port = port
         self.session_id = session_id
         self.refresh_interval = refresh_interval
         self.limit = limit
+        self.api_key = api_key
         self.base_url = f"http://{host}:{port}"
         self.running = True
         self.last_msg_count = 0
@@ -101,6 +103,12 @@ class AgentTerminal:
         self.COLOR_BOLD = "\033[1m"
         self.COLOR_DIM = "\033[2m"
 
+    def _get_headers(self):
+        """Return request headers with X-API-Key if api_key is set"""
+        if self.api_key:
+            return {"X-API-Key": self.api_key}
+        return None
+
     def get_messages(self, order_by='desc'):
         """Retrieve messages from the session, ordered by create_time"""
         url = f"{self.base_url}/api/v1/message"
@@ -111,7 +119,7 @@ class AgentTerminal:
         }
 
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=params, headers=self._get_headers(), timeout=10)
             if response.status_code == 200:
                 result = response.json()
                 if result.get("code") == 0:
@@ -133,7 +141,7 @@ class AgentTerminal:
         }
 
         try:
-            response = requests.post(url, json=data, timeout=10)
+            response = requests.post(url, json=data, headers=self._get_headers(), timeout=10)
             if response.status_code == 200:
                 result = response.json()
                 if result.get("code") == 0:
@@ -151,7 +159,7 @@ class AgentTerminal:
         url = f"{self.base_url}/api/v1/session/{self.session_id}"
 
         try:
-            response = requests.get(url, timeout=3)
+            response = requests.get(url, headers=self._get_headers(), timeout=3)
             if response.status_code == 200:
                 result = response.json()
                 if result.get("code") == 0:
@@ -172,7 +180,7 @@ class AgentTerminal:
         }
 
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=params, headers=self._get_headers(), timeout=10)
             if response.status_code == 200:
                 result = response.json()
                 if result.get("code") == 0:
@@ -411,6 +419,12 @@ def main():
         default=DEFAULT_LIMIT,
         help=f'Number of messages to display (default: {DEFAULT_LIMIT}, use 0 for all)'
     )
+    parser.add_argument(
+        '--api-key',
+        type=str,
+        default=DEFAULT_API_KEY,
+        help='API key for authentication (default: from TOPSAILAI_AGENT_DAEMON_API_KEY env var)'
+    )
 
     args = parser.parse_args()
 
@@ -420,7 +434,8 @@ def main():
         port=args.port,
         session_id=args.session_id,
         refresh_interval=args.refresh_interval,
-        limit=args.limit
+        limit=args.limit,
+        api_key=args.api_key
     )
 
     try:

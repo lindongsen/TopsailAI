@@ -1,101 +1,74 @@
-# TopsailAI Agent Daemon Environment Configuration Template
-# Copy this file to .env and customize values for your deployment
-# =============================================================================
+# Agent Daemon Environment Variables Template
+# Copy this file to .env and customize for your deployment.
 
 # =============================================================================
-# REQUIRED ENVIRONMENT VARIABLES
-# These MUST be set, otherwise the service will fail to start
+# Server Configuration
 # =============================================================================
 
-# TOPSAILAI_AGENT_DAEMON_PROCESSOR
-# Description: Script file used to process messages. When processing completes,
-#              it actively records results to storage.
-# Runtime env vars provided to this script:
-#   - TOPSAILAI_MSG_ID: Latest unprocessed msg_id from message table
-#   - TOPSAILAI_TASK: Message content to process
-#   - TOPSAILAI_SESSION_ID: Session identifier
-# Example: /path/to/processor.sh or /path/to/processor.py
-TOPSAILAI_AGENT_DAEMON_PROCESSOR=/path/to/your/processor_script
+# Host IP address to listen on
+# Default: 0.0.0.0
+# TOPSAILAI_AGENT_DAEMON_HOST=0.0.0.0
 
-# TOPSAILAI_AGENT_DAEMON_SUMMARIZER
-# Description: Script file used to summarize messages. The service does not
-#              need to care about the summary result - it's closely related
-#              to the processor's processing logic.
-# Runtime env vars provided to this script:
-#   - TOPSAILAI_SESSION_ID: Session identifier
-#   - TOPSAILAI_TASK: Message content to summarize
-# Example: /path/to/summarizer.sh or /path/to/summarizer.py
-TOPSAILAI_AGENT_DAEMON_SUMMARIZER=/path/to/your/summarizer_script
-
-# TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER
-# Description: Script file to get session state (idle/processing).
-#              Returns 'idle' if no messages are being processed.
-# Runtime env vars provided to this script:
-#   - TOPSAILAI_SESSION_ID: Session identifier
-# Example: /path/to/state_checker.sh or /path/to/state_checker.py
-TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER=/path/to/your/state_checker_script
-
-# =============================================================================
-# OPTIONAL ENVIRONMENT VARIABLES
-# These have sensible defaults but can be customized
-# =============================================================================
-
-# TOPSAILAI_AGENT_DAEMON_HOST
-# Description: HTTP server host address to bind to
-# Default: 0.0.0.0 (all interfaces)
-# Example: 127.0.0.1 (localhost only), 0.0.0.0 (all interfaces)
-TOPSAILAI_AGENT_DAEMON_HOST=0.0.0.0
-
-# TOPSAILAI_AGENT_DAEMON_PORT
-# Description: HTTP server port to listen on
+# Port number to listen on
 # Default: 7373
-# Example: 7373, 8080, 3000
-TOPSAILAI_AGENT_DAEMON_PORT=7373
-# TOPSAILAI_AGENT_DAEMON_DEFAULT_ADMIN_KEY
-# Description: Default admin API key for auto-initialization on first startup.
-#              If not set, a random admin API key will be generated automatically.
-#              This key has full admin privileges (all sessions access, API key management).
-# Default: None (auto-generated random key)
-# Example: your-secure-admin-key-12345
-#TOPSAILAI_AGENT_DAEMON_DEFAULT_ADMIN_KEY=
-# TOPSAILAI_AGENT_DAEMON_DB_URL
-# Description: Database connection URL for SQLAlchemy
-# Default: sqlite:///topsailai_agent_daemon.db (relative to working directory)
-# Examples:
-#   - SQLite (file): sqlite:///path/to/database.db
-#   - SQLite (memory): sqlite:///:memory:
-#   - PostgreSQL: postgresql://user:password@localhost:5432/dbname
-#   - MySQL: mysql+pymysql://user:password@localhost:3306/dbname
-TOPSAILAI_AGENT_DAEMON_DB_URL=sqlite:///topsailai_agent_daemon.db
+# TOPSAILAI_AGENT_DAEMON_PORT=7373
+
+# Database URL for SQLAlchemy
+# Default: sqlite:///topsailai_agent_daemon.db
+# TOPSAILAI_AGENT_DAEMON_DB_URL=sqlite:///topsailai_agent_daemon.db
+
+# Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+# Default: INFO
+# TOPSAILAI_AGENT_DAEMON_LOG_LEVEL=INFO
+
 # =============================================================================
-# Message Control
-# =============================================================================
-# split by ';' or ','
-TOPSAILAI_AGENT_DAEMON_UNPROCESSED_MSG_INCLUDED_ROLES=""
+# Worker Scripts
 # =============================================================================
 
-# Worker Scripts Requirements:
-# All worker scripts (processor, summarizer, state_checker) should:
-# 1. Be executable (chmod +x for shell scripts)
-# 2. Handle the runtime environment variables provided
-# 3. Return appropriate exit codes (0 for success)
-# 4. For processor: After completion, call the SetTaskResult API to record results
+# Script to process messages. When it finishes, it records the result to storage.
+# Required. Must be an executable script.
+# TOPSAILAI_AGENT_DAEMON_PROCESSOR=/path/to/processor.py
 
-# Example Processor Script (processor.sh):
-#   #!/bin/bash
-#   echo "Processing message $TOPSAILAI_MSG_ID for session $TOPSAILAI_SESSION_ID"
-#   echo "Task content: $TOPSAILAI_TASK"
-#   # ... processing logic ...
-#   # Call API to set result: curl -X POST http://localhost:7373/api/v1/task ...
+# Script to summarize messages. The daemon does not care about the result.
+# Required. Must be an executable script.
+# TOPSAILAI_AGENT_DAEMON_SUMMARIZER=/path/to/summarizer.py
 
-# Example State Checker Script (state_checker.sh):
-#   #!/bin/bash
-#   # Check if session is processing
-#   # Output "idle" or "processing" to stdout
-#   echo "idle"
+# Script to check session state (idle/processing).
+# Required. Must be an executable script.
+# TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER=/path/to/session_state_checker.py
 
-# Security Considerations:
-# - Store sensitive database credentials securely
-# - Use absolute paths for worker scripts
-# - Ensure worker scripts have appropriate permissions
-# - Consider using environment-specific .env files (dev.env, prod.env)
+# =============================================================================
+# API Key Authentication
+# =============================================================================
+
+# Enable or disable API key authentication.
+# When enabled, all endpoints require X-API-Key header.
+# When disabled, no authentication is required.
+# Default: false
+# TOPSAILAI_AGENT_DAEMON_API_KEY_ENABLED=false
+
+# Optional: Pre-configured default admin API key.
+# If not set, a random admin key is generated on first startup.
+# This key has full admin privileges (all sessions, API key management).
+# Only used when API_KEY_ENABLED is true.
+# TOPSAILAI_AGENT_DAEMON_DEFAULT_ADMIN_KEY=
+
+# =============================================================================
+# Client Configuration
+# =============================================================================
+
+# Base URL for the agent daemon API (used by clients)
+# Default: http://127.0.0.1:7373
+# TOPSAILAI_AGENT_DAEMON_BASE_URL=http://127.0.0.1:7373
+
+# API key for client authentication (used by topsailai_agent_client, terminal, etc.)
+# Required when API_KEY_ENABLED is true.
+# TOPSAILAI_AGENT_DAEMON_API_KEY=
+
+# =============================================================================
+# Advanced Configuration
+# =============================================================================
+
+# Comma-separated list of roles to include in unprocessed messages.
+# Default: user
+# TOPSAILAI_AGENT_DAEMON_UNPROCESSED_MSG_INCLUDED_ROLES=user

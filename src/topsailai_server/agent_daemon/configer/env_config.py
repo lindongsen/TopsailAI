@@ -12,6 +12,11 @@ from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.exceptions import ConfigError
 
 
+def _parse_bool(value: str) -> bool:
+    """Parse a string value to boolean."""
+    return value.strip().lower() in ('true', '1', 'yes', 'on')
+
+
 class EnvConfig:
     """Environment configuration for agent_daemon"""
 
@@ -26,7 +31,8 @@ class EnvConfig:
         'TOPSAILAI_AGENT_DAEMON_HOST': '0.0.0.0',
         'TOPSAILAI_AGENT_DAEMON_PORT': '7373',
         'TOPSAILAI_AGENT_DAEMON_DB_URL': 'sqlite:///topsailai_agent_daemon.db',
-        'TOPSAILAI_AGENT_DAEMON_LOG_LEVEL': 'INFO'
+        'TOPSAILAI_AGENT_DAEMON_LOG_LEVEL': 'INFO',
+        'TOPSAILAI_AGENT_DAEMON_API_KEY_ENABLED': 'false'
     }
 
     def __init__(self, validate_scripts: bool = True):
@@ -54,8 +60,8 @@ class EnvConfig:
             # Use private attribute to avoid conflict with properties
             private_attr = f'_{attr_name}'
             setattr(self, private_attr, os.getenv(var, default))
-        logger.info("Optional configuration loaded: host=%s, port=%s, db_url=%s, log_level=%s",
-                    self.host, self.port, self.db_url, self.log_level)
+        logger.info("Optional configuration loaded: host=%s, port=%s, db_url=%s, log_level=%s, api_key_enabled=%s",
+                    self.host, self.port, self.db_url, self.log_level, self.api_key_enabled)
 
     def _validate_required(self):
         """Validate required environment variables"""
@@ -130,6 +136,11 @@ class EnvConfig:
     def log_level(self) -> str:
         """Get the log level"""
         return getattr(self, '_log_level', 'INFO')
+
+    @property
+    def api_key_enabled(self) -> bool:
+        """Get whether API key authentication is enabled"""
+        return _parse_bool(getattr(self, '_api_key_enabled', 'false'))
 
     @property
     def processor_script(self) -> Optional[str]:

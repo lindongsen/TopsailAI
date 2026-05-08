@@ -24,7 +24,8 @@ set -euo pipefail
 # =============================================================================
 README_FILE="${EXE_FOLDER}/../src/topsailai/readme.md"
 [ -e "${README_FILE}" ] || README_FILE="${EXE_FOLDER}/../topsailai/readme.md"
-LOG_FILE="/topsailai/log/chat.log"
+[ -n "${TOPSAILAI_HOME}" ] || TOPSAILAI_HOME="/topsailai"
+LOG_FILE="${TOPSAILAI_HOME}/log/chat.log"
 
 # =============================================================================
 # Help Information & Documentation

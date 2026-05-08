@@ -1,5 +1,4 @@
 ---
-workspace: /root/ai/TopsailAI/src/topsailai
 maintainer: human
 ---
 # Test

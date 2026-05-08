@@ -11,10 +11,22 @@ from typing import Optional
 from fastapi import Header, HTTPException, Request, Depends
 
 from topsailai_server.agent_daemon import logger
+from topsailai_server.agent_daemon.configer.env_config import get_config
 from topsailai_server.agent_daemon.storage.api_key_manager.base import ApiKeyData
 
 # Global reference to API key storage (set by app.py)
 _api_key_storage = None
+
+DUMMY_API_KEY = ApiKeyData(
+    api_key_id="dummy",
+    api_key="dummy",
+    name="dummy",
+    role="admin",
+    rate_limit=0,
+    is_active=True,
+    create_time=datetime.now(),
+    update_time=datetime.now(),
+)
 
 
 def set_dependencies(api_key_storage):
@@ -38,6 +50,10 @@ async def get_current_api_key(
     Raises:
         HTTPException: 401 if the header is missing or the key is invalid/inactive.
     """
+    if not get_config().api_key_enabled:
+        logger.debug("API key authentication is disabled, returning dummy key")
+        return DUMMY_API_KEY
+
     if not x_api_key:
         logger.warning("API request missing X-API-Key header")
         raise HTTPException(status_code=401, detail="Missing API key")
@@ -70,6 +86,9 @@ async def require_admin(
     Raises:
         HTTPException: 403 if the key is not an admin key.
     """
+    if not get_config().api_key_enabled:
+        return DUMMY_API_KEY
+
     if api_key.role != 'admin':
         logger.warning("Admin access denied for API key: %s", api_key.api_key_id)
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -96,12 +115,15 @@ async def check_session_permission(
     Raises:
         HTTPException: 403 if access is denied.
     """
+    if not get_config().api_key_enabled:
+        return
+
     session_id = request.path_params.get('session_id') or request.query_params.get('session_id')
     if not session_id:
         # No session_id to check, skip permission check
         return
 
-    _verify_session_permission(api_key, session_id)
+    verify_session_permission(api_key, session_id)
 
 
 def verify_session_permission(api_key: ApiKeyData, session_id: str) -> None:
@@ -117,31 +139,9 @@ def verify_session_permission(api_key: ApiKeyData, session_id: str) -> None:
     Raises:
         HTTPException: 403 if access is denied.
     """
-    if api_key.role == 'admin':
+    if not get_config().api_key_enabled:
         return
 
-    if _api_key_storage is None:
-        logger.error("API key storage not initialized")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-    if not _api_key_storage.is_session_bound(api_key.api_key_id, session_id):
-        logger.warning(
-            "Access denied: API key %s to session %s",
-            api_key.api_key_id, session_id
-        )
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied to session: %s" % session_id
-        )
-
-    logger.debug(
-        "Access granted: API key %s to session %s",
-        api_key.api_key_id, session_id
-    )
-
-
-def _verify_session_permission(api_key: ApiKeyData, session_id: str) -> None:
-    """Internal helper shared by dependency and explicit verifier."""
     if api_key.role == 'admin':
         return
 
@@ -184,6 +184,9 @@ async def check_rate_limit(
     Raises:
         HTTPException: 429 if rate limit is exceeded.
     """
+    if not get_config().api_key_enabled:
+        return
+
     if api_key.rate_limit == 0:
         return
 
@@ -191,7 +194,7 @@ async def check_rate_limit(
     if not session_id:
         return
 
-    _verify_rate_limit(api_key, session_id)
+    verify_rate_limit(api_key, session_id)
 
 
 def verify_rate_limit(api_key: ApiKeyData, session_id: str) -> None:
@@ -208,6 +211,9 @@ def verify_rate_limit(api_key: ApiKeyData, session_id: str) -> None:
     Raises:
         HTTPException: 429 if rate limit is exceeded.
     """
+    if not get_config().api_key_enabled:
+        return
+
     if api_key.rate_limit == 0:
         return
 
@@ -231,39 +237,6 @@ def verify_rate_limit(api_key: ApiKeyData, session_id: str) -> None:
         )
 
     # Log the rate limit entry after successful check
-    _api_key_storage.log_rate_limit(
-        api_key.api_key_id, session_id, 'receive_message'
-    )
-    logger.debug(
-        "Rate limit check passed for API key %s: %d/%d",
-        api_key.api_key_id, count + 1, api_key.rate_limit
-    )
-
-
-def _verify_rate_limit(api_key: ApiKeyData, session_id: str) -> None:
-    """Internal helper shared by dependency and explicit verifier."""
-    if api_key.rate_limit == 0:
-        return
-
-    if _api_key_storage is None:
-        logger.error("API key storage not initialized")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-    since = datetime.now() - timedelta(seconds=60)
-    count = _api_key_storage.count_rate_limit(
-        api_key.api_key_id, 'receive_message', since
-    )
-
-    if count >= api_key.rate_limit:
-        logger.warning(
-            "Rate limit exceeded for API key %s: %d/%d per minute",
-            api_key.api_key_id, count, api_key.rate_limit
-        )
-        raise HTTPException(
-            status_code=429,
-            detail="Rate limit exceeded: %d messages per minute" % api_key.rate_limit
-        )
-
     _api_key_storage.log_rate_limit(
         api_key.api_key_id, session_id, 'receive_message'
     )

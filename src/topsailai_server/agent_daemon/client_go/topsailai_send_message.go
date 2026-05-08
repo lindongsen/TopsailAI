@@ -22,6 +22,7 @@ type Config struct {
 	WaitInterval int
 	MaxWaitTime  int
 	ResultOnly   bool
+	APIKey       string
 }
 
 func (c *Config) baseURL() string {
@@ -67,6 +68,7 @@ func loadConfig() *Config {
 	waitInterval := intEnv("WAIT_INTERVAL", 2)
 	maxWaitTime := intEnv("MAX_WAIT_TIME", 300)
 	resultOnly := envBool("RESULT_ONLY")
+	apiKey := getEnv("TOPSAILAI_AGENT_DAEMON_API_KEY", "")
 
 	flag.StringVar(&cfg.Host, "host", host, "Agent daemon host")
 	flag.StringVar(&cfg.Port, "port", port, "Agent daemon port")
@@ -76,6 +78,7 @@ func loadConfig() *Config {
 	flag.IntVar(&cfg.WaitInterval, "wait-interval", waitInterval, "Wait interval in seconds")
 	flag.IntVar(&cfg.MaxWaitTime, "max-wait-time", maxWaitTime, "Max wait time in seconds")
 	flag.BoolVar(&cfg.ResultOnly, "result-only", resultOnly, "Only output result")
+	flag.StringVar(&cfg.APIKey, "api-key", apiKey, "API key for authentication (fallback: TOPSAILAI_AGENT_DAEMON_API_KEY env var)")
 
 	flag.Parse()
 	return cfg
@@ -117,7 +120,17 @@ func receiveMessage(cfg *Config, processedMsgID string) (string, error) {
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if cfg.APIKey != "" {
+		req.Header.Set("X-API-Key", cfg.APIKey)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to send request: %w", err)
 	}
@@ -164,7 +177,16 @@ func listMessages(cfg *Config, processedMsgID string) ([]Message, error) {
 		"&processed_msg_id=" + processedMsgID +
 		"&sort_key=create_time&order_by=asc&limit=100"
 
-	resp, err := http.Get(url)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if cfg.APIKey != "" {
+		req.Header.Set("X-API-Key", cfg.APIKey)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get messages: %w", err)
 	}

@@ -32,6 +32,8 @@ FOLDER_ROOT = "/topsailai"
 if os.getenv("TOPSAILAI_HOME"):
     FOLDER_ROOT = os.getenv("TOPSAILAI_HOME")
 
+TOPSAILAI_HOME=FOLDER_ROOT
+
 ###################################################################################
 # Layer 2: Main system directories under the root
 # These directories organize the system into functional areas

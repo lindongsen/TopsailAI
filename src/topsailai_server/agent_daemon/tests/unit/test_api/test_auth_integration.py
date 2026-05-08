@@ -1,23 +1,24 @@
-"""
+'''
   Author: km2
   Email: lin_dongsen@126.com
   Created: 2026-05-04
   Purpose: Integration tests for auth in session/message/task routes.
-"""
+'''
 
 import os
 import unittest
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
-# Set test environment variables before imports
+# Set test environment variables BEFORE any imports
 os.environ['TOPSAILAI_AGENT_DAEMON_PROCESSOR'] = '/bin/echo'
 os.environ['TOPSAILAI_AGENT_DAEMON_SUMMARIZER'] = '/bin/echo'
 os.environ['TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER'] = '/bin/echo'
 os.environ['TOPSAILAI_AGENT_DAEMON_DB_URL'] = 'sqlite:////tmp/test_auth_integration.db'
+os.environ['TOPSAILAI_AGENT_DAEMON_API_KEY_ENABLED'] = 'true'
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from topsailai_server.agent_daemon.storage.api_key_manager.base import ApiKeyData
 from topsailai_server.agent_daemon.api.middleware import auth as auth_module
@@ -36,6 +37,9 @@ class TestAuthIntegration(unittest.TestCase):
         self.mock_session_storage = MagicMock()
         self.mock_message_storage = MagicMock()
         self.mock_worker_manager = MagicMock()
+
+        # Default: unknown API key returns None
+        self.mock_api_key_storage.get_api_key_by_value.return_value = None
 
         # Set up mock engine
         self.mock_engine = MagicMock()
@@ -134,6 +138,18 @@ class TestAuthIntegration(unittest.TestCase):
         self.task_storage_patch.stop()
         auth_module._api_key_storage = None
 
+    def _make_mock_session(self, session_id='test-session', session_name='Test Session',
+                           task=None, processed_msg_id=None):
+        """Create a properly configured mock session object."""
+        mock_session = MagicMock()
+        mock_session.session_id = session_id
+        mock_session.session_name = session_name
+        mock_session.task = task
+        mock_session.create_time = datetime.now()
+        mock_session.update_time = datetime.now()
+        mock_session.processed_msg_id = processed_msg_id
+        return mock_session
+
     # ------------------------------------------------------------------
     # Session Routes Auth Tests
     # ------------------------------------------------------------------
@@ -149,13 +165,7 @@ class TestAuthIntegration(unittest.TestCase):
         """Admin API key can access any session."""
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
 
-        mock_session = MagicMock()
-        mock_session.session_id = 'test-session'
-        mock_session.session_name = 'Test Session'
-        mock_session.task = None
-        mock_session.create_time = datetime.now()
-        mock_session.update_time = datetime.now()
-        mock_session.processed_msg_id = None
+        mock_session = self._make_mock_session('test-session', 'Test Session')
         self.mock_session_storage.get.return_value = mock_session
 
         self.mock_worker_manager.check_session_state.return_value = 'idle'
@@ -174,13 +184,7 @@ class TestAuthIntegration(unittest.TestCase):
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
         self.mock_api_key_storage.is_session_bound.return_value = True
 
-        mock_session = MagicMock()
-        mock_session.session_id = 'bound-session'
-        mock_session.session_name = 'Bound Session'
-        mock_session.task = None
-        mock_session.create_time = datetime.now()
-        mock_session.update_time = datetime.now()
-        mock_session.processed_msg_id = None
+        mock_session = self._make_mock_session('bound-session', 'Bound Session')
         self.mock_session_storage.get.return_value = mock_session
 
         self.mock_worker_manager.check_session_state.return_value = 'idle'
@@ -501,13 +505,7 @@ class TestAuthIntegration(unittest.TestCase):
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
         self.mock_api_key_storage.list_bound_sessions.return_value = ['session-1', 'session-2']
 
-        mock_session1 = MagicMock()
-        mock_session1.session_id = 'session-1'
-        mock_session1.session_name = 'Session 1'
-        mock_session1.task = None
-        mock_session1.create_time = datetime.now()
-        mock_session1.update_time = datetime.now()
-        mock_session1.processed_msg_id = None
+        mock_session1 = self._make_mock_session('session-1', 'Session 1')
 
         self.mock_session_storage.list_sessions.return_value = [mock_session1]
 

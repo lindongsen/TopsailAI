@@ -1,57 +1,55 @@
-"""
-  Author: km2
-  Email: lin_dongsen@126.com
-  Created: 2026-05-04
-  Purpose: API key management routes - FastAPI implementation
-"""
-
-import secrets
-from typing import Optional, List
+"""API key management routes for agent_daemon."""
 from datetime import datetime
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Request as FastAPIRequest
+from pydantic import BaseModel, Field
 from topsailai_server.agent_daemon import logger
-from topsailai_server.agent_daemon.storage import Storage
-from topsailai_server.agent_daemon.storage.api_key_manager.base import ApiKeyData
-from topsailai_server.agent_daemon.api.utils import ApiResponse, success_response, error_response
-from topsailai_server.agent_daemon.api.middleware.auth import require_admin
-
+from topsailai_server.agent_daemon.api.middleware.auth import (
+    get_current_api_key,
+    require_admin,
+    check_session_permission,
+    verify_session_permission,
+    check_rate_limit,
+    verify_rate_limit,
+    ApiKeyData
+)
+from topsailai_server.agent_daemon.storage.api_key_manager import (
+    ApiKeyData as StorageApiKeyData,
+    ApiKeySessionData
+)
 
 # Router
-router = APIRouter(prefix="/api/v1/apikey", tags=["api_key"])
+router = APIRouter(prefix="/api/v1/apikey", tags=["apikey"])
 
-# Global dependencies (set by app.py)
+# Dependencies (set by set_dependencies)
+_session_storage = None
+_message_storage = None
+_worker_manager = None
 _api_key_storage = None
+
+
 def set_dependencies(session_storage, message_storage, worker_manager):
-    """Set dependencies for the routes (called by app.py)"""
-    global _api_key_storage
-    _api_key_storage = session_storage
-
-
-def get_storage() -> Storage:
-    """Get Storage instance"""
-    if _api_key_storage is None:
-        raise RuntimeError("Storage not initialized")
-    return Storage(_api_key_storage.engine)
+    """Set storage and worker dependencies for the router."""
+    global _session_storage, _message_storage, _worker_manager, _api_key_storage
+    _session_storage = session_storage
+    _message_storage = message_storage
+    _worker_manager = worker_manager
+    # api_key_storage is set via auth middleware
+    from topsailai_server.agent_daemon.api.middleware.auth import _api_key_storage as auth_api_key_storage
+    _api_key_storage = auth_api_key_storage
 
 
 # Request/Response Models
 class CreateApiKeyRequest(BaseModel):
-    """Request model for creating an API key"""
-    name: str
-    role: str = "user"
-    rate_limit: int = 0
-    session_ids: Optional[List[str]] = None
+    """Request model for creating an API key."""
+    name: str = Field(..., description="Human-readable name for the key")
+    role: str = Field(default="user", description="Role: 'admin' or 'user'")
+    rate_limit: Optional[int] = Field(default=None, description="Max messages per minute, 0=unlimited")
+    session_ids: Optional[list] = Field(default=None, description="Sessions to bind (user role only)")
 
 
-class BindSessionsRequest(BaseModel):
-    """Request model for binding sessions to an API key"""
-    session_ids: List[str]
-
-
-class ApiKeyResponse(BaseModel):
-    """Response model for an API key"""
+class CreateApiKeyResponse(BaseModel):
+    """Response model for creating an API key."""
     api_key_id: str
     api_key: str
     name: str
@@ -62,263 +60,181 @@ class ApiKeyResponse(BaseModel):
     update_time: datetime
 
 
-class ApiKeyListResponse(BaseModel):
-    """Response model for listing API keys"""
-    api_keys: List[ApiKeyResponse]
-    total: int
+class BindSessionsRequest(BaseModel):
+    """Request model for binding sessions to an API key."""
+    session_ids: list = Field(..., description="List of session IDs to bind")
 
 
-def _generate_api_key() -> str:
-    """Generate a secure random API key string."""
-    return secrets.token_hex(32)
+class UnbindSessionsRequest(BaseModel):
+    """Request model for unbinding sessions from an API key."""
+    session_ids: list = Field(..., description="List of session IDs to unbind")
 
 
-def _generate_api_key_id() -> str:
-    """Generate a unique API key ID."""
-    return "ak_" + secrets.token_hex(8)
-
-
-@router.post("", response_model=ApiResponse)
+# Routes
+@router.post("", response_model=dict)
 async def create_api_key(
     request: CreateApiKeyRequest,
-    storage: Storage = Depends(get_storage),
-    admin_key: ApiKeyData = Depends(require_admin)
-) -> ApiResponse:
-    """
-    Create a new API key.
+    current_key: ApiKeyData = Depends(require_admin)
+):
+    """Create a new API key. Admin only."""
+    # Validate role
+    if request.role not in ("admin", "user"):
+        return {"code": 400, "data": None, "message": "Invalid role. Must be 'admin' or 'user'"}
 
-    Only admin keys can create new API keys.
-    Auto-generates a secure random api_key value.
-    If role is 'user' and session_ids are provided, binds them immediately.
+    # Validate rate_limit
+    if request.rate_limit is not None and request.rate_limit < 0:
+        return {"code": 400, "data": None, "message": "rate_limit must be >= 0"}
 
-    Args:
-        request: CreateApiKeyRequest with name, role, rate_limit, and optional session_ids
-    """
-    try:
-        # Validate role
-        if request.role not in ("admin", "user"):
-            logger.warning("Invalid role for API key creation: %s", request.role)
-            return error_response(message="Role must be 'admin' or 'user'")
+    # Set default rate_limit based on role
+    if request.rate_limit is None:
+        rate_limit = 0 if request.role == "admin" else 60
+    else:
+        rate_limit = request.rate_limit
 
-        # Generate API key ID and value
-        api_key_id = _generate_api_key_id()
-        api_key_value = _generate_api_key()
+    # Generate API key ID and value
+    import secrets
+    api_key_id = "ak_" + secrets.token_hex(8)
+    api_key_value = secrets.token_hex(32)
 
-        # Create API key data
-        now = datetime.now()
-        api_key_data = ApiKeyData(
+    now = datetime.now()
+    api_key_data = StorageApiKeyData(
+        api_key_id=api_key_id,
+        api_key=api_key_value,
+        name=request.name,
+        role=request.role,
+        rate_limit=rate_limit,
+        is_active=True,
+        create_time=now,
+        update_time=now
+    )
+
+    _api_key_storage.create_api_key(api_key_data)
+
+    # Bind sessions if provided (only for user role)
+    if request.role == "user" and request.session_ids:
+        for session_id in request.session_ids:
+            binding = ApiKeySessionData(
+                api_key_id=api_key_id,
+                session_id=session_id,
+                create_time=now
+            )
+            _api_key_storage.bind_session(binding)
+
+    logger.info("API key created: %s (role=%s)", api_key_id, request.role)
+
+    return {
+        "code": 0,
+        "data": CreateApiKeyResponse(
             api_key_id=api_key_id,
             api_key=api_key_value,
             name=request.name,
             role=request.role,
-            rate_limit=request.rate_limit,
+            rate_limit=rate_limit,
             is_active=True,
             create_time=now,
             update_time=now
-        )
-
-        # Save to storage
-        success = storage.api_key.create_api_key(api_key_data)
-        if not success:
-            logger.error("Failed to create API key in storage")
-            return error_response(message="Failed to create API key")
-
-        # Bind sessions if provided and role is user
-        if request.role == "user" and request.session_ids:
-            storage.api_key.bind_sessions(api_key_id, request.session_ids)
-            logger.info("Bound %d sessions to new API key: %s", len(request.session_ids), api_key_id)
-
-        logger.info("Created API key: %s, role=%s, by admin=%s",
-                   api_key_id, request.role, admin_key.api_key_id)
-
-        return success_response(
-            data=api_key_data.__dict__,
-            message="API key created successfully"
-        )
-
-    except Exception as e:
-        logger.exception("Error creating API key: %s", e)
-        return error_response(message="Failed to create API key: %s" % str(e))
+        ),
+        "message": "API key created successfully"
+    }
 
 
-@router.get("", response_model=ApiResponse)
+@router.get("", response_model=dict)
 async def list_api_keys(
-    offset: int = 0,
-    limit: int = 1000,
-    storage: Storage = Depends(get_storage),
-    admin_key: ApiKeyData = Depends(require_admin)
-) -> ApiResponse:
-    """
-    List all API keys.
+    current_key: ApiKeyData = Depends(require_admin)
+):
+    """List all API keys. Admin only."""
+    api_keys = _api_key_storage.list_api_keys()
 
-    Only admin keys can list all API keys.
-
-    Args:
-        offset: Pagination offset
-        limit: Maximum number of keys to return
-    """
-    try:
-        api_keys = storage.api_key.list_api_keys()
-        total = len(api_keys)
-
-        # Apply pagination
-        paginated_keys = api_keys[offset:offset + limit]
-
-        # Convert to response format
-        key_list = []
-        for key in paginated_keys:
-            key_list.append(ApiKeyResponse(
-                api_key_id=key.api_key_id,
-                api_key=key.api_key,
-                name=key.name,
-                role=key.role,
-                rate_limit=key.rate_limit,
-                is_active=key.is_active,
-                create_time=key.create_time,
-                update_time=key.update_time
-            ))
-
-        logger.debug("Listed %d API keys (total: %d)", len(key_list), total)
-        return success_response(
-            data={
-                "api_keys": [k.model_dump() for k in key_list],
-                "total": total
-            }
-        )
-
-    except Exception as e:
-        logger.exception("Error listing API keys: %s", e)
-        return error_response(message="Failed to list API keys: %s" % str(e))
+    return {
+        "code": 0,
+        "data": {
+            "api_keys": [key.to_dict() for key in api_keys],
+            "total": len(api_keys)
+        },
+        "message": "OK"
+    }
 
 
-@router.delete("/{api_key_id}", response_model=ApiResponse)
+@router.delete("/{api_key_id}", response_model=dict)
 async def delete_api_key(
     api_key_id: str,
-    storage: Storage = Depends(get_storage),
-    admin_key: ApiKeyData = Depends(require_admin)
-) -> ApiResponse:
-    """
-    Delete an API key and its related bindings and rate limit logs.
+    current_key: ApiKeyData = Depends(require_admin)
+):
+    """Delete an API key. Admin only."""
+    api_key = _api_key_storage.get_api_key_by_id(api_key_id)
+    if not api_key:
+        return {"code": 404, "data": None, "message": "API key not found"}
 
-    Only admin keys can delete API keys.
+    # Prevent deleting the last admin key
+    if api_key.role == "admin":
+        admin_count = _api_key_storage.count_admin_api_keys()
+        if admin_count <= 1:
+            return {"code": 400, "data": None, "message": "Cannot delete the last admin API key"}
 
-    Args:
-        api_key_id: The API key ID to delete
-    """
-    try:
-        # Check if the key exists
-        existing = storage.api_key.get_api_key_by_id(api_key_id)
-        if not existing:
-            logger.warning("API key not found for deletion: %s", api_key_id)
-            return error_response(message="API key not found", code=404)
+    _api_key_storage.delete_api_key(api_key_id)
+    logger.info("API key deleted: %s", api_key_id)
 
-        # Prevent deleting the last admin key
-        if existing.role == "admin":
-            all_keys = storage.api_key.list_api_keys()
-            admin_count = sum(1 for k in all_keys if k.role == "admin" and k.is_active)
-            if admin_count <= 1:
-                logger.warning("Cannot delete the last admin API key: %s", api_key_id)
-                return error_response(message="Cannot delete the last admin API key")
-
-        # Delete the API key (cascades to bindings and logs)
-        success = storage.api_key.delete_api_key(api_key_id)
-        if not success:
-            logger.error("Failed to delete API key: %s", api_key_id)
-            return error_response(message="Failed to delete API key")
-
-        logger.info("Deleted API key: %s, by admin=%s", api_key_id, admin_key.api_key_id)
-        return success_response(message="API key deleted successfully")
-
-    except Exception as e:
-        logger.exception("Error deleting API key: %s", e)
-        return error_response(message="Failed to delete API key: %s" % str(e))
+    return {
+        "code": 0,
+        "data": None,
+        "message": "API key deleted successfully"
+    }
 
 
-@router.post("/{api_key_id}/sessions", response_model=ApiResponse)
+@router.post("/{api_key_id}/sessions", response_model=dict)
 async def bind_sessions(
     api_key_id: str,
     request: BindSessionsRequest,
-    storage: Storage = Depends(get_storage),
-    admin_key: ApiKeyData = Depends(require_admin)
-) -> ApiResponse:
-    """
-    Bind sessions to a user API key.
+    current_key: ApiKeyData = Depends(require_admin)
+):
+    """Bind sessions to a user API key. Admin only."""
+    api_key = _api_key_storage.get_api_key_by_id(api_key_id)
+    if not api_key:
+        return {"code": 404, "data": None, "message": "API key not found"}
 
-    Only admin keys can bind sessions.
-    The target API key must exist and be a user key (not admin).
+    if api_key.role == "admin":
+        return {"code": 400, "data": None, "message": "Cannot bind sessions to admin API key"}
 
-    Args:
-        api_key_id: The API key ID to bind sessions to
-        request: BindSessionsRequest with list of session_ids
-    """
-    try:
-        # Check if the key exists
-        existing = storage.api_key.get_api_key_by_id(api_key_id)
-        if not existing:
-            logger.warning("API key not found for binding: %s", api_key_id)
-            return error_response(message="API key not found", code=404)
-
-        # Only user keys can have session bindings
-        if existing.role == "admin":
-            logger.warning("Cannot bind sessions to admin API key: %s", api_key_id)
-            return error_response(message="Cannot bind sessions to admin API key")
-
-        # Bind sessions
-        success = storage.api_key.bind_sessions(api_key_id, request.session_ids)
-        if not success:
-            logger.error("Failed to bind sessions to API key: %s", api_key_id)
-            return error_response(message="Failed to bind sessions")
-
-        logger.info("Bound %d sessions to API key: %s, by admin=%s",
-                   len(request.session_ids), api_key_id, admin_key.api_key_id)
-
-        return success_response(
-            data={"bound_sessions": request.session_ids},
-            message="Sessions bound successfully"
+    now = datetime.now()
+    bound_sessions = []
+    for session_id in request.session_ids:
+        binding = ApiKeySessionData(
+            api_key_id=api_key_id,
+            session_id=session_id,
+            create_time=now
         )
+        _api_key_storage.bind_session(binding)
+        bound_sessions.append(session_id)
 
-    except Exception as e:
-        logger.exception("Error binding sessions: %s", e)
-        return error_response(message="Failed to bind sessions: %s" % str(e))
+    logger.info("Sessions bound to API key %s: %s", api_key_id, bound_sessions)
+
+    return {
+        "code": 0,
+        "data": {"bound_sessions": bound_sessions},
+        "message": "Sessions bound successfully"
+    }
 
 
-@router.delete("/{api_key_id}/sessions", response_model=ApiResponse)
+@router.delete("/{api_key_id}/sessions", response_model=dict)
 async def unbind_sessions(
     api_key_id: str,
-    request: BindSessionsRequest,
-    storage: Storage = Depends(get_storage),
-    admin_key: ApiKeyData = Depends(require_admin)
-) -> ApiResponse:
-    """
-    Unbind sessions from a user API key.
+    request: UnbindSessionsRequest,
+    current_key: ApiKeyData = Depends(require_admin)
+):
+    """Unbind sessions from a user API key. Admin only."""
+    api_key = _api_key_storage.get_api_key_by_id(api_key_id)
+    if not api_key:
+        return {"code": 404, "data": None, "message": "API key not found"}
 
-    Only admin keys can unbind sessions.
+    unbound_sessions = []
+    for session_id in request.session_ids:
+        _api_key_storage.unbind_session(api_key_id, session_id)
+        unbound_sessions.append(session_id)
 
-    Args:
-        api_key_id: The API key ID to unbind sessions from
-        request: BindSessionsRequest with list of session_ids to unbind
-    """
-    try:
-        # Check if the key exists
-        existing = storage.api_key.get_api_key_by_id(api_key_id)
-        if not existing:
-            logger.warning("API key not found for unbinding: %s", api_key_id)
-            return error_response(message="API key not found", code=404)
+    logger.info("Sessions unbound from API key %s: %s", api_key_id, unbound_sessions)
 
-        # Unbind sessions
-        success = storage.api_key.unbind_sessions(api_key_id, request.session_ids)
-        if not success:
-            logger.error("Failed to unbind sessions from API key: %s", api_key_id)
-            return error_response(message="Failed to unbind sessions")
-
-        logger.info("Unbound %d sessions from API key: %s, by admin=%s",
-                   len(request.session_ids), api_key_id, admin_key.api_key_id)
-
-        return success_response(
-            data={"unbound_sessions": request.session_ids},
-            message="Sessions unbound successfully"
-        )
-
-    except Exception as e:
-        logger.exception("Error unbinding sessions: %s", e)
-        return error_response(message="Failed to unbind sessions: %s" % str(e))
+    return {
+        "code": 0,
+        "data": {"unbound_sessions": unbound_sessions},
+        "message": "Sessions unbound successfully"
+    }

@@ -63,7 +63,7 @@ class Storage:
             try:
                 from .session_manager.sql import Session
                 from .message_manager.sql import Message
-                from .api_key_manager.sql import ApiKey, ApiKeySession, RateLimitLog
+                from .api_key_manager.sql import ApiKeyModel, ApiKeySessionModel, RateLimitLogModel
                 Base.metadata.create_all(self._engine)
             except (TypeError, AttributeError):
                 # Handle mock engines in tests that don't support inspection
@@ -86,7 +86,7 @@ class Storage:
         """
         from .session_manager.sql import Session
         from .message_manager.sql import Message
-        from .api_key_manager.sql import ApiKey, ApiKeySession, RateLimitLog
+        from .api_key_manager.sql import ApiKeyModel, ApiKeySessionModel, RateLimitLogModel
         Base.metadata.create_all(self._engine)
 
 

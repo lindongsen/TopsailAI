@@ -38,6 +38,11 @@ def _create_test_app(mock_storage):
     # Set the storage dependency directly using the correct variable name
     auth_module._api_key_storage = mock_storage
 
+    # Mock get_config to return api_key_enabled=True for tests
+    mock_cfg = MagicMock()
+    mock_cfg.api_key_enabled = True
+    auth_module.get_config = lambda: mock_cfg
+
     app = FastAPI()
 
     @app.get("/test-auth")

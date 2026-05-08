@@ -41,6 +41,13 @@ def mock_request_failure():
 
 
 @pytest.fixture
+def mock_probe_port():
+    """Mock probe_port to prevent actual network probing during tests."""
+    with patch("topsailai_server.agent_daemon.scripts.processor_callback.probe_port", return_value=True) as m:
+        yield m
+
+
+@pytest.fixture
 def base_url():
     """Default base URL for testing."""
     return "http://localhost:7373"
@@ -387,7 +394,7 @@ class TestCallReceiveMessage:
 class TestMain:
     """Tests for main function."""
 
-    def test_with_task_id_calls_set_task_result(self, mock_logger, mock_sys_exit):
+    def test_with_task_id_calls_set_task_result(self, mock_logger, mock_sys_exit, mock_probe_port):
         """Test main calls SetTaskResult when TASK_ID is present."""
         env = {
             "TOPSAILAI_SESSION_ID": "test-session-123",
@@ -410,7 +417,7 @@ class TestMain:
                         mock_receive.assert_not_called()
                         mock_sys_exit.assert_called_once_with(0)
 
-    def test_without_task_id_calls_receive_message(self, mock_logger, mock_sys_exit):
+    def test_without_task_id_calls_receive_message(self, mock_logger, mock_sys_exit, mock_probe_port):
         """Test main calls ReceiveMessage when TASK_ID is absent."""
         env = {
             "TOPSAILAI_SESSION_ID": "test-session-123",
@@ -432,7 +439,7 @@ class TestMain:
                         mock_set_task.assert_not_called()
                         mock_sys_exit.assert_called_once_with(0)
 
-    def test_success_exits_with_zero(self, mock_logger, mock_sys_exit):
+    def test_success_exits_with_zero(self, mock_logger, mock_sys_exit, mock_probe_port):
         """Test main exits with 0 on successful API call."""
         env = {
             "TOPSAILAI_SESSION_ID": "s1", "TOPSAILAI_MSG_ID": "m1",
@@ -445,7 +452,7 @@ class TestMain:
                     main()
                     mock_sys_exit.assert_called_once_with(0)
 
-    def test_failure_exits_with_one(self, mock_logger, mock_sys_exit):
+    def test_failure_exits_with_one(self, mock_logger, mock_sys_exit, mock_probe_port):
         """Test main exits with 1 on failed API call."""
         env = {
             "TOPSAILAI_SESSION_ID": "s1", "TOPSAILAI_MSG_ID": "m1",
@@ -458,7 +465,7 @@ class TestMain:
                     main()
                     mock_sys_exit.assert_called_once_with(1)
 
-    def test_missing_session_id_exits_with_one(self, mock_logger, mock_sys_exit):
+    def test_missing_session_id_exits_with_one(self, mock_logger, mock_sys_exit, mock_probe_port):
         """Test main exits when TOPSAILAI_SESSION_ID is missing."""
         env = {
             "TOPSAILAI_MSG_ID": "m1", "TOPSAILAI_FINAL_ANSWER": "Answer",
@@ -469,7 +476,7 @@ class TestMain:
                 main()
                 mock_sys_exit.assert_called_with(1)
 
-    def test_missing_msg_id_exits_with_one(self, mock_logger, mock_sys_exit):
+    def test_missing_msg_id_exits_with_one(self, mock_logger, mock_sys_exit, mock_probe_port):
         """Test main exits when TOPSAILAI_MSG_ID is missing."""
         env = {
             "TOPSAILAI_SESSION_ID": "s1", "TOPSAILAI_FINAL_ANSWER": "Answer",
@@ -480,7 +487,7 @@ class TestMain:
                 main()
                 mock_sys_exit.assert_any_call(1)
 
-    def test_missing_final_answer_exits_with_one(self, mock_logger, mock_sys_exit):
+    def test_missing_final_answer_exits_with_one(self, mock_logger, mock_sys_exit, mock_probe_port):
         """Test main exits when TOPSAILAI_FINAL_ANSWER is missing."""
         env = {
             "TOPSAILAI_SESSION_ID": "s1", "TOPSAILAI_MSG_ID": "m1",
@@ -491,7 +498,7 @@ class TestMain:
                 main()
                 mock_sys_exit.assert_called_with(1)
 
-    def test_default_host_and_port(self, mock_logger, mock_sys_exit):
+    def test_default_host_and_port(self, mock_logger, mock_sys_exit, mock_probe_port):
         """Test main uses default host (localhost) and port (7373) when env vars are missing."""
         env = {
             "TOPSAILAI_SESSION_ID": "s1", "TOPSAILAI_MSG_ID": "m1",
@@ -504,7 +511,7 @@ class TestMain:
                     call_kwargs = mock_receive.call_args[1]
                     assert call_kwargs["base_url"] == "http://localhost:7373"
 
-    def test_custom_host_and_port(self, mock_logger, mock_sys_exit):
+    def test_custom_host_and_port(self, mock_logger, mock_sys_exit, mock_probe_port):
         """Test main uses custom host and port from env vars."""
         env = {
             "TOPSAILAI_SESSION_ID": "s1", "TOPSAILAI_MSG_ID": "m1",
@@ -519,7 +526,7 @@ class TestMain:
                     call_kwargs = mock_receive.call_args[1]
                     assert call_kwargs["base_url"] == "http://my-host:8080"
 
-    def test_receive_message_failure_exits_with_one(self, mock_logger, mock_sys_exit):
+    def test_receive_message_failure_exits_with_one(self, mock_logger, mock_sys_exit, mock_probe_port):
         """Test main exits with 1 when call_receive_message fails."""
         env = {
             "TOPSAILAI_SESSION_ID": "s1", "TOPSAILAI_MSG_ID": "m1",
@@ -532,7 +539,7 @@ class TestMain:
                     main()
                     mock_sys_exit.assert_called_once_with(1)
 
-    def test_set_thread_name_called(self, mock_logger, mock_sys_exit):
+    def test_set_thread_name_called(self, mock_logger, mock_sys_exit, mock_probe_port):
         """Test main calls set_thread_name for thread identification."""
         env = {
             "TOPSAILAI_SESSION_ID": "s1", "TOPSAILAI_MSG_ID": "m1",
@@ -545,14 +552,14 @@ class TestMain:
                     main()
                     mock_thread.assert_called_once()
 
-    def test_no_env_vars_exits_with_one(self, mock_logger, mock_sys_exit):
+    def test_no_env_vars_exits_with_one(self, mock_logger, mock_sys_exit, mock_probe_port):
         """Test main exits with 1 when all required env vars are missing."""
         with patch.dict(os.environ, {}, clear=True):
             with patch("topsailai_server.agent_daemon.scripts.processor_callback.set_thread_name"):
                 main()
                 mock_sys_exit.assert_called_with(1)
 
-    def test_unicode_final_answer(self, mock_logger, mock_sys_exit):
+    def test_unicode_final_answer(self, mock_logger, mock_sys_exit, mock_probe_port):
         """Test main handles unicode characters in FINAL_ANSWER env var."""
         env = {
             "TOPSAILAI_SESSION_ID": "s1", "TOPSAILAI_MSG_ID": "m1",
@@ -565,27 +572,4 @@ class TestMain:
                     main()
                     call_kwargs = mock_receive.call_args[1]
                     assert call_kwargs["message"] == "\u4efb\u52a1\u5b8c\u6210 \U0001f389"
-                    with patch("topsailai_server.agent_daemon.scripts.processor_callback.set_thread_name") as mock_thread:
-                        main()
-                        mock_thread.assert_called_once()
 
-    def test_no_env_vars_exits_with_one(self, mock_logger, mock_sys_exit):
-        """Test main exits with 1 when all required env vars are missing."""
-        with patch.dict(os.environ, {}, clear=True):
-            with patch("topsailai_server.agent_daemon.scripts.processor_callback.set_thread_name"):
-                main()
-                mock_sys_exit.assert_any_call(1)
-
-    def test_unicode_final_answer(self, mock_logger, mock_sys_exit):
-        """Test main handles unicode characters in FINAL_ANSWER env var."""
-        env = {
-            "TOPSAILAI_SESSION_ID": "s1", "TOPSAILAI_MSG_ID": "m1",
-            "TOPSAILAI_FINAL_ANSWER": "\u4efb\u52a1\u5b8c\u6210 \U0001f389",
-            "TOPSAILAI_AGENT_DAEMON_HOST": "localhost", "TOPSAILAI_AGENT_DAEMON_PORT": "7373",
-        }
-        with patch.dict(os.environ, env, clear=True):
-            with patch("topsailai_server.agent_daemon.scripts.processor_callback.call_receive_message", return_value=True) as mock_receive:
-                with patch("topsailai_server.agent_daemon.scripts.processor_callback.set_thread_name"):
-                    main()
-                    call_kwargs = mock_receive.call_args[1]
-                    assert call_kwargs["message"] == "\u4efb\u52a1\u5b8c\u6210 \U0001f389"
