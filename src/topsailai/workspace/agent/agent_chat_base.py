@@ -260,3 +260,23 @@ class AgentChatBase(object):
                 fd.write(answer)
 
         return
+
+    def format_message(self, message:str) -> str:
+        """
+        Format/Build new message
+
+        Args:
+            message (str): The message content
+
+        Returns:
+            str: new message
+        """
+        if not message:
+            return message
+        if message in [
+            "continue",
+            "/noop",
+            "/continue",
+        ]:
+            return ""
+        return message

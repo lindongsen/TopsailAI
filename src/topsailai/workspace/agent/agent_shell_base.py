@@ -130,6 +130,9 @@ class AgentChat(AgentChatBase):
         answer = ""
         curr_count = 0
 
+        if message:
+            message = self.format_message(message)
+
         # start
         while True:
             flag_abort = False
@@ -245,6 +248,7 @@ class AgentChat(AgentChatBase):
                 message = input_message(hook=self.hook_instruction)
                 message = message.strip()
                 if message:
+                    message = self.format_message(message)
                     break
 
         # hook answer
