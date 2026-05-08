@@ -1,13 +1,7 @@
 ---
 maintainer: human
-workspace: /root/ai/TopsailAI/src/topsailai_server/agent_daemon
-ProjectRootFolder: /root/ai/TopsailAI
 programming_language: python
 test_framwork: pytest
-
-reviewer: km-k25
-developer: mm-m25
-tester: km-k25
 ---
 # Test
 
@@ -15,17 +9,12 @@ tester: km-k25
 
 ## Under the workspace
 
-Important Documents:
-- readme.md
-
 refer to folders:
 - docs/
 - tests/
 
 guide files(Dynamically changing documents):
-- `docs/Code_Improvement_Proposal.md`
-- `docs/cases/test_cases.md`
-- `docs/Test_Execution_Checklist.md`
+- `docs/cases/`
 
 NOTE: The execution time of integration testing is very long. It is recommended to set the tool_call timeout to 600 seconds when executing pytest.
 

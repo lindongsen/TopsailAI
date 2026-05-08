@@ -245,6 +245,10 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         head_offset_to_keep = int(head_offset_to_keep)
         need_interactive = True if int(need_interactive) else False
 
+        if not self.ctx_runtime_data.is_need_summarize_for_processed():
+            print("no need summarize")
+            return
+
         self.ctx_runtime_data.summarize_messages_for_processed(
             head_offset_to_keep=head_offset_to_keep,
             need_interactive=need_interactive,
