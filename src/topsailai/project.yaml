@@ -17,13 +17,13 @@ workspace_project_structure: |
       - UserCase_xxx.md
       - TestCase_xxx.md
 
-  - task/ # The last/current task info, The Folder's maintainer is AI
-    - Code_Improvement_Proposal.md
-    - Unit_Test_Improvement_Proposal.md
-    - Integration_Test_Improvement_Proposal.md
-    - Test_Execution_Checklist.md
-
   - tests/ # TestsFolder, Store testing code files
     - unit/ # Some unit tests should be placed in the same folder as the source code, such as golang
     - integration/ # (integration test) or (live integration test)
     - e2e/ # Complete or auxiliary scripts for E2E
+
+  - ".task/" # The last/current task info, The Folder's maintainer is AI
+    - Code_Improvement_Proposal.md
+    - Unit_Test_Improvement_Proposal.md
+    - Integration_Test_Improvement_Proposal.md
+    - Test_Execution_Checklist.md
