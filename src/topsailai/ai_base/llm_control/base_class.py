@@ -359,7 +359,7 @@ class LLMModelBase(object):
         txt_content = str(rsp_content)
         max_tokens = self.max_tokens
         current_tokens = count_tokens(txt_content)
-        if current_tokens >= max_tokens:
+        if (current_tokens+max_tokens*0.1) >= max_tokens:
             repetition_result = text_tool.check_repetition(txt_content)
             if repetition_result.get("has_severe_repetition"):
                 error_msg = f"{LLM_KEYWORD_MISTAKE}: Severe repetition loop pattern detected!"
