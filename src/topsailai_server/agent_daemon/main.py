@@ -122,8 +122,8 @@ class AgentDaemon:
         """
         try:
             # Check if any admin API key already exists
-            admin_keys = self.api_key_storage.list_api_keys(role="admin", limit=1)
-            if admin_keys:
+            admin_count = self.api_key_storage.count_admin_api_keys()
+            if admin_count > 0:
                 logger.info("Admin API key already exists, skipping default initialization")
                 return
 
