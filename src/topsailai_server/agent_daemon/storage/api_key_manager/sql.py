@@ -1,5 +1,6 @@
 """SQLAlchemy implementation of API key storage."""
 from datetime import datetime
+from typing import Optional
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, create_engine, Index
 from sqlalchemy.orm import sessionmaker, declarative_base, Session as SQLAlchemySession
 from sqlalchemy.exc import IntegrityError
@@ -7,9 +8,9 @@ from topsailai_server.agent_daemon.storage.api_key_manager.base import (
     ApiKeyData,
     ApiKeySessionData,
     RateLimitLogData,
-    ApiKeyStorageBase
+    ApiKeyStorageBase,
+    ApiKeyEnvironData
 )
-
 Base = declarative_base()
 
 
@@ -378,3 +379,8 @@ class ApiKeySQLAlchemy(ApiKeyStorageBase):
         """Get all environment variables for a session via its bound API key."""
         from topsailai_server.agent_daemon.storage.api_key_environ_manager.sql import ApiKeyEnvironSQLAlchemy
         return ApiKeyEnvironSQLAlchemy(self.engine).get_api_key_environs_by_session_id(session_id)
+
+    def get_api_key_environ_by_api_key_id_and_key(self, api_key_id: str, key: str) -> Optional[ApiKeyEnvironData]:
+        """Get a specific environment variable for an API key by key name."""
+        from topsailai_server.agent_daemon.storage.api_key_environ_manager.sql import ApiKeyEnvironSQLAlchemy
+        return ApiKeyEnvironSQLAlchemy(self.engine).get_api_key_environ_by_api_key_id_and_key(api_key_id, key)

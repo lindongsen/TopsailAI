@@ -47,7 +47,21 @@ class Storage:
         Args:
             engine: SQLAlchemy engine instance.
         """
+        self.engine = engine
         self.session = SessionSQLAlchemy(engine)
         self.message = MessageSQLAlchemy(engine)
         self.api_key = ApiKeySQLAlchemy(engine)
         self.api_key_environ = ApiKeyEnvironSQLAlchemy(engine)
+    def init_db(self):
+        """Initialize all database tables.
+
+        Ensures all tables for session, message, api_key, and related
+        models are created. Safe to call multiple times (idempotent).
+        """
+        from topsailai_server.agent_daemon.storage.session_manager.sql import Base as SessionBase
+        from topsailai_server.agent_daemon.storage.message_manager.sql import Base as MessageBase
+        from topsailai_server.agent_daemon.storage.api_key_manager.sql import Base as ApiKeyBase
+
+        SessionBase.metadata.create_all(self.engine)
+        MessageBase.metadata.create_all(self.engine)
+        ApiKeyBase.metadata.create_all(self.engine)

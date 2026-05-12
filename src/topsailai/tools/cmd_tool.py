@@ -62,7 +62,7 @@ def exec_cmd(
     """ execute command
 
     Args:
-        cmd (str|list): example "echo hello" or ["echo", "hello"], use str for "pipe/redirect operation" else use list
+        cmd (str|list): example "echo hello" or ["echo", "hello"], use str for "pipe/redirect/Logical operation" else use list
         no_need_stderr (int, optional): if 1, stderr still be null. Defaults to 0.
         timeout (int, optional): Timeout in seconds. If the command does not finish
                                  within this time, a exception will be raised.
@@ -97,7 +97,7 @@ TOOLS = dict(
 
 PROMPT_REQUIRED = """
 # Requirements For Command
-1. DONOT use `killall` to terminate processes; you MUST specify the exact process ID with `kill {pid}`
+1. DONOT use `killall` or `pkill -f` to terminate processes by name; you MUST specify the exact process ID with `kill {pid}`
 """
 
 PROMPT = prompt_tool.read_prompt("search/cmd_text.md") + PROMPT_REQUIRED

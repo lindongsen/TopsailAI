@@ -185,6 +185,11 @@ class ApiKeyStorageBase(ABC):
         pass
 
     @abstractmethod
+    def get_api_key_environ_by_api_key_id_and_key(self, api_key_id: str, key: str) -> Optional[ApiKeyEnvironData]:
+        """Get a specific environment variable for an API key by key name."""
+        pass
+
+    @abstractmethod
     def get_api_key_environs_by_session_id(self, session_id: str) -> list:
         """Get all environment variables for a session via its bound API key."""
         pass

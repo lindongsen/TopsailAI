@@ -59,7 +59,7 @@ async def get_current_api_key(
         raise HTTPException(status_code=401, detail="Missing API key")
 
     if _api_key_storage is None:
-        logger.error("API key storage not initialized")
+        logger.error("API key storage not initialized", stack_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
     api_key_data = _api_key_storage.get_api_key_by_value(x_api_key)
@@ -146,7 +146,7 @@ def verify_session_permission(api_key: ApiKeyData, session_id: str) -> None:
         return
 
     if _api_key_storage is None:
-        logger.error("API key storage not initialized")
+        logger.error("API key storage not initialized", stack_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
     if not _api_key_storage.is_session_bound(api_key.api_key_id, session_id):
@@ -218,7 +218,7 @@ def verify_rate_limit(api_key: ApiKeyData, session_id: str) -> None:
         return
 
     if _api_key_storage is None:
-        logger.error("API key storage not initialized")
+        logger.error("API key storage not initialized", stack_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
     since = datetime.now() - timedelta(seconds=60)

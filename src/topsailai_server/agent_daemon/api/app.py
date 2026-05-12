@@ -2,7 +2,8 @@
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.storage import Storage
@@ -13,11 +14,13 @@ _storage: Optional[Storage] = None
 _worker_manager = None
 _scheduler = None
 
+
 class HealthResponse(BaseModel):
     """Health check response model."""
     status: str
     database: str
     timestamp: datetime
+
 
 def create_app(session_storage, message_storage, worker_manager, scheduler, api_key_storage=None) -> FastAPI:
     """Create and configure the FastAPI application."""
@@ -33,7 +36,7 @@ def create_app(session_storage, message_storage, worker_manager, scheduler, api_
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         """Lifespan context manager for startup/shutdown.
-                
+        
         Note: The scheduler is started in main.py before uvicorn runs.
         Here we only handle shutdown to avoid duplicate start warnings.
         """
@@ -45,6 +48,7 @@ def create_app(session_storage, message_storage, worker_manager, scheduler, api_
             scheduler.stop()
         if worker_manager:
             worker_manager.stop_all()
+
     # Create FastAPI app
     fastapi_app = FastAPI(
         title="Agent Daemon API",
@@ -52,6 +56,7 @@ def create_app(session_storage, message_storage, worker_manager, scheduler, api_
         version="1.0.0",
         lifespan=lifespan
     )
+
     # Health check endpoint - returns unified response format
     @fastapi_app.get("/health")
     async def health_check():
@@ -72,6 +77,7 @@ def create_app(session_storage, message_storage, worker_manager, scheduler, api_
             "data": response_data.model_dump(),
             "message": "OK"
         }
+
     # Include routers
     from topsailai_server.agent_daemon.api.routes import message, task, session, api_key
     message.set_dependencies(session_storage, message_storage, worker_manager)
@@ -82,5 +88,25 @@ def create_app(session_storage, message_storage, worker_manager, scheduler, api_
     fastapi_app.include_router(task.router)
     fastapi_app.include_router(session.router)
     fastapi_app.include_router(api_key.router)
+
+    # Global exception handler for unhandled errors - logs full traceback
+    @fastapi_app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        """Global exception handler for unhandled errors.
+        
+        Logs full traceback and returns unified 500 response format.
+        """
+        logger.exception(
+            "Unhandled exception in request %s %s: %s",
+            request.method, request.url, exc
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": 500,
+                "data": None,
+                "message": "Internal server error"
+            }
+        )
 
     return fastapi_app

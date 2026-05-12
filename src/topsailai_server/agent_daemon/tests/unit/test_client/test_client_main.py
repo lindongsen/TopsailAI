@@ -148,8 +148,8 @@ class TestClientPackageExports:
     def test_all_has_expected_length(self):
         """Test that __all__ has the expected number of exports."""
         from topsailai_server.agent_daemon import client
-        # Base (3) + Clients (3) + Session (6) + Message (3) + Task (3) = 18
-        assert len(client.__all__) == 18
+        # Base (3) + Clients (4) + Session (6) + Message (3) + Task (3) + API Key (9) = 28
+        assert len(client.__all__) == 28
 
 
 class TestClientPackageAttributes:
