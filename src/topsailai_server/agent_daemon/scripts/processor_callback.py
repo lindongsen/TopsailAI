@@ -80,12 +80,13 @@ def request_with_retry(
         retry_delay: Delay between retries in seconds (default: 2.0, with exponential backoff)
         timeout: Request timeout in seconds (default: 30)
         **kwargs: Additional arguments passed to requests.request()
-
-    Returns:
-        Response object if successful, None if all retries failed
     """
     last_exception = None
-
+    # Inject X-API-Key header if the environment variable is set
+    api_key = os.environ.get("TOPSAILAI_AGENT_DAEMON_API_KEY")
+    if api_key:
+        headers = kwargs.setdefault("headers", {})
+        headers["X-API-Key"] = api_key
     for attempt in range(max_retries):
         try:
             if attempt > 0:
@@ -94,7 +95,6 @@ def request_with_retry(
                 logger.warning("Retry attempt %d/%d for %s %s after %.1fs delay",
                              attempt + 1, max_retries, method.upper(), url, wait_time)
                 time.sleep(wait_time)
-
             response = requests.request(
                 method=method.upper(),
                 url=url,
@@ -103,12 +103,9 @@ def request_with_retry(
                 **kwargs
             )
             response.raise_for_status()
-
             if attempt > 0:
                 logger.info("Request succeeded on attempt %d: %s %s", attempt + 1, method.upper(), url)
-
             return response
-
         except requests.exceptions.RequestException as e:
             last_exception = e
             if attempt < max_retries - 1:
@@ -116,9 +113,7 @@ def request_with_retry(
                              attempt + 1, max_retries, method.upper(), url, e)
             else:
                 logger.exception("All %d retry attempts failed for %s %s", max_retries, method.upper(), url)
-
     return None
-
 
 def get_env(key: str, required: bool = True) -> Optional[str]:
     """Get environment variable.

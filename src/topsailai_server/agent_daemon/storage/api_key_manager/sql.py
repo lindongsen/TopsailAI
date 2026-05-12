@@ -143,6 +143,60 @@ class ApiKeySQLAlchemy(ApiKeyStorageBase):
             session.commit()
             return True
 
+
+    def list_api_keys_with_sessions(self) -> list:
+        """List all API keys with their bound session IDs.
+
+        Returns:
+            list: List of dicts, each containing:
+                - "api_key": ApiKeyData instance
+                - "session_ids": list of bound session ID strings
+        """
+        with self.Session() as session:
+            api_keys = session.query(ApiKeyModel).order_by(
+                ApiKeyModel.create_time.desc()
+            ).all()
+            result = []
+            for key_model in api_keys:
+                # Get bound sessions for this API key
+                session_models = session.query(ApiKeySessionModel).filter(
+                    ApiKeySessionModel.api_key_id == key_model.api_key_id
+                ).all()
+                session_ids = [m.session_id for m in session_models]
+                result.append({
+                    "api_key": self._to_data(key_model),
+                    "session_ids": session_ids
+                })
+            return result
+
+    def list_api_keys_with_details(self) -> list:
+        """List all API keys with their bound session IDs and environment variables.
+
+        Returns:
+            list: List of dicts, each containing:
+                - "api_key": ApiKeyData instance
+                - "session_ids": list of bound session ID strings
+                - "environs": list of ApiKeyEnvironData instances
+        """
+        with self.Session() as session:
+            api_keys = session.query(ApiKeyModel).order_by(
+                ApiKeyModel.create_time.desc()
+            ).all()
+            result = []
+            for key_model in api_keys:
+                # Get bound sessions for this API key
+                session_models = session.query(ApiKeySessionModel).filter(
+                    ApiKeySessionModel.api_key_id == key_model.api_key_id
+                ).all()
+                session_ids = [m.session_id for m in session_models]
+                # Get environment variables for this API key
+                environs = self.get_api_key_environs_by_api_key_id(key_model.api_key_id)
+                result.append({
+                    "api_key": self._to_data(key_model),
+                    "session_ids": session_ids,
+                    "environs": environs
+                })
+            return result
     def delete_api_key(self, api_key_id: str) -> bool:
         """Delete an API key and its related data. Returns True on success, False if not found."""
         with self.Session() as session:

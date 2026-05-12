@@ -149,13 +149,19 @@ async def create_api_key(
 async def list_api_keys(
     current_key: ApiKeyData = Depends(require_admin)
 ):
-    """List all API keys. Admin only."""
-    api_keys = _api_key_storage.list_api_keys()
+    """List all API keys with their bound sessions and environs. Admin only."""
+    api_keys_with_details = _api_key_storage.list_api_keys_with_details()
 
+    api_keys = []
+    for item in api_keys_with_details:
+        key_dict = item["api_key"].to_dict()
+        key_dict["sessions"] = item["session_ids"]
+        key_dict["environs"] = [env.to_dict() for env in item["environs"]]
+        api_keys.append(key_dict)
     return {
         "code": 0,
         "data": {
-            "api_keys": [key.to_dict() for key in api_keys],
+            "api_keys": api_keys,
             "total": len(api_keys)
         },
         "message": "OK"

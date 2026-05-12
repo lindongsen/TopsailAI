@@ -60,6 +60,11 @@ from topsailai_server.agent_daemon.client.task_do import (
     add_task_parsers,
 )
 from topsailai_server.agent_daemon.client.api_key_do import (
+    do_client_create_api_key,
+    do_client_list_api_keys,
+    do_client_delete_api_key,
+    do_client_bind_sessions,
+    do_client_unbind_sessions,
     do_client_set_api_key_environ,
     do_client_list_api_key_environs,
     do_client_delete_api_key_environ,
@@ -92,6 +97,11 @@ __all__ = [
     "do_client_get_tasks",
     "add_task_parsers",
     # API key do functions
+    "do_client_create_api_key",
+    "do_client_list_api_keys",
+    "do_client_delete_api_key",
+    "do_client_bind_sessions",
+    "do_client_unbind_sessions",
     "do_client_set_api_key_environ",
     "do_client_list_api_key_environs",
     "do_client_delete_api_key_environ",

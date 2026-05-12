@@ -80,6 +80,29 @@ class ApiKeyStorageBase(ABC):
         pass
 
     @abstractmethod
+    def list_api_keys_with_sessions(self) -> list:
+        """List all API keys with their bound session IDs.
+
+        Returns:
+            list: List of dicts, each containing:
+                - "api_key": ApiKeyData instance
+                - "session_ids": list of bound session ID strings
+        """
+        pass
+
+    @abstractmethod
+    def list_api_keys_with_details(self) -> list:
+        """List all API keys with their bound session IDs and environment variables.
+
+        Returns:
+            list: List of dicts, each containing:
+                - "api_key": ApiKeyData instance
+                - "session_ids": list of bound session ID strings
+                - "environs": list of ApiKeyEnvironData instances
+        """
+        pass
+
+    @abstractmethod
     def delete_api_key(self, api_key_id: str) -> bool:
         """Delete an API key and its related data. Returns True on success, False if not found."""
         pass
