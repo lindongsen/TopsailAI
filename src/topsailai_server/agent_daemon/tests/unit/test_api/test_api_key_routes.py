@@ -158,8 +158,9 @@ class TestApiKeyRoutes(unittest.TestCase):
     def test_list_api_keys_success(self):
         """Test admin can list all API keys"""
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
-        self.mock_api_key_storage.list_api_keys.return_value = [
-            self.admin_key, self.user_key
+        self.mock_api_key_storage.list_api_keys_with_details.return_value = [
+            {"api_key": self.admin_key, "session_ids": [], "environs": []},
+            {"api_key": self.user_key, "session_ids": ["session_1"], "environs": []}
         ]
 
         response = self.client.get(
@@ -172,12 +173,15 @@ class TestApiKeyRoutes(unittest.TestCase):
         self.assertEqual(data["code"], 0)
         self.assertEqual(len(data["data"]["api_keys"]), 2)
         self.assertEqual(data["data"]["total"], 2)
+        # Verify sessions and environs are included in response
+        self.assertIn("sessions", data["data"]["api_keys"][0])
+        self.assertIn("environs", data["data"]["api_keys"][0])
 
     def test_list_api_keys_pagination(self):
         """Test listing API keys with pagination"""
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
-        self.mock_api_key_storage.list_api_keys.return_value = [
-            self.user_key
+        self.mock_api_key_storage.list_api_keys_with_details.return_value = [
+            {"api_key": self.user_key, "session_ids": ["session_1"], "environs": []}
         ]
 
         response = self.client.get(

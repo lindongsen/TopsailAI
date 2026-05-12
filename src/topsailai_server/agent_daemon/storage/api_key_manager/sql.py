@@ -197,6 +197,7 @@ class ApiKeySQLAlchemy(ApiKeyStorageBase):
                     "environs": environs
                 })
             return result
+
     def delete_api_key(self, api_key_id: str) -> bool:
         """Delete an API key and its related data. Returns True on success, False if not found."""
         with self.Session() as session:
