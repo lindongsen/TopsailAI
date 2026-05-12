@@ -414,6 +414,8 @@ class TestApiKeyRoutes(unittest.TestCase):
         """Test admin can set environment variable for API key"""
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
         self.mock_api_key_storage.get_api_key_by_id.return_value = self.admin_key
+        # create_api_key_environ returns bool (True) after DB write
+        self.mock_api_key_storage.create_api_key_environ.return_value = True
         environ_data = ApiKeyEnvironData(
             api_key_id="ak_admin_001",
             key="TEST_VAR",
@@ -421,7 +423,8 @@ class TestApiKeyRoutes(unittest.TestCase):
             create_time=datetime.now(),
             update_time=datetime.now()
         )
-        self.mock_api_key_storage.create_api_key_environ.return_value = environ_data
+        # Fetch the created record for response construction
+        self.mock_api_key_storage.get_api_key_environ_by_api_key_id_and_key.return_value = environ_data
 
         response = self.client.post(
             "/api/v1/apikey/ak_admin_001/environs",
@@ -439,9 +442,6 @@ class TestApiKeyRoutes(unittest.TestCase):
             key="TEST_VAR",
             value="test_value"
         )
-
-    def test_set_api_key_environ_non_admin(self):
-        """Test non-admin cannot set environment variable"""
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
 
         response = self.client.post(

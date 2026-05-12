@@ -268,10 +268,16 @@ async def set_api_key_environ(
     if not api_key:
         return {"code": 404, "data": None, "message": "API key not found"}
 
-    environ_data = _api_key_storage.create_api_key_environ(
+    _api_key_storage.create_api_key_environ(
         api_key_id=api_key_id,
         key=request.key,
         value=request.value
+    )
+
+    # Fetch the created/updated record to return in response
+    environ_data = _api_key_storage.get_api_key_environ_by_api_key_id_and_key(
+        api_key_id=api_key_id,
+        key=request.key
     )
 
     logger.info(
@@ -284,7 +290,6 @@ async def set_api_key_environ(
         "data": environ_data.to_dict(),
         "message": "Environment variable set successfully"
     }
-
 
 @router.get("/{api_key_id}/environs", response_model=dict)
 async def list_api_key_environs(
