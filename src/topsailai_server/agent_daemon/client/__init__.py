@@ -12,6 +12,8 @@ Modules:
     - message_do: do_xxx functions for message CLI operations
     - task: TaskClient for task operations
     - task_do: do_xxx functions for task CLI operations
+    - api_key: ApiKeyClient for API key management operations
+    - api_key_do: do_xxx functions for API key management CLI operations
 
 Usage:
     from topsailai_server.agent_daemon.client import (
@@ -19,6 +21,7 @@ Usage:
         SessionClient,
         MessageClient,
         TaskClient,
+        ApiKeyClient,
     )
 
     # Or import do_xxx functions
@@ -35,6 +38,7 @@ from topsailai_server.agent_daemon.client.base import BaseClient, SPLIT_LINE, AP
 from topsailai_server.agent_daemon.client.session import SessionClient
 from topsailai_server.agent_daemon.client.message import MessageClient
 from topsailai_server.agent_daemon.client.task import TaskClient
+from topsailai_server.agent_daemon.client.api_key import ApiKeyClient
 
 # Import do_xxx functions
 from topsailai_server.agent_daemon.client.session_do import (
@@ -55,6 +59,12 @@ from topsailai_server.agent_daemon.client.task_do import (
     do_client_get_tasks,
     add_task_parsers,
 )
+from topsailai_server.agent_daemon.client.api_key_do import (
+    do_client_set_api_key_environ,
+    do_client_list_api_key_environs,
+    do_client_delete_api_key_environ,
+    add_api_key_parsers,
+)
 
 __all__ = [
     # Base classes
@@ -65,6 +75,7 @@ __all__ = [
     "SessionClient",
     "MessageClient",
     "TaskClient",
+    "ApiKeyClient",
     # Session do functions
     "do_client_health",
     "do_client_list_sessions",
@@ -80,6 +91,11 @@ __all__ = [
     "do_client_set_task_result",
     "do_client_get_tasks",
     "add_task_parsers",
+    # API key do functions
+    "do_client_set_api_key_environ",
+    "do_client_list_api_key_environs",
+    "do_client_delete_api_key_environ",
+    "add_api_key_parsers",
 ]
 
 __version__ = "1.0.0"

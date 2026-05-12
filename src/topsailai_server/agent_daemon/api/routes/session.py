@@ -196,7 +196,7 @@ async def list_sessions(
 
         # For user role, restrict to bound sessions
         if api_key.role != 'admin':
-            bound_sessions = storage.api_key.list_bound_sessions(api_key.api_key_id)
+            bound_sessions = storage.api_key.get_bound_sessions(api_key.api_key_id)
             if session_id_list:
                 # Intersect with requested session_ids
                 session_id_list = [s for s in session_id_list if s in bound_sessions]

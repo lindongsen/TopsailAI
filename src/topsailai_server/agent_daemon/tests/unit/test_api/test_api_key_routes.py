@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 # Need to set env vars before importing routes
+from topsailai_server.agent_daemon.storage.api_key_environ_manager.base import ApiKeyEnvironData
 os.environ['TOPSAILAI_AGENT_DAEMON_PROCESSOR'] = '/bin/echo'
 os.environ['TOPSAILAI_AGENT_DAEMON_SUMMARIZER'] = '/bin/echo'
 os.environ['TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER'] = '/bin/echo'
@@ -401,6 +402,183 @@ class TestApiKeyRoutes(unittest.TestCase):
             "/api/v1/apikey/ak_user_001/sessions",
             json={"session_ids": ["session_1"]}
         )
+
+        self.assertEqual(response.status_code, 401)
+
+    # Tests for SetEnviron
+    def test_set_api_key_environ_success(self):
+        """Test admin can set environment variable for API key"""
+        self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
+        self.mock_api_key_storage.get_api_key_by_id.return_value = self.admin_key
+        environ_data = ApiKeyEnvironData(
+            api_key_id="ak_admin_001",
+            key="TEST_VAR",
+            value="test_value",
+            create_time=datetime.now(),
+            update_time=datetime.now()
+        )
+        self.mock_api_key_storage.create_api_key_environ.return_value = environ_data
+
+        response = self.client.post(
+            "/api/v1/apikey/ak_admin_001/environs",
+            json={"key": "TEST_VAR", "value": "test_value"},
+            headers=self._auth_header("admin_secret_key_123")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["code"], 0)
+        self.assertEqual(data["data"]["key"], "TEST_VAR")
+        self.assertEqual(data["data"]["value"], "test_value")
+        self.mock_api_key_storage.create_api_key_environ.assert_called_once_with(
+            api_key_id="ak_admin_001",
+            key="TEST_VAR",
+            value="test_value"
+        )
+
+    def test_set_api_key_environ_non_admin(self):
+        """Test non-admin cannot set environment variable"""
+        self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
+
+        response = self.client.post(
+            "/api/v1/apikey/ak_user_001/environs",
+            json={"key": "TEST_VAR", "value": "test_value"},
+            headers=self._auth_header("user_secret_key_123")
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_set_api_key_environ_key_not_found(self):
+        """Test setting environ for non-existent API key returns error"""
+        self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
+        self.mock_api_key_storage.get_api_key_by_id.return_value = None
+
+        response = self.client.post(
+            "/api/v1/apikey/nonexistent/environs",
+            json={"key": "TEST_VAR", "value": "test_value"},
+            headers=self._auth_header("admin_secret_key_123")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertNotEqual(data["code"], 0)
+
+    # Tests for ListEnvirons
+    def test_list_api_key_environs_success(self):
+        """Test admin can list environment variables for API key"""
+        self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
+        self.mock_api_key_storage.get_api_key_by_id.return_value = self.admin_key
+        now = datetime.now()
+        environs = [
+            ApiKeyEnvironData(
+                api_key_id="ak_admin_001",
+                key="VAR_1",
+                value="value_1",
+                create_time=now,
+                update_time=now
+            ),
+            ApiKeyEnvironData(
+                api_key_id="ak_admin_001",
+                key="VAR_2",
+                value="value_2",
+                create_time=now,
+                update_time=now
+            )
+        ]
+        self.mock_api_key_storage.get_api_key_environs_by_api_key_id.return_value = environs
+
+        response = self.client.get(
+            "/api/v1/apikey/ak_admin_001/environs",
+            headers=self._auth_header("admin_secret_key_123")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["code"], 0)
+        self.assertEqual(len(data["data"]["environs"]), 2)
+        self.assertEqual(data["data"]["total"], 2)
+
+    def test_list_api_key_environs_empty(self):
+        """Test listing environs returns empty list when none exist"""
+        self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
+        self.mock_api_key_storage.get_api_key_by_id.return_value = self.admin_key
+        self.mock_api_key_storage.get_api_key_environs_by_api_key_id.return_value = []
+
+        response = self.client.get(
+            "/api/v1/apikey/ak_admin_001/environs",
+            headers=self._auth_header("admin_secret_key_123")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["code"], 0)
+        self.assertEqual(data["data"]["environs"], [])
+        self.assertEqual(data["data"]["total"], 0)
+
+    # Tests for DeleteEnviron
+    def test_delete_api_key_environ_success(self):
+        """Test admin can delete environment variable"""
+        self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
+        self.mock_api_key_storage.get_api_key_by_id.return_value = self.admin_key
+        self.mock_api_key_storage.delete_api_key_environ.return_value = True
+
+        response = self.client.delete(
+            "/api/v1/apikey/ak_admin_001/environs/TEST_VAR",
+            headers=self._auth_header("admin_secret_key_123")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["code"], 0)
+        self.mock_api_key_storage.delete_api_key_environ.assert_called_once_with(
+            "ak_admin_001", "TEST_VAR"
+        )
+
+    def test_delete_api_key_environ_not_found(self):
+        """Test deleting non-existent environ returns error"""
+        self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
+        self.mock_api_key_storage.get_api_key_by_id.return_value = self.admin_key
+        self.mock_api_key_storage.delete_api_key_environ.return_value = False
+
+        response = self.client.delete(
+            "/api/v1/apikey/ak_admin_001/environs/NONEXISTENT",
+            headers=self._auth_header("admin_secret_key_123")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertNotEqual(data["code"], 0)
+
+    def test_delete_api_key_environ_non_admin(self):
+        """Test non-admin cannot delete environment variable"""
+        self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
+
+        response = self.client.delete(
+            "/api/v1/apikey/ak_user_001/environs/TEST_VAR",
+            headers=self._auth_header("user_secret_key_123")
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    # Tests for missing auth header on environ endpoints
+    def test_set_api_key_environ_missing_auth(self):
+        """Test setting environ without auth header"""
+        response = self.client.post(
+            "/api/v1/apikey/ak_admin_001/environs",
+            json={"key": "TEST_VAR", "value": "test_value"}
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_list_api_key_environs_missing_auth(self):
+        """Test listing environs without auth header"""
+        response = self.client.get("/api/v1/apikey/ak_admin_001/environs")
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_delete_api_key_environ_missing_auth(self):
+        """Test deleting environ without auth header"""
+        response = self.client.delete("/api/v1/apikey/ak_admin_001/environs/TEST_VAR")
 
         self.assertEqual(response.status_code, 401)
 

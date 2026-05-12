@@ -15,7 +15,8 @@ from topsailai_server.agent_daemon.api.middleware.auth import (
 )
 from topsailai_server.agent_daemon.storage.api_key_manager import (
     ApiKeyData as StorageApiKeyData,
-    ApiKeySessionData
+    ApiKeySessionData,
+    ApiKeyEnvironData
 )
 
 # Router
@@ -68,6 +69,12 @@ class BindSessionsRequest(BaseModel):
 class UnbindSessionsRequest(BaseModel):
     """Request model for unbinding sessions from an API key."""
     session_ids: list = Field(..., description="List of session IDs to unbind")
+
+
+class SetEnvironRequest(BaseModel):
+    """Request model for setting an environment variable for an API key."""
+    key: str = Field(..., description="Environment variable name")
+    value: str = Field(..., description="Environment variable value")
 
 
 # Routes
@@ -237,4 +244,86 @@ async def unbind_sessions(
         "code": 0,
         "data": {"unbound_sessions": unbound_sessions},
         "message": "Sessions unbound successfully"
+    }
+
+
+@router.post("/{api_key_id}/environs", response_model=dict)
+async def set_api_key_environ(
+    api_key_id: str,
+    request: SetEnvironRequest,
+    current_key: ApiKeyData = Depends(require_admin)
+):
+    """
+    Set an environment variable for an API key.
+    Creates a new entry if the key does not exist, updates it otherwise.
+    Admin only.
+    """
+    api_key = _api_key_storage.get_api_key_by_id(api_key_id)
+    if not api_key:
+        return {"code": 404, "data": None, "message": "API key not found"}
+
+    environ_data = _api_key_storage.create_api_key_environ(
+        api_key_id=api_key_id,
+        key=request.key,
+        value=request.value
+    )
+
+    logger.info(
+        "Environment variable set for API key %s: %s=%s",
+        api_key_id, request.key, request.value
+    )
+
+    return {
+        "code": 0,
+        "data": environ_data.to_dict(),
+        "message": "Environment variable set successfully"
+    }
+
+
+@router.get("/{api_key_id}/environs", response_model=dict)
+async def list_api_key_environs(
+    api_key_id: str,
+    current_key: ApiKeyData = Depends(require_admin)
+):
+    """List all environment variables for an API key. Admin only."""
+    api_key = _api_key_storage.get_api_key_by_id(api_key_id)
+    if not api_key:
+        return {"code": 404, "data": None, "message": "API key not found"}
+
+    environs = _api_key_storage.get_api_key_environs_by_api_key_id(api_key_id)
+
+    return {
+        "code": 0,
+        "data": {
+            "environs": [env.to_dict() for env in environs],
+            "total": len(environs)
+        },
+        "message": "OK"
+    }
+
+
+@router.delete("/{api_key_id}/environs/{key}", response_model=dict)
+async def delete_api_key_environ(
+    api_key_id: str,
+    key: str,
+    current_key: ApiKeyData = Depends(require_admin)
+):
+    """Delete an environment variable for an API key. Admin only."""
+    api_key = _api_key_storage.get_api_key_by_id(api_key_id)
+    if not api_key:
+        return {"code": 404, "data": None, "message": "API key not found"}
+
+    deleted = _api_key_storage.delete_api_key_environ(api_key_id, key)
+    if not deleted:
+        return {"code": 404, "data": None, "message": "Environment variable not found"}
+
+    logger.info(
+        "Environment variable deleted for API key %s: %s",
+        api_key_id, key
+    )
+
+    return {
+        "code": 0,
+        "data": None,
+        "message": "Environment variable deleted successfully"
     }

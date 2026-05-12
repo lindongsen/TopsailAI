@@ -28,3 +28,6 @@ workspace_project_structure: |
     - Unit_Test_Improvement_Proposal.md
     - Integration_Test_Improvement_Proposal.md
     - Test_Execution_Checklist.md
+
+Notes:
+  - During integration testing, the processor, summarizer, and checker need to use `scripts/test_xxx` or write their own mock scripts.

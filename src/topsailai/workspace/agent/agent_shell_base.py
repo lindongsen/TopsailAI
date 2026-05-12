@@ -8,6 +8,7 @@
     2. ctx_runtime_data.messages: Save the processed Q&A messages
 '''
 
+import sys
 import time
 
 from topsailai.logger import logger
@@ -236,6 +237,7 @@ class AgentChat(AgentChatBase):
                 print(f"start_time      : {time_tool.parse_time_seconds(start_time)}")
                 print(f"end_time(now)   : {time_tool.parse_time_seconds(end_time)}")
                 print(f"elapsed_time    : {end_time-start_time}")
+                sys.stdout.flush()
 
             if env_tool.is_debug_mode():
                 tool_call_stat = tool_stat.get_default_stat()

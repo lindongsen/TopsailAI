@@ -503,7 +503,7 @@ class TestAuthIntegration(unittest.TestCase):
     def test_list_sessions_user_lists_only_bound(self):
         """User API key can only list bound sessions."""
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
-        self.mock_api_key_storage.list_bound_sessions.return_value = ['session-1', 'session-2']
+        self.mock_api_key_storage.get_bound_sessions.return_value = ['session-1', 'session-2']
 
         mock_session1 = self._make_mock_session('session-1', 'Session 1')
 
@@ -523,7 +523,7 @@ class TestAuthIntegration(unittest.TestCase):
     def test_list_sessions_user_with_no_bound_sessions_returns_empty(self):
         """User API key with no bound sessions returns empty list."""
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
-        self.mock_api_key_storage.list_bound_sessions.return_value = []
+        self.mock_api_key_storage.get_bound_sessions.return_value = []
 
         response = self.client.get(
             '/api/v1/session',

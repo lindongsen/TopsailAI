@@ -47,6 +47,9 @@ class DatabaseMigrator:
         if 'rate_limit_log' in existing_tables:
             self._migrate_rate_limit_log_table()
 
+        if 'api_key_environ' in existing_tables:
+            self._migrate_api_key_environ_table()
+
         if self._migrations_applied:
             logger.info("Applied %d migration(s): %s",
                        len(self._migrations_applied),
@@ -225,6 +228,23 @@ class DatabaseMigrator:
 
         self._create_index_if_not_exists('rate_limit_log', 'ix_rate_limit_log_api_key_id', 'api_key_id')
         self._create_index_if_not_exists('rate_limit_log', 'ix_rate_limit_log_create_time', 'create_time')
+
+    def _migrate_api_key_environ_table(self):
+        """Migrate the api_key_environ table to add any missing columns."""
+        logger.info("Checking api_key_environ table for schema updates")
+
+        expected_columns = {
+            'api_key_id': 'VARCHAR(32)',
+            'key': 'VARCHAR(255)',
+            'value': 'TEXT',
+            'create_time': 'DATETIME',
+            'update_time': 'DATETIME',
+        }
+
+        for col_name, col_type in expected_columns.items():
+            self._add_column_if_not_exists('api_key_environ', col_name, col_type)
+
+        self._create_index_if_not_exists('api_key_environ', 'ix_api_key_environ_api_key_id', 'api_key_id')
 
 
 def run_migrations(engine):

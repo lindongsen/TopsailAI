@@ -296,3 +296,30 @@ class ApiKeySQLAlchemy(ApiKeyStorageBase):
             ).delete(synchronize_session=False)
             session.commit()
             return deleted
+
+    # API Key Environ methods - delegated to ApiKeyEnvironSQLAlchemy
+
+    def create_api_key_environ(self, api_key_id: str, key: str, value: str) -> bool:
+        """Create an environment variable for an API key. Returns True on success."""
+        from topsailai_server.agent_daemon.storage.api_key_environ_manager.sql import ApiKeyEnvironSQLAlchemy
+        return ApiKeyEnvironSQLAlchemy(self.engine).create_api_key_environ(api_key_id, key, value)
+
+    def update_api_key_environ(self, api_key_id: str, key: str, value: str) -> bool:
+        """Update an environment variable for an API key. Returns True on success, False if not found."""
+        from topsailai_server.agent_daemon.storage.api_key_environ_manager.sql import ApiKeyEnvironSQLAlchemy
+        return ApiKeyEnvironSQLAlchemy(self.engine).update_api_key_environ(api_key_id, key, value)
+
+    def delete_api_key_environ(self, api_key_id: str, key: str) -> bool:
+        """Delete an environment variable for an API key. Returns True on success, False if not found."""
+        from topsailai_server.agent_daemon.storage.api_key_environ_manager.sql import ApiKeyEnvironSQLAlchemy
+        return ApiKeyEnvironSQLAlchemy(self.engine).delete_api_key_environ(api_key_id, key)
+
+    def get_api_key_environs_by_api_key_id(self, api_key_id: str) -> list:
+        """Get all environment variables for an API key."""
+        from topsailai_server.agent_daemon.storage.api_key_environ_manager.sql import ApiKeyEnvironSQLAlchemy
+        return ApiKeyEnvironSQLAlchemy(self.engine).get_api_key_environs_by_api_key_id(api_key_id)
+
+    def get_api_key_environs_by_session_id(self, session_id: str) -> list:
+        """Get all environment variables for a session via its bound API key."""
+        from topsailai_server.agent_daemon.storage.api_key_environ_manager.sql import ApiKeyEnvironSQLAlchemy
+        return ApiKeyEnvironSQLAlchemy(self.engine).get_api_key_environs_by_session_id(session_id)

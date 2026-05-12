@@ -39,6 +39,7 @@ MSG_SEPARATOR = "-" * TERM_WIDTH
 DEFAULT_LIMIT = 17
 DEFAULT_REFRESH_INTERVAL = 3
 
+
 def format_time(time_str):
     """Format time string to YYYY-MM-DD HH:MM:SS"""
     if not time_str:
@@ -191,6 +192,64 @@ class AgentTerminal:
             logger.exception("Error getting session info: %s", e)
         return None
 
+    def set_api_key_environ(self, api_key_id, key, value):
+        """Set an environment variable for an API key"""
+        url = f"{self.base_url}/api/v1/apikey/{api_key_id}/environs"
+        data = {
+            "key": key,
+            "value": value,
+        }
+
+        try:
+            response = requests.post(url, json=data, headers=self._get_headers(), timeout=10)
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("code") == 0:
+                    return True, result.get("data", {})
+                return False, result.get('message', 'Unknown error')
+            return False, f"HTTP {response.status_code}"
+        except requests.exceptions.ConnectionError:
+            return False, "Cannot connect to server"
+        except Exception as e:
+            logger.exception("Error setting API key environ: %s", e)
+            return False, str(e)
+
+    def list_api_key_environs(self, api_key_id):
+        """List environment variables for an API key"""
+        url = f"{self.base_url}/api/v1/apikey/{api_key_id}/environs"
+
+        try:
+            response = requests.get(url, headers=self._get_headers(), timeout=10)
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("code") == 0:
+                    return True, result.get("data", {})
+                return False, result.get('message', 'Unknown error')
+            return False, f"HTTP {response.status_code}"
+        except requests.exceptions.ConnectionError:
+            return False, "Cannot connect to server"
+        except Exception as e:
+            logger.exception("Error listing API key environs: %s", e)
+            return False, str(e)
+
+    def delete_api_key_environ(self, api_key_id, key):
+        """Delete an environment variable for an API key"""
+        url = f"{self.base_url}/api/v1/apikey/{api_key_id}/environs/{key}"
+
+        try:
+            response = requests.delete(url, headers=self._get_headers(), timeout=10)
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("code") == 0:
+                    return True, result.get("data", {})
+                return False, result.get('message', 'Unknown error')
+            return False, f"HTTP {response.status_code}"
+        except requests.exceptions.ConnectionError:
+            return False, "Cannot connect to server"
+        except Exception as e:
+            logger.exception("Error deleting API key environ: %s", e)
+            return False, str(e)
+
     def display_header(self):
         """Display terminal header"""
         print(self.COLOR_BOLD)
@@ -330,6 +389,68 @@ class AgentTerminal:
                     self.refresh_display()
                     self.needs_refresh = False
 
+    def _handle_command(self, user_input):
+        """Handle special terminal commands. Returns True if handled, False otherwise."""
+        parts = user_input.strip().split()
+        if not parts:
+            return False
+
+        cmd = parts[0].lower()
+
+        if cmd == '/setenviron':
+            if len(parts) < 4:
+                print(f"{self.COLOR_SYSTEM}  Usage: /setenviron <api_key_id> <key> <value>{self.COLOR_RESET}")
+                return True
+            api_key_id = parts[1]
+            key = parts[2]
+            value = ' '.join(parts[3:])
+            print(f"{self.COLOR_DIM}  Setting environ {key}={value} for {api_key_id}...{self.COLOR_RESET}")
+            success, result = self.set_api_key_environ(api_key_id, key, value)
+            if success:
+                print(f"{self.COLOR_ASSISTANT}  Environ set successfully:{self.COLOR_RESET}")
+                print(f"    api_key_id: {result.get('api_key_id')}")
+                print(f"    key: {result.get('key')}")
+                print(f"    value: {result.get('value')}")
+            else:
+                print(f"{self.COLOR_SYSTEM}  Error: {result}{self.COLOR_RESET}")
+            return True
+
+        if cmd == '/listenviron':
+            if len(parts) < 2:
+                print(f"{self.COLOR_SYSTEM}  Usage: /listenviron <api_key_id>{self.COLOR_RESET}")
+                return True
+            api_key_id = parts[1]
+            print(f"{self.COLOR_DIM}  Listing environs for {api_key_id}...{self.COLOR_RESET}")
+            success, result = self.list_api_key_environs(api_key_id)
+            if success:
+                environs = result.get('environs', [])
+                total = result.get('total', 0)
+                if environs:
+                    print(f"{self.COLOR_ASSISTANT}  Environs ({total} total):{self.COLOR_RESET}")
+                    for env in environs:
+                        print(f"    {env.get('key')}: {env.get('value')}")
+                else:
+                    print(f"{self.COLOR_DIM}  No environs found.{self.COLOR_RESET}")
+            else:
+                print(f"{self.COLOR_SYSTEM}  Error: {result}{self.COLOR_RESET}")
+            return True
+
+        if cmd == '/delenviron':
+            if len(parts) < 3:
+                print(f"{self.COLOR_SYSTEM}  Usage: /delenviron <api_key_id> <key>{self.COLOR_RESET}")
+                return True
+            api_key_id = parts[1]
+            key = parts[2]
+            print(f"{self.COLOR_DIM}  Deleting environ {key} for {api_key_id}...{self.COLOR_RESET}")
+            success, result = self.delete_api_key_environ(api_key_id, key)
+            if success:
+                print(f"{self.COLOR_ASSISTANT}  Environ deleted successfully.{self.COLOR_RESET}")
+            else:
+                print(f"{self.COLOR_SYSTEM}  Error: {result}{self.COLOR_RESET}")
+            return True
+
+        return False
+
     def run(self):
         """Run the interactive terminal"""
         # Initial display
@@ -355,6 +476,10 @@ class AgentTerminal:
                     break
 
                 if user_input.strip():
+                    # Check for special commands
+                    if self._handle_command(user_input):
+                        continue
+
                     print(f"{self.COLOR_DIM}  Sending message...{self.COLOR_RESET}")
                     # Send the message
                     success, msg = self.send_message(user_input.strip())

@@ -75,9 +75,45 @@ class SessionLock:
 class WorkerManager:
     """Manages worker processes for message processing"""
 
-    def __init__(self, config):
+    def __init__(self, config, api_key_storage=None):
         self.config = config
+        self.api_key_storage = api_key_storage
         self.running_processes: Dict[str, subprocess.Popen] = {}
+
+    def _inject_api_key_environs(self, env: dict, session_id: str) -> dict:
+        """
+        Inject API key environment variables for the session into the env dict.
+
+        Looks up the API key bound to the session and injects any configured
+        environment variables. API key environs are injected before standard
+        TOPSAILAI_* variables so that standard vars take precedence.
+
+        Args:
+            env: The environment dictionary to inject into
+            session_id: The session ID to look up API key environs for
+
+        Returns:
+            The updated environment dictionary
+        """
+        if not self.api_key_storage or not session_id:
+            return env
+
+        try:
+            environs = self.api_key_storage.get_api_key_environs_by_session_id(session_id)
+            if environs:
+                for environ in environs:
+                    env[environ.key] = environ.value
+                logger.debug(
+                    "Injected %d API key environment variables for session: %s",
+                    len(environs), session_id
+                )
+        except Exception as e:
+            logger.exception(
+                "Error injecting API key environment variables for session %s: %s",
+                session_id, e
+            )
+
+        return env
 
     def check_session_state(self, session_id: str) -> str:
         """Check if session is idle or processing"""
@@ -98,6 +134,7 @@ class WorkerManager:
         # Use the session state checker script
         try:
             env = os.environ.copy()
+            env = self._inject_api_key_environs(env, session_id)
             env['TOPSAILAI_SESSION_ID'] = session_id
 
             result = subprocess.run(
@@ -148,6 +185,7 @@ class WorkerManager:
                 return False
 
             env = os.environ.copy()
+            env = self._inject_api_key_environs(env, session_id)
             env['TOPSAILAI_MSG_ID'] = msg_id
             env['TOPSAILAI_TASK'] = task
             env['TOPSAILAI_SESSION_ID'] = session_id
@@ -207,6 +245,7 @@ class WorkerManager:
             
             # Set environment variables
             env = os.environ.copy()
+            env = self._inject_api_key_environs(env, session_id)
             env['TOPSAILAI_SESSION_ID'] = session_id
             env['TOPSAILAI_TASK'] = task
             # Add host and port for summarizer callback

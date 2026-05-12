@@ -31,6 +31,7 @@ from topsailai_server.agent_daemon.client import (
     add_session_parsers,
     add_message_parsers,
     add_task_parsers,
+    add_api_key_parsers,
 )
 
 
@@ -80,6 +81,9 @@ def cli():
     
     # Add task parsers
     add_task_parsers(subparsers)
+    
+    # Add API key parsers
+    add_api_key_parsers(subparsers)
     
     # Parse arguments
     args = parser.parse_args()

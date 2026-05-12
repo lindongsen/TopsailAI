@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from topsailai_server.agent_daemon.storage.api_key_environ_manager.base import ApiKeyEnvironData
+
 
 @dataclass
 class ApiKeyData:
@@ -135,4 +137,31 @@ class ApiKeyStorageBase(ABC):
     @abstractmethod
     def clean_rate_limit_logs(self, before: datetime) -> int:
         """Clean rate limit logs older than the given time. Returns number of records deleted."""
+        pass
+
+    # API Key Environ methods
+
+    @abstractmethod
+    def create_api_key_environ(self, api_key_id: str, key: str, value: str) -> bool:
+        """Create an environment variable for an API key. Returns True on success."""
+        pass
+
+    @abstractmethod
+    def update_api_key_environ(self, api_key_id: str, key: str, value: str) -> bool:
+        """Update an environment variable for an API key. Returns True on success, False if not found."""
+        pass
+
+    @abstractmethod
+    def delete_api_key_environ(self, api_key_id: str, key: str) -> bool:
+        """Delete an environment variable for an API key. Returns True on success, False if not found."""
+        pass
+
+    @abstractmethod
+    def get_api_key_environs_by_api_key_id(self, api_key_id: str) -> list:
+        """Get all environment variables for an API key."""
+        pass
+
+    @abstractmethod
+    def get_api_key_environs_by_session_id(self, session_id: str) -> list:
+        """Get all environment variables for a session via its bound API key."""
         pass

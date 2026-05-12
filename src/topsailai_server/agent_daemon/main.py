@@ -12,13 +12,14 @@ import socket
 import io
 import traceback
 import secrets
+import uuid
 from sqlalchemy import create_engine, text
 
 from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.configer import get_config
 from topsailai_server.agent_daemon.storage.session_manager import SessionSQLAlchemy
 from topsailai_server.agent_daemon.storage.message_manager import MessageSQLAlchemy
-from topsailai_server.agent_daemon.storage.api_key_manager import ApiKeySQLAlchemy
+from topsailai_server.agent_daemon.storage.api_key_manager import ApiKeySQLAlchemy, ApiKeyData
 from topsailai_server.agent_daemon.storage.migration import run_migrations
 from topsailai_server.agent_daemon.worker import WorkerManager
 from topsailai_server.agent_daemon.croner import create_scheduler
@@ -89,8 +90,8 @@ class AgentDaemon:
         # Initialize default admin API key if none exists
         self._init_default_admin_key()
 
-        # Initialize worker manager
-        self.worker_manager = WorkerManager(self.config)
+        # Initialize worker manager with api_key_storage for environ injection
+        self.worker_manager = WorkerManager(self.config, self.api_key_storage)
         logger.info("Worker manager initialized")
 
         # Create cron scheduler
@@ -107,7 +108,8 @@ class AgentDaemon:
             self.session_storage,
             self.message_storage,
             self.worker_manager,
-            self.scheduler
+            self.scheduler,
+            self.api_key_storage
         )
         logger.info("FastAPI application created")
 
@@ -137,14 +139,19 @@ class AgentDaemon:
                 api_key_value = secrets.token_hex(32)
                 logger.info("Generated random default admin API key")
 
+            # Generate api_key_id with "ak_" prefix (total 32 chars)
+            api_key_id = "ak_{}".format(uuid.uuid4().hex[:29])
+
             # Create the admin API key with unlimited rate limit
-            self.api_key_storage.create_api_key(
+            api_key_data = ApiKeyData(
+                api_key_id=api_key_id,
                 api_key=api_key_value,
                 name="Default Admin",
                 role="admin",
                 rate_limit=0,
                 is_active=True
             )
+            self.api_key_storage.create_api_key(api_key_data)
 
             logger.info("Default admin API key created successfully")
             logger.info("Admin API Key: %s", api_key_value)

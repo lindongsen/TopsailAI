@@ -1,109 +1,53 @@
-'''
-  Author: DawsonLin
-  Email: lin_dongsen@126.com
-  Created: 2026-04-12
-  Purpose: Storage module for agent_daemon
-'''
+"""Storage module for agent_daemon.
 
-from sqlalchemy import Engine
-from sqlalchemy.orm import declarative_base
+This module provides the main Storage class that aggregates all storage managers.
+"""
 
-from .session_manager import SessionData, SessionStorageBase, SessionSQLAlchemy
-from .message_manager import MessageData, MessageStorageBase, MessageSQLAlchemy
-from .api_key_manager import ApiKeyData, ApiKeySessionData, RateLimitLogData, ApiKeyStorageBase, ApiKeySQLAlchemy
-from .migration import run_migrations, DatabaseMigrator
-
-# Create declarative base for table creation
-Base = declarative_base()
+from topsailai_server.agent_daemon.storage.api_key_environ_manager import (
+    ApiKeyEnvironData,
+    ApiKeyEnvironSQLAlchemy,
+    ApiKeyEnvironStorageBase,
+)
+from topsailai_server.agent_daemon.storage.api_key_manager import (
+    ApiKeyData,
+    ApiKeySQLAlchemy,
+    ApiKeySessionData,
+    ApiKeyStorageBase,
+    RateLimitLogData,
+)
+from topsailai_server.agent_daemon.storage.message_manager import (
+    MessageData,
+    MessageSQLAlchemy,
+    MessageStorageBase,
+)
+from topsailai_server.agent_daemon.storage.session_manager import (
+    SessionData,
+    SessionSQLAlchemy,
+    SessionStorageBase,
+)
 
 
 class Storage:
-    """
-    Storage Facade Class
-    
-    Provides a unified interface for database operations by wrapping
-    SessionSQLAlchemy, MessageSQLAlchemy, and ApiKeySQLAlchemy.
-    
-    This class is used by API routes and cron jobs to access database operations.
-    
-    Attributes:
-        session: SessionSQLAlchemy instance for session operations
-        message: MessageSQLAlchemy instance for message operations
-        api_key: ApiKeySQLAlchemy instance for API key operations
-    
+    """Main storage class that aggregates all storage managers.
+
+    This class provides a unified interface to all storage operations
+    by composing individual storage managers for sessions, messages,
+    API keys, and API key environment variables.
+
     Example:
-        >>> from sqlalchemy import create_engine
-        >>> from topsailai_server.agent_daemon.storage import Storage
-        >>> 
-        >>> engine = create_engine("sqlite:///agent_daemon.db")
         >>> storage = Storage(engine)
-        >>> 
-        >>> # Access session operations
-        >>> session_data = storage.session.get("session_123")
-        >>> 
-        >>> # Access message operations
-        >>> messages = storage.message.get_by_session("session_123")
-        >>> 
-        >>> # Access API key operations
-        >>> api_key = storage.api_key.get_api_key_by_value("key_123")
+        >>> session = storage.session.create_session("test-session")
+        >>> api_key = storage.api_key.create_api_key(api_key_data)
+        >>> env_vars = storage.api_key_environ.get_by_api_key_id("ak_123")
     """
-    
-    def __init__(self, engine: Engine, auto_migrate: bool = True):
-        """
-        Initialize the Storage facade.
-        
+
+    def __init__(self, engine):
+        """Initialize all storage managers.
+
         Args:
-            engine: SQLAlchemy Engine instance for database connections
-            auto_migrate: If True, automatically run migrations to ensure schema is up to date
+            engine: SQLAlchemy engine instance.
         """
-        self._engine = engine
-        
-        # Run auto-migration if enabled
-        if auto_migrate:
-            try:
-                from .session_manager.sql import Session
-                from .message_manager.sql import Message
-                from .api_key_manager.sql import ApiKeyModel, ApiKeySessionModel, RateLimitLogModel
-                Base.metadata.create_all(self._engine)
-            except (TypeError, AttributeError):
-                # Handle mock engines in tests that don't support inspection
-                pass
-        
         self.session = SessionSQLAlchemy(engine)
         self.message = MessageSQLAlchemy(engine)
         self.api_key = ApiKeySQLAlchemy(engine)
-    
-    @property
-    def engine(self) -> Engine:
-        """Get the underlying SQLAlchemy engine"""
-        return self._engine
-    
-    def init_db(self):
-        """
-        Initialize database tables.
-        
-        Creates all necessary tables in the database based on SQLAlchemy models.
-        """
-        from .session_manager.sql import Session
-        from .message_manager.sql import Message
-        from .api_key_manager.sql import ApiKeyModel, ApiKeySessionModel, RateLimitLogModel
-        Base.metadata.create_all(self._engine)
-
-
-__all__ = [
-    'Storage',
-    'Base',
-    'SessionData',
-    'SessionStorageBase',
-    'SessionSQLAlchemy',
-    'MessageData',
-    'MessageStorageBase',
-    'MessageSQLAlchemy',
-    'ApiKeyData',
-    'ApiKeySessionData',
-    'RateLimitLogData',
-    'ApiKeyStorageBase',
-    'ApiKeySQLAlchemy',
-    'run_migrations',
-    'DatabaseMigrator'
-]
+        self.api_key_environ = ApiKeyEnvironSQLAlchemy(engine)
