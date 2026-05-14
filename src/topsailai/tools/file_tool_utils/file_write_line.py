@@ -22,6 +22,8 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]], **_):
     To ensure code integrity and indentation, do not replace lines individually
     if they are part of a logical block (e.g., a function, a loop, or a class).
     Instead, replace the entire block containing the change in a single operation.
+    You MUST confirm the line number before each call.
+    You CANNOT call continuously due to the line number will change after each call.
 
     Args:
         file_path (str): Path to the file to modify

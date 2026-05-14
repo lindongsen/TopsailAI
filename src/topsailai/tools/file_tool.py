@@ -453,3 +453,8 @@ FILE_RO_TOOLS = dict(
 )
 
 FILE_RO_TOOLS.update(file_read_line.TOOLS)
+
+PROMPT = """
+# Requirements for `overwrite_lines_in_file`
+You MUST confirm the line number using either `read_file_lines` or `read_file_around_line` or `read_file_with_context`
+"""
