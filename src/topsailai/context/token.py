@@ -164,6 +164,9 @@ class TokenStat(threading.Thread):
 
         self.msg_count = 0          # Number of messages processed
 
+        # From LLM
+        self.current_cached_tokens = 0
+
         # Thread synchronization and data management
         self.buffer = None          # Temporary message storage
         self.rlock = threading.RLock()  # Reentrant lock for thread safety
@@ -172,6 +175,16 @@ class TokenStat(threading.Thread):
 
         # Start the thread automatically
         self.start()
+
+    @property
+    def current_tokens(self):
+        """ Tokens in current messages """
+        return self.current_count
+
+    @property
+    def total_tokens(self):
+        """ summarized, Total tokens across all messages """
+        return self.total_count
 
     def output_token_stat(self, usage:CompletionUsage=None):
         """
@@ -198,9 +211,10 @@ class TokenStat(threading.Thread):
                 msg_count=self.msg_count,
             )
             if usage:
+                self.current_cached_tokens = usage.prompt_tokens_details.cached_tokens
                 info.update(
                     dict(
-                        cached_tokens=usage.prompt_tokens_details.cached_tokens,
+                        cached_tokens=self.current_cached_tokens,
                     )
                 )
 
@@ -239,6 +253,7 @@ class TokenStat(threading.Thread):
             self.msg_count = len(msgs)
             self.current_count = 0
             self.current_text_len = 0
+            self.current_cached_tokens = 0
 
             # Update timestamp for last message activity
             self._last_msg_time = int(time.time())

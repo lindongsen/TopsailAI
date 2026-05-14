@@ -46,12 +46,16 @@ def log_if_slow(
     log_func = _get_log_function(level, logger_obj)
 
     start_time = time.perf_counter()
+    info = {}
     try:
-        yield
+        yield info
     finally:
         elapsed_time = time.perf_counter() - start_time
         if elapsed_time > threshold:
-            log_func(f"{message} (elapsed: {elapsed_time:.3f}s, threshold: {threshold}s)")
+            info_content = ""
+            if info:
+                info_content = f"({info})" if info else ""
+            log_func(f"{message} (elapsed: {elapsed_time:.3f}s, threshold: {threshold}s)" + info_content)
 
 
 def _get_log_function(

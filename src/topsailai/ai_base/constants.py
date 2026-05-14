@@ -18,3 +18,6 @@ ROLE_TOOL = "tool"        # Messages containing tool execution results
 LLM_KEYWORD_MISTAKE = "LLM Mistake"
 # LLM service keyword
 LLM_KEYWORD_SERVICE = "LLM Service"
+
+# default seconds
+DEFAULT_LLM_SLOW_CHAT_THRESHOLD = 60

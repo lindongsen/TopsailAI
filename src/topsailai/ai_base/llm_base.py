@@ -29,6 +29,7 @@ from topsailai.utils import (
 from .constants import (
     ROLE_ASSISTANT,
     LLM_KEYWORD_SERVICE,
+    DEFAULT_LLM_SLOW_CHAT_THRESHOLD,
 )
 from .llm_control.exception import (
     JsonError,
@@ -288,7 +289,14 @@ class LLMModel(LLMModelBase):
                 time.sleep(sec)
 
             try:
-                with qos_tool.log_if_slow(30, f"{LLM_KEYWORD_SERVICE}: slow chat"):
+                with qos_tool.log_if_slow(
+                        env_tool.EnvReaderInstance.get(
+                            "TOPSAILAI_LLM_SLOW_CHAT_THRESHOLD",
+                            default=DEFAULT_LLM_SLOW_CHAT_THRESHOLD,
+                            formatter=int,
+                        ) or DEFAULT_LLM_SLOW_CHAT_THRESHOLD,
+                        f"{LLM_KEYWORD_SERVICE}: slow chat",
+                    ) as _info:
                     if for_stream:
                         rsp_obj, rsp_content = self.call_llm_model_by_stream(
                             messages,
@@ -299,6 +307,10 @@ class LLMModel(LLMModelBase):
                             messages,
                             tools=tools, tool_choice=tool_choice,
                         )
+
+                    # set qos info
+                    _info["current_tokens"] = self.tokenStat.current_tokens
+                    _info["cached_tokens"] = self.tokenStat.current_cached_tokens
 
                 if for_raw:
                     return rsp_content
