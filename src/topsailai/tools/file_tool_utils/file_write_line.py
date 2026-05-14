@@ -33,6 +33,17 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]], **_):
 
     Returns:
         str: diff content on success, error message on failure
+
+    Example, Modify a function block (lines 1-3) and delete line 5
+        ```
+        lines = [
+            (1, "def calculate_sum(a, b):"),
+            (2, "    return a + b"),
+            (3, "\\n"),
+            (5, "")  # Passing an empty string deletes the line
+
+        ]
+        ```
     """
     with _file_tool.ctxm_temp_file("") as (tmp_file, fp):
         # Check if file exists
