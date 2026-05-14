@@ -119,10 +119,10 @@ def get_unified_diff(file1_path, file2_path):
 
 
 def compare_files_strived(file1_path, file2_path, context_lines=3) -> str:
-    try:
-        return compare_files(file1_path=file1_path, file2_path=file2_path, context_lines=context_lines)
-    except Exception:
-        pass
+    #try:
+    #    return compare_files(file1_path=file1_path, file2_path=file2_path, context_lines=context_lines)
+    #except Exception:
+    #    pass
 
     try:
         return get_unified_diff(file1_path=file1_path, file2_path=file2_path)

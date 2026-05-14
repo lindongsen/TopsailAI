@@ -587,6 +587,40 @@ class TestReplaceLinesInFile:
         assert lines[10] == ""
         assert len(lines) == 11
 
+    def test_replace_consecutive_lines_no_trailing_newline_preserves_surrounding(self, tmp_path):
+        """Test replacing consecutive lines (2 and 3) without trailing \\n.
+
+        File content:
+          line1
+          line2
+          line3
+          line4
+        Replace line2 with "new2" (no \\n) and line3 with "new3" (no \\n).
+        The original line endings from lines 2 and 3 should be preserved,
+        and line1 and line4 must remain unchanged.
+        """
+        test_file = tmp_path / "test.txt"
+        test_file.write_text(
+            "line1\n"
+            "line2\n"
+            "line3\n"
+            "line4\n"
+        )
+
+        # Replace lines 2 and 3 with content that has no trailing \n
+        result = replace_lines_in_file(str(test_file), [
+            (2, "new2"),
+            (3, "new3"),
+        ])
+
+        content = test_file.read_text()
+        assert content == (
+            "line1\n"
+            "new2\n"
+            "new3\n"
+            "line4\n"
+        )
+
     def test_replace_with_multiline_content_consecutive_insert(self, tmp_path):
         """Test multiple consecutive line replacements with multiline content.
 

@@ -94,7 +94,11 @@ if not WORKSPACE:
     TOOLS.clear()
 
 PROMPT = """
-# About story_memory_tool
+# About story_memory_tool (MemoryTool)
+
+Whenever the user explicitly asks you to remember something (e.g., using phrases like "remember that...", "please save this:", "don't forget...", "make a note of...", "store this information: [information]"),
+you must use the `MemoryTool` to store the specified information.
+The information to be stored is the key detail(s) the user wants you to retain for future interactions.
 
 Memory Retrieval, You can read historical contextual information as needed.
 
