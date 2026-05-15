@@ -391,6 +391,7 @@ def list_dir(folder_path:str) -> list[str]:
 def read_files(files:list[str]) -> dict:
     """
     Read multiple files.
+    When reviewing, you should read multiple-files each to improve efficiency.
 
     Args:
         files (list[str]): some files
