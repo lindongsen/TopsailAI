@@ -5,13 +5,18 @@
   Purpose: Message truncation utilities for managing message size limits in different agent contexts
 '''
 
-from topsailai.utils import print_tool
+from topsailai.utils import (
+    print_tool,
+    env_tool,
+)
 from topsailai.utils.thread_local_tool import get_agent_name
 
 # Maximum message size for most agents
-MAX_MSG_SIZE = 3000
+MAX_MSG_SIZE = env_tool.EnvReaderInstance.get(
+    "TOPSAILAI_CONTEXT_ONE_MESSAGE_MAX_KB", 30, formatter=int,
+) * 1000
 # Larger message size threshold for AgentWriter
-LARGE_MSG_SIZE = 13000
+LARGE_MSG_SIZE = 10000 + MAX_MSG_SIZE
 
 SUFFIX_TRUNCATE = " ... (force to truncate)"
 
