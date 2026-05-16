@@ -186,6 +186,10 @@ class TokenStat(threading.Thread):
         """ summarized, Total tokens across all messages """
         return self.total_count
 
+    @property
+    def uncached_tokens(self):
+        return self.current_tokens - self.current_cached_tokens
+
     def output_token_stat(self, usage:CompletionUsage=None):
         """
         Output current token statistics to the log.

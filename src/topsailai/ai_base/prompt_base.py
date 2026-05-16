@@ -22,6 +22,7 @@ from topsailai.utils.json_tool import (
 from topsailai.utils import (
     time_tool,
     cmd_tool,
+    thread_local_tool,
 )
 from topsailai.utils.thread_local_tool import (
     get_agent_name,
@@ -80,6 +81,9 @@ class ThresholdContextHistory(object):
         self.token_max = int(os.getenv("CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS", self.token_max))
         self.slim_len = int(os.getenv("CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH", self.slim_len))
 
+    def __str__(self):
+        return f"ThresholdContextHistory=(token_max: {self.token_max}, token_ratio: {self.token_ratio}, slim_len: {self.slim_len})"
+
     def exceed_ratio(self, token_count):
         """
         Check if token count exceeds the configured ratio threshold
@@ -121,6 +125,36 @@ class ThresholdContextHistory(object):
         """
         if self.exceed_msg_len(len(messages)):
             return True
+
+        # check cached_tokens first
+        agent = thread_local_tool.get_agent_object()
+
+        # debug
+        #from topsailai.ai_base.agent_base import AgentBase
+        # assert isinstance(agent, AgentBase)
+
+        if agent:
+            try:
+                current_tokens = agent.llm_model.tokenStat.current_tokens
+                uncached_tokens = agent.llm_model.tokenStat.uncached_tokens
+
+                if current_tokens and uncached_tokens:
+                    _v_exceed_uncached_tokens = self.exceed_ratio(uncached_tokens)
+                    if _v_exceed_uncached_tokens:
+                        return True
+
+                    # tips
+                    _v_exceed_current_tokens = self.exceed_ratio(current_tokens)
+                    if _v_exceed_current_tokens:
+                        logger.warning(
+                            "context messages not exceed threshold: current_tokens=%s, uncached_tokens=%s, %s",
+                            current_tokens, uncached_tokens, str(self),
+                        )
+                    return False
+            except Exception as e:
+                logger.exception(e)
+
+        # check current_tokens
         token_count_now = count_tokens(str(messages))
         if self.exceed_ratio(token_count_now):
             return True
