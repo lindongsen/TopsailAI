@@ -232,7 +232,10 @@ def get_message(hook: HookInstruction = None, need_input=True) -> str:
     if _flag_all_files and all_files:
         for _file_path in all_files:
             with open(_file_path, encoding='utf-8') as fd:
-                message += fd.read().strip() + "\n---\n"
+                _head = "\n---\n" + f"\n> File: {_file_path} > START\n"
+                _tail = "\n---\n" + f"\n> File: {_file_path} > END\n"
+                message += _head + fd.read().strip() + _tail
+        message += "\n---\n"
         if message:
             call_hook_get_message_for_task_from_file()
 
