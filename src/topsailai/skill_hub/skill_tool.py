@@ -130,14 +130,21 @@ class SkillInfo(object):
             str: A formatted markdown string containing the skill name,
                  folder path, and description, suitable for inclusion in prompts.
         """
+        flag_able_to_overview = True
+        description = self.description
+
+        if not self.description:
+            description = overview_skill_native(self.folder)
+            flag_able_to_overview = False
+
         result = f"""
 ## {self.name}. folder=`{self.folder}`
-{self.description}
+{description}
 """
 
         if self.flag_overview is None:
             self.flag_overview = is_need_load_overview(self.folder)
-        if self.flag_overview:
+        if self.flag_overview and flag_able_to_overview:
             result += f"\n>>> [SKILL_OVERVIEW_START:{self.folder}]\n" + overview_skill_native(self.folder) + f"\n<<< [SKILL_OVERVIEW_END:{self.folder}]\n"
 
         return result
