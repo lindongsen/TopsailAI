@@ -5,12 +5,13 @@
   Created: 2026-05-17
   Purpose: Watch log files in {TOPSAILAI_HOME}/workspace/task/ with interactive selection.
            Lists .stdout log files, shows process ownership, and streams selected file.
-           Supports /refresh and /session {number} commands.
+           Supports /refresh, /session {number}, /clean, and /help commands.
            Ensures all child processes are cleaned up on exit.
 """
 
 import atexit
 import os
+import select
 import sys
 import signal
 import subprocess
@@ -266,6 +267,11 @@ def format_timestamp(ts: float) -> str:
     return dt.strftime("%m-%d %H:%M")
 
 
+def format_timestamp_full(ts: float) -> str:
+    dt = datetime.fromtimestamp(ts)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def print_header(title: str):
     width = 80
     print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * width}{Colors.RESET}")
@@ -347,53 +353,288 @@ def print_table(files: List[dict]):
 
 
 # =============================================================================
+# Help Display
+# =============================================================================
+
+def print_help():
+    """
+    Display all available commands with descriptions and examples.
+    """
+    width = 80
+    print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * width}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}  Available Commands{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}{'=' * width}{Colors.RESET}")
+
+    commands = [
+        {
+            "cmd": "<number>",
+            "desc": "Select a log file by its number to stream output in real-time.",
+            "example": "Example: 3",
+        },
+        {
+            "cmd": "/refresh",
+            "desc": "Re-scan the task directory and refresh the file list.",
+            "example": "",
+        },
+        {
+            "cmd": "/session <number>",
+            "desc": "Retrieve detailed messages for the session ID of the selected file.",
+            "example": "Example: /session 3",
+        },
+        {
+            "cmd": "/clean",
+            "desc": "Clean up .stdout files that are idle and older than 3 days.",
+            "example": "",
+        },
+        {
+            "cmd": "/help  or  help",
+            "desc": "Display this help message with all available commands.",
+            "example": "",
+        },
+        {
+            "cmd": "q  or  quit",
+            "desc": "Exit the log watcher gracefully.",
+            "example": "",
+        },
+        {
+            "cmd": "Ctrl+C",
+            "desc": "Interrupt and exit gracefully, cleaning up all child processes.",
+            "example": "",
+        },
+    ]
+
+    for item in commands:
+        cmd = item["cmd"]
+        desc = item["desc"]
+        example = item.get("example", "")
+
+        print(f"\n  {Colors.BOLD}{Colors.YELLOW}{cmd}{Colors.RESET}")
+        print(f"      {Colors.WHITE}{desc}{Colors.RESET}")
+        if example:
+            print(f"      {Colors.DIM}{example}{Colors.RESET}")
+
+    print(f"\n{Colors.CYAN}{'-' * width}{Colors.RESET}")
+    print(
+        f"  {Colors.DIM}Tip: Running processes are shown in {Colors.GREEN}green"
+        f"{Colors.DIM}, idle files in {Colors.GRAY}gray"
+        f"{Colors.DIM}.{Colors.RESET}"
+    )
+    print(f"{Colors.CYAN}{'=' * width}{Colors.RESET}\n")
+
+
+# =============================================================================
+# Clean Expired Files
+# =============================================================================
+
+def clean_expired_files(task_dir: str, files: List[dict]) -> int:
+    """
+    Clean up .stdout log files that are:
+    - Not being used by any process (PID is None)
+    - Older than 3 days (72 hours)
+
+    Shows a confirmation prompt before deletion.
+    Returns the number of files deleted.
+    """
+    now = time.time()
+    threshold_seconds = 3 * 24 * 60 * 60  # 72 hours
+
+    expired_files = []
+    for f in files:
+        # Check if file is still on disk and get fresh stat
+        if not os.path.isfile(f["path"]):
+            continue
+
+        # Refresh mtime in case it changed
+        try:
+            mtime = os.path.getmtime(f["path"])
+        except OSError:
+            continue
+
+        age = now - mtime
+        if age <= threshold_seconds:
+            continue
+
+        # Check process ownership (fresh check)
+        pid = get_file_pid(f["path"])
+        if pid is not None:
+            continue
+
+        expired_files.append({
+            "filename": f["filename"],
+            "path": f["path"],
+            "size": os.path.getsize(f["path"]),
+            "mtime": mtime,
+            "age_hours": age / 3600,
+        })
+
+    if not expired_files:
+        print(
+            f"\n{Colors.GREEN}[INFO] No expired .stdout files found. "
+            f"(Files must be idle and older than 3 days){Colors.RESET}"
+        )
+        return 0
+
+    # Show confirmation table
+    print_header("Clean Expired Log Files")
+    print(
+        f"{Colors.YELLOW}[WARN] The following {len(expired_files)} file(s) are idle "
+        f"and older than 3 days:{Colors.RESET}\n"
+    )
+
+    w_no = 4
+    w_name = 32
+    w_size = 10
+    w_time = 20
+    w_age = 12
+
+    header = (
+        f"{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE}"
+        f" {'No':^{w_no}} |"
+        f" {'Filename':^{w_name}} |"
+        f" {'Size':^{w_size}} |"
+        f" {'Modified':^{w_time}} |"
+        f" {'Age':^{w_age}} "
+        f"{Colors.RESET}"
+    )
+    sep = (
+        f"{Colors.CYAN}"
+        f"{'-' * (w_no + 1)}+"
+        f"{'-' * (w_name + 2)}+"
+        f"{'-' * (w_size + 2)}+"
+        f"{'-' * (w_time + 2)}+"
+        f"{'-' * (w_age + 1)}"
+        f"{Colors.RESET}"
+    )
+
+    print(header)
+    print(sep)
+
+    for idx, ef in enumerate(expired_files, start=1):
+        name = ef["filename"]
+        if len(name) > w_name:
+            name = name[:w_name - 3] + "..."
+
+        size_str = format_size(ef["size"])
+        time_str = format_timestamp_full(ef["mtime"])
+        age_str = f"{ef['age_hours']:.1f}h"
+
+        row = (
+            f"{Colors.GRAY}"
+            f" {idx:^{w_no}} |"
+            f" {name:<{w_name}} |"
+            f" {size_str:>{w_size}} |"
+            f" {time_str:^{w_time}} |"
+            f" {age_str:>{w_age}} "
+            f"{Colors.RESET}"
+        )
+        print(row)
+
+    print(sep)
+
+    # Confirmation prompt
+    confirm_prompt = (
+        f"\n{Colors.BOLD}{Colors.YELLOW}"
+        f"Are you sure you want to delete these {len(expired_files)} file(s)? [y/N]: "
+        f"{Colors.RESET}"
+    )
+    try:
+        confirm = input(confirm_prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print(f"\n{Colors.YELLOW}[INFO] Clean cancelled.{Colors.RESET}")
+        return 0
+
+    if confirm not in ("y", "yes"):
+        print(f"{Colors.YELLOW}[INFO] Clean cancelled.{Colors.RESET}")
+        return 0
+
+    # Perform deletion
+    deleted_count = 0
+    failed_files = []
+
+    for ef in expired_files:
+        try:
+            os.remove(ef["path"])
+            deleted_count += 1
+            print(
+                f"{Colors.GREEN}[OK] Deleted: {ef['filename']}{Colors.RESET}"
+            )
+        except OSError as e:
+            failed_files.append((ef["filename"], str(e)))
+            print(
+                f"{Colors.RED}[ERROR] Failed to delete {ef['filename']}: {e}{Colors.RESET}"
+            )
+
+    print(
+        f"\n{Colors.GREEN}[INFO] Clean complete: "
+        f"{deleted_count} deleted, {len(failed_files)} failed.{Colors.RESET}"
+    )
+    return deleted_count
+
+
+# =============================================================================
 # File Streaming
 # =============================================================================
 
 def stream_file(filepath: str):
     """
     Stream a log file in real-time, similar to `tail -f`.
-    Supports 'q' + Enter to quit, or Ctrl+C for graceful exit.
+
+    Strategy:
+    1. Show the last 20 lines via `tail -n 20` (one-shot subprocess).
+    2. Open the file directly in binary mode, seek to end, and read new data
+       in a tight loop. This avoids pipe buffering issues from `tail -f`.
+    3. Use select() with a short timeout (0.05s) to check for 'q' keypress.
+
+    Supports 'q' to quit, or Ctrl+C for graceful exit.
     """
     global running
     filename = os.path.basename(filepath)
     print_header(f"Streaming: {filename}")
     print(
-        f"{Colors.YELLOW}[INFO] Press 'q' + Enter to quit, or Ctrl+C to exit.{Colors.RESET}\n"
+        f"{Colors.YELLOW}[INFO] Press 'q' to quit, or Ctrl+C to exit.{Colors.RESET}\n"
     )
 
+    # Step 1: Show last 20 lines using a one-shot tail command.
     try:
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-            f.seek(0, 2)
-            while running:
-                try:
-                    line = f.readline()
-                except KeyboardInterrupt:
-                    print(
-                        f"\n{Colors.YELLOW}[INFO] Interrupted by user.{Colors.RESET}"
-                    )
-                    break
+        subprocess.run(["tail", "-n", "20", filepath], check=False)
+    except Exception:
+        pass
 
-                if line:
-                    print(line, end="")
-                    sys.stdout.flush()
+    # Step 2: Open file directly and follow new writes.
+    # Using binary mode for minimal overhead; write raw bytes to stdout.buffer.
+    try:
+        with open(filepath, "rb") as f:
+            f.seek(0, 2)  # Jump to end
+            while running:
+                chunk = f.read(4096)
+                if chunk:
+                    if hasattr(sys.stdout, "buffer"):
+                        sys.stdout.buffer.write(chunk)
+                        sys.stdout.buffer.flush()
+                    else:
+                        print(chunk.decode("utf-8", errors="replace"), end="")
+                        sys.stdout.flush()
                 else:
-                    time.sleep(0.2)
-                    try:
-                        import select
-                        if select.select([sys.stdin], [], [], 0)[0]:
+                    # No new data; check for 'q' key with a short timeout.
+                    if sys.stdin.isatty():
+                        readable, _, _ = select.select([sys.stdin], [], [], 0.05)
+                        if readable:
                             char = sys.stdin.read(1)
-                            if char.lower() == 'q':
+                            if char and char.lower() == 'q':
                                 print(
                                     f"\n{Colors.YELLOW}[INFO] Quit requested.{Colors.RESET}"
                                 )
                                 break
-                    except Exception:
-                        pass
+                    else:
+                        time.sleep(0.05)
     except FileNotFoundError:
         print(f"{Colors.RED}[ERROR] File not found: {filepath}{Colors.RESET}")
     except PermissionError:
         print(f"{Colors.RED}[ERROR] Permission denied: {filepath}{Colors.RESET}")
+    except KeyboardInterrupt:
+        print(
+            f"\n{Colors.YELLOW}[INFO] Interrupted by user.{Colors.RESET}"
+        )
     except Exception as e:
         print(f"{Colors.RED}[ERROR] Failed to stream file: {e}{Colors.RESET}")
 
@@ -462,7 +703,7 @@ def prompt_selection(files: List[dict]) -> Tuple[str, Optional[int]]:
         try:
             prompt_text = (
                 f"\n{Colors.BOLD}{Colors.YELLOW}"
-                f"Enter number to watch, /refresh, /session {{number}}, or 'q' to quit: "
+                f"Enter number to watch, /refresh, /session {{number}}, /clean, /help, or 'q' to quit: "
                 f"{Colors.RESET}"
             )
             user_input = input(prompt_text).strip()
@@ -477,6 +718,12 @@ def prompt_selection(files: List[dict]) -> Tuple[str, Optional[int]]:
 
             if lower_input == "/refresh":
                 return ("refresh", None)
+
+            if lower_input == "/clean":
+                return ("clean", None)
+
+            if lower_input in ("/help", "help"):
+                return ("help", None)
 
             if lower_input.startswith("/session "):
                 parts = user_input.split(None, 1)
@@ -513,7 +760,7 @@ def prompt_selection(files: List[dict]) -> Tuple[str, Optional[int]]:
             except ValueError:
                 print(
                     f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
-                    f"Please enter a number, /refresh, /session {{number}}, or 'q'.{Colors.RESET}"
+                    f"Please enter a number, /refresh, /session {{number}}, /clean, /help, or 'q'.{Colors.RESET}"
                 )
 
         except (EOFError, KeyboardInterrupt):
@@ -547,6 +794,9 @@ def main():
         sys.exit(0)
 
     print_table(log_files)
+    print(
+        f"\n  {Colors.DIM}Type {Colors.YELLOW}/help{Colors.DIM} for available commands{Colors.RESET}"
+    )
 
     try:
         while running:
@@ -556,6 +806,17 @@ def main():
                 break
 
             if action == "refresh":
+                print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
+                log_files = discover_log_files(task_dir)
+                print_table(log_files)
+                continue
+
+            if action == "help":
+                print_help()
+                continue
+
+            if action == "clean":
+                clean_expired_files(task_dir, log_files)
                 print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
                 log_files = discover_log_files(task_dir)
                 print_table(log_files)
