@@ -33,6 +33,33 @@ from topsailai.context.ctx_manager import get_managers_by_env
 from topsailai.context.prompt_env import generate_prompt_for_env
 
 
+class MessageData(object):
+    """
+    {"role": ROLE_USER, "content": content, "tool_call_id": None}
+    """
+    ROLE_USER = ROLE_USER
+    ROLE_ASSISTANT = ROLE_ASSISTANT
+    ROLE_SYSTEM = ROLE_SYSTEM
+    ROLE_TOOL = ROLE_TOOL
+
+    def __init__(self, role:str, content:str, tool_call_id:str=None):
+        self.role = str(role)
+        self.content = content if isinstance(content, str) else to_json_str(content, indent=0)
+        self.tool_call_id = str(tool_call_id) if tool_call_id is not None else tool_call_id
+
+    def to_dict(self):
+        result = dict(
+            role=self.role,
+            content=self.content,
+        )
+        if self.tool_call_id is not None:
+            result["tool_call_id"] = self.tool_call_id
+        return result
+
+    def __str__(self):
+        return to_json_str(self.to_dict())
+
+
 def get_prompt_by_cmd(cmd:str) -> str:
     """ Execute a command to get stdout """
     assert cmd, "missing command"

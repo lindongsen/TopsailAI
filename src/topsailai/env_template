@@ -199,6 +199,11 @@ CRITICAL SYSTEM ALERT: NO ACTION DETECTED
 # If has severe repetiton, raise error. 1 for enabled, 0 for disabled
 TOPSAILAI_REFUSE_SEVERE_REPETITION=1
 
+# Heavy Task
+TOPSAILAI_HEAVY_TASK_THRESHOLD_CONTINUOUS_SUMMARY_TIMES=5
+TOPSAILAI_HEAVY_TASK_PROMPT=""
+
+
 # =============================================================================
 # Feature Flags
 # =============================================================================

@@ -14,6 +14,9 @@ from topsailai.utils import (
 from topsailai.ai_base.constants import (
     ROLE_ASSISTANT,
 )
+from topsailai.ai_base.prompt_base import (
+    MessageData,
+)
 from topsailai.context import ctx_manager
 from topsailai.workspace.context.ctx_runtime import (
     ContextRuntimeData,
@@ -29,6 +32,36 @@ from topsailai.workspace.plugin_instruction.base.cache import set_ai_agent
 from topsailai.workspace.agent.agent_constants import (
     DEFAULT_HEAD_TAIL_OFFSET,
 )
+
+class HeavyTaskBase(object):
+    def __init__(self):
+        self.continuous_summary_times = 0
+
+        # threshold
+        self.threshold_continuous_summary_times = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_HEAVY_TASK_THRESHOLD_CONTINUOUS_SUMMARY_TIMES",
+            default=5,
+            formatter=int,
+        )
+
+        # prompt
+        self.prompt = """CRITICAL SYSTEM ALERT: HeavyTask, Current task execution time is too long. Please consider analyzing and splitting the task."""
+        env_prompt = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_HEAVY_TASK_PROMPT",
+        )
+        if env_prompt:
+            self.prompt += env_prompt
+
+    def is_heavy_task(self) -> bool:
+        if self.continuous_summary_times > self.threshold_continuous_summary_times:
+            return True
+
+        return False
+
+    def reset_count(self):
+        self.continuous_summary_times = 0
+
+        return
 
 
 class AgentChatBase(object):
@@ -70,6 +103,8 @@ class AgentChatBase(object):
 
         set_ai_agent(self.ai_agent)
 
+        self.heavy_task = HeavyTaskBase()
+
         ##########################################################################################
         # Agent HOOKS
         ##########################################################################################
@@ -101,6 +136,7 @@ class AgentChatBase(object):
             Args:
                 _ai_agent: The agent instance to operate on.
             """
+            self.heavy_task.reset_count()
             ctx_runtime_data.reset_messages()
 
             # cut messages
@@ -147,7 +183,20 @@ class AgentChatBase(object):
 
             # the processing agent messages
             if ctx_runtime_data.is_need_summarize_for_processing():
-                ctx_runtime_data.summarize_messages_for_processing()
+                _answer = ctx_runtime_data.summarize_messages_for_processing()
+                if _answer:
+                    self.heavy_task.continuous_summary_times += 1
+                else:
+                    self.heavy_task.continuous_summary_times = 0
+
+            # heavy task
+            if self.heavy_task.is_heavy_task():
+                _msg = MessageData(
+                    MessageData.ROLE_USER,
+                    self.heavy_task.prompt,
+                )
+                logger.warning("Heavy Task Trigger")
+                self.ai_agent.append_message(_msg.to_dict())
 
             return
 
