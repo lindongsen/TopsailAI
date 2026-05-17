@@ -58,6 +58,10 @@ class HeavyTaskBase(object):
 
         return False
 
+    def block_heavy_task(self):
+        assert self.continuous_summary_times < (self.threshold_continuous_summary_times + 7), self.prompt
+        return
+
     def reset_count(self):
         self.continuous_summary_times = 0
 
@@ -191,6 +195,7 @@ class AgentChatBase(object):
 
             # heavy task
             if self.heavy_task.is_heavy_task():
+                self.heavy_task.block_heavy_task()
                 _msg = MessageData(
                     MessageData.ROLE_USER,
                     self.heavy_task.prompt,
