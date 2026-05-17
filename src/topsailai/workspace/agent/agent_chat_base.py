@@ -180,6 +180,7 @@ class AgentChatBase(object):
             Args:
                 _ai_agent: The agent instance to operate on.
             """
+            _answer = None
 
             self.heavy_task.block_heavy_task()
 
@@ -196,7 +197,7 @@ class AgentChatBase(object):
                     self.heavy_task.continuous_summary_times = 0
 
             # heavy task
-            if self.heavy_task.is_heavy_task():
+            if _answer and self.heavy_task.is_heavy_task():
                 self.heavy_task.block_heavy_task()
                 _msg = MessageData(
                     MessageData.ROLE_USER,
