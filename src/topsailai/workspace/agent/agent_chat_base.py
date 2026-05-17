@@ -45,7 +45,7 @@ class HeavyTaskBase(object):
         )
 
         # prompt
-        self.prompt = """CRITICAL SYSTEM ALERT: HeavyTask, Current task execution time is too long. Please consider analyzing and splitting the task."""
+        self.prompt = """CRITICAL SYSTEM ALERT: Heavy Task, Current task execution time is too long. Please consider analyzing and splitting the task."""
         env_prompt = env_tool.EnvReaderInstance.get(
             "TOPSAILAI_HEAVY_TASK_PROMPT",
         )
