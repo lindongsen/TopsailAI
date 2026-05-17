@@ -181,6 +181,8 @@ class AgentChatBase(object):
                 _ai_agent: The agent instance to operate on.
             """
 
+            self.heavy_task.block_heavy_task()
+
             # the processed Q&A messages
             if ctx_runtime_data.is_need_summarize_for_processed():
                 ctx_runtime_data.summarize_messages_for_processed()
