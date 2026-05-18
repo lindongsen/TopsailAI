@@ -174,10 +174,11 @@ def print_context_messages(messages):
         # Get role and content, with default values in case fields are missing
         role = msg.get('role', 'unknown')
         content = msg.get('content', '')
+        create_time = msg.get('create_time', '')
 
         # Format the output with visual separators
         print(f"\n{'='*50}")
-        print(f"#{i+1} - Role: {role.upper()}")
+        print(f"#{i+1} - Role: {role.upper()}" + (f" - {create_time}" if create_time else ""))
         print(f"{'='*50}")
 
         # Handle multiline content while preserving formatting
@@ -191,7 +192,7 @@ def print_context_messages(messages):
         if content:
             lines = content.split('\n')
             for line in lines:
-                print(f"  {line}")
+                print(f"{line}")
         else:
             print("  [No content]")
 

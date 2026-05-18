@@ -46,3 +46,7 @@ LLM service errors
 
 - LLM make mistake
 - MAX_TOKENS is too small
+
+### LOG_ATTENTION: "Heavy Task Trigger"
+
+Task execution time is too long
