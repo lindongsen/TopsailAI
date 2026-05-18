@@ -782,7 +782,7 @@ def main():
     topsailai_home = get_topsailai_home()
     task_dir = os.path.join(topsailai_home, "workspace", "task")
 
-    print_header("TopsailAI Log Watcher")
+    print_header("TopsailAI Task Watcher")
     print(f"{Colors.DIM}HOME: {topsailai_home}{Colors.RESET}")
     print(f"{Colors.DIM}DIR:  {task_dir}{Colors.RESET}")
 
