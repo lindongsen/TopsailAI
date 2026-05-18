@@ -4,7 +4,7 @@
 # Created: 2025-10-19
 # Purpose:
 
-TOPSAILAI_PWD=${PWD}
+export TOPSAILAI_PWD=${PWD}
 
 BASE_NAME=$(basename "$0")
 
