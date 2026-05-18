@@ -10,6 +10,32 @@ from contextlib import contextmanager
 
 from topsailai.logger import logger
 
+
+@contextmanager
+def ctxm_set_env(kv:dict):
+    """ set environ """
+    old_kv = {}
+    for k in kv.keys():
+        old_v = os.getenv(k)
+        if old_v is None:
+            # no exists
+            continue
+        old_kv[k] = old_v
+
+    try:
+        for k, v in kv.items():
+            # case: remove env
+            if k in os.environ and v is None:
+                del os.environ[k]
+
+            os.environ[k] = v
+
+        yield
+    finally:
+        for k, v in old_kv.items():
+            os.environ[k] = v
+    return
+
 @contextmanager
 def ctxm_hide_env(keys:list[str]):
     """ hide environ """
