@@ -286,6 +286,17 @@ def append_data(file_path: str, data: any) -> bool:
         return False
 
 
+def is_file(file_path:str) -> bool:
+    """ file is existed and is not dir """
+    if not os.path.exists(file_path):
+        return False
+
+    if os.path.isdir(file_path):
+        return False
+
+    return True
+
+
 def get_all_files(args:list[str]) -> tuple[bool, list[str]]:
     """
     Get all of files from args.
@@ -301,6 +312,7 @@ def get_all_files(args:list[str]) -> tuple[bool, list[str]]:
 
     _flag_all_files = True
     all_files = []
+    pwd = os.getenv("TOPSAILAI_PWD") or ""
     for _arg in args:
         _arg = _arg.strip()
 
@@ -308,10 +320,17 @@ def get_all_files(args:list[str]) -> tuple[bool, list[str]]:
             continue
 
         if _arg[0] != '/':
+            # case: relative path
+            if pwd and (len(_arg) + len(pwd)) < 255:
+                _real_path = os.path.join(pwd, _arg)
+                if is_file(_real_path):
+                    all_files.append(_real_path)
+                    continue
+
             _flag_all_files = False
             continue
 
-        if not os.path.exists(_arg):
+        if not is_file(_arg):
             _flag_all_files = False
             continue
 

@@ -6,6 +6,8 @@
 #  Env:
 #    @SYSTEM_PROMPT: file;
 
+export TOPSAILAI_PWD=${PWD}
+
 BASE_NAME=$(basename "$0")
 ARG1=$1
 [ "${ARG1}" != "-" ] && [ "${ARG1:0:1}" == "-" ] && {
