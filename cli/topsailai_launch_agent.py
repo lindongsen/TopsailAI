@@ -15,6 +15,11 @@ import subprocess
 import sys
 
 
+PWD = os.getenv("TOPSAILAI_PWD")
+if PWD:
+    os.chdir(PWD)
+
+
 CONFIG_TEMPLATE = """# AI Agent Launcher Configuration Template
 # Save this file as .topsailai/settings.yaml in your project root
 

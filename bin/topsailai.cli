@@ -4,6 +4,8 @@
 # Created: 2025-10-19
 # Purpose:
 
+TOPSAILAI_PWD=${PWD}
+
 BASE_NAME=$(basename "$0")
 
 CWD=$(dirname "$(readlink -f $0)")
