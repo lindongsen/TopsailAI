@@ -21,3 +21,6 @@ LLM_KEYWORD_SERVICE = "LLM Service"
 
 # default seconds
 DEFAULT_LLM_SLOW_CHAT_THRESHOLD = 60
+
+# context messages
+NON_SYSTEM_PROMPT_MESSAGE_INDEX = 3

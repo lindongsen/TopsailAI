@@ -149,7 +149,11 @@ def fix_llm_mistakes_on_json(content):
 
     return content
 
-def to_json_str(content, indent=2):
+def to_json_str(
+        content,
+        indent=2,
+        sort_keys=True,
+    ):
     """Convert Python objects to JSON string with error handling.
 
     This function converts Python objects (dict, list, etc.) to JSON strings.
@@ -177,7 +181,13 @@ def to_json_str(content, indent=2):
             return new_content
         return content
     try:
-        return simplejson.dumps(content, indent=indent, ensure_ascii=False, default=str)
+        return simplejson.dumps(
+            content,
+            indent=indent,
+            ensure_ascii=False,
+            default=str,
+            sort_keys=sort_keys,
+        )
     except Exception as e:
         print_error(f"format_content error: {e}, content: {content}")
         return str(content)
@@ -235,7 +245,11 @@ def safe_json_dump(obj, indent=2, ensure_ascii=False, default=None) -> str:
 
     try:
         return simplejson.dumps(
-            obj, indent=indent, ensure_ascii=ensure_ascii, default=default or str,
+            obj,
+            indent=indent,
+            ensure_ascii=ensure_ascii,
+            default=default or str,
+            sort_keys=True,
         )
     except Exception:
         pass

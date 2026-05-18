@@ -19,7 +19,11 @@ from topsailai.utils import format_tool
 from topsailai.utils.thread_local_tool import get_session_id
 from topsailai.utils.time_tool import get_current_date
 from topsailai.context.token import count_tokens
-from topsailai.ai_base.constants import ROLE_SYSTEM, ROLE_USER
+from topsailai.ai_base.constants import (
+    ROLE_SYSTEM,
+    ROLE_USER,
+    NON_SYSTEM_PROMPT_MESSAGE_INDEX,
+)
 
 
 class ChatHistoryMessageData(object):
@@ -262,7 +266,7 @@ class ContextManager(MessageStorageBase):
         return content_obj
 
 
-    def link_messages(self, messages, index_start=3, index_end=-11, max_size=1024):
+    def link_messages(self, messages, index_start=NON_SYSTEM_PROMPT_MESSAGE_INDEX, index_end=-11, max_size=1024):
         """
         Link large messages to storage by archiving them.
 

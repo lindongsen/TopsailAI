@@ -10,6 +10,7 @@ import os
 from topsailai.logger.log_chat import logger
 from topsailai.ai_base.constants import (
     ROLE_USER, ROLE_ASSISTANT, ROLE_SYSTEM, ROLE_TOOL,
+    NON_SYSTEM_PROMPT_MESSAGE_INDEX,
 )
 from topsailai.utils.print_tool import (
     print_step,
@@ -195,6 +196,8 @@ class PromptBase(object):
     This class manages the conversation context, message history, and provides
     hooks for context management and message processing.
     """
+
+    NON_SYSTEM_PROMPT_MESSAGE_INDEX = NON_SYSTEM_PROMPT_MESSAGE_INDEX
 
     # define flags
     flag_dump_messages = False

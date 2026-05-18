@@ -16,6 +16,8 @@ from topsailai.utils.print_tool import (
 )
 from topsailai.ai_base.constants import (
     LLM_KEYWORD_MISTAKE,
+    NON_SYSTEM_PROMPT_MESSAGE_INDEX,
+    ROLE_SYSTEM,
 )
 from topsailai.utils import (
     format_tool,
@@ -119,7 +121,9 @@ def format_messages(messages, key_name, value_name):
     if func_format is None:
         return messages
 
-    for msg in messages[2:]:
+    for msg in messages:
+        if msg["role"] == ROLE_SYSTEM:
+            continue
         if msg["content"] and msg["content"][0] in ["[", "{"]:
             new_content = func_format(
                 msg["content"],
