@@ -14,6 +14,9 @@ import shlex
 import subprocess
 import sys
 
+# DONOT REMOVE THIS
+import readline
+
 
 PWD = os.getenv("TOPSAILAI_PWD")
 if PWD:

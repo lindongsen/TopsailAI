@@ -18,6 +18,10 @@ import subprocess
 import time
 from datetime import datetime
 from typing import List, Optional, Tuple
+try:
+    import readline
+except ImportError:
+    pass
 
 
 # =============================================================================
@@ -707,6 +711,10 @@ def prompt_selection(files: List[dict]) -> Tuple[str, Optional[int]]:
                 f"{Colors.RESET}"
             )
             user_input = input(prompt_text).strip()
+            try:
+                readline.add_history(user_input)
+            except NameError:
+                pass
 
             if not user_input:
                 continue

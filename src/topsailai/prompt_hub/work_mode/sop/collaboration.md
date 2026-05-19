@@ -1,14 +1,15 @@
 # Collaboration for subagents or team or group or multiple-agents
 
-Each member(agent/assistant) only handles a single task at a time.
-When a certain stage or step or task is completed, member should output `final_answer` so that to await/transfer next task.
+Each member(agent/assistant) only handles a single task at a time;
+The task content should include relevant contextual information, such as: `Reference Files`, `Notes`, etc.
 
+When a certain stage or step or task is completed, member should output `final_answer` so that to await/transfer next task.
 Example Scenarios:
     awaiting something from x;
     execute the next step by x;
     execute something by x;
 
-## Human and Assistant
+## Case: `re-xxx` intents
 
 Trigger Condition: User explicitly requests "re-{action}", for example "re-analysis", "re-test", "re-review" or similar intents.
 
