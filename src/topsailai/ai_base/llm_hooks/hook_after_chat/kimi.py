@@ -96,7 +96,7 @@ def check_mistakes(content:str):
         if line.startswith("<|tool_calls_section_begin|>"):
             raise ModelServiceError(f"{LLM_KEYWORD_MISTAKE}: failed to parse tool_call, [{content}]")
     for line in line_set[-11:]:
-        if line.startswith("<|tool_calls_section_end|>"):
+        if line.endswith("<|tool_calls_section_end|>"):
             raise ModelServiceError(f"{LLM_KEYWORD_MISTAKE}: failed to parse tool_call, [{content}]")
 
     return
