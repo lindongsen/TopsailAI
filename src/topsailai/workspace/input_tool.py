@@ -155,6 +155,7 @@ def input_multi_line(tips: str = "", hook: HookInstruction = None) -> str:
                 return ""
 
     message = message.strip()
+
     if message:
         if not hook_message(message, hook):
             return message

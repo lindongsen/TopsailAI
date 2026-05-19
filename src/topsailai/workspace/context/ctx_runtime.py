@@ -89,6 +89,18 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             )
         return
 
+    def del_session_message_by_ids(self, *msg_ids: list[str]):
+        """
+        Delete a single message from the session by message ID.
+
+        Args:
+            msg_ids (list_str)
+        """
+        session_id = self.session_id
+        if session_id:
+            ctx_manager.del_session_messages(session_id, msg_ids)
+        return
+
     def del_session_message(self, index: int):
         """
         Delete a single message from the session by index.

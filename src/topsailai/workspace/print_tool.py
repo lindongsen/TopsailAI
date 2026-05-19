@@ -94,6 +94,9 @@ class TeeOutput:
         self.close()
         return False
 
+    def __getattr__(self, name):
+        return getattr(self.terminal, name)
+
 
 def decorator_tee_output(filename, mode='a', encoding='utf-8', logrotate_max_file_bytes=100 * 1024 * 1024):
     """A function decorator that redirects stdout to both the screen and a file.
@@ -197,6 +200,7 @@ def print_context_messages(messages):
             print("  [No content]")
 
     #print(f"\n{'='*50}")
+    print()
 
 def print_raw_messages(messages: list[ChatHistoryMessageData]):
     """
@@ -207,17 +211,24 @@ def print_raw_messages(messages: list[ChatHistoryMessageData]):
     """
     for i, msg in enumerate(messages):
         # Parse the message content to get role
-        content = msg.message
+        message = msg.message
+        content = message
         role = "unknown"
+        create_time = ""
         try:
-            msg_dict = json_tool.json_load(content)
-            role = msg_dict.get("role", "unknown")
+            message = json_tool.json_load(message)
+            content = message["content"]
+            role = message.get("role", "unknown")
+            create_time = message.get("create_time")
         except Exception:
             pass
 
         # Format the output with visual separators and message_id
         print(f"\n{'='*50}")
-        print(f"#{i+1} - Role: {role.upper()} - ID: {msg.msg_id}")
+        print(
+            f"#{i+1} - Role: {role.upper()} - ID: {msg.msg_id}"
+            + (f" - ({create_time})" if create_time else "")
+        )
         print(f"{'='*50}")
 
         # Handle multiline content while preserving formatting
@@ -231,6 +242,8 @@ def print_raw_messages(messages: list[ChatHistoryMessageData]):
         if content:
             lines = content.split('\n')
             for line in lines:
-                print(f"  {line}")
+                print(f"{line}")
         else:
             print("  [No content]")
+
+    print()

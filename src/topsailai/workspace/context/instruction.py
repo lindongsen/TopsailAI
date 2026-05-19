@@ -51,7 +51,9 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             "ctx.history2": self.ctx_history2,
             "ctx.del_msg": self.ctx_delete_message,
             "ctx.del_msgs": self.ctx_delete_messages,
+            "ctx.del_msg_ids": self.ctx_runtime_data.del_session_message_by_ids,
             "ctx.summarize": self.ctx_summarize,
+            "ctx.search": self.ctx_search,
         }
 
         # total
@@ -254,4 +256,25 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             need_interactive=need_interactive,
         )
         self.ctx_history()
+        return
+
+    def ctx_search(self, keyword: str) -> list:
+        """
+        Search context messages by keyword
+
+        Args:
+            keyword (str)
+
+        Returns:
+            list: messages
+        """
+        raw_msgs = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
+        if not raw_msgs:
+            return
+        matched_msgs = []
+        for msg in raw_msgs:
+            if keyword in msg.message:
+                matched_msgs.append(msg)
+        if matched_msgs:
+            print_raw_messages(matched_msgs)
         return
