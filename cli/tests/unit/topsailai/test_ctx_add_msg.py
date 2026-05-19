@@ -118,8 +118,8 @@ class TestCtxAddMsgHandle(unittest.TestCase):
         self.assertEqual(result, "yaml_handled")
         mock_popen.assert_called_once()
         args = mock_popen.call_args.args[0]
-        self.assertIn("hello", args)
-        self.assertIn("world", args)
+        # Message must be a single argument, not split by spaces
+        self.assertEqual(args[-1], "hello world")
 
     @patch("builtins.input")
     @patch("topsailai.subprocess.Popen")
@@ -137,8 +137,30 @@ class TestCtxAddMsgHandle(unittest.TestCase):
         self.assertEqual(result, "yaml_handled")
         mock_popen.assert_called_once()
         args = mock_popen.call_args.args[0]
-        self.assertIn("line1", args)
-        self.assertIn("line2", args)
+        # Multiline message must be a single argument
+        self.assertEqual(args[-1], "line1\nline2")
+
+    @patch("builtins.input")
+    @patch("topsailai.subprocess.Popen")
+    @patch("builtins.print")
+    def test_handle_multiline_message_interactive(self, mock_print, mock_popen, mock_input):
+        """Multiline message is passed as a single argument."""
+        mock_input.side_effect = ["good", "luck", "haha", EOFError()]
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("", "")
+        mock_proc.poll.return_value = 0
+        mock_popen.return_value = mock_proc
+
+        instruction = self._make_instruction()
+        result = cli.handle_yaml_command(instruction, {"message": ""})
+        self.assertEqual(result, "yaml_handled")
+        mock_popen.assert_called_once()
+        args = mock_popen.call_args.args[0]
+        # The entire multiline message must be a single argument
+        self.assertEqual(args[-1], "good\nluck\nhaha")
+        # Ensure it was not split into separate arguments
+        self.assertNotIn("luck", args[:-1])
+        self.assertNotIn("haha", args[:-1])
 
     @patch("builtins.input")
     @patch("builtins.print")

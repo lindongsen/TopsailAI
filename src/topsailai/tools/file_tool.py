@@ -459,5 +459,5 @@ FILE_RO_TOOLS.update(file_read_line.TOOLS)
 PROMPT = """
 # Requirements for `overwrite_lines_in_file`
 You MUST confirm the line number using either `read_file_lines` or `read_file_around_line` or `read_file_with_context`.
-Best practice: Read the entire file via `read_file_lines("filepath", 1, 0)` FIRST!
+Best practice: Read the entire CODE/Markdown file via `read_file_lines` FIRST!
 """

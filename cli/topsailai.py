@@ -310,10 +310,11 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
                 f"{Colors.RED}[ERROR] Message cannot be empty.{Colors.RESET}"
             )
             return "yaml_handled"
-        # Build and execute the external shell command safely
+        # Build and execute the external shell command safely.
+        # Replace quoted placeholders (e.g., '{var}') first to avoid double-quoting.
         shell_cmd = shell
-        shell_cmd = shell_cmd.replace("{session_id}", shlex.quote(current_session_id or ""))
-        shell_cmd = shell_cmd.replace("{message}", shlex.quote(message))
+        shell_cmd = shell_cmd.replace("'{session_id}'", shlex.quote(current_session_id or ""))
+        shell_cmd = shell_cmd.replace("'{message}'", shlex.quote(message))
         try:
             proc = subprocess.Popen(
                 shlex.split(shell_cmd),
@@ -322,7 +323,6 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            register_process(proc)
             try:
                 stdout, stderr = proc.communicate(timeout=30)
                 if stdout:
@@ -383,10 +383,16 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
 
     # External shell command
     try:
-        # Replace variables in shell template, quoting values for safety
+        # Replace variables in shell template, quoting values for safety.
+        # Prefer replacing quoted placeholders (e.g., '{var}') to avoid
+        # double-quoting when the template already wraps variables in quotes.
         shell_cmd = shell
         for var_name, var_value in variables.items():
-            shell_cmd = shell_cmd.replace(f"{{{var_name}}}", shlex.quote(var_value))
+            quoted_placeholder = f"'{{{var_name}}}'"
+            if quoted_placeholder in shell_cmd:
+                shell_cmd = shell_cmd.replace(quoted_placeholder, shlex.quote(var_value))
+            else:
+                shell_cmd = shell_cmd.replace(f"{{{var_name}}}", shlex.quote(var_value))
 
         cmd_list = shlex.split(shell_cmd)
         proc = subprocess.Popen(
