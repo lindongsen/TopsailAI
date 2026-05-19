@@ -11,6 +11,11 @@
 import re
 import json
 
+from topsailai.ai_base.llm_control.exception import (
+    ModelServiceError,
+)
+from topsailai.ai_base.constants import LLM_KEYWORD_MISTAKE
+
 
 def convert_to_list_dict(content: str) -> list[dict]:
     """
@@ -72,6 +77,29 @@ def convert_to_list_dict(content: str) -> list[dict]:
 
     return result
 
+def check_mistakes(content:str):
+    """
+    Raise error
+
+    case:
+        <|tool_calls_section_begin|><|tool_call_begin|>
+
+    Args:
+        content (str):
+    """
+    if not isinstance(content, str):
+        return
+
+    line_set = content.splitlines()
+
+    for line in line_set[:11]:
+        if line.startswith("<|tool_calls_section_begin|>"):
+            raise ModelServiceError(f"{LLM_KEYWORD_MISTAKE}: failed to parse tool_call, [{content}]")
+    for line in line_set[-11:]:
+        if line.startswith("<|tool_calls_section_end|>"):
+            raise ModelServiceError(f"{LLM_KEYWORD_MISTAKE}: failed to parse tool_call, [{content}]")
+
+    return
 
 def hook_execute(content) -> list[dict] | str:
     """
@@ -83,8 +111,9 @@ def hook_execute(content) -> list[dict] | str:
         content = content.strip()
 
     result = convert_to_list_dict(content)
-
     if result:
         return result
+
+    check_mistakes(content)
 
     return content
