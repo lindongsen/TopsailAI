@@ -29,6 +29,11 @@ def get_params():
         description=""
     )
     parser.add_argument(
+        "-s", "--session_id", required=False, dest="session_id", type=str,
+        default=None,
+        help=""
+    )
+    parser.add_argument(
         "-i", "--instruction", required=True, dest="instruction", type=str,
         default=None,
         help="/help to show all instuctions"
@@ -40,6 +45,7 @@ def get_params():
     )
     args = parser.parse_args()
     params = {
+        "session_id": args.session_id or None,
         "instruction": args.instruction,
         "parameters": args.parameters,
     }
@@ -69,7 +75,11 @@ def main():
         - Session history can be maintained via SESSION_ID environment variable
     """
     params = get_params()
-    get_agent_chat(need_input_message=False).hook_instruction.call_hook(hook_name=params["instruction"], kwargs=params["parameters"])
+    get_agent_chat(
+        session_id=params["session_id"],
+        need_input_message=False,
+    ).hook_instruction.call_hook(hook_name=params["instruction"], kwargs=params["parameters"])
+
 
 if __name__ == "__main__":
     main()
