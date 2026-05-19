@@ -75,6 +75,17 @@ instructions:
     environ:
       TOPSAILAI_INTERACTIVE_MODE: "0"
       TOPSAILAI_SESSION_ID: "{session_id}"
+
+  - cmd: "/task.run {driver}"
+    scopes:
+      - session
+    desc: "Run task for the session"
+    example: "/task.run ai-team-flow-dev"
+    shell: "{driver}"
+    environ:
+      TOPSAILAI_INTERACTIVE_MODE: "0"
+      TOPSAILAI_SESSION_ID: "{session_id}"
+
   # > SESSION > END
 
   # /env.get, Get environment variable
