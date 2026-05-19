@@ -622,9 +622,9 @@ def print_help():
             "example": "Example: /session 3",
         },
         {
-            "cmd": "/clean",
-            "desc": "Clean up .stdout files that are idle and older than 3 days.",
-            "example": "",
+            "cmd": "/clean [<number> [<number>...]]",
+            "desc": "Clean up .stdout files. Without arguments: deletes idle files older than 3 days. With numbers: deletes the specified files by their list number.",
+            "example": "Example: /clean 3 5 7",
         },
         {
             "cmd": "/help  or  help",
@@ -836,6 +836,129 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
     return deleted_count
 
 
+def clean_by_numbers(task_dir: str, files: List[dict], indices: List[int]) -> int:
+    """
+    Clean up specific .stdout log files by their list numbers.
+
+    Validates each index, shows a confirmation prompt, then deletes the files.
+    Returns the number of files deleted.
+    """
+    valid_files = []
+    invalid_indices = []
+
+    for idx in indices:
+        if 0 <= idx < len(files):
+            f = files[idx]
+            if os.path.isfile(f["path"]):
+                valid_files.append(f)
+            else:
+                invalid_indices.append(idx + 1)
+        else:
+            invalid_indices.append(idx + 1)
+
+    if invalid_indices:
+        print(
+            f"{Colors.YELLOW}[WARN] Invalid or out-of-range number(s): "
+            f"{', '.join(str(i) for i in invalid_indices)}{Colors.RESET}"
+        )
+
+    if not valid_files:
+        print(
+            f"{Colors.YELLOW}[INFO] No valid files to delete.{Colors.RESET}"
+        )
+        return 0
+
+    # Show confirmation table
+    print_header("Clean Selected Log Files")
+    print(
+        f"{Colors.YELLOW}[WARN] The following {len(valid_files)} file(s) will be deleted:{Colors.RESET}\n"
+    )
+
+    w_no = 4
+    w_name = 32
+    w_size = 10
+    w_time = 20
+
+    header = (
+        f"{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE}"
+        f" {'No':^{w_no}} |"
+        f" {'Filename':^{w_name}} |"
+        f" {'Size':^{w_size}} |"
+        f" {'Modified':^{w_time}} "
+        f"{Colors.RESET}"
+    )
+    sep = (
+        f"{Colors.CYAN}"
+        f"{'-' * (w_no + 1)}+"
+        f"{'-' * (w_name + 2)}+"
+        f"{'-' * (w_size + 2)}+"
+        f"{'-' * (w_time + 1)}"
+        f"{Colors.RESET}"
+    )
+
+    print(header)
+    print(sep)
+
+    for idx, f in enumerate(valid_files, start=1):
+        name = f["filename"]
+        if len(name) > w_name:
+            name = name[:w_name - 3] + "..."
+
+        size_str = format_size(f["size"])
+        time_str = format_timestamp_full(f["mtime"])
+
+        row = (
+            f"{Colors.GRAY}"
+            f" {idx:^{w_no}} |"
+            f" {name:<{w_name}} |"
+            f" {size_str:>{w_size}} |"
+            f" {time_str:^{w_time}} "
+            f"{Colors.RESET}"
+        )
+        print(row)
+
+    print(sep)
+
+    # Confirmation prompt
+    confirm_prompt = (
+        f"\n{Colors.BOLD}{Colors.YELLOW}"
+        f"Are you sure you want to delete these {len(valid_files)} file(s)? [y/N]: "
+        f"{Colors.RESET}"
+    )
+    try:
+        confirm = input(confirm_prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print(f"\n{Colors.YELLOW}[INFO] Clean cancelled.{Colors.RESET}")
+        return 0
+
+    if confirm not in ("y", "yes"):
+        print(f"{Colors.YELLOW}[INFO] Clean cancelled.{Colors.RESET}")
+        return 0
+
+    # Perform deletion
+    deleted_count = 0
+    failed_files = []
+
+    for f in valid_files:
+        try:
+            os.remove(f["path"])
+            deleted_count += 1
+            print(
+                f"{Colors.GREEN}[OK] Deleted: {f['filename']}{Colors.RESET}"
+            )
+        except OSError as e:
+            failed_files.append((f["filename"], str(e)))
+            print(
+                f"{Colors.RED}[ERROR] Failed to delete {f['filename']}: {e}{Colors.RESET}"
+            )
+
+    print(
+        f"\n{Colors.GREEN}[INFO] Clean complete: "
+        f"{deleted_count} deleted, {len(failed_files)} failed.{Colors.RESET}"
+    )
+    return deleted_count
+
+
 # =============================================================================
 # File Streaming
 # =============================================================================
@@ -986,8 +1109,18 @@ def prompt_selection(files: List[dict]) -> Tuple[str, Optional[int]]:
             if lower_input == "/refresh":
                 return ("refresh", None)
 
-            if lower_input == "/clean":
-                return ("clean", None)
+            if lower_input.startswith("/clean"):
+                parts = user_input.split()
+                if len(parts) == 1:
+                    return ("clean", None)
+                try:
+                    indices = [int(p) - 1 for p in parts[1:]]
+                    return ("clean_numbers", indices)
+                except ValueError:
+                    print(
+                        f"{Colors.RED}[ERROR] Usage: /clean or /clean {{number}} [{{number}} ...]{Colors.RESET}"
+                    )
+                    continue
 
             if lower_input in ("/help", "help"):
                 return ("help", None)
@@ -1042,7 +1175,6 @@ def prompt_selection(files: List[dict]) -> Tuple[str, Optional[int]]:
             cleanup_children()
             return ("quit", None)
 
-
 # =============================================================================
 # Main Entry Point
 # =============================================================================
@@ -1094,6 +1226,13 @@ def main():
 
             if action == "clean":
                 clean_expired_files(task_dir, log_files)
+                print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
+                log_files = discover_log_files(task_dir)
+                print_table(log_files)
+                continue
+
+            if action == "clean_numbers":
+                clean_by_numbers(task_dir, log_files, value)
                 print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
                 log_files = discover_log_files(task_dir)
                 print_table(log_files)
