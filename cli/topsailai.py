@@ -225,9 +225,15 @@ def match_yaml_command(user_input: str) -> Optional[Tuple[Dict[str, Any], Dict[s
         pattern = re.escape(cmd_stripped)
         var_names = re.findall(r"\\\{(\w+)\\\}", pattern)
         for var_name in var_names:
-            pattern = pattern.replace(
-                f"\\{{{var_name}\\}}", f"(?P<{var_name}>\\S+)"
-            )
+            # Use greedy match for 'args' to capture remaining text
+            if var_name == "args":
+                pattern = pattern.replace(
+                    f"\\{{{var_name}\\}}", f"(?P<{var_name}>.*)"
+                )
+            else:
+                pattern = pattern.replace(
+                    f"\\{{{var_name}\\}}", f"(?P<{var_name}>\\S+)"
+                )
 
         # Allow optional leading '/' and optional trailing arguments
         pattern = f"^/?{pattern}(?:\\s+.*)?$"
@@ -256,9 +262,15 @@ def match_yaml_command(user_input: str) -> Optional[Tuple[Dict[str, Any], Dict[s
             alias_pattern = re.escape(alias_stripped)
             alias_vars = re.findall(r"\\\{(\w+)\\\}", alias_pattern)
             for var_name in alias_vars:
-                alias_pattern = alias_pattern.replace(
-                    f"\\{{{var_name}\\}}", f"(?P<{var_name}>\\S+)"
-                )
+                # Use greedy match for 'args' to capture remaining text
+                if var_name == "args":
+                    alias_pattern = alias_pattern.replace(
+                        f"\\{{{var_name}\\}}", f"(?P<{var_name}>.*)"
+                    )
+                else:
+                    alias_pattern = alias_pattern.replace(
+                        f"\\{{{var_name}\\}}", f"(?P<{var_name}>\\S+)"
+                    )
             alias_pattern = f"^/?{alias_pattern}(?:\\s+.*)?$"
             alias_match = re.match(alias_pattern, user_input)
             if alias_match:
@@ -267,6 +279,45 @@ def match_yaml_command(user_input: str) -> Optional[Tuple[Dict[str, Any], Dict[s
                 return instruction, variables
 
     return None
+
+
+def build_command_env(
+    instruction: Dict[str, Any], variables: Dict[str, str]
+) -> Dict[str, str]:
+    """
+    Build environment variables for a shell command.
+
+    Defaults:
+      - TOPSAILAI_SESSION_ID={session_id}
+      - TOPSAILAI_INTERACTIVE_MODE="0"
+
+    Instruction-level 'environ' overrides and extends defaults.
+    Variable placeholders like {session_id} are resolved from variables.
+    """
+    env = os.environ.copy()
+
+    # Default environment variables
+    defaults = {
+        "TOPSAILAI_SESSION_ID": variables.get("session_id", ""),
+        "TOPSAILAI_INTERACTIVE_MODE": "0",
+    }
+
+    # Apply defaults first
+    env.update(defaults)
+
+    # Apply instruction-level environ overrides
+    instruction_env = instruction.get("environ")
+    if isinstance(instruction_env, dict):
+        for key, value in instruction_env.items():
+            if not isinstance(value, str):
+                continue
+            # Resolve variable placeholders like {session_id}
+            resolved = value
+            for var_name, var_value in variables.items():
+                resolved = resolved.replace(f"{{{var_name}}}", var_value)
+            env[key] = resolved
+
+    return env
 
 
 def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) -> str:
@@ -316,12 +367,18 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
         shell_cmd = shell_cmd.replace("'{session_id}'", shlex.quote(current_session_id or ""))
         shell_cmd = shell_cmd.replace("'{message}'", shlex.quote(message))
         try:
+            cmd_list = shlex.split(shell_cmd)
+            cmd_env = build_command_env(instruction, variables)
+            print(
+                f"{Colors.CYAN}[INFO] Executing: {' '.join(cmd_list)} ...{Colors.RESET}"
+            )
             proc = subprocess.Popen(
-                shlex.split(shell_cmd),
+                cmd_list,
                 shell=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                env=cmd_env,
             )
             try:
                 stdout, stderr = proc.communicate(timeout=30)
@@ -337,6 +394,9 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
                         proc.wait(timeout=1)
                     except Exception:
                         pass
+            print(
+                f"{Colors.GREEN}[INFO] Execution completed.{Colors.RESET}"
+            )
         except Exception as e:
             print(f"{Colors.RED}[ERROR] Failed to execute command: {e}{Colors.RESET}")
         return "yaml_handled"
@@ -386,20 +446,32 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
         # Replace variables in shell template, quoting values for safety.
         # Prefer replacing quoted placeholders (e.g., '{var}') to avoid
         # double-quoting when the template already wraps variables in quotes.
+        # For 'args', do not quote — let shlex.split handle argument parsing.
         shell_cmd = shell
         for var_name, var_value in variables.items():
-            quoted_placeholder = f"'{{{var_name}}}'"
-            if quoted_placeholder in shell_cmd:
-                shell_cmd = shell_cmd.replace(quoted_placeholder, shlex.quote(var_value))
+            if var_name == "args":
+                # 'args' is a raw string of multiple arguments; replace directly
+                # so shlex.split can parse them into separate list items.
+                shell_cmd = shell_cmd.replace(f"'{{{var_name}}}'", var_value)
+                shell_cmd = shell_cmd.replace(f"{{{var_name}}}", var_value)
             else:
-                shell_cmd = shell_cmd.replace(f"{{{var_name}}}", shlex.quote(var_value))
+                quoted_placeholder = f"'{{{var_name}}}'"
+                if quoted_placeholder in shell_cmd:
+                    shell_cmd = shell_cmd.replace(quoted_placeholder, shlex.quote(var_value))
+                else:
+                    shell_cmd = shell_cmd.replace(f"{{{var_name}}}", shlex.quote(var_value))
 
         cmd_list = shlex.split(shell_cmd)
+        cmd_env = build_command_env(instruction, variables)
+        print(
+            f"{Colors.CYAN}[INFO] Executing: {' '.join(cmd_list)} ...{Colors.RESET}"
+        )
         proc = subprocess.Popen(
             cmd_list,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=cmd_env,
         )
         register_process(proc)
         try:
@@ -416,6 +488,9 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
                     proc.wait(timeout=1)
                 except Exception:
                     pass
+        print(
+            f"{Colors.GREEN}[INFO] Execution completed.{Colors.RESET}"
+        )
     except Exception as e:
         print(f"{Colors.RED}[ERROR] Failed to execute command: {e}{Colors.RESET}")
 

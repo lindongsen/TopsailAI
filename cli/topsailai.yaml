@@ -25,6 +25,8 @@ instructions:
   # desc: str, description
   # example: str,
   # shell: str, If it is empty, it needs to be implemented internally, else execute this command line to get result
+  # environ: dict, environment variables
+  #   default environ: TOPSAILAI_SESSION_ID={session_id}, TOPSAILAI_INTERACTIVE_MODE="0"
 
   # > Rules:
   # The instructions do not need to start with '/' in these scopes (compatibility): workspace, session
@@ -64,13 +66,15 @@ instructions:
     example: ""
     shell: "topsailai_session_add_message -s '{session_id}' -m '{message}'"
 
-  - cmd: "/task.run {driver}"
+  - cmd: "/task.run {driver} {args}"
     scopes:
       - session
     desc: "Run task for the session"
     example: "/task.run ai-team-flow-dev"
-    shell: "TOPSAILAI_INTERACTIVE_MODE=0 TOPSAILAI_SESSION_ID={session_id} {driver}"
-
+    shell: "{driver} {args}"
+    environ:
+      TOPSAILAI_INTERACTIVE_MODE: "0"
+      TOPSAILAI_SESSION_ID: "{session_id}"
   # > SESSION > END
 
   # /env.get, Get environment variable
