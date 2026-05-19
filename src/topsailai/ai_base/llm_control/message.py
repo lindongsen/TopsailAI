@@ -240,8 +240,53 @@ def update_response_item(item:dict) -> dict:
         item_extra = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", item["raw_text"])
         if item_extra and isinstance(item_extra, list) and len(item_extra) == 1:
             print_error(f"{LLM_KEYWORD_MISTAKE}: TOPSAILAI_HOOK_AFTER_LLM_CHAT, action content format is unexpected")
+            # {'step_name': 'action', 'tool_call': ..., 'tool_args': ...}
             item.update(item_extra[0])
     return item
+
+def format_response_finally(response, rsp_obj=None, messages=None):
+    """ return new response """
+    new_response = fix_llm_mistakes(response, rsp_obj)
+    if new_response and new_response is not response:
+        response = new_response
+
+    # hook after chat
+    if isinstance(response, list):
+        if len(response) == 1:
+            item = response[0]
+            update_response_item(item)
+
+            # case: only thought
+            if item.get("step_name") == "thought":
+                try:
+                    if get_tool_calls_of_rsp(rsp_obj):
+                        return response
+
+                    if "raw_text" in item and isinstance(item["raw_text"], str):
+                        _action_item = {"step_name": "action", "raw_text": item["raw_text"]}
+                        try:
+                            update_response_item(_action_item)
+                            if (_action_item.get("tool_call")) \
+                                or (_action_item.get("raw_text") and _action_item["raw_text"] != item["raw_text"]) \
+                            :
+                                item.update(_action_item)
+                                return response
+                        except Exception:
+                            pass
+
+                    action_count = get_count_of_action(messages)
+                    if action_count > 0:
+                        print_error(f"{LLM_KEYWORD_MISTAKE}: maybe final answer due to found action count [{action_count}]")
+                        item["step_name"] = "final_answer"
+                except Exception as e:
+                    logger.exception(e)
+        else:
+            # search step_name="action"
+            for item in response:
+                if not isinstance(item, dict):
+                    continue
+                update_response_item(item)
+    return response
 
 def format_response(response, rsp_obj=None, messages=None):
     """
@@ -309,32 +354,12 @@ def format_response(response, rsp_obj=None, messages=None):
             if count == (max_count-1):
                 logger.exception(e)
         finally:
-            new_response = fix_llm_mistakes(response, rsp_obj)
-            if new_response and new_response is not response:
-                response = new_response
-
-            # hook after chat
-            if isinstance(response, list):
-                if len(response) == 1:
-                    item = response[0]
-                    update_response_item(item)
-
-                    # case: only thought
-                    if item.get("step_name") == "thought":
-                        try:
-                            if not get_tool_calls_of_rsp(rsp_obj):
-                                action_count = get_count_of_action(messages)
-                                if action_count > 0:
-                                    print_error(f"{LLM_KEYWORD_MISTAKE}: maybe final answer due to found action count [{action_count}]")
-                                    item["step_name"] = "final_answer"
-                        except Exception as e:
-                            logger.exception(e)
-                else:
-                    # search step_name="action"
-                    for item in response:
-                        if not isinstance(item, dict):
-                            continue
-                        update_response_item(item)
+            new_response = format_response_finally(response, rsp_obj, messages)
+            if new_response is not response:
+                if isinstance(new_response, list) and len(new_response) == 1 and isinstance(new_response[0], dict):
+                    if isinstance(response, list) and len(response) == 1 and isinstance(response[0], dict):
+                        response[0] = new_response[0]
+            response = new_response
 
     # hook after chat
     new_response = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", response)
