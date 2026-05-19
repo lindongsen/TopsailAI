@@ -14,6 +14,7 @@ import atexit
 import os
 import re
 import select
+import shlex
 import sys
 import signal
 import subprocess
@@ -230,10 +231,20 @@ def match_yaml_command(user_input: str) -> Optional[Tuple[Dict[str, Any], Dict[s
 
         # Allow optional leading '/' and optional trailing arguments
         pattern = f"^/?{pattern}(?:\\s+.*)?$"
-        match = re.match(pattern, user_input)
+        # Use DOTALL for /ctx.add_msg to support multiline initial text
+        flags = re.DOTALL if cmd_template.startswith("/ctx.add_msg") else 0
+        match = re.match(pattern, user_input, flags)
         if match:
             variables = match.groupdict()
             variables.setdefault("session_id", current_session_id or "")
+            # Special handling for /ctx.add_msg: extract trailing text as initial message
+            if cmd_template.startswith("/ctx.add_msg"):
+                msg_match = re.match(
+                    rf"^/?{re.escape(cmd_template.lstrip('/'))}(?:\s+(.*))?$",
+                    user_input,
+                    re.DOTALL,
+                )
+                variables["message"] = msg_match.group(1) if msg_match and msg_match.group(1) is not None else ""
             return instruction, variables
 
         # Also check aliases
@@ -267,6 +278,68 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
 
     cmd = instruction.get("cmd", "")
     shell = instruction.get("shell", "")
+
+    # Special handling for /ctx.add_msg (supports multiline input, empty validation)
+    if cmd.startswith("/ctx.add_msg"):
+        initial = variables.get("message", "")
+        # Strip surrounding quotes from empty quoted strings like "" or ''
+        if len(initial) >= 2 and initial[0] in ('"', "'") and initial[-1] == initial[0]:
+            initial = initial[1:-1]
+        lines: List[str] = []
+        if initial:
+            lines.append(initial)
+        else:
+            # No initial message: enter interactive multi-line input mode
+            print(
+                f"{Colors.CYAN}[INFO] Enter message (Ctrl+D to finish):{Colors.RESET}"
+            )
+            while True:
+                try:
+                    line = input()
+                except EOFError:
+                    break
+                except KeyboardInterrupt:
+                    print(
+                        f"{Colors.YELLOW}[INFO] Cancelled.{Colors.RESET}"
+                    )
+                    return "yaml_handled"
+                lines.append(line)
+        message = "\n".join(lines).strip()
+        if not message:
+            print(
+                f"{Colors.RED}[ERROR] Message cannot be empty.{Colors.RESET}"
+            )
+            return "yaml_handled"
+        # Build and execute the external shell command safely
+        shell_cmd = shell
+        shell_cmd = shell_cmd.replace("{session_id}", shlex.quote(current_session_id or ""))
+        shell_cmd = shell_cmd.replace("{message}", shlex.quote(message))
+        try:
+            proc = subprocess.Popen(
+                shlex.split(shell_cmd),
+                shell=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            register_process(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=30)
+                if stdout:
+                    print(stdout, end="")
+                if stderr:
+                    print(f"{Colors.RED}{stderr}{Colors.RESET}", end="")
+            finally:
+                unregister_process(proc)
+                if proc.poll() is None:
+                    proc.kill()
+                    try:
+                        proc.wait(timeout=1)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"{Colors.RED}[ERROR] Failed to execute command: {e}{Colors.RESET}")
+        return "yaml_handled"
 
     # Internal commands (shell is empty)
     if not shell:
@@ -310,14 +383,14 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
 
     # External shell command
     try:
-        # Replace variables in shell template
+        # Replace variables in shell template, quoting values for safety
         shell_cmd = shell
         for var_name, var_value in variables.items():
-            shell_cmd = shell_cmd.replace(f"{{{var_name}}}", var_value)
+            shell_cmd = shell_cmd.replace(f"{{{var_name}}}", shlex.quote(var_value))
 
+        cmd_list = shlex.split(shell_cmd)
         proc = subprocess.Popen(
-            shell_cmd,
-            shell=True,
+            cmd_list,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -1106,7 +1179,7 @@ def prompt_selection(files: List[dict]) -> Tuple[str, Optional[int]]:
             if lower_input in ("q", "quit", "exit"):
                 return ("quit", None)
 
-            if lower_input == "/refresh":
+            if lower_input in ("r", "refresh", "/refresh"):
                 return ("refresh", None)
 
             if lower_input.startswith("/clean"):

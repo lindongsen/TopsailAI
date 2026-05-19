@@ -1,4 +1,9 @@
-# TopsailAI Configurations
+# --- FOR AI AGENT
+# workspace: /TopsailAI/cli/
+# unitest_folder: /TopsailAI/cli/tests/unit/topsailai/
+# ---
+
+# TopsailAI Configurations for `cli/topsailai.py`
 
 # Task Run
 drivers:
@@ -41,7 +46,7 @@ instructions:
       - session
     desc: search context messages by keyword
     example: "/ctx.search tool_calls_section"
-    shell: "topsailai_agent_call_instruction -s '{session_id}'' -i '/ctx.search' -p '{keyword}'"
+    shell: "topsailai_agent_call_instruction -s '{session_id}' -i '/ctx.search' -p '{keyword}'"
 
   - cmd: "/ctx.history"
     alias:

@@ -33,6 +33,7 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int, content: 
                        Pass 0 to replace from start_num to the end of the file.
         content (str): The new content to insert in place of the replaced lines.
                        Can be a single line or multi-line string.
+                       Pass null string to delete lines.
 
     Returns:
         str: diff content on success, error message on failure
