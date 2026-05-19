@@ -12,6 +12,7 @@ from topsailai.ai_base.llm_control.base_class import ContentSender
 from topsailai.utils import (
     format_tool,
     json_tool,
+    file_tool,
 )
 from topsailai.utils.env_tool import (
     EnvReaderInstance,
@@ -52,12 +53,17 @@ class TeeOutput:
             mode='a',
             encoding='utf-8',
             logrotate_max_file_bytes=100 * 1024 * 1024, # default 100 MBytes
+            need_delete_log_files=False,
         ):
         self.terminal = sys.stdout
         self.filename = filename
+        self._logrotate_file = f"{self.filename}.1"
         self._logrotate_max_file_bytes = logrotate_max_file_bytes
         self.logrotate_max_file_bytes()
         self.log_file = open(filename, mode, encoding=encoding)
+
+        self._need_delete_log_files = need_delete_log_files
+
 
     def logrotate_max_file_bytes(self):
         """Check if the log file exceeds the max size limit and rotate it.
@@ -70,8 +76,17 @@ class TeeOutput:
 
         file_size = os.path.getsize(self.filename)
         if file_size > self._logrotate_max_file_bytes:
-            rotated_filename = f"{self.filename}.1"
+            rotated_filename = self._logrotate_file
             os.rename(self.filename, rotated_filename)
+
+    def delete_logrotate_file(self):
+        file_tool.delete_file(self._logrotate_file)
+        return
+
+    def delete_log_files(self):
+        file_tool.delete_file(self.filename)
+        self.delete_logrotate_file()
+        return
 
     def write(self, message):
         self.terminal.write(message)
@@ -92,13 +107,18 @@ class TeeOutput:
     def __exit__(self, exc_type, exc_val, exc_tb):
         sys.stdout = self.terminal
         self.close()
+        if self._need_delete_log_files:
+            self.delete_log_files()
         return False
 
     def __getattr__(self, name):
         return getattr(self.terminal, name)
 
 
-def decorator_tee_output(filename, mode='a', encoding='utf-8', logrotate_max_file_bytes=100 * 1024 * 1024):
+def decorator_tee_output(
+        filename, mode='a', encoding='utf-8', logrotate_max_file_bytes=100 * 1024 * 1024,
+        need_delete_log_files=False,
+    ):
     """A function decorator that redirects stdout to both the screen and a file.
 
     Uses the TeeOutput context manager (with statement) internally.
@@ -119,14 +139,20 @@ def decorator_tee_output(filename, mode='a', encoding='utf-8', logrotate_max_fil
     """
     def decorator(func):
         def wrapper(*args, **kwargs):
-            with TeeOutput(filename, mode, encoding, logrotate_max_file_bytes):
+            with TeeOutput(
+                    filename, mode, encoding, logrotate_max_file_bytes,
+                    need_delete_log_files=need_delete_log_files,
+                ):
                 result = func(*args, **kwargs)
             return result
         return wrapper
     return decorator
 
 
-def decorator_tee_output_by_session(mode='a+', encoding='utf-8', logrotate_max_file_bytes=100 * 1024 * 1024):
+def decorator_tee_output_by_session(
+        mode='a+', encoding='utf-8', logrotate_max_file_bytes=100 * 1024 * 1024,
+        need_delete_log_files=False,
+    ):
     def decorator(func):
         def wrapper(*args, **kwargs):
 
@@ -137,7 +163,10 @@ def decorator_tee_output_by_session(mode='a+', encoding='utf-8', logrotate_max_f
             session_id = get_session_id()
             if session_id:
                 file_path = os.path.join(FOLDER_WORKSPACE_TASK, f"{session_id}.session.stdout")
-            with TeeOutput(file_path, mode, encoding, logrotate_max_file_bytes):
+            with TeeOutput(
+                file_path, mode, encoding, logrotate_max_file_bytes,
+                need_delete_log_files=need_delete_log_files,
+                ):
                 result = func(*args, **kwargs)
             return result
         return wrapper

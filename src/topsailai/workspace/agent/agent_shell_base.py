@@ -43,7 +43,7 @@ from topsailai.workspace.print_tool import (
 
 class AgentChat(AgentChatBase):
 
-    @decorator_tee_output_by_session()
+    @decorator_tee_output_by_session(need_delete_log_files=True)
     def run(
             self,
             message:str=None,
