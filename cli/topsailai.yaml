@@ -1,0 +1,92 @@
+# TopsailAI Configurations
+
+# Task Run
+drivers:
+  - topsailai_llm_chat
+  - topsailai_agent_chat
+  - topsailai_agent_plan_task
+  - ai-team-flow-dev
+
+# Instruction can only be used within the corresponding scopes
+scopes:
+  - workspace
+  - session
+
+instructions:
+  # > KEYS
+  # cmd: str, instruction name
+  # alias: list, instruction's alias name
+  # scopes: list, the cmd is only working in these scopes
+  # desc: str, description
+  # example: str,
+  # shell: str, If it is empty, it needs to be implemented internally, else execute this command line to get result
+
+  # > Rules:
+  # The instructions do not need to start with '/' in these scopes (compatibility): workspace, session
+  # Can dynamically recognize variables in the shell, assign values in order, and the format of variables in the shell is {variable-name}
+  # After entering a scope, call 'help' only displays instructions related to that scope
+
+  # > SESSION > START
+  - cmd: "/cd {session_id}"
+    scopes:
+      - workspace
+    desc: Entering to session scope; Switch to root workspace via `cd`
+    example: ""
+    shell: ""
+
+  # After entering a specific session `/cd {session_id}`, these instructions can be executed
+
+  - cmd: "/ctx.search {keyword}"
+    scopes:
+      - session
+    desc: search context messages by keyword
+    example: "/ctx.search tool_calls_section"
+    shell: "topsailai_agent_call_instruction -s '{session_id}'' -i '/ctx.search' -p '{keyword}'"
+
+  - cmd: "/ctx.history"
+    alias:
+      - history
+    scopes:
+      - session
+    desc: show context messages
+    example: ""
+    shell: "topsailai_agent_call_instruction -s '{session_id}' -i '/ctx.history'"
+
+  - cmd: "/ctx.add_msg" # Note: Special handling, supports line breaks
+    scopes:
+      - session
+    desc: "Add message to context"
+    example: ""
+    shell: "topsailai_session_add_message -s '{session_id}' -m '{message}'"
+
+  - cmd: "/task.run {driver}"
+    scopes:
+      - session
+    desc: "Run task for the session"
+    example: "/task.run ai-team-flow-dev"
+    shell: "TOPSAILAI_INTERACTIVE_MODE=0 TOPSAILAI_SESSION_ID={session_id} {driver}"
+
+  # > SESSION > END
+
+  # /env.get, Get environment variable
+  - cmd: "/env.get {key}"
+    scopes:
+      - workspace
+    desc: "Get environment variable"
+    example: "/env.get OPENAI_MODEL"
+    shell: ""
+
+  # /env.set, Set environment variable
+  - cmd: "/env.set {key} {value}"
+    scopes:
+      - workspace
+    desc: "Set environment variable"
+    example: "/env.set OPENAI_MODEL DeepSeek-V4-Pro"
+    shell: ""
+
+  - cmd: "/log.check"
+    scopes:
+      - workspace
+    desc: "Check log content to find critical events"
+    example: ""
+    shell: "topsailai_check_log"

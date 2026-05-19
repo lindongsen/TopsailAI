@@ -67,7 +67,7 @@ def call_assistant(task:str, llm:str=None) -> str:
     assert task, "missing task content"
 
     agent_name = os.getenv("TOPSAILAI_AGENT_NAME") or ""
-    agent_name = "Sub." + agent_name
+    agent_name = "Sub." + agent_name + f".{llm or ''}"
 
     from topsailai.workspace.agent_shell import get_agent_chat
 

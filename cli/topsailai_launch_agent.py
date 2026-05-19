@@ -91,7 +91,7 @@ def main():
     )
     parser.add_argument(
         "--item",
-        default=None,
+        default="default",
         help="Item name defined in settings.yaml context/environment sections",
     )
     parser.add_argument(

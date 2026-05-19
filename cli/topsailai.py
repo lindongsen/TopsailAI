@@ -6,18 +6,20 @@
   Purpose: Watch log files in {TOPSAILAI_HOME}/workspace/task/ with interactive selection.
            Lists .stdout log files, shows process ownership, and streams selected file.
            Supports /refresh, /session {number}, /clean, and /help commands.
+           Supports loading additional commands from topsailai.yaml with scope awareness.
            Ensures all child processes are cleaned up on exit.
 """
 
 import atexit
 import os
+import re
 import select
 import sys
 import signal
 import subprocess
 import time
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 try:
     import readline
 except ImportError:
@@ -49,6 +51,11 @@ class Colors:
 # =============================================================================
 running = True
 _child_processes: List[subprocess.Popen] = []
+
+# YAML command support
+current_scope = "workspace"
+current_session_id: Optional[str] = None
+yaml_commands: List[Dict[str, Any]] = []
 
 
 def register_process(proc: subprocess.Popen):
@@ -115,6 +122,234 @@ def signal_handler(signum, frame):
     running = False
     cleanup_children()
     sys.exit(0)
+
+
+# =============================================================================
+# YAML Command Loading
+# =============================================================================
+
+def load_yaml_commands() -> List[Dict[str, Any]]:
+    """
+    Load commands from topsailai.yaml in the same directory as this script.
+    Returns a list of instruction dictionaries.
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    yaml_path = os.path.join(script_dir, "topsailai.yaml")
+
+    if not os.path.isfile(yaml_path):
+        return []
+
+    try:
+        import yaml
+    except ImportError:
+        print(
+            f"{Colors.YELLOW}[WARN] PyYAML not installed. "
+            f"YAML commands will not be loaded.{Colors.RESET}"
+        )
+        return []
+
+    try:
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except Exception as e:
+        print(
+            f"{Colors.YELLOW}[WARN] Failed to load topsailai.yaml: {e}{Colors.RESET}"
+        )
+        return []
+
+    if not data or not isinstance(data, dict):
+        return []
+
+    instructions = data.get("instructions", [])
+    if not isinstance(instructions, list):
+        return []
+
+    return instructions
+
+
+def get_all_command_names(instruction: Dict[str, Any]) -> List[str]:
+    """
+    Get all command names for an instruction, including cmd and aliases.
+    Returns a list of names without leading '/'.
+    """
+    names = []
+    cmd = instruction.get("cmd", "")
+    if cmd:
+        # Strip leading '/' for matching
+        names.append(cmd.lstrip("/"))
+
+    aliases = instruction.get("alias", [])
+    if isinstance(aliases, str):
+        aliases = [aliases]
+    for alias in aliases:
+        if alias:
+            names.append(alias.lstrip("/"))
+
+    return names
+
+
+def match_yaml_command(user_input: str) -> Optional[Tuple[Dict[str, Any], Dict[str, str]]]:
+    """
+    Match user input against YAML commands.
+    Returns (instruction, variables) or None.
+
+    Supports:
+    - Exact match (with or without leading '/')
+    - Variable extraction from cmd template like "/cd {session_id}"
+    - Alias matching
+    - Scope filtering
+    """
+    global current_scope, current_session_id
+
+    # Special handling for /cd without arguments: available in all scopes
+    if user_input in ("/cd", "cd"):
+        for instruction in yaml_commands:
+            cmd_template = instruction.get("cmd", "")
+            if cmd_template.startswith("/cd"):
+                return instruction, {"session_id": ""}
+
+    for instruction in yaml_commands:
+        scopes = instruction.get("scopes", [])
+        if current_scope not in scopes:
+            continue
+
+        cmd_template = instruction.get("cmd", "")
+        if not cmd_template:
+            continue
+
+        # Build regex pattern from cmd template
+        # Strip leading '/' so commands work with or without it
+        cmd_stripped = cmd_template.lstrip('/')
+        # Escape special regex chars, then replace {var} with capture groups
+        pattern = re.escape(cmd_stripped)
+        var_names = re.findall(r"\\\{(\w+)\\\}", pattern)
+        for var_name in var_names:
+            pattern = pattern.replace(
+                f"\\{{{var_name}\\}}", f"(?P<{var_name}>\\S+)"
+            )
+
+        # Allow optional leading '/' and optional trailing arguments
+        pattern = f"^/?{pattern}(?:\\s+.*)?$"
+        match = re.match(pattern, user_input)
+        if match:
+            variables = match.groupdict()
+            variables.setdefault("session_id", current_session_id or "")
+            return instruction, variables
+
+        # Also check aliases
+        aliases = instruction.get("alias", [])
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        for alias in aliases:
+            alias_stripped = alias.lstrip('/')
+            alias_pattern = re.escape(alias_stripped)
+            alias_vars = re.findall(r"\\\{(\w+)\\\}", alias_pattern)
+            for var_name in alias_vars:
+                alias_pattern = alias_pattern.replace(
+                    f"\\{{{var_name}\\}}", f"(?P<{var_name}>\\S+)"
+                )
+            alias_pattern = f"^/?{alias_pattern}(?:\\s+.*)?$"
+            alias_match = re.match(alias_pattern, user_input)
+            if alias_match:
+                variables = alias_match.groupdict()
+                variables.setdefault("session_id", current_session_id or "")
+                return instruction, variables
+
+    return None
+
+
+def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) -> str:
+    """
+    Handle a matched YAML command.
+    Returns action string for main loop.
+    """
+    global current_scope, current_session_id
+
+    cmd = instruction.get("cmd", "")
+    shell = instruction.get("shell", "")
+
+    # Internal commands (shell is empty)
+    if not shell:
+        if cmd.startswith("/cd"):
+            session_id = variables.get("session_id", "").strip()
+            if session_id:
+                current_scope = "session"
+                current_session_id = session_id
+                print(
+                    f"{Colors.GREEN}[INFO] Entered session scope: {session_id}{Colors.RESET}"
+                )
+            else:
+                current_scope = "workspace"
+                current_session_id = None
+                print(
+                    f"{Colors.GREEN}[INFO] Switched to workspace scope.{Colors.RESET}"
+                )
+            return "yaml_handled"
+
+        if cmd.startswith("/env.get"):
+            key = variables.get("key", "").strip()
+            if key:
+                value = os.environ.get(key, "")
+                print(f"{Colors.CYAN}{key}={value}{Colors.RESET}")
+            else:
+                print(f"{Colors.RED}[ERROR] Usage: /env.get {{key}}{Colors.RESET}")
+            return "yaml_handled"
+
+        if cmd.startswith("/env.set"):
+            key = variables.get("key", "").strip()
+            value = variables.get("value", "").strip()
+            if key:
+                os.environ[key] = value
+                print(f"{Colors.GREEN}[INFO] Set {key}={value}{Colors.RESET}")
+            else:
+                print(f"{Colors.RED}[ERROR] Usage: /env.set {{key}} {{value}}{Colors.RESET}")
+            return "yaml_handled"
+
+        print(f"{Colors.YELLOW}[WARN] Internal command not implemented: {cmd}{Colors.RESET}")
+        return "yaml_handled"
+
+    # External shell command
+    try:
+        # Replace variables in shell template
+        shell_cmd = shell
+        for var_name, var_value in variables.items():
+            shell_cmd = shell_cmd.replace(f"{{{var_name}}}", var_value)
+
+        proc = subprocess.Popen(
+            shell_cmd,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        register_process(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=30)
+            if stdout:
+                print(stdout, end="")
+            if stderr:
+                print(f"{Colors.RED}{stderr}{Colors.RESET}", end="")
+        finally:
+            unregister_process(proc)
+            if proc.poll() is None:
+                proc.kill()
+                try:
+                    proc.wait(timeout=1)
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"{Colors.RED}[ERROR] Failed to execute command: {e}{Colors.RESET}")
+
+    return "yaml_handled"
+
+
+def get_prompt() -> str:
+    """Generate dynamic prompt based on current scope."""
+    if current_scope == "session" and current_session_id:
+        return (
+            f"\n{Colors.GREEN}[session:{current_session_id}]{Colors.RESET}> "
+        )
+    return f"\n{Colors.GREEN}[workspace]{Colors.RESET}> "
 
 
 # =============================================================================
@@ -363,6 +598,7 @@ def print_table(files: List[dict]):
 def print_help():
     """
     Display all available commands with descriptions and examples.
+    Includes built-in commands and YAML-loaded commands for current scope.
     """
     width = 80
     print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * width}{Colors.RESET}")
@@ -416,6 +652,31 @@ def print_help():
         print(f"      {Colors.WHITE}{desc}{Colors.RESET}")
         if example:
             print(f"      {Colors.DIM}{example}{Colors.RESET}")
+
+    # Print YAML commands for current scope
+    if yaml_commands:
+        scope_cmds = [
+            inst for inst in yaml_commands
+            if current_scope in inst.get("scopes", [])
+        ]
+        if scope_cmds:
+            print(f"\n  {Colors.BOLD}{Colors.CYAN}--- YAML Commands ---{Colors.RESET}")
+            for inst in scope_cmds:
+                cmd = inst.get("cmd", "")
+                aliases = inst.get("alias", [])
+                if isinstance(aliases, str):
+                    aliases = [aliases]
+                desc = inst.get("desc", "")
+                example = inst.get("example", "")
+
+                alias_str = ""
+                if aliases:
+                    alias_str = f" {Colors.DIM}(alias: {', '.join(aliases)}){Colors.RESET}"
+
+                print(f"\n  {Colors.BOLD}{Colors.YELLOW}{cmd}{Colors.RESET}{alias_str}")
+                print(f"      {Colors.WHITE}{desc}{Colors.RESET}")
+                if example:
+                    print(f"      {Colors.DIM}{example}{Colors.RESET}")
 
     print(f"\n{Colors.CYAN}{'-' * width}{Colors.RESET}")
     print(
@@ -703,13 +964,11 @@ def prompt_selection(files: List[dict]) -> Tuple[str, Optional[int]]:
     Prompt user to select a file by number or enter a command.
     Returns (action, value).
     """
+    global current_scope, current_session_id
+
     while True:
         try:
-            prompt_text = (
-                f"\n{Colors.BOLD}{Colors.YELLOW}"
-                f"Enter number to watch, /refresh, /session {{number}}, /clean, /help, or 'q' to quit: "
-                f"{Colors.RESET}"
-            )
+            prompt_text = get_prompt()
             user_input = input(prompt_text).strip()
             try:
                 readline.add_history(user_input)
@@ -732,6 +991,13 @@ def prompt_selection(files: List[dict]) -> Tuple[str, Optional[int]]:
 
             if lower_input in ("/help", "help"):
                 return ("help", None)
+
+            # Try YAML command matching first
+            yaml_match = match_yaml_command(user_input)
+            if yaml_match:
+                instruction, variables = yaml_match
+                action = handle_yaml_command(instruction, variables)
+                return (action, None)
 
             if lower_input.startswith("/session "):
                 parts = user_input.split(None, 1)
@@ -782,10 +1048,13 @@ def prompt_selection(files: List[dict]) -> Tuple[str, Optional[int]]:
 # =============================================================================
 
 def main():
-    global running
+    global running, yaml_commands
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+
+    # Load YAML commands
+    yaml_commands = load_yaml_commands()
 
     topsailai_home = get_topsailai_home()
     task_dir = os.path.join(topsailai_home, "workspace", "task")

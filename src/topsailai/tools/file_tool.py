@@ -24,6 +24,7 @@ from topsailai.tools.file_tool_utils import (
     file_read_line,
     file_diff,
     file_write_line,
+    file_write_code_block,
 )
 
 # lower of letter
@@ -426,7 +427,7 @@ TOOLS = dict(
     append_file=append_file,
     check_files_existing=check_files_existing,
     mkdirs=mkdirs,
-    overwrite_lines_in_file=file_write_line.replace_lines_in_file,
+    overwrite_lines_in_file=file_write_code_block.overwrite_code_block,
     insert_data_to_file=insert_data_to_file,
     list_dirs=list_dirs,
     read_files=read_files,
@@ -457,5 +458,5 @@ FILE_RO_TOOLS.update(file_read_line.TOOLS)
 
 PROMPT = """
 # Requirements for `overwrite_lines_in_file`
-You MUST confirm the line number using either `read_file_lines` or `read_file_around_line` or `read_file_with_context`
+You MUST confirm the line number using either `read_file_lines` or `read_file_around_line` or `read_file_with_context`.
 """
