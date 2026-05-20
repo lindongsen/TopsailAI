@@ -350,8 +350,8 @@ def format_response(response, rsp_obj=None, messages=None):
         except ModelServiceError as e:
             raise e
         except Exception as e:
-            print_error(f"parsing response: {e}\n>>>\n{response}\n<<<\nretrying times: {count}")
             if count == (max_count-1):
+                print_error(f"parsing response: {e}\n>>>\n{response}\n<<<\nretrying times: {count}")
                 logger.exception(e)
         finally:
             new_response = format_response_finally(response, rsp_obj, messages)
