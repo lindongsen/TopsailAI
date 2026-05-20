@@ -48,16 +48,22 @@ class TestSessionRoutes:
         scheduler.start = Mock()
         scheduler.stop = Mock()
 
-        return session_storage, message_storage, worker_manager, scheduler
+        # Create a mock storage facade that duck-types as Storage
+        mock_storage = Mock()
+        mock_storage.session = session_storage
+        mock_storage.message = message_storage
+        mock_storage.api_key = Mock()
+
+        return mock_storage, message_storage, worker_manager, scheduler
 
     @pytest.fixture
     def client(self, mock_dependencies):
         """Create test client with mocked dependencies."""
         from topsailai_server.agent_daemon.api.app import create_app
 
-        session_storage, message_storage, worker_manager, scheduler = mock_dependencies
+        mock_storage, message_storage, worker_manager, scheduler = mock_dependencies
 
-        app = create_app(session_storage, message_storage, worker_manager, scheduler)
+        app = create_app(mock_storage, message_storage, worker_manager, scheduler)
 
         return TestClient(app)
 
@@ -101,37 +107,29 @@ class TestListSessions(TestSessionRoutes):
 
     def test_list_sessions_with_pagination(self, client, mock_dependencies):
         """Test listing sessions with pagination parameters."""
-        session_storage, message_storage, worker_manager, scheduler = mock_dependencies
+        mock_storage, message_storage, worker_manager, scheduler = mock_dependencies
 
-        mock_storage_instance = Mock()
-        mock_storage_instance.session.list_sessions = Mock(return_value=[])
+        mock_storage.session.list_sessions = Mock(return_value=[])
 
-        with patch("topsailai_server.agent_daemon.api.routes.session.Storage") as MockStorage:
-            MockStorage.return_value = mock_storage_instance
+        response = client.get("/api/v1/session?offset=10&limit=50")
 
-            response = client.get("/api/v1/session?offset=10&limit=50")
-
-            assert response.status_code == 200
-            call_kwargs = mock_storage_instance.session.list_sessions.call_args[1]
-            assert call_kwargs["offset"] == 10
-            assert call_kwargs["limit"] == 50
+        assert response.status_code == 200
+        call_kwargs = mock_storage.session.list_sessions.call_args[1]
+        assert call_kwargs["offset"] == 10
+        assert call_kwargs["limit"] == 50
 
     def test_list_sessions_with_sorting(self, client, mock_dependencies):
         """Test listing sessions with sorting parameters."""
-        session_storage, message_storage, worker_manager, scheduler = mock_dependencies
+        mock_storage, message_storage, worker_manager, scheduler = mock_dependencies
 
-        mock_storage_instance = Mock()
-        mock_storage_instance.session.list_sessions = Mock(return_value=[])
+        mock_storage.session.list_sessions = Mock(return_value=[])
 
-        with patch("topsailai_server.agent_daemon.api.routes.session.Storage") as MockStorage:
-            MockStorage.return_value = mock_storage_instance
+        response = client.get("/api/v1/session?sort_key=update_time&order_by=asc")
 
-            response = client.get("/api/v1/session?sort_key=update_time&order_by=asc")
-
-            assert response.status_code == 200
-            call_kwargs = mock_storage_instance.session.list_sessions.call_args[1]
-            assert call_kwargs["sort_key"] == "update_time"
-            assert call_kwargs["order_by"] == "asc"
+        assert response.status_code == 200
+        call_kwargs = mock_storage.session.list_sessions.call_args[1]
+        assert call_kwargs["sort_key"] == "update_time"
+        assert call_kwargs["order_by"] == "asc"
 
 
 class TestDeleteSessions(TestSessionRoutes):

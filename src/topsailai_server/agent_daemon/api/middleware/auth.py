@@ -99,8 +99,12 @@ async def get_current_api_key(
 
     api_key_data = _api_key_storage.get_api_key_by_value(api_key_value)
     if not api_key_data:
-        logger.warning("Invalid or inactive API key: %s", api_key_value[:8])
-        raise HTTPException(status_code=401, detail="Invalid or inactive API key")
+        logger.warning("Invalid API key: %s", api_key_value[:8])
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    if not api_key_data.is_active:
+        logger.warning("Inactive API key: %s", api_key_value[:8])
+        raise HTTPException(status_code=401, detail="Inactive API key")
 
     logger.debug("Authenticated API key: %s", api_key_data.api_key_id)
     return api_key_data

@@ -120,7 +120,7 @@ class TestGetCurrentApiKey:
         response = client.get("/test-auth", headers={"X-API-Key": "invalid-key"})
 
         assert response.status_code == 401
-        assert "Invalid or inactive API key" in response.json()["detail"]
+        assert "Invalid API key" in response.json()["detail"]
 
     def test_get_current_api_key_inactive_key(self, client):
         """Test inactive API key returns 401.
@@ -133,7 +133,7 @@ class TestGetCurrentApiKey:
         response = client.get("/test-auth", headers={"X-API-Key": "inactive-key"})
 
         assert response.status_code == 401
-        assert "Invalid or inactive API key" in response.json()["detail"]
+        assert "Invalid API key" in response.json()["detail"]
     def test_get_current_api_key_storage_not_initialized(self, client):
         """Test storage not initialized returns 500."""
         from topsailai_server.agent_daemon.api.middleware import auth as auth_module
@@ -759,7 +759,7 @@ class TestBearerTokenAuth:
         )
 
         assert response.status_code == 401
-        assert "Invalid or inactive API key" in response.json()["detail"]
+        assert "Invalid API key" in response.json()["detail"]
 
     def test_x_api_key_takes_precedence_over_bearer(self, client):
         """Test X-API-Key header takes precedence over Authorization: Bearer."""

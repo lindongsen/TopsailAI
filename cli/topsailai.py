@@ -11,6 +11,7 @@
 """
 
 import atexit
+import json
 import os
 import re
 import select
@@ -58,6 +59,86 @@ current_scope = "workspace"
 current_session_id: Optional[str] = None
 yaml_commands: List[Dict[str, Any]] = []
 
+# Command history manager
+history_manager: Optional["HistoryManager"] = None
+
+
+# =============================================================================
+# Command History
+# =============================================================================
+
+class HistoryManager:
+    """Manages command history persisted to a JSONL file."""
+
+    def __init__(self, filepath: str):
+        self.filepath = filepath
+        self.entries: List[Dict[str, Any]] = []
+
+    def load_all(self) -> None:
+        """Load all history entries from the JSONL file."""
+        if not os.path.isfile(self.filepath):
+            return
+        try:
+            with open(self.filepath, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        if isinstance(entry, dict):
+                            self.entries.append(entry)
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            pass
+
+    def append(self, scope: str, session_id: str, text: str) -> None:
+        """Append a new entry to memory and persist to disk."""
+        entry = {
+            "scope": scope,
+            "session_id": session_id,
+            "ts": int(time.time()),
+            "text": text,
+        }
+        self.entries.append(entry)
+        try:
+            with open(self.filepath, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    def filter_entries(
+        self, scope: str, session_id: Optional[str] = None
+    ) -> List[str]:
+        """Return command texts matching the given scope and session."""
+        results: List[str] = []
+        for entry in self.entries:
+            if entry.get("scope") != scope:
+                continue
+            if scope == "session" and session_id is not None:
+                if entry.get("session_id") != session_id:
+                    continue
+            text = entry.get("text", "")
+            if text:
+                results.append(text)
+        return results
+
+
+def load_readline_history(
+    manager: HistoryManager, scope: str, session_id: Optional[str]
+) -> None:
+    """Clear readline history and load filtered entries for the current context."""
+    try:
+        readline.clear_history()
+    except (NameError, AttributeError):
+        return
+    texts = manager.filter_entries(scope, session_id)
+    for text in texts:
+        try:
+            readline.add_history(text)
+        except (NameError, AttributeError):
+            break
 
 def register_process(proc: subprocess.Popen):
     """Register a subprocess for cleanup tracking."""
@@ -341,6 +422,88 @@ def get_all_command_names(instruction: Dict[str, Any]) -> List[str]:
     return names
 
 
+def get_available_completions() -> List[str]:
+    """
+    Get all available command completions for the current scope.
+    Returns a sorted list of command strings (with leading '/').
+    Command templates like '/cd {session_id}' are truncated to '/cd'.
+    """
+    completions: List[str] = []
+
+    # Built-in commands (always available)
+    builtins = ["/refresh", "/clean", "/help", "/session"]
+    completions.extend(builtins)
+
+    # YAML commands filtered by current scope
+    for instruction in yaml_commands:
+        scopes = instruction.get("scopes", [])
+        if current_scope not in scopes:
+            continue
+        cmd = instruction.get("cmd", "")
+        if cmd:
+            # Extract base command up to first space or variable placeholder
+            base = cmd.split()[0]
+            completions.append(base)
+        aliases = instruction.get("alias", [])
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        for alias in aliases:
+            if alias:
+                # Ensure alias has leading '/' for consistency
+                if not alias.startswith("/"):
+                    alias = "/" + alias
+                completions.append(alias)
+
+    # Remove duplicates and sort
+    seen = set()
+    unique = []
+    for c in completions:
+        if c not in seen:
+            seen.add(c)
+            unique.append(c)
+    return sorted(unique)
+
+
+def tab_completer(text: str, state: int) -> Optional[str]:
+    """
+    readline tab completion callback.
+    Matches available commands against the current input text.
+    """
+    try:
+        # Get the full current input line from readline
+        line = readline.get_line_buffer()
+        # Only complete at the beginning of the line (first word)
+        if line.strip() and not line.startswith(text):
+            # If there's already text before current word, no completion
+            parts = line[:readline.get_begidx()].strip().split()
+            if parts:
+                return None
+
+        candidates = get_available_completions()
+        matches = []
+        for c in candidates:
+            if c.startswith(text):
+                matches.append(c)
+            elif not text.startswith("/") and c.lstrip("/").startswith(text):
+                # User typed without leading '/', e.g. 're' -> match '/refresh'
+                matches.append(c.lstrip("/"))
+        if state < len(matches):
+            return matches[state]
+    except (NameError, AttributeError):
+        pass
+    return None
+
+def setup_tab_completion() -> None:
+    """Configure readline for TAB command completion."""
+    try:
+        readline.set_completer(tab_completer)
+        # Remove '/' from delimiters so '/cmd' is treated as a single word
+        readline.set_completer_delims(' \t\n')
+        # Use default tab binding (\t) for completion
+        readline.parse_and_bind("tab: complete")
+    except (NameError, AttributeError):
+        pass
+
 def match_yaml_command(user_input: str, task_dir: str = "") -> Optional[Tuple[Dict[str, Any], Dict[str, str]]]:
     """
     Match user input against YAML commands.
@@ -569,6 +732,10 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
                 current_session_id = None
                 print(
                     f"{Colors.GREEN}[INFO] Switched to workspace scope.{Colors.RESET}"
+                )
+            if history_manager is not None:
+                load_readline_history(
+                    history_manager, current_scope, current_session_id
                 )
             return "yaml_handled"
 
@@ -1378,10 +1545,17 @@ def prompt_selection(files: List[dict], task_dir: str) -> Tuple[str, Optional[in
         try:
             prompt_text = get_prompt()
             user_input = input(prompt_text).strip()
-            try:
-                readline.add_history(user_input)
-            except NameError:
-                pass
+            if user_input:
+                try:
+                    readline.add_history(user_input)
+                except NameError:
+                    pass
+                if history_manager is not None:
+                    history_manager.append(
+                        current_scope,
+                        current_session_id or "",
+                        user_input,
+                    )
 
             if not user_input:
                 continue
@@ -1476,10 +1650,17 @@ def main():
     topsailai_home = get_topsailai_home()
     task_dir = os.path.join(topsailai_home, "workspace", "task")
 
+
+    # Initialize command history
+    history_path = os.path.join(topsailai_home, ".history.jsonl")
+    global history_manager
+    history_manager = HistoryManager(history_path)
+    history_manager.load_all()
+    load_readline_history(history_manager, current_scope, current_session_id)
+    setup_tab_completion()
     print_header("TopsailAI Task Watcher")
     print(f"{Colors.DIM}HOME: {topsailai_home}{Colors.RESET}")
     print(f"{Colors.DIM}DIR:  {task_dir}{Colors.RESET}")
-
     log_files = discover_log_files(task_dir)
 
     if not log_files:

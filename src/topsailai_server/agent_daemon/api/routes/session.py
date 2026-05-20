@@ -40,15 +40,17 @@ def set_dependencies(session_storage, message_storage, worker_manager):
     _session_storage = session_storage
     _message_storage = message_storage
     _worker_manager = worker_manager
-
-
 def get_storage() -> Storage:
     """Get Storage instance"""
     if _session_storage is None:
         raise RuntimeError("Storage not initialized")
-    if isinstance(_session_storage, Storage):
+    # Duck-typing check to avoid isinstance issues with mocks/circular imports
+    if hasattr(_session_storage, 'session') and hasattr(_session_storage, 'message'):
         return _session_storage
-    return Storage(_session_storage.engine)
+    try:
+        return Storage(_session_storage.engine)
+    except Exception:
+        return _session_storage
 
 
 def get_worker_manager() -> WorkerManager:

@@ -258,5 +258,123 @@ class TestMatchYamlCommand(unittest.TestCase):
         self.assertEqual(variables["session_id"], "default-session")
 
 
+class TestGetAvailableCompletions(unittest.TestCase):
+    """Tests for get_available_completions."""
+
+    def setUp(self):
+        cli.current_scope = "workspace"
+        cli.current_session_id = None
+        cli.yaml_commands = [
+            {"cmd": "/cd {session_id}", "scopes": ["workspace"], "shell": ""},
+            {"cmd": "/env.get {key}", "scopes": ["workspace"], "shell": ""},
+            {"cmd": "/ctx.search {keyword}", "scopes": ["session"], "shell": "search {keyword}"},
+            {"cmd": "/ctx.history", "scopes": ["session"], "shell": "history", "alias": ["history"]},
+        ]
+
+    def tearDown(self):
+        cli.current_scope = "workspace"
+        cli.current_session_id = None
+        cli.yaml_commands = []
+
+    def test_workspace_scope(self):
+        """Return workspace-scoped commands and builtins."""
+        result = cli.get_available_completions()
+        self.assertIn("/refresh", result)
+        self.assertIn("/cd", result)
+        self.assertIn("/env.get", result)
+        self.assertNotIn("/ctx.search", result)
+        self.assertNotIn("/ctx.history", result)
+
+    def test_session_scope(self):
+        """Return session-scoped commands and builtins."""
+        cli.current_scope = "session"
+        result = cli.get_available_completions()
+        self.assertIn("/refresh", result)
+        self.assertIn("/ctx.search", result)
+        self.assertIn("/ctx.history", result)
+        self.assertIn("/history", result)
+        self.assertNotIn("/cd", result)
+
+    def test_sorted_and_unique(self):
+        """Results should be sorted and deduplicated."""
+        result = cli.get_available_completions()
+        self.assertEqual(result, sorted(result))
+        self.assertEqual(len(result), len(set(result)))
+
+
+class TestTabCompleter(unittest.TestCase):
+    """Tests for tab_completer."""
+
+    def setUp(self):
+        cli.current_scope = "workspace"
+        cli.current_session_id = None
+        cli.yaml_commands = [
+            {"cmd": "/cd {session_id}", "scopes": ["workspace"], "shell": ""},
+            {"cmd": "/env.get {key}", "scopes": ["workspace"], "shell": ""},
+            {"cmd": "/env.set {key} {value}", "scopes": ["workspace"], "shell": ""},
+        ]
+
+    def tearDown(self):
+        cli.current_scope = "workspace"
+        cli.current_session_id = None
+        cli.yaml_commands = []
+
+    @patch("topsailai.readline.get_line_buffer", return_value="/e")
+    def test_match_prefix(self, mock_buffer):
+        """Return matching command for prefix."""
+        result = cli.tab_completer("/e", 0)
+        self.assertTrue(result.startswith("/e"))
+
+    @patch("topsailai.readline.get_line_buffer", return_value="/e")
+    def test_no_match(self, mock_buffer):
+        """Return None when no matches."""
+        result = cli.tab_completer("/xyz", 0)
+        self.assertIsNone(result)
+
+    @patch("topsailai.readline.get_line_buffer", return_value="/e")
+    def test_state_increment(self, mock_buffer):
+        """Return different matches for different state values."""
+        r0 = cli.tab_completer("/e", 0)
+        r1 = cli.tab_completer("/e", 1)
+        self.assertNotEqual(r0, r1)
+        r2 = cli.tab_completer("/e", 2)
+        self.assertIsNone(r2)
+
+    @patch("topsailai.readline.get_line_buffer", return_value="")
+    def test_empty_text(self, mock_buffer):
+        """Return first completion when text is empty."""
+        result = cli.tab_completer("", 0)
+        self.assertIsNotNone(result)
+
+    @patch("topsailai.readline.get_line_buffer", return_value="e")
+    def test_match_without_leading_slash(self, mock_buffer):
+        """Match commands when user omits leading '/'."""
+        result = cli.tab_completer("e", 0)
+        self.assertTrue(result.startswith("e"))
+        self.assertFalse(result.startswith("/"))
+
+    @patch("topsailai.readline.get_line_buffer", return_value="re")
+    def test_match_builtin_without_slash(self, mock_buffer):
+        """Match builtin command without leading '/'."""
+        result = cli.tab_completer("re", 0)
+        self.assertEqual(result, "refresh")
+
+class TestSetupTabCompletion(unittest.TestCase):
+    """Tests for setup_tab_completion."""
+
+    @patch("topsailai.readline.set_completer")
+    @patch("topsailai.readline.parse_and_bind")
+    def test_setup_calls(self, mock_parse, mock_set):
+        """Verify readline functions are called."""
+        cli.setup_tab_completion()
+        mock_set.assert_called_once()
+        mock_parse.assert_called_once_with("tab: complete")
+
+    @patch("topsailai.readline.set_completer", side_effect=AttributeError())
+    def test_setup_graceful(self, mock_set):
+        """Handle missing readline gracefully."""
+        cli.setup_tab_completion()
+
+
 if __name__ == "__main__":
     unittest.main()

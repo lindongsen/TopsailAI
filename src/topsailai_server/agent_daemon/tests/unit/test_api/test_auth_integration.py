@@ -76,17 +76,22 @@ class TestAuthIntegration(unittest.TestCase):
 
         # Set route module dependencies
         session_module.set_dependencies(
-            self.mock_session_storage,
+            self.mock_storage,
             self.mock_message_storage,
             self.mock_worker_manager
         )
         message_module.set_dependencies(
-            self.mock_session_storage,
+            self.mock_storage,
             self.mock_message_storage,
             self.mock_worker_manager
         )
         task_module.set_dependencies(
-            self.mock_session_storage,
+            self.mock_storage,
+            self.mock_message_storage,
+            self.mock_worker_manager
+        )
+        api_key_module.set_dependencies(
+            self.mock_storage,
             self.mock_message_storage,
             self.mock_worker_manager
         )
@@ -96,6 +101,7 @@ class TestAuthIntegration(unittest.TestCase):
         self.app.include_router(session_module.router)
         self.app.include_router(message_module.router)
         self.app.include_router(task_module.router)
+        self.app.include_router(api_key_module.router)
 
         self.client = TestClient(self.app)
 
@@ -156,7 +162,7 @@ class TestAuthIntegration(unittest.TestCase):
 
     def test_get_session_requires_auth(self):
         """GET /api/v1/session/detail without auth returns 401."""
-        response = self.client.get('/api/v1/session/detail?session_id=test-session')
+        response = self.client.get('/api/v1/session/test-session')
         self.assertEqual(response.status_code, 401)
         data = response.json()
         self.assertIn('Missing API key', data['detail'])
@@ -171,7 +177,7 @@ class TestAuthIntegration(unittest.TestCase):
         self.mock_worker_manager.check_session_state.return_value = 'idle'
 
         response = self.client.get(
-            '/api/v1/session/detail?session_id=test-session',
+            '/api/v1/session/test-session',
             headers={'X-API-Key': 'admin-secret-key'}
         )
         self.assertEqual(response.status_code, 200)
@@ -190,7 +196,7 @@ class TestAuthIntegration(unittest.TestCase):
         self.mock_worker_manager.check_session_state.return_value = 'idle'
 
         response = self.client.get(
-            '/api/v1/session/detail?session_id=bound-session',
+            '/api/v1/session/bound-session',
             headers={'X-API-Key': 'user-secret-key'}
         )
         self.assertEqual(response.status_code, 200)
@@ -203,7 +209,7 @@ class TestAuthIntegration(unittest.TestCase):
         self.mock_api_key_storage.is_session_bound.return_value = False
 
         response = self.client.get(
-            '/api/v1/session/detail?session_id=unbound-session',
+            '/api/v1/session/unbound-session',
             headers={'X-API-Key': 'user-secret-key-unbound'}
         )
         self.assertEqual(response.status_code, 403)
@@ -495,19 +501,29 @@ class TestAuthIntegration(unittest.TestCase):
         self.assertEqual(data['code'], 0)
 
     def test_list_api_keys_requires_admin(self):
-        """GET /api/v1/apikey requires admin role."""
+        """GET /api/v1/apikey requires admin role to list all keys; user can only see their own."""
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
+        self.mock_api_key_storage.get_api_key_with_details.return_value = {
+            "api_key": self.user_key, "session_ids": [], "environs": []
+        }
 
         response = self.client.get(
             '/api/v1/apikey',
             headers={'X-API-Key': 'user-secret-key'}
         )
-        self.assertEqual(response.status_code, 403)
+        # User role can list their own key, not all keys
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['code'], 0)
+        self.assertEqual(len(data['data']['api_keys']), 1)
 
     def test_list_api_keys_admin_can_list(self):
         """Admin API key can list all API keys."""
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
-        self.mock_api_key_storage.list_api_keys.return_value = ([self.admin_key, self.user_key], 2)
+        self.mock_api_key_storage.list_api_keys_with_details.return_value = [
+            {"api_key": self.admin_key, "session_ids": [], "environs": []},
+            {"api_key": self.user_key, "session_ids": [], "environs": []},
+        ]
 
         response = self.client.get(
             '/api/v1/apikey',
@@ -531,8 +547,8 @@ class TestAuthIntegration(unittest.TestCase):
     def test_delete_api_key_admin_can_delete(self):
         """Admin API key can delete API keys."""
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
-        self.mock_api_key_storage.get_api_key.return_value = self.user_key
-        self.mock_api_key_storage.list_api_keys.return_value = ([self.admin_key], 1)
+        self.mock_api_key_storage.get_api_key_by_id.return_value = self.user_key
+        self.mock_api_key_storage.count_admin_api_keys.return_value = 2
 
         response = self.client.delete(
             '/api/v1/apikey/user-key-001',
@@ -555,7 +571,7 @@ class TestAuthIntegration(unittest.TestCase):
         self.mock_worker_manager.check_session_state.return_value = 'idle'
 
         response = self.client.get(
-            '/api/v1/session/detail?session_id=test-session',
+            '/api/v1/session/test-session',
             headers={'Authorization': 'Bearer admin-secret-key'}
         )
         self.assertEqual(response.status_code, 200)
@@ -565,7 +581,7 @@ class TestAuthIntegration(unittest.TestCase):
     def test_invalid_bearer_token_returns_401(self):
         """Invalid Bearer token returns 401."""
         response = self.client.get(
-            '/api/v1/session/detail?session_id=test-session',
+            '/api/v1/session/test-session',
             headers={'Authorization': 'Bearer invalid-token'}
         )
         self.assertEqual(response.status_code, 401)
@@ -589,7 +605,7 @@ class TestAuthIntegration(unittest.TestCase):
         self.mock_api_key_storage.get_api_key_by_value.return_value = inactive_key
 
         response = self.client.get(
-            '/api/v1/session/detail?session_id=test-session',
+            '/api/v1/session/test-session',
             headers={'X-API-Key': 'inactive-secret'}
         )
         self.assertEqual(response.status_code, 401)
