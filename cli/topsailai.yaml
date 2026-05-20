@@ -1,5 +1,6 @@
 # --- FOR AI AGENT
 # workspace: /TopsailAI/cli/
+# cli: topsailai.py
 # unitest_folder: /TopsailAI/cli/tests/unit/topsailai/
 # ---
 
@@ -17,17 +18,43 @@ scopes:
   - workspace
   - session
 
-instructions:
+# Describe the meaning of instruction configuration
+instructions_helper:
   # > KEYS
-  # cmd: str, instruction name
-  # alias: list, instruction's alias name
-  # scopes: list, the cmd is only working in these scopes
-  # desc: str, description
-  # example: str,
-  # shell: str, If it is empty, it needs to be implemented internally, else execute this command line to get result
-  # environ: dict, environment variables
-  #   default environ: TOPSAILAI_SESSION_ID={session_id}, TOPSAILAI_INTERACTIVE_MODE="0"
+  cmd: str, instruction name
+  alias: list, instruction's alias name
+  scopes: list, the cmd is only working in these scopes
+  desc: str, description
+  example: str,
+  shell: str, If it is empty, it needs to be implemented internally, else execute this command line to get result
+  environ: |
+    dict, environment variables, default environ:
+      TOPSAILAI_SESSION_ID={session_id}
+      TOPSAILAI_INTERACTIVE_MODE="0"
+  independent_process: |
+    bool or int, 1 or true for True.
+    Example:
+    ```python
+    def launch_independent_process(cmd):
+        """Start an independent child process that is logically separated from the current process:
+            The child process's parent-process-id is not current-process-id."""
+        kwargs = {
+            'stdin': subprocess.DEVNULL,
+            'stdout': subprocess.PIPE,
+            'stderr': subprocess.PIPE
+        }
+        if sys.platform == 'win32':
+            # Windows
+            kwargs['creationflags'] = subprocess.DETACHED_PROCESS
+        else:
+            # Linux/macOS
+            kwargs['start_new_session'] = True
+            kwargs['preexec_fn'] = os.setsid
+    ```
+  async: bool or int, 1 or true for True, async to execute shell, when async is True, independent_process default is True too.
+  use_os_system: bool or int, 1 or true for True, use os.system(shell) to execute shell.
 
+instructions:
   # > Rules:
   # The instructions do not need to start with '/' in these scopes (compatibility): workspace, session
   # Can dynamically recognize variables in the shell, assign values in order, and the format of variables in the shell is {variable-name}
@@ -57,7 +84,7 @@ instructions:
       - session
     desc: show context messages
     example: ""
-    shell: "topsailai_agent_call_instruction -s '{session_id}' -i '/ctx.history'"
+    shell: "topsailai_retrieve_messages {session_id}"
 
   - cmd: "/ctx.add_msg" # Note: Special handling, supports line breaks
     scopes:
@@ -85,6 +112,53 @@ instructions:
     environ:
       TOPSAILAI_INTERACTIVE_MODE: "0"
       TOPSAILAI_SESSION_ID: "{session_id}"
+
+  - cmd: "/task.async {driver} {args}"
+    scopes:
+      - session
+    desc: "Run async task for the session"
+    example: "/task.async ai-team-flow-dev"
+    shell: "{driver} {args}"
+    environ:
+      TOPSAILAI_INTERACTIVE_MODE: "0"
+      TOPSAILAI_SESSION_ID: "{session_id}"
+    independent_process: 1
+    async: 1
+
+  - cmd: "/task.async {driver}"
+    scopes:
+      - session
+    desc: "Run async task for the session"
+    example: "/task.async ai-team-flow-dev"
+    shell: "{driver}"
+    environ:
+      TOPSAILAI_INTERACTIVE_MODE: "0"
+      TOPSAILAI_SESSION_ID: "{session_id}"
+    independent_process: 1
+    async: 1
+
+  - cmd: "/task.dtach {driver}"
+    scopes:
+      - session
+    desc: "Run async task for the session"
+    example: "/task.dtach ai-team-flow-dev"
+    shell: "dtach -A /tmp/topsailai.dtach.{session_id} {driver}"
+    environ:
+      TOPSAILAI_INTERACTIVE_MODE: "0"
+      TOPSAILAI_SESSION_ID: "{session_id}"
+    independent_process: 1
+    async: 1
+
+  - cmd: "/dtach"
+    scopes:
+      - session
+    desc: "Run dtach command"
+    example: ""
+    shell: "dtach -A /tmp/topsailai.dtach.{session_id} bash"
+    environ:
+      TOPSAILAI_INTERACTIVE_MODE: "0"
+      TOPSAILAI_SESSION_ID: "{session_id}"
+    use_os_system: 1
 
   # > SESSION > END
 

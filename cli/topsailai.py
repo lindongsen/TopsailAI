@@ -73,6 +73,158 @@ def unregister_process(proc: subprocess.Popen):
         pass
 
 
+def is_independent_process(instruction: Dict[str, Any]) -> bool:
+    """Check if the instruction should run as an independent process."""
+    independent = instruction.get("independent_process")
+    if isinstance(independent, str):
+        return independent.lower() in ("1", "true", "yes")
+    return bool(independent)
+
+
+def is_async_command(instruction: Dict[str, Any]) -> bool:
+    """Check if the instruction should be executed asynchronously."""
+    async_val = instruction.get("async")
+    if isinstance(async_val, str):
+        return async_val.lower() in ("1", "true", "yes")
+    return bool(async_val)
+
+
+def is_use_os_system(instruction: Dict[str, Any]) -> bool:
+    """Check if the instruction should use os.system() to execute shell."""
+    use_os = instruction.get("use_os_system")
+    if isinstance(use_os, str):
+        return use_os.lower() in ("1", "true", "yes")
+    return bool(use_os)
+
+def launch_independent_process(cmd_list: List[str], **kwargs) -> subprocess.Popen:
+    """
+    Start an independent child process that is logically separated from the current process:
+    The child process's parent-process-id is not current-process-id.
+    """
+    popen_kwargs = {
+        'stdin': subprocess.DEVNULL,
+        'stdout': kwargs.get('stdout', subprocess.PIPE),
+        'stderr': kwargs.get('stderr', subprocess.PIPE),
+        'text': kwargs.get('text', True),
+        'env': kwargs.get('env'),
+    }
+    if sys.platform == 'win32':
+        # Windows
+        popen_kwargs['creationflags'] = subprocess.DETACHED_PROCESS
+    else:
+        # Linux/macOS: start_new_session already calls os.setsid() internally
+        popen_kwargs['start_new_session'] = True
+    return subprocess.Popen(cmd_list, **popen_kwargs)
+
+
+def run_external_command(
+    cmd_list: List[str],
+    cmd_env: Dict[str, str],
+    independent: bool,
+    async_cmd: bool = False,
+    use_os_system: bool = False,
+    timeout: int = 30,
+) -> None:
+    """
+    Run an external command, either as a tracked child process or as an independent process.
+    Independent processes are not registered for cleanup and run in a new session.
+    Async commands are launched in the background and return immediately.
+    When use_os_system is True, the command is executed via os.system() instead of subprocess.
+    """
+    # When use_os_system is True, execute via os.system() with environment variables
+    if use_os_system:
+        shell_cmd = " ".join(shlex.quote(arg) for arg in cmd_list)
+        print(
+            f"{Colors.CYAN}[INFO] Executing (os.system): {shell_cmd} ...{Colors.RESET}"
+        )
+        # Merge cmd_env into os.environ temporarily for os.system()
+        old_env = {}
+        try:
+            for key, value in cmd_env.items():
+                old_env[key] = os.environ.get(key)
+                os.environ[key] = value
+            exit_code = os.system(shell_cmd)
+        finally:
+            for key, old_value in old_env.items():
+                if old_value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = old_value
+        if exit_code != 0:
+            print(
+                f"{Colors.RED}[ERROR] Command exited with code {exit_code}.{Colors.RESET}"
+            )
+        print(
+            f"{Colors.GREEN}[INFO] Execution completed.{Colors.RESET}"
+        )
+        return
+
+    print(
+        f"{Colors.CYAN}[INFO] Executing: {' '.join(cmd_list)} ...{Colors.RESET}"
+    )
+    if async_cmd:
+        # Async commands run as independent background processes
+        proc = launch_independent_process(
+            cmd_list,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            env=cmd_env,
+        )
+        print(
+            f"{Colors.GREEN}[INFO] Async process started (pid={proc.pid}).{Colors.RESET}"
+        )
+        return
+
+    if independent:
+        proc = launch_independent_process(
+            cmd_list,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=cmd_env,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+            if stdout:
+                print(stdout, end="")
+            if stderr:
+                print(f"{Colors.RED}{stderr}{Colors.RESET}", end="")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                try:
+                    proc.wait(timeout=1)
+                except Exception:
+                    pass
+    else:
+        proc = subprocess.Popen(
+            cmd_list,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=cmd_env,
+        )
+        register_process(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+            if stdout:
+                print(stdout, end="")
+            if stderr:
+                print(f"{Colors.RED}{stderr}{Colors.RESET}", end="")
+        finally:
+            unregister_process(proc)
+            if proc.poll() is None:
+                proc.kill()
+                try:
+                    proc.wait(timeout=1)
+                except Exception:
+                    pass
+    print(
+        f"{Colors.GREEN}[INFO] Execution completed.{Colors.RESET}"
+    )
+
+
 def cleanup_children():
     """
     Terminate and kill all tracked child processes.
@@ -369,33 +521,12 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
         try:
             cmd_list = shlex.split(shell_cmd)
             cmd_env = build_command_env(instruction, variables)
-            print(
-                f"{Colors.CYAN}[INFO] Executing: {' '.join(cmd_list)} ...{Colors.RESET}"
-            )
-            proc = subprocess.Popen(
+            run_external_command(
                 cmd_list,
-                shell=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=cmd_env,
-            )
-            try:
-                stdout, stderr = proc.communicate(timeout=30)
-                if stdout:
-                    print(stdout, end="")
-                if stderr:
-                    print(f"{Colors.RED}{stderr}{Colors.RESET}", end="")
-            finally:
-                unregister_process(proc)
-                if proc.poll() is None:
-                    proc.kill()
-                    try:
-                        proc.wait(timeout=1)
-                    except Exception:
-                        pass
-            print(
-                f"{Colors.GREEN}[INFO] Execution completed.{Colors.RESET}"
+                cmd_env,
+                is_independent_process(instruction),
+                is_async_command(instruction),
+                is_use_os_system(instruction),
             )
         except Exception as e:
             print(f"{Colors.RED}[ERROR] Failed to execute command: {e}{Colors.RESET}")
@@ -463,39 +594,17 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
 
         cmd_list = shlex.split(shell_cmd)
         cmd_env = build_command_env(instruction, variables)
-        print(
-            f"{Colors.CYAN}[INFO] Executing: {' '.join(cmd_list)} ...{Colors.RESET}"
-        )
-        proc = subprocess.Popen(
+        run_external_command(
             cmd_list,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=cmd_env,
-        )
-        register_process(proc)
-        try:
-            stdout, stderr = proc.communicate(timeout=30)
-            if stdout:
-                print(stdout, end="")
-            if stderr:
-                print(f"{Colors.RED}{stderr}{Colors.RESET}", end="")
-        finally:
-            unregister_process(proc)
-            if proc.poll() is None:
-                proc.kill()
-                try:
-                    proc.wait(timeout=1)
-                except Exception:
-                    pass
-        print(
-            f"{Colors.GREEN}[INFO] Execution completed.{Colors.RESET}"
+            cmd_env,
+            is_independent_process(instruction),
+            is_async_command(instruction),
+            is_use_os_system(instruction),
         )
     except Exception as e:
         print(f"{Colors.RED}[ERROR] Failed to execute command: {e}{Colors.RESET}")
 
     return "yaml_handled"
-
 
 def get_prompt() -> str:
     """Generate dynamic prompt based on current scope."""
@@ -1263,7 +1372,7 @@ def prompt_selection(files: List[dict]) -> Tuple[str, Optional[int]]:
             if lower_input in ("r", "refresh", "/refresh"):
                 return ("refresh", None)
 
-            if lower_input.startswith("/clean"):
+            if lower_input.startswith("/clean") or lower_input.startswith("clean"):
                 parts = user_input.split()
                 if len(parts) == 1:
                     return ("clean", None)
@@ -1286,7 +1395,7 @@ def prompt_selection(files: List[dict]) -> Tuple[str, Optional[int]]:
                 action = handle_yaml_command(instruction, variables)
                 return (action, None)
 
-            if lower_input.startswith("/session "):
+            if lower_input.startswith("/session ") or lower_input.startswith("session "):
                 parts = user_input.split(None, 1)
                 if len(parts) < 2:
                     print(
