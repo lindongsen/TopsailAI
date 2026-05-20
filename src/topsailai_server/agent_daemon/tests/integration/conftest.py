@@ -52,7 +52,7 @@ def ensure_script_executable(script_path):
         os.chmod(script_path, current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def start_server():
+def start_server(db_url=None):
     """Start the agent daemon server"""
     workspace = Path(WORKSPACE_DIR)
     daemon_script = workspace / "topsailai_agent_daemon.py"
@@ -76,9 +76,11 @@ def start_server():
     # Prepare environment
     env = os.environ.copy()
     env["HOME"] = INTEGRATION_DIR
+    env["TOPSAILAI_AGENT_DAEMON_API_KEY_ENABLED"] = "false"
     
-    # Database path - use absolute path for the test database
-    db_url = f"sqlite:///{os.path.join(INTEGRATION_DIR, 'test.db')}"
+    # Database path - use provided db_url or default test database
+    if db_url is None:
+        db_url = "sqlite:///%s" % os.path.join(INTEGRATION_DIR, 'test.db')
     
     # Use mock scripts from integration test directory
     processor_path = str(mock_processor) if mock_processor.exists() else str(processor)
@@ -189,10 +191,11 @@ def require_server(request):
 
 
 @pytest.fixture(scope="function")
-def running_daemon():
+def running_daemon(temp_db_path):
     """
     Fixture to start/stop the daemon for integration tests.
     Yields the server process and ensures cleanup after test.
+    Uses a unique temporary database per test for isolation.
     """
     # Ensure mock scripts are executable
     mock_processor = Path(INTEGRATION_DIR) / "mock_processor.sh"
@@ -203,8 +206,9 @@ def running_daemon():
         if script.exists():
             ensure_script_executable(str(script))
     
-    # Start server
-    proc = start_server()
+    # Start server with unique database per test
+    db_url = "sqlite:///%s" % temp_db_path
+    proc = start_server(db_url=db_url)
     
     yield proc
     
@@ -215,7 +219,7 @@ def running_daemon():
 @pytest.fixture
 def session_id():
     """Generate a unique session ID for testing"""
-    return f"test-session-{uuid.uuid4().hex[:8]}"
+    return "test-session-%s" % uuid.uuid4().hex[:8]
 
 
 @pytest.fixture
@@ -268,10 +272,11 @@ def mock_state_checker_script():
 
 
 @pytest.fixture(scope='function')
-def daemon_config(mock_processor_script, mock_summarizer_script, mock_state_checker_script):
+def daemon_config(mock_processor_script, mock_summarizer_script, mock_state_checker_script, temp_db_path):
     """
     Configuration for running the daemon in tests.
     Sets up environment variables and returns a config dict.
+    Uses a unique temporary database per test for isolation.
     """
     # Set environment variables
     os.environ['TOPSAILAI_AGENT_DAEMON_PROCESSOR'] = mock_processor_script
@@ -282,7 +287,7 @@ def daemon_config(mock_processor_script, mock_summarizer_script, mock_state_chec
         'processor': mock_processor_script,
         'summarizer': mock_summarizer_script,
         'session_state_checker': mock_state_checker_script,
-        'db_url': f"sqlite:///{os.path.join(INTEGRATION_DIR, 'test.db')}",
+        'db_url': "sqlite:///%s" % temp_db_path,
         'host': '0.0.0.0',
         'port': 7373
     }
@@ -310,4 +315,4 @@ def api_base_url():
 @pytest.fixture
 def unique_session_id():
     """Generate a unique session ID for testing"""
-    return f"test-session-{uuid.uuid4().hex[:12]}"
+    return "test-session-%s" % uuid.uuid4().hex[:12]

@@ -35,7 +35,8 @@ class TestCreateApp:
 
         return session_storage, message_storage, worker_manager, scheduler
 
-    def test_create_app_returns_fastapi_instance(self, mock_dependencies):
+    @patch("topsailai_server.agent_daemon.api.app.Storage")
+    def test_create_app_returns_fastapi_instance(self, mock_storage_class, mock_dependencies):
         """Test create_app returns a FastAPI instance."""
         from topsailai_server.agent_daemon.api.app import create_app
 
@@ -47,7 +48,8 @@ class TestCreateApp:
         assert hasattr(app, "title")
         assert app.title == "Agent Daemon API"
 
-    def test_create_app_with_none_scheduler(self, mock_dependencies):
+    @patch("topsailai_server.agent_daemon.api.app.Storage")
+    def test_create_app_with_none_scheduler(self, mock_storage_class, mock_dependencies):
         """Test create_app works without scheduler."""
         from topsailai_server.agent_daemon.api.app import create_app
 
@@ -57,7 +59,8 @@ class TestCreateApp:
 
         assert app is not None
 
-    def test_create_app_with_none_worker_manager(self, mock_dependencies):
+    @patch("topsailai_server.agent_daemon.api.app.Storage")
+    def test_create_app_with_none_worker_manager(self, mock_storage_class, mock_dependencies):
         """Test create_app works without worker manager."""
         from topsailai_server.agent_daemon.api.app import create_app
 
@@ -67,7 +70,8 @@ class TestCreateApp:
 
         assert app is not None
 
-    def test_create_app_registers_routes(self, mock_dependencies):
+    @patch("topsailai_server.agent_daemon.api.app.Storage")
+    def test_create_app_registers_routes(self, mock_storage_class, mock_dependencies):
         """Test create_app registers all required routes."""
         from topsailai_server.agent_daemon.api.app import create_app
 
@@ -82,7 +86,8 @@ class TestCreateApp:
         assert any("/api/v1/message" in path for path in route_paths)
         assert any("/api/v1/task" in path for path in route_paths)
 
-    def test_create_app_multiple_instances(self, mock_dependencies):
+    @patch("topsailai_server.agent_daemon.api.app.Storage")
+    def test_create_app_multiple_instances(self, mock_storage_class, mock_dependencies):
         """Test create_app can create multiple instances."""
         from topsailai_server.agent_daemon.api.app import create_app
 
@@ -124,10 +129,10 @@ class TestHealthCheck:
 
         session_storage, message_storage, worker_manager, scheduler = mock_dependencies
 
-        app = create_app(session_storage, message_storage, worker_manager, scheduler)
+        with patch("topsailai_server.agent_daemon.api.app.Storage"):
+            app = create_app(session_storage, message_storage, worker_manager, scheduler)
 
         return TestClient(app)
-
     def test_health_check_returns_200(self, client):
         """Test health check endpoint returns 200."""
         response = client.get("/health")
@@ -220,7 +225,10 @@ class TestHealthCheckDatabaseFailure:
 
         session_storage, message_storage, worker_manager, scheduler = mock_dependencies
 
-        app = create_app(session_storage, message_storage, worker_manager, scheduler)
+        with patch("topsailai_server.agent_daemon.api.app.Storage") as mock_storage_class:
+            mock_instance = mock_storage_class.return_value
+            mock_instance.session.get_all.side_effect = Exception("DB connection failed")
+            app = create_app(session_storage, message_storage, worker_manager, scheduler)
 
         return TestClient(app)
 
@@ -357,7 +365,8 @@ class TestAppConfiguration:
 
         return session_storage, message_storage, worker_manager, scheduler
 
-    def test_app_title(self, mock_dependencies):
+    @patch("topsailai_server.agent_daemon.api.app.Storage")
+    def test_app_title(self, mock_storage_class, mock_dependencies):
         """Test app has correct title."""
         from topsailai_server.agent_daemon.api.app import create_app
 
@@ -367,7 +376,8 @@ class TestAppConfiguration:
 
         assert app.title == "Agent Daemon API"
 
-    def test_app_version(self, mock_dependencies):
+    @patch("topsailai_server.agent_daemon.api.app.Storage")
+    def test_app_version(self, mock_storage_class, mock_dependencies):
         """Test app has correct version."""
         from topsailai_server.agent_daemon.api.app import create_app
 
@@ -377,7 +387,8 @@ class TestAppConfiguration:
 
         assert app.version == "1.0.0"
 
-    def test_app_description(self, mock_dependencies):
+    @patch("topsailai_server.agent_daemon.api.app.Storage")
+    def test_app_description(self, mock_storage_class, mock_dependencies):
         """Test app has correct description."""
         from topsailai_server.agent_daemon.api.app import create_app
 

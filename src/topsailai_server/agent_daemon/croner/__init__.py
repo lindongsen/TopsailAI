@@ -6,7 +6,7 @@
 '''
 
 from .scheduler import CronScheduler, CronJob, create_scheduler
-from .jobs import CronJobBase, MessageConsumer, MessageSummarizer, SessionCleaner
+from .jobs import CronJobBase, MessageConsumer, MessageSummarizer, SessionCleaner, RateLimitCleaner
 
 __all__ = [
     'CronScheduler',
@@ -15,5 +15,6 @@ __all__ = [
     'MessageConsumer',
     'MessageSummarizer',
     'SessionCleaner',
+    'RateLimitCleaner',
     'create_scheduler'
 ]

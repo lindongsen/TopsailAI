@@ -148,14 +148,22 @@ async def create_api_key(
 @router.get("", response_model=dict)
 async def list_api_keys(
     session_id: Optional[str] = None,
+    offset: int = 0,
+    limit: int = 1000,
+    sort_key: str = "create_time",
+    order_by: str = "desc",
     current_key: ApiKeyData = Depends(get_current_api_key)
 ):
     """List API keys. Admin sees all keys; user sees only their own key."""
     if current_key.role == "admin":
         if session_id:
-            api_keys_with_details = _api_key_storage.list_api_keys_by_session_id(session_id)
+            api_keys_with_details = _api_key_storage.list_api_keys_by_session_id(
+                session_id, offset=offset, limit=limit, sort_key=sort_key, order_by=order_by
+            )
         else:
-            api_keys_with_details = _api_key_storage.list_api_keys_with_details()
+            api_keys_with_details = _api_key_storage.list_api_keys_with_details(
+                offset=offset, limit=limit, sort_key=sort_key, order_by=order_by
+            )
     else:
         # User role: can only query their own key
         if session_id:
@@ -179,6 +187,33 @@ async def list_api_keys(
             "api_keys": api_keys,
             "total": len(api_keys)
         },
+        "message": "OK"
+    }
+
+@router.get("/{api_key_id}", response_model=dict)
+async def get_api_key(
+    api_key_id: str,
+    current_key: ApiKeyData = Depends(get_current_api_key)
+):
+    """Get a single API key by ID. Admin can get any key; user can only get their own."""
+    # Check permissions
+    if current_key.role != "admin" and current_key.api_key_id != api_key_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied to API key: %s" % api_key_id
+        )
+
+    api_key_with_details = _api_key_storage.get_api_key_with_details(api_key_id)
+    if not api_key_with_details:
+        return {"code": 404, "data": None, "message": "API key not found"}
+
+    key_dict = api_key_with_details["api_key"].to_dict()
+    key_dict["sessions"] = api_key_with_details["session_ids"]
+    key_dict["environs"] = [env.to_dict() for env in api_key_with_details["environs"]]
+
+    return {
+        "code": 0,
+        "data": key_dict,
         "message": "OK"
     }
 

@@ -83,7 +83,7 @@ class ServerProcess:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=INTEGRATION_DIR,
-                env={**os.environ, 'HOME': INTEGRATION_DIR}
+                env={**os.environ, 'HOME': INTEGRATION_DIR, 'TOPSAILAI_AGENT_DAEMON_API_KEY_ENABLED': 'false'}
             )
             
             if self._wait_for_server(SERVER_STARTUP_TIMEOUT):

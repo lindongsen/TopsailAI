@@ -52,6 +52,7 @@ class Storage:
         self.message = MessageSQLAlchemy(engine)
         self.api_key = ApiKeySQLAlchemy(engine)
         self.api_key_environ = ApiKeyEnvironSQLAlchemy(engine)
+
     def init_db(self):
         """Initialize all database tables.
 
@@ -61,7 +62,9 @@ class Storage:
         from topsailai_server.agent_daemon.storage.session_manager.sql import Base as SessionBase
         from topsailai_server.agent_daemon.storage.message_manager.sql import Base as MessageBase
         from topsailai_server.agent_daemon.storage.api_key_manager.sql import Base as ApiKeyBase
+        from topsailai_server.agent_daemon.storage.api_key_environ_manager.sql import Base as ApiKeyEnvironBase
 
         SessionBase.metadata.create_all(self.engine)
         MessageBase.metadata.create_all(self.engine)
         ApiKeyBase.metadata.create_all(self.engine)
+        ApiKeyEnvironBase.metadata.create_all(self.engine)

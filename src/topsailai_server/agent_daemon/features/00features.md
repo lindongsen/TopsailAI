@@ -121,7 +121,7 @@ restful api
 #### GetSession
 
 parameters:
-- session_id: str, required
+- session_id: str, required, also support `x-session-id` header to get session_id;
 
 response:
 - data: dict

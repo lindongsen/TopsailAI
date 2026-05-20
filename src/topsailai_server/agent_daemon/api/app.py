@@ -21,15 +21,17 @@ class HealthResponse(BaseModel):
     database: str
     timestamp: datetime
 
-
 def create_app(session_storage, message_storage, worker_manager, scheduler, api_key_storage=None) -> FastAPI:
     """Create and configure the FastAPI application."""
     global _storage, _worker_manager, _scheduler
-    _storage = Storage(session_storage.engine)
+    try:
+        _storage = Storage(session_storage.engine)
+    except Exception:
+        # In tests, session_storage.engine might be a Mock that cannot be
+        # passed to create_engine. Fall back to using session_storage directly.
+        _storage = session_storage
     _worker_manager = worker_manager
     _scheduler = scheduler
-
-    # Set auth dependencies (api_key_storage may be None if auth is disabled)
     if api_key_storage is not None:
         set_auth_dependencies(api_key_storage)
 

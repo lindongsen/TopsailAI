@@ -2,7 +2,8 @@
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Column, String, DateTime, Text
+from sqlalchemy import create_engine, Column, String, DateTime, Text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 from topsailai_server.agent_daemon.storage.api_key_environ_manager.base import (
@@ -27,10 +28,21 @@ class ApiKeyEnvironSQLAlchemy(ApiKeyEnvironStorageBase):
     """SQLAlchemy implementation of API key environment variable storage."""
 
     def __init__(self, engine):
-        """Initialize with a SQLAlchemy engine."""
-        self.engine = engine
-        self.Session = sessionmaker(bind=engine)
-        Base.metadata.create_all(engine)
+        """Initialize with a SQLAlchemy engine or database URL.
+
+        Args:
+            engine: SQLAlchemy Engine instance, or a database connection URL string.
+        """
+        if isinstance(engine, Engine):
+            self.engine = engine
+        else:
+            self.engine = create_engine(engine)
+        self.Session = sessionmaker(bind=self.engine)
+        Base.metadata.create_all(self.engine)
+
+    def get_engine(self):
+        """Return the SQLAlchemy engine instance."""
+        return self.engine
 
     def create_api_key_environ(self, api_key_id: str, key: str, value: str) -> bool:
         """Create an environment variable for an API key. Returns True on success."""

@@ -91,8 +91,14 @@ class ApiKeyStorageBase(ABC):
         pass
 
     @abstractmethod
-    def list_api_keys_with_details(self) -> list:
+    def list_api_keys_with_details(self, offset: int = 0, limit: int = 1000, sort_key: str = "create_time", order_by: str = "desc") -> list:
         """List all API keys with their bound session IDs and environment variables.
+
+        Args:
+            offset: Number of records to skip.
+            limit: Maximum number of records to return.
+            sort_key: Field to sort by, default is create_time.
+            order_by: Sort order, 'asc' or 'desc', default is desc.
 
         Returns:
             list: List of dicts, each containing:
@@ -116,15 +122,20 @@ class ApiKeyStorageBase(ABC):
         pass
 
     @abstractmethod
-    def list_api_keys_by_session_id(self, session_id: str) -> list:
+    def list_api_keys_by_session_id(self, session_id: str, offset: int = 0, limit: int = 1000, sort_key: str = "create_time", order_by: str = "desc") -> list:
         """List all API keys bound to a specific session.
+
+        Args:
+            session_id: The session ID to filter by.
+            offset: Number of records to skip.
+            limit: Maximum number of records to return.
+            sort_key: Field to sort by, default is create_time.
+            order_by: Sort order, 'asc' or 'desc', default is desc.
 
         Returns:
             list: Same format as list_api_keys_with_details().
         """
         pass
-
-
     @abstractmethod
     def delete_api_key(self, api_key_id: str) -> bool:
         """Delete an API key and its related data. Returns True on success, False if not found."""

@@ -1,7 +1,8 @@
 """SQLAlchemy implementation of API key storage."""
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, create_engine, Index
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, create_engine, Index, desc, asc
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker, declarative_base, Session as SQLAlchemySession
 from sqlalchemy.exc import IntegrityError
 from topsailai_server.agent_daemon.storage.api_key_manager.base import (
@@ -66,10 +67,22 @@ class ApiKeySQLAlchemy(ApiKeyStorageBase):
     """SQLAlchemy implementation of API key storage."""
 
     def __init__(self, engine):
-        self.engine = engine
-        self.Session = sessionmaker(bind=engine)
+        """Initialize with a SQLAlchemy engine or database URL.
+
+        Args:
+            engine: SQLAlchemy Engine instance, or a database connection URL string.
+        """
+        if isinstance(engine, Engine):
+            self.engine = engine
+        else:
+            self.engine = create_engine(engine)
+        self.Session = sessionmaker(bind=self.engine)
         # Ensure all tables for this module are created
-        Base.metadata.create_all(engine)
+        Base.metadata.create_all(self.engine)
+
+    def get_engine(self):
+        """Return the SQLAlchemy engine instance."""
+        return self.engine
 
     def _to_data(self, model: ApiKeyModel) -> ApiKeyData:
         """Convert SQLAlchemy model to data class."""
@@ -170,8 +183,14 @@ class ApiKeySQLAlchemy(ApiKeyStorageBase):
                 })
             return result
 
-    def list_api_keys_with_details(self) -> list:
+    def list_api_keys_with_details(self, offset: int = 0, limit: int = 1000, sort_key: str = "create_time", order_by: str = "desc") -> list:
         """List all API keys with their bound session IDs and environment variables.
+
+        Args:
+            offset: Number of records to skip.
+            limit: Maximum number of records to return.
+            sort_key: Field to sort by, default is create_time.
+            order_by: Sort order, 'asc' or 'desc', default is desc.
 
         Returns:
             list: List of dicts, each containing:
@@ -180,9 +199,14 @@ class ApiKeySQLAlchemy(ApiKeyStorageBase):
                 - "environs": list of ApiKeyEnvironData instances
         """
         with self.Session() as session:
-            api_keys = session.query(ApiKeyModel).order_by(
-                ApiKeyModel.create_time.desc()
-            ).all()
+            query = session.query(ApiKeyModel)
+            sort_column = getattr(ApiKeyModel, sort_key, ApiKeyModel.create_time)
+            if order_by == "desc":
+                query = query.order_by(desc(sort_column))
+            else:
+                query = query.order_by(asc(sort_column))
+            query = query.offset(offset).limit(limit)
+            api_keys = query.all()
             result = []
             for key_model in api_keys:
                 # Get bound sessions for this API key
@@ -226,8 +250,15 @@ class ApiKeySQLAlchemy(ApiKeyStorageBase):
                 "environs": environs
             }
 
-    def list_api_keys_by_session_id(self, session_id: str) -> list:
+    def list_api_keys_by_session_id(self, session_id: str, offset: int = 0, limit: int = 1000, sort_key: str = "create_time", order_by: str = "desc") -> list:
         """List all API keys bound to a specific session.
+
+        Args:
+            session_id: The session ID to filter by.
+            offset: Number of records to skip.
+            limit: Maximum number of records to return.
+            sort_key: Field to sort by, default is create_time.
+            order_by: Sort order, 'asc' or 'desc', default is desc.
 
         Returns:
             list: Same format as list_api_keys_with_details().
@@ -239,13 +270,23 @@ class ApiKeySQLAlchemy(ApiKeyStorageBase):
             api_key_ids = [b.api_key_id for b in bindings]
             if not api_key_ids:
                 return []
+            # Apply pagination and sorting to the API key query
+            query = session.query(ApiKeyModel).filter(
+                ApiKeyModel.api_key_id.in_(api_key_ids)
+            )
+            sort_column = getattr(ApiKeyModel, sort_key, ApiKeyModel.create_time)
+            if order_by == "desc":
+                query = query.order_by(desc(sort_column))
+            else:
+                query = query.order_by(asc(sort_column))
+            query = query.offset(offset).limit(limit)
+            api_keys = query.all()
             result = []
-            for key_id in api_key_ids:
-                details = self.get_api_key_with_details(key_id)
+            for key_model in api_keys:
+                details = self.get_api_key_with_details(key_model.api_key_id)
                 if details:
                     result.append(details)
             return result
-
 
     def delete_api_key(self, api_key_id: str) -> bool:
         """Delete an API key and its related data. Returns True on success, False if not found."""

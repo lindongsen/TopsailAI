@@ -42,18 +42,19 @@ _worker_manager = None
 
 
 def set_dependencies(session_storage, message_storage, worker_manager):
-    """Set dependencies for the routes (called by app.py)"""
+    """Set global dependencies (called by app.py)."""
     global _session_storage, _message_storage, _worker_manager
     _session_storage = session_storage
     _message_storage = message_storage
     _worker_manager = worker_manager
 
 
-def get_storage() -> Storage:
+def get_storage():
     """Get Storage instance"""
     if _session_storage is None:
         raise RuntimeError("Storage not initialized")
-    # Get engine from session_storage
+    if isinstance(_session_storage, Storage):
+        return _session_storage
     return Storage(_session_storage.engine)
 
 
@@ -63,8 +64,6 @@ def get_worker_manager() -> WorkerManager:
         raise RuntimeError("WorkerManager not initialized")
     return _worker_manager
 
-
-# Request/Response Models
 class ReceiveMessageRequest(BaseModel):
     """Request model for receiving a message"""
     message: str

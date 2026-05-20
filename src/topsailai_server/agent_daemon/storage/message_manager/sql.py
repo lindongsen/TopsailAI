@@ -7,11 +7,11 @@
 
 from datetime import datetime
 from typing import Optional, List, Dict
-from sqlalchemy import Column, String, Text, DateTime, Index, inspect, asc
+from sqlalchemy import create_engine, Column, String, Text, DateTime, Index, inspect, asc
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session as SQLSession
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import desc
-
 from topsailai.utils import (
     env_tool,
 )
@@ -51,8 +51,16 @@ class MessageSQLAlchemy(MessageStorageBase):
     """SQLAlchemy implementation of Message storage"""
 
     def __init__(self, engine):
-        self.engine = engine
-        Base.metadata.create_all(engine)
+        """Initialize with a SQLAlchemy engine or database URL.
+
+        Args:
+            engine: SQLAlchemy Engine instance, or a database connection URL string.
+        """
+        if isinstance(engine, Engine):
+            self.engine = engine
+        else:
+            self.engine = create_engine(engine)
+        Base.metadata.create_all(self.engine)
 
     def get_engine(self):
         """Get the SQLAlchemy engine"""
@@ -356,6 +364,60 @@ class MessageSQLAlchemy(MessageStorageBase):
             limit=limit,
             processed_msg_id=processed_msg_id
         )
+
+    def list_messages(
+        self,
+        session_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        sort_key: str = "create_time",
+        order_by: str = "desc",
+        offset: int = 0,
+        limit: int = 1000
+    ) -> List[MessageData]:
+        """
+        Retrieve messages with optional filtering, sorting, and pagination.
+
+        This method supports querying across all sessions (when session_id is None)
+        or filtering by a specific session. It is used by cron jobs such as
+        message_consumer and message_summarizer.
+
+        Args:
+            session_id (str, optional): Filter by specific session identifier.
+                                        If None, queries across all sessions.
+            start_time (datetime, optional): Filter messages created after this time.
+            end_time (datetime, optional): Filter messages created before this time.
+            sort_key (str): Field to sort by, default is create_time.
+            order_by (str): Sort order, 'asc' or 'desc', default is desc.
+            offset (int): Number of records to skip.
+            limit (int): Maximum number of records to return.
+
+        Returns:
+            List[MessageData]: List of message data objects matching the criteria.
+        """
+        with SQLSession(self.engine) as db:
+            query = db.query(Message)
+
+            # Filter by session_id if provided
+            if session_id:
+                query = query.filter(Message.session_id == session_id)
+
+            # Apply time filters
+            if start_time:
+                query = query.filter(Message.create_time >= start_time)
+            if end_time:
+                query = query.filter(Message.create_time <= end_time)
+
+            # Apply sorting
+            sort_column = getattr(Message, sort_key, Message.create_time)
+            if order_by == "asc":
+                query = query.order_by(asc(sort_column))
+            else:
+                query = query.order_by(desc(sort_column))
+
+            # Apply pagination
+            messages = query.offset(offset).limit(limit).all()
+            return [self._to_data(m) for m in messages]
 
     def add_message(self, msg: MessageData):
         """Add a message to the storage if it doesn't exist"""

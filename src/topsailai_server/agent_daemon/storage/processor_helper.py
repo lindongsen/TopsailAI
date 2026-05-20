@@ -1,68 +1,85 @@
-'''
-  Author: mm-m25
-  Created: 2026-04-15
-  Purpose: Shared processor helper - message formatting and processing logic
-'''
+"""Shared processor helper - message formatting and processing logic."""
 
 import threading
-from typing import Optional, List
+from typing import Optional
 from topsailai_server.agent_daemon import logger
 from topsailai_server.agent_daemon.storage import Storage
+from topsailai.utils import env_tool
+
+
+def _get_included_roles() -> set:
+    """Get the set of roles to include in unprocessed messages.
+
+    Reads from TOPSAILAI_AGENT_DAEMON_UNPROCESSED_MSG_INCLUDED_ROLES env var.
+    If not set, defaults to ['user'].
+
+    Returns:
+        Set of role strings to include.
+    """
+    default_roles = {"user"}
+    env_roles = env_tool.EnvReaderInstance.get_list_str(
+        "TOPSAILAI_AGENT_DAEMON_UNPROCESSED_MSG_INCLUDED_ROLES",
+        separator=None,
+    )
+    if env_roles:
+        return set(env_roles)
+    return default_roles
 
 
 def format_pending_messages(unprocessed_messages: list) -> str:
     """
-    Format unprocessed messages into the "待处理消息" (pending messages) format.
-    
+    Format unprocessed messages into the "pending messages" format.
+
     The format is markdown with "---" separators:
     ---
-    msg1内容
+    msg1 content
     ---
-    msg2内容
-    >>> task_id: msg2的task_id
-    >>> task_result: msg2的task_result
+    msg2 content
+    >>> task_id: msg2's task_id
+    >>> task_result: msg2's task_result
     ---
-    
+
     Rules:
     - Each message is wrapped between "---" separators
     - The content starts and ends with "---"
     - task_id and task_result are only included when they have values
-    - Assistant messages WITHOUT task_id are EXCLUDED
-    - Assistant messages WITH task_id are INCLUDED
-    - User messages are always INCLUDED
+    - Messages with roles not in the included roles set are excluded,
+      unless they have task_id (task results are always included)
     - If all messages are filtered out, returns empty string
-    
+
     Args:
         unprocessed_messages: List of MessageData objects to format
-        
+
     Returns:
         str: Formatted pending messages string, or empty string if no valid messages
     """
+    included_roles = _get_included_roles()
     parts = []
-    
+
     for msg in unprocessed_messages:
-        # Skip assistant messages without task_id (they are responses, not user input)
-        if msg.role == "assistant" and not msg.task_id:
+        # Skip messages with roles not in the included set, unless they have task_id
+        # (task results from assistant are always included)
+        if msg.role not in included_roles and not msg.task_id:
             continue
-        
+
         msg_parts = []
         msg_parts.append(msg.message)
-        
-        # Include task_id if present (only for assistant messages with tasks)
+
+        # Include task_id if present
         if msg.task_id:
             msg_parts.append(">>> task_id: %s" % msg.task_id)
-        
+
         # Include task_result if present
         if msg.task_result:
             msg_parts.append(">>> task_result: %s" % msg.task_result)
-        
+
         parts.append("\n".join(msg_parts))
-    
+
     # Handle edge case: all messages were filtered out
     if not parts:
         logger.debug("All unprocessed messages were filtered out (no valid content)")
         return ""
-    
+
     return "---\n" + "\n---\n".join(parts) + "\n---"
 
 
@@ -74,7 +91,7 @@ def _async_processor_worker(
 ):
     """
     Background worker to run the processor asynchronously.
-    
+
     Args:
         session_id: The session ID
         msg_id: The message ID being processed
@@ -104,20 +121,21 @@ def check_and_process_messages(
 ) -> Optional[dict]:
     """
     Check if there are unprocessed messages and start processor if needed.
-    
+
     Flow per spec:
     1. If processed_msg_id is the latest message -> log and return None
-    2. If all messages from processed_msg_id to latest are role=assistant -> log and return None (avoid infinite loop)
+    2. If all messages from processed_msg_id to latest are role=assistant
+       -> log and return None (avoid infinite loop)
     3. Run TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER -> if processing, return None
     4. Format the pending messages and start the processor
     5. Return the processing info dict
-    
+
     Args:
         session_id: The session ID to check
         storage: Storage instance for database operations
         worker_manager: WorkerManager instance for process management
         async_mode: If True, run processor in background thread (default: True)
-        
+
     Returns:
         dict with processing info, or None if no processing needed
     """
@@ -139,24 +157,27 @@ def check_and_process_messages(
             logger.debug("Session %s is up to date", session_id)
             return None
 
-        # Get unprocessed messages (include assistant messages for filtering at formatting level)
-        # We must include assistant messages because they may have task_id/task_result
-        # that need to be included in the pending messages
-        unprocessed = storage.message.get_unprocessed_messages(
+        # Get ALL unprocessed messages without role filtering first
+        # This is needed for the infinite-loop guard check (Step 2)
+        all_unprocessed = storage.message.get_unprocessed_messages(
             session_id, session.processed_msg_id, to_include_role_assistant=True
         )
-        if not unprocessed:
+        if not all_unprocessed:
             logger.debug("No unprocessed messages for session: %s", session_id)
             return None
 
         # Step 2: Check if ALL unprocessed messages are assistant without task_id
-        # (avoid infinite loop - no user input to process)
-        all_filtered_out = all(
-            msg.role == "assistant" and not msg.task_id 
-            for msg in unprocessed
+        # This check must happen BEFORE role filtering to properly detect infinite loops
+        all_assistant_no_task = all(
+            msg.role == "assistant" and not msg.task_id
+            for msg in all_unprocessed
         )
-        if all_filtered_out:
-            logger.info("All unprocessed messages are assistant without task_id, skipping session %s to avoid infinite loop", session_id)
+        if all_assistant_no_task:
+            logger.info(
+                "All unprocessed messages are assistant without task_id, "
+                "skipping session %s to avoid infinite loop",
+                session_id
+            )
             return None
 
         # Step 3: Check if session is idle
@@ -164,13 +185,19 @@ def check_and_process_messages(
             logger.info("Session %s is processing, skipping", session_id)
             return None
 
-        # Step 4: Format pending messages
-        task = format_pending_messages(unprocessed)
+        # Step 4: Format pending messages (applies role filtering from env var)
+        task = format_pending_messages(all_unprocessed)
         if not task:
-            logger.info("No pending messages to process after formatting for session: %s", session_id)
+            logger.info(
+                "No pending messages to process after formatting for session: %s",
+                session_id
+            )
             return None
 
-        logger.info("Starting processor for session: %s, msg_id: %s", session_id, latest_message.msg_id)
+        logger.info(
+            "Starting processor for session: %s, msg_id: %s",
+            session_id, latest_message.msg_id
+        )
 
         # Build response info
         response_info = {
@@ -187,7 +214,7 @@ def check_and_process_messages(
                     "task_id": msg.task_id,
                     "task_result": msg.task_result
                 }
-                for msg in unprocessed
+                for msg in all_unprocessed
             ],
             "processor_pid": None
         }
@@ -200,7 +227,10 @@ def check_and_process_messages(
                 daemon=True
             )
             thread.start()
-            logger.info("Processor started in background thread for session: %s", session_id)
+            logger.info(
+                "Processor started in background thread for session: %s",
+                session_id
+            )
             # Return immediately with processing info
             return response_info
         else:
@@ -211,7 +241,10 @@ def check_and_process_messages(
                 task=task
             )
             if success:
-                response_info["processor_pid"] = worker_manager.running_processes.get(session_id).pid if session_id in worker_manager.running_processes else None
+                response_info["processor_pid"] = (
+                    worker_manager.running_processes.get(session_id).pid
+                    if session_id in worker_manager.running_processes else None
+                )
                 return response_info
             return None
 

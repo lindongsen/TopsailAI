@@ -7,7 +7,7 @@
 
 from typing import Optional, List
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from topsailai_server.agent_daemon import logger
@@ -46,6 +46,8 @@ def get_storage() -> Storage:
     """Get Storage instance"""
     if _session_storage is None:
         raise RuntimeError("Storage not initialized")
+    if isinstance(_session_storage, Storage):
+        return _session_storage
     return Storage(_session_storage.engine)
 
 
@@ -154,6 +156,7 @@ async def get_session(
 
 @router.get("", response_model=ApiResponse)
 async def list_sessions(
+    request: Request,
     session_ids: Optional[str] = None,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
@@ -162,15 +165,21 @@ async def list_sessions(
     sort_key: str = "create_time",
     order_by: str = "desc",
     storage: Storage = Depends(get_storage),
+    worker_manager: WorkerManager = Depends(get_worker_manager),
     api_key: ApiKeyData = Depends(get_current_api_key)
 ) -> ApiResponse:
     """
     List sessions with optional filtering and pagination.
 
+    If the X-Session-Id header is provided (and no session_ids query param),
+    returns a single session detail with status (same as GetSession).
+    Otherwise, returns a list of sessions.
+
     For user role API keys, only sessions bound to the key are returned.
     Admin keys can list all sessions.
 
     Args:
+        request: FastAPI request object (for reading X-Session-Id header)
         session_ids: Comma-separated list of session IDs to filter
         start_time: Start time filter (ISO format string)
         end_time: End time filter (ISO format string)
@@ -180,6 +189,47 @@ async def list_sessions(
         order_by: Sort order (asc or desc, default: desc)
     """
     try:
+        # Check X-Session-Id header for single session retrieval
+        header_session_id = request.headers.get("x-session-id")
+        if header_session_id and not session_ids:
+            session_id = header_session_id.strip()
+            logger.debug("X-Session-Id header provided: %s", session_id)
+
+            # Validate session_id format
+            try:
+                validate_session_id(session_id)
+            except ValueError as e:
+                logger.warning("Invalid session_id format from header: %s, error: %s", session_id, e)
+                return error_response(message="Invalid session_id format: %s" % e)
+
+            # Check permission for the session
+            verify_session_permission(api_key, session_id)
+
+            # Get session from storage
+            session = storage.session.get(session_id)
+
+            if not session:
+                logger.debug("Session not found: %s", session_id)
+                return error_response(message="Session not found", code=404)
+
+            # Get session status using the session state checker
+            status = worker_manager.check_session_state(session_id)
+            logger.debug("Session %s status: %s", session_id, status)
+
+            # Build response data
+            session_data = SessionDetailResponse(
+                session_id=session.session_id,
+                session_name=session.session_name,
+                task=session.task,
+                create_time=session.create_time,
+                update_time=session.update_time,
+                processed_msg_id=session.processed_msg_id,
+                status=status
+            )
+
+            logger.debug("Retrieved session via X-Session-Id header: %s", session_id)
+            return success_response(data=session_data.model_dump())
+
         # Parse datetime strings if provided
         start_dt = None
         end_dt = None
