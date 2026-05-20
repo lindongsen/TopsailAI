@@ -23,7 +23,8 @@ def do_client_send_message(args):
     """Send a message to a session"""
     client = MessageClient(
         base_url=f"http://{args.host}:{args.port}",
-        api_key=getattr(args, 'api_key', None)
+        api_key=getattr(args, 'api_key', None),
+        auth_header_style=getattr(args, 'auth_style', 'x-api-key')
     )
     
     try:
@@ -46,7 +47,8 @@ def do_client_get_messages(args):
     """Retrieve messages from a session"""
     client = MessageClient(
         base_url=f"http://{args.host}:{args.port}",
-        api_key=getattr(args, 'api_key', None)
+        api_key=getattr(args, 'api_key', None),
+        auth_header_style=getattr(args, 'auth_style', 'x-api-key')
     )
     
     try:

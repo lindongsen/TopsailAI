@@ -580,7 +580,7 @@ class TestCLIEdgeCases:
         result = do_client_health(args)
         
         assert result is True
-        mock_client_class.assert_called_once_with(base_url='http://192.168.1.100:8080', api_key=None)
+        mock_client_class.assert_called_once_with(base_url='http://192.168.1.100:8080', api_key=None, auth_header_style='x-api-key')    
     
     @patch('topsailai_server.agent_daemon.client.session_do.SessionClient')
     def test_list_sessions_empty_session_ids(self, mock_client_class):

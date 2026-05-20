@@ -42,7 +42,9 @@
 # =============================================================================
 
 # Enable or disable API key authentication.
-# When enabled, all endpoints require X-API-Key header.
+# When enabled, all endpoints require authentication via one of the following:
+#   - X-API-Key header: X-API-Key: <api_key_value>
+#   - Authorization header: Authorization: Bearer <api_key_value>
 # When disabled, no authentication is required.
 # Default: false
 # TOPSAILAI_AGENT_DAEMON_API_KEY_ENABLED=false
@@ -64,6 +66,14 @@
 # API key for client authentication (used by topsailai_agent_client, terminal, etc.)
 # Required when API_KEY_ENABLED is true.
 # TOPSAILAI_AGENT_DAEMON_API_KEY=
+
+# Authentication header style for clients.
+# Supported values: "x-api-key" (default) or "bearer".
+# When set to "x-api-key", the client sends the API key via the X-API-Key header.
+# When set to "bearer", the client sends the API key via the Authorization header
+# in the format "Bearer <api_key_value>".
+# Default: x-api-key
+# TOPSAILAI_AGENT_DAEMON_AUTH_STYLE=x-api-key
 
 # =============================================================================
 # Advanced Configuration

@@ -23,7 +23,8 @@ def do_client_create_api_key(args):
     """Create a new API key"""
     client = ApiKeyClient(
         base_url=f"http://{args.host}:{args.port}",
-        api_key=getattr(args, 'api_key', None)
+        api_key=getattr(args, 'api_key', None),
+        auth_header_style=getattr(args, 'auth_style', 'x-api-key')
     )
 
     try:
@@ -54,7 +55,8 @@ def do_client_list_api_keys(args):
     """List API keys"""
     client = ApiKeyClient(
         base_url=f"http://{args.host}:{args.port}",
-        api_key=getattr(args, 'api_key', None)
+        api_key=getattr(args, 'api_key', None),
+        auth_header_style=getattr(args, 'auth_style', 'x-api-key')
     )
 
     try:
@@ -74,7 +76,8 @@ def do_client_delete_api_key(args):
     """Delete an API key"""
     client = ApiKeyClient(
         base_url=f"http://{args.host}:{args.port}",
-        api_key=getattr(args, 'api_key', None)
+        api_key=getattr(args, 'api_key', None),
+        auth_header_style=getattr(args, 'auth_style', 'x-api-key')
     )
 
     try:
@@ -94,7 +97,8 @@ def do_client_bind_sessions(args):
     """Bind sessions to an API key"""
     client = ApiKeyClient(
         base_url=f"http://{args.host}:{args.port}",
-        api_key=getattr(args, 'api_key', None)
+        api_key=getattr(args, 'api_key', None),
+        auth_header_style=getattr(args, 'auth_style', 'x-api-key')
     )
 
     session_ids = [s.strip() for s in args.session_ids.split(',') if s.strip()]
@@ -123,7 +127,8 @@ def do_client_unbind_sessions(args):
     """Unbind sessions from an API key"""
     client = ApiKeyClient(
         base_url=f"http://{args.host}:{args.port}",
-        api_key=getattr(args, 'api_key', None)
+        api_key=getattr(args, 'api_key', None),
+        auth_header_style=getattr(args, 'auth_style', 'x-api-key')
     )
 
     session_ids = [s.strip() for s in args.session_ids.split(',') if s.strip()]
@@ -152,7 +157,8 @@ def do_client_set_api_key_environ(args):
     """Set an environment variable for an API key"""
     client = ApiKeyClient(
         base_url=f"http://{args.host}:{args.port}",
-        api_key=getattr(args, 'api_key', None)
+        api_key=getattr(args, 'api_key', None),
+        auth_header_style=getattr(args, 'auth_style', 'x-api-key')
     )
 
     try:
@@ -177,7 +183,8 @@ def do_client_list_api_key_environs(args):
     """List environment variables for an API key"""
     client = ApiKeyClient(
         base_url=f"http://{args.host}:{args.port}",
-        api_key=getattr(args, 'api_key', None)
+        api_key=getattr(args, 'api_key', None),
+        auth_header_style=getattr(args, 'auth_style', 'x-api-key')
     )
 
     try:
@@ -197,7 +204,8 @@ def do_client_delete_api_key_environ(args):
     """Delete an environment variable for an API key"""
     client = ApiKeyClient(
         base_url=f"http://{args.host}:{args.port}",
-        api_key=getattr(args, 'api_key', None)
+        api_key=getattr(args, 'api_key', None),
+        auth_header_style=getattr(args, 'auth_style', 'x-api-key')
     )
 
     try:

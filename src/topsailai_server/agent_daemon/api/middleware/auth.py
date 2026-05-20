@@ -35,14 +35,48 @@ def set_dependencies(api_key_storage):
     _api_key_storage = api_key_storage
 
 
-async def get_current_api_key(
-    x_api_key: Optional[str] = Header(None, alias="X-API-Key")
-) -> ApiKeyData:
+def _extract_api_key_from_request(request: Request) -> Optional[str]:
     """
-    Validate the X-API-Key header and return the corresponding ApiKeyData.
+    Extract the API key value from the request headers.
+
+    Supports two authentication methods:
+    1. X-API-Key header (takes precedence)
+    2. Authorization: Bearer <token> header
 
     Args:
-        x_api_key: The API key value from the X-API-Key header.
+        request: The incoming HTTP request.
+
+    Returns:
+        The API key value if found, otherwise None.
+    """
+    # First, check X-API-Key header (takes precedence)
+    api_key_value = request.headers.get("X-API-Key")
+    if api_key_value:
+        return api_key_value
+
+    # Fallback: check Authorization header for Bearer token
+    auth_header = request.headers.get("Authorization")
+    if auth_header:
+        parts = auth_header.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            bearer_token = parts[1]
+            if bearer_token:
+                return bearer_token
+
+    return None
+
+
+async def get_current_api_key(
+    request: Request,
+) -> ApiKeyData:
+    """
+    Validate the API key from request headers and return the corresponding ApiKeyData.
+
+    Supports both X-API-Key and Authorization: Bearer <token> headers.
+    X-API-Key takes precedence over Authorization: Bearer.
+
+    Args:
+        request: The incoming HTTP request.
 
     Returns:
         ApiKeyData: The validated API key data.
@@ -54,17 +88,18 @@ async def get_current_api_key(
         logger.debug("API key authentication is disabled, returning dummy key")
         return DUMMY_API_KEY
 
-    if not x_api_key:
-        logger.warning("API request missing X-API-Key header")
+    api_key_value = _extract_api_key_from_request(request)
+    if not api_key_value:
+        logger.warning("API request missing API key (X-API-Key or Authorization: Bearer)")
         raise HTTPException(status_code=401, detail="Missing API key")
 
     if _api_key_storage is None:
         logger.error("API key storage not initialized", stack_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
-    api_key_data = _api_key_storage.get_api_key_by_value(x_api_key)
+    api_key_data = _api_key_storage.get_api_key_by_value(api_key_value)
     if not api_key_data:
-        logger.warning("Invalid or inactive API key: %s", x_api_key[:8])
+        logger.warning("Invalid or inactive API key: %s", api_key_value[:8])
         raise HTTPException(status_code=401, detail="Invalid or inactive API key")
 
     logger.debug("Authenticated API key: %s", api_key_data.api_key_id)

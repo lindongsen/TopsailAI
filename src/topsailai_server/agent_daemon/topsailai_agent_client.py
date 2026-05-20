@@ -39,6 +39,7 @@ from topsailai_server.agent_daemon.client import (
 DEFAULT_HOST = os.environ.get("TOPSAILAI_AGENT_DAEMON_HOST", "localhost")
 DEFAULT_PORT = int(os.environ.get("TOPSAILAI_AGENT_DAEMON_PORT", "7373"))
 DEFAULT_API_KEY = os.environ.get("TOPSAILAI_AGENT_DAEMON_API_KEY", None)
+DEFAULT_AUTH_STYLE = os.environ.get("TOPSAILAI_AGENT_DAEMON_AUTH_STYLE", "x-api-key")
 
 
 def cli():
@@ -64,6 +65,13 @@ def cli():
         type=str,
         default=DEFAULT_API_KEY,
         help='API key for authentication (optional, env: TOPSAILAI_AGENT_DAEMON_API_KEY)'
+    )
+    parser.add_argument(
+        '--auth-style',
+        type=str,
+        default=DEFAULT_AUTH_STYLE,
+        choices=['x-api-key', 'bearer'],
+        help='Authentication header style (default: x-api-key, env: TOPSAILAI_AGENT_DAEMON_AUTH_STYLE)'
     )
     parser.add_argument(
         '-v', '--verbose',

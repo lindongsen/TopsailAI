@@ -30,13 +30,29 @@ The Agent Daemon API provides RESTful endpoints for managing sessions, messages,
 
 ## Authentication
 
-### API Key Header
+When `TOPSAILAI_AGENT_DAEMON_API_KEY_ENABLED=true`, all protected endpoints require authentication via one of the following methods.
 
-When `TOPSAILAI_AGENT_DAEMON_API_KEY_ENABLED=true`, all protected endpoints require the `X-API-Key` header:
+### Method 1: X-API-Key Header
+
+The `X-API-Key` header is the primary authentication method and takes precedence over the `Authorization` header:
 
 ```
 X-API-Key: <api_key_value>
 ```
+
+### Method 2: Authorization Bearer Token
+
+As an alternative, you can provide the API key via the `Authorization` header using the Bearer scheme:
+
+```
+Authorization: Bearer <api_key_value>
+```
+
+The Bearer scheme is case-insensitive (`Bearer`, `bearer`, and `BEARER` are all accepted).
+
+### Authentication Precedence
+
+If both headers are present, `X-API-Key` takes precedence. The `Authorization` header is only evaluated when `X-API-Key` is absent.
 
 ### Authentication Errors
 
@@ -824,10 +840,6 @@ Delete an environment variable for an API key.
 | `sessions` | list[str] | Bound session IDs (included in list response) |
 | `environs` | list[dict] | Environment variables (included in list response) |
 
-### API Key Environment Variable
-
-| Field | Type | Description |
-|-------|------|-------------|
 | `api_key_id` | str | Parent API key identifier |
 | `key` | str | Environment variable name |
 | `value` | str | Environment variable value |
@@ -849,10 +861,51 @@ The following environment variables control API behavior:
 | `TOPSAILAI_AGENT_DAEMON_SESSION_STATE_CHECKER` | (required) | Session state checker script path |
 | `TOPSAILAI_AGENT_DAEMON_API_KEY_ENABLED` | `false` | Enable API key authentication |
 | `TOPSAILAI_AGENT_DAEMON_DEFAULT_ADMIN_KEY` | (generated) | Pre-configured default admin API key |
+| `TOPSAILAI_AGENT_DAEMON_AUTH_STYLE` | `x-api-key` | Client authentication header style: `x-api-key` or `bearer` |
 | `TOPSAILAI_AGENT_DAEMON_BASE_URL` | `http://127.0.0.1:7373` | Client base URL |
 | `TOPSAILAI_AGENT_DAEMON_API_KEY` | (none) | Client API key |
 | `TOPSAILAI_AGENT_DAEMON_UNPROCESSED_MSG_INCLUDED_ROLES` | `user` | Roles included in unprocessed messages |
 
+
+## Client Authentication
+
+The Python client (`topsailai_agent_client.py`), terminal client (`topsailai_agent_terminal.py`), and Go client (`client_go/topsailai_send_message.go`) support selecting the authentication header style.
+
+### Python Client
+
+Use the `--auth-style` argument to choose the header style:
+
+```bash
+# Use X-API-Key header (default)
+python topsailai_agent_client.py --auth-style x-api-key --api-key YOUR_KEY session list
+
+# Use Authorization Bearer header
+python topsailai_agent_client.py --auth-style bearer --api-key YOUR_KEY session list
+```
+
+The default style can also be set via the `TOPSAILAI_AGENT_DAEMON_AUTH_STYLE` environment variable.
+
+### Terminal Client
+
+```bash
+# Use X-API-Key header (default)
+python topsailai_agent_terminal.py --auth-style x-api-key --api-key YOUR_KEY
+
+# Use Authorization Bearer header
+python topsailai_agent_terminal.py --auth-style bearer --api-key YOUR_KEY
+```
+
+### Go Client
+
+```bash
+# Use X-API-Key header (default)
+go run client_go/topsailai_send_message.go -auth-style x-api-key -api-key YOUR_KEY
+
+# Use Authorization Bearer header
+go run client_go/topsailai_send_message.go -auth-style bearer -api-key YOUR_KEY
+```
+
+The default style can also be set via the `TOPSAILAI_AGENT_DAEMON_AUTH_STYLE` environment variable.
 ---
 
 ## Error Codes Summary

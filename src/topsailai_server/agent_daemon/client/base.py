@@ -8,6 +8,7 @@ Features:
     - HTTP request handling with proper error management
     - API response parsing and validation
     - Common utilities for time formatting and display
+    - Support for both X-API-Key and Authorization: Bearer authentication
 """
 
 import os
@@ -42,12 +43,14 @@ class BaseClient:
         base_url: The base URL of the agent_daemon API server.
         timeout: Default timeout for HTTP requests in seconds.
         api_key: Optional API key for authentication.
+        auth_header_style: Authentication header style, either "x-api-key" or "bearer".
     """
     def __init__(
         self,
         base_url: Optional[str] = None,
         timeout: int = 10,
-        api_key: Optional[str] = None
+        api_key: Optional[str] = None,
+        auth_header_style: str = "x-api-key"
     ):
         """Initialize the BaseClient.
         Args:
@@ -57,7 +60,10 @@ class BaseClient:
             timeout: Default timeout for HTTP requests in seconds.
                     Defaults to 10 seconds.
             api_key: Optional API key for authentication.
-                    If provided, included in X-API-Key header.
+                    If provided, included in the authentication header.
+            auth_header_style: Authentication header style.
+                    "x-api-key" (default) sends X-API-Key header.
+                    "bearer" sends Authorization: Bearer header.
         """
         if base_url is None:
             host = os.environ.get("TOPSAILAI_AGENT_DAEMON_HOST", "127.0.0.1")
@@ -66,6 +72,7 @@ class BaseClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.api_key = api_key
+        self.auth_header_style = auth_header_style
 
     @staticmethod
     def format_time(time_str: Optional[str]) -> str:
@@ -141,10 +148,13 @@ class BaseClient:
 
         try:
             logger.info("Request: %s %s", method, url)
-            # Build headers, include X-API-Key if provided
+            # Build headers, include authentication if provided
             headers = {}
             if self.api_key:
-                headers["X-API-Key"] = self.api_key
+                if self.auth_header_style == "bearer":
+                    headers["Authorization"] = f"Bearer {self.api_key}"
+                else:
+                    headers["X-API-Key"] = self.api_key
             response = requests.request(
                 method=method.upper(),
                 url=url,

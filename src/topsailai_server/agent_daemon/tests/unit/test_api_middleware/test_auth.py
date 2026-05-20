@@ -662,3 +662,196 @@ class TestAuthEdgeCases:
         # Empty string is falsy, so check is skipped
         assert response.status_code == 200
         self.mock_storage.is_session_bound.assert_not_called()
+
+
+class TestBearerTokenAuth:
+    """Tests for Bearer Token authentication via Authorization header."""
+
+    @pytest.fixture
+    def client(self):
+        """Create a test client with mocked storage."""
+        self.mock_storage = MagicMock()
+        self.admin_key = MagicMock()
+        self.admin_key.api_key_id = "admin-001"
+        self.admin_key.api_key = "admin-secret-key"
+        self.admin_key.name = "Admin Key"
+        self.admin_key.role = "admin"
+        self.admin_key.rate_limit = 0
+        self.admin_key.is_active = True
+
+        app = _create_test_app(self.mock_storage)
+        yield TestClient(app)
+
+    def test_bearer_token_success(self, client):
+        """Test valid Bearer token returns key data."""
+        self.mock_storage.get_api_key_by_value.return_value = self.admin_key
+
+        response = client.get(
+            "/test-auth",
+            headers={"Authorization": "Bearer admin-secret-key"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["api_key_id"] == "admin-001"
+        assert data["role"] == "admin"
+
+    def test_bearer_token_lowercase_bearer(self, client):
+        """Test lowercase 'bearer' scheme is accepted."""
+        self.mock_storage.get_api_key_by_value.return_value = self.admin_key
+
+        response = client.get(
+            "/test-auth",
+            headers={"Authorization": "bearer admin-secret-key"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["api_key_id"] == "admin-001"
+
+    def test_bearer_token_uppercase_bearer(self, client):
+        """Test uppercase 'BEARER' scheme is accepted."""
+        self.mock_storage.get_api_key_by_value.return_value = self.admin_key
+
+        response = client.get(
+            "/test-auth",
+            headers={"Authorization": "BEARER admin-secret-key"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["api_key_id"] == "admin-001"
+
+    def test_bearer_token_missing_auth_header(self, client):
+        """Test missing Authorization header returns 401."""
+        response = client.get("/test-auth")
+
+        assert response.status_code == 401
+        assert "Missing API key" in response.json()["detail"]
+
+    def test_bearer_token_empty_bearer_token(self, client):
+        """Test empty Bearer token returns 401."""
+        response = client.get(
+            "/test-auth",
+            headers={"Authorization": "Bearer "},
+        )
+
+        assert response.status_code == 401
+        assert "Missing API key" in response.json()["detail"]
+
+    def test_bearer_token_wrong_scheme(self, client):
+        """Test wrong Authorization scheme (Basic) returns 401."""
+        response = client.get(
+            "/test-auth",
+            headers={"Authorization": "Basic dXNlcjpwYXNz"},
+        )
+
+        assert response.status_code == 401
+        assert "Missing API key" in response.json()["detail"]
+
+    def test_bearer_token_invalid_key(self, client):
+        """Test invalid Bearer token returns 401."""
+        self.mock_storage.get_api_key_by_value.return_value = None
+
+        response = client.get(
+            "/test-auth",
+            headers={"Authorization": "Bearer invalid-key"},
+        )
+
+        assert response.status_code == 401
+        assert "Invalid or inactive API key" in response.json()["detail"]
+
+    def test_x_api_key_takes_precedence_over_bearer(self, client):
+        """Test X-API-Key header takes precedence over Authorization: Bearer."""
+        self.mock_storage.get_api_key_by_value.return_value = self.admin_key
+
+        response = client.get(
+            "/test-auth",
+            headers={
+                "X-API-Key": "admin-secret-key",
+                "Authorization": "Bearer some-other-token",
+            },
+        )
+
+        assert response.status_code == 200
+        # Verify the X-API-Key value was used (get_api_key_by_value called with it)
+        self.mock_storage.get_api_key_by_value.assert_called_once_with("admin-secret-key")
+
+    def test_x_api_key_invalid_bearer_valid_uses_x_api_key(self, client):
+        """Test invalid X-API-Key takes precedence even if Bearer is valid."""
+        self.mock_storage.get_api_key_by_value.return_value = None
+
+        response = client.get(
+            "/test-auth",
+            headers={
+                "X-API-Key": "invalid-key",
+                "Authorization": "Bearer admin-secret-key",
+            },
+        )
+
+        assert response.status_code == 401
+        # Verify the X-API-Key value was checked first
+        self.mock_storage.get_api_key_by_value.assert_called_once_with("invalid-key")
+
+    def test_bearer_token_with_extra_whitespace(self, client):
+        """Test Bearer token with extra whitespace is parsed correctly."""
+        self.mock_storage.get_api_key_by_value.return_value = self.admin_key
+
+        response = client.get(
+            "/test-auth",
+            headers={"Authorization": "Bearer   admin-secret-key"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["api_key_id"] == "admin-001"
+
+    def test_bearer_token_with_rate_limit(self, client):
+        """Test Bearer token works with rate limiting."""
+        self.user_key = MagicMock()
+        self.user_key.api_key_id = "user-001"
+        self.user_key.role = "user"
+        self.user_key.rate_limit = 5
+        self.user_key.is_active = True
+        self.mock_storage.get_api_key_by_value.return_value = self.user_key
+        self.mock_storage.count_rate_limit.return_value = 3
+
+        response = client.post(
+            "/test-rate-limit",
+            headers={"Authorization": "Bearer user-secret-key"},
+            params={"session_id": "session-001"},
+        )
+
+        assert response.status_code == 200
+        self.mock_storage.log_rate_limit.assert_called_once()
+
+    def test_bearer_token_with_session_permission(self, client):
+        """Test Bearer token works with session permission checks."""
+        self.user_key = MagicMock()
+        self.user_key.api_key_id = "user-001"
+        self.user_key.role = "user"
+        self.user_key.rate_limit = 5
+        self.user_key.is_active = True
+        self.mock_storage.get_api_key_by_value.return_value = self.user_key
+        self.mock_storage.is_session_bound.return_value = True
+
+        response = client.get(
+            "/test-permission",
+            headers={"Authorization": "Bearer user-secret-key"},
+            params={"session_id": "bound-session"},
+        )
+
+        assert response.status_code == 200
+        self.mock_storage.is_session_bound.assert_called_once_with("user-001", "bound-session")
+
+    def test_bearer_token_with_admin_check(self, client):
+        """Test Bearer token works with admin role check."""
+        self.mock_storage.get_api_key_by_value.return_value = self.admin_key
+
+        response = client.get(
+            "/test-admin",
+            headers={"Authorization": "Bearer admin-secret-key"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["api_key_id"] == "admin-001"

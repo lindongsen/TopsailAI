@@ -23,6 +23,7 @@ type Config struct {
 	MaxWaitTime  int
 	ResultOnly   bool
 	APIKey       string
+	AuthStyle    string
 	APIKeyID     string
 	EnvironKey   string
 	EnvironValue string
@@ -30,6 +31,18 @@ type Config struct {
 
 func (c *Config) baseURL() string {
 	return fmt.Sprintf("http://%s:%s", c.Host, c.Port)
+}
+
+// setAuthHeader sets the appropriate authentication header on the request
+func (c *Config) setAuthHeader(req *http.Request) {
+	if c.APIKey == "" {
+		return
+	}
+	if strings.ToLower(c.AuthStyle) == "bearer" {
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	} else {
+		req.Header.Set("X-API-Key", c.APIKey)
+	}
 }
 
 // Message represents a message from the API
@@ -86,6 +99,7 @@ func loadConfig() *Config {
 	maxWaitTime := intEnv("MAX_WAIT_TIME", 300)
 	resultOnly := envBool("RESULT_ONLY")
 	apiKey := getEnv("TOPSAILAI_AGENT_DAEMON_API_KEY", "")
+	authStyle := getEnv("TOPSAILAI_AGENT_DAEMON_AUTH_STYLE", "x-api-key")
 
 	flag.StringVar(&cfg.Host, "host", host, "Agent daemon host")
 	flag.StringVar(&cfg.Port, "port", port, "Agent daemon port")
@@ -96,6 +110,7 @@ func loadConfig() *Config {
 	flag.IntVar(&cfg.MaxWaitTime, "max-wait-time", maxWaitTime, "Max wait time in seconds")
 	flag.BoolVar(&cfg.ResultOnly, "result-only", resultOnly, "Only output result")
 	flag.StringVar(&cfg.APIKey, "api-key", apiKey, "API key for authentication (fallback: TOPSAILAI_AGENT_DAEMON_API_KEY env var)")
+	flag.StringVar(&cfg.AuthStyle, "auth-style", authStyle, "Authentication header style: x-api-key or bearer (fallback: TOPSAILAI_AGENT_DAEMON_AUTH_STYLE env var)")
 	flag.StringVar(&cfg.APIKeyID, "api-key-id", "", "API key ID for environ operations")
 	flag.StringVar(&cfg.EnvironKey, "key", "", "Environment variable key")
 	flag.StringVar(&cfg.EnvironValue, "value", "", "Environment variable value")
@@ -145,9 +160,7 @@ func receiveMessage(cfg *Config, processedMsgID string) (string, error) {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if cfg.APIKey != "" {
-		req.Header.Set("X-API-Key", cfg.APIKey)
-	}
+	cfg.setAuthHeader(req)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -201,9 +214,7 @@ func listMessages(cfg *Config, processedMsgID string) ([]Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	if cfg.APIKey != "" {
-		req.Header.Set("X-API-Key", cfg.APIKey)
-	}
+	cfg.setAuthHeader(req)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -258,9 +269,7 @@ func setAPIKeyEnviron(cfg *Config) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if cfg.APIKey != "" {
-		req.Header.Set("X-API-Key", cfg.APIKey)
-	}
+	cfg.setAuthHeader(req)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -309,9 +318,7 @@ func listAPIKeyEnvirons(cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	if cfg.APIKey != "" {
-		req.Header.Set("X-API-Key", cfg.APIKey)
-	}
+	cfg.setAuthHeader(req)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -368,9 +375,7 @@ func deleteAPIKeyEnviron(cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	if cfg.APIKey != "" {
-		req.Header.Set("X-API-Key", cfg.APIKey)
-	}
+	cfg.setAuthHeader(req)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -537,6 +542,7 @@ func printUsage() {
 	fmt.Println("  -host string       Agent daemon host (default \"localhost\")")
 	fmt.Println("  -port string       Agent daemon port (default \"7373\")")
 	fmt.Println("  -api-key string    API key for authentication")
+	fmt.Println("  -auth-style string Authentication header style: x-api-key or bearer (default \"x-api-key\")")
 	fmt.Println()
 	fmt.Println("Use 'topsailai_send_message <command> -h' for command-specific help.")
 }

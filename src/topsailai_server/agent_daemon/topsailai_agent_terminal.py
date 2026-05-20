@@ -29,6 +29,7 @@ DEFAULT_HOST = os.environ.get("TOPSAILAI_AGENT_DAEMON_HOST", "localhost")
 DEFAULT_PORT = int(os.environ.get("TOPSAILAI_AGENT_DAEMON_PORT", "7373"))
 DEFAULT_SESSION_ID = socket.gethostname()
 DEFAULT_API_KEY = os.environ.get("TOPSAILAI_AGENT_DAEMON_API_KEY", None)
+DEFAULT_AUTH_STYLE = os.environ.get("TOPSAILAI_AGENT_DAEMON_AUTH_STYLE", "x-api-key")
 
 # Terminal display constants
 TERM_WIDTH = 80
@@ -80,13 +81,15 @@ def truncate_text(text, max_width):
 class AgentTerminal:
     """Interactive terminal for agent_daemon"""
 
-    def __init__(self, host, port, session_id, refresh_interval=2, limit=DEFAULT_LIMIT, api_key=None):
+    def __init__(self, host, port, session_id, refresh_interval=2, limit=DEFAULT_LIMIT,
+                 api_key=None, auth_header_style="x-api-key"):
         self.host = host
         self.port = port
         self.session_id = session_id
         self.refresh_interval = refresh_interval
         self.limit = limit
         self.api_key = api_key
+        self.auth_header_style = auth_header_style
         self.base_url = f"http://{host}:{port}"
         self.running = True
         self.last_msg_count = 0
@@ -105,8 +108,10 @@ class AgentTerminal:
         self.COLOR_DIM = "\033[2m"
 
     def _get_headers(self):
-        """Return request headers with X-API-Key if api_key is set"""
+        """Return request headers with authentication if api_key is set"""
         if self.api_key:
+            if self.auth_header_style == "bearer":
+                return {"Authorization": f"Bearer {self.api_key}"}
             return {"X-API-Key": self.api_key}
         return None
 
@@ -550,6 +555,13 @@ def main():
         default=DEFAULT_API_KEY,
         help='API key for authentication (default: from TOPSAILAI_AGENT_DAEMON_API_KEY env var)'
     )
+    parser.add_argument(
+        '--auth-style',
+        type=str,
+        default=DEFAULT_AUTH_STYLE,
+        choices=['x-api-key', 'bearer'],
+        help='Authentication header style (default: x-api-key, env: TOPSAILAI_AGENT_DAEMON_AUTH_STYLE)'
+    )
 
     args = parser.parse_args()
 
@@ -560,7 +572,8 @@ def main():
         session_id=args.session_id,
         refresh_interval=args.refresh_interval,
         limit=args.limit,
-        api_key=args.api_key
+        api_key=args.api_key,
+        auth_header_style=args.auth_style
     )
 
     try:

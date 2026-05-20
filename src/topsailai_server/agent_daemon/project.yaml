@@ -33,5 +33,4 @@ workspace_project_structure: |
 
 Notes: |
   - During integration testing, the processor, summarizer, and checker need to use `scripts/test_xxx` or write their own mock scripts.
-  - If there are updates to the code of these projects, the documentation should also be updated:
-    - docs/API.md
+  - If there are updates to the code of these projects, the documentation should also be updated: docs/API.md
