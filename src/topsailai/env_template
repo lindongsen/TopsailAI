@@ -172,6 +172,9 @@ TOPSAILAI_NEED_SYMBOL_FOR_ANSWER=0
 # ONLY RUNTIME: a file path to save answer
 # TOPSAILAI_SAVE_RESULT_TO_FILE=""
 
+# runtime or message
+TOPSAILAI_CONTEXT_SUMMARY_MODE="runtime"
+
 # Prompt for summary, file or content
 TOPSAILAI_SUMMARY_PROMPT=""
 

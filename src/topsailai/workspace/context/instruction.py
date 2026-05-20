@@ -226,7 +226,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         self.ctx_history()
         return
 
-    def ctx_summarize(self, head_offset_to_keep:int=1, need_interactive:int=1):
+    def ctx_summarize(self, head_offset_to_keep:int=1, need_interactive:int=1, to_force:int=0):
         """
         Summarize context messages for the current session.
 
@@ -240,14 +240,16 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
                 to keep from the beginning of the message list
                 before summarization. Defaults to 1.
             need_interactive (int, optional): 1 for interactive mode
+            to_force (int, optional): 1 to force to do summary, default 0
 
         Returns:
             None
         """
         head_offset_to_keep = int(head_offset_to_keep)
         need_interactive = True if int(need_interactive) else False
+        to_force = True if int(to_force) else False
 
-        if not self.ctx_runtime_data.is_need_summarize_for_processed():
+        if not to_force and not self.ctx_runtime_data.is_need_summarize_for_processed():
             print("no need summarize")
             return
 

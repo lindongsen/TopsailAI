@@ -59,7 +59,7 @@ class LLMChat(object):
         self.last_message = ""
         return
 
-    def chat(self, message: str = "", need_print: bool = True) -> str:
+    def chat(self, message: str = "", need_print: bool = True, need_env_message: bool = True) -> str:
         """
         Send a message to the LLM and receive a response.
 
@@ -79,7 +79,8 @@ class LLMChat(object):
         if message:
             self.prompt_ctl.add_user_message(message, need_print=need_print)
 
-        self.prompt_ctl.update_message_for_env()
+        if need_env_message:
+            self.prompt_ctl.update_message_for_env()
 
         answer = self.llm_model.chat(self.prompt_ctl.messages, for_raw=True, for_stream=True)
         if answer:

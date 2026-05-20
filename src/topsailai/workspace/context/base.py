@@ -21,6 +21,7 @@ from topsailai.utils import (
     json_tool,
     env_tool,
     file_tool,
+    print_tool,
 )
 from topsailai.workspace.llm_shell import get_llm_chat
 from topsailai.workspace.context import summary_tool
@@ -183,37 +184,11 @@ class ContextRuntimeBase(object):
     # Summary
     ###############################################################
 
-    def _summarize_messages(
+    def _get_summary_prompt(
             self,
-            messages,
             prompt: str = None,
             extra_prompt: str=None,
-        ):
-        """
-        Summarize messages into a single text using LLM.
-
-        Args:
-            messages: The messages to summarize. Can be a string or list/dict.
-            prompt (str, optional): Custom prompt for summarization. If None, uses
-                default from environment variable.
-
-        Returns:
-            tuple: A tuple containing (llm_chat, answer) where:
-                - llm_chat: The LLM chat instance used for summarization
-                - answer (str): The summarized text response from LLM
-
-        Raises:
-            AssertionError: If messages is null/empty.
-        """
-        # message
-        assert messages, "null of messages"
-        message_title = """
----
-Summarize Messages
----
-"""
-        one_msg = messages if isinstance(messages, str) else json_tool.json_dump(messages)
-
+        ) -> str:
         # prompt
         prompt_content = ""
         if prompt is None:
@@ -237,16 +212,92 @@ Summarize Messages
             if not extra_prompt_content:
                 extra_prompt_content = ""
 
+        return extra_prompt_content + prompt_content
+
+
+    def _summarize_messages(
+            self,
+            messages,
+            prompt: str = None,
+            extra_prompt: str=None,
+        ):
+        """
+        Summarize messages into a single text using LLM.
+
+        Args:
+            messages: The messages to summarize. Can be a string or list/dict.
+            prompt (str, optional): Custom prompt for summarization. If None, uses
+                default from environment variable.
+
+        Returns:
+            tuple: A tuple containing (llm_chat, answer) where:
+                - llm_chat: The LLM chat instance used for summarization
+                - answer (str): The summarized text response from LLM
+
+        Raises:
+            AssertionError: If messages is null/empty.
+        """
+        # switch to summary-runtime mode
+        if env_tool.EnvReaderInstance.get("TOPSAILAI_CONTEXT_SUMMARY_MODE") == "runtime":
+            return self._summarize_runtime_messages(
+                messages, prompt=prompt, extra_prompt=extra_prompt,
+            )
+
+        # message
+        assert messages, "null of messages"
+        message_title = """
+---
+Summarize Messages
+---
+"""
+        one_msg = messages if isinstance(messages, str) else json_tool.json_dump(messages)
+
         llm_chat = get_llm_chat(
             message=message_title + one_msg,
             session_id="",
-            system_prompt=extra_prompt_content + prompt_content,
+            system_prompt=self._get_summary_prompt(prompt=prompt, extra_prompt=extra_prompt),
 
-            need_stdout=False,
+            need_stdout=env_tool.is_interactive_mode(),
             need_input_message=False,
             need_print_session=False,
             need_print_message=False,
         )
-        answer = llm_chat.chat(need_print=False)
+        answer = llm_chat.chat(
+            need_print=env_tool.is_interactive_mode(),
+            need_env_message=False,
+        )
+
+        return (llm_chat, answer)
+
+
+    def _summarize_runtime_messages(
+            self,
+            messages,
+            prompt: str = None,
+            extra_prompt: str=None,
+        ):
+        all_messages = self.ai_agent.messages[:] if self.ai_agent else None
+        if not all_messages or len(all_messages) < 7:
+            all_messages = messages
+        assert all_messages, "null of messages"
+        print_tool.print_debug(f"All of messages: length=[{len(all_messages)}]")
+
+        llm_chat = get_llm_chat(
+            message="NA",
+            session_id="",
+            system_prompt="",
+
+            need_stdout=env_tool.is_interactive_mode(),
+            need_input_message=False,
+            need_print_session=False,
+            need_print_message=False,
+        )
+        llm_chat.prompt_ctl.messages = all_messages
+        TIPS = "\nDONOT CALL ANY TOOLS, DIRECTLY OUTPUT FINAL_ANSWER!"
+        answer = llm_chat.chat(
+            self._get_summary_prompt(prompt=prompt, extra_prompt=extra_prompt) + TIPS,
+            need_print=env_tool.is_interactive_mode(),
+            need_env_message=False,
+        )
 
         return (llm_chat, answer)
