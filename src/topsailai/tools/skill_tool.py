@@ -64,7 +64,7 @@ def call_skill(
         timeout:int=120,
         output_file:str=None,
     ):
-    """Execute a skill script
+    """Can only execute scripts that exist in the skill-folder, cannot execute other command lines!
 
     Args:
         folder_path (str): required, a skill folder.
@@ -214,7 +214,7 @@ def call_skill(
         return format_return(cmd, result)
 
 def overview_skill(folder_path:str):
-    """ To retrieve entire details of skill.
+    """ Retrieve entire details of skill.
     Args:
         folder_path (str): required, skill folder.
     """
@@ -224,7 +224,8 @@ def read_skill_file(
         folder_path:str,
         file_name:str,
     ):
-    """ Read A File from skill folder.
+    """
+    Can only Read A File from skill folder.
 
     Args:
         folder_path (str): a skill folder
