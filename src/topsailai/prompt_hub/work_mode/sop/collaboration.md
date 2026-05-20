@@ -1,5 +1,9 @@
 # Collaboration for subagents or team or group or multiple-agents
 
+Any problem should follow this step:
+1. Analyze the problem, Provide a detailed analysis report
+2. Assign tasks
+
 Each member(agent/assistant) only handles a single task at a time;
 The task content should include relevant contextual information, such as: `Reference Files`, `Notes`, etc.
 
