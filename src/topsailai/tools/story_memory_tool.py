@@ -25,41 +25,41 @@ if WORKSPACE:
     assert WORKSPACE[0] == "/", f"Require the use of absolute paths: [{WORKSPACE}]"
 
 
-def write_memory(memory_title:str, memory_content:str) -> str:
+def write_memory(title:str, content:str, **_) -> str:
     """
     Save/Rewrite context key information for future extraction.
 
     Args:
-        memory_title (str): A title contains core information and keywords.
-        memory_content (str):
+        title (str): A title contains core information and keywords.
+        content (str):
     """
-    memory_title = build_story_id(memory_title)
+    title = build_story_id(title)
     return StoryFileInstance.write_story(
         workspace=WORKSPACE,
-        story_id=memory_title,
-        story_content=memory_content,
+        story_id=title,
+        story_content=content,
     )
 
-def read_memory(memory_title:str) -> str|None:
+def read_memory(title:str) -> str|None:
     """
     Read history context information
 
     Args:
-        memory_title (str): use `list_memories` to get title
+        title (str): use `list_memories` to get title
 
     Return:
         str, memory content.
         none, no found memory.
     """
     for _file in [
-        memory_title,
-        memory_title+".md",
+        title,
+        title+".md",
     ]:
         if os.path.exists(_file):
-            memory_title = _file
+            title = _file
             break
 
-    return StoryFileInstance.read_story(workspace=WORKSPACE, story_id=memory_title)
+    return StoryFileInstance.read_story(workspace=WORKSPACE, story_id=title)
 
 def list_memories() -> list[str]|None:
     """
@@ -71,14 +71,14 @@ def list_memories() -> list[str]|None:
     """
     return StoryFileInstance.list_stories(workspace=WORKSPACE)
 
-def delete_memory(memory_title:str) -> bool:
+def delete_memory(title:str) -> bool:
     """
     Delete history context information.
 
     Args:
-        memory_title (str):
+        title (str):
     """
-    return StoryFileInstance.delete_story(workspace=WORKSPACE, story_id=memory_title)
+    return StoryFileInstance.delete_story(workspace=WORKSPACE, story_id=title)
 
 
 TOOLS = dict(

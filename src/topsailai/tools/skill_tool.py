@@ -33,7 +33,7 @@ from topsailai.workspace import lock_tool
 
 DEFAULT_CALL_SKILL_TIMEOUT = 600
 
-def get_call_skill_timeout(folder_path:str) -> int:
+def get_call_skill_timeout(skill_folder:str) -> int:
     """ get timeout from environ """
 
     timeout_map_s = env_tool.EnvReaderInstance.get("TOPSAILAI_CALL_SKILL_TIMEOUT_MAP")
@@ -46,7 +46,7 @@ def get_call_skill_timeout(folder_path:str) -> int:
 
     # matched?
     for key, timeout in skill_timeout_map.items():
-        if is_matched_skill(folder_path, [key]):
+        if is_matched_skill(skill_folder, [key]):
             return int(timeout)
 
     # default
@@ -57,7 +57,7 @@ def get_call_skill_timeout(folder_path:str) -> int:
     return default_timeout
 
 def call_skill(
-        folder_path:str,
+        skill_folder:str,
         script_path:str,
         script_parameters:str|list="",
         no_need_stderr:int=0,
@@ -67,8 +67,8 @@ def call_skill(
     """Can only execute scripts that exist in the skill-folder, cannot execute other command lines!
 
     Args:
-        folder_path (str): required, a skill folder.
-        script_path (str): required, The executable file (MUST EXIST) in folder_path, otherwise it cannot be called.
+        skill_folder (str): required, a skill folder.
+        script_path (str): required, The executable file (MUST EXIST) in skill_folder, otherwise it cannot be called.
         script_parameters (str|list): optional
 
         no_need_stderr (int): If 1, stderr will be returned as empty string.
@@ -90,19 +90,19 @@ def call_skill(
         assert not os.path.exists(output_file), "The output_file already exists and cannot be overwritten"
 
     # format script_path
-    if not script_path.startswith(folder_path):
+    if not script_path.startswith(skill_folder):
         # case: /xxx or .xxx
         for _ in range(2):
             if script_path[0] in ['/', '.']:
                 script_path = script_path[1:]
             else:
                 break
-        if not os.path.exists(f"{folder_path}/{script_path}"):
+        if not os.path.exists(f"{skill_folder}/{script_path}"):
             for _script_dirname in [
                 "scripts",
                 "script"
             ]:
-                if os.path.exists(f"{folder_path}/{_script_dirname}/{script_path}"):
+                if os.path.exists(f"{skill_folder}/{_script_dirname}/{script_path}"):
                     script_path = f"{_script_dirname}/{script_path}"
                     break
 
@@ -133,7 +133,7 @@ def call_skill(
     if not cmd_exe_file:
         raise Exception("illegal cmd: [%s]" % raw_cmd)
 
-    if not cmd_exe_file.startswith(folder_path):
+    if not cmd_exe_file.startswith(skill_folder):
         # case: /xxx or .xxx
         for _ in range(2):
             if cmd_exe_file[0] in ['/', '.']:
@@ -141,14 +141,14 @@ def call_skill(
             else:
                 break
 
-        cmd_exe_file = os.path.join(folder_path, cmd_exe_file)
+        cmd_exe_file = os.path.join(skill_folder, cmd_exe_file)
         if isinstance(cmd, list):
             cmd[0] = cmd_exe_file
         else:
             for _ in range(2):
                 if cmd[0] in '/.':
                     cmd = cmd[1:]
-            cmd = folder_path + "/" + cmd
+            cmd = skill_folder + "/" + cmd
 
     flag_cmd_matched = False
     for skill in get_skills_from_cache():
@@ -164,7 +164,7 @@ def call_skill(
 
     # hook
     hook_handler = skill_hook.SkillHookHandler(
-        folder_path, cmd,
+        skill_folder, cmd,
     )
 
     # ctxm
@@ -175,7 +175,7 @@ def call_skill(
     # timeout
     timeout = max(
         int(timeout),
-        get_call_skill_timeout(folder_path),
+        get_call_skill_timeout(skill_folder),
     )
 
     # hook before
@@ -192,7 +192,7 @@ def call_skill(
             cmd,
             no_need_stderr=True if int(no_need_stderr) else False,
             timeout=int(timeout),
-            cwd=folder_path,
+            cwd=skill_folder,
         )
         hook_handler.data_agent_refresh_session.tool_result = result
 
@@ -213,27 +213,27 @@ def call_skill(
 
         return format_return(cmd, result)
 
-def overview_skill(folder_path:str):
+def overview_skill(skill_folder:str):
     """ Retrieve entire details of skill.
     Args:
-        folder_path (str): required, skill folder.
+        skill_folder (str): required, skill folder.
     """
-    return overview_skill_native(folder_path)
+    return overview_skill_native(skill_folder)
 
 def read_skill_file(
-        folder_path:str,
+        skill_folder:str,
         file_name:str,
     ):
     """
     Can only Read A File from skill folder.
 
     Args:
-        folder_path (str): a skill folder
+        skill_folder (str): a skill folder
         file_name (str): a file with relative path
     """
-    assert exists_skill(folder_path), f"no found this skill folder: {folder_path}"
+    assert exists_skill(skill_folder), f"no found this skill folder: {skill_folder}"
 
-    file_path = get_skill_file(folder_path, file_name)
+    file_path = get_skill_file(skill_folder, file_name)
     assert file_path, f"no found this skill file: {file_name}"
 
     file_content = ""
