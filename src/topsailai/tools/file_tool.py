@@ -194,7 +194,8 @@ def _do_step_read_bytes(fd, size:int):
         return content[:size]
     return content
 
-def read_file(file_path:str, seek:int=0, size:int=-1):
+# Arg 'files' for compatibility on LLM mistake
+def read_file(file_path:str="", seek:int=0, size:int=-1, files=None):
     """ read a file and output file content.
 
     Args:
@@ -212,6 +213,12 @@ def read_file(file_path:str, seek:int=0, size:int=-1):
     """
     seek = int(seek)
     size = int(size)
+
+    # compatibility on LLM mistake
+    if not file_path and files and seek == 0 and size == -1:
+        return read_files(files)
+
+    assert file_path, "missing file_path"
 
     file_path_lower = file_path.lower()
     file_ext = file_path_lower.rsplit('.', 1)[-1]

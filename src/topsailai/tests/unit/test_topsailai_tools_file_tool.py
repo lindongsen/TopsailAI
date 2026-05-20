@@ -35,7 +35,6 @@ from topsailai.tools.file_tool import (
     check_files_existing,
     exists_file,
     mkdirs,
-    replace_lines_in_file,
     insert_data_to_file,
     list_dir,
     list_dirs,
@@ -43,6 +42,9 @@ from topsailai.tools.file_tool import (
     TOOLS,
     TOOLS_INFO,
     FILE_RO_TOOLS,
+)
+from topsailai.tools.file_tool_utils.file_write_line import (
+    replace_lines_in_file,
 )
 
 
@@ -517,7 +519,7 @@ class TestReplaceLinesInFile:
             
             result = replace_lines_in_file(temp_path, [(2, "")])
             # result is diff output, deleted line appears with - prefix
-            assert "- BBB" in result
+            assert "-BBB" in result
         finally:
             shutil.rmtree(temp_dir)
 
