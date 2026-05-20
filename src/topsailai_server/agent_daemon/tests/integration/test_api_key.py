@@ -720,3 +720,211 @@ class TestAPIKeyAuthenticationErrors:
             timeout=10
         )
         assert resp.status_code == 401, "Expected 401, got {}: {}".format(resp.status_code, resp.text)
+
+
+# =============================================================================
+# Test Class 7: API Key Query Permissions
+# =============================================================================
+
+class TestAPIKeyQueryPermissions:
+    """Test API key query permissions for admin and user roles."""
+
+    @pytest.fixture(scope="class")
+    def server(self):
+        port = find_free_port(23373)
+        db_path = os.path.join(BASE_DIR, 'test_api_key_query.db')
+        srv = ServerProcess(
+            port, db_path,
+            api_key_enabled=True,
+            admin_key=DEFAULT_ADMIN_KEY
+        )
+        srv.start()
+        yield srv
+        srv.stop()
+
+    def test_user_key_can_query_own_key(self, server):
+        """User key should be able to query its own key info."""
+        # Create a user key
+        resp = requests.post(
+            server.base_url + "/api/v1/apikey",
+            headers={"X-API-Key": DEFAULT_ADMIN_KEY},
+            json={"name": "Self Query Key", "role": "user", "rate_limit": 60},
+            timeout=10
+        )
+        assert resp.status_code == 200
+        user_key = resp.json()["data"]["api_key"]
+        user_key_id = resp.json()["data"]["api_key_id"]
+
+        # Query with user key
+        resp = requests.get(
+            server.base_url + "/api/v1/apikey",
+            headers={"X-API-Key": user_key},
+            timeout=10
+        )
+        assert resp.status_code == 200, "User self-query failed: {}".format(resp.text)
+        data = resp.json()
+        assert data["code"] == 0
+        assert data["data"]["total"] == 1
+        assert data["data"]["api_keys"][0]["api_key_id"] == user_key_id
+        assert "sessions" in data["data"]["api_keys"][0]
+        assert "environs" in data["data"]["api_keys"][0]
+
+    def test_user_key_cannot_query_other_keys(self, server):
+        """User key should only see its own key, not other keys."""
+        # Create session for binding
+        session_id = "query-session-{}".format(uuid.uuid4().hex[:8])
+        resp = requests.post(
+            server.base_url + "/api/v1/message",
+            headers={"X-API-Key": DEFAULT_ADMIN_KEY},
+            json={"message": "query test", "session_id": session_id, "role": "user"},
+            timeout=10
+        )
+        assert resp.status_code == 200
+
+        # Create user key 1 bound to session
+        resp = requests.post(
+            server.base_url + "/api/v1/apikey",
+            headers={"X-API-Key": DEFAULT_ADMIN_KEY},
+            json={"name": "User Key 1", "role": "user", "rate_limit": 60, "session_ids": [session_id]},
+            timeout=10
+        )
+        assert resp.status_code == 200
+        user_key_1 = resp.json()["data"]["api_key"]
+        user_key_1_id = resp.json()["data"]["api_key_id"]
+
+        # Create user key 2 bound to same session
+        resp = requests.post(
+            server.base_url + "/api/v1/apikey",
+            headers={"X-API-Key": DEFAULT_ADMIN_KEY},
+            json={"name": "User Key 2", "role": "user", "rate_limit": 60, "session_ids": [session_id]},
+            timeout=10
+        )
+        assert resp.status_code == 200
+        user_key_2_id = resp.json()["data"]["api_key_id"]
+
+        # Query with user key 1
+        resp = requests.get(
+            server.base_url + "/api/v1/apikey",
+            headers={"X-API-Key": user_key_1},
+            timeout=10
+        )
+        assert resp.status_code == 200, "User query failed: {}".format(resp.text)
+        data = resp.json()
+        assert data["code"] == 0
+        assert data["data"]["total"] == 1
+        assert data["data"]["api_keys"][0]["api_key_id"] == user_key_1_id
+        # Should NOT contain user_key_2
+        key_ids = [k["api_key_id"] for k in data["data"]["api_keys"]]
+        assert user_key_2_id not in key_ids
+
+    def test_list_api_keys_filter_by_session_id_admin(self, server):
+        """Admin should be able to filter API keys by session_id."""
+        # Create sessions
+        session_1 = "filter-session-1-{}".format(uuid.uuid4().hex[:8])
+        session_2 = "filter-session-2-{}".format(uuid.uuid4().hex[:8])
+        for sid in [session_1, session_2]:
+            resp = requests.post(
+                server.base_url + "/api/v1/message",
+                headers={"X-API-Key": DEFAULT_ADMIN_KEY},
+                json={"message": "filter test", "session_id": sid, "role": "user"},
+                timeout=10
+            )
+            assert resp.status_code == 200
+
+        # Create user key 1 bound to session_1
+        resp = requests.post(
+            server.base_url + "/api/v1/apikey",
+            headers={"X-API-Key": DEFAULT_ADMIN_KEY},
+            json={"name": "Filter Key 1", "role": "user", "rate_limit": 60, "session_ids": [session_1]},
+            timeout=10
+        )
+        assert resp.status_code == 200
+        key_1_id = resp.json()["data"]["api_key_id"]
+
+        # Create user key 2 bound to session_2
+        resp = requests.post(
+            server.base_url + "/api/v1/apikey",
+            headers={"X-API-Key": DEFAULT_ADMIN_KEY},
+            json={"name": "Filter Key 2", "role": "user", "rate_limit": 60, "session_ids": [session_2]},
+            timeout=10
+        )
+        assert resp.status_code == 200
+        key_2_id = resp.json()["data"]["api_key_id"]
+
+        # Admin filter by session_1
+        resp = requests.get(
+            server.base_url + "/api/v1/apikey?session_id={}".format(session_1),
+            headers={"X-API-Key": DEFAULT_ADMIN_KEY},
+            timeout=10
+        )
+        assert resp.status_code == 200, "Admin filter failed: {}".format(resp.text)
+        data = resp.json()
+        assert data["code"] == 0
+        key_ids = [k["api_key_id"] for k in data["data"]["api_keys"]]
+        assert key_1_id in key_ids
+        assert key_2_id not in key_ids
+
+    def test_list_api_keys_filter_by_session_id_user_bound(self, server):
+        """User should be able to filter by a session_id they are bound to."""
+        # Create session
+        session_id = "user-filter-session-{}".format(uuid.uuid4().hex[:8])
+        resp = requests.post(
+            server.base_url + "/api/v1/message",
+            headers={"X-API-Key": DEFAULT_ADMIN_KEY},
+            json={"message": "user filter test", "session_id": session_id, "role": "user"},
+            timeout=10
+        )
+        assert resp.status_code == 200
+
+        # Create user key bound to session
+        resp = requests.post(
+            server.base_url + "/api/v1/apikey",
+            headers={"X-API-Key": DEFAULT_ADMIN_KEY},
+            json={"name": "User Filter Key", "role": "user", "rate_limit": 60, "session_ids": [session_id]},
+            timeout=10
+        )
+        assert resp.status_code == 200
+        user_key = resp.json()["data"]["api_key"]
+        user_key_id = resp.json()["data"]["api_key_id"]
+
+        # User filter by bound session_id
+        resp = requests.get(
+            server.base_url + "/api/v1/apikey?session_id={}".format(session_id),
+            headers={"X-API-Key": user_key},
+            timeout=10
+        )
+        assert resp.status_code == 200, "User bound filter failed: {}".format(resp.text)
+        data = resp.json()
+        assert data["code"] == 0
+        assert data["data"]["total"] == 1
+        assert data["data"]["api_keys"][0]["api_key_id"] == user_key_id
+
+    def test_list_api_keys_filter_by_session_id_user_unbound(self, server):
+        """User should get 403 when filtering by a session_id they are not bound to."""
+        # Create session
+        session_id = "unbound-filter-session-{}".format(uuid.uuid4().hex[:8])
+        resp = requests.post(
+            server.base_url + "/api/v1/message",
+            headers={"X-API-Key": DEFAULT_ADMIN_KEY},
+            json={"message": "unbound filter test", "session_id": session_id, "role": "user"},
+            timeout=10
+        )
+        assert resp.status_code == 200
+
+        # Create user key NOT bound to any session
+        resp = requests.post(
+            server.base_url + "/api/v1/apikey",
+            headers={"X-API-Key": DEFAULT_ADMIN_KEY},
+            json={"name": "Unbound Filter Key", "role": "user", "rate_limit": 60},
+            timeout=10
+        )
+        assert resp.status_code == 200
+        user_key = resp.json()["data"]["api_key"]
+
+        # User filter by unbound session_id
+        resp = requests.get(
+            server.base_url + "/api/v1/apikey?session_id={}".format(session_id),
+            headers={"X-API-Key": user_key},
+            timeout=10
+        )
+        assert resp.status_code == 403, "Expected 403, got {}: {}".format(resp.status_code, resp.text)

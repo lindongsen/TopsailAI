@@ -6,7 +6,7 @@ These functions are used by the topsailai_agent_client CLI.
 
 Functions:
     - do_client_create_api_key: Create a new API key
-    - do_client_list_api_keys: List all API keys
+    - do_client_list_api_keys: List API keys
     - do_client_delete_api_key: Delete an API key
     - do_client_bind_sessions: Bind sessions to an API key
     - do_client_unbind_sessions: Unbind sessions from an API key
@@ -51,7 +51,7 @@ def do_client_create_api_key(args):
 
 
 def do_client_list_api_keys(args):
-    """List all API keys"""
+    """List API keys"""
     client = ApiKeyClient(
         base_url=f"http://{args.host}:{args.port}",
         api_key=getattr(args, 'api_key', None)
@@ -59,7 +59,10 @@ def do_client_list_api_keys(args):
 
     try:
         logger.info("Listing API keys")
-        client.list_api_keys(verbose=args.verbose)
+        client.list_api_keys(
+            session_id=getattr(args, 'session_id', None),
+            verbose=args.verbose
+        )
         return True
     except Exception as e:
         logger.exception("Failed to list API keys: %s", e)
@@ -246,7 +249,11 @@ def add_api_key_parsers(subparsers):
     # List API keys
     list_parser = subparsers.add_parser(
         'list-api-keys',
-        help='List all API keys'
+        help='List API keys'
+    )
+    list_parser.add_argument(
+        '--session-id', type=str,
+        help='Filter API keys by bound session ID'
     )
     list_parser.set_defaults(func=do_client_list_api_keys)
 

@@ -103,6 +103,29 @@ class ApiKeyStorageBase(ABC):
         pass
 
     @abstractmethod
+    def get_api_key_with_details(self, api_key_id: str) -> Optional[dict]:
+        """Get a single API key with its bound sessions and environs.
+
+        Returns:
+            dict: {
+                "api_key": ApiKeyData,
+                "session_ids": list[str],
+                "environs": list[ApiKeyEnvironData]
+            } or None if not found.
+        """
+        pass
+
+    @abstractmethod
+    def list_api_keys_by_session_id(self, session_id: str) -> list:
+        """List all API keys bound to a specific session.
+
+        Returns:
+            list: Same format as list_api_keys_with_details().
+        """
+        pass
+
+
+    @abstractmethod
     def delete_api_key(self, api_key_id: str) -> bool:
         """Delete an API key and its related data. Returns True on success, False if not found."""
         pass

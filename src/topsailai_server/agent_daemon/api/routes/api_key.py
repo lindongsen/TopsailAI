@@ -147,10 +147,25 @@ async def create_api_key(
 
 @router.get("", response_model=dict)
 async def list_api_keys(
-    current_key: ApiKeyData = Depends(require_admin)
+    session_id: Optional[str] = None,
+    current_key: ApiKeyData = Depends(get_current_api_key)
 ):
-    """List all API keys with their bound sessions and environs. Admin only."""
-    api_keys_with_details = _api_key_storage.list_api_keys_with_details()
+    """List API keys. Admin sees all keys; user sees only their own key."""
+    if current_key.role == "admin":
+        if session_id:
+            api_keys_with_details = _api_key_storage.list_api_keys_by_session_id(session_id)
+        else:
+            api_keys_with_details = _api_key_storage.list_api_keys_with_details()
+    else:
+        # User role: can only query their own key
+        if session_id:
+            if not _api_key_storage.is_session_bound(current_key.api_key_id, session_id):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Access denied to session: %s" % session_id
+                )
+        api_keys_with_details = _api_key_storage.get_api_key_with_details(current_key.api_key_id)
+        api_keys_with_details = [api_keys_with_details] if api_keys_with_details else []
 
     api_keys = []
     for item in api_keys_with_details:

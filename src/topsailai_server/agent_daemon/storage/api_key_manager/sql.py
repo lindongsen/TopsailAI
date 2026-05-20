@@ -199,6 +199,54 @@ class ApiKeySQLAlchemy(ApiKeyStorageBase):
                 })
             return result
 
+    def get_api_key_with_details(self, api_key_id: str) -> Optional[dict]:
+        """Get a single API key with its bound sessions and environs.
+
+        Returns:
+            dict: {
+                "api_key": ApiKeyData,
+                "session_ids": list[str],
+                "environs": list[ApiKeyEnvironData]
+            } or None if not found.
+        """
+        with self.Session() as session:
+            key_model = session.query(ApiKeyModel).filter(
+                ApiKeyModel.api_key_id == api_key_id
+            ).first()
+            if not key_model:
+                return None
+            session_models = session.query(ApiKeySessionModel).filter(
+                ApiKeySessionModel.api_key_id == api_key_id
+            ).all()
+            session_ids = [m.session_id for m in session_models]
+            environs = self.get_api_key_environs_by_api_key_id(api_key_id)
+            return {
+                "api_key": self._to_data(key_model),
+                "session_ids": session_ids,
+                "environs": environs
+            }
+
+    def list_api_keys_by_session_id(self, session_id: str) -> list:
+        """List all API keys bound to a specific session.
+
+        Returns:
+            list: Same format as list_api_keys_with_details().
+        """
+        with self.Session() as session:
+            bindings = session.query(ApiKeySessionModel).filter(
+                ApiKeySessionModel.session_id == session_id
+            ).all()
+            api_key_ids = [b.api_key_id for b in bindings]
+            if not api_key_ids:
+                return []
+            result = []
+            for key_id in api_key_ids:
+                details = self.get_api_key_with_details(key_id)
+                if details:
+                    result.append(details)
+            return result
+
+
     def delete_api_key(self, api_key_id: str) -> bool:
         """Delete an API key and its related data. Returns True on success, False if not found."""
         with self.Session() as session:

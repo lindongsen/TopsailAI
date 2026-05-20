@@ -2,6 +2,8 @@
 workspace: /root/ai/TopsailAI/src/topsailai_server/agent_daemon
 ProjectRootFolder: /root/ai/TopsailAI
 programming_language: python
+references:
+  - docs/How_to_Add_Future_Schema_Changes.md
 
 workspace_project_structure: |
   - features/ # FeaturesFolder, Store various factual feature information
@@ -29,5 +31,7 @@ workspace_project_structure: |
     - Integration_Test_Improvement_Proposal.md
     - Test_Execution_Checklist.md
 
-Notes:
+Notes: |
   - During integration testing, the processor, summarizer, and checker need to use `scripts/test_xxx` or write their own mock scripts.
+  - If there are updates to the code of these projects, the documentation should also be updated:
+    - docs/API.md

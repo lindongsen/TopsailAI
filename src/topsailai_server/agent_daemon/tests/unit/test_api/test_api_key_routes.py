@@ -195,16 +195,99 @@ class TestApiKeyRoutes(unittest.TestCase):
         self.assertEqual(len(data["data"]["api_keys"]), 1)
         self.assertEqual(data["data"]["total"], 1)
 
-    def test_list_api_keys_non_admin_rejected(self):
-        """Test non-admin cannot list API keys"""
+    def test_list_api_keys_user_self_query(self):
+        """Test user can query their own API key info"""
         self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
+        self.mock_api_key_storage.get_api_key_with_details.return_value = {
+            "api_key": self.user_key,
+            "session_ids": ["session_1"],
+            "environs": []
+        }
 
         response = self.client.get(
             "/api/v1/apikey",
             headers=self._auth_header("user_secret_key_123")
         )
 
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["code"], 0)
+        self.assertEqual(len(data["data"]["api_keys"]), 1)
+        self.assertEqual(data["data"]["total"], 1)
+        self.assertEqual(data["data"]["api_keys"][0]["api_key_id"], "ak_user_001")
+        self.assertIn("sessions", data["data"]["api_keys"][0])
+        self.assertIn("environs", data["data"]["api_keys"][0])
+
+    def test_list_api_keys_user_with_bound_session_id(self):
+        """Test user can query with bound session_id"""
+        self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
+        self.mock_api_key_storage.is_session_bound.return_value = True
+        self.mock_api_key_storage.get_api_key_with_details.return_value = {
+            "api_key": self.user_key,
+            "session_ids": ["session_1"],
+            "environs": []
+        }
+
+        response = self.client.get(
+            "/api/v1/apikey?session_id=session_1",
+            headers=self._auth_header("user_secret_key_123")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["code"], 0)
+        self.assertEqual(len(data["data"]["api_keys"]), 1)
+        self.assertEqual(data["data"]["total"], 1)
+
+    def test_list_api_keys_user_with_unbound_session_id(self):
+        """Test user gets 403 when querying with unbound session_id"""
+        self.mock_api_key_storage.get_api_key_by_value.return_value = self.user_key
+        self.mock_api_key_storage.is_session_bound.return_value = False
+
+        response = self.client.get(
+            "/api/v1/apikey?session_id=session_2",
+            headers=self._auth_header("user_secret_key_123")
+        )
+
         self.assertEqual(response.status_code, 403)
+
+    def test_list_api_keys_admin_with_session_id(self):
+        """Test admin can filter API keys by session_id"""
+        self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
+        self.mock_api_key_storage.list_api_keys_by_session_id.return_value = [
+            {"api_key": self.user_key, "session_ids": ["session_1"], "environs": []}
+        ]
+
+        response = self.client.get(
+            "/api/v1/apikey?session_id=session_1",
+            headers=self._auth_header("admin_secret_key_123")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["code"], 0)
+        self.assertEqual(len(data["data"]["api_keys"]), 1)
+        self.assertEqual(data["data"]["total"], 1)
+        self.assertEqual(data["data"]["api_keys"][0]["api_key_id"], "ak_user_001")
+
+    def test_list_api_keys_admin_no_session_id(self):
+        """Test admin sees all keys when no session_id filter is provided"""
+        self.mock_api_key_storage.get_api_key_by_value.return_value = self.admin_key
+        self.mock_api_key_storage.list_api_keys_with_details.return_value = [
+            {"api_key": self.admin_key, "session_ids": [], "environs": []},
+            {"api_key": self.user_key, "session_ids": ["session_1"], "environs": []}
+        ]
+
+        response = self.client.get(
+            "/api/v1/apikey",
+            headers=self._auth_header("admin_secret_key_123")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["code"], 0)
+        self.assertEqual(len(data["data"]["api_keys"]), 2)
+        self.assertEqual(data["data"]["total"], 2)
 
     # Tests for DeleteApiKey
     def test_delete_api_key_success(self):

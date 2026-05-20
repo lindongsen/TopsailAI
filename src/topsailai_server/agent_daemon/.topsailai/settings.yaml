@@ -1,0 +1,24 @@
+# AI Agent driver path or command
+ai_agent_driver: "ai-team-flow-dev"
+
+# Working directory (relative paths will be resolved based on the current directory)
+workspace: "/TopsailAI/src/topsailai_server/agent_daemon"
+
+# Context configuration: each item corresponds to a set of context files
+# _default is the base context shared by all items
+context:
+  _default:
+    - "project.yaml"
+    - features/00features.md
+    - features/10api_key.md
+    - features/11api_key_environ.md
+    - features/19api_key_required.md
+    - "env_template"
+
+  default: []
+
+# Environment variable configuration: each item can define its own environment variables
+# _default is the base environment variables shared by all items
+environment:
+  _default:
+    TOPSAILAI_INTERACTIVE_MODE: "1"

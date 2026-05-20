@@ -112,11 +112,16 @@ class ApiKeyClient(BaseClient):
 
         return result
 
-    def list_api_keys(self, verbose: bool = False) -> List[Dict[str, Any]]:
+    def list_api_keys(
+        self,
+        session_id: Optional[str] = None,
+        verbose: bool = False
+    ) -> List[Dict[str, Any]]:
         """
-        List all API keys.
+        List API keys.
 
         Args:
+            session_id: Optional session ID to filter by.
             verbose: If True, print full JSON response.
 
         Returns:
@@ -125,7 +130,11 @@ class ApiKeyClient(BaseClient):
         Raises:
             APIError: If the API returns an error.
         """
-        result = self.get("/api/v1/apikey")
+        params = {}
+        if session_id:
+            params["session_id"] = session_id
+
+        result = self.get("/api/v1/apikey", params=params)
 
         api_keys = result.get("api_keys", []) if result else []
         total = result.get("total", 0) if result else 0
