@@ -137,12 +137,35 @@ instructions:
     independent_process: 1
     async: 1
 
-  - cmd: "/task.dtach {driver}"
+  - cmd: "/chat {driver}"
+    scopes:
+      - session
+    desc: "Chatting"
+    example: ""
+    shell: "{driver}"
+    environ:
+      TOPSAILAI_TASK: ""
+      TOPSAILAI_INTERACTIVE_MODE: "0"
+      TOPSAILAI_SESSION_ID: "{session_id}"
+    use_os_system: 1
+
+  - cmd: "/chat {driver} {args}"
+    scopes:
+      - session
+    desc: "Chatting"
+    example: ""
+    shell: "{driver} {args}"
+    environ:
+      TOPSAILAI_INTERACTIVE_MODE: "0"
+      TOPSAILAI_SESSION_ID: "{session_id}"
+    use_os_system: 1
+
+  - cmd: "/dtach {driver}"
     scopes:
       - session
     desc: "Run async task for the session"
-    example: "/task.dtach ai-team-flow-dev"
-    shell: "dtach -A /tmp/topsailai.dtach.{session_id} {driver}"
+    example: "/dtach ai-team-flow-dev"
+    shell: "dtach -A /tmp/topsailai.dtach.{session_id} bash -c {driver}"
     environ:
       TOPSAILAI_INTERACTIVE_MODE: "0"
       TOPSAILAI_SESSION_ID: "{session_id}"
