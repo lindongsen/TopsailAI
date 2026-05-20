@@ -341,7 +341,7 @@ def get_all_command_names(instruction: Dict[str, Any]) -> List[str]:
     return names
 
 
-def match_yaml_command(user_input: str) -> Optional[Tuple[Dict[str, Any], Dict[str, str]]]:
+def match_yaml_command(user_input: str, task_dir: str = "") -> Optional[Tuple[Dict[str, Any], Dict[str, str]]]:
     """
     Match user input against YAML commands.
     Returns (instruction, variables) or None.
@@ -359,7 +359,7 @@ def match_yaml_command(user_input: str) -> Optional[Tuple[Dict[str, Any], Dict[s
         for instruction in yaml_commands:
             cmd_template = instruction.get("cmd", "")
             if cmd_template.startswith("/cd"):
-                return instruction, {"session_id": ""}
+                return instruction, {"session_id": "", "task_dir": task_dir}
 
     for instruction in yaml_commands:
         scopes = instruction.get("scopes", [])
@@ -371,14 +371,15 @@ def match_yaml_command(user_input: str) -> Optional[Tuple[Dict[str, Any], Dict[s
             continue
 
         # Build regex pattern from cmd template
-        # Strip leading '/' so commands work with or without it
-        cmd_stripped = cmd_template.lstrip('/')
-        # Escape special regex chars, then replace {var} with capture groups
-        pattern = re.escape(cmd_stripped)
-        var_names = re.findall(r"\\\{(\w+)\\\}", pattern)
+        # Extract variable names like {var}
+        var_pattern = re.compile(r"\{(\w+)\}")
+        var_names = var_pattern.findall(cmd_template)
+
+        # Escape the template and replace variables with capture groups
+        pattern = re.escape(cmd_template.lstrip("/"))
         for var_name in var_names:
-            # Use greedy match for 'args' to capture remaining text
             if var_name == "args":
+                # 'args' captures everything after the command
                 pattern = pattern.replace(
                     f"\\{{{var_name}\\}}", f"(?P<{var_name}>.*)"
                 )
@@ -395,6 +396,7 @@ def match_yaml_command(user_input: str) -> Optional[Tuple[Dict[str, Any], Dict[s
         if match:
             variables = match.groupdict()
             variables.setdefault("session_id", current_session_id or "")
+            variables["task_dir"] = task_dir
             # Special handling for /ctx.add_msg: extract trailing text as initial message
             if cmd_template.startswith("/ctx.add_msg"):
                 msg_match = re.match(
@@ -405,16 +407,15 @@ def match_yaml_command(user_input: str) -> Optional[Tuple[Dict[str, Any], Dict[s
                 variables["message"] = msg_match.group(1) if msg_match and msg_match.group(1) is not None else ""
             return instruction, variables
 
-        # Also check aliases
+        # Check aliases
         aliases = instruction.get("alias", [])
         if isinstance(aliases, str):
             aliases = [aliases]
         for alias in aliases:
-            alias_stripped = alias.lstrip('/')
-            alias_pattern = re.escape(alias_stripped)
-            alias_vars = re.findall(r"\\\{(\w+)\\\}", alias_pattern)
-            for var_name in alias_vars:
-                # Use greedy match for 'args' to capture remaining text
+            if not alias:
+                continue
+            alias_pattern = re.escape(alias)
+            for var_name in var_names:
                 if var_name == "args":
                     alias_pattern = alias_pattern.replace(
                         f"\\{{{var_name}\\}}", f"(?P<{var_name}>.*)"
@@ -428,6 +429,7 @@ def match_yaml_command(user_input: str) -> Optional[Tuple[Dict[str, Any], Dict[s
             if alias_match:
                 variables = alias_match.groupdict()
                 variables.setdefault("session_id", current_session_id or "")
+                variables["task_dir"] = task_dir
                 return instruction, variables
 
     return None
@@ -537,6 +539,26 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
         if cmd.startswith("/cd"):
             session_id = variables.get("session_id", "").strip()
             if session_id:
+                # Support numeric index: resolve to session_id from log files
+                if session_id.isdigit():
+                    task_dir = variables.get("task_dir", "")
+                    if task_dir:
+                        log_files = discover_log_files(task_dir)
+                        idx = int(session_id) - 1
+                        if 0 <= idx < len(log_files):
+                            resolved = log_files[idx].get("session_id")
+                            if resolved and resolved != "(temp)":
+                                session_id = resolved
+                            else:
+                                print(
+                                    f"{Colors.RED}[ERROR] No session ID available for entry {idx + 1}.{Colors.RESET}"
+                                )
+                                return "yaml_handled"
+                        else:
+                            print(
+                                f"{Colors.RED}[ERROR] Invalid number. Please enter 1-{len(log_files)}.{Colors.RESET}"
+                            )
+                            return "yaml_handled"
                 current_scope = "session"
                 current_session_id = session_id
                 print(
@@ -1345,7 +1367,7 @@ def retrieve_session(session_id: str):
 # Interactive Selection
 # =============================================================================
 
-def prompt_selection(files: List[dict]) -> Tuple[str, Optional[int]]:
+def prompt_selection(files: List[dict], task_dir: str) -> Tuple[str, Optional[int]]:
     """
     Prompt user to select a file by number or enter a command.
     Returns (action, value).
@@ -1389,7 +1411,7 @@ def prompt_selection(files: List[dict]) -> Tuple[str, Optional[int]]:
                 return ("help", None)
 
             # Try YAML command matching first
-            yaml_match = match_yaml_command(user_input)
+            yaml_match = match_yaml_command(user_input, task_dir)
             if yaml_match:
                 instruction, variables = yaml_match
                 action = handle_yaml_command(instruction, variables)
@@ -1472,7 +1494,7 @@ def main():
 
     try:
         while running:
-            action, value = prompt_selection(log_files)
+            action, value = prompt_selection(log_files, task_dir)
 
             if action == "quit":
                 break

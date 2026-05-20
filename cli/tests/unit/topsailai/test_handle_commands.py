@@ -51,6 +51,61 @@ class TestHandleYamlCommand(unittest.TestCase):
         self.assertEqual(cli.current_scope, "workspace")
         self.assertIsNone(cli.current_session_id)
 
+    @patch("topsailai.discover_log_files")
+    @patch("builtins.print")
+    def test_cd_with_numeric_index(self, mock_print, mock_discover):
+        """Enter session scope with /cd using numeric index."""
+        mock_discover.return_value = [
+            {"filename": "a.session.stdout", "session_id": "session-abc"},
+            {"filename": "b.session.stdout", "session_id": "session-xyz"},
+        ]
+        instruction = {"cmd": "/cd {session_id}", "shell": ""}
+        variables = {"session_id": "2", "task_dir": "/tmp/tasks"}
+        result = cli.handle_yaml_command(instruction, variables)
+        self.assertEqual(result, "yaml_handled")
+        self.assertEqual(cli.current_scope, "session")
+        self.assertEqual(cli.current_session_id, "session-xyz")
+
+    @patch("topsailai.discover_log_files")
+    @patch("builtins.print")
+    def test_cd_with_numeric_index_out_of_range(self, mock_print, mock_discover):
+        """Show error for out-of-range numeric index."""
+        mock_discover.return_value = [
+            {"filename": "a.session.stdout", "session_id": "session-abc"},
+        ]
+        instruction = {"cmd": "/cd {session_id}", "shell": ""}
+        variables = {"session_id": "5", "task_dir": "/tmp/tasks"}
+        result = cli.handle_yaml_command(instruction, variables)
+        self.assertEqual(result, "yaml_handled")
+        self.assertEqual(cli.current_scope, "workspace")
+        printed = [str(args[0]) for args, kwargs in mock_print.call_args_list]
+        self.assertTrue(any("Invalid number" in p for p in printed))
+
+    @patch("topsailai.discover_log_files")
+    @patch("builtins.print")
+    def test_cd_with_numeric_index_temp_session(self, mock_print, mock_discover):
+        """Show error when numeric index points to temp session."""
+        mock_discover.return_value = [
+            {"filename": "session.stdout", "session_id": "(temp)"},
+        ]
+        instruction = {"cmd": "/cd {session_id}", "shell": ""}
+        variables = {"session_id": "1", "task_dir": "/tmp/tasks"}
+        result = cli.handle_yaml_command(instruction, variables)
+        self.assertEqual(result, "yaml_handled")
+        self.assertEqual(cli.current_scope, "workspace")
+        printed = [str(args[0]) for args, kwargs in mock_print.call_args_list]
+        self.assertTrue(any("No session ID available" in p for p in printed))
+
+    @patch("builtins.print")
+    def test_cd_with_session_id_string(self, mock_print):
+        """Enter session scope with /cd using session_id string."""
+        instruction = {"cmd": "/cd {session_id}", "shell": ""}
+        variables = {"session_id": "20260520T105654", "task_dir": "/tmp/tasks"}
+        result = cli.handle_yaml_command(instruction, variables)
+        self.assertEqual(result, "yaml_handled")
+        self.assertEqual(cli.current_scope, "session")
+        self.assertEqual(cli.current_session_id, "20260520T105654")
+
     @patch.dict(os.environ, {}, clear=True)
     @patch("builtins.print")
     def test_env_get(self, mock_print):
