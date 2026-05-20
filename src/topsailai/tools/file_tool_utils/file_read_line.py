@@ -202,7 +202,7 @@ def read_file_around_line(
         return f"Error reading file {file_path}: {str(e)}"
 
 
-def read_file_lines(file_path: str, start_num: int, end_num: int) -> str:
+def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> str:
     """Read specific lines from a file and return them as a string.
     This function reads a range of lines from a file using 1-based line numbering.
     Print line number with output lines, format is "{number}-{line_content}"
