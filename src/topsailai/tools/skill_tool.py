@@ -103,7 +103,7 @@ def call_skill(
                 "script"
             ]:
                 if os.path.exists(f"{skill_folder}/{_script_dirname}/{script_path}"):
-                    script_path = f"{_script_dirname}/{script_path}"
+                    script_path = f"{skill_folder}/{_script_dirname}/{script_path}"
                     break
 
     # cmd
