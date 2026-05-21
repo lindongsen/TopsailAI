@@ -207,3 +207,22 @@ instructions:
     desc: "Check log content to find critical events"
     example: ""
     shell: "topsailai_check_log"
+
+  - cmd: "/log.check_for_improvement"
+    scopes:
+      - workspace
+    desc: "Check log content to improve usability"
+    example: ""
+    shell: |
+      bash -c "grep ' ERROR -' ${TOPSAILAI_HOME:-/topsailai}/log/chat.log | grep -v '\- parsing response:' | grep -v '\- Expecting value:' | grep -v '\- LLM Mistake:' | grep -v ' blocking chat '"
+
+  - cmd: "/log.check_for_error"
+    scopes:
+      - workspace
+    desc: "Check log content to improve usability"
+    example: ""
+    shell: |
+      bash -c "grep -E ' ERROR -| CRITICAL -' ${TOPSAILAI_HOME:-/topsailai}/log/chat.log |
+        grep ^$(date +%Y-%m-%d) | grep -v RateLimit | grep -v blocking | grep -v ReadError |
+        grep -v 'parsing response:' | grep -v 'Expecting value:' | grep -v 'LLM Mistake:'
+      "
