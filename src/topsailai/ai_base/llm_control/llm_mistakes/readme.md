@@ -2,6 +2,8 @@
 
 ## Variables & Functions
 
+message: str or list_dict,
+
 - MISTAKES: assert error / format message, `def func(message, **kwargs) -> str|dict|list:`, if have any changes, return new_message, else return None; if assert error, raise sth.
 
 Example:
@@ -20,4 +22,11 @@ MISTAKES = dict(
     check_mistake1=check_mistake1,
     ...
 )
+```
+
+## Check Method
+
+```python
+from topsailai.ai_base.llm_control.message import format_response
+format_response(message)
 ```

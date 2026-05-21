@@ -23,6 +23,9 @@ def convert_to_list_dict(content: str) -> list[dict]:
 
     Pattern: <optional_whitespace> <|tool_calls_section_begin|> <optional_whitespace> <|tool_call_begin|> <optional_whitespace>functions.tool_name:id<optional_whitespace> <|tool_call_argument_begin|> <optional_whitespace>{json_args}<optional_whitespace> <|tool_call_end|> <optional_whitespace> <|tool_calls_section_end|> <optional_whitespace>
     """
+    if not isinstance(content, str):
+        return
+
     result = []
 
     # Pattern to match kimi function calls with flexible whitespace

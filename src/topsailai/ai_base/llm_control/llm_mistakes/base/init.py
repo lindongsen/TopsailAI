@@ -36,13 +36,16 @@ def check_or_fix_mistakes(response, rsp_obj=None, **kwargs):
     new_response = response
 
     for name, func in MISTAKES.items():
-        new_response = func(new_response, rsp_obj=rsp_obj, **kwargs)
+        tmp_response = func(new_response, rsp_obj=rsp_obj, **kwargs)
 
-        if new_response is None:
+        if tmp_response is None:
             continue
 
-        if new_response is response:
+        if tmp_response is new_response:
             continue
+
+        if tmp_response:
+            new_response = tmp_response
 
         print_tool.print_error(f"{LLM_KEYWORD_MISTAKE}: fixed by [{name}], origin=[{response}], new=[{new_response}]")
         break

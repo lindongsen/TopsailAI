@@ -7,6 +7,11 @@ Purpose:
 
 import simplejson
 
+from topsailai.utils import (
+    format_tool,
+)
+
+
 def fix_raw_text(raw_text):
     """
     Return new text
@@ -56,7 +61,7 @@ def fix_raw_text(raw_text):
     if isinstance(raw_text, dict):
         return d
     elif isinstance(raw_text, str):
-        return simplejson.dumps(raw_text, ensure_ascii=False)
+        return simplejson.dumps(d, ensure_ascii=False)
     return None
 
 def fix_mistake1(message, **kwargs):
@@ -127,7 +132,62 @@ def fix_mistake1(message, **kwargs):
 
     return message
 
+def fix_mistake2(message, **_):
+    """
+    BAD:
+    ```
+    hello
+    <action>
+    {
+    "tool_call": "file_tool-read_files",
+    "tool_args": {
+        "files": [
+            "/tmp/1.txt"
+            ]
+        }
+    }
+    </action>
+
+    GOOD:
+    {
+        "step_name": "action",
+        "raw_text": {
+            "tool_call": "file_tool-read_files",
+            "tool_args": {
+                "files": [
+                    "/tmp/1.txt"
+                    ]
+                }
+        }
+    }
+    ```
+
+    Args:
+        message (_type_): _description_
+    """
+    if isinstance(message, str):
+       if '\n<action>\n' in message or message.startswith("<action>\n"):
+            new_message1 = message[message.find("<action>\n")+10 : message.find("\n</action>")]
+            new_message2 = fix_raw_text(new_message1)
+            if new_message2 and new_message2 != new_message1:
+                d = {
+                    "step_name": "action",
+                    "raw_text": new_message2,
+                }
+                return [d]
+
+    if isinstance(message, list) and len(message) == 1 and isinstance(message[0], dict):
+        d = message[0]
+        raw_text = d.get("raw_text")
+        if raw_text and ('\n<action>\n' in raw_text or raw_text.startswith("<action>\n")):
+            new_list = fix_mistake2(raw_text)
+            if new_list and isinstance(new_list, list):
+                message += new_list
+                return message
+
+    return None
 
 MISTAKES = dict(
     fix_mistake1=fix_mistake1,
+    fix_mistake2=fix_mistake2,
 )

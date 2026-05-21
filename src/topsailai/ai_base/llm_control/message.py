@@ -369,6 +369,9 @@ def format_response(response, rsp_obj=None, messages=None):
         if not isinstance(response, str):
             return response
 
+    if not isinstance(response, str):
+        return response
+
     # only thought
     # response is string
     if response \
