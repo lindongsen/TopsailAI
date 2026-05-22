@@ -16,6 +16,7 @@ from topsailai.skill_hub.skill_tool import (
     is_matched_skill,
     exists_skill,
     get_skill_file,
+    get_script_path,
 )
 from topsailai.tools.cmd_tool import format_return
 from topsailai.utils import (
@@ -90,21 +91,7 @@ def call_skill(
         assert not os.path.exists(output_file), "The output_file already exists and cannot be overwritten"
 
     # format script_path
-    if not script_path.startswith(skill_folder):
-        # case: /xxx or .xxx
-        for _ in range(2):
-            if script_path[0] in ['/', '.']:
-                script_path = script_path[1:]
-            else:
-                break
-        if not os.path.exists(f"{skill_folder}/{script_path}"):
-            for _script_dirname in [
-                "scripts",
-                "script"
-            ]:
-                if os.path.exists(f"{skill_folder}/{_script_dirname}/{script_path}"):
-                    script_path = f"{skill_folder}/{_script_dirname}/{script_path}"
-                    break
+    script_path = get_script_path(skill_folder, script_path)
 
     # cmd
     if isinstance(script_parameters, list):

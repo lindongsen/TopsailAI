@@ -54,6 +54,11 @@ Overview Content
 """
 
 
+COMMON_SCRIPT_FOLDER_NAME_LIST = [
+    "scripts",
+    "script",
+]
+
 def is_matched_skill(skill_folder:str, keys:list[str]) -> bool:
     """ return True for matched """
     keys = to_list(keys)
@@ -469,3 +474,34 @@ def get_skill_file_content(folder_path:str, file_name:str) -> str:
         file_content = fp.read()
 
     return file_content
+
+def get_script_path(skill_folder:str, script_path:str) -> str:
+    """ return absolute path """
+    if not script_path.startswith(skill_folder):
+        # case: /xxx or .xxx
+        for _ in range(2):
+            if script_path[0] in ['/', '.']:
+                script_path = script_path[1:]
+            else:
+                break
+
+        if not os.path.exists(f"{skill_folder}/{script_path}"):
+            for _script_dirname in COMMON_SCRIPT_FOLDER_NAME_LIST:
+                _real_script_path = f"{skill_folder}/{_script_dirname}/{script_path}"
+                if os.path.exists(_real_script_path):
+                    script_path = _real_script_path
+                    return script_path
+
+    script_base_name = os.path.basename(script_path)
+    if not os.path.exists(script_path):
+        for _script_dirname in COMMON_SCRIPT_FOLDER_NAME_LIST:
+            _real_script_path = f"{skill_folder}/{_script_dirname}/{script_base_name}"
+            if os.path.exists(_real_script_path):
+                script_path = _real_script_path
+                return script_path
+
+    _real_script_path = get_skill_file(skill_folder, script_base_name)
+    if _real_script_path:
+        return _real_script_path
+
+    return script_path
