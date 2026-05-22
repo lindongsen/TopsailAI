@@ -24,7 +24,7 @@ from topsailai.workspace.hook_instruction import (
 SPLIT_LINE = "--------------------------------------------------------------------------------"
 INPUT_TIPS = f">>> Your Turn: (pid={os.getpid()}) "
 
-DESCRIPTION_EXIT_SET = ["exit", "quit", "/exit", "/quit"]
+DESCRIPTION_EXIT_SET = ["exit", "quit", "/exit", "/quit", "q"]
 
 
 def hook_message(message: str, hook: HookInstruction) -> bool:

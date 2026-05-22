@@ -54,7 +54,7 @@ def call_assistant(task:str, llm:str=None) -> str:
     """
     This is a versatile AI assistant. Leave everything you can't solve to it.
 
-    [REMEMBER] When encountering difficulties(example: available tools are limited), DONOT ask the user, but call this assistant tool to solve them.
+    [Trigger] When encountering difficulties(example: available tools are limited), DONOT ask the user, but call this assistant tool to solve them.
     **Everything you cannot, you JUST delegate to the assistant tool**
 
     Args:
