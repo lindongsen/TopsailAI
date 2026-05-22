@@ -1663,12 +1663,12 @@ def main():
     print(f"{Colors.DIM}DIR:  {task_dir}{Colors.RESET}")
     log_files = discover_log_files(task_dir)
 
-    if not log_files:
+    if log_files:
+        print_table(log_files)
+    else:
         print(f"\n{Colors.YELLOW}[WARN] No .stdout log files found in:{Colors.RESET}")
         print(f"  {task_dir}")
-        sys.exit(0)
 
-    print_table(log_files)
     print(
         f"\n  {Colors.DIM}Type {Colors.YELLOW}/help{Colors.DIM} for available commands{Colors.RESET}"
     )
