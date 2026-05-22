@@ -66,14 +66,21 @@ def call_assistant(task:str, llm:str=None) -> str:
     """
     assert task, "missing task content"
 
-    agent_name = os.getenv("TOPSAILAI_AGENT_NAME") or ""
+    agent_name = os.getenv("TOPSAILAI_AGENT_NAME") or "Agent"
     agent_name = "Sub." + agent_name + f".{llm or ''}"
 
     from topsailai.workspace.agent_shell import get_agent_chat
 
     disabled_tools = ["agent_tool", "subagent_tool"]
 
+    system_prompt = f"""
+## Sub Agent
+I am a sub-agent, and my name is ({agent_name})
+"""
+    system_prompt += EnvReaderInstance.read_file_or_content("TOPSAILAI_SUBAGENT_SYSTEM_PROMPT")
+
     task_agent = get_agent_chat(
+        system_prompt=system_prompt,
         disabled_tools=disabled_tools,
         need_input_message=False,
         agent_name=agent_name,
@@ -84,7 +91,7 @@ def call_assistant(task:str, llm:str=None) -> str:
     task_agent.hooks_for_final_answer.clear()
 
     task_id = get_task_id()
-    return task_agent.run(
+    return task_agent._run(
         message=task,
         times=1,
         need_session_lock=False,
@@ -110,4 +117,4 @@ TOOLS = dict(
 FLAG_TOOL_ENABLED = False
 
 PROMPT = prompt_tool.read_prompt("work_mode/sop/collaboration.md") + \
-    EnvReaderInstance.get("TOPSAILAI_SUBAGENT_TOOL_PROMPT", "")
+    EnvReaderInstance.read_file_or_content("TOPSAILAI_SUBAGENT_TOOL_PROMPT")

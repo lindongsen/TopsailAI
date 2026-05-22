@@ -44,7 +44,30 @@ from topsailai.workspace.print_tool import (
 class AgentChat(AgentChatBase):
 
     @decorator_tee_output_by_session(need_delete_log_files=True)
-    def run(
+    def run(self, *args, **kwargs):
+        """Run the agent chat session.
+
+        Executes the main conversation loop between human and AI agent.
+        Handles message input, agent execution, response processing, and
+        session management.
+
+        Args:
+            message: Initial message to send to the agent. If None, prompts for input.
+            times: Maximum number of conversation turns. 0 means unlimited.
+            func_build_message: Optional callback to transform message before sending.
+            func_print_pre_input_message: Optional callback to execute before prompting for input.
+            need_save_answer: Whether to save answers to context. Defaults to True.
+            need_confirm_abort: Whether to confirm before aborting on keyboard interrupt.
+            need_interactive: Whether to use interactive mode. Defaults to True.
+            need_symbol_for_answer: Whether to prepend symbol to answer. Defaults to False.
+            only_save_final: If True, only save the final answer to session history.
+
+        Returns:
+            str: The final answer from the AI agent.
+        """
+        return self._run(*args, **kwargs)
+
+    def _run(
             self,
             message:str=None,
             times:int=0,

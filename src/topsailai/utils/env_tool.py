@@ -143,6 +143,22 @@ class EnvironmentReader(object):
                     return fd.read().strip()
         return ""
 
+    @staticmethod
+    def read_file_or_content(env_key:str) -> str:
+        """Environment Variable may be file, if it is file, return file content
+
+        Args:
+            env_key (str):
+
+        Returns:
+            str:
+        """
+        env_var = os.getenv(env_key)
+        if not env_var:
+            return ""
+        content = EnvironmentReader.try_read_file(env_var)
+        return content or env_var
+
     @property
     def story_prompt_content(self):
         """Retrieve story prompt content from environment variable.

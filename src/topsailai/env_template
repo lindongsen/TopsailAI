@@ -275,6 +275,7 @@ TOPSAILAI_TOOL_CALL_MAXIMUM_RETURN=300000
 # subagent_tool
 TOPSAILAI_SUBAGENT_TOOL_AVAILABLE_LLMS=""
 TOPSAILAI_SUBAGENT_TOOL_PROMPT=""
+TOPSAILAI_SUBAGENT_SYSTEM_PROMPT=""
 
 # =============================================================================
 # Skill Configuration
