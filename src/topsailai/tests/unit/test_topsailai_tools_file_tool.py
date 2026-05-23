@@ -10,7 +10,7 @@ Test coverage:
 - exists_file: Single file existence checking
 - mkdirs: Directory creation
 - replace_lines_in_file: Line replacement
-- insert_data_to_file: Data insertion
+- insert_content_to_file: Data insertion
 - list_dir: Directory listing
 - list_dirs: Multiple directory listing
 - is_need_truncate: Truncation check
@@ -35,7 +35,7 @@ from topsailai.tools.file_tool import (
     check_files_existing,
     exists_file,
     mkdirs,
-    insert_data_to_file,
+    insert_content_to_file,
     list_dir,
     list_dirs,
     is_need_truncate,
@@ -583,10 +583,10 @@ class TestReplaceLinesInFile:
 
 
 class TestInsertDataToFile:
-    """Test insert_data_to_file function."""
+    """Test insert_content_to_file function."""
 
     def test_insert_data_after_line(self):
-        """Verify insert_data_to_file inserts after specified line."""
+        """Verify insert_content_to_file inserts after specified line."""
         temp_dir = tempfile.mkdtemp()
         temp_path = os.path.join(temp_dir, "test_insert.txt")
         
@@ -594,7 +594,7 @@ class TestInsertDataToFile:
             with open(temp_path, 'w') as f:
                 f.write("AAA\nBBB\nCCC\n")
             
-            result = insert_data_to_file(temp_path, "XXX", 1, "after")
+            result = insert_content_to_file(temp_path, "XXX", 1, "after")
             # result is diff output, not raw file content
             assert "XXX" in result
             assert "---" in result
@@ -602,7 +602,7 @@ class TestInsertDataToFile:
             shutil.rmtree(temp_dir)
 
     def test_insert_data_before_line(self):
-        """Verify insert_data_to_file inserts before specified line."""
+        """Verify insert_content_to_file inserts before specified line."""
         temp_dir = tempfile.mkdtemp()
         temp_path = os.path.join(temp_dir, "test_insert_before.txt")
         
@@ -610,14 +610,14 @@ class TestInsertDataToFile:
             with open(temp_path, 'w') as f:
                 f.write("AAA\nBBB\nCCC\n")
             
-            result = insert_data_to_file(temp_path, "XXX", 2, "before")
+            result = insert_content_to_file(temp_path, "XXX", 2, "before")
             assert "XXX" in result
             assert "---" in result
         finally:
             shutil.rmtree(temp_dir)
 
     def test_insert_data_at_beginning(self):
-        """Verify insert_data_to_file inserts at beginning."""
+        """Verify insert_content_to_file inserts at beginning."""
         temp_dir = tempfile.mkdtemp()
         temp_path = os.path.join(temp_dir, "test_insert_begin.txt")
         
@@ -625,14 +625,14 @@ class TestInsertDataToFile:
             with open(temp_path, 'w') as f:
                 f.write("AAA\nBBB\n")
             
-            result = insert_data_to_file(temp_path, "XXX", 1, "before")
+            result = insert_content_to_file(temp_path, "XXX", 1, "before")
             assert "XXX" in result
             assert "---" in result
         finally:
             shutil.rmtree(temp_dir)
 
     def test_insert_data_invalid_position(self):
-        """Verify insert_data_to_file handles invalid position."""
+        """Verify insert_content_to_file handles invalid position."""
         temp_dir = tempfile.mkdtemp()
         temp_path = os.path.join(temp_dir, "test_insert_invalid.txt")
         
@@ -640,14 +640,14 @@ class TestInsertDataToFile:
             with open(temp_path, 'w') as f:
                 f.write("AAA\n")
             
-            result = insert_data_to_file(temp_path, "XXX", 100, "after")
+            result = insert_content_to_file(temp_path, "XXX", 100, "after")
             assert "XXX" in result
             assert "---" in result
         finally:
             shutil.rmtree(temp_dir)
 
-    def test_insert_data_to_file_empty_file(self):
-        """Verify insert_data_to_file returns empty string for empty file."""
+    def test_insert_content_to_file_empty_file(self):
+        """Verify insert_content_to_file returns empty string for empty file."""
         temp_dir = tempfile.mkdtemp()
         temp_path = os.path.join(temp_dir, "test_empty.txt")
         
@@ -655,13 +655,13 @@ class TestInsertDataToFile:
             with open(temp_path, 'w') as f:
                 f.write("")
             
-            result = insert_data_to_file(temp_path, "XXX", 1, "after")
+            result = insert_content_to_file(temp_path, "XXX", 1, "after")
             assert result == ""
         finally:
             shutil.rmtree(temp_dir)
 
-    def test_insert_data_to_file_invalid_position_raises(self):
-        """Verify insert_data_to_file raises ValueError for invalid before_or_after."""
+    def test_insert_content_to_file_invalid_position_raises(self):
+        """Verify insert_content_to_file raises ValueError for invalid before_or_after."""
         temp_dir = tempfile.mkdtemp()
         temp_path = os.path.join(temp_dir, "test_invalid.txt")
         
@@ -670,7 +670,7 @@ class TestInsertDataToFile:
                 f.write("AAA\n")
             
             with pytest.raises(ValueError):
-                insert_data_to_file(temp_path, "XXX", 1, "invalid")
+                insert_content_to_file(temp_path, "XXX", 1, "invalid")
         finally:
             shutil.rmtree(temp_dir)
 
@@ -777,7 +777,7 @@ class TestToolsDictionary:
         """Verify TOOLS contains expected function keys."""
         expected_keys = {
             "write_file", "read_file", "append_file", "check_files_existing",
-            "mkdirs", "overwrite_lines_in_file", "insert_data_to_file",
+            "mkdirs", "overwrite_lines_in_file", "insert_content_to_file",
             "list_dirs", "read_files"
         }
         for key in expected_keys:

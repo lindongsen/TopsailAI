@@ -18,14 +18,14 @@ class TestCtxSafeConstants(unittest.TestCase):
     """Test module-level constants."""
 
     def test_max_msg_size_value(self):
-        """Test MAX_MSG_SIZE constant value is 3000."""
+        """Test MAX_MSG_SIZE constant value is 30000."""
         from topsailai.context.ctx_safe import MAX_MSG_SIZE
-        self.assertEqual(MAX_MSG_SIZE, 3000)
+        self.assertEqual(MAX_MSG_SIZE, 30000)
 
     def test_large_msg_size_value(self):
-        """Test LARGE_MSG_SIZE constant value is 13000."""
+        """Test LARGE_MSG_SIZE constant value is 40000."""
         from topsailai.context.ctx_safe import LARGE_MSG_SIZE
-        self.assertEqual(LARGE_MSG_SIZE, 13000)
+        self.assertEqual(LARGE_MSG_SIZE, 40000)
 
     def test_suffix_truncate_value(self):
         """Test SUFFIX_TRUNCATE constant value."""
@@ -57,7 +57,7 @@ class TestIsNeedTruncate(unittest.TestCase):
         """Test truncation needed for standard agent above MAX_MSG_SIZE."""
         mock_get_agent_name.return_value = "StandardAgent"
         from topsailai.context.ctx_safe import is_need_truncate
-        result = is_need_truncate(5000)
+        result = is_need_truncate(35000)
         self.assertTrue(result)
 
     @patch('topsailai.context.ctx_safe.get_agent_name')
@@ -187,8 +187,8 @@ class TestTruncateMessage(unittest.TestCase):
         """Test truncation of unicode string."""
         mock_get_agent_name.return_value = "StandardAgent"
         from topsailai.context.ctx_safe import truncate_message, SUFFIX_TRUNCATE
-        # Create unicode string longer than MAX_MSG_SIZE (3000)
-        unicode_message = "中文" * 2000
+        # Create unicode string longer than MAX_MSG_SIZE (30000)
+        unicode_message = "中文" * 16000
         result = truncate_message(unicode_message)
         self.assertTrue(result.endswith(SUFFIX_TRUNCATE))
 

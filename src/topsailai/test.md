@@ -5,6 +5,8 @@ maintainer: human
 
 Enhance unit tests.
 
+Run all of tests via this script: `tests/run_tests.sh`
+
 ## Test Sequence
 
 - Common Utils

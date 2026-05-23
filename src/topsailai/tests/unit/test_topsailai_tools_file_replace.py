@@ -15,7 +15,7 @@ workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '
 if (workspace_root + "/src") not in sys.path:
     sys.path.insert(0, workspace_root)
     sys.path.insert(0, workspace_root + "/src")
-from topsailai.tools.file_tool import replace_lines_in_file
+from topsailai.tools.file_tool_utils.file_write_line import replace_lines_in_file
 
 
 class TestFileToolReplaceLinesInFile:
@@ -78,7 +78,7 @@ class TestFileToolReplaceLinesInFile:
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = replace_lines_in_file(test_file, [(10, "Non-existent line")])
-        assert result == "---"
+        assert result == ""
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == initial_content
@@ -89,7 +89,7 @@ class TestFileToolReplaceLinesInFile:
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = replace_lines_in_file(test_file, [(-1, "Invalid line")])
-        assert result == "---"
+        assert result == ""
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == initial_content
@@ -99,11 +99,10 @@ class TestFileToolReplaceLinesInFile:
         with open(test_file, 'w') as f:
             f.write("")
         result = replace_lines_in_file(test_file, [(1, "New line")])
-        assert result == "---"
+        assert result == ""
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == ""
-
     def test_replace_lines_in_file_single_line_no_newline(self, test_file):
         """Test replacing a line in a file with no trailing newline"""
         initial_content = "Line 1\nLine 2\nLine 3"
@@ -187,11 +186,10 @@ class TestFileToolReplaceLinesInFile:
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = replace_lines_in_file(test_file, [(0, "Invalid line")])
-        assert result == "---"
+        assert result == ""
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == initial_content
-
     def test_replace_lines_in_file_permission_error(self, test_file):
         """Test error handling with permission denied"""
         with open(test_file, 'w') as f:
@@ -829,8 +827,7 @@ def bar():
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = replace_lines_in_file(test_file, [{"line_number": 0, "content": "Invalid"}])
-        assert result == "---"
-
+        assert result == ""
     def test_replace_lines_in_file_json_list_of_lists(self, test_file):
         """Test JSON string input as list of lists format"""
         initial_content = "Line 1\nLine 2\nLine 3"
@@ -895,11 +892,10 @@ def bar():
         with open(test_file, 'w') as f:
             f.write(initial_content)
         result = replace_lines_in_file(test_file, [(1000000, "Way out of bounds")])
-        assert result == "---"
+        assert result == ""
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == initial_content
-
     def test_replace_lines_in_file_whitespace_only_content(self, test_file):
         """Test replacing with whitespace-only content"""
         initial_content = "Line 1\nLine 2\nLine 3"

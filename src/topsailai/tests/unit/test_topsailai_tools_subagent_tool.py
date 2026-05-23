@@ -106,7 +106,7 @@ class TestCallAssistant:
         
         # Setup mocks
         mock_agent = MagicMock()
-        mock_agent.run.return_value = "assistant response"
+        mock_agent._run.return_value = "assistant response"
         mock_get_agent_chat.return_value = mock_agent
         mock_get_task_id.return_value = "task_123"
         
@@ -120,7 +120,7 @@ class TestCallAssistant:
         assert call_kwargs["need_input_message"] is False
         
         # Verify agent was run
-        mock_agent.run.assert_called_once_with(
+        mock_agent._run.assert_called_once_with(
             message="test task",
             times=1,
             need_session_lock=False,
@@ -136,7 +136,7 @@ class TestCallAssistant:
         from topsailai.tools.subagent_tool import call_assistant
         
         mock_agent = MagicMock()
-        mock_agent.run.return_value = "response"
+        mock_agent._run.return_value = "response"
         mock_agent.hooks_for_final_answer = ["hook1", "hook2"]
         mock_get_agent_chat.return_value = mock_agent
         mock_get_task_id.return_value = "task_123"
@@ -144,7 +144,6 @@ class TestCallAssistant:
         call_assistant("test task")
         
         assert len(mock_agent.hooks_for_final_answer) == 0
-
     @patch("topsailai.workspace.agent_shell.get_agent_chat")
     @patch("topsailai.tools.subagent_tool.get_task_id")
     @patch.dict(os.environ, {"TOPSAILAI_AGENT_NAME": "TestAgent"})
@@ -153,14 +152,14 @@ class TestCallAssistant:
         from topsailai.tools.subagent_tool import call_assistant
         
         mock_agent = MagicMock()
-        mock_agent.run.return_value = "response"
+        mock_agent._run.return_value = "response"
         mock_get_agent_chat.return_value = mock_agent
         mock_get_task_id.return_value = "task_123"
         
         call_assistant("test task")
         
         call_kwargs = mock_get_agent_chat.call_args[1]
-        assert call_kwargs["agent_name"] == "Sub.TestAgent"
+        assert call_kwargs["agent_name"] == "Sub.TestAgent."
 
     @patch("topsailai.workspace.agent_shell.get_agent_chat")
     @patch("topsailai.tools.subagent_tool.get_task_id")
@@ -173,15 +172,14 @@ class TestCallAssistant:
             del os.environ["TOPSAILAI_AGENT_NAME"]
         
         mock_agent = MagicMock()
-        mock_agent.run.return_value = "response"
+        mock_agent._run.return_value = "response"
         mock_get_agent_chat.return_value = mock_agent
         mock_get_task_id.return_value = "task_123"
         
         call_assistant("test task")
         
         call_kwargs = mock_get_agent_chat.call_args[1]
-        assert call_kwargs["agent_name"] == "Sub."
-
+        assert call_kwargs["agent_name"] == "Sub.Agent."
 
 class TestToolsDictionary:
     """Test TOOLS dictionary structure."""
@@ -275,7 +273,7 @@ class TestIntegration:
         
         # Setup mocks
         mock_agent = MagicMock()
-        mock_agent.run.return_value = "final answer"
+        mock_agent._run.return_value = "final answer"
         mock_get_agent_chat.return_value = mock_agent
         mock_get_task_id.return_value = "integration_task_123"
         
@@ -287,7 +285,7 @@ class TestIntegration:
         result = call_assistant("integration test task")
         
         assert result == "final answer"
-        mock_agent.run.assert_called_once()
+        mock_agent._run.assert_called_once()
 
     def test_task_id_persistence(self):
         """Verify task ID persists across multiple get_task_id calls."""
@@ -307,7 +305,7 @@ class TestIntegration:
         from topsailai.tools.subagent_tool import call_assistant
         
         mock_agent = MagicMock()
-        mock_agent.run.return_value = "response"
+        mock_agent._run.return_value = "response"
         mock_get_agent_chat.return_value = mock_agent
         mock_get_task_id.return_value = "task_123"
         
@@ -352,7 +350,7 @@ class TestEdgeCases:
         from topsailai.tools.subagent_tool import call_assistant
         
         mock_agent = MagicMock()
-        mock_agent.run.return_value = "response"
+        mock_agent._run.return_value = "response"
         mock_get_agent_chat.return_value = mock_agent
         mock_get_task_id.return_value = "task_123"
         
@@ -360,7 +358,7 @@ class TestEdgeCases:
             call_assistant("test task")
         
         call_kwargs = mock_get_agent_chat.call_args[1]
-        assert call_kwargs["agent_name"] == "Sub.Test_Agent-123"
+        assert call_kwargs["agent_name"] == "Sub.Test_Agent-123."
 
 
 if __name__ == "__main__":

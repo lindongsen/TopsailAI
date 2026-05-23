@@ -167,7 +167,7 @@ def fix_mistake2(message, **_):
     """
     if isinstance(message, str):
        if '\n<action>\n' in message or message.startswith("<action>\n"):
-            new_message1 = message[message.find("<action>\n")+10 : message.find("\n</action>")]
+            new_message1 = message[message.find("<action>\n")+9 : message.find("\n</action>")]
             new_message2 = fix_raw_text(new_message1)
             if new_message2 and new_message2 != new_message1:
                 d = {

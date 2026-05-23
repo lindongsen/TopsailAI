@@ -20,26 +20,26 @@ class TestCheckOrFixMistakes:
         assert result is None
 
     def test_check_or_fix_mistakes_with_empty_list(self):
-        """Verify returns None for empty list when no mistakes registered."""
+        """Verify returns empty list when no mistakes registered."""
         from topsailai.ai_base.llm_control.llm_mistakes.base.init import check_or_fix_mistakes
 
         result = check_or_fix_mistakes([])
-        assert result is None
+        assert result == []
 
     def test_check_or_fix_mistakes_with_string(self):
-        """Verify returns None for string when no fixes applied."""
+        """Verify returns original string when no fixes applied."""
         from topsailai.ai_base.llm_control.llm_mistakes.base.init import check_or_fix_mistakes
 
         result = check_or_fix_mistakes("test string")
-        assert result is None
+        assert result == "test string"
 
     def test_check_or_fix_mistakes_with_dict(self):
-        """Verify returns None for dict when no fixes applied."""
+        """Verify returns original dict when no fixes applied."""
         from topsailai.ai_base.llm_control.llm_mistakes.base.init import check_or_fix_mistakes
 
         test_dict = {"key": "value"}
         result = check_or_fix_mistakes(test_dict)
-        assert result is None
+        assert result == test_dict
 
     def test_check_or_fix_mistakes_calls_mistake_function(self):
         """Verify mistake function is called with response."""

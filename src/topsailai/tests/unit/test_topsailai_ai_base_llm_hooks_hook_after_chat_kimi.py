@@ -8,11 +8,11 @@ Purpose: Test Kimi LLM hook - convert kimi format to standard format
 """
 
 import pytest
+from topsailai.ai_base.llm_control.exception import ModelServiceError
 from topsailai.ai_base.llm_hooks.hook_after_chat.kimi import (
     convert_to_list_dict,
     hook_execute,
 )
-
 
 class TestConvertToListDict:
     """Test convert_to_list_dict function"""
@@ -124,10 +124,10 @@ class TestHookExecuteEdgeCases:
     """Test hook_execute edge cases"""
 
     def test_execute_with_partial_markers(self):
-        """Test hook_execute with partial markers (no match)"""
+        """Test hook_execute with partial markers raises ModelServiceError"""
         content = "<|tool_calls_section_begin|> but no end"
-        result = hook_execute(content)
-        assert result == content
+        with pytest.raises(ModelServiceError):
+            hook_execute(content)
 
 
 if __name__ == "__main__":

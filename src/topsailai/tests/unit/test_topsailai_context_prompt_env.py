@@ -104,7 +104,7 @@ class TestCurrentDate:
         from topsailai.context.prompt_env import CurrentDate
         
         with patch('topsailai.context.prompt_env.time_tool') as mock_time:
-            mock_time.get_current_date.return_value = "2025-01-15T10:30:00"
+            mock_time.get_current_day.return_value = "2025-01-15T10:30:00"
             
             current_date = CurrentDate()
             result = current_date.prompt
@@ -117,7 +117,7 @@ class TestCurrentDate:
         from topsailai.context.prompt_env import CurrentDate
         
         with patch('topsailai.context.prompt_env.time_tool') as mock_time:
-            mock_time.get_current_date.return_value = "2025-01-15"
+            mock_time.get_current_day.return_value = "2025-01-15"
             
             current_date = CurrentDate()
             assert str(current_date) == "CurrentDate: 2025-01-15"
@@ -127,7 +127,7 @@ class TestCurrentDate:
         from topsailai.context.prompt_env import CurrentDate
         
         with patch('topsailai.context.prompt_env.time_tool') as mock_time:
-            mock_time.get_current_date.return_value = "2025-12-31T23:59:59"
+            mock_time.get_current_day.return_value = "2025-12-31T23:59:59"
             
             current_date = CurrentDate()
             result = current_date.prompt
@@ -305,47 +305,41 @@ class TestIntegration:
         """Test complete prompt generation workflow."""
         monkeypatch.setenv("ENV_PROMPT", "Custom environment setup")
         
-        with patch('topsailai.context.prompt_env.os') as mock_os:
-            mock_os.getenv.return_value = "Custom environment setup"
-            
-            with patch('topsailai.context.prompt_env.CurrentDate') as mock_date:
-                with patch('topsailai.context.prompt_env.CurrentSystem') as mock_system:
-                    mock_date.return_value.prompt = "CurrentDate: 2025-01-15T10:00:00"
-                    mock_system.return_value.prompt = "System Info:\n- uname:Linux x86_64"
-                    
-                    result = generate_prompt_for_env()
-                    
-                    # Verify complete structure
-                    assert result.startswith("# Environment")
-                    assert "CurrentDate:" in result
-                    assert "System Info:" in result
-                    assert "Custom environment setup" in result
+        with patch('topsailai.context.prompt_env.CurrentDate') as mock_date:
+            with patch('topsailai.context.prompt_env.CurrentSystem') as mock_system:
+                mock_date.return_value.prompt = "CurrentDate: 2025-01-15T10:00:00"
+                mock_system.return_value.prompt = "System Info:\n- uname:Linux x86_64"
+                
+                result = generate_prompt_for_env()
+                
+                # Verify complete structure
+                assert result.startswith("# Environment")
+                assert "CurrentDate:" in result
+                assert "System Info:" in result
+                assert "Custom environment setup" in result
 
     def test_prompt_generation_without_custom_env(self, monkeypatch):
         """Test prompt generation without custom environment."""
         monkeypatch.delenv("ENV_PROMPT", raising=False)
         
-        with patch('topsailai.context.prompt_env.os') as mock_os:
-            mock_os.getenv.return_value = None
-            
-            with patch('topsailai.context.prompt_env.CurrentDate') as mock_date:
-                with patch('topsailai.context.prompt_env.CurrentSystem') as mock_system:
-                    mock_date.return_value.prompt = "CurrentDate: 2025-01-15"
-                    mock_system.return_value.prompt = "System Info:\n- uname:Linux"
-                    
-                    result = generate_prompt_for_env()
-                    
-                    # Verify structure without custom env
-                    assert result.startswith("# Environment")
-                    assert "CurrentDate:" in result
-                    assert "System Info:" in result
+        with patch('topsailai.context.prompt_env.CurrentDate') as mock_date:
+            with patch('topsailai.context.prompt_env.CurrentSystem') as mock_system:
+                mock_date.return_value.prompt = "CurrentDate: 2025-01-15"
+                mock_system.return_value.prompt = "System Info:\n- uname:Linux"
+                
+                result = generate_prompt_for_env()
+                
+                # Verify structure without custom env
+                assert result.startswith("# Environment")
+                assert "CurrentDate:" in result
+                assert "System Info:" in result
 
     def test_current_date_and_system_together(self):
         """Test that CurrentDate and CurrentSystem work together in prompt."""
         from topsailai.context.prompt_env import CurrentDate, CurrentSystem
         
         with patch('topsailai.context.prompt_env.time_tool') as mock_time:
-            mock_time.get_current_date.return_value = "2025-01-15"
+            mock_time.get_current_day.return_value = "2025-01-15"
             
             with patch.object(CurrentSystem, 'system_info', {'uname': 'Linux', 'issue': 'Debian'}):
                 date_prompt = CurrentDate().prompt

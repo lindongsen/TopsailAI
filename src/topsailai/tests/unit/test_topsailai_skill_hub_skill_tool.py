@@ -153,9 +153,10 @@ class TestSkillInfo(unittest.TestCase):
         """Test markdown property with empty values."""
         skill_info = SkillInfo()
         skill_info.folder = "test_folder"
-        
-        result = skill_info.markdown
-        
+
+        with patch('topsailai.skill_hub.skill_tool.overview_skill_native', return_value="overview content"):
+            result = skill_info.markdown
+
         self.assertIn("test_folder", result)
         self.assertIn("## . folder=", result)
 
@@ -165,9 +166,9 @@ class TestSkillInfo(unittest.TestCase):
         skill_info.folder = "test_folder"
         skill_info.name = "TestSkill"
         skill_info.description = "A test skill"
-        
+
         result = skill_info.markdown
-        
+
         self.assertIn("TestSkill", result)
         self.assertIn("A test skill", result)
         self.assertIn("test_folder", result)
@@ -177,12 +178,12 @@ class TestSkillInfo(unittest.TestCase):
         skill_info = SkillInfo()
         skill_info.name = "TestSkill"
         skill_info.folder = "test_folder"  # Need folder for markdown
-        
-        # Mock is_need_load_overview to avoid folder path issues
-        with patch('topsailai.skill_hub.skill_tool.is_need_load_overview', return_value=False):
+
+        # Mock is_need_load_overview and overview_skill_native to avoid folder path issues
+        with patch('topsailai.skill_hub.skill_tool.is_need_load_overview', return_value=False), \
+             patch('topsailai.skill_hub.skill_tool.overview_skill_native', return_value="overview content"):
             result = str(skill_info)
             self.assertIn("TestSkill", result)
-
 
 class TestGetFileSkillMd(unittest.TestCase):
     """Test cases for get_file_skill_md function."""
