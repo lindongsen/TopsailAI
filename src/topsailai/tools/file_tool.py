@@ -355,13 +355,13 @@ def _insert_data_to_file(file_path: str, data: str, line_num: int, before_or_aft
 
     return new_content
 
-def insert_data_to_file(file_path: str, data: str, line_num: int, before_or_after: str = "after"):
+def insert_content_to_file(file_path: str, content: str, line_num: int, before_or_after: str = "after"):
     """
-    Insert data(ends with newline) to file before/after line number.
+    Insert content(ends with newline) to file before/after line number.
 
     Args:
         file_path (str): Path to the file to modify
-        data (str): Data to insert
+        content (str):
         line_num (int): Line number to insert before/after (1-based)
         before_or_after (str, optional): Whether to insert "before" or "after" the line. Defaults to "after".
 
@@ -370,15 +370,15 @@ def insert_data_to_file(file_path: str, data: str, line_num: int, before_or_afte
     """
     with _file_tool.ctxm_temp_file("") as (tmp_file, fp):
         with open(file_path, encoding='utf-8') as f1:
-            content = f1.read()
+            raw_content = f1.read()
 
-        if content:
-            fp.write(content)
+        if raw_content:
+            fp.write(raw_content)
             fp.flush()
 
-        _insert_data_to_file(file_path=file_path, data=data, line_num=line_num, before_or_after=before_or_after)
+        _insert_data_to_file(file_path=file_path, data=content, line_num=line_num, before_or_after=before_or_after)
 
-        if not content:
+        if not raw_content:
             return ""
 
         diff_content = file_diff.compare_files_strived(tmp_file, file_path)
@@ -435,7 +435,7 @@ TOOLS = dict(
     check_files_existing=check_files_existing,
     mkdirs=mkdirs,
     overwrite_lines_in_file=file_write_code_block.overwrite_code_block,
-    insert_data_to_file=insert_data_to_file,
+    insert_content_to_file=insert_content_to_file,
     list_dirs=list_dirs,
     read_files=read_files,
 )

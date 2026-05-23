@@ -1,0 +1,17 @@
+# AI Agent Driver
+ai_agent_driver: ai-team-flow-dev
+
+# Project Folder
+workspace: /root/ai/TopsailAI/src/topsailai
+
+# Context Informations, key is item name, value is list for files
+context:
+  _default:
+    - project.yaml
+    - test.md
+    - readme.md
+
+  default: []
+
+  llm_mistake:
+    - ai_base/llm_control/llm_mistakes/readme.md
