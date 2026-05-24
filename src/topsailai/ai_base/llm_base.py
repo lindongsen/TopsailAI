@@ -385,6 +385,8 @@ class LLMModel(LLMModelBase):
                     httpx.ReadError,
                     httpcore.ReadError,
                     httpx.RemoteProtocolError,
+                    httpx.ReadTimeout,
+                    httpcore.ReadTimeout,
                 ) as e:
                 # This problem often occurs with streaming response
                 print_error(f"!!! [{i}] ReadError, {e}")
