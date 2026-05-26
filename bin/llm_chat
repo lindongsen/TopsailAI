@@ -51,6 +51,9 @@ cd "${WORK_DIR}" || error_quit "enter work_dir failed: ${WORK_DIR}"
 [ "${DEBUG}" == "" ] && DEBUG=0
 export DEBUG
 
+[ "${TOPSAILAI_CLI_NEED_TIPS}" == "" ] && TOPSAILAI_CLI_NEED_TIPS=0
+export TOPSAILAI_CLI_NEED_TIPS
+
 # task
 task="$*"
 task_ex=""
