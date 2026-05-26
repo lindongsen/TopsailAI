@@ -175,6 +175,11 @@ def get_agent_chat(
             message = message_content
 
     if not message:
+        message = env_tool.EnvReaderInstance.read_file_or_content("TOPSAILAI_USER_MESSAGE")
+        # only once
+        os.environ["TOPSAILAI_USER_MESSAGE"] = ""
+
+    if not message:
         message = ""
 
     message_from_args = ""

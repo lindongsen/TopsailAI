@@ -149,6 +149,11 @@ def get_llm_chat(
     if not message:
         message = get_message(need_input=need_input_message)
 
+    if not message:
+        message = env_tool.EnvReaderInstance.read_file_or_content("TOPSAILAI_USER_MESSAGE")
+        # only once
+        os.environ["TOPSAILAI_USER_MESSAGE"] = ""
+
     # session
     if session_id is None:
         session_id = env_tool.get_session_id()

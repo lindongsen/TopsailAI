@@ -322,6 +322,9 @@ TOPSAILAI_CMD_ENV_KEYS=""
 # Format: Tool names separated by semicolons (';')
 # TOPSAILAI_CLI_AGENT_CHAT_DISABLED_TOOLS="agent_tool"
 
+# DONOT SET IT, only for runtime
+TOPSAILAI_USER_MESSAGE=""
+
 # =============================================================================
 # HOOK Configuration
 # =============================================================================
