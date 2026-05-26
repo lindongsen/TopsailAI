@@ -14,8 +14,7 @@ import (
 
 // Config holds all configuration
 type Config struct {
-	Host         string
-	Port         string
+	APIBase      string
 	SessionID    string
 	Message      string
 	Role         string
@@ -24,13 +23,25 @@ type Config struct {
 	ResultOnly   bool
 	APIKey       string
 	AuthStyle    string
-	APIKeyID     string
-	EnvironKey   string
-	EnvironValue string
+}
+
+// rawBaseURL returns the base URL without the /api/v1 suffix.
+func (c *Config) rawBaseURL() string {
+	base := c.APIBase
+	if base == "" {
+		base = "http://localhost:7373"
+	}
+	base = strings.TrimSuffix(base, "/")
+	base = strings.TrimSuffix(base, "/api/v1")
+	return base
 }
 
 func (c *Config) baseURL() string {
-	return fmt.Sprintf("http://%s:%s", c.Host, c.Port)
+	base := c.rawBaseURL()
+	if !strings.HasSuffix(base, "/api/v1") {
+		base = base + "/api/v1"
+	}
+	return base
 }
 
 // setAuthHeader sets the appropriate authentication header on the request
@@ -72,48 +83,39 @@ type ReceiveMessageRequest struct {
 	ProcessedMsgID string `json:"processed_msg_id,omitempty"`
 }
 
-// SetEnvironRequest is the request body for setting an API key environ
-type SetEnvironRequest struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
-// EnvironData represents an API key environ from the API
-type EnvironData struct {
-	APIKeyID   string `json:"api_key_id"`
-	Key        string `json:"key"`
-	Value      string `json:"value"`
-	CreateTime string `json:"create_time"`
-}
-
 // loadConfig loads configuration from environment variables and flags
 func loadConfig() *Config {
 	cfg := &Config{}
 
-	host := getEnv("TOPSAILAI_AGENT_DAEMON_HOST", "localhost")
-	port := getEnv("TOPSAILAI_AGENT_DAEMON_PORT", "7373")
+	apiBase := getEnv("TOPSAILAI_AGENT_DAEMON_API_BASE", "")
 	sessionID := getEnv("TOPSAILAI_SESSION_ID", "")
 	message := getEnv("TOPSAILAI_MESSAGE", "")
 	role := getEnv("TOPSAILAI_MESSAGE_ROLE", "user")
 	waitInterval := intEnv("WAIT_INTERVAL", 2)
-	maxWaitTime := intEnv("MAX_WAIT_TIME", 300)
-	resultOnly := envBool("RESULT_ONLY")
+	maxWaitTime := intEnv("MAX_WAIT_TIME", 600)
+	resultOnly := false
+	debugVal := os.Getenv("DEBUG")
+	if debugVal != "" {
+		if debugVal == "0" {
+			resultOnly = true
+		} else if debugVal == "1" {
+			resultOnly = false
+		}
+	} else {
+		resultOnly = envBool("RESULT_ONLY")
+	}
 	apiKey := getEnv("TOPSAILAI_AGENT_DAEMON_API_KEY", "")
 	authStyle := getEnv("TOPSAILAI_AGENT_DAEMON_AUTH_STYLE", "x-api-key")
 
-	flag.StringVar(&cfg.Host, "host", host, "Agent daemon host")
-	flag.StringVar(&cfg.Port, "port", port, "Agent daemon port")
+	flag.StringVar(&cfg.APIBase, "api-base", apiBase, "Agent daemon API base URL (e.g., http://host:port or http://host:port/api/v1)")
 	flag.StringVar(&cfg.SessionID, "session-id", sessionID, "Session ID")
 	flag.StringVar(&cfg.Message, "message", message, "Message content")
 	flag.StringVar(&cfg.Role, "role", role, "Message role (user/assistant)")
 	flag.IntVar(&cfg.WaitInterval, "wait-interval", waitInterval, "Wait interval in seconds")
 	flag.IntVar(&cfg.MaxWaitTime, "max-wait-time", maxWaitTime, "Max wait time in seconds")
 	flag.BoolVar(&cfg.ResultOnly, "result-only", resultOnly, "Only output result")
-	flag.StringVar(&cfg.APIKey, "api-key", apiKey, "API key for authentication (fallback: TOPSAILAI_AGENT_DAEMON_API_KEY env var)")
-	flag.StringVar(&cfg.AuthStyle, "auth-style", authStyle, "Authentication header style: x-api-key or bearer (fallback: TOPSAILAI_AGENT_DAEMON_AUTH_STYLE env var)")
-	flag.StringVar(&cfg.APIKeyID, "api-key-id", "", "API key ID for environ operations")
-	flag.StringVar(&cfg.EnvironKey, "key", "", "Environment variable key")
-	flag.StringVar(&cfg.EnvironValue, "value", "", "Environment variable value")
+	flag.StringVar(&cfg.APIKey, "api-key", apiKey, "API key for authentication")
+	flag.StringVar(&cfg.AuthStyle, "auth-style", authStyle, "Authentication header style: x-api-key or bearer")
 
 	flag.Parse()
 	return cfg
@@ -141,7 +143,7 @@ func envBool(key string) bool {
 
 // receiveMessage sends a message to the API and returns the new message ID
 func receiveMessage(cfg *Config, processedMsgID string) (string, error) {
-	url := cfg.baseURL() + "/api/v1/message"
+	url := cfg.baseURL() + "/message"
 
 	reqBody := ReceiveMessageRequest{
 		Message:        cfg.Message,
@@ -174,7 +176,6 @@ func receiveMessage(cfg *Config, processedMsgID string) (string, error) {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Debug: print raw response if non-2xx
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
@@ -188,7 +189,6 @@ func receiveMessage(cfg *Config, processedMsgID string) (string, error) {
 		return "", fmt.Errorf("API error: %s", apiResp.Message)
 	}
 
-	// Parse data to get msg_id
 	var data map[string]interface{}
 	if err := json.Unmarshal(apiResp.Data, &data); err != nil {
 		return "", fmt.Errorf("failed to parse data (raw: %s): %w", string(apiResp.Data), err)
@@ -203,10 +203,8 @@ func receiveMessage(cfg *Config, processedMsgID string) (string, error) {
 }
 
 // listMessages retrieves messages filtered by processed_msg_id via the API.
-// When processedMsgID is provided, the API returns only messages whose
-// processed_msg_id matches the given value.
 func listMessages(cfg *Config, processedMsgID string) ([]Message, error) {
-	url := cfg.baseURL() + "/api/v1/message?session_id=" + cfg.SessionID +
+	url := cfg.baseURL() + "/message?session_id=" + cfg.SessionID +
 		"&processed_msg_id=" + processedMsgID +
 		"&sort_key=create_time&order_by=asc&limit=100"
 
@@ -228,7 +226,6 @@ func listMessages(cfg *Config, processedMsgID string) ([]Message, error) {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Debug: print raw response if non-2xx
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
@@ -250,25 +247,72 @@ func listMessages(cfg *Config, processedMsgID string) ([]Message, error) {
 	return messages, nil
 }
 
-// setAPIKeyEnviron sets an environment variable for an API key
-func setAPIKeyEnviron(cfg *Config) error {
-	url := cfg.baseURL() + "/api/v1/apikey/" + cfg.APIKeyID + "/environs"
-
-	reqBody := SetEnvironRequest{
-		Key:   cfg.EnvironKey,
-		Value: cfg.EnvironValue,
+// formatMessage formats a single message for output
+func formatMessage(msg Message) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("[%s] [%s] [%s]\n", msg.CreateTime, msg.MsgID, msg.Role))
+	sb.WriteString(msg.Message)
+	if msg.TaskID != "" {
+		sb.WriteString(fmt.Sprintf("\n>>> task_id: %s", msg.TaskID))
 	}
-
-	jsonData, err := json.Marshal(reqBody)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
+	if msg.TaskResult != "" {
+		sb.WriteString(fmt.Sprintf("\n>>> task_result: %s", msg.TaskResult))
 	}
+	return sb.String()
+}
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+// handleHealthCommand checks the health endpoint and prints the raw response.
+func handleHealthCommand(cfg *Config) error {
+	url := cfg.rawBaseURL() + "/health"
+
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	cfg.setAuthHeader(req)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	fmt.Println(string(body))
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	var apiResp APIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if apiResp.Code != 0 {
+		return fmt.Errorf("API error: %s", apiResp.Message)
+	}
+
+	return nil
+}
+
+// handleStatusCommand gets session status and prints data.status.
+func handleStatusCommand(cfg *Config) error {
+	if cfg.SessionID == "" {
+		return fmt.Errorf("session-id is required for /status command")
+	}
+
+	url := cfg.baseURL() + "/session/" + cfg.SessionID
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
 	cfg.setAuthHeader(req)
 
 	client := &http.Client{}
@@ -296,152 +340,81 @@ func setAPIKeyEnviron(cfg *Config) error {
 		return fmt.Errorf("API error: %s", apiResp.Message)
 	}
 
-	// Parse data to display result
 	var data map[string]interface{}
 	if err := json.Unmarshal(apiResp.Data, &data); err != nil {
 		return fmt.Errorf("failed to parse data: %w", err)
 	}
 
-	fmt.Printf("Environ set successfully:\n")
-	fmt.Printf("  api_key_id: %v\n", data["api_key_id"])
-	fmt.Printf("  key: %v\n", data["key"])
-	fmt.Printf("  value: %v\n", data["value"])
+	status, ok := data["status"].(string)
+	if !ok {
+		return fmt.Errorf("status not found in response")
+	}
 
+	fmt.Println(status)
 	return nil
 }
 
-// listAPIKeyEnvirons lists environment variables for an API key
-func listAPIKeyEnvirons(cfg *Config) error {
-	url := cfg.baseURL() + "/api/v1/apikey/" + cfg.APIKeyID + "/environs"
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	cfg.setAuthHeader(req)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to get environs: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
-	}
-
-	var apiResp APIResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return fmt.Errorf("failed to parse response (raw: %s): %w", string(body), err)
-	}
-
-	if apiResp.Code != 0 {
-		return fmt.Errorf("API error: %s", apiResp.Message)
-	}
-
-	// Parse data to get environs list
-	var data struct {
-		Environs []EnvironData `json:"environs"`
-		Total    int           `json:"total"`
-	}
-	if err := json.Unmarshal(apiResp.Data, &data); err != nil {
-		return fmt.Errorf("failed to parse data: %w", err)
-	}
-
-	if len(data.Environs) == 0 {
-		fmt.Println("No environs found.")
-		return nil
-	}
-
-	fmt.Printf("Environs (%d total):\n", data.Total)
-	for _, env := range data.Environs {
-		fmt.Printf("  %s: %s\n", env.Key, env.Value)
-	}
-
-	return nil
+func printUsage() {
+	fmt.Println("Usage: topsailai_send_message [options]")
+	fmt.Println()
+	fmt.Println("Options:")
+	fmt.Println("  -api-base string    Agent daemon API base URL (default: http://localhost:7373, auto-append /api/v1)")
+	fmt.Println("  -session-id string  Session ID (required for send-message and /status)")
+	fmt.Println("  -message string     Message content or command (required)")
+	fmt.Println("  -role string        Message role (user/assistant) (default \"user\")")
+	fmt.Println("  -wait-interval int  Wait interval in seconds (default 2)")
+	fmt.Println("  -max-wait-time int  Max wait time in seconds (default 600)")
+	fmt.Println("  -result-only        Only output result")
+	fmt.Println("  -api-key string     API key for authentication")
+	fmt.Println("  -auth-style string  Authentication header style: x-api-key or bearer (default \"x-api-key\")")
+	fmt.Println()
+	fmt.Println("Commands (when -message starts with '/'):")
+	fmt.Println("  /health             Check daemon health (endpoint: /health)")
+	fmt.Println("  /status             Get session status (endpoint: /api/v1/session/{session_id})")
 }
 
-// deleteAPIKeyEnviron deletes an environment variable for an API key
-func deleteAPIKeyEnviron(cfg *Config) error {
-	url := cfg.baseURL() + "/api/v1/apikey/" + cfg.APIKeyID + "/environs/" + cfg.EnvironKey
+func main() {
+	cfg := loadConfig()
 
-	req, err := http.NewRequest("DELETE", url, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	cfg.setAuthHeader(req)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to delete environ: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
-	}
-
-	var apiResp APIResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return fmt.Errorf("failed to parse response (raw: %s): %w", string(body), err)
-	}
-
-	if apiResp.Code != 0 {
-		return fmt.Errorf("API error: %s", apiResp.Message)
-	}
-
-	fmt.Println("Environ deleted successfully.")
-	return nil
-}
-
-// formatMessage formats a single message for output
-func formatMessage(msg Message) string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("[%s] [%s] [%s]\n", msg.CreateTime, msg.MsgID, msg.Role))
-	sb.WriteString(msg.Message)
-	if msg.TaskID != "" {
-		sb.WriteString(fmt.Sprintf("\n>>> task_id: %s", msg.TaskID))
-	}
-	if msg.TaskResult != "" {
-		sb.WriteString(fmt.Sprintf("\n>>> task_result: %s", msg.TaskResult))
-	}
-	return sb.String()
-}
-
-func runSendMessage(cfg *Config) {
-	if cfg.SessionID == "" {
-		fmt.Fprintln(os.Stderr, "Error: session-id is required")
-		os.Exit(1)
-	}
 	if cfg.Message == "" {
 		fmt.Fprintln(os.Stderr, "Error: message is required")
 		os.Exit(1)
 	}
 
-	// Send the message
+	// Dispatch commands when message starts with '/'
+	if strings.HasPrefix(cfg.Message, "/") {
+		switch cfg.Message {
+		case "/health":
+			if err := handleHealthCommand(cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "/status":
+			if err := handleStatusCommand(cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "Error: unknown command %s\n", cfg.Message)
+			os.Exit(1)
+		}
+	}
+
+	if cfg.SessionID == "" {
+		fmt.Fprintln(os.Stderr, "Error: session-id is required")
+		os.Exit(1)
+	}
+
 	newMsgID, err := receiveMessage(cfg, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error sending message: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Output new message ID
-	fmt.Printf("new_msg_id: %s\n", newMsgID)
-
-	// Wait for result by querying messages whose processed_msg_id equals newMsgID.
-	// The API handles the filtering, so we only get result messages for our request.
+	if !cfg.ResultOnly {
+		fmt.Printf("new_msg_id: %s\n", newMsgID)
+	}
 	waitInterval := time.Duration(cfg.WaitInterval) * time.Second
 	maxWaitTime := time.Duration(cfg.MaxWaitTime) * time.Second
 	startTime := time.Now()
@@ -457,7 +430,6 @@ func runSendMessage(cfg *Config) {
 
 		if len(messages) > 0 {
 			if cfg.ResultOnly {
-				// Only output the result (task_result or message)
 				for _, msg := range messages {
 					if msg.TaskResult != "" {
 						fmt.Println(msg.TaskResult)
@@ -466,7 +438,6 @@ func runSendMessage(cfg *Config) {
 					}
 				}
 			} else {
-				// Output full message format
 				for _, msg := range messages {
 					fmt.Println("---")
 					fmt.Print(formatMessage(msg))
@@ -479,109 +450,4 @@ func runSendMessage(cfg *Config) {
 
 	fmt.Fprintln(os.Stderr, "Error: timeout waiting for result")
 	os.Exit(1)
-}
-
-func runSetEnviron(cfg *Config) {
-	if cfg.APIKeyID == "" {
-		fmt.Fprintln(os.Stderr, "Error: api-key-id is required")
-		os.Exit(1)
-	}
-	if cfg.EnvironKey == "" {
-		fmt.Fprintln(os.Stderr, "Error: key is required")
-		os.Exit(1)
-	}
-	if cfg.EnvironValue == "" {
-		fmt.Fprintln(os.Stderr, "Error: value is required")
-		os.Exit(1)
-	}
-
-	if err := setAPIKeyEnviron(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "Error setting environ: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func runListEnvirons(cfg *Config) {
-	if cfg.APIKeyID == "" {
-		fmt.Fprintln(os.Stderr, "Error: api-key-id is required")
-		os.Exit(1)
-	}
-
-	if err := listAPIKeyEnvirons(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing environs: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func runDeleteEnviron(cfg *Config) {
-	if cfg.APIKeyID == "" {
-		fmt.Fprintln(os.Stderr, "Error: api-key-id is required")
-		os.Exit(1)
-	}
-	if cfg.EnvironKey == "" {
-		fmt.Fprintln(os.Stderr, "Error: key is required")
-		os.Exit(1)
-	}
-
-	if err := deleteAPIKeyEnviron(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "Error deleting environ: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func printUsage() {
-	fmt.Println("Usage: topsailai_send_message <command> [options]")
-	fmt.Println()
-	fmt.Println("Commands:")
-	fmt.Println("  send-message    Send a message to a session (default)")
-	fmt.Println("  set-environ     Set an environment variable for an API key")
-	fmt.Println("  list-environs   List environment variables for an API key")
-	fmt.Println("  delete-environ  Delete an environment variable for an API key")
-	fmt.Println()
-	fmt.Println("Global Options:")
-	fmt.Println("  -host string       Agent daemon host (default \"localhost\")")
-	fmt.Println("  -port string       Agent daemon port (default \"7373\")")
-	fmt.Println("  -api-key string    API key for authentication")
-	fmt.Println("  -auth-style string Authentication header style: x-api-key or bearer (default \"x-api-key\")")
-	fmt.Println()
-	fmt.Println("Use 'topsailai_send_message <command> -h' for command-specific help.")
-}
-
-func main() {
-	// Check if a subcommand is provided
-	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
-	}
-
-	// The first argument after the program name is the subcommand
-	cmd := os.Args[1]
-
-	// If the first argument looks like a flag (starts with -), treat as default send-message
-	if strings.HasPrefix(cmd, "-") {
-		// Reset args to include all arguments for default command
-		cmd = "send-message"
-	} else {
-		// Remove the subcommand from args so flag.Parse works correctly
-		os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
-	}
-
-	cfg := loadConfig()
-
-	switch cmd {
-	case "send-message":
-		runSendMessage(cfg)
-	case "set-environ":
-		runSetEnviron(cfg)
-	case "list-environs":
-		runListEnvirons(cfg)
-	case "delete-environ":
-		runDeleteEnviron(cfg)
-	case "help", "-h", "--help":
-		printUsage()
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
-		printUsage()
-		os.Exit(1)
-	}
 }
