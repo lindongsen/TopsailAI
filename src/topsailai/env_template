@@ -284,6 +284,11 @@ TOPSALAI_TOOL_CMD_TIMEOUT_MAP='
     "cmd": "pytest ",
     "min_timeout": 300,
     "max_timeout": 0
+  },
+  {
+    "cmd": "go test",
+    "min_timeout": 300,
+    "max_timeout": 0
   }
 ]
 '
