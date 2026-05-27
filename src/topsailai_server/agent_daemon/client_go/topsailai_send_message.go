@@ -415,6 +415,10 @@ func main() {
 	if !cfg.ResultOnly {
 		fmt.Printf("new_msg_id: %s\n", newMsgID)
 	}
+	// If role is assistant, do not wait for result
+	if strings.ToLower(cfg.Role) == "assistant" {
+		return
+	}
 	waitInterval := time.Duration(cfg.WaitInterval) * time.Second
 	maxWaitTime := time.Duration(cfg.MaxWaitTime) * time.Second
 	startTime := time.Now()
