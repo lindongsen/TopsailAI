@@ -277,6 +277,18 @@ TOPSAILAI_SUBAGENT_TOOL_AVAILABLE_LLMS=""
 TOPSAILAI_SUBAGENT_TOOL_PROMPT=""
 TOPSAILAI_SUBAGENT_SYSTEM_PROMPT=""
 
+# cmd timeout, JSON
+TOPSALAI_TOOL_CMD_TIMEOUT_MAP='
+[
+  {
+    "cmd": "pytest ",
+    "min_timeout": 300,
+    "max_timeout": 0
+  }
+]
+'
+
+
 # =============================================================================
 # Skill Configuration
 # =============================================================================

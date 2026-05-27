@@ -1,6 +1,7 @@
 from topsailai.utils.text_tool import safe_decode
 from topsailai.utils.cmd_tool import exec_cmd as exec_command
 from topsailai.utils.json_tool import safe_json_load
+from topsailai.utils.env_tool import EnvReaderInstance
 from topsailai.context import ctx_safe
 from topsailai.prompt_hub import prompt_tool
 
@@ -53,6 +54,61 @@ def format_return(cmd:str|list, t:tuple):
 
     return _format_return(cmd_string, t)
 
+def get_cmd_timeout(cmd:str|list, timeout:int) -> int:
+    timeout = int(timeout)
+    raw_timeout = timeout
+
+    env_cmd_timeout_map = EnvReaderInstance.get("TOPSALAI_TOOL_CMD_TIMEOUT_MAP")
+    if not env_cmd_timeout_map:
+        return timeout
+
+    env_cmd_timeout_map = safe_json_load(env_cmd_timeout_map)
+    if not env_cmd_timeout_map:
+        return timeout
+
+    # list_dict
+    # [
+    # {
+    #     "cmd": "pytest ",
+    #     "min_timeout": 300,
+    #     "max_timeout": 0
+    # }
+    # ]
+    for item in env_cmd_timeout_map:
+        item_cmd = item.get("cmd")
+        if not item_cmd:
+            continue
+
+        min_timeout = int(item.get("min_timeout") or 0)
+        max_timeout = int(item.get("max_timeout") or 0)
+
+        if not min_timeout and not max_timeout:
+            continue
+
+        if min_timeout and max_timeout:
+            if timeout >= min_timeout and timeout <= max_timeout:
+                continue
+
+        _matched = False
+        if isinstance(cmd, str):
+            if item_cmd in cmd:
+                _matched = True
+        else:
+            if item_cmd.strip() in cmd:
+                _matched = True
+        if not _matched:
+            continue
+
+        if min_timeout and timeout < min_timeout:
+            timeout = min_timeout
+        if max_timeout and timeout > max_timeout:
+            timeout = max_timeout
+        if timeout != raw_timeout:
+            return timeout
+
+    return timeout
+
+
 def exec_cmd(
         cmd:str|list,
         no_need_stderr:int=0,
@@ -82,7 +138,7 @@ def exec_cmd(
     result = exec_command(
         cmd,
         no_need_stderr=True if int(no_need_stderr) else False,
-        timeout=int(timeout),
+        timeout=get_cmd_timeout(cmd, timeout),
         cwd=cwd,
     )
 
