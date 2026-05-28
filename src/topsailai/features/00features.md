@@ -7,3 +7,8 @@
 2. Agent2LLM, Agent chatting to LLM，ai-agent直接面向LLM去执行明确的任务。
 
 DONE: TopsailAI/cli/topsailai_session_add_message.py
+
+## 读取skill的文档时，可以自动将内容加入到上下文消息中
+
+1. 在 `tools.skill_tool` 中的 `read_skill_file` 方法，判断读取的文件是 文档（.md），就作为新消息保存到 user2agent 的session中。
+2. 要判断历史消息是否存在这个记录，不要重复性加入。

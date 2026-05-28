@@ -106,6 +106,11 @@ def main():
         dest="use_subprocess",
         help="Use subprocess.run() to launch the command instead of os.system (default)",
     )
+    parser.add_argument(
+        "--driver",
+        default=None,
+        help="Override the ai_agent_driver defined in settings.yaml",
+    )
     args = parser.parse_args()
 
     # 1. Locate and parse .topsailai/settings.yaml in the current working directory
@@ -119,7 +124,7 @@ def main():
 
     settings = load_yaml(settings_path)
 
-    ai_agent_driver = settings.get("ai_agent_driver", "")
+    ai_agent_driver = args.driver if args.driver else settings.get("ai_agent_driver", "")
     workspace = settings.get("workspace", os.getcwd())
     context_map = settings.get("context", {})
     env_map = settings.get("environment", {})
