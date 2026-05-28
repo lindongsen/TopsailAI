@@ -63,7 +63,7 @@ if [ "$1" == "-" ]; then
 fi
 
 # print histroy messages
-[ -n "${SESSION_ID}" ] && {
+[ -n "${SESSION_ID}" ] && [ ${DEBUG} -ne 0 ] && {
   command -v ai_retrieve_messages > /dev/null && ai_retrieve_messages "${SESSION_ID}"
 }
 

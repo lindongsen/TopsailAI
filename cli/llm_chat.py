@@ -59,7 +59,7 @@ def main():
         - Session history can be maintained via SESSION_ID environment variable
         - In debug mode, the first message is not printed
     """
-    llm_chat = get_llm_chat(need_input_message=False)
+    llm_chat = get_llm_chat(need_input_message=False, need_print_session=False)
     if not env_tool.is_debug_mode() \
         and env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CLI_NEED_TIPS", default=True):
         print(f">>> message:\n{llm_chat.first_message}")
