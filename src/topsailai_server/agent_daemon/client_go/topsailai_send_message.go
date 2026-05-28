@@ -337,6 +337,10 @@ func handleStatusCommand(cfg *Config) error {
 	}
 
 	if apiResp.Code != 0 {
+		if strings.Contains(apiResp.Message, "Session not found") {
+			fmt.Println("idle")
+			return nil
+		}
 		return fmt.Errorf("API error: %s", apiResp.Message)
 	}
 
