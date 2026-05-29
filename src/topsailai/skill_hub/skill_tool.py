@@ -150,7 +150,7 @@ class SkillInfo(object):
         if self.flag_overview is None:
             self.flag_overview = is_need_load_overview(self.folder)
         if self.flag_overview and flag_able_to_overview:
-            result += f"\n>>> [SKILL_OVERVIEW_START:{self.folder}]\n" + overview_skill_native(self.folder) + f"\n<<< [SKILL_OVERVIEW_END:{self.folder}]\n"
+            result += overview_skill_native(self.folder)
 
         return result
 
@@ -305,7 +305,13 @@ def get_skill_markdown(skill_folders=None) -> str:
                 result += get_skill_markdown_with_subfolders(skill_folder, recursion_depth=max_recursion_depth)
 
     if result:
-        return PROMPT_SKILL_FORMAT + result
+        content_all_skill_folders = "\n".join(
+            ("- " + key) for key in g_skills.keys()
+        )
+        return PROMPT_SKILL_FORMAT + result + f"""
+## ALL OF SKILL FOLDERS
+{content_all_skill_folders}
+"""
     return ""
 
 
@@ -418,7 +424,7 @@ def overview_skill_native(folder_path:str) -> str:
             except Exception:
                 pass
 
-    return result
+    return f"\n>>> [SKILL_OVERVIEW_START:{folder_path}]\n" + result + f"\n<<< [SKILL_OVERVIEW_END:{folder_path}]\n"
 
 def get_skill_file(folder_path:str, file_name:str) -> str:
     """ Return a skill file """
