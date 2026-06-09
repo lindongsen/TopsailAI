@@ -491,3 +491,29 @@ def ctxm_backup_file(file_path):
     shutil.copy2(file_path, bak_file_path)
     yield bak_file_path
     return
+
+
+def is_tmp_dir(folder_or_file:str) -> bool:
+    """
+    Check whether the folder is temporary.
+
+    Args:
+        folder_or_file (str): a folder or a file
+
+    Returns:
+        bool: True is temporary
+    """
+    folder_path = folder_or_file
+    if os.path.exists(folder_or_file) and os.path.is_file(folder_or_file):
+        folder_path = os.path.dirname(folder_or_file)
+
+    if folder_path.startswith("/tmp"):
+        return True
+
+    if folder_path.endswith("/.tmp"):
+        return True
+
+    if "/.tmp/" in folder_path:
+        return True
+
+    return False

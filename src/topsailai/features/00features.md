@@ -8,7 +8,19 @@
 
 DONE: TopsailAI/cli/topsailai_session_add_message.py
 
-## 读取skill的文档时，可以自动将内容加入到上下文消息中
+---
+
+## Context Messages
+
+设置一个上下文消息列表，将该内容按照一定的规则进行组合，call LLM时会作为第一条user message。
+
+### 读取skill的文档时，可以自动将内容加入到上下文消息中
 
 1. 在 `tools.skill_tool` 中的 `read_skill_file` 方法，判断读取的文件是 文档（.md），就作为新消息保存到 user2agent 的session中。
 2. 要判断历史消息是否存在这个记录，不要重复性加入。
+
+### 用环境变量 TOPSAILAI_CONTEXT_USER_MESSAGE 去传递上下文信息
+
+role=user
+
+---

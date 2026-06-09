@@ -17,12 +17,14 @@ from topsailai.skill_hub.skill_tool import (
     exists_skill,
     get_skill_file,
     get_script_path,
+    parse_skill_folder,
 )
 from topsailai.tools.cmd_tool import format_return
 from topsailai.utils import (
     json_tool,
     env_tool,
     format_tool,
+    file_tool,
 )
 from topsailai.utils.cmd_tool import exec_cmd
 from topsailai.prompt_hub import prompt_tool
@@ -64,6 +66,7 @@ def call_skill(
         no_need_stderr:int=0,
         timeout:int=120,
         output_file:str=None,
+        environ:str=None,
     ):
     """Can only execute scripts that exist in the skill-folder, cannot execute other command lines!
 
@@ -72,23 +75,36 @@ def call_skill(
         script_path (str): required, The executable file (MUST EXIST) in skill_folder, otherwise it cannot be called.
         script_parameters (str|list): optional
 
-        no_need_stderr (int): If 1, stderr will be returned as empty string.
+        no_need_stderr (int, optional): If 1, stderr will be returned as empty string.
                                Defaults to 0.
         timeout (int, optional): Timeout in seconds. If the command does not finish
                                  within this time, a exception will be raised.
                                  Defaults to 120.
-        output_file (str): Save stdout to a file path.
+        output_file (str, optional): Save stdout to a file path.
                            The result may be truncated due to the content being too long.
                            You can output it to a file and then process the large text.
+        environ (str, optional): JSON str, dict, environment variables.
 
     Returns:
         tuple: (return_code, stdout, stderr) where stdout and stderr are strings.
                If no_need_stderr is True, stderr will be empty string.
     """
+
+    # environ
+    environ_d = environ
+    if isinstance(environ, str):
+        environ_d = json_tool.safe_json_load(environ)
+    if not isinstance(environ_d, dict):
+        environ_d = None
+    if environ and not environ_d:
+        raise Exception("error parameter 'environ': it should be JSON and MAP format")
+
     # check parameter: output_file
     if output_file:
         assert output_file[0] == '/', "The output_file MUST be a absolute path"
-        assert not os.path.exists(output_file), "The output_file already exists and cannot be overwritten"
+
+        if not file_tool.is_tmp_dir(output_file):
+            assert not os.path.exists(output_file), "The output_file already exists and cannot be overwritten"
 
     # format script_path
     script_path = get_script_path(skill_folder, script_path)
@@ -180,6 +196,7 @@ def call_skill(
             no_need_stderr=True if int(no_need_stderr) else False,
             timeout=int(timeout),
             cwd=skill_folder,
+            env_info=environ_d,
         )
         hook_handler.data_agent_refresh_session.tool_result = result
 
@@ -229,11 +246,22 @@ def read_skill_file(
 
     return file_content
 
+def load_skill(skill_folder:str):
+    """Load a new SKILL
+
+    Args:
+        skill_folder (str):
+    """
+    s = parse_skill_folder(skill_folder)
+    assert s.name, f"load skill failed: {skill_folder}"
+    return s.markdown
+
 
 TOOLS = dict(
     call_skill=call_skill,
     overview_skill=overview_skill,
     read_skill_file=read_skill_file,
+    load_skill=load_skill,
 )
 
 PROMPT_SKILL_TOOL_RULE = """
