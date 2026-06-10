@@ -52,8 +52,8 @@ You must strictly output in the following format. Do not include any additional 
 
 ```markdown
 ---
-name: [Generated Skill Name]
-description: [Generated Skill Description]
+name: [Generated Skill Name] # Composed of lowercase letters, numbers, and hyphens
+description: [Generated Skill Description] # Clearly describe the `ability details` and possible `user intentions` to trigger the skill
 ---
 # Core Instructions
 [Detailed Markdown instructions here, guiding the AI Agent on how to use the tool or apply knowledge to complete the task.]

@@ -504,7 +504,7 @@ def is_tmp_dir(folder_or_file:str) -> bool:
         bool: True is temporary
     """
     folder_path = folder_or_file
-    if os.path.exists(folder_or_file) and os.path.is_file(folder_or_file):
+    if os.path.exists(folder_or_file) and is_file(folder_or_file):
         folder_path = os.path.dirname(folder_or_file)
 
     if folder_path.startswith("/tmp"):
