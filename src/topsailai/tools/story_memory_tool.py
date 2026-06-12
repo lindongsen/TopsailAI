@@ -64,6 +64,7 @@ def read_memory(title:str) -> str|None:
 def list_memories() -> list[str]|None:
     """
     List all of titles from memory.
+    You can refer to these knowledge to avoid making mistakes again.
 
     Returns:
         list[str]: titles
@@ -92,6 +93,12 @@ FLAG_TOOL_ENABLED = True if WORKSPACE else False
 
 if not WORKSPACE:
     TOOLS.clear()
+
+
+PROMPT_MEMORY = f"""
+# Current Memories
+{'\n'.join([str("- "+s) for s in list_memories()])}
+"""
 
 PROMPT = """
 # About story_memory_tool (MemoryTool)
@@ -123,4 +130,4 @@ Proactively retrieve relevant memory whenever the user's input contains personal
 ## Action & Output
 - **Synthesize**: Seamlessly integrate retrieved memory into the response to provide a personalized answer.
 - **Verify**: If the memory is ambiguous, ask for clarification rather than assuming.
-"""
+""" + PROMPT_MEMORY
