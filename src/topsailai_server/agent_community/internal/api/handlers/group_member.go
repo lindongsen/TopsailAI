@@ -1,0 +1,336 @@
+// Package handlers provides HTTP handlers for the ACS API.
+package handlers
+
+import (
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/topsailai/agent-community/internal/api/middleware"
+	"github.com/topsailai/agent-community/internal/models"
+	"github.com/topsailai/agent-community/internal/nats"
+	"github.com/topsailai/agent-community/pkg/logger"
+	"gorm.io/gorm"
+)
+
+// GroupMemberHandler handles group member-related HTTP requests.
+type GroupMemberHandler struct {
+	db        *gorm.DB
+	publisher *nats.Publisher
+	log       *logger.Logger
+}
+
+// NewGroupMemberHandler creates a new GroupMemberHandler.
+func NewGroupMemberHandler(db *gorm.DB, publisher *nats.Publisher, log *logger.Logger) *GroupMemberHandler {
+	return &GroupMemberHandler{
+		db:        db,
+		publisher: publisher,
+		log:       log,
+	}
+}
+
+// JoinGroupRequest represents the request body for joining a group.
+type JoinGroupRequest struct {
+	MemberID          string `json:"member_id" binding:"required"`
+	MemberName        string `json:"member_name" binding:"required"`
+	MemberDescription string `json:"member_description"`
+	MemberType        string `json:"member_type" binding:"required"`
+	MemberInterface   string `json:"member_interface"`
+}
+
+// UpdateMemberRequest represents the request body for updating a member.
+type UpdateMemberRequest struct {
+	MemberName        string `json:"member_name"`
+	MemberDescription string `json:"member_description"`
+	MemberStatus      string `json:"member_status"`
+	MemberInterface   string `json:"member_interface"`
+	LastReadMessageID string `json:"last_read_message_id"`
+}
+
+// GroupMemberResponse represents a group member in API responses.
+type GroupMemberResponse struct {
+	GroupID           string `json:"group_id"`
+	MemberID          string `json:"member_id"`
+	MemberName        string `json:"member_name"`
+	MemberDescription string `json:"member_description"`
+	MemberStatus      string `json:"member_status"`
+	MemberType        string `json:"member_type"`
+	MemberInterface   string `json:"member_interface"`
+	LastReadMessageID string `json:"last_read_message_id"`
+	CreateAtMs        int64  `json:"create_at_ms"`
+	UpdateAtMs        int64  `json:"update_at_ms"`
+}
+
+// ListGroupMembersResponse represents the response for listing group members.
+type ListGroupMembersResponse struct {
+	Items   []GroupMemberResponse `json:"items"`
+	Total   int64                 `json:"total"`
+	Offset  int                   `json:"offset"`
+	Limit   int                   `json:"limit"`
+	SortKey string                `json:"sort_key"`
+	OrderBy string                `json:"order_by"`
+}
+
+// JoinGroup handles POST /api/v1/groups/:group_id/members.
+func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
+	traceID := middleware.GetTraceID(c)
+	groupID := c.Param("group_id")
+
+	// Verify group exists
+	var group models.Group
+	if err := h.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+			return
+		}
+		h.log.Error("api", traceID, "failed to get group", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to join group"})
+		return
+	}
+
+	var req JoinGroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.log.Warn("api", traceID, "invalid join group request", "error", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate member type
+	memberType := models.MemberType(req.MemberType)
+	if memberType != models.MemberTypeUser &&
+		memberType != models.MemberTypeManagerAgent &&
+		memberType != models.MemberTypeWorkerAgent {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid member_type"})
+		return
+	}
+
+	member := models.GroupMember{
+		GroupID:           groupID,
+		MemberID:          req.MemberID,
+		MemberName:        req.MemberName,
+		MemberDescription: req.MemberDescription,
+		MemberType:        memberType,
+		MemberStatus:      models.MemberStatusOnline,
+		MemberInterface:   req.MemberInterface,
+	}
+	// Check for duplicate member
+	var existingMember models.GroupMember
+	if err := h.db.Where("group_id = ? AND member_id = ?", groupID, req.MemberID).First(&existingMember).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "member already exists in group"})
+		return
+	}
+
+
+	if err := h.db.Create(&member).Error; err != nil {
+		h.log.Error("api", traceID, "failed to join group", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to join group"})
+		return
+	}
+
+	// Publish event
+	if h.publisher != nil {
+		if err := h.publisher.PublishGroupMemberCreate(&member); err != nil {
+			h.log.Warn("api", traceID, "failed to publish member join event", "error", err.Error())
+		}
+	}
+
+	h.log.Info("api", traceID, "member joined group", "group_id", groupID, "member_id", req.MemberID)
+	c.JSON(http.StatusCreated, toGroupMemberResponse(&member))
+}
+
+// ListGroupMembers handles GET /api/v1/groups/:group_id/members.
+func (h *GroupMemberHandler) ListGroupMembers(c *gin.Context) {
+	traceID := middleware.GetTraceID(c)
+	groupID := c.Param("group_id")
+
+	// Verify group exists
+	var group models.Group
+	if err := h.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+			return
+		}
+		h.log.Error("api", traceID, "failed to get group", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list members"})
+		return
+	}
+
+	// Parse pagination
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if offset < 0 {
+		offset = 0
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "1000"))
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+
+	// Parse sorting
+	sortKey := c.DefaultQuery("sort_key", "create_at_ms")
+	orderBy := strings.ToLower(c.DefaultQuery("order_by", "desc"))
+	if orderBy != "asc" && orderBy != "desc" {
+		orderBy = "desc"
+	}
+	// Validate sort_key
+	allowedSortKeys := map[string]bool{"create_at_ms": true, "update_at_ms": true, "member_id": true, "member_name": true, "member_type": true, "member_status": true}
+	if !allowedSortKeys[sortKey] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sort_key"})
+		return
+	}
+
+	// Build query
+	query := h.db.Model(&models.GroupMember{}).Where("group_id = ?", groupID)
+
+	// Time range filtering
+	if createRange := c.Query("create_at_ms"); createRange != "" {
+		start, end, err := parseTimeRange(createRange)
+		if err == nil {
+			query = query.Where("create_at_ms BETWEEN ? AND ?", start, end)
+		}
+	}
+	if updateRange := c.Query("update_at_ms"); updateRange != "" {
+		start, end, err := parseTimeRange(updateRange)
+		if err == nil {
+			query = query.Where("update_at_ms BETWEEN ? AND ?", start, end)
+		}
+	}
+
+	// Get total count
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		h.log.Error("api", traceID, "failed to count members", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list members"})
+		return
+	}
+
+	// Execute query
+	var members []models.GroupMember
+	orderClause := sortKey + " " + orderBy
+	if err := query.Order(orderClause).Offset(offset).Limit(limit).Find(&members).Error; err != nil {
+		h.log.Error("api", traceID, "failed to list members", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list members"})
+		return
+	}
+
+	items := make([]GroupMemberResponse, 0, len(members))
+	for i := range members {
+		items = append(items, toGroupMemberResponse(&members[i]))
+	}
+
+	c.JSON(http.StatusOK, ListGroupMembersResponse{
+		Items:   items,
+		Total:   total,
+		Offset:  offset,
+		Limit:   limit,
+		SortKey: sortKey,
+		OrderBy: orderBy,
+	})
+}
+
+// UpdateMember handles PUT /api/v1/groups/:group_id/members/:member_id.
+func (h *GroupMemberHandler) UpdateMember(c *gin.Context) {
+	traceID := middleware.GetTraceID(c)
+	groupID := c.Param("group_id")
+	memberID := c.Param("member_id")
+
+	var req UpdateMemberRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.log.Warn("api", traceID, "invalid update member request", "error", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var member models.GroupMember
+	if err := h.db.Where("group_id = ? AND member_id = ?", groupID, memberID).First(&member).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "member not found"})
+			return
+		}
+		h.log.Error("api", traceID, "failed to get member", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update member"})
+		return
+	}
+
+	// Update fields
+	updates := make(map[string]interface{})
+	if req.MemberName != "" {
+		updates["member_name"] = req.MemberName
+	}
+	if req.MemberDescription != "" {
+		updates["member_description"] = req.MemberDescription
+	}
+	if req.MemberStatus != "" {
+		updates["member_status"] = req.MemberStatus
+	}
+	if req.MemberInterface != "" {
+		updates["member_interface"] = req.MemberInterface
+	}
+	if req.LastReadMessageID != "" {
+		updates["last_read_message_id"] = req.LastReadMessageID
+	}
+	updates["update_at_ms"] = time.Now().UnixMilli()
+
+	if err := h.db.Model(&member).Updates(updates).Error; err != nil {
+		h.log.Error("api", traceID, "failed to update member", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update member"})
+		return
+	}
+
+	// Reload member
+	h.db.Where("group_id = ? AND member_id = ?", groupID, memberID).First(&member)
+
+	h.log.Info("api", traceID, "member updated", "group_id", groupID, "member_id", memberID)
+	c.JSON(http.StatusOK, toGroupMemberResponse(&member))
+}
+
+// LeaveGroup handles DELETE /api/v1/groups/:group_id/members/:member_id.
+func (h *GroupMemberHandler) LeaveGroup(c *gin.Context) {
+	traceID := middleware.GetTraceID(c)
+	groupID := c.Param("group_id")
+	memberID := c.Param("member_id")
+
+	var member models.GroupMember
+	if err := h.db.Where("group_id = ? AND member_id = ?", groupID, memberID).First(&member).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "member not found"})
+			return
+		}
+		h.log.Error("api", traceID, "failed to get member for leave", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to leave group"})
+		return
+	}
+
+	if err := h.db.Delete(&member).Error; err != nil {
+		h.log.Error("api", traceID, "failed to leave group", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to leave group"})
+		return
+	}
+
+	// Publish event
+	if h.publisher != nil {
+		if err := h.publisher.PublishGroupMemberDelete(groupID, memberID); err != nil {
+			h.log.Warn("api", traceID, "failed to publish member leave event", "error", err.Error())
+		}
+	}
+
+	h.log.Info("api", traceID, "member left group", "group_id", groupID, "member_id", memberID)
+	c.Status(http.StatusNoContent)
+}
+
+// toGroupMemberResponse converts a GroupMember model to API response.
+func toGroupMemberResponse(m *models.GroupMember) GroupMemberResponse {
+	return GroupMemberResponse{
+		GroupID:           m.GroupID,
+		MemberID:          m.MemberID,
+		MemberName:        m.MemberName,
+		MemberDescription: m.MemberDescription,
+		MemberStatus:      string(m.MemberStatus),
+		MemberType:        string(m.MemberType),
+		MemberInterface:   m.MemberInterface,
+		LastReadMessageID: m.LastReadMessageID,
+		CreateAtMs:        m.CreateAtMs,
+		UpdateAtMs:        m.UpdateAtMs,
+	}
+}

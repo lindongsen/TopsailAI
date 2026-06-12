@@ -104,6 +104,32 @@ def check_mistakes(content:str):
 
     return
 
+def remove_unnecessary_labels(content:str) -> list[dict]|None:
+    """ return None for invalid content.
+
+    There are labels:
+    - '<|tool_call_end|><|tool_calls_section_end|>'
+    """
+    if not isinstance(content, str):
+        return None
+
+    _tail = "<|tool_call_end|><|tool_calls_section_end|>"
+    if content.endswith(_tail):
+        new_content = content.rsplit(_tail, 1)[0]
+
+        try:
+            new_content = json.loads(new_content)
+            if new_content:
+                return new_content
+        except Exception as _:
+            pass
+
+        new_content = convert_to_list_dict(new_content)
+        if new_content:
+            return new_content
+
+    return None
+
 def hook_execute(content) -> list[dict] | str:
     """
     Execute hook to convert kimi content to standard format.
@@ -114,6 +140,10 @@ def hook_execute(content) -> list[dict] | str:
         content = content.strip()
 
     result = convert_to_list_dict(content)
+    if result:
+        return result
+
+    result = remove_unnecessary_labels(content)
     if result:
         return result
 

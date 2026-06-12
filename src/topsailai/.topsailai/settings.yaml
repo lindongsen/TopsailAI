@@ -15,3 +15,4 @@ context:
 
   llm_mistake:
     - ai_base/llm_control/llm_mistakes/readme.md
+    - ai_base/llm_hooks/hook_after_chat/README.md
