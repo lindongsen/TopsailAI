@@ -7,9 +7,18 @@ SERVER_BINARY := bin/acs-server
 CLI_BINARY := bin/acs-cli
 GO := go
 GOFLAGS := -v
+PYTHON := $(shell \
+	if command -v uv >/dev/null 2>&1; then \
+		echo "uv run python"; \
+	elif python3 -c "import nats" 2>/dev/null; then \
+		echo "python3"; \
+	else \
+		echo "python3"; \
+		echo "WARNING: No Python with 'nats' module found, falling back to python3" >&2; \
+	fi \
+)
 
 # Default target
-.PHONY: all
 all: build
 
 # Build both server and CLI
@@ -40,7 +49,7 @@ test:
 .PHONY: test-integration
 test-integration:
 	@echo "Running integration tests..."
-	@cd tests/integration && python3 -m pytest --color=no -v
+	@cd tests/integration && $(PYTHON) -m pytest --color=no -v
 
 # Run database migrations (up)
 .PHONY: migrate-up
