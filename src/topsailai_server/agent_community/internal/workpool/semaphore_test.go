@@ -196,7 +196,7 @@ func TestPoolAcquireRelease(t *testing.T) {
 		t.Errorf("group available = %d, want 1", stats.PerGroupAvailable["group1"])
 	}
 
-	pool.Release("user1", "group1")
+	pool.Release("user1", "group1", "")
 
 	stats = pool.GetStats()
 	if stats.GlobalAvailable != 5 {
@@ -223,7 +223,7 @@ func TestPoolAcquireTimeout(t *testing.T) {
 		t.Error("expected timeout error")
 	}
 
-	pool.Release("user1", "group1")
+	pool.Release("user1", "group1", "")
 }
 
 // TestPoolDifferentUsers verifies different users have independent semaphores.
@@ -249,8 +249,8 @@ func TestPoolDifferentUsers(t *testing.T) {
 		t.Errorf("user2 available = %d, want 1", stats.PerUserAvailable["user2"])
 	}
 
-	pool.Release("user1", "group1")
-	pool.Release("user2", "group1")
+	pool.Release("user1", "group1", "")
+	pool.Release("user2", "group1", "")
 }
 
 // TestPoolDifferentGroups verifies different groups have independent semaphores.
@@ -276,8 +276,8 @@ func TestPoolDifferentGroups(t *testing.T) {
 		t.Errorf("group2 available = %d, want 1", stats.PerGroupAvailable["group2"])
 	}
 
-	pool.Release("user1", "group1")
-	pool.Release("user1", "group2")
+	pool.Release("user1", "group1", "")
+	pool.Release("user1", "group2", "")
 }
 
 // TestPoolConcurrentAccess verifies concurrent pool access.
@@ -302,7 +302,7 @@ func TestPoolConcurrentAccess(t *testing.T) {
 
 			atomic.AddInt32(&successCount, 1)
 			time.Sleep(10 * time.Millisecond)
-			pool.Release(userID, groupID)
+			pool.Release(userID, groupID, "")
 		}(i)
 	}
 
@@ -349,7 +349,7 @@ func TestPoolStats(t *testing.T) {
 		t.Errorf("group2 available = %d, want 4", stats.PerGroupAvailable["group2"])
 	}
 
-	pool.Release("user1", "group1")
-	pool.Release("user1", "group1")
-	pool.Release("user2", "group2")
+	pool.Release("user1", "group1", "")
+	pool.Release("user1", "group1", "")
+	pool.Release("user2", "group2", "")
 }

@@ -20,6 +20,8 @@ import (
 	"github.com/topsailai/agent-community/pkg/logger"
 )
 
+const consumerModule = "consumer"
+
 // Consumer processes pending messages from NATS and dispatches them to agents.
 type Consumer struct {
 	db             *gorm.DB
@@ -53,8 +55,14 @@ func NewConsumer(
 // Handler returns a NATS MsgHandler for processing pending messages.
 func (c *Consumer) Handler() nats.MsgHandler {
 	return func(msg *nats.Msg) {
-		if err := c.processMessage(msg); err != nil {
-			logger.Error("failed to process pending message", "error", err)
+		// Extract trace_id from NATS header or generate a new one
+		traceID := msg.Header.Get("X-Trace-ID")
+		if traceID == "" {
+			traceID = uuid.New().String()
+		}
+
+		if err := c.processMessage(msg, traceID); err != nil {
+			logger.ErrorM(consumerModule, traceID, "failed to process pending message", "error", err)
 			// Negative ack to trigger redelivery
 			msg.Nak()
 			return
@@ -64,8 +72,9 @@ func (c *Consumer) Handler() nats.MsgHandler {
 }
 
 // processMessage processes a single pending message from NATS.
-func (c *Consumer) processMessage(msg *nats.Msg) error {
+func (c *Consumer) processMessage(msg *nats.Msg, traceID string) error {
 	ctx := context.Background()
+	start := time.Now()
 
 	// Parse pending message payload
 	var payload PendingMessagePayload
@@ -76,20 +85,23 @@ func (c *Consumer) processMessage(msg *nats.Msg) error {
 	groupID := payload.GroupID
 	messageID := payload.MessageID
 
-	logger.Info("processing pending message", "group_id", groupID, "message_id", messageID)
+	logger.InfoM(consumerModule, traceID, "processing pending message",
+		"group_id", groupID,
+		"message_id", messageID,
+	)
 
 	// Acquire semaphore for concurrency control
 	userID := payload.SenderID
-	if err := c.pool.AcquireWithTimeout(30*time.Second, userID, groupID); err != nil {
+	if err := c.pool.AcquireWithTimeout(30*time.Second, userID, groupID, traceID); err != nil {
 		return fmt.Errorf("failed to acquire work pool slot: %w", err)
 	}
-	defer c.pool.Release(userID, groupID)
+	defer c.pool.Release(userID, groupID, traceID)
 
 	// Fetch group
 	var group models.Group
 	if err := c.db.First(&group, "group_id = ?", groupID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			logger.Warn("group not found, skipping message", "group_id", groupID)
+			logger.WarnM(consumerModule, traceID, "group not found, skipping message", "group_id", groupID)
 			return nil // Ack to remove from queue
 		}
 		return fmt.Errorf("failed to fetch group: %w", err)
@@ -97,7 +109,7 @@ func (c *Consumer) processMessage(msg *nats.Msg) error {
 
 	// Check if group is soft-deleted
 	if group.DeletedAt.Valid {
-		logger.Warn("group is deleted, skipping message", "group_id", groupID)
+		logger.WarnM(consumerModule, traceID, "group is deleted, skipping message", "group_id", groupID)
 		return nil
 	}
 
@@ -118,22 +130,29 @@ func (c *Consumer) processMessage(msg *nats.Msg) error {
 	}
 
 	if len(targets) == 0 {
-		logger.Warn("no agent targets found, skipping message", "message_id", messageID)
+		logger.WarnM(consumerModule, traceID, "no agent targets found, skipping message", "message_id", messageID)
 		return nil
 	}
 
 	// Process each target agent
 	for _, target := range targets {
-		if err := c.processAgentTarget(ctx, &group, members, &payload.GroupMessage, triggerInfo, target); err != nil {
-			logger.Error("failed to process agent target",
+		if err := c.processAgentTarget(ctx, &group, members, &payload.GroupMessage, triggerInfo, target, traceID); err != nil {
+			logger.ErrorM(consumerModule, traceID, "failed to process agent target",
 				"agent_id", target.AgentID,
 				"message_id", messageID,
 				"error", err,
 			)
 			// Try to send system error message
-			c.sendSystemError(ctx, &group, members, &payload.GroupMessage, target.AgentID, err.Error())
+			c.sendSystemError(ctx, &group, members, &payload.GroupMessage, target.AgentID, err.Error(), traceID)
 		}
 	}
+
+	totalMs := time.Since(start).Milliseconds()
+	logger.InfoM(consumerModule, traceID, "pending message processed",
+		"group_id", groupID,
+		"message_id", messageID,
+		"total_duration_ms", totalMs,
+	)
 
 	return nil
 }
@@ -146,6 +165,7 @@ func (c *Consumer) processAgentTarget(
 	pendingMsg *models.GroupMessage,
 	triggerInfo trigger.TriggerInfo,
 	target trigger.AgentTarget,
+	traceID string,
 ) error {
 	// Find target agent member
 	var agentMember *models.GroupMember
@@ -185,7 +205,7 @@ func (c *Consumer) processAgentTarget(
 		"ACS_AGENT_ID":   agentMember.MemberID,
 		"ACS_AGENT_NAME": agentMember.MemberName,
 	})
-	healthResult, err := c.executor.CheckHealth(ctx, iface, healthEnv)
+	healthResult, err := c.executor.CheckHealth(ctx, iface, healthEnv, traceID)
 	if err != nil || !healthResult.IsHealthy() {
 		return fmt.Errorf("agent health check failed: %w, exit_code=%d", err, healthResult.ExitCode)
 	}
@@ -243,7 +263,7 @@ func (c *Consumer) processAgentTarget(
 	)
 
 	// Execute agent chat
-	chatResult, err := c.executor.Chat(ctx, iface, chatEnv)
+	chatResult, err := c.executor.Chat(ctx, iface, chatEnv, traceID)
 	if err != nil {
 		return fmt.Errorf("agent chat failed: %w", err)
 	}
@@ -267,18 +287,24 @@ func (c *Consumer) processAgentTarget(
 	agentMember.LastReadMessageID = pendingMsg.MessageID
 	agentMember.UpdateAtMs = time.Now().UnixMilli()
 	if err := c.db.Save(agentMember).Error; err != nil {
-		logger.Error("failed to update last_read_message_id", "agent_id", agentMember.MemberID, "error", err)
+		logger.ErrorM(consumerModule, traceID, "failed to update last_read_message_id",
+			"agent_id", agentMember.MemberID,
+			"error", err,
+		)
 	}
 
 	// Publish response to NATS
 	if err := c.publisher.PublishAgentResponse(responseMsg); err != nil {
-		logger.Error("failed to publish agent response", "message_id", responseID, "error", err)
+		logger.ErrorM(consumerModule, traceID, "failed to publish agent response",
+			"message_id", responseID,
+			"error", err,
+		)
 	}
 
 	// Record processing status
-	c.recordProcessingStatus(group.GroupID, pendingMsg.MessageID, agentMember.MemberID, true, "")
+	c.recordProcessingStatus(group.GroupID, pendingMsg.MessageID, agentMember.MemberID, true, "", traceID)
 
-	logger.Info("agent processed message successfully",
+	logger.InfoM(consumerModule, traceID, "agent processed message successfully",
 		"agent_id", agentMember.MemberID,
 		"message_id", pendingMsg.MessageID,
 		"response_id", responseID,
@@ -297,6 +323,7 @@ func (c *Consumer) sendSystemError(
 	pendingMsg *models.GroupMessage,
 	failedAgentID string,
 	errorText string,
+	traceID string,
 ) {
 	// Find a manager agent to use as sender
 	var managerAgent *models.GroupMember
@@ -336,22 +363,25 @@ func (c *Consumer) sendSystemError(
 
 	// Save error message to database
 	if err := c.db.Create(errorMsg).Error; err != nil {
-		logger.Error("failed to save system error message", "error", err)
+		logger.ErrorM(consumerModule, traceID, "failed to save system error message", "error", err)
 		return
 	}
 
 	// Publish error message to NATS
 	if err := c.publisher.PublishSystemError(errorMsg); err != nil {
-		logger.Error("failed to publish system error message", "error", err)
+		logger.ErrorM(consumerModule, traceID, "failed to publish system error message", "error", err)
 	}
 
 	// Record processing status as failed
-	c.recordProcessingStatus(group.GroupID, pendingMsg.MessageID, failedAgentID, false, errorText)
+	c.recordProcessingStatus(group.GroupID, pendingMsg.MessageID, failedAgentID, false, errorText, traceID)
 
 	if managerAgent != nil {
-		logger.Info("system error message sent", "manager_id", managerAgent.MemberID, "failed_agent", failedAgentID)
+		logger.InfoM(consumerModule, traceID, "system error message sent",
+			"manager_id", managerAgent.MemberID,
+			"failed_agent", failedAgentID,
+		)
 	} else {
-		logger.Info("system error message sent with system identity", "failed_agent", failedAgentID)
+		logger.InfoM(consumerModule, traceID, "system error message sent with system identity", "failed_agent", failedAgentID)
 	}
 }
 
@@ -379,7 +409,7 @@ func (c *Consumer) getProcessingChainLength(msg *models.GroupMessage) int {
 }
 
 // recordProcessingStatus records the agent message processing status.
-func (c *Consumer) recordProcessingStatus(groupID, messageID, agentID string, success bool, errorMsg string) {
+func (c *Consumer) recordProcessingStatus(groupID, messageID, agentID string, success bool, errorMsg string, traceID string) {
 	status := models.ProcessingStatusCompleted
 	if !success {
 		status = models.ProcessingStatusFailed
@@ -399,6 +429,6 @@ func (c *Consumer) recordProcessingStatus(groupID, messageID, agentID string, su
 	record.ProcessedAtMs = time.Now().UnixMilli()
 
 	if err := c.db.Create(record).Error; err != nil {
-		logger.Error("failed to record processing status", "error", err)
+		logger.ErrorM(consumerModule, traceID, "failed to record processing status", "error", err)
 	}
 }

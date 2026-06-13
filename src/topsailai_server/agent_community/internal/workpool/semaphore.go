@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/topsailai/agent-community/pkg/logger"
 )
 
 // Semaphore provides a counting semaphore using channels.
@@ -107,14 +109,43 @@ func (p *Pool) Acquire(ctx context.Context, userID, groupID string) error {
 }
 
 // AcquireWithTimeout acquires slots with a timeout.
-func (p *Pool) AcquireWithTimeout(timeout time.Duration, userID, groupID string) error {
+func (p *Pool) AcquireWithTimeout(timeout time.Duration, userID, groupID, traceID string) error {
+	logger.DebugM("workpool", traceID, "pool acquiring",
+		"user_id", userID,
+		"group_id", groupID,
+		"global_available", p.global.Available(),
+		"global_capacity", p.global.Capacity(),
+	)
+
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	return p.Acquire(ctx, userID, groupID)
+
+	err := p.Acquire(ctx, userID, groupID)
+	waitMs := time.Since(start).Milliseconds()
+
+	if err != nil {
+		logger.WarnM("workpool", traceID, "pool acquire timeout",
+			"user_id", userID,
+			"group_id", groupID,
+			"error", err.Error(),
+			"wait_ms", waitMs,
+		)
+		p.LogStats(traceID)
+		return err
+	}
+
+	logger.DebugM("workpool", traceID, "pool acquired",
+		"user_id", userID,
+		"group_id", groupID,
+		"wait_ms", waitMs,
+		"global_available", p.global.Available(),
+	)
+	return nil
 }
 
 // Release releases slots from global, per-user, and per-group semaphores.
-func (p *Pool) Release(userID, groupID string) {
+func (p *Pool) Release(userID, groupID, traceID string) {
 	p.global.Release()
 
 	if userSem := p.getUserSemaphore(userID); userSem != nil {
@@ -124,6 +155,12 @@ func (p *Pool) Release(userID, groupID string) {
 	if groupSem := p.getGroupSemaphore(groupID); groupSem != nil {
 		groupSem.Release()
 	}
+
+	logger.DebugM("workpool", traceID, "pool released",
+		"user_id", userID,
+		"group_id", groupID,
+		"global_available", p.global.Available(),
+	)
 }
 
 // getOrCreateUserSemaphore gets or creates a per-user semaphore.
@@ -205,4 +242,15 @@ func (p *Pool) GetStats() Stats {
 	}
 
 	return stats
+}
+
+// LogStats logs current pool statistics at INFO level.
+func (p *Pool) LogStats(traceID string) {
+	stats := p.GetStats()
+	logger.InfoM("workpool", traceID, "pool stats",
+		"global_available", stats.GlobalAvailable,
+		"global_capacity", stats.GlobalCapacity,
+		"per_user_available", stats.PerUserAvailable,
+		"per_group_available", stats.PerGroupAvailable,
+	)
 }

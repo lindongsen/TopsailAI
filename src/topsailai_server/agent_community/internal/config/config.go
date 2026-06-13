@@ -56,9 +56,10 @@ type AgentConfig struct {
 
 // PoolConfig holds AgentWorkPool concurrency limits.
 type PoolConfig struct {
-	Global    int `mapstructure:"global"`
-	PerUser   int `mapstructure:"per_user"`
-	PerGroup  int `mapstructure:"per_group"`
+	Global           int           `mapstructure:"global"`
+	PerUser          int           `mapstructure:"per_user"`
+	PerGroup         int           `mapstructure:"per_group"`
+	StatsLogInterval time.Duration `mapstructure:"stats_log_interval"`
 }
 
 // LogConfig holds logging settings.
@@ -106,6 +107,7 @@ func Load() (*Config, error) {
 	v.SetDefault("pool.global", 10)
 	v.SetDefault("pool.per_user", 5)
 	v.SetDefault("pool.per_group", 5)
+	v.SetDefault("pool.stats_log_interval", "30s")
 
 	// Log defaults
 	v.SetDefault("log.output", "stdout")

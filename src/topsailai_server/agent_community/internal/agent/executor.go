@@ -11,6 +11,8 @@ import (
 	"github.com/topsailai/agent-community/pkg/logger"
 )
 
+const executorModule = "executor"
+
 // ExecutionResult holds the result of an agent command execution.
 type ExecutionResult struct {
 	ExitCode int    `json:"exit_code"`
@@ -28,18 +30,18 @@ func NewExecutor() *Executor {
 }
 
 // CheckHealth checks if the agent is healthy by executing the health check command.
-func (e *Executor) CheckHealth(ctx context.Context, iface *Interface, env map[string]string) (*ExecutionResult, error) {
-	return e.execute(ctx, iface.CmdCheckHealth, env, iface.TimeoutCheckHealth)
+func (e *Executor) CheckHealth(ctx context.Context, iface *Interface, env map[string]string, traceID string) (*ExecutionResult, error) {
+	return e.execute(ctx, iface.CmdCheckHealth, env, iface.TimeoutCheckHealth, traceID)
 }
 
 // CheckStatus checks the agent's current status.
-func (e *Executor) CheckStatus(ctx context.Context, iface *Interface, env map[string]string) (*ExecutionResult, error) {
-	return e.execute(ctx, iface.CmdCheckStatus, env, iface.TimeoutCheckStatus)
+func (e *Executor) CheckStatus(ctx context.Context, iface *Interface, env map[string]string, traceID string) (*ExecutionResult, error) {
+	return e.execute(ctx, iface.CmdCheckStatus, env, iface.TimeoutCheckStatus, traceID)
 }
 
 // Chat sends a message to the agent and returns the response.
-func (e *Executor) Chat(ctx context.Context, iface *Interface, env map[string]string) (*ExecutionResult, error) {
-	return e.execute(ctx, iface.CmdChat, env, iface.TimeoutChat)
+func (e *Executor) Chat(ctx context.Context, iface *Interface, env map[string]string, traceID string) (*ExecutionResult, error) {
+	return e.execute(ctx, iface.CmdChat, env, iface.TimeoutChat, traceID)
 }
 
 // execute runs a command with the given environment variables and timeout.
@@ -48,6 +50,7 @@ func (e *Executor) execute(
 	cmd string,
 	env map[string]string,
 	timeout time.Duration,
+	traceID string,
 ) (*ExecutionResult, error) {
 	if cmd == "" {
 		return nil, fmt.Errorf("command is empty")
@@ -70,7 +73,10 @@ func (e *Executor) execute(
 	command.Stdout = &stdoutBuf
 	command.Stderr = &stderrBuf
 
-	logger.Info("executing agent command", "cmd", cmd, "timeout", timeout.String())
+	logger.InfoM(executorModule, traceID, "executing agent command",
+		"cmd", cmd,
+		"timeout", timeout.String(),
+	)
 
 	// Run command
 	err := command.Run()
@@ -87,17 +93,29 @@ func (e *Executor) execute(
 			result.ExitCode = exitErr.ExitCode()
 		} else if execCtx.Err() == context.DeadlineExceeded {
 			result.ExitCode = -1
-			logger.Error("agent command timed out", "cmd", cmd, "timeout", timeout.String())
+			logger.ErrorM(executorModule, traceID, "agent command timed out",
+				"cmd", cmd,
+				"timeout", timeout.String(),
+			)
 			return result, fmt.Errorf("command timed out after %v: %w", timeout, err)
 		} else {
 			result.ExitCode = -1
 		}
-		logger.Error("agent command failed", "cmd", cmd, "exit_code", result.ExitCode, "stderr", result.Stderr)
+		logger.ErrorM(executorModule, traceID, "agent command failed",
+			"cmd", cmd,
+			"exit_code", result.ExitCode,
+			"stderr", result.Stderr,
+		)
 		return result, fmt.Errorf("command failed with exit code %d: %w", result.ExitCode, err)
 	}
 
 	result.ExitCode = 0
-	logger.Info("agent command completed", "cmd", cmd, "duration_ms", duration)
+	logger.InfoM(executorModule, traceID, "agent command completed",
+		"cmd", cmd,
+		"duration_ms", duration,
+		"stdout_len", len(result.Stdout),
+		"stderr_len", len(result.Stderr),
+	)
 
 	return result, nil
 }

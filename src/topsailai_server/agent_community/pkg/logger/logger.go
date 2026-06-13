@@ -188,3 +188,27 @@ func Error(msg string, args ...any) {
 	ensureDefault()
 	defaultLogger.Error("", "", msg, args...)
 }
+
+// DebugM logs a debug message with module and trace_id using the default logger.
+func DebugM(module, traceID, msg string, args ...any) {
+	ensureDefault()
+	defaultLogger.Debug(module, traceID, msg, args...)
+}
+
+// InfoM logs an info message with module and trace_id using the default logger.
+func InfoM(module, traceID, msg string, args ...any) {
+	ensureDefault()
+	defaultLogger.Info(module, traceID, msg, args...)
+}
+
+// WarnM logs a warning message with module and trace_id using the default logger.
+func WarnM(module, traceID, msg string, args ...any) {
+	ensureDefault()
+	defaultLogger.Warn(module, traceID, msg, args...)
+}
+
+// ErrorM logs an error message with module and trace_id using the default logger.
+func ErrorM(module, traceID, msg string, args ...any) {
+	ensureDefault()
+	defaultLogger.Error(module, traceID, msg, args...)
+}
