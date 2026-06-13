@@ -24,6 +24,10 @@ if WORKSPACE:
 if WORKSPACE:
     assert WORKSPACE[0] == "/", f"Require the use of absolute paths: [{WORKSPACE}]"
 
+_PROMPT_NEW_MEMORY = """
+[Note] You should only keep the latest memory, and for 'repeated old memories', either merge them into new memory or delete them
+"""
+
 
 def write_memory(title:str, content:str, **_) -> str:
     """
@@ -34,11 +38,12 @@ def write_memory(title:str, content:str, **_) -> str:
         content (str):
     """
     title = build_story_id(title)
-    return StoryFileInstance.write_story(
+    memory_file = StoryFileInstance.write_story(
         workspace=WORKSPACE,
         story_id=title,
         story_content=content,
     )
+    return f"new_memory_file={memory_file}" + _PROMPT_NEW_MEMORY
 
 def read_memory(title:str) -> str|None:
     """
@@ -77,7 +82,7 @@ def delete_memory(title:str) -> bool:
     Delete history context information.
 
     Args:
-        title (str):
+        title (str): one title from `list_memories`
     """
     return StoryFileInstance.delete_story(workspace=WORKSPACE, story_id=title)
 
@@ -98,10 +103,12 @@ if not WORKSPACE:
 PROMPT_MEMORY = f"""
 # Current Memories
 {'\n'.join([str("- "+s) for s in list_memories()])}
-"""
+""" + _PROMPT_NEW_MEMORY
 
 PROMPT = """
 # About story_memory_tool (MemoryTool)
+
+Memory content MUST be English.
 
 Whenever the user explicitly asks you to remember something (e.g., using phrases like "remember that...", "please save this:", "don't forget...", "make a note of...", "store this information: [information]"),
 you must use the `MemoryTool` to store the specified information.
