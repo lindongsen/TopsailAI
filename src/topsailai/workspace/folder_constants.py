@@ -64,3 +64,6 @@ FOLDER_MEMORY_STORY = FOLDER_MEMORY + "/story"
 
 # Task files
 FOLDER_WORKSPACE_TASK = FOLDER_WORKSPACE + "/task"
+
+# Input history file - Stores readline history for interactive input
+FILE_INPUT_HISTORY = FOLDER_ROOT + "/.input_history"

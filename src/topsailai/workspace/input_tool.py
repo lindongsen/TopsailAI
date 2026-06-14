@@ -5,6 +5,7 @@
   Purpose: Input handling utilities for TopsailAI system
 '''
 
+import atexit
 import os
 import sys
 
@@ -16,6 +17,7 @@ from topsailai.utils import (
     file_tool,
     thread_local_tool,
 )
+from topsailai.workspace.folder_constants import FILE_INPUT_HISTORY
 from topsailai.workspace.hook_instruction import (
     HookInstruction,
     TRIGGER_CHARS,
@@ -23,8 +25,43 @@ from topsailai.workspace.hook_instruction import (
 
 SPLIT_LINE = "--------------------------------------------------------------------------------"
 INPUT_TIPS = f">>> Your Turn: (pid={os.getpid()}) "
-
 DESCRIPTION_EXIT_SET = ["exit", "quit", "/exit", "/quit", "q"]
+
+
+def _load_input_history():
+    """
+    Load readline history from FILE_INPUT_HISTORY if it exists.
+
+    Called at module import time to restore previous input history.
+    """
+    if os.path.exists(FILE_INPUT_HISTORY):
+        try:
+            readline.read_history_file(FILE_INPUT_HISTORY)
+        except Exception:
+            pass
+    return
+
+
+def _save_input_history():
+    """
+    Save current readline history to FILE_INPUT_HISTORY.
+
+    Ensures the parent directory exists before writing.
+    Called on program exit via atexit and after each input.
+    """
+    try:
+        _dir = os.path.dirname(FILE_INPUT_HISTORY)
+        if _dir and not os.path.exists(_dir):
+            os.makedirs(_dir, exist_ok=True)
+        readline.write_history_file(FILE_INPUT_HISTORY)
+    except Exception:
+        pass
+    return
+
+
+# Load history on module import and register auto-save on exit
+_load_input_history()
+atexit.register(_save_input_history)
 
 
 def hook_message(message: str, hook: HookInstruction) -> bool:
@@ -102,7 +139,9 @@ def input_one_line(tips: str = "", hook: HookInstruction = None) -> str:
             continue
         break
     if message.lower() == "/noop":
+        _save_input_history()
         return ""
+    _save_input_history()
     return message
 
 
@@ -152,13 +191,16 @@ def input_multi_line(tips: str = "", hook: HookInstruction = None) -> str:
                 message = ""
                 break
             if message.strip().lower() ==  "/noop":
+                _save_input_history()
                 return ""
 
     message = message.strip()
 
     if message:
         if not hook_message(message, hook):
+            _save_input_history()
             return message
+    _save_input_history()
     return input_multi_line(tips, hook)
 
 
