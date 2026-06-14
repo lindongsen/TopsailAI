@@ -27,3 +27,8 @@ workspace_project_structure: |
     - Unit_Test_Improvement_Proposal.md
     - Integration_Test_Improvement_Proposal.md
     - Test_Execution_Checklist.md
+
+Note:
+  - |
+    Factual Info MUST SYNC:
+    - When there are changes to the environment variables, this file also needs to be updated: `/env_template`

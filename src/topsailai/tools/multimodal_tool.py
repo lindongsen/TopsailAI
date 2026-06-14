@@ -13,9 +13,16 @@ from topsailai.ai_base.multimodal import (
     build_audio_content,
     build_video_content,
 )
+from topsailai.utils import env_tool
 
 
-def recognize_image(image_source: str, prompt: str = "") -> str:
+def _get_extra_prompt() -> str:
+    """Get extra prompt from environment variable."""
+    extra = env_tool.EnvReaderInstance.read_file_or_content("TOPSAILAI_MULTIMODAL_TOOL_PROMPT")
+    return extra or ""
+
+
+def recognize_image(image_source: str, prompt: str = "", model_name: str = "") -> str:
     """
     Recognize and describe the content of an image using a multimodal LLM.
 
@@ -28,6 +35,9 @@ def recognize_image(image_source: str, prompt: str = "") -> str:
             - URL: "https://example.com/image.jpg"
         prompt (str, optional): Specific question or instruction about the image.
             Defaults to "Describe this image in detail." if not provided.
+        model_name (str, optional): Name of the LLM model to use.
+            Defaults to empty string (use default model).
+            Specify a vision-capable model if the default does not support images.
 
     Returns:
         str: The LLM's description or analysis of the image.
@@ -65,6 +75,9 @@ def recognize_image(image_source: str, prompt: str = "") -> str:
         need_print_message=False,
     )
 
+    if model_name:
+        chat.llm_model.model_name = model_name
+
     response = chat.chat_with_image(
         message=prompt,
         image_source=image_source,
@@ -74,7 +87,7 @@ def recognize_image(image_source: str, prompt: str = "") -> str:
     return response or "No response from LLM."
 
 
-def recognize_voice(audio_source: str, prompt: str = "") -> str:
+def recognize_voice(audio_source: str, prompt: str = "", model_name: str = "") -> str:
     """
     Recognize and transcribe audio content using a multimodal LLM.
 
@@ -87,6 +100,9 @@ def recognize_voice(audio_source: str, prompt: str = "") -> str:
             - URL: "https://example.com/audio.mp3"
         prompt (str, optional): Specific question or instruction about the audio.
             Defaults to "Transcribe and describe this audio content." if not provided.
+        model_name (str, optional): Name of the LLM model to use.
+            Defaults to empty string (use default model).
+            Specify an audio-capable model if the default does not support audio.
 
     Returns:
         str: The LLM's transcription or analysis of the audio.
@@ -121,6 +137,9 @@ def recognize_voice(audio_source: str, prompt: str = "") -> str:
         need_print_message=False,
     )
 
+    if model_name:
+        chat.llm_model.model_name = model_name
+
     response = chat.chat_with_content(
         message=prompt,
         content=build_audio_content(audio_source),
@@ -129,7 +148,7 @@ def recognize_voice(audio_source: str, prompt: str = "") -> str:
     return response or "No response from LLM."
 
 
-def recognize_video(video_source: str, prompt: str = "") -> str:
+def recognize_video(video_source: str, prompt: str = "", model_name: str = "") -> str:
     """
     Recognize and describe the content of a video using a multimodal LLM.
 
@@ -142,6 +161,9 @@ def recognize_video(video_source: str, prompt: str = "") -> str:
             - URL: "https://example.com/video.mp4"
         prompt (str, optional): Specific question or instruction about the video.
             Defaults to "Describe the content of this video." if not provided.
+        model_name (str, optional): Name of the LLM model to use.
+            Defaults to empty string (use default model).
+            Specify a video-capable model if the default does not support video.
 
     Returns:
         str: The LLM's description or analysis of the video.
@@ -176,6 +198,9 @@ def recognize_video(video_source: str, prompt: str = "") -> str:
         need_print_message=False,
     )
 
+    if model_name:
+        chat.llm_model.model_name = model_name
+
     response = chat.chat_with_content(
         message=prompt,
         content=build_video_content(video_source),
@@ -191,73 +216,6 @@ TOOLS = dict(
     recognize_video=recognize_video,
 )
 
-# OpenAI function calling schema
-TOOLS_INFO = dict(
-    recognize_image={
-        "type": "function",
-        "function": {
-            "name": "recognize_image",
-            "description": recognize_image.__doc__,
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "image_source": {
-                        "type": "string",
-                        "description": "File path or URL to the image. Local file: absolute path like '/path/to/image.png'. URL: 'https://example.com/image.jpg'",
-                    },
-                    "prompt": {
-                        "type": "string",
-                        "description": "Specific question or instruction about the image. Defaults to 'Describe this image in detail.'",
-                    },
-                },
-                "required": ["image_source"],
-            },
-        },
-    },
-    recognize_voice={
-        "type": "function",
-        "function": {
-            "name": "recognize_voice",
-            "description": recognize_voice.__doc__,
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "audio_source": {
-                        "type": "string",
-                        "description": "File path or URL to the audio. Local file: absolute path like '/path/to/audio.mp3'. URL: 'https://example.com/audio.mp3'",
-                    },
-                    "prompt": {
-                        "type": "string",
-                        "description": "Specific question or instruction about the audio. Defaults to 'Transcribe and describe this audio content.'",
-                    },
-                },
-                "required": ["audio_source"],
-            },
-        },
-    },
-    recognize_video={
-        "type": "function",
-        "function": {
-            "name": "recognize_video",
-            "description": recognize_video.__doc__,
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "video_source": {
-                        "type": "string",
-                        "description": "File path or URL to the video. Local file: absolute path like '/path/to/video.mp4'. URL: 'https://example.com/video.mp4'",
-                    },
-                    "prompt": {
-                        "type": "string",
-                        "description": "Specific question or instruction about the video. Defaults to 'Describe the content of this video.'",
-                    },
-                },
-                "required": ["video_source"],
-            },
-        },
-    },
-)
-
 # Tool prompt for agent context
 PROMPT = """
 # About multimodal_tool
@@ -270,7 +228,12 @@ Supported image formats: PNG, JPG, JPEG, GIF, WEBP, BMP, TIFF.
 Supported audio formats: MP3, WAV, OGG, M4A.
 Supported video formats: MP4, AVI, MOV, WEBM.
 Media source can be a local file path or a URL.
-"""
+
+## Model Selection Guidance
+Not all LLM models support multimodal inputs (image, audio, video). When using this tool:
+- If the default model does not support multimodal, explicitly specify a model that does via the `model_name` parameter.
+- Choose a vision-capable model for `recognize_image`, an audio-capable model for `recognize_voice`, and a video-capable model for `recognize_video`.
+""" + _get_extra_prompt()
 
 # Enable this tool by default
 FLAG_TOOL_ENABLED = True

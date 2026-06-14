@@ -8,11 +8,13 @@ workspace: /TopsailAI/src/topsailai
 context:
   _default:
     - project.yaml
-    - test.md
     - readme.md
     - workspace/readme.md
 
   default: []
+
+  test:
+    - test.md
 
   llm_mistake:
     - ai_base/llm_control/llm_mistakes/readme.md

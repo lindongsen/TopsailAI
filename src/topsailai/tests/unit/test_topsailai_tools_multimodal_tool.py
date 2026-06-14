@@ -15,6 +15,7 @@ from topsailai.tools.multimodal_tool import (
     recognize_image,
     recognize_voice,
     recognize_video,
+    _get_extra_prompt,
     TOOLS,
     TOOLS_INFO,
     PROMPT,
@@ -180,6 +181,39 @@ class TestRecognizeImage:
         assert call_args[1]["image_source"] == "http://example.com/image.png"
         assert result == "Description"
 
+    def test_recognize_image_with_model_name(self):
+        """Test recognize_image sets model_name on chat.llm_model."""
+        mock_chat = MagicMock()
+        mock_chat.chat_with_image.return_value = "Description"
+
+        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+            with patch("os.path.exists", return_value=False):
+                result = recognize_image(
+                    image_source="https://example.com/image.png",
+                    prompt="Describe",
+                    model_name="gpt-4o",
+                )
+
+        assert mock_chat.llm_model.model_name == "gpt-4o"
+        assert result == "Description"
+
+    def test_recognize_image_with_empty_model_name(self):
+        """Test recognize_image does not change model_name when empty."""
+        mock_chat = MagicMock()
+        mock_chat.llm_model.model_name = "default-model"
+        mock_chat.chat_with_image.return_value = "Description"
+
+        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+            with patch("os.path.exists", return_value=False):
+                result = recognize_image(
+                    image_source="https://example.com/image.png",
+                    prompt="Describe",
+                    model_name="",
+                )
+
+        assert mock_chat.llm_model.model_name == "default-model"
+        assert result == "Description"
+
 
 class TestRecognizeVoice:
     """Test recognize_voice function."""
@@ -329,6 +363,22 @@ class TestRecognizeVoice:
 
         call_args = mock_chat.chat_with_content.call_args
         assert call_args[1]["message"] == "Transcribe"
+        assert result == "Transcription"
+
+    def test_recognize_voice_with_model_name(self):
+        """Test recognize_voice sets model_name on chat.llm_model."""
+        mock_chat = MagicMock()
+        mock_chat.chat_with_content.return_value = "Transcription"
+
+        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+            with patch("os.path.exists", return_value=False):
+                result = recognize_voice(
+                    audio_source="https://example.com/audio.mp3",
+                    prompt="Transcribe",
+                    model_name="gpt-4o-audio",
+                )
+
+        assert mock_chat.llm_model.model_name == "gpt-4o-audio"
         assert result == "Transcription"
 
 
@@ -482,6 +532,22 @@ class TestRecognizeVideo:
         assert call_args[1]["message"] == "Describe"
         assert result == "Description"
 
+    def test_recognize_video_with_model_name(self):
+        """Test recognize_video sets model_name on chat.llm_model."""
+        mock_chat = MagicMock()
+        mock_chat.chat_with_content.return_value = "Description"
+
+        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+            with patch("os.path.exists", return_value=False):
+                result = recognize_video(
+                    video_source="https://example.com/video.mp4",
+                    prompt="Describe",
+                    model_name="gpt-4o-video",
+                )
+
+        assert mock_chat.llm_model.model_name == "gpt-4o-video"
+        assert result == "Description"
+
 
 class TestToolsDict:
     """Test TOOLS dict structure."""
@@ -531,6 +597,13 @@ class TestToolsInfo:
         """Test TOOLS_INFO dict has exactly 3 entries."""
         assert len(TOOLS_INFO) == 3
 
+    def test_tools_info_model_name_property(self):
+        """Test TOOLS_INFO schemas include model_name parameter."""
+        for name in ["recognize_image", "recognize_voice", "recognize_video"]:
+            props = TOOLS_INFO[name]["function"]["parameters"]["properties"]
+            assert "model_name" in props
+            assert props["model_name"]["type"] == "string"
+
 
 class TestPrompt:
     """Test PROMPT string."""
@@ -563,6 +636,11 @@ class TestPrompt:
         """Test PROMPT is not empty."""
         assert len(PROMPT.strip()) > 0
 
+    def test_prompt_contains_model_selection_guidance(self):
+        """Test PROMPT contains model selection guidance."""
+        assert "Model Selection Guidance" in PROMPT
+        assert "model_name" in PROMPT
+
 
 class TestFlagToolEnabled:
     """Test FLAG_TOOL_ENABLED."""
@@ -579,3 +657,27 @@ class TestEdgeCases:
         """Test that all functions in TOOLS are callable."""
         for name, func in TOOLS.items():
             assert callable(func), f"{name} is not callable"
+
+
+class TestGetExtraPrompt:
+    """Test _get_extra_prompt function."""
+
+    def test_get_extra_prompt_returns_empty_when_not_set(self):
+        """Test _get_extra_prompt returns empty string when env var not set."""
+        with patch.object(
+            multimodal_tool.env_tool.EnvReaderInstance,
+            "read_file_or_content",
+            return_value="",
+        ):
+            result = _get_extra_prompt()
+        assert result == ""
+
+    def test_get_extra_prompt_returns_text(self):
+        """Test _get_extra_prompt returns text from env var."""
+        with patch.object(
+            multimodal_tool.env_tool.EnvReaderInstance,
+            "read_file_or_content",
+            return_value="Extra guidance text",
+        ):
+            result = _get_extra_prompt()
+        assert result == "Extra guidance text"
