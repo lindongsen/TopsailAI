@@ -77,7 +77,7 @@ Columns:
 - sender_id, {member_id}
 - sender_type, {member_type}
 - processed_msg_id, related to history message_id
-- mentions,JSON, list_dict, [{member_id, member_name, member_type}]
+- mentions, JSON, list_dict, [{member_id, member_name, member_type}]
 - is_deleted
 - delete_at_ms
 
@@ -99,18 +99,6 @@ environments:
   ACS_AGENT_API_BASE: "http://172.18.0.4:7373"
   ACS_AGENT_API_KEY: “I-Love-Dawson” # any string, a secret key for the connection base on `Bearer Token`
   ACS_AGENT_API_AUTH: "BearerToken"
-
-# Additional Environments in possible:
-# ACS_AGENT_ID, member id
-# ACS_AGENT_MODE, chat/agent, chat是仅聊天、直接对话、不使用工具，agent会使用工具。默认是 agent 。
-# ACS_AGENT_NAME, member name
-# ACS_AGENT_MESSAGE="Hello"
-# ACS_AGENT_TIMEOUT, it is timeout_chat
-# ACS_GROUP_ID
-# ACS_GROUP_NAME
-# ACS_SENDER_ID
-# ACS_SENDER_NAME
-# ACS_MESSAGE_ID
 
 timeout_check_health: 5 # default is 5 seconds
 timeout_check_status: 5 # default is 5 seconds
@@ -161,9 +149,9 @@ ACS_AGENT_NAME -> member_name
 ACS_AGENT_TYPE -> member_type
 
 > 事务信息
-ACS_AGENT_MODE
+ACS_AGENT_MODE    -> chat/agent, chat是仅聊天、直接对话、不使用工具，agent会使用工具。默认是agent。
 ACS_AGENT_MESSAGE -> context_messages
-ACS_AGENT_TIMEOUT
+ACS_AGENT_TIMEOUT -> agent_interface.timeout_chat
 ACS_AGENT_PROMPT
 ACS_GROUP_ID
 ACS_GROUP_NAME

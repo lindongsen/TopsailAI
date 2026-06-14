@@ -11,6 +11,8 @@ Created: 2025-12-25
 Purpose: Provide a hook-based instruction system for command processing
 '''
 
+import readline
+
 from topsailai.utils import (
     json_tool,
     print_tool,
@@ -112,23 +114,20 @@ class HookInstruction(HookBaseUtils):
         """
         # Dictionary mapping hook names to lists of HookFunc objects
         # Structure: {hook_name: [HookFunc1, HookFunc2, ...]}
-        self.hook_map = {
-            "/help": [HookFunc("show help info", self.show_help)],
-        }
+        self.hook_map = {}
+        self.add_hook("/help", self.show_help, "show help info")
 
         # add plugin hooks
         self.load_instructions(INSTRUCTIONS)
 
+        # tab completion
+        self.setup_readline_completion()
         return
 
     def load_instructions(self, instructions:dict):
         """ add instructions to hook_map """
         for key, func in instructions.items():
-            if key[0] not in TRIGGER_CHARS:
-                key = TRIGGER_CHARS[0] + key
-            self.hook_map[key] = [
-                HookFunc("", func),
-            ]
+            self.add_hook(key, func, "")
         return
 
     def __print_hook(self, hook_name:str):
@@ -156,6 +155,55 @@ class HookInstruction(HookBaseUtils):
                 continue
             self.__print_hook(_hook_name)
         print(SPLIT_LINE)
+        return
+
+    def _hook_completer(self, text, state):
+        """
+        readline completer callback for hook names.
+
+        Dynamically generates completion candidates from the current keys
+        in self.hook_map. When text starts with a trigger character (e.g., "/"),
+        returns matching hook names; when text is empty, returns all hook names.
+
+        Args:
+            text (str): The current input text to complete.
+            state (int): The index of the completion candidate to return.
+
+        Returns:
+            str or None: The matching hook name at the given state index,
+                         or None if no more matches.
+        """
+        if state == 0:
+            if not text:
+                self._completions = sorted(self.hook_map.keys())
+            else:
+                self._completions = sorted(
+                    k for k in self.hook_map.keys() if k.startswith(text)
+                )
+        try:
+            return self._completions[state]
+        except IndexError:
+            return None
+
+    def setup_readline_completion(self):
+        """
+        Enable readline tab-completion for hook names.
+
+        Configures the readline module so that pressing Tab in the terminal
+        will auto-complete against the current keys in self.hook_map.
+        The completion list is dynamic and reflects add_hook / del_hook changes.
+
+        Returns:
+            None
+        """
+        readline.set_completer(self._hook_completer)
+        readline.parse_and_bind("tab: complete")
+        # Remove trigger characters from completer delimiters so that
+        # "/hel<Tab>" can complete to "/help" instead of treating "/" as a word break.
+        delims = readline.get_completer_delims()
+        for ch in TRIGGER_CHARS:
+            delims = delims.replace(ch, "")
+        readline.set_completer_delims(delims)
         return
 
     def add_hook(self, hook_name, hook_func: HookFunc, description=""):
