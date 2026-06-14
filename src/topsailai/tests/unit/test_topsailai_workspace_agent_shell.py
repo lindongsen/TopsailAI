@@ -22,9 +22,8 @@ class TestGetAIAgent(unittest.TestCase):
         self.env_tool_patcher = patch('topsailai.workspace.agent_shell.env_tool')
         self.mock_env_tool = self.env_tool_patcher.start()
         self.mock_env_tool.EnvReaderInstance.get_list_str.return_value = None
+        self.mock_env_tool.EnvReaderInstance.read_file_or_content.return_value = ""
         self.mock_env_tool.is_debug_mode.return_value = False
-        
-        # Mock get_agent_type
         self.agent_type_patcher = patch('topsailai.workspace.agent_shell.get_agent_type')
         self.mock_get_agent_type = self.agent_type_patcher.start()
         
@@ -226,6 +225,7 @@ class TestGetAgentChat(unittest.TestCase):
         self.env_tool_patcher = patch('topsailai.workspace.agent_shell.env_tool')
         self.mock_env_tool = self.env_tool_patcher.start()
         self.mock_env_tool.is_debug_mode.return_value = False
+        self.mock_env_tool.EnvReaderInstance.read_file_or_content.return_value = ""
         self.mock_env_tool.is_interactive_mode.return_value = True
         self.mock_env_tool.get_session_id.return_value = "test-session-123"
         

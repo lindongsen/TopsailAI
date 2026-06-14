@@ -165,18 +165,26 @@ class TestCallSkill(unittest.TestCase):
             if os.path.exists(output_file):
                 os.remove(output_file)
 
-    def test_call_skill_output_file_must_be_absolute_path(self):
+    @patch('topsailai.tools.skill_tool.get_skills_from_cache')
+    def test_call_skill_output_file_must_be_absolute_path(self, mock_get_skills):
         """Test that output_file must be an absolute path"""
         from topsailai.tools.skill_tool import call_skill
+        
+        mock_get_skills.return_value = [SimpleNamespace(folder=self.test_folder)]
         
         with self.assertRaises(AssertionError) as context:
             call_skill(self.test_folder, self.test_script, '', output_file='relative/path.txt')
         
         self.assertIn('absolute path', str(context.exception))
 
-    def test_call_skill_output_file_must_not_exist(self):
+    @patch('topsailai.tools.skill_tool.file_tool.is_tmp_dir')
+    @patch('topsailai.tools.skill_tool.get_skills_from_cache')
+    def test_call_skill_output_file_must_not_exist(self, mock_get_skills, mock_is_tmp):
         """Test that output_file must not already exist"""
         from topsailai.tools.skill_tool import call_skill
+        
+        mock_get_skills.return_value = [SimpleNamespace(folder=self.test_folder)]
+        mock_is_tmp.return_value = False
         
         test_file = '/tmp/existing_output.txt'
         with open(test_file, 'w') as f:
@@ -396,9 +404,9 @@ class TestEdgeCases(unittest.TestCase):
         mock_hook_instance.need_lock_session = False
         mock_hook_instance.need_refresh_session = False
         mock_hook.return_value = mock_hook_instance
-        mock_exec_cmd.return_value = (0, 'unicode output: 你好世界', '')
+        mock_exec_cmd.return_value = (0, 'unicode output: \u4f60\u597d\u4e16\u754c', '')
         
-        result = call_skill('/test/skill/folder', 'test.py', '参数 --name 中文')
+        result = call_skill('/test/skill/folder', 'test.py', '\u53c2\u6570 --name \u4e2d\u6587')
         
         self.assertIsNotNone(result)
 

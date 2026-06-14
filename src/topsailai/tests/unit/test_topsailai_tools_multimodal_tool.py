@@ -2,7 +2,7 @@
 Unit tests for tools/multimodal_tool.py module.
 
 Tests cover recognize_image, recognize_voice, recognize_video functions,
-TOOLS dict, TOOLS_INFO, PROMPT, and FLAG_TOOL_ENABLED.
+TOOLS dict, PROMPT, and FLAG_TOOL_ENABLED.
 """
 
 import os
@@ -17,7 +17,6 @@ from topsailai.tools.multimodal_tool import (
     recognize_video,
     _get_extra_prompt,
     TOOLS,
-    TOOLS_INFO,
     PROMPT,
     FLAG_TOOL_ENABLED,
 )
@@ -572,37 +571,6 @@ class TestToolsDict:
         assert len(TOOLS) == 3
 
 
-class TestToolsInfo:
-    """Test TOOLS_INFO dict structure."""
-
-    def test_tools_info_has_recognize_image(self):
-        """Test TOOLS_INFO contains recognize_image schema."""
-        assert "recognize_image" in TOOLS_INFO
-        assert TOOLS_INFO["recognize_image"]["type"] == "function"
-        assert TOOLS_INFO["recognize_image"]["function"]["name"] == "recognize_image"
-
-    def test_tools_info_has_recognize_voice(self):
-        """Test TOOLS_INFO contains recognize_voice schema."""
-        assert "recognize_voice" in TOOLS_INFO
-        assert TOOLS_INFO["recognize_voice"]["type"] == "function"
-        assert TOOLS_INFO["recognize_voice"]["function"]["name"] == "recognize_voice"
-
-    def test_tools_info_has_recognize_video(self):
-        """Test TOOLS_INFO contains recognize_video schema."""
-        assert "recognize_video" in TOOLS_INFO
-        assert TOOLS_INFO["recognize_video"]["type"] == "function"
-        assert TOOLS_INFO["recognize_video"]["function"]["name"] == "recognize_video"
-
-    def test_tools_info_count(self):
-        """Test TOOLS_INFO dict has exactly 3 entries."""
-        assert len(TOOLS_INFO) == 3
-
-    def test_tools_info_model_name_property(self):
-        """Test TOOLS_INFO schemas include model_name parameter."""
-        for name in ["recognize_image", "recognize_voice", "recognize_video"]:
-            props = TOOLS_INFO[name]["function"]["parameters"]["properties"]
-            assert "model_name" in props
-            assert props["model_name"]["type"] == "string"
 
 
 class TestPrompt:

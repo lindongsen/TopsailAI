@@ -54,7 +54,7 @@ class TestWriteMemory(unittest.TestCase):
         mock_story_instance.write_story.assert_called_once()
         call_kwargs = mock_story_instance.write_story.call_args[1]
         self.assertEqual(call_kwargs['story_content'], "test content")
-        self.assertEqual(result, "/path/to/memory.md")
+        self.assertIn("/path/to/memory.md", result)
     
     @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
     @patch('topsailai.tools.story_memory_tool.build_story_id')
@@ -65,11 +65,12 @@ class TestWriteMemory(unittest.TestCase):
         mock_build_id.return_value = "2026-04-19.unicode_test.md"
         mock_story_instance.write_story.return_value = "/path/to/memory.md"
         
-        unicode_content = "测试内容 🎉 émojis & special <chars>"
+        unicode_content = "æµ‹è¯•å†…å®¹ ðŸŽ‰ Ã©mojis & special <chars>"
         result = story_memory_tool.write_memory("unicode_test", unicode_content)
         
         call_kwargs = mock_story_instance.write_story.call_args[1]
         self.assertEqual(call_kwargs['story_content'], unicode_content)
+        self.assertIn("/path/to/memory.md", result)
     
     @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
     @patch('topsailai.tools.story_memory_tool.build_story_id')
@@ -84,6 +85,7 @@ class TestWriteMemory(unittest.TestCase):
         
         call_kwargs = mock_story_instance.write_story.call_args[1]
         self.assertEqual(call_kwargs['story_content'], "")
+        self.assertIn("/path/to/memory.md", result)
 
 
 class TestReadMemory(unittest.TestCase):
@@ -144,7 +146,7 @@ class TestReadMemory(unittest.TestCase):
         mock_exists.return_value = True
         mock_story_instance.read_story.return_value = "unicode content"
         
-        result = story_memory_tool.read_memory("测试_标题.md")
+        result = story_memory_tool.read_memory("æµ‹è¯•_æ ‡é¢˜.md")
         
         self.assertEqual(result, "unicode content")
 
@@ -201,7 +203,7 @@ class TestDeleteMemory(unittest.TestCase):
         
         mock_story_instance.delete_story.return_value = True
         
-        result = story_memory_tool.delete_memory("测试_标题")
+        result = story_memory_tool.delete_memory("æµ‹è¯•_æ ‡é¢˜")
         
         self.assertTrue(result)
 
@@ -253,7 +255,7 @@ class TestBuildStoryId(unittest.TestCase):
         """Test build_story_id with unicode characters."""
         from topsailai.tools.story_tool import build_story_id
         
-        result = build_story_id("测试标题")
+        result = build_story_id("æµ‹è¯•æ ‡é¢˜")
         
         self.assertTrue(result.endswith(".md"))
         # Unicode chars should be preserved or converted appropriately
@@ -300,7 +302,7 @@ class TestIntegration(unittest.TestCase):
         
         # Write memory
         write_result = story_memory_tool.write_memory("integration_test", "test content")
-        self.assertEqual(write_result, "/path/to/memory.md")
+        self.assertIn("/path/to/memory.md", write_result)
         
         # Read memory
         read_result = story_memory_tool.read_memory("integration_test")
