@@ -171,6 +171,31 @@ Loaded by `plugin_instruction/base/init.py` via `get_function_map()`; supports e
 | `task/task_tool.py` | Task lifecycle management for one-shot executions |
 | `agent/hooks/` | Pre-run and post-final-answer hook discovery and execution |
 
+### Thread-Local Agent Object
+
+During agent execution, the current `agent_object` (an `AgentBase` instance) is stored in thread-local storage. This allows any code running within the same thread — particularly tools — to access the active agent's state without explicit parameter passing.
+
+The thread-local utilities are provided by `utils/thread_local_tool.py`:
+
+- `ctxm_set_agent(agent_obj)` — Context manager that sets the agent object in thread-local storage for the duration of the context. It also tracks recursion depth via `KEY_AGENT_DEEP` and enforces a maximum depth of `MAX_AGENT_DEEP` (default 3).
+- `get_agent_object()` — Retrieves the current agent object from thread-local storage, or `None` if not set.
+
+**Typical use case in tools:**
+
+When a tool needs to inspect or use the current agent's messages, it can retrieve the agent object from thread-local storage:
+
+```python
+from topsailai.utils.thread_local_tool import get_agent_object
+
+def my_tool():
+    agent = get_agent_object()
+    if agent:
+        messages = agent.messages
+        # Use messages for context-aware processing
+```
+
+This mechanism is used internally during the **Agent2LLM** execution phase, where the agent framework sets the active agent object before invoking tools.
+
 ---
 
 ## Module Call Graph
