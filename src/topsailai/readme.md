@@ -2,7 +2,7 @@
 programming_language: python
 ---
 
-# Topsailai Agent
+# TopsailAI Agent
 
 AI-Agent Core, Agent Workers
 

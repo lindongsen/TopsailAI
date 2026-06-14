@@ -5,7 +5,7 @@ These tools will be called by the AI agent.
 ## Variables & Functions
 
 - TOOLS: required, dict, func_name=func_call
-- TOOLS_INFO: optional, dict, func_name={openai_tool_spec}
+- TOOLS_INFO: optional, dict, func_name={openai_tool_spec}, Do not set it unless necessary!
 - PROMPT: optional, str, tool prompt
 - FLAG_TOOL_ENABLED: optional, bool, default True
 - reload(): optional, callable function to reload sth.
