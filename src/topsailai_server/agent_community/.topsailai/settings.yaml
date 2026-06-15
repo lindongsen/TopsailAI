@@ -17,7 +17,7 @@ context:
     - ORIGIN_CLI.md
 
   scripts:
-    - scripts/topsailai_agent_cmd.md
+    - scripts/agent_interface.adaptor.md
 
   skills:
     - skills/agent_community_client.md
