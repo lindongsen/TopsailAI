@@ -541,7 +541,7 @@ func (h *MessageHandler) TriggerMessage(c *gin.Context) {
 		c.JSON(http.StatusAccepted, gin.H{
 			"message_id": messageID,
 			"group_id":   groupID,
-			"trigger":    result.Trigger,
+			"trigger":    trigger.TriggerInfo{Type: trigger.TriggerTypeManual, AgentID: result.Trigger.AgentID},
 			"status":     "pending",
 		})
 		return

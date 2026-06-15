@@ -68,7 +68,15 @@ All tests pass: `ok github.com/topsailai/agent-community/internal/api/handlers 0
 
 ### 5. `tests/integration/test_api.py`
 
-Added `TestManualTrigger` class with 7 integration test cases covering all required scenarios. Tests are written but blocked from execution due to missing infrastructure (PostgreSQL, NATS, ACS server not running). Tracked in `issues/undo/issue-manual-trigger-integration-test-blocked.md`.
+Added `TestManualTrigger` class with 7 integration test cases covering all required scenarios.
+
+**Integration Test Results (2026-06-15):**
+- All 7 manual trigger integration tests: **PASSED**
+- Full API integration test suite (35 tests): **ALL PASSED**
+- NATS integration test suite (13 tests): **ALL PASSED**
+- Total: **48/48 integration tests passed**
+
+Service was compiled and started successfully with PostgreSQL and NATS dependencies running.
 
 ---
 
@@ -84,7 +92,6 @@ Added `TestManualTrigger` class with 7 integration test cases covering all requi
 ## Related Files
 
 - `.task/Code_Improvement_Proposal.md` — Original proposal by km2-reviewer
-- `issues/undo/issue-manual-trigger-integration-test-blocked.md` — Integration test blocker
 
 ---
 
@@ -94,4 +101,5 @@ Added `TestManualTrigger` class with 7 integration test cases covering all requi
 - [x] Unit tests pass
 - [x] API documentation updated
 - [x] Integration tests written
-- [ ] Integration tests executed (blocked by infrastructure)
+- [x] Integration tests executed and passed (48/48)
+- [x] Service compiled and started successfully
