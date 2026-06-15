@@ -19,6 +19,9 @@ context:
   scripts:
     - scripts/topsailai_agent_cmd.md
 
+  skills:
+    - skills/agent_community_client.md
+
 # Environment variable configuration: each item can define its own environment variables
 # _default is the base environment variables shared by all items
 environment:

@@ -271,6 +271,11 @@ func (h *MessageHandler) ListMessages(c *gin.Context) {
 		}
 	}
 
+	// Filter by processed_msg_id
+	if processedMsgID := c.Query("processed_msg_id"); processedMsgID != "" {
+		query = query.Where("processed_msg_id = ?", processedMsgID)
+	}
+
 	// Get total count
 	var total int64
 	if err := query.Count(&total).Error; err != nil {

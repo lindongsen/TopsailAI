@@ -588,3 +588,104 @@ class TestEndToEndFlow:
         # 8. Cleanup: delete group
         response = api_client.delete(f"{server_url}/api/v1/groups/{group_id}")
         assert response.status_code == 204
+
+
+class TestMessageProcessedMsgID:
+    """Test querying messages by processed_msg_id."""
+
+    def test_list_messages_by_processed_msg_id(self, api_client: requests.Session, server_url: str, test_group: dict, test_member: dict, test_agent_member: dict):
+        """Test filtering messages by processed_msg_id query parameter."""
+        import psycopg2
+
+        # 1. Send a message from the user
+        user_message_data = {
+            "message_text": "Hello agent, can you help me?",
+            "sender_id": test_member["member_id"],
+            "sender_type": "user"
+        }
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages",
+            json=user_message_data
+        )
+        assert response.status_code == 201
+        user_message = response.json()
+        user_message_id = user_message["message_id"]
+
+        # 2. Directly insert an agent response message with processed_msg_id set
+        # (Simulating what happens after agent processing)
+        conn = psycopg2.connect(
+            host="localhost", port=5432, user="acs", password="acs", dbname="acs"
+        )
+        cur = conn.cursor()
+        agent_message_id = f"agent-response-{int(time.time() * 1000)}"
+        create_at_ms = int(time.time() * 1000)
+        cur.execute(
+            """
+            INSERT INTO group_messages (
+                group_id, message_id, message_text, message_attachments,
+                sender_id, sender_type, processed_msg_id, mentions,
+                is_deleted, delete_at_ms, create_at_ms, update_at_ms
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                test_group["group_id"],
+                agent_message_id,
+                "This is the agent response to your message.",
+                "[]",
+                test_agent_member["member_id"],
+                "worker-agent",
+                user_message_id,
+                "[]",
+                False,
+                0,
+                create_at_ms,
+                create_at_ms,
+            ),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        # 3. Query messages filtered by processed_msg_id
+        response = api_client.get(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages?processed_msg_id={user_message_id}"
+        )
+        assert response.status_code == 200
+
+        data = response.json()
+        assert "items" in data
+        assert isinstance(data["items"], list)
+        assert data["total"] == 1
+        assert len(data["items"]) == 1
+
+        # 4. Verify the returned message is the agent response
+        returned_msg = data["items"][0]
+        assert returned_msg["message_id"] == agent_message_id
+        assert returned_msg["processed_msg_id"] == user_message_id
+        assert returned_msg["sender_id"] == test_agent_member["member_id"]
+        assert returned_msg["sender_type"] == "worker-agent"
+        assert returned_msg["message_text"] == "This is the agent response to your message."
+
+        # 5. Cleanup: delete the agent response message directly
+        conn = psycopg2.connect(
+            host="localhost", port=5432, user="acs", password="acs", dbname="acs"
+        )
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM group_messages WHERE message_id = %s",
+            (agent_message_id,),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    def test_list_messages_by_nonexistent_processed_msg_id(self, api_client: requests.Session, server_url: str, test_group: dict, test_message: dict):
+        """Test filtering by a non-existent processed_msg_id returns empty results."""
+        response = api_client.get(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages?processed_msg_id=non-existent-msg-id"
+        )
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["total"] == 0
+        assert len(data["items"]) == 0

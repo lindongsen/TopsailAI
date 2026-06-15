@@ -118,6 +118,11 @@ func run() error {
 	autoTrigger.Start()
 	defer autoTrigger.Stop()
 
+	// 12.5. Create and start cleanup periodic task for agent_message_processing.
+	cleanupTask := db.NewCleanupTask(database.Conn, cfg.Cleanup)
+	cleanupTask.Start()
+	defer cleanupTask.Stop()
+
 	// 13. Create HTTP API router and server.
 	router := api.NewRouter(cfg, database.Conn, publisher, evaluator, log)
 	server := api.NewServer(cfg, router, log)

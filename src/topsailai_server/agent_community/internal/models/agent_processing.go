@@ -46,3 +46,8 @@ const (
 	ProcessingStatusCompleted = "completed"
 	ProcessingStatusFailed    = "failed"
 )
+// IsTerminalStatus returns true if the status is a terminal state (completed or failed).
+func (amp *AgentMessageProcessing) IsTerminalStatus() bool {
+	return amp.Status == ProcessingStatusCompleted || amp.Status == ProcessingStatusFailed
+}
+

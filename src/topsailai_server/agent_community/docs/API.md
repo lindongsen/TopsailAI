@@ -463,7 +463,12 @@ List messages in a group with pagination and filtering.
 - group_id: UUID string
 
 **Query Parameters:**
-- offset, limit, sort_key, order_by, create_at_ms, update_at_ms
+- offset, limit, sort_key, order_by, create_at_ms, update_at_ms, processed_msg_id
+
+**Example Request:**
+```bash
+GET /api/v1/groups/550e8400-e29b-41d4-a716-446655440000/messages?processed_msg_id=msg-001&limit=10
+```
 
 **Response:**
 ```json

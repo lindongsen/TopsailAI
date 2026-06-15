@@ -18,6 +18,7 @@ type Config struct {
 	Agent    AgentConfig    `mapstructure:"agent"`
 	Pool     PoolConfig     `mapstructure:"pool"`
 	Log      LogConfig      `mapstructure:"log"`
+	Cleanup  CleanupConfig  `mapstructure:"cleanup"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -39,8 +40,8 @@ type DatabaseConfig struct {
 
 // NATSConfig holds NATS connection and subject settings.
 type NATSConfig struct {
-	Servers                        string `mapstructure:"servers"`
-	StreamGroup                    string `mapstructure:"stream_group"`
+	Servers                          string `mapstructure:"servers"`
+	StreamGroup                      string `mapstructure:"stream_group"`
 	SubjectGroupPendingMessagePrefix string `mapstructure:"subject_group_pending_message_prefix"`
 	SubjectGroupMessagePrefix        string `mapstructure:"subject_group_message_prefix"`
 }
@@ -64,12 +65,21 @@ type PoolConfig struct {
 
 // LogConfig holds logging settings.
 type LogConfig struct {
-	Output   string `mapstructure:"output"`
-	Level    string `mapstructure:"level"`
-	FilePath string `mapstructure:"file_path"`
-	MaxSize  int    `mapstructure:"max_size_mb"`
-	MaxAge   int    `mapstructure:"max_age_days"`
-	MaxBackups int  `mapstructure:"max_backups"`
+	Output     string `mapstructure:"output"`
+	Level      string `mapstructure:"level"`
+	FilePath   string `mapstructure:"file_path"`
+	MaxSize    int    `mapstructure:"max_size_mb"`
+	MaxAge     int    `mapstructure:"max_age_days"`
+	MaxBackups int    `mapstructure:"max_backups"`
+}
+
+// CleanupConfig holds settings for the agent_message_processing cleanup job.
+type CleanupConfig struct {
+	Enabled           bool          `mapstructure:"enabled"`
+	Interval          time.Duration `mapstructure:"interval"`
+	RetentionDays     int           `mapstructure:"retention_days"`
+	StalePendingHours int           `mapstructure:"stale_pending_hours"`
+	BatchSize         int           `mapstructure:"batch_size"`
 }
 
 // Load reads configuration from environment variables with ACS_ prefix.
@@ -97,12 +107,14 @@ func Load() (*Config, error) {
 	v.SetDefault("nats.stream_group", "acs_group")
 	v.SetDefault("nats.subject_group_pending_message_prefix", "acs.group.pending-message")
 	v.SetDefault("nats.subject_group_message_prefix", "acs.group.message")
+
 	// Agent defaults
 	v.SetDefault("agent.manager_api_base", "")
 	v.SetDefault("agent.manager_api_key", "")
 	v.SetDefault("agent.manager_api_auth", "BearerToken")
 	v.SetDefault("agent.auto_trigger_timeout", "10m")
 	v.SetDefault("agent.agent_prompt", "")
+
 	// Pool defaults
 	v.SetDefault("pool.global", 10)
 	v.SetDefault("pool.per_user", 5)
@@ -116,6 +128,13 @@ func Load() (*Config, error) {
 	v.SetDefault("log.max_size_mb", 100)
 	v.SetDefault("log.max_age_days", 30)
 	v.SetDefault("log.max_backups", 10)
+
+	// Cleanup defaults
+	v.SetDefault("cleanup.enabled", true)
+	v.SetDefault("cleanup.interval", "1h")
+	v.SetDefault("cleanup.retention_days", 7)
+	v.SetDefault("cleanup.stale_pending_hours", 24)
+	v.SetDefault("cleanup.batch_size", 1000)
 
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
