@@ -255,6 +255,80 @@ func TestAPIClientNonJSONResponse(t *testing.T) {
 	}
 }
 
+func TestAPIClientRawResponseWithoutEnvelope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"items": []map[string]interface{}{
+				{"group_id": "g1", "group_name": "Group One"},
+			},
+			"total": 1,
+		})
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(server.URL)
+	resp, err := client.ListGroups(ListQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result struct {
+		Items []map[string]interface{} `json:"items"`
+		Total int                      `json:"total"`
+	}
+	if err := resp.GetData(&result); err != nil {
+		t.Fatalf("GetData() error = %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(result.Items))
+	}
+	if result.Items[0]["group_id"] != "g1" {
+		t.Errorf("group_id = %q, want %q", result.Items[0]["group_id"], "g1")
+	}
+	if result.Total != 1 {
+		t.Errorf("total = %d, want %d", result.Total, 1)
+	}
+}
+
+func TestAPIClientRawResponseWithoutEnvelopeMessages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"items": []map[string]interface{}{
+				{"message_id": "m1", "message_text": "Hello", "sender_id": "u1", "sender_type": "user"},
+			},
+			"total": 1,
+		})
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(server.URL)
+	resp, err := client.ListMessages("g1", ListQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result struct {
+		Items []map[string]interface{} `json:"items"`
+		Total int                      `json:"total"`
+	}
+	if err := resp.GetData(&result); err != nil {
+		t.Fatalf("GetData() error = %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Items))
+	}
+	if result.Items[0]["message_id"] != "m1" {
+		t.Errorf("message_id = %q, want %q", result.Items[0]["message_id"], "m1")
+	}
+	if result.Total != 1 {
+		t.Errorf("total = %d, want %d", result.Total, 1)
+	}
+}
+
 func TestAPIClientNetworkError(t *testing.T) {
 	client := NewAPIClient("http://invalid-host-that-does-not-exist:99999")
 	_, err := client.Get("/api/v1/groups")

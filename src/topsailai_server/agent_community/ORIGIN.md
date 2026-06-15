@@ -98,7 +98,7 @@ adaptor: topsailai_agent
 environments:
   ACS_AGENT_API_BASE: "http://172.18.0.4:7373"
   ACS_AGENT_API_KEY: “I-Love-Dawson” # any string, a secret key for the connection base on `Bearer Token`
-  ACS_AGENT_API_AUTH: "BearerToken"
+  ACS_AGENT_API_AUTH: "bearer"
 
 timeout_check_health: 5 # default is 5 seconds
 timeout_check_status: 5 # default is 5 seconds
@@ -288,9 +288,11 @@ I AM `{member_name}`({member_id})
 ## Send Message Format
 
 ```
+---
 > sender: id={id}, name={name}
 > message:
 {message}
+---
 ```
 
 ## member_status of group_member

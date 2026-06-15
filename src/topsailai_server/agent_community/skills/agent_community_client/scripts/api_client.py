@@ -139,7 +139,11 @@ class ACSClient:
             if api_error:
                 raise ACSAPIError(api_error, status_code=response.status_code, trace_id=trace_id)
 
-            return body.get("data")
+            data = body.get("data")
+            # Handle raw responses without standard envelope
+            if data is None and not body.get("error") and not body.get("trace_id"):
+                data = body
+            return data
 
         # Should never reach here, but satisfy type checker
         raise ACSAPIError("Unexpected end of retry loop")

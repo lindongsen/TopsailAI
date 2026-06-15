@@ -25,11 +25,11 @@ func main() {
 func run() error {
 	// Parse flags.
 	var (
-		apiBase      = flag.String("api-base", getEnv("ACS_SERVER_API_BASE", defaultAPIBase), "ACS server API base URL")
-		natsURL      = flag.String("nats-url", getEnv("ACS_NATS_SERVERS", defaultNATSServers), "NATS server URL(s)")
-		noColorFlag  = flag.Bool("no-color", false, "Disable ANSI colors")
-		memberID     = flag.String("member-id", getEnv("ACS_CLI_MEMBER_ID", "cli-user"), "Member ID for this CLI session")
-		memberName   = flag.String("member-name", getEnv("ACS_CLI_MEMBER_NAME", "CLI User"), "Member name for this CLI session")
+		apiBase     = flag.String("api-base", getEnv("ACS_SERVER_API_BASE", defaultAPIBase), "ACS server API base URL")
+		natsURL     = flag.String("nats-url", getEnv("ACS_NATS_SERVERS", defaultNATSServers), "NATS server URL(s)")
+		noColorFlag = flag.Bool("no-color", false, "Disable ANSI colors")
+		memberID    = flag.String("member-id", getEnv("ACS_CLI_MEMBER_ID", "cli-user"), "Member ID for this CLI session")
+		memberName  = flag.String("member-name", getEnv("ACS_CLI_MEMBER_NAME", "CLI User"), "Member name for this CLI session")
 	)
 	flag.Parse()
 
@@ -64,8 +64,11 @@ func run() error {
 
 	chatMode := NewChatMode(apiClient, natsManager)
 
-	// Create readline instance.
-	rl, err := readline.New(ps1Normal(*memberName))
+	// Create readline instance with auto-completion.
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:       ps1Normal(*memberName),
+		AutoComplete: newNormalCompleter(),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create readline: %w", err)
 	}

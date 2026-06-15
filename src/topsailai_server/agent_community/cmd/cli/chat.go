@@ -67,8 +67,11 @@ func (cm *ChatMode) EnterChat(groupID, userID, userName string) error {
 		}
 	}
 
-	// Create readline with chat PS1.
-	rl, err := readline.New(ps1Chat(userName, groupID))
+	// Create readline with chat PS1 and auto-completion.
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:       ps1Chat(userName, groupID),
+		AutoComplete: newChatCompleter(),
+	})
 	if err != nil {
 		cm.restoreHandler()
 		cm.natsManager.Unsubscribe()

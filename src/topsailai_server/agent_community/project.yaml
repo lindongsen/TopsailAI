@@ -33,6 +33,15 @@ workspace_project_structure: |
     - Integration_Test_Improvement_Proposal.md
     - Test_Execution_Checklist.md
 
+  - cmd/
+    - cli/ # cli-terminal
+    - server/ # package main
+
+  - scripts/
+    - agent_interface.adaptor.md # adaptor list
+
+  - skills/ # support manager-agent
+
 Notes:
   - All code modifications must be recorded in issues (exclude testCode)
   - If the issues you are solving is directly related to the Database Table Schema, you need to update the README.md, such as adding or removing fields etc..

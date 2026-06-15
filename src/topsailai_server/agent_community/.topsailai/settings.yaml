@@ -22,8 +22,13 @@ context:
   skills:
     - skills/agent_community_client.md
 
+  use:
+    - skills/agent_community_client/references/USAGE.md
+
 # Environment variable configuration: each item can define its own environment variables
 # _default is the base environment variables shared by all items
 environment:
   _default:
     TOPSAILAI_INTERACTIVE_MODE: "1"
+  use:
+    TOPSAILAI_PLUGIN_SKILLS: "/TopsailAI/src/topsailai_server/agent_community/skills"

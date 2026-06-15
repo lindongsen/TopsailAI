@@ -107,6 +107,12 @@ func (c *APIClient) doRequest(method, path string, body []byte) (*APIResponse, e
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
 
+	// Detect raw server response without envelope (data/error/trace_id fields).
+	// When all envelope fields are zero, wrap the raw body as Data.
+	if apiResp.Data == nil && apiResp.Error == "" && apiResp.TraceID == "" {
+		apiResp.Data = respBody
+	}
+
 	if resp.StatusCode >= 400 {
 		if apiResp.Error != "" {
 			return nil, fmt.Errorf("HTTP %d: %s (trace_id: %s)", resp.StatusCode, apiResp.Error, apiResp.TraceID)
