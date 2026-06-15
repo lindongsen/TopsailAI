@@ -14,27 +14,29 @@ import (
 
 // ChatMode manages the chat window state.
 type ChatMode struct {
-	groupID     string
-	userID      string
-	userName    string
-	natsManager *NATSManager
-	apiClient   *APIClient
-	rl          *readline.Instance
-	active      bool
-	mu          sync.Mutex
-	members     []map[string]interface{}
-	eventCh     chan *nats.PendingPublishMessage
-	inputCh     chan string
-	oldHandler  func(*nats.PendingPublishMessage)
+	groupID         string
+	userID          string
+	userName        string
+	natsManager     *NATSManager
+	apiClient       *APIClient
+	rl              *readline.Instance
+	active          bool
+	mu              sync.Mutex
+	members         []map[string]interface{}
+	displayedMsgIDs map[string]struct{}
+	eventCh         chan *nats.PendingPublishMessage
+	inputCh         chan string
+	oldHandler      func(*nats.PendingPublishMessage)
 }
 
 // NewChatMode creates a new chat mode manager.
 func NewChatMode(apiClient *APIClient, natsManager *NATSManager) *ChatMode {
 	return &ChatMode{
-		apiClient:   apiClient,
-		natsManager: natsManager,
-		eventCh:     make(chan *nats.PendingPublishMessage, 100),
-		inputCh:     make(chan string),
+		apiClient:       apiClient,
+		natsManager:     natsManager,
+		displayedMsgIDs: make(map[string]struct{}),
+		eventCh:         make(chan *nats.PendingPublishMessage, 100),
+		inputCh:         make(chan string),
 	}
 }
 
@@ -154,9 +156,17 @@ func (cm *ChatMode) SendChatMessage(text string) error {
 		payload["mentions"] = mentions
 	}
 
-	_, err := cm.apiClient.Post(fmt.Sprintf("/api/v1/groups/%s/messages", cm.groupID), payload)
+	resp, err := cm.apiClient.Post(fmt.Sprintf("/api/v1/groups/%s/messages", cm.groupID), payload)
 	if err != nil {
 		return err
+	}
+
+	// Try to extract message_id from the response so we can deduplicate the local echo.
+	var msgResp map[string]interface{}
+	if err := resp.GetData(&msgResp); err == nil {
+		if msgID, ok := msgResp["message_id"].(string); ok && msgID != "" {
+			cm.markMessageDisplayed(msgID)
+		}
 	}
 
 	// Display locally.
@@ -182,6 +192,7 @@ func (cm *ChatMode) LeaveChat() {
 
 	cm.natsManager.Unsubscribe()
 	cm.restoreHandler()
+	cm.clearDisplayedMessages()
 
 	if cm.rl != nil {
 		cm.rl.Close()
@@ -196,6 +207,28 @@ func (cm *ChatMode) restoreHandler() {
 	if cm.natsManager != nil {
 		cm.natsManager.onEvent = cm.oldHandler
 	}
+}
+
+// isMessageDisplayed checks if a message has already been displayed.
+func (cm *ChatMode) isMessageDisplayed(msgID string) bool {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	_, ok := cm.displayedMsgIDs[msgID]
+	return ok
+}
+
+// markMessageDisplayed records a message ID as displayed.
+func (cm *ChatMode) markMessageDisplayed(msgID string) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.displayedMsgIDs[msgID] = struct{}{}
+}
+
+// clearDisplayedMessages clears the displayed message ID set.
+func (cm *ChatMode) clearDisplayedMessages() {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.displayedMsgIDs = make(map[string]struct{})
 }
 
 // refreshMembers fetches and caches the member list.
@@ -265,6 +298,13 @@ func (cm *ChatMode) displayEvent(event *nats.PendingPublishMessage) {
 		data, ok := event.Data.(map[string]interface{})
 		if !ok {
 			return
+		}
+		msgID, _ := data["message_id"].(string)
+		if msgID != "" && cm.isMessageDisplayed(msgID) {
+			return
+		}
+		if msgID != "" {
+			cm.markMessageDisplayed(msgID)
 		}
 		action := event.Action
 		if action == "delete" {

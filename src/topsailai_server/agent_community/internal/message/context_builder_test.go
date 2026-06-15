@@ -123,6 +123,11 @@ func TestBuildMessageContext(t *testing.T) {
 	if !strings.Contains(msgCtx, "Hi there") {
 		t.Error("missing Hi there message")
 	}
+
+	// Should have --- separators between messages
+	if !strings.Contains(msgCtx, "---") {
+		t.Error("missing --- separator between messages")
+	}
 }
 
 // TestBuildMessageContextEmpty verifies empty message list.
@@ -152,6 +157,35 @@ func TestBuildMessageContextDeletedMessage(t *testing.T) {
 		t.Error("non-deleted message should appear")
 	}
 }
+// TestBuildMessageContextSeparator verifies --- separators between messages.
+func TestBuildMessageContextSeparator(t *testing.T) {
+	cb := NewContextBuilder()
+	now := time.Now().UnixMilli()
+
+	messages := []models.GroupMessage{
+		makeMessage("m1", "g1", "user1", models.MemberTypeUser, "Hello", now-2000),
+		makeMessage("m2", "g1", "agent1", models.MemberTypeWorkerAgent, "Hi there", now-1000),
+	}
+
+	msgCtx := cb.buildMessageContext(messages)
+
+	// Should have --- between messages
+	parts := strings.Split(msgCtx, "\n---\n")
+	if len(parts) < 3 {
+		t.Errorf("expected --- separators between messages, got %q", msgCtx)
+	}
+
+	// Should start with --- after Messages header
+	if !strings.Contains(msgCtx, "## Messages\n\n---\n") {
+		t.Errorf("expected --- after Messages header, got %q", msgCtx)
+	}
+
+	// Should end with trailing ---
+	if !strings.HasSuffix(msgCtx, "---\n") {
+		t.Errorf("expected trailing ---, got %q", msgCtx)
+	}
+}
+
 
 // TestBuildContextWithoutLastRead verifies context building without last_read_message_id.
 func TestBuildContextWithoutLastRead(t *testing.T) {
@@ -231,6 +265,17 @@ func TestBuildContextWithLastRead(t *testing.T) {
 	if !strings.Contains(context, "Message 3") {
 		t.Error("missing Message 3 (pending)")
 	}
+
+	// Init context should NOT be present when last_read_message_id exists
+	if strings.Contains(context, "## group_member") {
+		t.Error("init context should not be included when last_read_message_id exists")
+	}
+	if strings.Contains(context, "ME (Receiver)") {
+		t.Error("ME section should not be included when last_read_message_id exists")
+	}
+	if strings.Contains(context, "GROUP CONTEXT START") {
+		t.Error("group context should not be included when last_read_message_id exists")
+	}
 }
 
 // TestBuildContextNilGroup verifies error on nil group.
@@ -292,9 +337,9 @@ func TestGetRecentMessages(t *testing.T) {
 
 	recent := cb.getRecentMessages(allMessages, &pendingMsg, 24*time.Hour)
 
-	// Should include recent message and pending message
-	if len(recent) != 2 {
-		t.Fatalf("expected 2 recent messages, got %d", len(recent))
+	// Should include only 1 message (pending message m2, not duplicated)
+	if len(recent) != 1 {
+		t.Fatalf("expected 1 recent message, got %d", len(recent))
 	}
 
 	// Should include pending message

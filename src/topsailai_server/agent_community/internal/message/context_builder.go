@@ -33,22 +33,24 @@ func (cb *ContextBuilder) BuildContext(
 	}
 
 	var contextMessages []models.GroupMessage
+	var initContext string
 
 	if lastReadMessageID == "" {
 		// No last_read_message_id: init context + recent 1 day messages
 		contextMessages = cb.getRecentMessages(allMessages, pendingMessage, 24*time.Hour)
+		initContext = cb.buildInitContext(group, members, agentMember)
 	} else {
 		// Has last_read_message_id: messages from lastReadMessageID to pendingMessage (inclusive)
 		contextMessages = cb.getMessagesFromLastRead(allMessages, lastReadMessageID, pendingMessage)
 	}
 
-	// Build init context message
-	initContext := cb.buildInitContext(group, members, agentMember)
-
 	// Build message context
 	messageContext := cb.buildMessageContext(contextMessages)
 
-	return initContext + "\n" + messageContext, nil
+	if initContext != "" {
+		return initContext + "\n" + messageContext, nil
+	}
+	return messageContext, nil
 }
 
 // getRecentMessages returns messages within the recent duration up to pendingMessage.
@@ -61,6 +63,9 @@ func (cb *ContextBuilder) getRecentMessages(
 	result := make([]models.GroupMessage, 0)
 
 	for _, msg := range allMessages {
+		if msg.MessageID == pendingMessage.MessageID {
+			continue
+		}
 		if msg.CreateAtMs >= cutoff && msg.CreateAtMs <= pendingMessage.CreateAtMs {
 			result = append(result, msg)
 		}
@@ -145,13 +150,26 @@ func (cb *ContextBuilder) buildMessageContext(messages []models.GroupMessage) st
 	var sb strings.Builder
 	sb.WriteString("\n## Messages\n\n")
 
+	var msgTexts []string
 	for _, msg := range messages {
 		if msg.IsDeleted {
 			continue
 		}
-		sb.WriteString(cb.formatMessage(&msg))
+		var msgSb strings.Builder
+		msgSb.WriteString(cb.formatMessage(&msg))
+		msgTexts = append(msgTexts, msgSb.String())
+	}
+
+	if len(msgTexts) == 0 {
+		return sb.String()
+	}
+
+	for _, text := range msgTexts {
+		sb.WriteString("---\n")
+		sb.WriteString(text)
 		sb.WriteString("\n")
 	}
+	sb.WriteString("---\n")
 
 	return sb.String()
 }

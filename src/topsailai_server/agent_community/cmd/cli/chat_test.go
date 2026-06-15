@@ -2,9 +2,12 @@
 package main
 
 import (
+	"fmt"
+	"sync"
 	"testing"
-)
 
+	"github.com/topsailai/agent-community/internal/nats"
+)
 // newTestChatMode creates a ChatMode for testing without external dependencies.
 func newTestChatMode() *ChatMode {
 	return &ChatMode{
@@ -324,5 +327,204 @@ func TestParseMentionsSpecialCharsInID(t *testing.T) {
 	}
 	if mentions[0]["member_id"] != "user-123_test" {
 		t.Errorf("member_id = %q, want %q", mentions[0]["member_id"], "user-123_test")
+	}
+}
+
+
+// --- Message deduplication tests ---
+
+func TestIsMessageDisplayed(t *testing.T) {
+	cm := newTestChatMode()
+	cm.displayedMsgIDs = make(map[string]struct{})
+
+	if cm.isMessageDisplayed("msg-1") {
+		t.Error("isMessageDisplayed() = true, want false for unknown msgID")
+	}
+
+	cm.markMessageDisplayed("msg-1")
+	if !cm.isMessageDisplayed("msg-1") {
+		t.Error("isMessageDisplayed() = false, want true after marking")
+	}
+}
+
+func TestMarkMessageDisplayed(t *testing.T) {
+	cm := newTestChatMode()
+	cm.displayedMsgIDs = make(map[string]struct{})
+
+	cm.markMessageDisplayed("msg-a")
+	cm.markMessageDisplayed("msg-b")
+
+	if !cm.isMessageDisplayed("msg-a") {
+		t.Error("expected msg-a to be displayed")
+	}
+	if !cm.isMessageDisplayed("msg-b") {
+		t.Error("expected msg-b to be displayed")
+	}
+	if cm.isMessageDisplayed("msg-c") {
+		t.Error("expected msg-c to NOT be displayed")
+	}
+}
+
+func TestClearDisplayedMessages(t *testing.T) {
+	cm := newTestChatMode()
+	cm.displayedMsgIDs = make(map[string]struct{})
+
+	cm.markMessageDisplayed("msg-1")
+	cm.markMessageDisplayed("msg-2")
+	cm.clearDisplayedMessages()
+
+	if cm.isMessageDisplayed("msg-1") {
+		t.Error("expected msg-1 to be cleared")
+	}
+	if cm.isMessageDisplayed("msg-2") {
+		t.Error("expected msg-2 to be cleared")
+	}
+}
+
+func TestDisplayEventDeduplication(t *testing.T) {
+	cm := newTestChatMode()
+	cm.groupID = "g1"
+	cm.displayedMsgIDs = make(map[string]struct{})
+
+	// First event with message_id should be displayed.
+	event1 := &nats.PendingPublishMessage{
+		Type:    "message",
+		Action:  "create",
+		GroupID: "g1",
+		Data: map[string]interface{}{
+			"message_id":   "msg-1",
+			"sender_id":    "u1",
+			"sender_name":  "Alice",
+			"sender_type":  "user",
+			"message_text": "Hello",
+			"create_at_ms": float64(1718205045000),
+		},
+	}
+
+	// Second event with same message_id should be skipped.
+	event2 := &nats.PendingPublishMessage{
+		Type:    "message",
+		Action:  "create",
+		GroupID: "g1",
+		Data: map[string]interface{}{
+			"message_id":   "msg-1",
+			"sender_id":    "u1",
+			"sender_name":  "Alice.local",
+			"sender_type":  "user",
+			"message_text": "Hello",
+			"create_at_ms": float64(1718205045000),
+		},
+	}
+
+	// Third event with different message_id should be displayed.
+	event3 := &nats.PendingPublishMessage{
+		Type:    "message",
+		Action:  "create",
+		GroupID: "g1",
+		Data: map[string]interface{}{
+			"message_id":   "msg-2",
+			"sender_id":    "u2",
+			"sender_name":  "Bob",
+			"sender_type":  "user",
+			"message_text": "World",
+			"create_at_ms": float64(1718205045001),
+		},
+	}
+
+	// Simulate display: mark msg-1 as already displayed (as if from local echo).
+	cm.markMessageDisplayed("msg-1")
+
+	if !cm.isMessageDisplayed("msg-1") {
+		t.Fatal("msg-1 should be marked displayed")
+	}
+	if cm.isMessageDisplayed("msg-2") {
+		t.Fatal("msg-2 should NOT be marked displayed yet")
+	}
+
+	// displayEvent should skip event2 because msg-1 is already displayed.
+	// We cannot easily capture fmt.Println output here, but we can verify the state.
+	cm.displayEvent(event1)
+	cm.displayEvent(event2)
+	cm.displayEvent(event3)
+
+	if !cm.isMessageDisplayed("msg-1") {
+		t.Error("msg-1 should still be displayed")
+	}
+	if !cm.isMessageDisplayed("msg-2") {
+		t.Error("msg-2 should be marked displayed after event3")
+	}
+}
+
+func TestDisplayEventDifferentGroup(t *testing.T) {
+	cm := newTestChatMode()
+	cm.groupID = "g1"
+	cm.displayedMsgIDs = make(map[string]struct{})
+
+	event := &nats.PendingPublishMessage{
+		Type:    "message",
+		Action:  "create",
+		GroupID: "g2",
+		Data: map[string]interface{}{
+			"message_id":   "msg-1",
+			"sender_id":    "u1",
+			"sender_name":  "Alice",
+			"sender_type":  "user",
+			"message_text": "Hello",
+			"create_at_ms": float64(1718205045000),
+		},
+	}
+
+	cm.displayEvent(event)
+
+	if cm.isMessageDisplayed("msg-1") {
+		t.Error("message from different group should not be marked displayed")
+	}
+}
+func TestDisplayEventNonMessageType(t *testing.T) {
+	cm := newTestChatMode()
+	cm.groupID = "g1"
+	cm.displayedMsgIDs = make(map[string]struct{})
+
+	event := &nats.PendingPublishMessage{
+		Type:    "group",
+		Action:  "create",
+		GroupID: "g1",
+		Data: map[string]interface{}{
+			"group_id":   "g1",
+			"group_name": "TestGroup",
+		},
+	}
+
+	cm.displayEvent(event)
+
+	// Non-message events should not interact with displayedMsgIDs.
+	if cm.isMessageDisplayed("g1") {
+		t.Error("non-message event should not mark anything displayed")
+	}
+}
+
+func TestMessageDeduplicationConcurrency(t *testing.T) {
+	cm := newTestChatMode()
+	cm.displayedMsgIDs = make(map[string]struct{})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			msgID := fmt.Sprintf("msg-%d", idx)
+			cm.markMessageDisplayed(msgID)
+			if !cm.isMessageDisplayed(msgID) {
+				t.Errorf("msg %s should be displayed after marking", msgID)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	for i := 0; i < 100; i++ {
+		msgID := fmt.Sprintf("msg-%d", i)
+		if !cm.isMessageDisplayed(msgID) {
+			t.Errorf("msg %s should be displayed after concurrent marking", msgID)
+		}
 	}
 }
