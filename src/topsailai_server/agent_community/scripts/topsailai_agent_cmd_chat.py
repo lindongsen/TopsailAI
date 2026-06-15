@@ -37,6 +37,7 @@ def run_command(cmd: list, env: dict):
 
 def main():
     env = os.environ.copy()
+    env.setdefault("DEBUG", "0")
     session_id = env.get("ACS_GROUP_ID", "")
     agent_mode = env.get("ACS_AGENT_MODE", "")
     agent_type = env.get("ACS_AGENT_TYPE", "")

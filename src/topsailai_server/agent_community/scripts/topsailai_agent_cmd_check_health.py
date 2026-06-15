@@ -9,6 +9,7 @@ import sys
 def main():
     # Build environment overrides from ACS_* variables
     env = os.environ.copy()
+    env.setdefault("DEBUG", "0")
 
     api_base = env.get("ACS_AGENT_API_BASE")
     if api_base:

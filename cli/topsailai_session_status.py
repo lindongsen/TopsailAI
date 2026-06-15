@@ -8,16 +8,15 @@ Purpose: Check session state (idle/processing) for agent_daemon
 '''
 
 import os
+import argparse
 import sys
 
-CWD = os.path.dirname(__file__)
-PROJECT_FOLDER = CWD
-for _ in range(4):
-    if os.path.exists(f"{PROJECT_FOLDER}/topsailai"):
-        break
-    PROJECT_FOLDER = os.path.dirname(PROJECT_FOLDER)
-if os.path.exists(f"{PROJECT_FOLDER}/topsailai"):
-    sys.path.insert(0, PROJECT_FOLDER)
+# Add project root to path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if os.path.exists(
+    os.path.join(project_root, "src")
+):
+    sys.path.insert(0, project_root + "/src")
 
 from topsailai.workspace.lock_tool import (
     ctxm_try_session_lock,
@@ -26,14 +25,18 @@ from topsailai.workspace.lock_tool import (
 STATUS_PROCESSING = "processing"
 STATUS_IDLE = "idle"
 
-
 def main():
     """Check if a session is idle or processing."""
-    # Get session_id from environment
-    session_id = os.environ.get("TOPSAILAI_SESSION_ID")
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Check session state (idle/processing) for agent_daemon")
+    parser.add_argument("-s", "--session", dest="session_id", help="Session ID to check")
+    args = parser.parse_args()
+
+    # Get session_id from command line or environment
+    session_id = args.session_id or os.environ.get("TOPSAILAI_SESSION_ID")
 
     if not session_id:
-        print("Error: TOPSAILAI_SESSION_ID not set", file=sys.stderr)
+        print("Error: TOPSAILAI_SESSION_ID not set and no --session provided", file=sys.stderr)
         sys.exit(1)
 
     # Try to acquire session lock
