@@ -6,11 +6,19 @@ references:
   - topsailai_agent_cmd_check_health.py
   - topsailai_agent_cmd_check_status.py
   - topsailai_agent_cmd_chat.py
+
+  - local_topsailai_agent_cmd_check_health.sh
+  - local_topsailai_agent_cmd_check_status.sh
+  - local_topsailai_agent_cmd_chat.sh
 ---
 
 # Implement topsailai_agent_cmd scripts
 
 ## topsailai_CLI
+
+你无需读取和 `topsailai_CLI` 相关的所有命令的代码,这些CLI的用法已经描述得足够清晰了。
+
+### Local Agent
 
 - topsailai_llm_chat, 直接和LLM进行交流，可以通过环境变量传递 system_prompt(SYSTEM_PROMPT)、session_id(SESSION_ID)、message(TOPSAILAI_USER_MESSAGE)。对于一些需要直接给出回答的场景可以直接使用，如：内容汇总，内容优化，发表看法 等。
 Example:
@@ -20,6 +28,23 @@ Example:
 # --- stdout ---
 hello
 ```
+
+- topsailai_session_status, 获得session的状态
+Example:
+```
+~# TOPSAILAI_SESSION_ID=test topsailai_session_status
+idle
+```
+
+- topsailai_agent_chat, 执行agent，并返回结果, 可以通过环境变量传递 system_prompt(SYSTEM_PROMPT)、session_id(SESSION_ID)、message(TOPSAILAI_USER_MESSAGE)
+Example:
+```
+~# TOPSAILAI_USER_MESSAGE=hello SYSTEM_PROMPT="user say hello, you just output 'hello world'" SESSION_ID=test TOPSAILAI_INTERACTIVE_MODE=0 topsailai_agent_chat
+hello world
+```
+这个参数`TOPSAILAI_INTERACTIVE_MODE=0`必须设置为0
+
+### Remote Agent
 
 - topsailai_send_message, 发送消息给agent执行，并等待执行结果，通过环境变量传递参数：
 ```md
@@ -61,8 +86,6 @@ idle
 hi
 ```
 
-你无需读取和 `topsailai_CLI` 相关的所有命令的代码,这些CLI的用法已经描述得足够清晰了。
-
 ## 关键参数的构成
 
 ### 已知调用 `references` 的cmd时，会带入这些环境变量
@@ -99,6 +122,8 @@ ACS_MESSAGE_TRIGGER_TYPE
 
 ## Implement `topsailai_agent_cmd_chat.py`
 
+Use `topsailai_llm_chat` or `topsailai_send_message`
+
 - 当 ACS_GROUP_CONTEXT 存在时，先尝试调用 `topsailai_agent_cmd_check_status.py`，exit_code!=0 且 存在 "Session not found" 在 stdout，就发送消息：
 `TOPSAILAI_MESSAGE_ROLE=assistant TOPSAILAI_MESSAGE="${ACS_GROUP_CONTEXT}" TOPSAILAI_SESSION_ID=${SESSION_ID} topsailai_send_message`
 使用 assistant role 将 ACS_GROUP_CONTEXT 作为消息 发送到agent；之后再去发送真正的消息内容。
@@ -109,4 +134,28 @@ ACS_MESSAGE_TRIGGER_TYPE
 
 ## Implement `topsailai_agent_cmd_check_health.py`
 
+Use `topsailai_send_message`
+
 ## Implement `topsailai_agent_cmd_check_status.py`
+
+Use `topsailai_send_message`
+
+---
+
+## Implement `local_topsailai_agent_cmd_check_health.sh`
+
+始终返回 healthy, exit_code=0
+
+## Implement `local_topsailai_agent_cmd_check_status.sh`
+
+Use `topsailai_session_status`
+
+## Implement `local_topsailai_agent_cmd_chat.sh`
+
+Use `topsailai_agent_chat` or `topsailai_llm_chat`
+
+- 当 ACS_AGENT_MODE=chat 且 ACS_AGENT_TYPE="manager-agent" 就调用 topsailai_llm_chat 得到结果，否则使用 topsailai_agent_chat
+
+- 当 ACS_AGENT_MODE=chat 且 ACS_AGENT_TYPE!="manager-agent", 给`TOPSAILAI_USER_MESSAGE`附加上一行消息: `! DONOT INVOKE ANY TOOLS/SKILLS, Think directly and give the final answer !`
+
+---
