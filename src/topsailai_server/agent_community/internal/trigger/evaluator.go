@@ -17,6 +17,7 @@ type TriggerType string
 const (
 	TriggerTypeMention TriggerType = "mention"
 	TriggerTypeAuto    TriggerType = "auto"
+	TriggerTypeManual  TriggerType = "manual"
 )
 
 // TriggerResult represents the result of trigger evaluation.
@@ -74,6 +75,16 @@ func (e *Evaluator) Evaluate(
 		return &TriggerResult{ShouldTrigger: false}, nil
 	}
 
+	return e.ResolveAgents(ctx, msg, members)
+}
+
+// ResolveAgents decides which agents should process a message based on mentions / @all / manager-agent / auto rules.
+// This does NOT check NO_TRIGGER_CASES; it is intended for manual trigger reuse.
+func (e *Evaluator) ResolveAgents(
+	ctx context.Context,
+	msg *models.GroupMessage,
+	members []models.GroupMember,
+) (*TriggerResult, error) {
 	// Extract mentions from message text
 	mentions := e.extractMentions(msg.MessageText, members)
 

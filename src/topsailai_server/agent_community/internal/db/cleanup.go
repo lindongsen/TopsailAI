@@ -74,9 +74,13 @@ func (c *CleanupTask) run() {
 
 // doCleanup performs the actual cleanup of old agent_message_processing records.
 func (c *CleanupTask) doCleanup() {
+	if c.db == nil {
+		logger.WarnM(cleanupModule, "", "cleanup skipped: database connection is nil")
+		return
+	}
+
 	traceID := uuid.New().String()
 	start := time.Now()
-
 	// 1. Delete terminal records (completed/failed) older than retention days.
 	cutoffMs := time.Now().AddDate(0, 0, -c.cfg.RetentionDays).UnixMilli()
 	result := c.db.Where("status IN ? AND create_at_ms < ?",

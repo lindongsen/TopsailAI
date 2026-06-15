@@ -399,7 +399,7 @@ Remove a member from a group.
 
 **POST /api/v1/groups/:group_id/messages**
 
-Send a message to a group. Mentions in the message text (e.g., `@agent-001`, `@all`) are automatically extracted and may trigger agent responses.
+Send a message to a group. Mentions in the message text (e.g., `@agent-001`, `@all`) are automatically extracted and may trigger agent responses. Automatic triggers respect `NO_TRIGGER_CASES` (e.g., messages from agents are not re-triggered). To force agent processing on any message regardless of these restrictions, use the **Trigger Message** endpoint.
 
 **Path Parameters:**
 - group_id: UUID string
@@ -561,6 +561,51 @@ Soft-delete a message (clear content, mark as deleted). The message record remai
   "trace_id": "..."
 }
 ```
+### Trigger Message
+
+**POST /api/v1/groups/:group_id/messages/:message_id/trigger**
+
+Manually trigger agent processing for a specific message. This bypasses `NO_TRIGGER_CASES` restrictions that normally prevent automatic agent triggering (e.g., messages sent by agents, messages with `processed_msg_id` set, or messages in a long sequence of agent messages).
+
+**Path Parameters:**
+- group_id: UUID string
+- message_id: string
+
+**Request Body (optional):**
+```json
+{
+  "agent_id": "agent-123"
+}
+```
+- `agent_id`: Optional. If provided, only this specific agent will be triggered. Must be a member of the group with type ending in `-agent`. If omitted, the system will resolve target agents using the same rules as automatic triggers (mentions, manager-agent, auto-trigger).
+
+**Response 202 Accepted:**
+```json
+{
+  "data": {
+    "message_id": "msg-001",
+    "group_id": "550e8400-e29b-41d4-a716-446655440000",
+    "trigger": {
+      "type": "manual",
+      "agent_id": "agent-123"
+    },
+    "status": "pending"
+  },
+  "trace_id": "..."
+}
+```
+
+**Response 404 Not Found:**
+- Group does not exist.
+- Message does not exist or does not belong to the group.
+- Specified `agent_id` is not a member of the group.
+
+**Response 400 Bad Request:**
+- Specified `agent_id` is not an agent type (does not end with `-agent`).
+
+**Response 500 Internal Server Error:**
+- Database or NATS publish failure.
+
 
 ---
 

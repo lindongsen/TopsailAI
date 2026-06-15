@@ -86,6 +86,27 @@ All environment variables used by ACS are prefixed with `ACS_`.
 
 ---
 
+## Cleanup Configuration
+
+Controls the periodic cleanup of `agent_message_processing` table records.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ACS_CLEANUP_ENABLED` | `true` | Enable or disable the cleanup background task |
+| `ACS_CLEANUP_INTERVAL` | `1h` | Interval between cleanup executions (e.g., `30m`, `1h`, `24h`) |
+| `ACS_CLEANUP_RETENTION_DAYS` | `7` | Number of days to retain terminal (completed/failed) records |
+| `ACS_CLEANUP_STALE_PENDING_HOURS` | `24` | Hours after which pending records are considered stale and eligible for deletion |
+| `ACS_CLEANUP_BATCH_SIZE` | `1000` | Maximum number of records to delete per cleanup execution |
+
+### Behavior
+
+- **Terminal records** (status = `completed` or `failed`) older than `ACS_CLEANUP_RETENTION_DAYS` are deleted
+- **Pending records** older than `ACS_CLEANUP_STALE_PENDING_HOURS` are considered stale and deleted
+- Cleanup runs immediately on service start, then on each interval tick
+- When disabled (`ACS_CLEANUP_ENABLED=false`), no cleanup occurs and records accumulate
+
+---
+
 ## CLI Configuration
 
 | Variable | Default | Description |
@@ -131,4 +152,11 @@ ACS_AGENT_WORK_POOL_PER_GROUP=5
 # Auto-Trigger
 ACS_AUTO_TRIGGER_INTERVAL_SECONDS=60
 ACS_AUTO_TRIGGER_TIMEOUT_MINUTES=10
+
+# Cleanup
+ACS_CLEANUP_ENABLED=true
+ACS_CLEANUP_INTERVAL=1h
+ACS_CLEANUP_RETENTION_DAYS=7
+ACS_CLEANUP_STALE_PENDING_HOURS=24
+ACS_CLEANUP_BATCH_SIZE=1000
 ```

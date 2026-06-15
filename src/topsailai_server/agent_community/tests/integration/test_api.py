@@ -689,3 +689,190 @@ class TestMessageProcessedMsgID:
         data = response.json()
         assert data["total"] == 0
         assert len(data["items"]) == 0
+
+
+class TestManualTrigger:
+    """Test manual message trigger API that bypasses NO_TRIGGER_CASES."""
+
+    def test_manual_trigger_with_agent_id(self, api_client: requests.Session, server_url: str, test_group: dict, test_member: dict, test_agent_member: dict):
+        """Test manual trigger with specific agent_id returns 202 and bypasses NO_TRIGGER_CASES."""
+        # Create a message from user
+        message_data = {
+            "message_text": "Hello, can you help me?",
+            "sender_id": test_member["member_id"],
+            "sender_type": "user"
+        }
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages",
+            json=message_data
+        )
+        assert response.status_code == 201
+        message_id = response.json()["message_id"]
+
+        # Manually trigger with specific agent_id
+        trigger_data = {"agent_id": test_agent_member["member_id"]}
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}/trigger",
+            json=trigger_data
+        )
+        assert response.status_code == 202
+
+        data = response.json()
+        assert data["message_id"] == message_id
+        assert data["group_id"] == test_group["group_id"]
+        assert data["status"] == "pending"
+        assert data["trigger"]["type"] == "manual"
+        assert data["trigger"]["agent_id"] == test_agent_member["member_id"]
+
+        # Cleanup
+        api_client.delete(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}"
+        )
+
+    def test_manual_trigger_without_agent_id(self, api_client: requests.Session, server_url: str, test_group: dict, test_member: dict, test_manager_agent: dict):
+        """Test manual trigger without agent_id returns 202 and resolves agents automatically."""
+        # Create a message from user with @all mention
+        message_data = {
+            "message_text": "Hello @all, can someone help?",
+            "sender_id": test_member["member_id"],
+            "sender_type": "user"
+        }
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages",
+            json=message_data
+        )
+        assert response.status_code == 201
+        message_id = response.json()["message_id"]
+
+        # Manually trigger without agent_id - should resolve to manager-agent
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}/trigger",
+            json={}
+        )
+        assert response.status_code == 202
+
+        data = response.json()
+        assert data["message_id"] == message_id
+        assert data["group_id"] == test_group["group_id"]
+        assert data["status"] == "pending"
+        assert data["trigger"]["type"] == "manual"
+
+        # Cleanup
+        api_client.delete(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}"
+        )
+
+    def test_manual_trigger_nonexistent_group(self, api_client: requests.Session, server_url: str, test_message: dict):
+        """Test manual trigger on non-existent group returns 404."""
+        trigger_data = {"agent_id": "some-agent"}
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/non-existent-group/messages/{test_message['message_id']}/trigger",
+            json=trigger_data
+        )
+        assert response.status_code == 404
+        data = response.json()
+        assert "group not found" in data.get("error", "")
+
+    def test_manual_trigger_nonexistent_message(self, api_client: requests.Session, server_url: str, test_group: dict):
+        """Test manual trigger on non-existent message returns 404."""
+        trigger_data = {"agent_id": "some-agent"}
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/non-existent-message/trigger",
+            json=trigger_data
+        )
+        assert response.status_code == 404
+        data = response.json()
+        assert "message not found" in data.get("error", "")
+
+    def test_manual_trigger_nonexistent_agent(self, api_client: requests.Session, server_url: str, test_group: dict, test_member: dict):
+        """Test manual trigger with non-existent agent_id returns 404."""
+        # Create a message
+        message_data = {
+            "message_text": "Hello!",
+            "sender_id": test_member["member_id"],
+            "sender_type": "user"
+        }
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages",
+            json=message_data
+        )
+        assert response.status_code == 201
+        message_id = response.json()["message_id"]
+
+        # Try to trigger with non-existent agent
+        trigger_data = {"agent_id": "non-existent-agent"}
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}/trigger",
+            json=trigger_data
+        )
+        assert response.status_code == 404
+        data = response.json()
+        assert "agent not found" in data.get("error", "")
+
+        # Cleanup
+        api_client.delete(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}"
+        )
+
+    def test_manual_trigger_non_agent_member(self, api_client: requests.Session, server_url: str, test_group: dict, test_member: dict):
+        """Test manual trigger with non-agent member_id returns 400."""
+        # Create a message
+        message_data = {
+            "message_text": "Hello!",
+            "sender_id": test_member["member_id"],
+            "sender_type": "user"
+        }
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages",
+            json=message_data
+        )
+        assert response.status_code == 201
+        message_id = response.json()["message_id"]
+
+        # Try to trigger with a user member (not an agent)
+        trigger_data = {"agent_id": test_member["member_id"]}
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}/trigger",
+            json=trigger_data
+        )
+        assert response.status_code == 400
+        data = response.json()
+        assert "not an agent" in data.get("error", "")
+
+        # Cleanup
+        api_client.delete(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}"
+        )
+
+    def test_manual_trigger_bypasses_no_trigger_cases(self, api_client: requests.Session, server_url: str, test_group: dict, test_agent_member: dict):
+        """Test manual trigger bypasses NO_TRIGGER_CASES (e.g., agent-sent message)."""
+        # Create a message from an agent (normally would NOT trigger due to NO_TRIGGER_CASE #1)
+        message_data = {
+            "message_text": "I am an agent message that normally wouldn't trigger",
+            "sender_id": test_agent_member["member_id"],
+            "sender_type": "worker-agent"
+        }
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages",
+            json=message_data
+        )
+        assert response.status_code == 201
+        message_id = response.json()["message_id"]
+
+        # Manually trigger this agent-sent message - should bypass NO_TRIGGER_CASES
+        trigger_data = {"agent_id": test_agent_member["member_id"]}
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}/trigger",
+            json=trigger_data
+        )
+        assert response.status_code == 202
+
+        data = response.json()
+        assert data["message_id"] == message_id
+        assert data["status"] == "pending"
+        assert data["trigger"]["type"] == "manual"
+
+        # Cleanup
+        api_client.delete(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}"
+        )

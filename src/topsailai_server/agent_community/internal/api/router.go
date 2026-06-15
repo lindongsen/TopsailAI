@@ -62,6 +62,7 @@ func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evalu
 		v1.GET("/groups/:group_id/messages", messageHandler.ListMessages)
 		v1.PUT("/groups/:group_id/messages/:message_id", messageHandler.UpdateMessage)
 		v1.DELETE("/groups/:group_id/messages/:message_id", messageHandler.DeleteMessage)
+		v1.POST("/groups/:group_id/messages/:message_id/trigger", messageHandler.TriggerMessage)
 	}
 
 	return &Router{engine: engine}

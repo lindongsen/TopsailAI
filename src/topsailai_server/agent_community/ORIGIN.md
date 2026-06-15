@@ -293,6 +293,12 @@ I AM `{member_name}`({member_id})
 {message}
 ```
 
+## member_status of group_member
+
+### 主动更新机制
+
+1. 当 agent 被调用时，直接设置为 `processing`；调用结束时，直接设置为 `idle`。
+
 ---
 
 ## NATS Message Bus
@@ -311,9 +317,9 @@ ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX=acs.group.message # e.g. `{ACS_NATS_SUBJEC
 
 ### Publish/Subscribe: `{ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX}.{group_id}`
 
-- 将group相关的信息变化封装成`pendingPublishMessage`Publish出去，包括group的基本信息、消息信息等，`pendingPublishMessage`的格式与API的返回格式一致。
+- 将group相关的信息变化封装成`PublishMessage`Publish出去，包括group的基本信息、消息信息等，`PublishMessage`的格式与API的返回格式一致。
 
-`pendingPublishMessage` 的内容格式：
+`PublishMessage` 的内容格式：
 ```
 { type: "", action: "", groupId: "", data: {} }
 ```
@@ -326,6 +332,12 @@ ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX=acs.group.message # e.g. `{ACS_NATS_SUBJEC
 增删改的`action`对应：create/delete/modify
 数据内容`data`遵循 "GET api" 的response格式
 无论是增删改，`data`所构造的格式都是 "GET api"的response格式。
+
+## NATS Service Discovery by Micro-Framework (Service-Leader)
+
+服务启动后，会注册服务信息到NATS。
+服务可以拉取所有的注册信息，在注册信息中，服务可以通过id去判断某个记录是否为自己。
+id值最小的一个服务可以作为 `Service-Leader`。
 
 ---
 
