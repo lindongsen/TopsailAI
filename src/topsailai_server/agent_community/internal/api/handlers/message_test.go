@@ -16,10 +16,9 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
-
 // setupMessageTestDB creates an in-memory SQLite database and auto-migrates models.
 func setupMessageTestDB(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("file::memory:"), &gorm.Config{})
 	require.NoError(t, err)
 
 	err = db.AutoMigrate(&models.Group{}, &models.GroupMember{}, &models.GroupMessage{})
@@ -27,8 +26,6 @@ func setupMessageTestDB(t *testing.T) *gorm.DB {
 
 	return db
 }
-
-// setupMessageTestRouter creates a gin router with the message handler for testing.
 func setupMessageTestRouter(t *testing.T, db *gorm.DB) (*gin.Engine, *MessageHandler) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

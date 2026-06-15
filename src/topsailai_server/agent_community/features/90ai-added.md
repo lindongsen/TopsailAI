@@ -307,3 +307,137 @@ Implemented three Python executable scripts that serve as adaptor commands for t
 - **File**: `cmd/server/main.go`
 - **Changes**:
   - Updated `nats.NewConsumer()` call to pass `cfg` as the 5th argument
+
+
+---
+
+# Feature: NATS Service Discovery by Micro-Framework (Service-Leader)
+
+## Summary
+
+Implemented NATS-based service discovery and Service-Leader election for the AI-Agent Community Server (ACS). Each service instance registers itself to a NATS KV bucket with a unique UUID. All instances can discover each other, and the instance with the smallest `id` is elected as the `Service-Leader`.
+
+## Files Added
+
+1. `internal/discovery/discovery.go`
+   - `ServiceInfo` struct with `id`, `name`, `address`, `port`, `version`, `started_at_ms`
+   - `Discovery` struct managing registration, heartbeat, deregistration, and leader election
+   - `New()` creates the NATS KV bucket (or opens existing) and initializes self info with UUID
+   - `Register()` publishes self info to KV and starts background heartbeat loop
+   - `Deregister()` stops heartbeat and removes self from KV
+   - `Discover()` fetches all registered services from KV
+   - `IsLeader()` returns true if local instance has the smallest ID
+   - `LeaderInfo()` returns the `ServiceInfo` of the current leader
+   - `SelfInfo()` returns the local instance's registration info
+   - Heartbeat interval and TTL are configurable
+
+2. `internal/discovery/discovery_test.go`
+   - 8 unit tests using embedded NATS server with JetStream
+   - `TestNewDiscovery` - validates struct initialization
+   - `TestDiscovery_RegisterAndDeregister` - full register/deregister lifecycle
+   - `TestDiscovery_Discover` - multi-instance discovery
+   - `TestDiscovery_IsLeader` - leader election with 2 instances
+   - `TestDiscovery_LeaderInfo` - leader info retrieval
+   - `TestDiscovery_DiscoverEmptyBucket` - empty bucket handling
+   - `TestDiscovery_DoubleRegister` - idempotent protection
+   - `TestDiscovery_SelfInfo` - self info correctness
+
+## Files Modified
+
+3. `internal/config/config.go`
+   - Added `DiscoveryConfig` struct with `Enabled`, `ServiceName`, `BucketName`, `Heartbeat`, `TTL`
+   - Added defaults: `ACS_DISCOVERY_ENABLED=true`, `ACS_DISCOVERY_SERVICE_NAME=acs`, `ACS_DISCOVERY_BUCKET_NAME=acs_service_discovery`, `ACS_DISCOVERY_HEARTBEAT=30s`, `ACS_DISCOVERY_TTL=120s`
+   - Added `GetListenAddress()` helper on `ServerConfig`
+
+4. `cmd/server/main.go`
+   - Added discovery registration after NATS client initialization (step 12.6)
+   - Added deregistration on graceful shutdown via defer
+   - Discovery is conditional on `cfg.Discovery.Enabled`
+
+5. `internal/api/router.go`
+   - Added `GET /discovery/services` endpoint
+   - Added `GET /health/leader` endpoint
+
+6. `internal/api/handlers/health.go`
+   - Added `DiscoveryServices` handler for `GET /discovery/services`
+   - Added `LeaderStatus` handler for `GET /health/leader`
+   - Added `DiscoveryServicesResponse` and `LeaderStatusResponse` structs
+   - `HealthHandler` now accepts optional `*discovery.Discovery`
+
+7. `docs/Environment_Variables.md`
+   - Added "Service Discovery Configuration" section documenting all `ACS_DISCOVERY_*` variables
+   - Added discovery variables to the example environment file
+
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/discovery/services` | List all registered services from NATS KV |
+| `GET` | `/health/leader` | Check if this instance is the current Service-Leader |
+
+### Example Responses
+
+**GET /discovery/services**
+```json
+{
+  "services": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "acs",
+      "address": "0.0.0.0",
+      "port": 7370,
+      "version": "1.0.0",
+      "started_at_ms": 1781516703000
+    }
+  ],
+  "count": 1
+}
+```
+
+**GET /health/leader**
+```json
+{
+  "is_leader": true,
+  "self": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "acs",
+    "address": "0.0.0.0",
+    "port": 7370,
+    "version": "1.0.0",
+    "started_at_ms": 1781516703000
+  },
+  "leader": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "acs",
+    "address": "0.0.0.0",
+    "port": 7370,
+    "version": "1.0.0",
+    "started_at_ms": 1781516703000
+  },
+  "timestamp": 1781516703000
+}
+```
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ACS_DISCOVERY_ENABLED` | `true` | Enable service discovery |
+| `ACS_DISCOVERY_SERVICE_NAME` | `acs` | Service name in registry |
+| `ACS_DISCOVERY_BUCKET_NAME` | `acs_service_discovery` | NATS KV bucket name |
+| `ACS_DISCOVERY_HEARTBEAT` | `30s` | Heartbeat interval |
+| `ACS_DISCOVERY_TTL` | `120s` | KV entry TTL |
+
+## Design Notes
+
+- Uses NATS KV (Key-Value) Store for persistent service registry
+- Each instance uses a UUIDv4 as its unique service ID
+- Heartbeat loop refreshes the KV entry to prevent TTL expiration
+- On graceful shutdown, the instance explicitly deletes its KV entry
+- Leader election is deterministic: smallest UUID string wins
+- If discovery is disabled, the API endpoints return HTTP 503
+
+## Build Status
+
+- `go build ./...` - PASS
+- `go test ./internal/discovery/...` - PASS (8/8 tests)

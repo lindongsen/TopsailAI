@@ -6,6 +6,7 @@ import (
 	"github.com/topsailai/agent-community/internal/api/handlers"
 	"github.com/topsailai/agent-community/internal/api/middleware"
 	"github.com/topsailai/agent-community/internal/config"
+	"github.com/topsailai/agent-community/internal/discovery"
 	"github.com/topsailai/agent-community/internal/nats"
 	"github.com/topsailai/agent-community/internal/trigger"
 	"github.com/topsailai/agent-community/pkg/logger"
@@ -18,7 +19,7 @@ type Router struct {
 }
 
 // NewRouter creates a new Gin router with all routes configured.
-func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evaluator *trigger.Evaluator, log *logger.Logger) *Router {
+func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evaluator *trigger.Evaluator, disc *discovery.Discovery, log *logger.Logger) *Router {
 	// Set Gin to release mode in production
 	if cfg.Log.Level == "info" || cfg.Log.Level == "warn" || cfg.Log.Level == "error" {
 		gin.SetMode(gin.ReleaseMode)
@@ -34,12 +35,16 @@ func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evalu
 	groupHandler := handlers.NewGroupHandler(db, publisher, log)
 	memberHandler := handlers.NewGroupMemberHandler(db, publisher, log)
 	messageHandler := handlers.NewMessageHandler(db, publisher, evaluator, log)
-	healthHandler := handlers.NewHealthHandler(db, log)
+	healthHandler := handlers.NewHealthHandler(db, disc, log)
 
 	// Health and readiness endpoints
 	engine.GET("/healthz", healthHandler.Liveness)
 	engine.GET("/readyz", healthHandler.Readiness)
 	engine.GET("/health", healthHandler.Health)
+	engine.GET("/health/leader", healthHandler.LeaderStatus)
+
+	// Discovery endpoints
+	engine.GET("/discovery/services", healthHandler.DiscoveryServices)
 
 	// API v1 routes
 	v1 := engine.Group("/api/v1")

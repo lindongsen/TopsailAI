@@ -107,6 +107,27 @@ Controls the periodic cleanup of `agent_message_processing` table records.
 
 ---
 
+## Service Discovery Configuration
+
+Controls NATS-based service discovery and Service-Leader election.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ACS_DISCOVERY_ENABLED` | `true` | Enable or disable service discovery registration |
+| `ACS_DISCOVERY_SERVICE_NAME` | `acs` | Service name used in discovery registry |
+| `ACS_DISCOVERY_BUCKET_NAME` | `acs_service_discovery` | NATS KV bucket name for service registry |
+| `ACS_DISCOVERY_HEARTBEAT` | `30s` | Interval between heartbeat updates to NATS KV |
+| `ACS_DISCOVERY_TTL` | `120s` | TTL for service registration entries in NATS KV |
+
+### Behavior
+
+- Each service instance registers itself with a unique UUID to the NATS KV bucket on startup
+- A background heartbeat loop refreshes the registration at the configured interval
+- On graceful shutdown, the instance deregisters itself from the bucket
+- The instance with the smallest `id` among all registered services is elected as `Service-Leader`
+- When disabled (`ACS_DISCOVERY_ENABLED=false`), no registration occurs and leader election APIs return 503
+
+
 ## CLI Configuration
 
 | Variable | Default | Description |
@@ -159,4 +180,11 @@ ACS_CLEANUP_INTERVAL=1h
 ACS_CLEANUP_RETENTION_DAYS=7
 ACS_CLEANUP_STALE_PENDING_HOURS=24
 ACS_CLEANUP_BATCH_SIZE=1000
+
+# Service Discovery
+ACS_DISCOVERY_ENABLED=true
+ACS_DISCOVERY_SERVICE_NAME=acs
+ACS_DISCOVERY_BUCKET_NAME=acs_service_discovery
+ACS_DISCOVERY_HEARTBEAT=30s
+ACS_DISCOVERY_TTL=120s
 ```

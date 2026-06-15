@@ -7,21 +7,24 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/topsailai/agent-community/internal/api/middleware"
+	"github.com/topsailai/agent-community/internal/discovery"
 	"github.com/topsailai/agent-community/pkg/logger"
 	"gorm.io/gorm"
 )
 
 // HealthHandler handles health and readiness check requests.
 type HealthHandler struct {
-	db  *gorm.DB
-	log *logger.Logger
+	db        *gorm.DB
+	discovery *discovery.Discovery
+	log       *logger.Logger
 }
 
 // NewHealthHandler creates a new HealthHandler.
-func NewHealthHandler(db *gorm.DB, log *logger.Logger) *HealthHandler {
+func NewHealthHandler(db *gorm.DB, disc *discovery.Discovery, log *logger.Logger) *HealthHandler {
 	return &HealthHandler{
-		db:  db,
-		log: log,
+		db:        db,
+		discovery: disc,
+		log:       log,
 	}
 }
 
@@ -38,6 +41,20 @@ type ReadinessResponse struct {
 	Status    string            `json:"status"`
 	Timestamp int64             `json:"timestamp"`
 	Checks    map[string]string `json:"checks"`
+}
+
+// DiscoveryServicesResponse represents the list of discovered services.
+type DiscoveryServicesResponse struct {
+	Services []discovery.ServiceInfo `json:"services"`
+	Count    int                     `json:"count"`
+}
+
+// LeaderStatusResponse represents the leader status of this instance.
+type LeaderStatusResponse struct {
+	IsLeader   bool                   `json:"is_leader"`
+	Self       discovery.ServiceInfo  `json:"self"`
+	Leader     *discovery.ServiceInfo `json:"leader,omitempty"`
+	Timestamp  int64                  `json:"timestamp"`
 }
 
 // Liveness handles GET /healthz (liveness probe).
@@ -134,5 +151,72 @@ func (h *HealthHandler) Health(c *gin.Context) {
 		Version:   "1.0.0",
 		Timestamp: time.Now().UnixMilli(),
 		Checks:    checks,
+	})
+}
+
+// DiscoveryServices handles GET /discovery/services.
+// Returns all currently registered services from NATS KV.
+func (h *HealthHandler) DiscoveryServices(c *gin.Context) {
+	traceID := middleware.GetTraceID(c)
+
+	if h.discovery == nil {
+		h.log.Warn("api", traceID, "discovery not initialized")
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "service discovery not available",
+		})
+		return
+	}
+
+	services, err := h.discovery.Discover()
+	if err != nil {
+		h.log.Error("api", traceID, "failed to discover services", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to discover services",
+		})
+		return
+	}
+
+	h.log.Debug("api", traceID, "discovery services listed", "count", len(services))
+	c.JSON(http.StatusOK, DiscoveryServicesResponse{
+		Services: services,
+		Count:    len(services),
+	})
+}
+
+// LeaderStatus handles GET /health/leader.
+// Returns whether this instance is the current Service-Leader.
+func (h *HealthHandler) LeaderStatus(c *gin.Context) {
+	traceID := middleware.GetTraceID(c)
+
+	if h.discovery == nil {
+		h.log.Warn("api", traceID, "discovery not initialized")
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "service discovery not available",
+		})
+		return
+	}
+
+	isLeader, err := h.discovery.IsLeader()
+	if err != nil {
+		h.log.Error("api", traceID, "failed to check leader status", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to check leader status",
+		})
+		return
+	}
+
+	leaderInfo, err := h.discovery.LeaderInfo()
+	if err != nil {
+		h.log.Error("api", traceID, "failed to get leader info", "error", err)
+		// Non-fatal: still return is_leader and self info
+		leaderInfo = nil
+	}
+
+	h.log.Debug("api", traceID, "leader status checked", "is_leader", isLeader)
+	c.JSON(http.StatusOK, LeaderStatusResponse{
+		IsLeader:  isLeader,
+		Self:      h.discovery.SelfInfo(),
+		Leader:    leaderInfo,
+		Timestamp: time.Now().UnixMilli(),
 	})
 }

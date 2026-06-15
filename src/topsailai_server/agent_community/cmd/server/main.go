@@ -11,6 +11,7 @@ import (
 	"github.com/topsailai/agent-community/internal/api"
 	"github.com/topsailai/agent-community/internal/config"
 	"github.com/topsailai/agent-community/internal/db"
+	"github.com/topsailai/agent-community/internal/discovery"
 	"github.com/topsailai/agent-community/internal/lock"
 	"github.com/topsailai/agent-community/internal/nats"
 	"github.com/topsailai/agent-community/internal/trigger"
@@ -123,8 +124,34 @@ func run() error {
 	cleanupTask.Start()
 	defer cleanupTask.Stop()
 
+	// 12.6. Create and register service discovery (if enabled).
+	var disc *discovery.Discovery
+	if cfg.Discovery.Enabled {
+		disc, err = discovery.New(js, discovery.Config{
+			ServiceName: cfg.Discovery.ServiceName,
+			Address:     cfg.Server.GetListenAddress(),
+			Port:        cfg.Server.Port,
+			Version:     "1.0.0",
+			BucketName:  cfg.Discovery.BucketName,
+			Heartbeat:   cfg.Discovery.Heartbeat,
+			TTL:         cfg.Discovery.TTL,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create service discovery: %w", err)
+		}
+		if err := disc.Register(); err != nil {
+			return fmt.Errorf("failed to register service: %w", err)
+		}
+		defer func() {
+			log.Info("server", "", "deregistering service from discovery")
+			if err := disc.Deregister(); err != nil {
+				log.Error("server", "", "failed to deregister service", "error", err.Error())
+			}
+		}()
+	}
+
 	// 13. Create HTTP API router and server.
-	router := api.NewRouter(cfg, database.Conn, publisher, evaluator, log)
+	router := api.NewRouter(cfg, database.Conn, publisher, evaluator, disc, log)
 	server := api.NewServer(cfg, router, log)
 
 	// 14. Handle OS signals for graceful shutdown.
@@ -156,8 +183,9 @@ func run() error {
 	// 1. HTTP server
 	// 2. NATS consumer subscription
 	// 3. Auto-trigger task
-	// 4. NATS connection
-	// 5. Database (handled by defer)
+	// 4. Service discovery deregistration (handled by defer)
+	// 5. NATS connection
+	// 6. Database (handled by defer)
 
 	log.Info("server", "", "shutting down HTTP server")
 	if err := server.Shutdown(); err != nil {

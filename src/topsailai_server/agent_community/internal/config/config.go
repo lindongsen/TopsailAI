@@ -12,13 +12,14 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	Database DatabaseConfig `mapstructure:"database"`
-	NATS     NATSConfig     `mapstructure:"nats"`
-	Agent    AgentConfig    `mapstructure:"agent"`
-	Pool     PoolConfig     `mapstructure:"pool"`
-	Log      LogConfig      `mapstructure:"log"`
-	Cleanup  CleanupConfig  `mapstructure:"cleanup"`
+	Server    ServerConfig    `mapstructure:"server"`
+	Database  DatabaseConfig  `mapstructure:"database"`
+	NATS      NATSConfig      `mapstructure:"nats"`
+	Agent     AgentConfig     `mapstructure:"agent"`
+	Pool      PoolConfig      `mapstructure:"pool"`
+	Log       LogConfig       `mapstructure:"log"`
+	Cleanup   CleanupConfig   `mapstructure:"cleanup"`
+	Discovery DiscoveryConfig `mapstructure:"discovery"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -82,6 +83,15 @@ type CleanupConfig struct {
 	BatchSize         int           `mapstructure:"batch_size"`
 }
 
+// DiscoveryConfig holds NATS service discovery settings.
+type DiscoveryConfig struct {
+	Enabled         bool          `mapstructure:"enabled"`
+	ServiceName     string        `mapstructure:"service_name"`
+	BucketName      string        `mapstructure:"bucket_name"`
+	Heartbeat       time.Duration `mapstructure:"heartbeat"`
+	TTL             time.Duration `mapstructure:"ttl"`
+}
+
 // Load reads configuration from environment variables with ACS_ prefix.
 func Load() (*Config, error) {
 	v := viper.New()
@@ -136,6 +146,13 @@ func Load() (*Config, error) {
 	v.SetDefault("cleanup.stale_pending_hours", 24)
 	v.SetDefault("cleanup.batch_size", 1000)
 
+	// Discovery defaults
+	v.SetDefault("discovery.enabled", true)
+	v.SetDefault("discovery.service_name", "acs")
+	v.SetDefault("discovery.bucket_name", "acs_service_discovery")
+	v.SetDefault("discovery.heartbeat", "30s")
+	v.SetDefault("discovery.ttl", "120s")
+
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
@@ -150,4 +167,9 @@ func (d *DatabaseConfig) DSN() string {
 		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		d.Host, d.Port, d.User, d.Password, d.Name, d.SSLMode,
 	)
+}
+
+// GetListenAddress returns the listen address for the server.
+func (s *ServerConfig) GetListenAddress() string {
+	return "0.0.0.0"
 }

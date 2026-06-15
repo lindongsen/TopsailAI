@@ -53,7 +53,7 @@ func (m *mockPublisher) PublishMessageDelete(msg *models.GroupMessage) error {
 
 // setupTriggerTestDB creates an in-memory SQLite database and auto-migrates models.
 func setupTriggerTestDB(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("file::memory:"), &gorm.Config{})
 	require.NoError(t, err)
 
 	err = db.AutoMigrate(&models.Group{}, &models.GroupMember{}, &models.GroupMessage{})
@@ -220,6 +220,7 @@ func TestTriggerMessage_AgentSentMessageBypassesNO_TRIGGER_CASES(t *testing.T) {
 	db := setupTriggerTestDB(t)
 	groupID := "group-trigger-6"
 	createTestGroup(t, db, groupID, "Trigger Test Group 6")
+	createTestGroupMember(t, db, groupID, "user-6", models.MemberTypeUser)
 	createTestGroupMember(t, db, groupID, "agent-6", models.MemberTypeWorkerAgent)
 	createTestGroupMember(t, db, groupID, "manager-6", models.MemberTypeManagerAgent)
 	// Message sent by an agent — normally blocked by NO_TRIGGER_CASES

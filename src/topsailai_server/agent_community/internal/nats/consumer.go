@@ -210,6 +210,24 @@ func (c *Consumer) processAgentTarget(
 		return fmt.Errorf("agent health check failed: %w, exit_code=%d", err, healthResult.ExitCode)
 	}
 
+	// Set member_status to processing before invoking agent
+	if err := c.updateMemberStatus(agentMember.GroupID, agentMember.MemberID, models.MemberStatusProcessing, traceID); err != nil {
+		logger.WarnM(consumerModule, traceID, "failed to set agent status to processing",
+			"agent_id", agentMember.MemberID,
+			"error", err,
+		)
+	}
+
+	// Ensure status is always reset to idle when processing ends
+	defer func() {
+		if err := c.updateMemberStatus(agentMember.GroupID, agentMember.MemberID, models.MemberStatusIdle, traceID); err != nil {
+			logger.WarnM(consumerModule, traceID, "failed to set agent status to idle",
+				"agent_id", agentMember.MemberID,
+				"error", err,
+			)
+		}
+	}()
+
 	// Check processing chain length to prevent infinite loops
 	chainLength := c.getProcessingChainLength(pendingMsg)
 	if chainLength >= c.maxChainLength {
@@ -431,4 +449,28 @@ func (c *Consumer) recordProcessingStatus(groupID, messageID, agentID string, su
 	if err := c.db.Create(record).Error; err != nil {
 		logger.ErrorM(consumerModule, traceID, "failed to record processing status", "error", err)
 	}
+}
+
+// updateMemberStatus updates the member_status of a group member in the database.
+// It also updates the update_at_ms timestamp. Returns error if member not found.
+func (c *Consumer) updateMemberStatus(groupID, memberID string, status models.MemberStatus, traceID string) error {
+	result := c.db.Model(&models.GroupMember{}).
+		Where("group_id = ? AND member_id = ?", groupID, memberID).
+		Updates(map[string]interface{}{
+			"member_status": status,
+			"update_at_ms":  time.Now().UnixMilli(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("member not found: group_id=%s, member_id=%s", groupID, memberID)
+	}
+
+	logger.InfoM(consumerModule, traceID, "agent status updated",
+		"agent_id", memberID,
+		"group_id", groupID,
+		"status", status,
+	)
+	return nil
 }
