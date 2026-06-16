@@ -10,6 +10,9 @@ from topsailai.utils import (
     json_tool,
     env_tool,
 )
+from topsailai.ai_base.llm_control.message import (
+    format_response,
+)
 
 
 class ToolCallInfo(object):
@@ -164,7 +167,10 @@ class StepCallBase(object):
                 # Parsed dictionary from raw text
                 raw_dict = None
                 if raw_text:
-                    raw_dict = json_tool.json_load(raw_text)
+                    try:
+                        raw_dict = json_tool.json_load(raw_text)
+                    except Exception:
+                        raw_dict = format_response(raw_text)
                     if isinstance(raw_dict, list):
                         raw_dict = raw_dict[0]
                 if raw_dict and 'tool_call' in raw_dict:

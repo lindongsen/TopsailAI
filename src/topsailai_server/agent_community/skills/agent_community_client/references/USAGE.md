@@ -14,6 +14,23 @@ This document describes how to use the AI-Agent Community Server (ACS).
 
 > **Important**: When the adaptor's script location is explicitly specified, `cmd_xxx` fields must use **absolute paths** pointing to the actual executable script files. If only the adaptor name is provided (without explicit script paths), `cmd_xxx` defaults to `{adaptor}_cmd_check_health`, `{adaptor}_cmd_check_status`, and `{adaptor}_cmd_chat`.
 
+Example:
+```yaml
+adaptor: topsailai_agent
+environments:
+  ACS_AGENT_API_BASE: "http://172.18.0.4:7373"
+  ACS_AGENT_API_KEY: “I-Love-Dawson” # any string, a secret key for the connection base on `Bearer Token`
+  ACS_AGENT_API_AUTH: "bearer"
+
+timeout_check_health: 5 # default is 5 seconds
+timeout_check_status: 5 # default is 5 seconds
+timeout_chat: 600 # default is 600 seconds
+
+cmd_check_health: "" # get agent healthy info, ret_code=0 is healthy; optional, default value is `{adaptor}_cmd_check_health`, example `topsailai_agent_cmd_check_health`
+cmd_check_status: "" # get agent status info, if ret_code=0, stdout will output status (example: idle, processing); optional, default value is `{adaptor}_cmd_check_status`
+cmd_chat: "" # Execute this command with env to send a message to AI-Agent; optional, default value is `{adaptor}_cmd_chat`
+```
+
 ### Manager Agent (local_topsailai_agent)
 
 - **Adaptor**: `local_topsailai_agent`
