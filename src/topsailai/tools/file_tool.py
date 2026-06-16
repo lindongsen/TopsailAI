@@ -161,6 +161,17 @@ def write_file(file_path:str, content:str, seek:int=0, to_insert:bool=False):
         return str(e)
     return ""
 
+def write_file_simple(file_path:str, content:str):
+    """Write content to a file.
+    Args:
+        file_path (str):
+        content (str): text
+
+    Returns:
+        str: Empty string on success, error message string on failure
+    """
+    return write_file(file_path=file_path, content=content)
+
 def _do_step_read_bytes(fd, size:int):
     """ read in a certain block size order.
 
@@ -427,10 +438,9 @@ def list_dirs(dirs:list[str]) -> dict:
         result[dir_path] = list_dir(dir_path)
     return result
 
-
+# Move read_file to bigfile_tool.py
 TOOLS = dict(
-    write_file=write_file,
-    read_file=read_file,
+    write_file=write_file_simple,
     append_file=append_file,
     check_files_existing=check_files_existing,
     mkdirs=mkdirs,

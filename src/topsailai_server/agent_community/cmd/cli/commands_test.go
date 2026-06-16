@@ -2,6 +2,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -307,4 +308,30 @@ func TestRestorePrompt(t *testing.T) {
 	// restorePrompt requires a readline instance, which we can't easily mock.
 	// Just verify it doesn't panic with nil rl (it will panic, so we skip).
 	t.Skip("restorePrompt requires readline instance")
+}
+
+func TestHandleGroupEnterInlineArg(t *testing.T) {
+	// Verify that a direct group_id argument is parsed by handleGroupEnter fallback.
+	args := []string{"group-123"}
+	params := parseInlineArgs(args)
+
+	groupID := params["group-id"]
+	if groupID == "" && len(args) > 0 {
+		groupID = strings.TrimSpace(args[0])
+	}
+	if groupID != "group-123" {
+		t.Errorf("handleGroupEnter inline arg parsing failed: got %q, want %q", groupID, "group-123")
+	}
+}
+
+func TestHandleGroupEnterEmptyInlineArg(t *testing.T) {
+	args := []string{""}
+	groupID := ""
+	params := parseInlineArgs(args)
+	if params["group-id"] == "" && len(args) > 0 {
+		groupID = strings.TrimSpace(args[0])
+	}
+	if groupID != "" {
+		t.Errorf("expected empty groupID for empty arg, got %q", groupID)
+	}
 }

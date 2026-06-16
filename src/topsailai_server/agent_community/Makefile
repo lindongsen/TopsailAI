@@ -57,7 +57,7 @@ test:
 .PHONY: test-integration
 test-integration:
 	@echo "Running integration tests..."
-	@cd tests/integration && $(PYTHON) -m pytest --color=no -v
+	@./tests/integration/manage_test_server.sh -v
 
 # Run database migrations (up)
 .PHONY: migrate-up

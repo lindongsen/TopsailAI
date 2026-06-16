@@ -192,6 +192,11 @@ func handleGroupEnter(args []string, state *CLIState) error {
 	params := parseInlineArgs(args)
 	groupID := params["group-id"]
 
+	// Support direct inline argument: /group:enter <group_id>
+	if groupID == "" && len(args) > 0 {
+		groupID = strings.TrimSpace(args[0])
+	}
+
 	if groupID == "" {
 		defer restorePrompt(state)
 		prompt := &InteractivePrompt{rl: state.rl}

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Wrapper for topsailai_agent_cmd_check_health.py
+# Provides the extension-less command name expected by the ACS agent interface.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "${SCRIPT_DIR}/topsailai_agent_cmd_check_health.py" "$@"

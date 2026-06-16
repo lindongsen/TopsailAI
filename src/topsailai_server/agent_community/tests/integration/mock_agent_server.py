@@ -1,256 +1,242 @@
 #!/usr/bin/env python3
-"""Mock AI-Agent Server for testing ACS integration.
+"""Simple HTTP mock agent server for integration tests.
 
-This server simulates an AI agent that responds to chat requests.
-It supports configurable delay, error rate, and Bearer Token authentication.
+This server implements the endpoints expected by the `topsailai_send_message`
+client (used by the `topsailai_agent_cmd_*` scripts) so that ACS can invoke
+agent members during integration tests.
+
+Endpoints:
+  GET  /health                       -> health check
+  GET  /api/v1/session/<session_id>  -> session status (used by /status command)
+  POST /api/v1/message               -> send a message (used by chat command)
+  GET  /api/v1/message               -> list messages by processed_msg_id
 """
 
 import argparse
 import json
-import logging
 import random
 import threading
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger("mock_agent")
+import uuid
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlparse
 
 
 class MockAgentHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for mock agent server."""
+    """Handler for mock agent daemon API requests."""
 
-    def __init__(self, config, *args, **kwargs):
-        self.config = config
-        super().__init__(*args, **kwargs)
+    # Shared state across all handler instances
+    state_lock = threading.Lock()
+    messages = {}  # session_id -> list of message dicts
+    config = {
+        "delay": 1.5,
+        "error_rate": 0.0,
+    }
 
-    def log_message(self, format, *args):
-        """Override to use our logger."""
-        logger.info(format % args)
+    def log_message(self, fmt, *args):
+        print(f"[MockAgent] {self.address_string()} - {fmt % args}")
 
-    def _send_json(self, status_code, data):
-        """Send JSON response."""
+    def _send_json(self, status_code, body):
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(json.dumps(data).encode("utf-8"))
+        self.wfile.write(json.dumps(body).encode("utf-8"))
 
-    def _check_auth(self):
-        """Check Bearer Token authentication if configured."""
-        if not self.config.get("auth_token"):
-            return True
-
-        auth_header = self.headers.get("Authorization", "")
-        expected = f"Bearer {self.config['auth_token']}"
-        if auth_header != expected:
-            logger.warning("Authentication failed: %s", auth_header)
-            return False
-        return True
-
-    def _simulate_delay(self):
-        """Simulate processing delay."""
-        delay = self.config.get("delay", 0)
-        if delay > 0:
-            time.sleep(delay)
+    def _api_response(self, data, message="", code=0):
+        return {"code": code, "data": data, "message": message}
 
     def _should_error(self):
-        """Determine if this request should simulate an error."""
-        error_rate = self.config.get("error_rate", 0)
-        return random.random() < error_rate
+        return random.random() < self.config["error_rate"]
+
+    def _now(self):
+        return datetime.now(timezone.utc).isoformat()
 
     def do_GET(self):
-        """Handle GET requests."""
         parsed = urlparse(self.path)
         path = parsed.path
+        query = parse_qs(parsed.query)
 
         if path == "/health":
-            self._handle_health()
-        elif path == "/status":
-            self._handle_status()
-        else:
-            self._send_json(404, {"error": "not found"})
+            self._send_json(200, self._api_response({"status": "healthy"}))
+            return
+
+        if path.startswith("/api/v1/session/"):
+            session_id = path[len("/api/v1/session/"):]
+            if not session_id:
+                self._send_json(400, self._api_response(None, "Session ID required", 1))
+                return
+            self._send_json(200, self._api_response({"status": "idle"}))
+            return
+
+        if path == "/api/v1/message":
+            session_id = self._first(query.get("session_id"))
+            processed_msg_id = self._first(query.get("processed_msg_id"))
+
+            if not session_id or not processed_msg_id:
+                self._send_json(
+                    400,
+                    self._api_response(None, "session_id and processed_msg_id required", 1),
+                )
+                return
+
+            # Simulate the agent processing time before the response is available.
+            delay = self.config["delay"]
+            if delay > 0:
+                time.sleep(delay)
+
+            if self._should_error():
+                # Use 422 Unprocessable Entity so the client treats this as a
+                # non-retryable application error and returns immediately.
+                self._send_json(422, self._api_response(None, "mock agent error", 1))
+                return
+
+            with self.state_lock:
+                session_messages = self.messages.setdefault(session_id, [])
+                response_msg = {
+                    "msg_id": f"msg-{uuid.uuid4().hex[:12]}",
+                    "session_id": session_id,
+                    "processed_msg_id": processed_msg_id,
+                    "role": "assistant",
+                    "message": "Mock agent response",
+                    "task_id": "",
+                    "task_result": "",
+                    "create_time": self._now(),
+                }
+                session_messages.append(response_msg)
+
+            self._send_json(200, self._api_response([response_msg]))
+            return
+
+        self._send_json(404, self._api_response(None, "not found", 1))
 
     def do_POST(self):
-        """Handle POST requests."""
         parsed = urlparse(self.path)
         path = parsed.path
 
-        if path == "/chat":
-            self._handle_chat()
-        else:
-            self._send_json(404, {"error": "not found"})
+        if path == "/api/v1/message":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length).decode("utf-8")
+            try:
+                payload = json.loads(body) if body else {}
+            except json.JSONDecodeError:
+                self._send_json(400, self._api_response(None, "invalid JSON", 1))
+                return
 
-    def _handle_health(self):
-        """Handle health check endpoint."""
-        if not self._check_auth():
-            self._send_json(401, {"error": "unauthorized"})
+            session_id = payload.get("session_id", "")
+            if not session_id:
+                self._send_json(400, self._api_response(None, "session_id required", 1))
+                return
+
+            # Simulate a chat failure when the mock is configured to error.
+            # Failing the POST causes topsailai_send_message to exit immediately
+            # with a non-zero status, which lets the ACS consumer reset the
+            # agent member_status back to idle within the test timeout.
+            if self._should_error():
+                self._send_json(500, self._api_response(None, "mock agent chat error", 1))
+                return
+
+            new_msg_id = f"msg-{uuid.uuid4().hex[:12]}"
+            request_msg = {
+                "msg_id": new_msg_id,
+                "session_id": session_id,
+                "processed_msg_id": payload.get("processed_msg_id", ""),
+                "role": payload.get("role", "user"),
+                "message": payload.get("message", ""),
+                "task_id": "",
+                "task_result": "",
+                "create_time": self._now(),
+            }
+            with self.state_lock:
+                self.messages.setdefault(session_id, []).append(request_msg)
+
+            self._send_json(200, self._api_response({"msg_id": new_msg_id}))
             return
 
-        self._send_json(200, {
-            "status": "healthy",
-            "agent_id": self.config.get("agent_id", "mock-agent"),
-            "timestamp": int(time.time() * 1000)
-        })
+        self._send_json(404, self._api_response(None, "not found", 1))
 
-    def _handle_status(self):
-        """Handle status check endpoint."""
-        if not self._check_auth():
-            self._send_json(401, {"error": "unauthorized"})
-            return
-
-        # Randomly return idle or processing
-        statuses = ["idle", "processing"]
-        status = random.choice(statuses)
-
-        self._send_json(200, {
-            "status": status,
-            "agent_id": self.config.get("agent_id", "mock-agent"),
-            "timestamp": int(time.time() * 1000)
-        })
-
-    def _handle_chat(self):
-        """Handle chat endpoint."""
-        if not self._check_auth():
-            self._send_json(401, {"error": "unauthorized"})
-            return
-
-        # Read request body
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length).decode("utf-8")
-
-        try:
-            request_data = json.loads(body) if body else {}
-        except json.JSONDecodeError:
-            request_data = {}
-
-        # Simulate delay
-        self._simulate_delay()
-
-        # Simulate error
-        if self._should_error():
-            self._send_json(500, {
-                "error": "simulated agent error",
-                "agent_id": self.config.get("agent_id", "mock-agent")
-            })
-            return
-
-        # Generate response based on input
-        message = request_data.get("message", "")
-        agent_mode = request_data.get("mode", "agent")
-        agent_id = self.config.get("agent_id", "mock-agent")
-        agent_name = self.config.get("agent_name", "Mock Agent")
-
-        # Generate a contextual response
-        if "@all" in message:
-            response_text = f"Hello everyone! This is {agent_name} ({agent_id}). I received a message addressed to all members."
-        elif "@" in message:
-            mentioned = [w for w in message.split() if w.startswith("@")]
-            response_text = f"Hi! {agent_name} here. I see mentions: {', '.join(mentioned)}. How can I help?"
-        elif "help" in message.lower():
-            response_text = f"I'm {agent_name} ({agent_id}), ready to assist you. What do you need help with?"
-        elif agent_mode == "chat":
-            response_text = f"[{agent_name}] Chat mode response: {message}"
-        else:
-            if len(message) > 50:
-                response_text = f"[{agent_name}] Agent mode response to: '{message[:50]}...'"
-            else:
-                response_text = f"[{agent_name}] Agent mode response to: '{message}'"
-
-        response_data = {
-            "agent_id": agent_id,
-            "agent_name": agent_name,
-            "mode": agent_mode,
-            "response": response_text,
-            "timestamp": int(time.time() * 1000),
-            "processed": True
-        }
-
-        logger.info("Chat response: %s", response_data["response"][:100])
-        self._send_json(200, response_data)
-
-
-def create_handler(config):
-    """Create a request handler class with config."""
-    def handler(*args, **kwargs):
-        return MockAgentHandler(config, *args, **kwargs)
-    return handler
+    @staticmethod
+    def _first(values):
+        if values:
+            return values[0]
+        return None
 
 
 class MockAgentServer:
-    """Mock agent server wrapper for testing."""
+    """Wrapper around the mock agent HTTP server.
 
-    def __init__(self, host="127.0.0.1", port=18080, agent_id="mock-agent",
-                 agent_name="Mock Agent", auth_token="", delay=0.1, error_rate=0.0):
+    Supports both explicit ``start()``/``stop()`` calls and the context-manager
+    protocol (``with MockAgentServer(...) as server:``).
+    """
+
+    def __init__(
+        self,
+        host="127.0.0.1",
+        port=7371,
+        delay=1.5,
+        error_rate=0.0,
+        # Backward-compatible parameters kept for existing tests.
+        agent_id=None,
+        agent_name=None,
+        auth_token=None,
+    ):
         self.host = host
         self.port = port
-        self.config = {
-            "agent_id": agent_id,
-            "agent_name": agent_name,
-            "auth_token": auth_token,
-            "delay": delay,
-            "error_rate": error_rate,
-        }
+        self.delay = delay
+        self.error_rate = error_rate
+        # agent_id, agent_name and auth_token are accepted for backward
+        # compatibility but are not required by the new agent-daemon API.
+        self.agent_id = agent_id
+        self.agent_name = agent_name
+        self.auth_token = auth_token
         self.server = None
         self.thread = None
 
     def start(self):
-        """Start the mock agent server in a background thread."""
-        handler_class = create_handler(self.config)
-        self.server = HTTPServer((self.host, self.port), handler_class)
+        MockAgentHandler.config["delay"] = self.delay
+        MockAgentHandler.config["error_rate"] = self.error_rate
+        MockAgentHandler.messages.clear()
 
+        self.server = HTTPServer((self.host, self.port), MockAgentHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
-        logger.info(
-            "Mock agent server started on %s:%d (agent_id=%s)",
-            self.host, self.port, self.config["agent_id"]
-        )
+        print(f"[MockAgent] Server started on http://{self.host}:{self.port}")
+        return self
 
     def stop(self):
-        """Stop the mock agent server."""
+        print("[MockAgent] Server stopping")
         if self.server:
             self.server.shutdown()
             self.server.server_close()
-            logger.info("Mock agent server stopped")
+        if self.thread:
+            self.thread.join(timeout=5)
 
-    def is_running(self):
-        """Check if the server is running."""
-        return self.thread is not None and self.thread.is_alive()
+    def __enter__(self):
+        return self.start()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
+        return False
 
 
 def main():
-    """Run the mock agent server."""
-    parser = argparse.ArgumentParser(description="Mock AI-Agent Server")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
-    parser.add_argument("--port", type=int, default=18080, help="Port to listen on")
-    parser.add_argument("--agent-id", default="mock-agent", help="Agent ID")
-    parser.add_argument("--agent-name", default="Mock Agent", help="Agent name")
-    parser.add_argument("--auth-token", default="", help="Bearer token for auth")
-    parser.add_argument("--delay", type=float, default=0.1, help="Response delay in seconds")
-    parser.add_argument("--error-rate", type=float, default=0.0, help="Error rate (0.0-1.0)")
-
+    parser = argparse.ArgumentParser(description="Mock agent daemon server")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=7371)
+    parser.add_argument("--delay", type=float, default=1.5)
+    parser.add_argument("--error-rate", type=float, default=0.0)
     args = parser.parse_args()
 
     server = MockAgentServer(
-        host=args.host,
-        port=args.port,
-        agent_id=args.agent_id,
-        agent_name=args.agent_name,
-        auth_token=args.auth_token,
-        delay=args.delay,
-        error_rate=args.error_rate,
+        host=args.host, port=args.port, delay=args.delay, error_rate=args.error_rate
     )
     server.start()
-
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("Shutting down mock agent server...")
+        pass
+    finally:
         server.stop()
 
 
