@@ -268,3 +268,144 @@ func TestAgentLevelDeduplication_MultipleAgentsCanRun(t *testing.T) {
 	assert.NoError(t, err)
 	assert.False(t, isRunning)
 }
+
+// ===== checkAndCreateRunningRecord tests =====
+
+func TestCheckAndCreateRunningRecord_NewRecord(t *testing.T) {
+	db := setupDuplicateTestDB(t)
+	c := NewConsumer(db, nil, nil, nil, nil)
+
+	created, err := c.checkAndCreateRunningRecord("g1", "m1", "a1", "trace-1")
+	assert.NoError(t, err)
+	assert.True(t, created)
+
+	var record models.AgentMessageProcessing
+	assert.NoError(t, db.First(&record, "group_id = ? AND message_id = ? AND agent_id = ?", "g1", "m1", "a1").Error)
+	assert.Equal(t, models.ProcessingStatusRunning, record.Status)
+}
+
+func TestCheckAndCreateRunningRecord_AlreadyRunning(t *testing.T) {
+	db := setupDuplicateTestDB(t)
+	c := NewConsumer(db, nil, nil, nil, nil)
+
+	// Pre-create a running record
+	runningRecord := &models.AgentMessageProcessing{
+		GroupID:   "g1",
+		MessageID: "m1",
+		AgentID:   "a1",
+		Status:    models.ProcessingStatusRunning,
+	}
+	assert.NoError(t, db.Create(runningRecord).Error)
+
+	// Should return false since agent is already running
+	created, err := c.checkAndCreateRunningRecord("g1", "m1", "a1", "trace-1")
+	assert.NoError(t, err)
+	assert.False(t, created)
+
+	// Verify only one record exists
+	var records []models.AgentMessageProcessing
+	assert.NoError(t, db.Where("group_id = ? AND message_id = ? AND agent_id = ?", "g1", "m1", "a1").Find(&records).Error)
+	assert.Len(t, records, 1)
+}
+
+func TestCheckAndCreateRunningRecord_CompletedRecord(t *testing.T) {
+	db := setupDuplicateTestDB(t)
+	c := NewConsumer(db, nil, nil, nil, nil)
+
+	// Pre-create a completed record
+	completedRecord := &models.AgentMessageProcessing{
+		GroupID:   "g1",
+		MessageID: "m1",
+		AgentID:   "a1",
+		Status:    models.ProcessingStatusCompleted,
+	}
+	assert.NoError(t, db.Create(completedRecord).Error)
+
+	// Should create a new running record since the existing one is completed
+	created, err := c.checkAndCreateRunningRecord("g1", "m1", "a1", "trace-1")
+	assert.NoError(t, err)
+	assert.True(t, created)
+
+	// Verify two records exist (completed + running)
+	var records []models.AgentMessageProcessing
+	assert.NoError(t, db.Where("group_id = ? AND message_id = ? AND agent_id = ?", "g1", "m1", "a1").Find(&records).Error)
+	assert.Len(t, records, 2)
+}
+
+func TestCheckAndCreateRunningRecord_DifferentAgentRunning(t *testing.T) {
+	db := setupDuplicateTestDB(t)
+	c := NewConsumer(db, nil, nil, nil, nil)
+
+	// Pre-create a running record for a different agent
+	runningRecord := &models.AgentMessageProcessing{
+		GroupID:   "g1",
+		MessageID: "m1",
+		AgentID:   "a1",
+		Status:    models.ProcessingStatusRunning,
+	}
+	assert.NoError(t, db.Create(runningRecord).Error)
+
+	// Should create a new running record for a different agent
+	created, err := c.checkAndCreateRunningRecord("g1", "m1", "a2", "trace-1")
+	assert.NoError(t, err)
+	assert.True(t, created)
+
+	// Verify two records exist
+	var records []models.AgentMessageProcessing
+	assert.NoError(t, db.Where("group_id = ? AND message_id = ?", "g1", "m1").Find(&records).Error)
+	assert.Len(t, records, 2)
+}
+
+func TestCheckAndCreateRunningRecord_Concurrent(t *testing.T) {
+	// Use shared-cache in-memory SQLite for concurrent test.
+	// We limit to a single connection since SQLite in-memory with shared cache
+	// still requires connection sharing for concurrent access to work correctly.
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open shared in-memory db: %v", err)
+	}
+	if err := db.AutoMigrate(&models.AgentMessageProcessing{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	// Force single connection to ensure all goroutines use the same SQLite connection
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("failed to get sql.DB: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+
+	c := NewConsumer(db, nil, nil, nil, nil)
+
+	const numGoroutines = 10
+	results := make(chan bool, numGoroutines)
+
+	// Launch multiple goroutines trying to create the same running record
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			created, err := c.checkAndCreateRunningRecord("g1", "m1", "a1", "trace-1")
+			if err != nil {
+				results <- false
+				return
+			}
+			results <- created
+		}()
+	}
+
+	// Collect results
+	var successCount int
+	for i := 0; i < numGoroutines; i++ {
+		if <-results {
+			successCount++
+		}
+	}
+
+	// Only one goroutine should have successfully created the record
+	assert.Equal(t, 1, successCount, "exactly one goroutine should create the record")
+
+	// Verify only one running record exists
+	var records []models.AgentMessageProcessing
+	assert.NoError(t, db.Where("group_id = ? AND message_id = ? AND agent_id = ? AND status = ?", "g1", "m1", "a1", models.ProcessingStatusRunning).Find(&records).Error)
+	assert.Len(t, records, 1)
+}

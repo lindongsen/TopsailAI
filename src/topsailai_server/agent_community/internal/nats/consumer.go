@@ -245,6 +245,60 @@ func (c *Consumer) isAgentAlreadyRunning(groupID, messageID, agentID, traceID st
 	return true, nil
 }
 
+
+// checkAndCreateRunningRecord atomically checks if an agent is already running for the given message
+// and creates a running record if not. This prevents race conditions between multiple nodes.
+// Returns (true, nil) if the record was created successfully (agent was not running).
+// Returns (false, nil) if the agent is already running (duplicate detected).
+// Returns (false, err) on database error.
+func (c *Consumer) checkAndCreateRunningRecord(groupID, messageID, agentID, traceID string) (bool, error) {
+	var created bool
+
+	err := c.db.Transaction(func(tx *gorm.DB) error {
+		// Check if a running record already exists for this agent and message
+		var existing models.AgentMessageProcessing
+		if err := tx.Where("group_id = ? AND message_id = ? AND agent_id = ? AND status = ?",
+			groupID, messageID, agentID, models.ProcessingStatusRunning).
+			First(&existing).Error; err != nil {
+			if err != gorm.ErrRecordNotFound {
+				return fmt.Errorf("failed to check running status: %w", err)
+			}
+			// Record not found, proceed to create
+		} else {
+			// Record already exists, agent is already running
+			created = false
+			return nil
+		}
+
+		// Create running record
+		record := &models.AgentMessageProcessing{
+			GroupID:   groupID,
+			MessageID: messageID,
+			AgentID:   agentID,
+			Status:    models.ProcessingStatusRunning,
+		}
+		if err := tx.Create(record).Error; err != nil {
+			return fmt.Errorf("failed to create running record: %w", err)
+		}
+
+		created = true
+		return nil
+	})
+
+	if err != nil {
+		return false, err
+	}
+
+	if created {
+		logger.InfoM(consumerModule, traceID, "running record created",
+			"group_id", groupID,
+			"message_id", messageID,
+			"agent_id", agentID,
+		)
+	}
+
+	return created, nil
+}
 // processAgentTarget processes a single agent target.
 func (c *Consumer) processAgentTarget(
 	ctx context.Context,
@@ -316,23 +370,18 @@ func (c *Consumer) processAgentTarget(
 		}
 	}()
 
-	// Check if this agent is already processing this message (agent-level deduplication)
-	if isRunning, err := c.isAgentAlreadyRunning(group.GroupID, pendingMsg.MessageID, agentMember.MemberID, traceID); err != nil {
-		return fmt.Errorf("failed to check agent running status: %w", err)
-	} else if isRunning {
+	// Atomically check if this agent is already processing this message and create a running record.
+	// This prevents race conditions between multiple nodes processing the same pending message.
+	created, err := c.checkAndCreateRunningRecord(group.GroupID, pendingMsg.MessageID, agentMember.MemberID, traceID)
+	if err != nil {
+		return fmt.Errorf("failed to check and create running record: %w", err)
+	}
+	if !created {
 		logger.WarnM(consumerModule, traceID, "agent already processing this message, skipping duplicate",
 			"agent_id", agentMember.MemberID,
 			"message_id", pendingMsg.MessageID,
 		)
 		return nil
-	}
-
-	// Create running record before agent chat to prevent duplicate processing
-	if err := c.createRunningRecord(group.GroupID, pendingMsg.MessageID, agentMember.MemberID, traceID); err != nil {
-		logger.WarnM(consumerModule, traceID, "failed to create running record",
-			"agent_id", agentMember.MemberID,
-			"error", err,
-		)
 	}
 
 	// Check processing chain length to prevent infinite loops
