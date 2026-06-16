@@ -61,3 +61,78 @@ func filterCommands(prefix string, commands []string) []string {
 	}
 	return result
 }
+
+// chatMentionCompleter provides auto-completion for chat mode,
+// including slash commands and @member_name mentions.
+type chatMentionCompleter struct {
+	cmdCompleter  readline.PrefixCompleterInterface
+	membersGetter func() []map[string]interface{}
+}
+
+// newChatMentionCompleter creates a chat completer that supports @mentions.
+func newChatMentionCompleter(membersGetter func() []map[string]interface{}) readline.AutoCompleter {
+	return &chatMentionCompleter{
+		cmdCompleter:  newChatCompleter(),
+		membersGetter: membersGetter,
+	}
+}
+
+// Do implements readline.AutoCompleter.
+// It completes slash commands when the line starts with '/',
+// and completes @member_name when the current word starts with '@'.
+//
+// readline contract: offset is the number of shared characters before pos
+// that should be kept; candidates are the suffixes to append after those
+// shared characters.
+// Example: Do("@d", 2) for member "dawson" => ["awson "], 2
+func (c *chatMentionCompleter) Do(line []rune, pos int) ([][]rune, int) {
+	if len(line) == 0 || pos == 0 {
+		return nil, 0
+	}
+
+	// Delegate slash commands to the prefix completer.
+	if line[0] == '/' {
+		return c.cmdCompleter.Do(line, pos)
+	}
+
+	// Find the current word being typed (from last whitespace to cursor).
+	wordStart := pos
+	for i := pos - 1; i >= 0; i-- {
+		if line[i] == ' ' || line[i] == '\t' {
+			break
+		}
+		wordStart = i
+	}
+	wordRunes := line[wordStart:pos]
+	word := string(wordRunes)
+
+	if !strings.HasPrefix(word, "@") {
+		return nil, 0
+	}
+
+	mentionPrefix := strings.ToLower(strings.TrimPrefix(word, "@"))
+	members := c.membersGetter()
+	var candidates [][]rune
+	seen := make(map[string]bool)
+
+	for _, m := range members {
+		name, _ := m["member_name"].(string)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		if mentionPrefix == "" || strings.HasPrefix(strings.ToLower(name), mentionPrefix) {
+			// Return only the suffix after the already-typed prefix.
+			suffix := name[len(mentionPrefix):] + " "
+			candidates = append(candidates, []rune(suffix))
+		}
+	}
+
+	// Also suggest @all.
+	if mentionPrefix == "" || strings.HasPrefix("all", mentionPrefix) {
+		suffix := "all"[len(mentionPrefix):] + " "
+		candidates = append(candidates, []rune(suffix))
+	}
+
+	return candidates, len(wordRunes)
+}

@@ -195,7 +195,7 @@ class TestNATSPubSub:
                 "groupId": test_group_id,
                 "data": {
                     "member_id": "user-123",
-                    "member_name": "Test User"
+                    "member_name": "Test_User"
                 }
             }
             await js.publish(subject, json.dumps(event).encode())

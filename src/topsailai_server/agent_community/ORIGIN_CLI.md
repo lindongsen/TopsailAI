@@ -32,6 +32,10 @@ Example:
 
 > group:enter 之后，则进入聊天窗口，消息也会实时更新
 
+## Auto-Completion
+
+When the user is in a group chat (after `/group:enter`), typing `@` should trigger auto-completion suggestions for member names in that group. For example, if group members are "Alice", "Bob", and "agent-1", typing `@A` should suggest "Alice", typing `@B` should suggest "Bob", etc.
+
 ## Multi-byte Character Support (Chinese, Emoji, etc.)
 
 This terminal uses `github.com/chzyer/readline` for input handling, which provides:

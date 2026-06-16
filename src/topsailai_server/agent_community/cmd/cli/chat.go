@@ -72,7 +72,11 @@ func (cm *ChatMode) EnterChat(groupID, userID, userName string) error {
 	// Create readline with chat PS1 and auto-completion.
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:       ps1Chat(userName, groupID),
-		AutoComplete: newChatCompleter(),
+		AutoComplete: newChatMentionCompleter(func() []map[string]interface{} {
+			cm.mu.Lock()
+			defer cm.mu.Unlock()
+			return cm.members
+		}),
 	})
 	if err != nil {
 		cm.restoreHandler()

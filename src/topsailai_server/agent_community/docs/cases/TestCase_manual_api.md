@@ -256,7 +256,7 @@ export ACS_API_BASE="http://127.0.0.1:7370"
 | **Test ID** | MANUAL-API-017 |
 | **Description** | Add a human user to a group |
 | **Preconditions** | Group exists ($GROUP_ID) |
-| **Steps** | ```curl -s -X POST "${ACS_API_BASE}/api/v1/groups/${GROUP_ID}/members" -H "Content-Type: application/json" -d '{"member_id":"manual-user-001","member_name":"Manual Tester","member_description":"A human tester","member_type":"user"}' \| jq .``` |
+| **Steps** | ```curl -s -X POST "${ACS_API_BASE}/api/v1/groups/${GROUP_ID}/members" -H "Content-Type: application/json" -d '{"member_id":"manual-user-001","member_name":"Manual_Tester","member_description":"A human tester","member_type":"user"}' \| jq .``` |
 | **Expected Result** | HTTP 201, `member_status` is "online", `member_type` is "user" |
 | **Actual Result** | |
 | **Status** | PENDING |
@@ -268,7 +268,7 @@ export ACS_API_BASE="http://127.0.0.1:7370"
 | **Test ID** | MANUAL-API-018 |
 | **Description** | Add a worker-agent with interface configuration |
 | **Preconditions** | Group exists |
-| **Steps** | ```curl -s -X POST "${ACS_API_BASE}/api/v1/groups/${GROUP_ID}/members" -H "Content-Type: application/json" -d '{"member_id":"manual-agent-001","member_name":"Test Worker Agent","member_description":"A test worker agent","member_type":"worker-agent","member_interface":"{\"adaptor\":\"topsailai_agent\",\"environments\":{\"ACS_AGENT_API_BASE\":\"http://127.0.0.1:7373\",\"ACS_AGENT_API_KEY\":\"test-key\"},\"timeout_chat\":30}"}' \| jq .``` |
+| **Steps** | ```curl -s -X POST "${ACS_API_BASE}/api/v1/groups/${GROUP_ID}/members" -H "Content-Type: application/json" -d '{"member_id":"manual-agent-001","member_name":"Test_Worker_Agent","member_description":"A test worker agent","member_type":"worker-agent","member_interface":"{\\"adaptor\\":\\"topsailai_agent\\",\\"environments\\":{\\"ACS_AGENT_API_BASE\\":\\"http://127.0.0.1:7373\\",\\"ACS_AGENT_API_KEY\\":\\"test-key\\"},\\"timeout_chat\\":30}"}' \| jq .``` |
 | **Expected Result** | HTTP 201, `member_type` is "worker-agent", `member_interface` is non-empty JSON string |
 | **Actual Result** | |
 | **Status** | PENDING |
@@ -280,7 +280,7 @@ export ACS_API_BASE="http://127.0.0.1:7370"
 | **Test ID** | MANUAL-API-019 |
 | **Description** | Add a manager-agent to coordinate group |
 | **Preconditions** | Group exists |
-| **Steps** | ```curl -s -X POST "${ACS_API_BASE}/api/v1/groups/${GROUP_ID}/members" -H "Content-Type: application/json" -d '{"member_id":"manual-manager-001","member_name":"Test Manager","member_description":"Group coordinator","member_type":"manager-agent","member_interface":"{\"adaptor\":\"topsailai_agent\",\"environments\":{\"ACS_AGENT_API_BASE\":\"http://127.0.0.1:7373\",\"ACS_AGENT_API_KEY\":\"test-key\"},\"timeout_chat\":30}"}' \| jq .``` |
+| **Steps** | ```curl -s -X POST "${ACS_API_BASE}/api/v1/groups/${GROUP_ID}/members" -H "Content-Type: application/json" -d '{"member_id":"manual-manager-001","member_name":"Test_Manager","member_description":"Group coordinator","member_type":"manager-agent","member_interface":"{\\"adaptor\\":\\"topsailai_agent\\",\\"environments\\":{\\"ACS_AGENT_API_BASE\\":\\"http://127.0.0.1:7373\\",\\"ACS_AGENT_API_KEY\\":\\"test-key\\"},\\"timeout_chat\\":30}"}' \| jq .``` |
 | **Expected Result** | HTTP 201, `member_type` is "manager-agent" |
 | **Actual Result** | |
 | **Status** | PENDING |
@@ -328,7 +328,7 @@ export ACS_API_BASE="http://127.0.0.1:7370"
 | **Test ID** | MANUAL-API-023 |
 | **Description** | Update member name and status |
 | **Preconditions** | Member exists ($MEMBER_ID = manual-user-001) |
-| **Steps** | ```curl -s -X PUT "${ACS_API_BASE}/api/v1/groups/${GROUP_ID}/members/manual-user-001" -H "Content-Type: application/json" -d '{"member_name":"Updated Tester","member_status":"idle"}' \| jq .``` |
+| **Steps** | ```curl -s -X PUT "${ACS_API_BASE}/api/v1/groups/${GROUP_ID}/members/manual-user-001" -H "Content-Type: application/json" -d '{"member_name":"Updated_Tester","member_status":"idle"}' \| jq .``` |
 | **Expected Result** | HTTP 200, `member_name` and `member_status` updated |
 | **Actual Result** | |
 | **Status** | PENDING |
@@ -692,7 +692,7 @@ export ACS_API_BASE="http://127.0.0.1:7370"
 | **Test ID** | MANUAL-API-052 |
 | **Description** | Multiple members join simultaneously |
 | **Preconditions** | Group exists |
-| **Steps** | ```for i in {1..5}; do curl -s -X POST "${ACS_API_BASE}/api/v1/groups/${GROUP_ID}/members" -H "Content-Type: application/json" -d "{\"member_id\":\"concurrent-user-$i\",\"member_name\":\"User $i\",\"member_type\":\"user\"}" > /dev/null & done; wait; curl -s "${ACS_API_BASE}/api/v1/groups/${GROUP_ID}/members" \| jq '.total'``` |
+| **Steps** | ```for i in {1..5}; do curl -s -X POST "${ACS_API_BASE}/api/v1/groups/${GROUP_ID}/members" -H "Content-Type: application/json" -d "{\\"member_id\\":\\"concurrent-user-$i\\",\\"member_name\\":\\"User_$i\\",\\"member_type\\":\\"user\\"}" > /dev/null & done; wait; curl -s "${ACS_API_BASE}/api/v1/groups/${GROUP_ID}/members" \| jq '.total'``` |
 | **Expected Result** | All 5 members joined successfully, no duplicates or errors |
 | **Actual Result** | |
 | **Status** | PENDING |

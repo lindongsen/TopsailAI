@@ -54,7 +54,7 @@ Verify the complete lifecycle of a group: create, join members, send messages, r
 
 2. **Join User Member**
    - POST /api/v1/groups/{group_id}/members
-   - Input: `{"member_id": "test-user", "member_name": "Test User", "member_type": "user"}`
+   - Input: `{"member_id": "test-user", "member_name": "Test_User", "member_type": "user"}`
    - Verify: 201 status, member is online
 
 3. **Join Agent Member**
@@ -387,7 +387,7 @@ Verify CLI terminal functionality.
 1. Start CLI: `./bin/acs-cli`
 2. Execute commands:
    - `groups` - List groups
-   - `join {group_id} test-user "Test User"` - Join group
+   - `join {group_id} test-user "Test_User"` - Join group
    - `send {group_id} "Hello from CLI"` - Send message
    - `listen {group_id}` - Subscribe to messages
    - `members {group_id}` - List members

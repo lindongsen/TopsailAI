@@ -216,7 +216,7 @@ class TestGroupMember:
         """Test joining a group."""
         member_data = {
             "member_id": f"new-user-{unique_id}",
-            "member_name": f"New User {unique_id}",
+            "member_name": f"New_User_{unique_id}",
             "member_description": "A new member",
             "member_type": "user"
         }
@@ -252,7 +252,7 @@ class TestGroupMember:
 
         member_data = {
             "member_id": f"agent-{unique_id}",
-            "member_name": f"Test Agent {unique_id}",
+            "member_name": f"Test_Agent_{unique_id}",
             "member_description": "A test agent",
             "member_type": "worker-agent",
             "member_interface": json.dumps(agent_interface)
@@ -289,7 +289,7 @@ class TestGroupMember:
     def test_update_member(self, api_client: requests.Session, server_url: str, test_group: dict, test_member: dict):
         """Test updating a member."""
         update_data = {
-            "member_name": f"Updated {test_member['member_name']}",
+            "member_name": f"Updated_{test_member['member_name']}",
             "member_status": "idle"
         }
 
@@ -308,7 +308,7 @@ class TestGroupMember:
         # Add a member to remove
         member_data = {
             "member_id": f"leave-user-{unique_id}",
-            "member_name": f"Leave User {unique_id}",
+            "member_name": f"Leave_User_{unique_id}",
             "member_type": "user"
         }
         response = api_client.post(
@@ -523,7 +523,7 @@ class TestEndToEndFlow:
         # 2. Add human user
         user_data = {
             "member_id": f"human-{unique_id}",
-            "member_name": f"Human {unique_id}",
+            "member_name": f"Human_{unique_id}",
             "member_type": "user"
         }
         response = api_client.post(
@@ -542,7 +542,7 @@ class TestEndToEndFlow:
         }
         agent_data = {
             "member_id": f"agent-{unique_id}",
-            "member_name": f"Agent {unique_id}",
+            "member_name": f"Agent_{unique_id}",
             "member_type": "worker-agent",
             "member_interface": json.dumps(agent_interface)
         }

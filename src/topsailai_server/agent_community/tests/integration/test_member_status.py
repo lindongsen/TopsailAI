@@ -45,7 +45,7 @@ class TestMemberStatusActiveUpdate:
             host="127.0.0.1",
             port=18081,
             agent_id=f"agent-{unique_id}",
-            agent_name=f"Test Agent {unique_id}",
+            agent_name=f"Test_Agent_{unique_id}",
             auth_token="test-key",
             delay=1.5,  # 1.5s delay to allow polling the processing state
             error_rate=0.0,
@@ -66,7 +66,7 @@ class TestMemberStatusActiveUpdate:
             }
             agent_data = {
                 "member_id": f"agent-{unique_id}",
-                "member_name": f"Test Agent {unique_id}",
+                "member_name": f"Test_Agent_{unique_id}",
                 "member_description": "A test agent for status transitions",
                 "member_type": "worker-agent",
                 "member_interface": json.dumps(agent_interface),
@@ -80,7 +80,7 @@ class TestMemberStatusActiveUpdate:
             # 3. Add a human user member
             user_data = {
                 "member_id": f"user-{unique_id}",
-                "member_name": f"Test User {unique_id}",
+                "member_name": f"Test_User_{unique_id}",
                 "member_type": "user",
             }
             response = api_client.post(
@@ -171,7 +171,7 @@ class TestMemberStatusActiveUpdate:
             host="127.0.0.1",
             port=18082,
             agent_id=f"fail-agent-{unique_id}",
-            agent_name=f"Fail Agent {unique_id}",
+            agent_name=f"Fail_Agent_{unique_id}",
             auth_token="test-key",
             delay=0.2,
             error_rate=1.0,  # 100% error rate
@@ -192,7 +192,7 @@ class TestMemberStatusActiveUpdate:
             }
             agent_data = {
                 "member_id": f"fail-agent-{unique_id}",
-                "member_name": f"Fail Agent {unique_id}",
+                "member_name": f"Fail_Agent_{unique_id}",
                 "member_description": "An agent that always fails",
                 "member_type": "worker-agent",
                 "member_interface": json.dumps(agent_interface),
@@ -206,7 +206,7 @@ class TestMemberStatusActiveUpdate:
             # 3. Add a human user member
             user_data = {
                 "member_id": f"user-fail-{unique_id}",
-                "member_name": f"Test User {unique_id}",
+                "member_name": f"Test_User_{unique_id}",
                 "member_type": "user",
             }
             response = api_client.post(
@@ -290,7 +290,7 @@ class TestMemberStatusActiveUpdate:
         }
         agent_data = {
             "member_id": f"dead-agent-{unique_id}",
-            "member_name": f"Dead Agent {unique_id}",
+            "member_name": f"Dead_Agent_{unique_id}",
             "member_description": "An agent with no running server",
             "member_type": "worker-agent",
             "member_interface": json.dumps(agent_interface),
@@ -304,7 +304,7 @@ class TestMemberStatusActiveUpdate:
         # 2. Add a human user member
         user_data = {
             "member_id": f"user-dead-{unique_id}",
-            "member_name": f"Test User {unique_id}",
+            "member_name": f"Test_User_{unique_id}",
             "member_type": "user",
         }
         response = api_client.post(

@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,9 @@ import (
 	"github.com/topsailai/agent-community/pkg/logger"
 	"gorm.io/gorm"
 )
+
+// memberNameRegex validates that member_name contains only alphanumeric characters, hyphens, and underscores.
+var memberNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // GroupMemberHandler handles group member-related HTTP requests.
 type GroupMemberHandler struct {
@@ -94,6 +98,12 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.log.Warn("api", traceID, "invalid join group request", "error", err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate member_name
+	if !memberNameRegex.MatchString(req.MemberName) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid member_name: must contain only alphanumeric characters, hyphens, and underscores"})
 		return
 	}
 
@@ -250,6 +260,12 @@ func (h *GroupMemberHandler) UpdateMember(c *gin.Context) {
 		}
 		h.log.Error("api", traceID, "failed to get member", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update member"})
+		return
+	}
+
+	// Validate member_name if provided
+	if req.MemberName != "" && !memberNameRegex.MatchString(req.MemberName) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid member_name: must contain only alphanumeric characters, hyphens, and underscores"})
 		return
 	}
 

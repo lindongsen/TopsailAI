@@ -261,7 +261,7 @@ For agent members:
 ```json
 {
   "member_id": "agent-001",
-  "member_name": "Research Agent",
+  "member_name": "Research_Agent",
   "member_description": "AI research assistant",
   "member_type": "worker-agent",
   "member_interface": {
@@ -345,7 +345,7 @@ Update member information.
 **Request Body:**
 ```json
 {
-  "member_name": "Alice Updated",
+  "member_name": "Alice_Updated",
   "member_description": "Updated description",
   "member_status": "idle",
   "member_interface": {}
@@ -358,7 +358,7 @@ Update member information.
   "data": {
     "group_id": "550e8400-e29b-41d4-a716-446655440000",
     "member_id": "user-001",
-    "member_name": "Alice Updated",
+    "member_name": "Alice_Updated",
     "member_description": "Updated description",
     "member_status": "idle",
     "member_type": "user",
@@ -440,7 +440,7 @@ Send a message to a group. Mentions in the message text (e.g., `@agent-001`, `@a
     "mentions": [
       {
         "member_id": "agent-001",
-        "member_name": "Research Agent",
+        "member_name": "Research_Agent",
         "member_type": "worker-agent"
       }
     ],
@@ -486,7 +486,7 @@ GET /api/v1/groups/550e8400-e29b-41d4-a716-446655440000/messages?processed_msg_i
         "mentions": [
           {
             "member_id": "agent-001",
-            "member_name": "Research Agent",
+            "member_name": "Research_Agent",
             "member_type": "worker-agent"
           }
         ],
@@ -710,7 +710,7 @@ Published to: `{ACS_NATS_SUBJECT_GROUP_PENDING_MESSAGE_PREFIX}.{group_id}`
   "mentions": [
     {
       "member_id": "agent-001",
-      "member_name": "Research Agent",
+      "member_name": "Research_Agent",
       "member_type": "worker-agent"
     }
   ],

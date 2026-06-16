@@ -37,7 +37,7 @@ Ensure the group has at least one user and one agent.
       },
       {
         "member_id": "research-agent-001",
-        "member_name": "Research Assistant",
+        "member_name": "Research_Assistant",
         "member_type": "worker-agent",
         "member_interface": {
           "adaptor": "topsailai_agent",
@@ -81,7 +81,7 @@ Alice sends a message mentioning the research agent.
     "mentions": [
       {
         "member_id": "research-agent-001",
-        "member_name": "Research Assistant",
+        "member_name": "Research_Assistant",
         "member_type": "worker-agent"
       }
     ],
@@ -159,7 +159,7 @@ Alice is subscribed to the group via NATS and sees the agent response in real-ti
 
 ```
 [2024-01-01 00:01:40] alice (user): @research-agent-001 Can you summarize the key findings from the transformer paper?
-[2024-01-01 00:01:50] Research Assistant (worker-agent): Based on the transformer paper, the key findings are: 1) Self-attention mechanism allows parallel processing...
+[2024-01-01 00:01:50] Research_Assistant (worker-agent): Based on the transformer paper, the key findings are: 1) Self-attention mechanism allows parallel processing...
 ```
 
 ---

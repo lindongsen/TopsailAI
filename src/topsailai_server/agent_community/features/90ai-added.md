@@ -440,4 +440,13 @@ Implemented NATS-based service discovery and Service-Leader election for the AI-
 ## Build Status
 
 - `go build ./...` - PASS
-- `go test ./internal/discovery/...` - PASS (8/8 tests)
+- `go test ./internal/discovery/...` - PASS (8/8 tests)# Features Added by AI
+
+## 1. CLI Tab Auto-Completion
+- **File**: `cmd/cli/completer.go`
+- **Description**: Tab auto-completion for CLI commands in both normal and chat modes.
+
+## 2. CLI `@` Mention Auto-Completion
+- **Files**: `cmd/cli/completer.go`, `cmd/cli/chat.go`, `cmd/cli/completer_test.go`
+- **Description**: After entering a group chat (`/group:enter`), typing `@` triggers auto-completion for member names. Supports case-insensitive prefix filtering, deduplication, and `@all` suggestion. Slash commands continue to work normally.
+- **Tests**: 12 unit tests in `completer_test.go`

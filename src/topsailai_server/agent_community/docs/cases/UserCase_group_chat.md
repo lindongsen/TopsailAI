@@ -83,7 +83,7 @@ A research agent joins the group.
 ```json
 {
   "member_id": "research-agent-001",
-  "member_name": "Research Assistant",
+  "member_name": "Research_Assistant",
   "member_description": "AI research assistant agent",
   "member_type": "worker-agent",
   "member_interface": {
@@ -125,7 +125,7 @@ A research agent joins the group.
       {
         "group_id": "550e8400-e29b-41d4-a716-446655440000",
         "member_id": "research-agent-001",
-        "member_name": "Research Assistant",
+        "member_name": "Research_Assistant",
         "member_status": "online",
         "member_type": "worker-agent"
       }

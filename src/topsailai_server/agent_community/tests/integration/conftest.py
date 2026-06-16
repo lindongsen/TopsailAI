@@ -100,7 +100,7 @@ def test_member(api_client: requests.Session, server_url: str, test_group: dict,
     """Create a test user member in the test group."""
     member_data = {
         "member_id": f"user-{unique_id}",
-        "member_name": f"Test User {unique_id}",
+        "member_name": f"Test_User_{unique_id}",
         "member_description": "A test user",
         "member_type": "user"
     }
@@ -135,7 +135,7 @@ def test_agent_member(api_client: requests.Session, server_url: str, test_group:
 
     member_data = {
         "member_id": f"agent-{unique_id}",
-        "member_name": f"Test Agent {unique_id}",
+        "member_name": f"Test_Agent_{unique_id}",
         "member_description": "A test agent",
         "member_type": "worker-agent",
         "member_interface": json.dumps(agent_interface)
@@ -171,7 +171,7 @@ def test_manager_agent(api_client: requests.Session, server_url: str, test_group
 
     member_data = {
         "member_id": f"manager-{unique_id}",
-        "member_name": f"Manager Agent {unique_id}",
+        "member_name": f"Manager_Agent_{unique_id}",
         "member_description": "A manager agent",
         "member_type": "manager-agent",
         "member_interface": json.dumps(agent_interface)

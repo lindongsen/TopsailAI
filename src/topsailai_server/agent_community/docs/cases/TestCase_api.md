@@ -206,7 +206,7 @@ This document describes test scenarios for all REST API endpoints of the AI-Agen
 | Field | Value |
 |-------|-------|
 | **Endpoint** | PUT /api/v1/groups/{group_id}/members/{member_id} |
-| **Input** | `{"member_name": "Updated Name", "member_status": "idle"}` |
+| **Input** | `{"member_name": "Updated_Name", "member_status": "idle"}` |
 | **Expected Output** | Status: 200, Body contains updated member data |
 | **Pass Criteria** | Member information is updated |
 

@@ -225,7 +225,7 @@ def main():
     # C-017: Join as User
     run_test(
         "MANUAL-API-017", "Join Group as User", 201, "POST", f"/api/v1/groups/{group_id}/members",
-        json={"member_id": "manual-user-001", "member_name": "Manual Tester", "member_description": "A human tester", "member_type": "user"}
+        json={"member_id": "manual-user-001", "member_name": "Manual_Tester", "member_description": "A human tester", "member_type": "user"}
     )
 
     # C-018: Join as Worker-Agent
@@ -233,7 +233,7 @@ def main():
         "MANUAL-API-018", "Join Group as Worker-Agent", 201, "POST", f"/api/v1/groups/{group_id}/members",
         json={
             "member_id": "manual-agent-001",
-            "member_name": "Test Worker Agent",
+            "member_name": "Test_Worker_Agent",
             "member_description": "A test worker agent",
             "member_type": "worker-agent",
             "member_interface": json.dumps({
@@ -249,7 +249,7 @@ def main():
         "MANUAL-API-019", "Join Group as Manager-Agent", 201, "POST", f"/api/v1/groups/{group_id}/members",
         json={
             "member_id": "manual-manager-001",
-            "member_name": "Test Manager",
+            "member_name": "Test_Manager",
             "member_description": "Group coordinator",
             "member_type": "manager-agent",
             "member_interface": json.dumps({
@@ -277,9 +277,9 @@ def main():
 
     # C-023: Update Member
     run_test_body_check(
-        "MANUAL-API-023", "Update Member Status", 200, "Updated Tester", "PUT",
+        "MANUAL-API-023", "Update Member Status", 200, "Updated_Tester", "PUT",
         f"/api/v1/groups/{group_id}/members/manual-user-001",
-        json={"member_name": "Updated Tester", "member_status": "idle"}
+        json={"member_name": "Updated_Tester", "member_status": "idle"}
     )
 
     # =====================================================================
@@ -486,7 +486,7 @@ def main():
     def join_member(i: int):
         return session.post(
             f"{API_BASE}/api/v1/groups/{group_id}/members",
-            json={"member_id": f"concurrent-user-{i}", "member_name": f"User {i}", "member_type": "user"},
+            json={"member_id": f"concurrent-user-{i}", "member_name": f"User_{i}", "member_type": "user"},
             timeout=10
         )
 
