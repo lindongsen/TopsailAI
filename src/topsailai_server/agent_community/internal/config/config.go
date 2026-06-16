@@ -4,6 +4,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -29,8 +31,9 @@ type ServerConfig struct {
 	WriteTimeout time.Duration `mapstructure:"write_timeout"`
 }
 
-// DatabaseConfig holds PostgreSQL connection settings.
+// DatabaseConfig holds database connection settings.
 type DatabaseConfig struct {
+	Driver   string `mapstructure:"driver"`
 	Host     string `mapstructure:"host"`
 	Port     int    `mapstructure:"port"`
 	User     string `mapstructure:"user"`
@@ -102,16 +105,20 @@ func Load() (*Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
+	// Check if database.name was explicitly set before applying defaults.
+	nameExplicitlySet := v.IsSet("database.name")
+
 	// Server defaults
 	v.SetDefault("server.port", 7370)
 	v.SetDefault("server.read_timeout", "30s")
 	v.SetDefault("server.write_timeout", "30s")
 	// Database defaults
+	v.SetDefault("database.driver", "postgres")
 	v.SetDefault("database.host", "localhost")
 	v.SetDefault("database.port", 5432)
 	v.SetDefault("database.user", "acs")
 	v.SetDefault("database.password", "acs")
-	v.SetDefault("database.name", "acs")
+	// Note: database.name default is handled after Unmarshal based on driver.
 	v.SetDefault("database.sslmode", "disable")
 
 	// NATS defaults
@@ -161,6 +168,22 @@ func Load() (*Config, error) {
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Apply database.name default based on driver when not explicitly set.
+	if !nameExplicitlySet || cfg.Database.Name == "" {
+		if cfg.Database.Driver == "sqlite" {
+			home := os.Getenv("ACS_HOME")
+			if home == "" {
+				home = os.Getenv("TOPSAILAI_HOME")
+			}
+			if home == "" {
+				home = "/topsailai"
+			}
+			cfg.Database.Name = filepath.Join(home, "agent_community.db")
+		} else {
+			cfg.Database.Name = "acs"
+		}
 	}
 
 	return &cfg, nil

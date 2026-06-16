@@ -4,6 +4,8 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -12,6 +14,7 @@ import (
 	"github.com/topsailai/agent-community/pkg/logger"
 
 	"gorm.io/driver/postgres"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
@@ -24,15 +27,25 @@ type DB struct {
 // New initializes the database connection, auto-creates the database if needed,
 // and auto-migrates all table structures.
 func New(cfg *config.Config) (*DB, error) {
-	// Attempt to create database if it does not exist.
-	if err := ensureDatabaseExists(cfg.Database); err != nil {
-		logger.Warn("failed to ensure database exists, continuing anyway", "error", err.Error())
-	}
+	var conn *gorm.DB
+	var err error
 
-	// Open connection to the target database.
-	conn, err := openConnection(cfg.Database)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database connection: %w", err)
+	if cfg.Database.Driver == "sqlite" {
+		// SQLite: open file directly, no need to create database.
+		conn, err = openSQLiteConnection(cfg.Database)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open sqlite database: %w", err)
+		}
+	} else {
+		// PostgreSQL: attempt to create database if it does not exist.
+		if err := ensureDatabaseExists(cfg.Database); err != nil {
+			logger.Warn("failed to ensure database exists, continuing anyway", "error", err.Error())
+		}
+
+		conn, err = openConnection(cfg.Database)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open database connection: %w", err)
+		}
 	}
 
 	sqlDB, err := conn.DB()
@@ -99,7 +112,7 @@ func ensureDatabaseExists(cfg config.DatabaseConfig) error {
 	return nil
 }
 
-// openConnection opens a GORM connection to the target database.
+// openConnection opens a GORM connection to the target PostgreSQL database.
 func openConnection(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	return gorm.Open(postgres.Open(cfg.DSN()), &gorm.Config{
 		NamingStrategy: schema.NamingStrategy{
@@ -108,8 +121,27 @@ func openConnection(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	})
 }
 
+// openSQLiteConnection opens a GORM connection to a SQLite database.
+func openSQLiteConnection(cfg config.DatabaseConfig) (*gorm.DB, error) {
+	// Ensure parent directory exists.
+	dir := filepath.Dir(cfg.Name)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create directory for sqlite database: %w", err)
+		}
+	}
+	return gorm.Open(sqlite.Open(cfg.Name), &gorm.Config{
+		NamingStrategy: schema.NamingStrategy{
+			SingularTable: true,
+		},
+	})
+}
+
 // openRawDB opens a raw *sql.DB connection for use with golang-migrate.
 func openRawDB(cfg config.DatabaseConfig) (*sql.DB, error) {
+	if cfg.Driver == "sqlite" {
+		return sql.Open("sqlite3", cfg.Name)
+	}
 	dsn := cfg.DSN()
 	return sql.Open("postgres", dsn)
 }

@@ -60,6 +60,13 @@ export SESSION_ID="${ACS_GROUP_ID:-}"
 export SYSTEM_PROMPT="${ACS_AGENT_PROMPT:-}"
 export TOPSAILAI_USER_MESSAGE="${ACS_AGENT_MESSAGE:-}"
 
+# Add Skills
+_SKILL_FOLDER=$(dirname "${EXE_FOLDER}")
+_SKILL_FOLDER=$(dirname "${_SKILL_FOLDER}")
+_SKILL_FOLDER="${_SKILL_FOLDER}/skills"
+TOPSAILAI_PLUGIN_SKILLS="${_SKILL_FOLDER};${TOPSAILAI_PLUGIN_SKILLS:-}"
+export TOPSAILAI_PLUGIN_SKILLS
+
 # Validate required parameters
 if [[ -z "$SESSION_ID" ]]; then
     echo "Error: SESSION_ID is required but not set (check ACS_GROUP_ID)" >&2
