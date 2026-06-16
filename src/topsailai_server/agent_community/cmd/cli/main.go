@@ -86,7 +86,7 @@ func run() error {
 
 	// Main command loop.
 	for state.running {
-		line, err := rl.Readline()
+		line, err := state.rl.Readline()
 		if err != nil {
 			// EOF or interrupt.
 			break

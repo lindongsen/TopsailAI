@@ -217,7 +217,10 @@ func handleGroupEnter(args []string, state *CLIState) error {
 	err := state.chatMode.EnterChat(groupID, state.userID, state.userName)
 
 	// Recreate main readline after chat mode exits.
-	rl, rerr := readline.New(ps1Normal(state.userName))
+	rl, rerr := readline.NewEx(&readline.Config{
+		Prompt:       ps1Normal(state.userName),
+		AutoComplete: newNormalCompleter(),
+	})
 	if rerr != nil {
 		state.running = false
 		return fmt.Errorf("failed to recreate readline: %w", rerr)
