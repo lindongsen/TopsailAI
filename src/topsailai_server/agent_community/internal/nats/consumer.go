@@ -196,7 +196,7 @@ func (c *Consumer) processAgentTarget(
 		iface.ApplyManagerDefaults(
 			agent.GetEnvOrDefault("ACS_GROUP_MANAGER_AGENT_API_BASE", ""),
 			agent.GetEnvOrDefault("ACS_GROUP_MANAGER_AGENT_API_KEY", ""),
-			agent.GetEnvOrDefault("ACS_GROUP_MANAGER_AGENT_API_AUTH", "BearerToken"),
+			agent.GetEnvOrDefault("ACS_GROUP_MANAGER_AGENT_API_AUTH", "bearer"),
 		)
 	}
 

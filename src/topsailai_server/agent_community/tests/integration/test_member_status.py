@@ -60,7 +60,7 @@ class TestMemberStatusActiveUpdate:
                 "environments": {
                     "ACS_AGENT_API_BASE": "http://127.0.0.1:18081",
                     "ACS_AGENT_API_KEY": "test-key",
-                    "ACS_AGENT_API_AUTH": "BearerToken",
+                    "ACS_AGENT_API_AUTH": "bearer",
                 },
                 "timeout_chat": 30,
             }
@@ -186,7 +186,7 @@ class TestMemberStatusActiveUpdate:
                 "environments": {
                     "ACS_AGENT_API_BASE": "http://127.0.0.1:18082",
                     "ACS_AGENT_API_KEY": "test-key",
-                    "ACS_AGENT_API_AUTH": "BearerToken",
+                    "ACS_AGENT_API_AUTH": "bearer",
                 },
                 "timeout_chat": 30,
             }
@@ -283,7 +283,7 @@ class TestMemberStatusActiveUpdate:
             "environments": {
                 "ACS_AGENT_API_BASE": f"http://127.0.0.1:{dead_port}",
                 "ACS_AGENT_API_KEY": "test-key",
-                "ACS_AGENT_API_AUTH": "BearerToken",
+                "ACS_AGENT_API_AUTH": "bearer",
             },
             "timeout_chat": 5,
             "timeout_check_health": 1,

@@ -121,7 +121,7 @@ func Load() (*Config, error) {
 	// Agent defaults
 	v.SetDefault("agent.manager_api_base", "")
 	v.SetDefault("agent.manager_api_key", "")
-	v.SetDefault("agent.manager_api_auth", "BearerToken")
+	v.SetDefault("agent.manager_api_auth", "bearer")
 	v.SetDefault("agent.auto_trigger_timeout", "10m")
 	v.SetDefault("agent.agent_prompt", "")
 

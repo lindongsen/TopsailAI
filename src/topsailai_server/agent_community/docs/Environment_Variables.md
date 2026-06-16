@@ -59,7 +59,7 @@ All environment variables used by ACS are prefixed with `ACS_`.
 |----------|---------|-------------|
 | `ACS_GROUP_MANAGER_AGENT_API_BASE` | - | Default API base URL for manager-agents |
 | `ACS_GROUP_MANAGER_AGENT_API_KEY` | - | Default API key for manager-agents |
-| `ACS_GROUP_MANAGER_AGENT_API_AUTH` | `BearerToken` | Default authentication method for manager-agents |
+| `ACS_GROUP_MANAGER_AGENT_API_AUTH` | `bearer` | Default authentication method for manager-agents |
 | `ACS_AGENT_MAX_CHAIN_LENGTH` | `5` | Maximum number of consecutive agent responses to prevent infinite loops |
 | `ACS_AGENT_CHECK_HEALTH_TIMEOUT_SECONDS` | `5` | Timeout for agent health checks |
 | `ACS_AGENT_CHECK_STATUS_TIMEOUT_SECONDS` | `5` | Timeout for agent status checks |
@@ -163,7 +163,7 @@ ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX=acs.group.message
 # Agent
 ACS_GROUP_MANAGER_AGENT_API_BASE=http://127.0.0.1:7373
 ACS_GROUP_MANAGER_AGENT_API_KEY=I-Love-Dawson
-ACS_GROUP_MANAGER_AGENT_API_AUTH=BearerToken
+ACS_GROUP_MANAGER_AGENT_API_AUTH=bearer
 
 # WorkPool
 ACS_AGENT_WORK_POOL_SIZE=10

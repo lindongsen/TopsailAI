@@ -3,7 +3,7 @@
 
 API_BASE="${ACS_AGENT_API_BASE:-http://127.0.0.1:18080}"
 API_KEY="${ACS_AGENT_API_KEY:-}"
-API_AUTH="${ACS_AGENT_API_AUTH:-BearerToken}"
+API_AUTH="${ACS_AGENT_API_AUTH:-bearer}"
 
 AUTH_HEADER=""
 if [ -n "$API_KEY" ]; then

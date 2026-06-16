@@ -734,7 +734,7 @@ The `member_interface` field for agent members is a JSON object:
   "environments": {
     "ACS_AGENT_API_BASE": "http://172.18.0.4:7373",
     "ACS_AGENT_API_KEY": "secret-key",
-    "ACS_AGENT_API_AUTH": "BearerToken"
+    "ACS_AGENT_API_AUTH": "bearer"
   },
   "timeout_check_health": 5,
   "timeout_check_status": 5,

@@ -128,7 +128,7 @@ def test_agent_member(api_client: requests.Session, server_url: str, test_group:
         "environments": {
             "ACS_AGENT_API_BASE": f"http://{TEST_SERVER_HOST}:{TEST_SERVER_PORT}",
             "ACS_AGENT_API_KEY": "test-key",
-            "ACS_AGENT_API_AUTH": "BearerToken"
+            "ACS_AGENT_API_AUTH": "bearer"
         },
         "timeout_chat": 30
     }
@@ -164,7 +164,7 @@ def test_manager_agent(api_client: requests.Session, server_url: str, test_group
         "environments": {
             "ACS_AGENT_API_BASE": f"http://{TEST_SERVER_HOST}:{TEST_SERVER_PORT}",
             "ACS_AGENT_API_KEY": "test-key",
-            "ACS_AGENT_API_AUTH": "BearerToken"
+            "ACS_AGENT_API_AUTH": "bearer"
         },
         "timeout_chat": 30
     }

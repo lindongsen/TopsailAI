@@ -50,7 +50,7 @@ func TestParseInterfaceFull(t *testing.T) {
 		"environments": {
 			"ACS_AGENT_API_BASE": "http://172.18.0.4:7373",
 			"ACS_AGENT_API_KEY": "I-Love-Dawson",
-			"ACS_AGENT_API_AUTH": "BearerToken"
+			"ACS_AGENT_API_AUTH": "bearer"
 		},
 		"timeout_check_health": 10,
 		"timeout_check_status": 15,
@@ -143,7 +143,7 @@ func TestApplyManagerDefaults(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	iface.ApplyManagerDefaults("http://manager.local:9090", "manager-key", "BearerToken")
+	iface.ApplyManagerDefaults("http://manager.local:9090", "manager-key", "bearer")
 
 	// Existing value should not be overwritten
 	if iface.Environments["ACS_AGENT_API_BASE"] != "http://agent.local:8080" {
@@ -154,8 +154,8 @@ func TestApplyManagerDefaults(t *testing.T) {
 	if iface.Environments["ACS_AGENT_API_KEY"] != "manager-key" {
 		t.Errorf("api_key = %v, want manager-key", iface.Environments["ACS_AGENT_API_KEY"])
 	}
-	if iface.Environments["ACS_AGENT_API_AUTH"] != "BearerToken" {
-		t.Errorf("api_auth = %v, want BearerToken", iface.Environments["ACS_AGENT_API_AUTH"])
+	if iface.Environments["ACS_AGENT_API_AUTH"] != "bearer" {
+		t.Errorf("api_auth = %v, want bearer", iface.Environments["ACS_AGENT_API_AUTH"])
 	}
 }
 
