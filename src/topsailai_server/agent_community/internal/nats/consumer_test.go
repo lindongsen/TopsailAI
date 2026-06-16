@@ -2,13 +2,17 @@
 package nats
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/topsailai/agent-community/internal/agent"
+	"github.com/topsailai/agent-community/internal/config"
 	"github.com/topsailai/agent-community/internal/models"
+	"github.com/topsailai/agent-community/internal/trigger"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -57,6 +61,38 @@ func createTestAgentMember(t *testing.T, db *gorm.DB, groupID, memberID, iface s
 	err := db.Create(member).Error
 	require.NoError(t, err)
 	return member
+}
+
+// createTestUserMember creates a test user member in the database.
+func createTestUserMember(t *testing.T, db *gorm.DB, groupID, memberID string) *models.GroupMember {
+	member := &models.GroupMember{
+		GroupID:      groupID,
+		MemberID:     memberID,
+		MemberName:   "Test User " + memberID,
+		MemberType:   models.MemberTypeUser,
+		MemberStatus: models.MemberStatusOnline,
+		CreateAtMs:   time.Now().UnixMilli(),
+		UpdateAtMs:   time.Now().UnixMilli(),
+	}
+	err := db.Create(member).Error
+	require.NoError(t, err)
+	return member
+}
+
+// createTestPendingMessage creates a test pending message in the database.
+func createTestPendingMessage(t *testing.T, db *gorm.DB, groupID, messageID, senderID string) *models.GroupMessage {
+	msg := &models.GroupMessage{
+		GroupID:     groupID,
+		MessageID:   messageID,
+		MessageText: "test message",
+		SenderID:    senderID,
+		SenderType:  models.MemberTypeUser,
+		CreateAtMs:  time.Now().UnixMilli(),
+		UpdateAtMs:  time.Now().UnixMilli(),
+	}
+	err := db.Create(msg).Error
+	require.NoError(t, err)
+	return msg
 }
 
 // TestUpdateMemberStatusToProcessing verifies status is updated to processing.
@@ -190,4 +226,267 @@ func TestUpdateMemberStatusMultipleTransitions(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, status, updated.MemberStatus, fmt.Sprintf("transition %d status mismatch", i))
 	}
+}
+
+// mockPublisherForConsumer records published events for verification.
+type mockPublisherForConsumer struct {
+	PublishGroupMemberModifyCalled bool
+	LastPublishedMember            *models.GroupMember
+	PublishedMembers               []*models.GroupMember
+	PublishShouldErr               error
+}
+
+func (m *mockPublisherForConsumer) PublishPendingMessageWithAgentID(groupID string, msg *models.GroupMessage, trigger interface{}, agentID string) error {
+	return nil
+}
+
+func (m *mockPublisherForConsumer) PublishMessageCreate(msg *models.GroupMessage) error {
+	return nil
+}
+
+func (m *mockPublisherForConsumer) PublishMessageModify(msg *models.GroupMessage) error {
+	return nil
+}
+
+func (m *mockPublisherForConsumer) PublishMessageDelete(msg *models.GroupMessage) error {
+	return nil
+}
+
+func (m *mockPublisherForConsumer) PublishGroupCreate(group *models.Group) error {
+	return nil
+}
+
+func (m *mockPublisherForConsumer) PublishGroupModify(group *models.Group) error {
+	return nil
+}
+
+func (m *mockPublisherForConsumer) PublishGroupDelete(groupID string) error {
+	return nil
+}
+
+func (m *mockPublisherForConsumer) PublishGroupMemberCreate(member *models.GroupMember) error {
+	return nil
+}
+
+func (m *mockPublisherForConsumer) PublishGroupMemberModify(member *models.GroupMember) error {
+	m.PublishGroupMemberModifyCalled = true
+	m.LastPublishedMember = member
+	// Clone the member to preserve state at the time of publication.
+	clone := *member
+	m.PublishedMembers = append(m.PublishedMembers, &clone)
+	return m.PublishShouldErr
+}
+
+func (m *mockPublisherForConsumer) PublishGroupMemberDelete(groupID, memberID string) error {
+	return nil
+}
+
+func (m *mockPublisherForConsumer) PublishAgentResponse(msg *models.GroupMessage) error {
+	return nil
+}
+
+func (m *mockPublisherForConsumer) PublishSystemError(msg *models.GroupMessage) error {
+	return nil
+}
+
+func (m *mockPublisherForConsumer) PublishAutoTriggerPendingMessage(groupID string, msg *models.GroupMessage, trigger interface{}) error {
+	return nil
+}
+
+func (m *mockPublisherForConsumer) PublishHeartbeat(nodeID string) error {
+	return nil
+}
+
+// mockExecutorForConsumer is a test double for agent.Executor.
+type mockExecutorForConsumer struct {
+	CheckHealthCalled bool
+	CheckStatusCalled bool
+	ChatCalled        bool
+	HealthResult      *agent.ExecutionResult
+	HealthErr         error
+	ChatResult        *agent.ExecutionResult
+	ChatErr           error
+}
+
+func (m *mockExecutorForConsumer) CheckHealth(ctx context.Context, iface *agent.Interface, env map[string]string, traceID string) (*agent.ExecutionResult, error) {
+	m.CheckHealthCalled = true
+	if m.HealthResult == nil {
+		return &agent.ExecutionResult{ExitCode: 0}, m.HealthErr
+	}
+	return m.HealthResult, m.HealthErr
+}
+
+func (m *mockExecutorForConsumer) CheckStatus(ctx context.Context, iface *agent.Interface, env map[string]string, traceID string) (*agent.ExecutionResult, error) {
+	m.CheckStatusCalled = true
+	return &agent.ExecutionResult{ExitCode: 0}, nil
+}
+
+func (m *mockExecutorForConsumer) Chat(ctx context.Context, iface *agent.Interface, env map[string]string, traceID string) (*agent.ExecutionResult, error) {
+	m.ChatCalled = true
+	if m.ChatResult == nil {
+		return &agent.ExecutionResult{ExitCode: 0, Stdout: "ok"}, m.ChatErr
+	}
+	return m.ChatResult, m.ChatErr
+}
+
+// testConsumerConfig returns a minimal config for consumer tests.
+func testConsumerConfig() *config.Config {
+	return &config.Config{
+		Agent: config.AgentConfig{
+			AgentPrompt: "test prompt",
+		},
+	}
+}
+
+// TestProcessAgentTarget_HealthCheckFailed_StatusUnchanged verifies that when
+// the agent health check fails, member_status is not updated and no modify
+// event is published.
+func TestProcessAgentTarget_HealthCheckFailed_StatusUnchanged(t *testing.T) {
+	db := setupConsumerTestDB(t)
+	mockPub := &mockPublisherForConsumer{}
+	mockExec := &mockExecutorForConsumer{
+		HealthResult: &agent.ExecutionResult{ExitCode: 1, Stderr: "unhealthy"},
+	}
+	pub := EventPublisher(mockPub)
+	exec := AgentExecutor(mockExec)
+	consumer := NewConsumer(db, pub, exec, nil, testConsumerConfig())
+
+	group := createTestGroup(t, db, "g-health-fail", "Test Group")
+	agent := createTestAgentMember(t, db, group.GroupID, "agent-health-fail", `{"adaptor":"topsailai_agent","environments":{"ACS_AGENT_API_BASE":"http://localhost:1"}}`)
+	user := createTestUserMember(t, db, group.GroupID, "user-health-fail")
+	msg := createTestPendingMessage(t, db, group.GroupID, "msg-health-fail", user.MemberID)
+
+	target := trigger.AgentTarget{AgentID: agent.MemberID, Mode: "agent"}
+	triggerInfo := trigger.TriggerInfo{Type: trigger.TriggerTypeMention, AgentID: agent.MemberID}
+
+	err := consumer.processAgentTarget(context.Background(), group, []models.GroupMember{*agent, *user}, msg, triggerInfo, target, "trace-health-fail")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "health check failed")
+
+	// Status should remain online.
+	var updated models.GroupMember
+	err = db.First(&updated, "group_id = ? AND member_id = ?", group.GroupID, agent.MemberID).Error
+	require.NoError(t, err)
+	assert.Equal(t, models.MemberStatusOnline, updated.MemberStatus)
+
+	// No modify event should be published.
+	assert.False(t, mockPub.PublishGroupMemberModifyCalled)
+	assert.Len(t, mockPub.PublishedMembers, 0)
+}
+
+// TestProcessAgentTarget_DuplicateRunningRecord_StatusUnchanged verifies that
+// when the agent is already processing this message, member_status is not
+// updated and no modify event is published.
+func TestProcessAgentTarget_DuplicateRunningRecord_StatusUnchanged(t *testing.T) {
+	db := setupConsumerTestDB(t)
+	mockPub := &mockPublisherForConsumer{}
+	mockExec := &mockExecutorForConsumer{
+		HealthResult: &agent.ExecutionResult{ExitCode: 0},
+	}
+	pub := EventPublisher(mockPub)
+	exec := AgentExecutor(mockExec)
+	consumer := NewConsumer(db, pub, exec, nil, testConsumerConfig())
+
+	group := createTestGroup(t, db, "g-dup", "Test Group")
+	agent := createTestAgentMember(t, db, group.GroupID, "agent-dup", `{"adaptor":"topsailai_agent","environments":{"ACS_AGENT_API_BASE":"http://localhost:1"}}`)
+	user := createTestUserMember(t, db, group.GroupID, "user-dup")
+	msg := createTestPendingMessage(t, db, group.GroupID, "msg-dup", user.MemberID)
+
+	// Pre-create a running record to simulate duplicate execution.
+	running := &models.AgentMessageProcessing{
+		GroupID:   group.GroupID,
+		MessageID: msg.MessageID,
+		AgentID:   agent.MemberID,
+		Status:    models.ProcessingStatusRunning,
+		CreateAtMs: time.Now().UnixMilli(),
+		UpdateAtMs: time.Now().UnixMilli(),
+	}
+	err := db.Create(running).Error
+	require.NoError(t, err)
+
+	target := trigger.AgentTarget{AgentID: agent.MemberID, Mode: "agent"}
+	triggerInfo := trigger.TriggerInfo{Type: trigger.TriggerTypeMention, AgentID: agent.MemberID}
+
+	err = consumer.processAgentTarget(context.Background(), group, []models.GroupMember{*agent, *user}, msg, triggerInfo, target, "trace-dup")
+	require.NoError(t, err)
+
+	// Status should remain online because the agent was already running.
+	var updated models.GroupMember
+	err = db.First(&updated, "group_id = ? AND member_id = ?", group.GroupID, agent.MemberID).Error
+	require.NoError(t, err)
+	assert.Equal(t, models.MemberStatusOnline, updated.MemberStatus)
+
+	// No modify event should be published.
+	assert.False(t, mockPub.PublishGroupMemberModifyCalled)
+	assert.Len(t, mockPub.PublishedMembers, 0)
+}
+
+// TestProcessAgentTarget_Success_PublishesProcessingAndIdle verifies that on
+// successful execution, member_status transitions processing -> idle and both
+// modify events carry the correct member_status value.
+func TestProcessAgentTarget_Success_PublishesProcessingAndIdle(t *testing.T) {
+	db := setupConsumerTestDB(t)
+	mockPub := &mockPublisherForConsumer{}
+	mockExec := &mockExecutorForConsumer{
+		HealthResult: &agent.ExecutionResult{ExitCode: 0},
+		ChatResult:   &agent.ExecutionResult{ExitCode: 0, Stdout: "agent response"},
+	}
+	pub := EventPublisher(mockPub)
+	exec := AgentExecutor(mockExec)
+	consumer := NewConsumer(db, pub, exec, nil, testConsumerConfig())
+
+	group := createTestGroup(t, db, "g-success", "Test Group")
+	agent := createTestAgentMember(t, db, group.GroupID, "agent-success", `{"adaptor":"topsailai_agent","environments":{"ACS_AGENT_API_BASE":"http://localhost:1"}}`)
+	user := createTestUserMember(t, db, group.GroupID, "user-success")
+	msg := createTestPendingMessage(t, db, group.GroupID, "msg-success", user.MemberID)
+
+	target := trigger.AgentTarget{AgentID: agent.MemberID, Mode: "agent"}
+	triggerInfo := trigger.TriggerInfo{Type: trigger.TriggerTypeMention, AgentID: agent.MemberID}
+
+	err := consumer.processAgentTarget(context.Background(), group, []models.GroupMember{*agent, *user}, msg, triggerInfo, target, "trace-success")
+	require.NoError(t, err)
+
+	// Final DB status should be idle.
+	var updated models.GroupMember
+	err = db.First(&updated, "group_id = ? AND member_id = ?", group.GroupID, agent.MemberID).Error
+	require.NoError(t, err)
+	assert.Equal(t, models.MemberStatusIdle, updated.MemberStatus)
+
+	// Two modify events should be published: processing then idle.
+	require.Len(t, mockPub.PublishedMembers, 2)
+	assert.Equal(t, models.MemberStatusProcessing, mockPub.PublishedMembers[0].MemberStatus)
+	assert.Equal(t, models.MemberStatusIdle, mockPub.PublishedMembers[1].MemberStatus)
+	assert.Equal(t, agent.MemberID, mockPub.PublishedMembers[0].MemberID)
+	assert.Equal(t, agent.MemberID, mockPub.PublishedMembers[1].MemberID)
+}
+
+// TestProcessAgentTarget_PublishModifyErrorDoesNotFailExecution verifies that a
+// failure to publish the modify event does not fail the agent execution.
+func TestProcessAgentTarget_PublishModifyErrorDoesNotFailExecution(t *testing.T) {
+	db := setupConsumerTestDB(t)
+	mockPub := &mockPublisherForConsumer{PublishShouldErr: fmt.Errorf("publish error")}
+	mockExec := &mockExecutorForConsumer{
+		HealthResult: &agent.ExecutionResult{ExitCode: 0},
+		ChatResult:   &agent.ExecutionResult{ExitCode: 0, Stdout: "agent response"},
+	}
+	pub := EventPublisher(mockPub)
+	exec := AgentExecutor(mockExec)
+	consumer := NewConsumer(db, pub, exec, nil, testConsumerConfig())
+
+	group := createTestGroup(t, db, "g-pub-err", "Test Group")
+	agent := createTestAgentMember(t, db, group.GroupID, "agent-pub-err", `{"adaptor":"topsailai_agent","environments":{"ACS_AGENT_API_BASE":"http://localhost:1"}}`)
+	user := createTestUserMember(t, db, group.GroupID, "user-pub-err")
+	msg := createTestPendingMessage(t, db, group.GroupID, "msg-pub-err", user.MemberID)
+
+	target := trigger.AgentTarget{AgentID: agent.MemberID, Mode: "agent"}
+	triggerInfo := trigger.TriggerInfo{Type: trigger.TriggerTypeMention, AgentID: agent.MemberID}
+
+	err := consumer.processAgentTarget(context.Background(), group, []models.GroupMember{*agent, *user}, msg, triggerInfo, target, "trace-pub-err")
+	require.NoError(t, err)
+
+	// Final DB status should still be idle.
+	var updated models.GroupMember
+	err = db.First(&updated, "group_id = ? AND member_id = ?", group.GroupID, agent.MemberID).Error
+	require.NoError(t, err)
+	assert.Equal(t, models.MemberStatusIdle, updated.MemberStatus)
 }

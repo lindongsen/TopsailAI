@@ -22,11 +22,36 @@ import (
 
 const consumerModule = "consumer"
 
+// EventPublisher publishes group and member events to NATS.
+type EventPublisher interface {
+	PublishPendingMessageWithAgentID(groupID string, msg *models.GroupMessage, trigger interface{}, agentID string) error
+	PublishMessageCreate(msg *models.GroupMessage) error
+	PublishMessageModify(msg *models.GroupMessage) error
+	PublishMessageDelete(msg *models.GroupMessage) error
+	PublishGroupCreate(group *models.Group) error
+	PublishGroupModify(group *models.Group) error
+	PublishGroupDelete(groupID string) error
+	PublishGroupMemberCreate(member *models.GroupMember) error
+	PublishGroupMemberModify(member *models.GroupMember) error
+	PublishGroupMemberDelete(groupID, memberID string) error
+	PublishAgentResponse(msg *models.GroupMessage) error
+	PublishSystemError(msg *models.GroupMessage) error
+	PublishAutoTriggerPendingMessage(groupID string, msg *models.GroupMessage, trigger interface{}) error
+	PublishHeartbeat(nodeID string) error
+}
+
+// AgentExecutor executes agent commands (health, status, chat).
+type AgentExecutor interface {
+	CheckHealth(ctx context.Context, iface *agent.Interface, env map[string]string, traceID string) (*agent.ExecutionResult, error)
+	CheckStatus(ctx context.Context, iface *agent.Interface, env map[string]string, traceID string) (*agent.ExecutionResult, error)
+	Chat(ctx context.Context, iface *agent.Interface, env map[string]string, traceID string) (*agent.ExecutionResult, error)
+}
+
 // Consumer processes pending messages from NATS and dispatches them to agents.
 type Consumer struct {
 	db             *gorm.DB
-	publisher      *Publisher
-	executor       *agent.Executor
+	publisher      EventPublisher
+	executor       AgentExecutor
 	pool           *workpool.Pool
 	contextBuilder *message.ContextBuilder
 	maxChainLength int
@@ -37,8 +62,8 @@ type Consumer struct {
 // NewConsumer creates a new NATS consumer.
 func NewConsumer(
 	db *gorm.DB,
-	publisher *Publisher,
-	executor *agent.Executor,
+	publisher EventPublisher,
+	executor AgentExecutor,
 	pool *workpool.Pool,
 	cfg *config.Config,
 ) *Consumer {
@@ -352,24 +377,6 @@ func (c *Consumer) processAgentTarget(
 		return fmt.Errorf("agent health check failed: %w, exit_code=%d", err, healthResult.ExitCode)
 	}
 
-	// Set member_status to processing before invoking agent
-	if err := c.updateMemberStatus(agentMember.GroupID, agentMember.MemberID, models.MemberStatusProcessing, traceID); err != nil {
-		logger.WarnM(consumerModule, traceID, "failed to set agent status to processing",
-			"agent_id", agentMember.MemberID,
-			"error", err,
-		)
-	}
-
-	// Ensure status is always reset to idle when processing ends
-	defer func() {
-		if err := c.updateMemberStatus(agentMember.GroupID, agentMember.MemberID, models.MemberStatusIdle, traceID); err != nil {
-			logger.WarnM(consumerModule, traceID, "failed to set agent status to idle",
-				"agent_id", agentMember.MemberID,
-				"error", err,
-			)
-		}
-	}()
-
 	// Atomically check if this agent is already processing this message and create a running record.
 	// This prevents race conditions between multiple nodes processing the same pending message.
 	created, err := c.checkAndCreateRunningRecord(group.GroupID, pendingMsg.MessageID, agentMember.MemberID, traceID)
@@ -383,6 +390,54 @@ func (c *Consumer) processAgentTarget(
 		)
 		return nil
 	}
+
+	// Set member_status to processing only after the agent is confirmed healthy and
+	// no duplicate running record exists. This ensures the processing state is visible
+	// for the actual duration of agent work rather than a transient pre-check window.
+	statusSet := false
+	if err := c.updateMemberStatus(agentMember.GroupID, agentMember.MemberID, models.MemberStatusProcessing, traceID); err != nil {
+		logger.WarnM(consumerModule, traceID, "failed to set agent status to processing",
+			"agent_id", agentMember.MemberID,
+			"error", err,
+		)
+	} else {
+		statusSet = true
+		// Sync in-memory status so published events reflect the new DB state.
+		agentMember.MemberStatus = models.MemberStatusProcessing
+		if c.publisher != nil {
+			if err := c.publisher.PublishGroupMemberModify(agentMember); err != nil {
+				logger.WarnM(consumerModule, traceID, "failed to publish member status processing event",
+					"agent_id", agentMember.MemberID,
+					"error", err,
+				)
+			}
+		}
+	}
+
+	// Ensure status is always reset to idle when processing ends, but only if we
+	// successfully transitioned to processing to avoid unnecessary DB writes.
+	defer func() {
+		if !statusSet {
+			return
+		}
+		if err := c.updateMemberStatus(agentMember.GroupID, agentMember.MemberID, models.MemberStatusIdle, traceID); err != nil {
+			logger.WarnM(consumerModule, traceID, "failed to set agent status to idle",
+				"agent_id", agentMember.MemberID,
+				"error", err,
+			)
+		} else {
+			// Sync in-memory status so published events reflect the new DB state.
+			agentMember.MemberStatus = models.MemberStatusIdle
+			if c.publisher != nil {
+				if err := c.publisher.PublishGroupMemberModify(agentMember); err != nil {
+					logger.WarnM(consumerModule, traceID, "failed to publish member status idle event",
+						"agent_id", agentMember.MemberID,
+						"error", err,
+					)
+				}
+			}
+		}
+	}()
 
 	// Check processing chain length to prevent infinite loops
 	chainLength := c.getProcessingChainLength(pendingMsg)

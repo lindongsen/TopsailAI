@@ -120,12 +120,17 @@ func (p *Publisher) PublishGroupMemberCreate(member *models.GroupMember) error {
 	return p.PublishGroupEvent("group_member", "create", member.GroupID, member)
 }
 
-// PublishGroupMemberDelete publishes a group member delete event.
+// PublishGroupMemberDelete publishes a group_member delete event.
 func (p *Publisher) PublishGroupMemberDelete(groupID, memberID string) error {
 	return p.PublishGroupEvent("group_member", "delete", groupID, map[string]string{
 		"group_id":  groupID,
 		"member_id": memberID,
 	})
+}
+
+// PublishGroupMemberModify publishes a group_member modify event.
+func (p *Publisher) PublishGroupMemberModify(member *models.GroupMember) error {
+	return p.PublishGroupEvent("group_member", "modify", member.GroupID, member)
 }
 
 // PublishAgentResponse publishes an agent response message as a group event.

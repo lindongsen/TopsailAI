@@ -25,6 +25,7 @@ from topsailai.tools.file_tool_utils import (
     file_diff,
     file_write_line,
     file_write_code_block,
+    file_stat,
 )
 
 # lower of letter
@@ -450,7 +451,9 @@ TOOLS = dict(
     read_files=read_files,
 )
 TOOLS.update(file_read_line.TOOLS)
+TOOLS.update(file_stat.TOOLS)
 
+# Just a example
 TOOLS_INFO = dict(
     check_files_existing={
         "type": "function",
@@ -472,6 +475,7 @@ FILE_RO_TOOLS = dict(
 )
 
 FILE_RO_TOOLS.update(file_read_line.TOOLS)
+FILE_RO_TOOLS.update(file_stat.TOOLS)
 
 PROMPT = """
 # Requirements for `overwrite_lines_in_file`

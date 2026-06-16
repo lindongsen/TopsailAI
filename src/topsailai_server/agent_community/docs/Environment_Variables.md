@@ -14,12 +14,8 @@ All environment variables used by ACS are prefixed with `ACS_`.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ACS_HTTP_PORT` | `7370` | HTTP server listen port |
-| `ACS_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
-| `ACS_LOG_OUTPUT` | `stdout` | Log output destination: `stdout` or `file` |
-| `ACS_LOG_FILE_PATH` | `logs/acs.log` | Log file path when `ACS_LOG_OUTPUT=file` |
-| `ACS_LOG_MAX_SIZE_MB` | `100` | Maximum log file size in MB before rotation |
-| `ACS_LOG_MAX_BACKUPS` | `10` | Maximum number of retained log files |
-| `ACS_LOG_MAX_AGE_DAYS` | `30` | Maximum number of days to retain log files |
+| `ACS_SERVER_READ_TIMEOUT` | `30s` | HTTP server read timeout |
+| `ACS_SERVER_WRITE_TIMEOUT` | `30s` | HTTP server write timeout |
 
 ---
 
@@ -27,15 +23,20 @@ All environment variables used by ACS are prefixed with `ACS_`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ACS_DB_HOST` | `localhost` | PostgreSQL server host |
-| `ACS_DB_PORT` | `5432` | PostgreSQL server port |
-| `ACS_DB_NAME` | `agent_community` | Database name |
-| `ACS_DB_USER` | `postgres` | Database username |
-| `ACS_DB_PASSWORD` | `postgres` | Database password |
-| `ACS_DB_SSL_MODE` | `disable` | SSL mode: `disable`, `require`, `verify-ca`, `verify-full` |
-| `ACS_DB_MAX_OPEN_CONNS` | `25` | Maximum number of open database connections |
-| `ACS_DB_MAX_IDLE_CONNS` | `5` | Maximum number of idle database connections |
-| `ACS_DB_CONN_MAX_LIFETIME_MINUTES` | `30` | Maximum lifetime of a database connection in minutes |
+| `ACS_DATABASE_DRIVER` | `postgres` | Database driver: `postgres` or `sqlite` |
+| `ACS_DATABASE_HOST` | `localhost` | PostgreSQL server host |
+| `ACS_DATABASE_PORT` | `5432` | PostgreSQL server port |
+| `ACS_DATABASE_USER` | `acs` | Database username |
+| `ACS_DATABASE_PASSWORD` | `acs` | Database password |
+| `ACS_DATABASE_NAME` | `acs` (postgres) or `$ACS_HOME/agent_community.db` (sqlite) | Database name or SQLite file path |
+| `ACS_DATABASE_SSLMODE` | `disable` | SSL mode: `disable`, `require`, `verify-ca`, `verify-full` |
+
+### SQLite Default Path
+
+When `ACS_DATABASE_DRIVER=sqlite` and `ACS_DATABASE_NAME` is not explicitly set, the SQLite file path is resolved in the following order:
+1. `$ACS_HOME/agent_community.db`
+2. `$TOPSAILAI_HOME/agent_community.db`
+3. `/topsailai/agent_community.db`
 
 ---
 
@@ -47,9 +48,6 @@ All environment variables used by ACS are prefixed with `ACS_`.
 | `ACS_NATS_STREAM_GROUP` | `acs_group` | NATS JetStream stream name prefix |
 | `ACS_NATS_SUBJECT_GROUP_PENDING_MESSAGE_PREFIX` | `acs.group.pending-message` | Subject prefix for pending messages (agent work queue) |
 | `ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX` | `acs.group.message` | Subject prefix for group events (pub/sub) |
-| `ACS_NATS_KV_BUCKET` | `acs_locks` | NATS KV bucket name for distributed locks |
-| `ACS_NATS_LOCK_TTL_SECONDS` | `7200` | TTL for distributed locks in seconds |
-| `ACS_NATS_LOCK_RENEW_INTERVAL_SECONDS` | `10` | Lock renewal interval in seconds |
 | `ACS_NATS_PENDING_MESSAGE_NO_ACK` | `false` | When `true`, pending messages use fire-and-forget mode (no ack/nak, no InProgress heartbeat). **Warning: messages may be lost if consumer crashes.** |
 | `ACS_NATS_ACK_WAIT_SECONDS` | `3600` | NATS consumer AckWait timeout in seconds. Must be greater than the longest expected agent execution time. Only effective when `ACS_NATS_PENDING_MESSAGE_NO_ACK=false`. |
 | `ACS_NATS_MAX_ACK_PENDING` | `10` | Maximum number of unacknowledged messages allowed for a consumer in reliable mode. When exceeded, new messages are not delivered until existing ones are acknowledged. |
@@ -70,10 +68,10 @@ All environment variables used by ACS are prefixed with `ACS_`.
 - **No redelivery** if processing fails or consumer crashes
 - Suitable for scenarios where occasional message loss is acceptable
 - **Not recommended** for critical agent processing
+
 ### MaxAckPending
 
 In reliable mode (`ACS_NATS_PENDING_MESSAGE_NO_ACK=false`), `MaxAckPending` controls how many messages can be delivered to a consumer without being acknowledged. When this limit is reached, NATS stops delivering new messages to that consumer until some messages are acknowledged. This prevents overwhelming slow consumers.
-
 
 ---
 
@@ -84,10 +82,33 @@ In reliable mode (`ACS_NATS_PENDING_MESSAGE_NO_ACK=false`), `MaxAckPending` cont
 | `ACS_GROUP_MANAGER_AGENT_API_BASE` | - | Default API base URL for manager-agents |
 | `ACS_GROUP_MANAGER_AGENT_API_KEY` | - | Default API key for manager-agents |
 | `ACS_GROUP_MANAGER_AGENT_API_AUTH` | `bearer` | Default authentication method for manager-agents |
-| `ACS_AGENT_MAX_CHAIN_LENGTH` | `5` | Maximum number of consecutive agent responses to prevent infinite loops |
-| `ACS_AGENT_CHECK_HEALTH_TIMEOUT_SECONDS` | `5` | Timeout for agent health checks |
-| `ACS_AGENT_CHECK_STATUS_TIMEOUT_SECONDS` | `5` | Timeout for agent status checks |
-| `ACS_AGENT_CHAT_TIMEOUT_SECONDS` | `600` | Timeout for agent chat requests |
+| `ACS_AGENT_AUTO_TRIGGER_TIMEOUT` | `10m` | Time after which a user message automatically triggers the manager-agent |
+| `ACS_AGENT_PROMPT` | - | Service-wide prompt injected into agent chat environment variables |
+
+### Agent Chat Environment Variables
+
+The following variables are passed to agent adaptors via `member_interface.environments` and built dynamically at runtime. They are documented here for completeness but are not configured directly on the ACS server.
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| `ACS_AGENT_API_BASE` | `member_interface.environments` | Agent API base URL |
+| `ACS_AGENT_API_KEY` | `member_interface.environments` | Agent API key |
+| `ACS_AGENT_API_AUTH` | `member_interface.environments` | Agent API auth method (e.g., `bearer`) |
+| `ACS_AGENT_ID` | `group_member.member_id` | Agent member ID |
+| `ACS_AGENT_NAME` | `group_member.member_name` | Agent member name |
+| `ACS_AGENT_TYPE` | `group_member.member_type` | Agent member type (`manager-agent` or `worker-agent`) |
+| `ACS_AGENT_MODE` | Trigger context | `chat` or `agent` |
+| `ACS_AGENT_MESSAGE` | Built context messages | Context messages sent to the agent |
+| `ACS_AGENT_TIMEOUT` | `member_interface.timeout_chat` | Agent chat timeout in seconds |
+| `ACS_AGENT_PROMPT` | `ACS_AGENT_PROMPT` env var | Service-wide agent prompt |
+| `ACS_GROUP_ID` | Group ID | Current group ID |
+| `ACS_GROUP_NAME` | Group name | Current group name |
+| `ACS_GROUP_CONTEXT` | `group.group_context` | Group context, only passed when `last_read_message_id` is empty |
+| `ACS_SENDER_ID` | Message sender ID | Original message sender ID |
+| `ACS_SENDER_NAME` | Message sender name | Original message sender name |
+| `ACS_MESSAGE_ID` | Message ID | ID of the message being processed |
+| `ACS_MESSAGE_MENTIONS` | Message mentions JSON | Mentions extracted from the message |
+| `ACS_MESSAGE_TRIGGER_TYPE` | Trigger type | `mention` or `auto` |
 
 ---
 
@@ -95,9 +116,23 @@ In reliable mode (`ACS_NATS_PENDING_MESSAGE_NO_ACK=false`), `MaxAckPending` cont
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ACS_AGENT_WORK_POOL_SIZE` | `10` | Maximum concurrent agent tasks per service node |
-| `ACS_AGENT_WORK_POOL_PER_USER` | `5` | Maximum concurrent agent tasks per user across all groups |
-| `ACS_AGENT_WORK_POOL_PER_GROUP` | `5` | Maximum concurrent agent tasks per group |
+| `ACS_POOL_GLOBAL` | `10` | Maximum concurrent agent tasks per service node |
+| `ACS_POOL_PER_USER` | `5` | Maximum concurrent agent tasks per user across all groups |
+| `ACS_POOL_PER_GROUP` | `5` | Maximum concurrent agent tasks per group |
+| `ACS_POOL_STATS_LOG_INTERVAL` | `30s` | Interval for logging work pool statistics |
+
+---
+
+## Log Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ACS_LOG_OUTPUT` | `stdout` | Log output destination: `stdout` or `file` |
+| `ACS_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `ACS_LOG_FILE_PATH` | `/var/log/acs/acs.log` | Log file path when `ACS_LOG_OUTPUT=file` |
+| `ACS_LOG_MAX_SIZE_MB` | `100` | Maximum log file size in MB before rotation |
+| `ACS_LOG_MAX_AGE_DAYS` | `30` | Maximum number of days to retain log files |
+| `ACS_LOG_MAX_BACKUPS` | `10` | Maximum number of retained log files |
 
 ---
 
@@ -107,6 +142,8 @@ In reliable mode (`ACS_NATS_PENDING_MESSAGE_NO_ACK=false`), `MaxAckPending` cont
 |----------|---------|-------------|
 | `ACS_AUTO_TRIGGER_INTERVAL_SECONDS` | `60` | Interval for the auto-trigger periodic task in seconds |
 | `ACS_AUTO_TRIGGER_TIMEOUT_MINUTES` | `10` | Time in minutes after which a user message triggers the manager-agent automatically |
+
+> **Note:** `ACS_AUTO_TRIGGER_TIMEOUT_MINUTES` is kept for backward compatibility. The canonical variable is `ACS_AGENT_AUTO_TRIGGER_TIMEOUT` (see Agent Configuration).
 
 ---
 
@@ -151,14 +188,31 @@ Controls NATS-based service discovery and Service-Leader election.
 - The instance with the smallest `id` among all registered services is elected as `Service-Leader`
 - When disabled (`ACS_DISCOVERY_ENABLED=false`), no registration occurs and leader election APIs return 503
 
+---
+
+## Daemon Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ACS_HOME` | `/topsailai` | Base directory for ACS daemon logs, PID files, and SQLite database |
+| `TOPSAILAI_HOME` | `/topsailai` | Fallback base directory when `ACS_HOME` is not set |
+
+### Behavior
+
+- Daemon log file: `$ACS_HOME/log/agent_community.log`
+- Daemon PID file: `$ACS_HOME/run/agent_community.pid`
+- SQLite default path: `$ACS_HOME/agent_community.db`
+
+---
 
 ## CLI Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ACS_SERVER_API_BASE` | `http://localhost:7370` | ACS server API base URL for CLI client |
-| `ACS_CLI_MEMBER_ID` | - | Default member ID for CLI client |
-| `ACS_CLI_MEMBER_NAME` | - | Default member name for CLI client |
+| `ACS_NATS_SERVERS` | `nats://localhost:4222` | NATS server URL(s) for CLI client |
+| `ACS_CLI_MEMBER_ID` | `cli-user` | Default member ID for CLI client |
+| `ACS_CLI_MEMBER_NAME` | `CLI User` | Default member name for CLI client |
 
 ---
 
@@ -167,16 +221,17 @@ Controls NATS-based service discovery and Service-Leader election.
 ```bash
 # Server
 ACS_HTTP_PORT=7370
-ACS_LOG_LEVEL=info
-ACS_LOG_OUTPUT=stdout
+ACS_SERVER_READ_TIMEOUT=30s
+ACS_SERVER_WRITE_TIMEOUT=30s
 
 # Database
-ACS_DB_HOST=localhost
-ACS_DB_PORT=5432
-ACS_DB_NAME=agent_community
-ACS_DB_USER=postgres
-ACS_DB_PASSWORD=postgres
-ACS_DB_SSL_MODE=disable
+ACS_DATABASE_DRIVER=postgres
+ACS_DATABASE_HOST=localhost
+ACS_DATABASE_PORT=5432
+ACS_DATABASE_NAME=acs
+ACS_DATABASE_USER=acs
+ACS_DATABASE_PASSWORD=acs
+ACS_DATABASE_SSL_MODE=disable
 
 # NATS
 ACS_NATS_SERVERS=nats://localhost:4222
@@ -185,16 +240,28 @@ ACS_NATS_SUBJECT_GROUP_PENDING_MESSAGE_PREFIX=acs.group.pending-message
 ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX=acs.group.message
 ACS_NATS_PENDING_MESSAGE_NO_ACK=false
 ACS_NATS_ACK_WAIT_SECONDS=3600
+ACS_NATS_MAX_ACK_PENDING=10
 
 # Agent
 ACS_GROUP_MANAGER_AGENT_API_BASE=http://127.0.0.1:7373
 ACS_GROUP_MANAGER_AGENT_API_KEY=I-Love-Dawson
 ACS_GROUP_MANAGER_AGENT_API_AUTH=bearer
+ACS_AGENT_AUTO_TRIGGER_TIMEOUT=10m
+ACS_AGENT_PROMPT="You are a helpful AI assistant."
 
 # WorkPool
-ACS_AGENT_WORK_POOL_SIZE=10
-ACS_AGENT_WORK_POOL_PER_USER=5
-ACS_AGENT_WORK_POOL_PER_GROUP=5
+ACS_POOL_GLOBAL=10
+ACS_POOL_PER_USER=5
+ACS_POOL_PER_GROUP=5
+ACS_POOL_STATS_LOG_INTERVAL=30s
+
+# Log
+ACS_LOG_OUTPUT=stdout
+ACS_LOG_LEVEL=info
+ACS_LOG_FILE_PATH=/var/log/acs/acs.log
+ACS_LOG_MAX_SIZE_MB=100
+ACS_LOG_MAX_AGE_DAYS=30
+ACS_LOG_MAX_BACKUPS=10
 
 # Auto-Trigger
 ACS_AUTO_TRIGGER_INTERVAL_SECONDS=60
@@ -213,4 +280,14 @@ ACS_DISCOVERY_SERVICE_NAME=acs
 ACS_DISCOVERY_BUCKET_NAME=acs_service_discovery
 ACS_DISCOVERY_HEARTBEAT=30s
 ACS_DISCOVERY_TTL=120s
+
+# Daemon
+ACS_HOME=/topsailai
+TOPSAILAI_HOME=/topsailai
+
+# CLI
+ACS_SERVER_API_BASE=http://localhost:7370
+ACS_NATS_SERVERS=nats://localhost:4222
+ACS_CLI_MEMBER_ID=cli-user
+ACS_CLI_MEMBER_NAME=CLI User
 ```

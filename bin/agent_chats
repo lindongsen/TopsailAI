@@ -60,9 +60,9 @@ if [ "$1" == "-" ]; then
 fi
 
 # print histroy messages
-[ -n "${SESSION_ID}" ] && {
-  command -v ai_retrieve_messages > /dev/null && ai_retrieve_messages "${SESSION_ID}"
-}
+# [ -n "${SESSION_ID}" ] && {
+#   command -v ai_retrieve_messages > /dev/null && ai_retrieve_messages "${SESSION_ID}"
+# }
 
 run_cli="uv run"
 [ "${UV_NO_DEV}" == "1" ] && run_cli="python"

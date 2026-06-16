@@ -297,6 +297,13 @@ func (h *GroupMemberHandler) UpdateMember(c *gin.Context) {
 	// Reload member
 	h.db.Where("group_id = ? AND member_id = ?", groupID, memberID).First(&member)
 
+	// Publish modify event when member_status changes so subscribers can observe transitions
+	if h.publisher != nil && req.MemberStatus != "" {
+		if err := h.publisher.PublishGroupMemberModify(&member); err != nil {
+			h.log.Warn("api", traceID, "failed to publish member modify event", "error", err.Error())
+		}
+	}
+
 	h.log.Info("api", traceID, "member updated", "group_id", groupID, "member_id", memberID)
 	c.JSON(http.StatusOK, toGroupMemberResponse(&member))
 }

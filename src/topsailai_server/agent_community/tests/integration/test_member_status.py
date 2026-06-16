@@ -4,11 +4,14 @@ Integration tests for member_status active update feature.
 These tests verify that member_status transitions correctly:
 - When an agent is invoked, status becomes "processing"
 - When agent call ends (success or failure), status returns to "idle"
+- NATS group_member/modify events are published for status changes
 """
 
+import asyncio
 import json
 import time
 
+import nats
 import pytest
 import requests
 
@@ -29,29 +32,50 @@ class TestMemberStatusActiveUpdate:
                 return member.get("member_status", "")
         return ""
 
-    def test_member_status_processing_then_idle_success(
+    @pytest.mark.asyncio
+    async def test_member_status_processing_then_idle_success(
         self,
         api_client: requests.Session,
         server_url: str,
         test_group: dict,
         unique_id: str,
+        nats_client: nats.NATS,
     ):
         """
         Test that member_status transitions to 'processing' during agent invocation
-        and back to 'idle' after successful completion.
+        and back to 'idle' after successful completion, and that NATS
+        group_member/modify events are published for both transitions.
         """
+        agent_id = f"agent-{unique_id}"
+        user_id = f"user-{unique_id}"
+        group_id = test_group["group_id"]
+        subject = f"acs.group.message.{group_id}"
+
         # 1. Start a mock agent server with a noticeable delay so we can observe "processing"
         mock_agent = MockAgentServer(
             host="127.0.0.1",
             port=18081,
-            agent_id=f"agent-{unique_id}",
+            agent_id=agent_id,
             agent_name=f"Test_Agent_{unique_id}",
             auth_token="test-key",
             delay=1.5,  # 1.5s delay to allow polling the processing state
             error_rate=0.0,
         )
         mock_agent.start()
-        time.sleep(0.3)  # wait for mock server to be ready
+        await asyncio.sleep(0.3)  # wait for mock server to be ready
+
+        received_events = []
+
+        async def on_message(msg):
+            try:
+                event = json.loads(msg.data.decode("utf-8"))
+                if event.get("type") == "group_member" and event.get("action") == "modify":
+                    if event.get("data", {}).get("member_id") == agent_id:
+                        received_events.append(event)
+            except Exception:
+                pass
+
+        sub = await nats_client.subscribe(subject, cb=on_message)
 
         try:
             # 2. Add agent member pointing to mock agent server
@@ -65,44 +89,42 @@ class TestMemberStatusActiveUpdate:
                 "timeout_chat": 30,
             }
             agent_data = {
-                "member_id": f"agent-{unique_id}",
+                "member_id": agent_id,
                 "member_name": f"Test_Agent_{unique_id}",
                 "member_description": "A test agent for status transitions",
                 "member_type": "worker-agent",
                 "member_interface": json.dumps(agent_interface),
             }
             response = api_client.post(
-                f"{server_url}/api/v1/groups/{test_group['group_id']}/members",
+                f"{server_url}/api/v1/groups/{group_id}/members",
                 json=agent_data,
             )
             assert response.status_code == 201, f"Failed to add agent: {response.text}"
 
             # 3. Add a human user member
             user_data = {
-                "member_id": f"user-{unique_id}",
+                "member_id": user_id,
                 "member_name": f"Test_User_{unique_id}",
                 "member_type": "user",
             }
             response = api_client.post(
-                f"{server_url}/api/v1/groups/{test_group['group_id']}/members",
+                f"{server_url}/api/v1/groups/{group_id}/members",
                 json=user_data,
             )
             assert response.status_code == 201, f"Failed to add user: {response.text}"
 
             # 4. Verify initial status is "online" (set on join)
-            status = self._get_member_status(
-                api_client, server_url, test_group["group_id"], f"agent-{unique_id}"
-            )
+            status = self._get_member_status(api_client, server_url, group_id, agent_id)
             assert status == "online", f"Expected initial status 'online', got '{status}'"
 
             # 5. Send a message that mentions the agent to trigger it
             message_data = {
-                "message_text": f"Hello @agent-{unique_id}, can you help me?",
-                "sender_id": f"user-{unique_id}",
+                "message_text": f"Hello @{agent_id}, can you help me?",
+                "sender_id": user_id,
                 "sender_type": "user",
             }
             response = api_client.post(
-                f"{server_url}/api/v1/groups/{test_group['group_id']}/messages",
+                f"{server_url}/api/v1/groups/{group_id}/messages",
                 json=message_data,
             )
             assert response.status_code == 201, f"Failed to send message: {response.text}"
@@ -111,13 +133,11 @@ class TestMemberStatusActiveUpdate:
             processing_observed = False
             deadline = time.time() + 10.0
             while time.time() < deadline:
-                status = self._get_member_status(
-                    api_client, server_url, test_group["group_id"], f"agent-{unique_id}"
-                )
+                status = self._get_member_status(api_client, server_url, group_id, agent_id)
                 if status == "processing":
                     processing_observed = True
                     break
-                time.sleep(0.2)
+                await asyncio.sleep(0.2)
 
             assert processing_observed, (
                 "Agent member_status never transitioned to 'processing' within timeout"
@@ -127,31 +147,58 @@ class TestMemberStatusActiveUpdate:
             idle_observed = False
             deadline = time.time() + 15.0
             while time.time() < deadline:
-                status = self._get_member_status(
-                    api_client, server_url, test_group["group_id"], f"agent-{unique_id}"
-                )
+                status = self._get_member_status(api_client, server_url, group_id, agent_id)
                 if status == "idle":
                     idle_observed = True
                     break
-                time.sleep(0.2)
+                await asyncio.sleep(0.2)
 
             assert idle_observed, (
                 "Agent member_status never transitioned back to 'idle' within timeout"
             )
 
+            # 8. Verify NATS events were published for both transitions
+            await asyncio.sleep(0.5)  # allow any in-flight events to be delivered
+
+            processing_events = [e for e in received_events if e["data"].get("member_status") == "processing"]
+            idle_events = [e for e in received_events if e["data"].get("member_status") == "idle"]
+
+            assert len(processing_events) >= 1, (
+                "No group_member/modify event with member_status='processing' was received"
+            )
+            assert len(idle_events) >= 1, (
+                "No group_member/modify event with member_status='idle' was received"
+            )
+
+            # The processing event should be received before the idle event
+            first_processing_index = next(
+                (i for i, e in enumerate(received_events) if e["data"].get("member_status") == "processing"),
+                None,
+            )
+            first_idle_index = next(
+                (i for i, e in enumerate(received_events) if e["data"].get("member_status") == "idle"),
+                None,
+            )
+            assert first_processing_index is not None
+            assert first_idle_index is not None
+            assert first_processing_index < first_idle_index, (
+                "Expected 'processing' event to be received before 'idle' event"
+            )
+
         finally:
+            await sub.unsubscribe()
             mock_agent.stop()
             # Cleanup: remove agent member if it exists
             try:
                 api_client.delete(
-                    f"{server_url}/api/v1/groups/{test_group['group_id']}/members/agent-{unique_id}"
+                    f"{server_url}/api/v1/groups/{group_id}/members/{agent_id}"
                 )
             except Exception:
                 pass
             # Cleanup: remove user member if it exists
             try:
                 api_client.delete(
-                    f"{server_url}/api/v1/groups/{test_group['group_id']}/members/user-{unique_id}"
+                    f"{server_url}/api/v1/groups/{group_id}/members/{user_id}"
                 )
             except Exception:
                 pass
@@ -353,6 +400,80 @@ class TestMemberStatusActiveUpdate:
             try:
                 api_client.delete(
                     f"{server_url}/api/v1/groups/{test_group['group_id']}/members/user-dead-{unique_id}"
+                )
+            except Exception:
+                pass
+
+    @pytest.mark.asyncio
+    async def test_member_status_modify_event_published(
+        self,
+        api_client: requests.Session,
+        server_url: str,
+        test_group: dict,
+        unique_id: str,
+        nats_client: nats.NATS,
+    ):
+        """
+        Test that a group_member/modify NATS event is published when member_status
+        is changed via the API update member endpoint.
+        """
+        user_id = f"event-user-{unique_id}"
+        group_id = test_group["group_id"]
+        subject = f"acs.group.message.{group_id}"
+
+        # 1. Add a user member
+        user_data = {
+            "member_id": user_id,
+            "member_name": f"Event_User_{unique_id}",
+            "member_type": "user",
+        }
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/{group_id}/members",
+            json=user_data,
+        )
+        assert response.status_code == 201, f"Failed to add user: {response.text}"
+
+        # 2. Subscribe to group events
+        received_events = []
+
+        async def on_message(msg):
+            try:
+                event = json.loads(msg.data.decode("utf-8"))
+                if event.get("type") == "group_member" and event.get("action") == "modify":
+                    received_events.append(event)
+            except Exception:
+                pass
+
+        sub = await nats_client.subscribe(subject, cb=on_message)
+        await asyncio.sleep(0.5)  # allow subscription to be ready
+
+        try:
+            # 3. Update member_status via API
+            update_data = {"member_status": "idle"}
+            response = api_client.put(
+                f"{server_url}/api/v1/groups/{group_id}/members/{user_id}",
+                json=update_data,
+            )
+            assert response.status_code == 200, f"Failed to update member: {response.text}"
+
+            # 4. Wait for the modify event
+            deadline = time.time() + 5.0
+            while time.time() < deadline and not received_events:
+                await asyncio.sleep(0.2)
+
+            assert len(received_events) >= 1, "No group_member/modify event received"
+            event = received_events[0]
+            assert event["data"]["member_id"] == user_id
+            assert event["data"]["member_status"] == "idle"
+
+        finally:
+            try:
+                await sub.unsubscribe()
+            except Exception:
+                pass
+            try:
+                api_client.delete(
+                    f"{server_url}/api/v1/groups/{group_id}/members/{user_id}"
                 )
             except Exception:
                 pass

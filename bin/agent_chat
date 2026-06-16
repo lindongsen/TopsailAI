@@ -63,11 +63,11 @@ if [ "$1" == "-" ]; then
 fi
 
 # print histroy messages
-if [ "${TOPSAILAI_INTERACTIVE_MODE}" == "1" ] || [ "${DEBUG}" != "0" ]; then
-  [ -n "${SESSION_ID}" ] && {
-    command -v ai_retrieve_messages > /dev/null && ai_retrieve_messages "${SESSION_ID}"
-  }
-fi
+# if [ "${TOPSAILAI_INTERACTIVE_MODE}" == "1" ] || [ "${DEBUG}" != "0" ]; then
+#   [ -n "${SESSION_ID}" ] && {
+#     command -v ai_retrieve_messages > /dev/null && ai_retrieve_messages "${SESSION_ID}"
+#   }
+# fi
 
 run_cli="uv run"
 [ "${UV_NO_DEV}" == "1" ] && run_cli="python"

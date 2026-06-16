@@ -51,6 +51,18 @@ func (m *mockPublisher) PublishMessageDelete(msg *models.GroupMessage) error {
 	return m.publishShouldErr
 }
 
+func (m *mockPublisher) PublishGroupMemberCreate(member *models.GroupMember) error {
+	return m.publishShouldErr
+}
+
+func (m *mockPublisher) PublishGroupMemberModify(member *models.GroupMember) error {
+	return m.publishShouldErr
+}
+
+func (m *mockPublisher) PublishGroupMemberDelete(groupID, memberID string) error {
+	return m.publishShouldErr
+}
+
 // setupTriggerTestDB creates an in-memory SQLite database and auto-migrates models.
 func setupTriggerTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open("file::memory:"), &gorm.Config{})
