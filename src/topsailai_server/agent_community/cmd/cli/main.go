@@ -39,21 +39,12 @@ func run() error {
 		noColor = true
 	}
 
-	// Print banner.
-	printBanner()
-	fmt.Printf("API Base:   %s\n", *apiBase)
-	fmt.Printf("NATS:       %s\n", *natsURL)
-	fmt.Printf("User:       %s (%s)\n", *memberName, *memberID)
-	fmt.Println()
-	fmt.Println("Type /help for available commands")
-	fmt.Println()
-
 	// Initialize components.
 	apiClient := NewAPIClient(*apiBase)
 
 	natsManager := NewNATSManager(apiClient, func(event *nats.PendingPublishMessage) {
 		// Default event handler: display events when not in chat mode.
-		fmt.Println(formatGenericEvent(event.Type, event.Action, event.GroupID))
+		promptPrintln(formatGenericEvent(event.Type, event.Action, event.GroupID))
 	})
 
 	// Attempt NATS connection (non-fatal).
@@ -83,6 +74,18 @@ func run() error {
 		running:     true,
 		rl:          rl,
 	}
+
+	// Register state with the prompt manager so output keeps the active prompt at the bottom.
+	setPromptState(state)
+
+	// Print banner after registering state so prompt-aware output works.
+	printBanner()
+	promptPrintf("API Base:   %s\n", *apiBase)
+	promptPrintf("NATS:       %s\n", *natsURL)
+	promptPrintf("User:       %s (%s)\n", *memberName, *memberID)
+	promptPrintln()
+	promptPrintln("Type /help for available commands")
+	promptPrintln()
 
 	// Main command loop.
 	for state.running {

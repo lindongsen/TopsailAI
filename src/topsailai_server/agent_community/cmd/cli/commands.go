@@ -142,11 +142,11 @@ func handleGroupList(args []string, state *CLIState) error {
 	}
 
 	printSeparator()
-	fmt.Printf("Groups (total: %d):\n", result.Total)
+	promptPrintf("Groups (total: %d):\n", result.Total)
 	for _, g := range result.Items {
 		id, _ := g["group_id"].(string)
 		name, _ := g["group_name"].(string)
-		fmt.Println(formatGroupLine(id, name))
+		promptPrintln(formatGroupLine(id, name))
 	}
 	printSeparator()
 	return nil
@@ -359,13 +359,13 @@ func handleMemberList(args []string, state *CLIState) error {
 	}
 
 	printSeparator()
-	fmt.Println("Members:")
+	promptPrintln("Members:")
 	for _, m := range result.Items {
 		id, _ := m["member_id"].(string)
 		name, _ := m["member_name"].(string)
 		mtype, _ := m["member_type"].(string)
 		status, _ := m["member_status"].(string)
-		fmt.Println(formatMemberLine(mtype, name, id, status))
+		promptPrintln(formatMemberLine(mtype, name, id, status))
 	}
 	printSeparator()
 	return nil
@@ -561,9 +561,9 @@ func handleMessageList(args []string, state *CLIState) error {
 	}
 
 	printDoubleSeparator()
-	fmt.Printf("Messages for group %s:\n", groupID)
+	promptPrintf("Messages for group %s:\n", groupID)
 	for _, msg := range result.Items {
-		fmt.Println(formatMessage(msg))
+		promptPrintln(formatMessage(msg))
 	}
 	printDoubleSeparator()
 	return nil
@@ -668,33 +668,33 @@ func handleMessageDelete(args []string, state *CLIState) error {
 // --- Other commands ---
 
 func handleHelp(args []string, state *CLIState) error {
-	fmt.Println(yellow("Available commands:"))
+	promptPrintln(yellow("Available commands:"))
 	printSeparator()
-	fmt.Println("Group commands:")
-	fmt.Println("  /group:list     List all groups")
-	fmt.Println("  /group:create   Create a new group")
-	fmt.Println("  /group:enter    Enter a group chat")
-	fmt.Println("  /group:update   Update a group")
-	fmt.Println("  /group:delete   Delete a group")
-	fmt.Println()
-	fmt.Println("Member commands:")
-	fmt.Println("  /member:list    List group members")
-	fmt.Println("  /member:add     Add a member to a group")
-	fmt.Println("  /member:remove  Remove a member from a group")
-	fmt.Println("  /member:update  Update a member")
-	fmt.Println()
-	fmt.Println("Message commands:")
-	fmt.Println("  /message:list   List messages in a group")
-	fmt.Println("  /message:edit   Edit a message")
-	fmt.Println("  /message:delete Delete a message")
-	fmt.Println()
-	fmt.Println("Other commands:")
-	fmt.Println("  /help           Show this help")
-	fmt.Println("  /exit           Exit the CLI")
-	fmt.Println("  exit, quit      Aliases for /exit")
+	promptPrintln("Group commands:")
+	promptPrintln("  /group:list     List all groups")
+	promptPrintln("  /group:create   Create a new group")
+	promptPrintln("  /group:enter    Enter a group chat")
+	promptPrintln("  /group:update   Update a group")
+	promptPrintln("  /group:delete   Delete a group")
+	promptPrintln()
+	promptPrintln("Member commands:")
+	promptPrintln("  /member:list    List group members")
+	promptPrintln("  /member:add     Add a member to a group")
+	promptPrintln("  /member:remove  Remove a member from a group")
+	promptPrintln("  /member:update  Update a member")
+	promptPrintln()
+	promptPrintln("Message commands:")
+	promptPrintln("  /message:list   List messages in a group")
+	promptPrintln("  /message:edit   Edit a message")
+	promptPrintln("  /message:delete Delete a message")
+	promptPrintln()
+	promptPrintln("Other commands:")
+	promptPrintln("  /help           Show this help")
+	promptPrintln("  /exit           Exit the CLI")
+	promptPrintln("  exit, quit      Aliases for /exit")
 	printSeparator()
-	fmt.Println("Interactive mode: type a command without arguments to be prompted.")
-	fmt.Println("Non-interactive mode: /command --arg value")
+	promptPrintln("Interactive mode: type a command without arguments to be prompted.")
+	promptPrintln("Non-interactive mode: /command --arg value")
 	return nil
 }
 

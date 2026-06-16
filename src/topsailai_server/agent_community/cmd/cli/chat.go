@@ -174,7 +174,7 @@ func (cm *ChatMode) SendChatMessage(text string) error {
 	}
 
 	// Display locally.
-	fmt.Println(formatMessage(map[string]interface{}{
+	promptPrintln(formatMessage(map[string]interface{}{
 		"sender_id":    cm.userID,
 		"sender_name":  cm.userName,
 		"sender_type":  "user",
@@ -267,13 +267,13 @@ func (cm *ChatMode) showMembers() {
 	}
 
 	printSeparator()
-	fmt.Println("Members:")
+	promptPrintln("Members:")
 	for _, m := range members {
 		id, _ := m["member_id"].(string)
 		name, _ := m["member_name"].(string)
 		mtype, _ := m["member_type"].(string)
 		status, _ := m["member_status"].(string)
-		fmt.Println(formatMemberLine(mtype, name, id, status))
+		promptPrintln(formatMemberLine(mtype, name, id, status))
 	}
 	printSeparator()
 }
@@ -281,13 +281,13 @@ func (cm *ChatMode) showMembers() {
 // showChatHelp displays available chat commands.
 func (cm *ChatMode) showChatHelp() {
 	printSeparator()
-	fmt.Println("Chat Commands:")
-	fmt.Println("  /members  - Show group members")
-	fmt.Println("  /help     - Show this help")
-	fmt.Println("  /exit     - Leave chat mode")
-	fmt.Println("  exit      - Alias for /exit")
-	fmt.Println("  quit      - Alias for /exit")
-	fmt.Println("  (any text) - Send a message to the group")
+	promptPrintln("Chat Commands:")
+	promptPrintln("  /members  - Show group members")
+	promptPrintln("  /help     - Show this help")
+	promptPrintln("  /exit     - Leave chat mode")
+	promptPrintln("  exit      - Alias for /exit")
+	promptPrintln("  quit      - Alias for /exit")
+	promptPrintln("  (any text) - Send a message to the group")
 	printSeparator()
 }
 
@@ -318,18 +318,13 @@ func (cm *ChatMode) displayEvent(event *nats.PendingPublishMessage) {
 			text, _ := data["message_text"].(string)
 			data["message_text"] = text + " [edited]"
 		}
-		fmt.Println(formatMessage(data))
+		promptPrintln(formatMessage(data))
 	case "group_member":
 		// Refresh members on member changes.
 		go cm.refreshMembers()
-		fmt.Println(formatMemberEvent(event.Action, event.GroupID))
+		promptPrintln(formatMemberEvent(event.Action, event.GroupID))
 	default:
-		fmt.Println(formatGenericEvent(event.Type, event.Action, event.GroupID))
-	}
-
-	// Refresh readline prompt to redraw after async output.
-	if cm.rl != nil {
-		cm.rl.Refresh()
+		promptPrintln(formatGenericEvent(event.Type, event.Action, event.GroupID))
 	}
 }
 

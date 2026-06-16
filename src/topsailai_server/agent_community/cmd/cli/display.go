@@ -99,39 +99,41 @@ func ps1Chat(userName, groupID string) string {
 
 // printBanner prints the ACS CLI welcome banner.
 func printBanner() {
-	fmt.Println(cyan("╔══════════════════════════════════════════╗"))
-	fmt.Println(cyan("║     ACS CLI Terminal                     ║"))
-	fmt.Println(cyan("╚══════════════════════════════════════════╝"))
+	promptPrintLines(
+		cyan("╔══════════════════════════════════════════╗"),
+		cyan("║     ACS CLI Terminal                     ║"),
+		cyan("╚══════════════════════════════════════════╝"),
+	)
 }
 
 // printInfo prints an informational message.
 func printInfo(msg string) {
-	fmt.Println(blue(msg))
+	promptPrintln(blue(msg))
 }
 
 // printSuccess prints a success message.
 func printSuccess(msg string) {
-	fmt.Println(green(msg))
+	promptPrintln(green(msg))
 }
 
 // printError prints an error message.
 func printError(msg string) {
-	fmt.Println(red(msg))
+	promptPrintln(red(msg))
 }
 
 // printWarning prints a warning message.
 func printWarning(msg string) {
-	fmt.Println(yellow(msg))
+	promptPrintln(yellow(msg))
 }
 
 // printSeparator prints a horizontal separator line.
 func printSeparator() {
-	fmt.Println(white("──────────────────────────────────────────"))
+	promptPrintln(white("──────────────────────────────────────────"))
 }
 
 // printDoubleSeparator prints a double horizontal separator line.
 func printDoubleSeparator() {
-	fmt.Println(white("══════════════════════════════════════════"))
+	promptPrintln(white("══════════════════════════════════════════"))
 }
 
 // formatMessage formats a single message for display.

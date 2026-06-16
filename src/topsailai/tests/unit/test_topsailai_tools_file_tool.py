@@ -31,6 +31,7 @@ from topsailai.tools.file_tool import (
     read_file,
     read_files,
     write_file,
+    write_file_simple,
     append_file,
     check_files_existing,
     exists_file,
@@ -776,7 +777,7 @@ class TestToolsDictionary:
     def test_tools_contains_expected_keys(self):
         """Verify TOOLS contains expected function keys."""
         expected_keys = {
-            "write_file", "read_file", "append_file", "check_files_existing",
+            "write_file", "append_file", "check_files_existing",
             "mkdirs", "overwrite_lines_in_file", "insert_content_to_file",
             "list_dirs", "read_files"
         }
@@ -790,11 +791,11 @@ class TestToolsDictionary:
 
     def test_tools_write_file_is_same_function(self):
         """Verify TOOLS write_file is the actual function."""
-        assert TOOLS["write_file"] is write_file
+        assert TOOLS["write_file"] is write_file_simple
 
-    def test_tools_read_file_is_same_function(self):
-        """Verify TOOLS read_file is the actual function."""
-        assert TOOLS["read_file"] is read_file
+    def test_tools_read_file_not_in_tools(self):
+        """Verify TOOLS does not contain read_file (moved to bigfile_tool)."""
+        assert "read_file" not in TOOLS
 
 
 class TestToolsInfo:
