@@ -198,7 +198,7 @@ func (c *Client) CreatePendingMessageConsumer(handler nats.MsgHandler) (*nats.Su
 		// Reliable mode: manual ack with configurable ack wait
 		subOpts = append(subOpts, nats.ManualAck())
 		subOpts = append(subOpts, nats.AckWait(requestedAckWait))
-		subOpts = append(subOpts, nats.MaxAckPending(10))
+		subOpts = append(subOpts, nats.MaxAckPending(c.cfg.MaxAckPending))
 		logger.Info("nats consumer created with manual-ack mode", "ack_wait", requestedAckWait.String())
 	}
 

@@ -52,6 +52,7 @@ All environment variables used by ACS are prefixed with `ACS_`.
 | `ACS_NATS_LOCK_RENEW_INTERVAL_SECONDS` | `10` | Lock renewal interval in seconds |
 | `ACS_NATS_PENDING_MESSAGE_NO_ACK` | `false` | When `true`, pending messages use fire-and-forget mode (no ack/nak, no InProgress heartbeat). **Warning: messages may be lost if consumer crashes.** |
 | `ACS_NATS_ACK_WAIT_SECONDS` | `3600` | NATS consumer AckWait timeout in seconds. Must be greater than the longest expected agent execution time. Only effective when `ACS_NATS_PENDING_MESSAGE_NO_ACK=false`. |
+| `ACS_NATS_MAX_ACK_PENDING` | `10` | Maximum number of unacknowledged messages allowed for a consumer in reliable mode. When exceeded, new messages are not delivered until existing ones are acknowledged. |
 
 ### NATS Consumer Modes
 
@@ -69,6 +70,10 @@ All environment variables used by ACS are prefixed with `ACS_`.
 - **No redelivery** if processing fails or consumer crashes
 - Suitable for scenarios where occasional message loss is acceptable
 - **Not recommended** for critical agent processing
+### MaxAckPending
+
+In reliable mode (`ACS_NATS_PENDING_MESSAGE_NO_ACK=false`), `MaxAckPending` controls how many messages can be delivered to a consumer without being acknowledged. When this limit is reached, NATS stops delivering new messages to that consumer until some messages are acknowledged. This prevents overwhelming slow consumers.
+
 
 ---
 

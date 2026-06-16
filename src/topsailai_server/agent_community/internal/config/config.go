@@ -47,6 +47,7 @@ type NATSConfig struct {
 	SubjectGroupMessagePrefix        string `mapstructure:"subject_group_message_prefix"`
 	PendingMessageNoAck              bool   `mapstructure:"pending_message_no_ack"`
 	AckWaitSeconds                   int    `mapstructure:"ack_wait_seconds"`
+	MaxAckPending                    int    `mapstructure:"max_ack_pending"`
 }
 
 // AgentConfig holds manager-agent and trigger settings.
@@ -105,7 +106,6 @@ func Load() (*Config, error) {
 	v.SetDefault("server.port", 7370)
 	v.SetDefault("server.read_timeout", "30s")
 	v.SetDefault("server.write_timeout", "30s")
-
 	// Database defaults
 	v.SetDefault("database.host", "localhost")
 	v.SetDefault("database.port", 5432)
@@ -121,6 +121,7 @@ func Load() (*Config, error) {
 	v.SetDefault("nats.subject_group_message_prefix", "acs.group.message")
 	v.SetDefault("nats.pending_message_no_ack", false)
 	v.SetDefault("nats.ack_wait_seconds", 3600)
+	v.SetDefault("nats.max_ack_pending", 10)
 
 	// Agent defaults
 	v.SetDefault("agent.manager_api_base", "")
