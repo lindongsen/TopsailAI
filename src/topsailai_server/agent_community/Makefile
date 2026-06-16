@@ -5,6 +5,7 @@
 PROJECT_NAME := agent-community
 SERVER_BINARY := bin/acs-server
 CLI_BINARY := bin/acs-cli
+NATCTL_BINARY := bin/natsctl
 GO := go
 GOFLAGS := -v
 PYTHON := $(shell \
@@ -21,9 +22,9 @@ PYTHON := $(shell \
 # Default target
 all: build
 
-# Build both server and CLI
+# Build all binaries
 .PHONY: build
-build: build-server build-cli
+build: build-server build-cli build-natsctl
 
 # Build server binary
 .PHONY: build-server
@@ -38,6 +39,13 @@ build-cli:
 	@echo "Building CLI..."
 	@mkdir -p bin
 	$(GO) build $(GOFLAGS) -o $(CLI_BINARY) ./cmd/cli
+
+# Build natsctl binary
+.PHONY: build-natsctl
+build-natsctl:
+	@echo "Building natsctl..."
+	@mkdir -p bin
+	$(GO) build $(GOFLAGS) -o $(NATCTL_BINARY) ./cmd/natsctl
 
 # Run unit tests
 .PHONY: test
@@ -119,9 +127,10 @@ docker-run:
 .PHONY: help
 help:
 	@echo "ACS Makefile targets:"
-	@echo "  build            - Build server and CLI binaries"
+	@echo "  build            - Build all binaries (server, CLI, natsctl)"
 	@echo "  build-server     - Build server binary only"
 	@echo "  build-cli        - Build CLI binary only"
+	@echo "  build-natsctl    - Build natsctl binary only"
 	@echo "  test             - Run unit tests"
 	@echo "  test-integration - Run integration tests (Python)"
 	@echo "  migrate-up       - Run database migrations (up)"
