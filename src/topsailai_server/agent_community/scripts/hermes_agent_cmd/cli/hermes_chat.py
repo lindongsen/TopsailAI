@@ -20,6 +20,8 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8642"
 DEFAULT_TIMEOUT = 600
 MIN_TIMEOUT = 300
 
+debug = os.environ.get("DEBUG", 0) in ["1", 1]
+
 
 def _get_timeout() -> int:
     """Return HTTP timeout in seconds. Default 600, env HERMES_AGENT_TIMEOUT overrides, min 300."""
@@ -62,17 +64,22 @@ def _api(method: str, path: str, body=None, headers=None):
         return 0, {"error": str(e)}, {}
 
 
-def create_session(title: str = "") -> str:
+def create_session(title: str = "", id: str = "") -> str:
     body = {}
     if title:
         body["title"] = title
     else:
         import datetime
         body["title"] = "chat_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    if id:
+        body["id"] = id
     status, resp, _ = _api("POST", "/api/sessions", body=body)
     if status == 201:
         sid = resp.get("session", {}).get("id")
-        print(f"[Session created] {sid}")
+        if debug:
+            print(f"[Session created] {sid}")
+        if id and sid != id:
+            print(f"[CRITICAL] Internal error, session is not expected, now={sid}, expected={id}")
         return sid
     print(f"[Create session failed] {status}: {json.dumps(resp, ensure_ascii=False)}", file=sys.stderr)
     sys.exit(1)
@@ -113,15 +120,15 @@ def main():
     parser.add_argument("--stream", action="store_true", help="Enable streaming (pure stdlib SSE not yet supported)")
     args = parser.parse_args()
 
-    if args.create:
-        sid = create_session(args.title)
-        print(sid)
-        return
-
     # Resolve inputs with priority: CLI argument > environment variable
     session_id = (args.session or "").strip()
     if not session_id:
         session_id = os.environ.get("HERMES_SESSION_ID", "").strip()
+
+    if args.create:
+        sid = create_session(args.title, session_id)
+        print(sid)
+        return
 
     message = (args.message or "").strip()
     if not message:
@@ -135,8 +142,6 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    debug = os.environ.get("DEBUG", 0) in ["1", 1]
-
     if not session_id:
         session_id = create_session(args.title)
     else:
@@ -144,7 +149,7 @@ def main():
         if not exists:
             if debug:
                 print(f"[Session '{session_id}' not found, auto-creating...]")
-            session_id = create_session(args.title)
+            session_id = create_session(args.title, session_id)
         else:
             if debug:
                 print(f"[Session resumed] {session_id}")
