@@ -50,6 +50,25 @@ All environment variables used by ACS are prefixed with `ACS_`.
 | `ACS_NATS_KV_BUCKET` | `acs_locks` | NATS KV bucket name for distributed locks |
 | `ACS_NATS_LOCK_TTL_SECONDS` | `7200` | TTL for distributed locks in seconds |
 | `ACS_NATS_LOCK_RENEW_INTERVAL_SECONDS` | `10` | Lock renewal interval in seconds |
+| `ACS_NATS_PENDING_MESSAGE_NO_ACK` | `false` | When `true`, pending messages use fire-and-forget mode (no ack/nak, no InProgress heartbeat). **Warning: messages may be lost if consumer crashes.** |
+| `ACS_NATS_ACK_WAIT_SECONDS` | `3600` | NATS consumer AckWait timeout in seconds. Must be greater than the longest expected agent execution time. Only effective when `ACS_NATS_PENDING_MESSAGE_NO_ACK=false`. |
+
+### NATS Consumer Modes
+
+#### Reliable Mode (default, `ACS_NATS_PENDING_MESSAGE_NO_ACK=false`)
+- Consumer must manually acknowledge (`Ack`) each message after processing
+- If processing fails, consumer sends negative acknowledgment (`Nak`) to trigger redelivery
+- `InProgress()` heartbeat is sent every 20 seconds during long-running processing to prevent premature redelivery
+- `AckWait` determines how long NATS waits for acknowledgment before redelivering
+- Guarantees **at-least-once** message delivery
+
+#### Fire-and-Forget Mode (`ACS_NATS_PENDING_MESSAGE_NO_ACK=true`)
+- Consumer does not acknowledge messages
+- No `InProgress()` heartbeat
+- NATS removes message from queue immediately after delivery
+- **No redelivery** if processing fails or consumer crashes
+- Suitable for scenarios where occasional message loss is acceptable
+- **Not recommended** for critical agent processing
 
 ---
 
@@ -159,6 +178,8 @@ ACS_NATS_SERVERS=nats://localhost:4222
 ACS_NATS_STREAM_GROUP=acs_group
 ACS_NATS_SUBJECT_GROUP_PENDING_MESSAGE_PREFIX=acs.group.pending-message
 ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX=acs.group.message
+ACS_NATS_PENDING_MESSAGE_NO_ACK=false
+ACS_NATS_ACK_WAIT_SECONDS=3600
 
 # Agent
 ACS_GROUP_MANAGER_AGENT_API_BASE=http://127.0.0.1:7373

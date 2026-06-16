@@ -31,6 +31,7 @@ type Consumer struct {
 	contextBuilder *message.ContextBuilder
 	maxChainLength int
 	cfg            *config.Config
+	noAck          bool
 }
 
 // NewConsumer creates a new NATS consumer.
@@ -41,6 +42,10 @@ func NewConsumer(
 	pool *workpool.Pool,
 	cfg *config.Config,
 ) *Consumer {
+	noAck := false
+	if cfg != nil {
+		noAck = cfg.NATS.PendingMessageNoAck
+	}
 	return &Consumer{
 		db:             db,
 		publisher:      publisher,
@@ -49,6 +54,7 @@ func NewConsumer(
 		contextBuilder: message.NewContextBuilder(),
 		maxChainLength: 5,
 		cfg:            cfg,
+		noAck:          noAck,
 	}
 }
 
@@ -60,6 +66,73 @@ func (c *Consumer) Handler() nats.MsgHandler {
 		if traceID == "" {
 			traceID = uuid.New().String()
 		}
+
+		// Extract message_id from payload for logging
+		var payload struct {
+			MessageID string `json:"message_id"`
+		}
+		_ = json.Unmarshal(msg.Data, &payload)
+		messageID := payload.MessageID
+		if messageID == "" {
+			messageID = "unknown"
+		}
+
+		if c.noAck {
+			// Fire-and-forget mode: process message without ack/nak and without InProgress heartbeat
+			logger.DebugM(consumerModule, traceID, "processing pending message (no-ack mode)", "message_id", messageID)
+
+			// Recover from panic to ensure graceful handling
+			defer func() {
+				if r := recover(); r != nil {
+					logger.ErrorM(consumerModule, traceID, "panic recovered in no-ack message handler", "panic", r)
+				}
+			}()
+
+			if err := c.processMessage(msg, traceID); err != nil {
+				logger.ErrorM(consumerModule, traceID, "failed to process pending message (no-ack mode)",
+					"error", err,
+					"message_id", messageID,
+				)
+				return
+			}
+			logger.DebugM(consumerModule, traceID, "pending message processed (no-ack mode)", "message_id", messageID)
+			return
+		}
+
+		// Reliable mode: ManualAck + InProgress heartbeat
+		// Start a goroutine to periodically send InProgress to reset AckWait timer
+		stopInProgress := make(chan struct{})
+		logger.DebugM(consumerModule, traceID, "starting InProgress heartbeat for message", "message_id", messageID)
+
+		go func() {
+			ticker := time.NewTicker(20 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					if err := msg.InProgress(); err != nil {
+						logger.WarnM(consumerModule, traceID, "failed to send InProgress", "error", err)
+					}
+				case <-stopInProgress:
+					return
+				}
+			}
+		}()
+
+		// Ensure heartbeat goroutine is always stopped to prevent goroutine leak.
+		// This defer runs before the recover defer (LIFO), so stopInProgress is
+		// closed even if a panic occurs and is recovered.
+		defer func() {
+			logger.DebugM(consumerModule, traceID, "stopping InProgress heartbeat for message", "message_id", messageID)
+			close(stopInProgress)
+		}()
+
+		// Recover from panic to ensure graceful handling and heartbeat cleanup.
+		defer func() {
+			if r := recover(); r != nil {
+				logger.ErrorM(consumerModule, traceID, "panic recovered in message handler", "panic", r)
+			}
+		}()
 
 		if err := c.processMessage(msg, traceID); err != nil {
 			logger.ErrorM(consumerModule, traceID, "failed to process pending message", "error", err)
@@ -157,6 +230,21 @@ func (c *Consumer) processMessage(msg *nats.Msg, traceID string) error {
 	return nil
 }
 
+// isAgentAlreadyRunning checks if the specified agent is already processing the given message.
+func (c *Consumer) isAgentAlreadyRunning(groupID, messageID, agentID, traceID string) (bool, error) {
+	var existing models.AgentMessageProcessing
+	err := c.db.Where("group_id = ? AND message_id = ? AND agent_id = ? AND status = ?",
+		groupID, messageID, agentID, models.ProcessingStatusRunning).
+		First(&existing).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // processAgentTarget processes a single agent target.
 func (c *Consumer) processAgentTarget(
 	ctx context.Context,
@@ -227,6 +315,25 @@ func (c *Consumer) processAgentTarget(
 			)
 		}
 	}()
+
+	// Check if this agent is already processing this message (agent-level deduplication)
+	if isRunning, err := c.isAgentAlreadyRunning(group.GroupID, pendingMsg.MessageID, agentMember.MemberID, traceID); err != nil {
+		return fmt.Errorf("failed to check agent running status: %w", err)
+	} else if isRunning {
+		logger.WarnM(consumerModule, traceID, "agent already processing this message, skipping duplicate",
+			"agent_id", agentMember.MemberID,
+			"message_id", pendingMsg.MessageID,
+		)
+		return nil
+	}
+
+	// Create running record before agent chat to prevent duplicate processing
+	if err := c.createRunningRecord(group.GroupID, pendingMsg.MessageID, agentMember.MemberID, traceID); err != nil {
+		logger.WarnM(consumerModule, traceID, "failed to create running record",
+			"agent_id", agentMember.MemberID,
+			"error", err,
+		)
+	}
 
 	// Check processing chain length to prevent infinite loops
 	chainLength := c.getProcessingChainLength(pendingMsg)
@@ -426,6 +533,27 @@ func (c *Consumer) getProcessingChainLength(msg *models.GroupMessage) int {
 	return length
 }
 
+// createRunningRecord creates a running status record for the agent message processing.
+func (c *Consumer) createRunningRecord(groupID, messageID, agentID, traceID string) error {
+	record := &models.AgentMessageProcessing{
+		GroupID:   groupID,
+		MessageID: messageID,
+		AgentID:   agentID,
+		Status:    models.ProcessingStatusRunning,
+	}
+
+	if err := c.db.Create(record).Error; err != nil {
+		return fmt.Errorf("failed to create running record: %w", err)
+	}
+
+	logger.InfoM(consumerModule, traceID, "running record created",
+		"group_id", groupID,
+		"message_id", messageID,
+		"agent_id", agentID,
+	)
+	return nil
+}
+
 // recordProcessingStatus records the agent message processing status.
 func (c *Consumer) recordProcessingStatus(groupID, messageID, agentID string, success bool, errorMsg string, traceID string) {
 	status := models.ProcessingStatusCompleted
@@ -433,21 +561,47 @@ func (c *Consumer) recordProcessingStatus(groupID, messageID, agentID string, su
 		status = models.ProcessingStatusFailed
 	}
 
-	record := &models.AgentMessageProcessing{
-		GroupID:   groupID,
-		MessageID: messageID,
-		AgentID:   agentID,
-		Status:    status,
+	// Try to update existing running record first
+	result := c.db.Model(&models.AgentMessageProcessing{}).
+		Where("group_id = ? AND message_id = ? AND agent_id = ? AND status = ?",
+			groupID, messageID, agentID, models.ProcessingStatusRunning).
+		Updates(map[string]interface{}{
+			"status":          status,
+			"error_message":   errorMsg,
+			"processed_at_ms": time.Now().UnixMilli(),
+			"update_at_ms":    time.Now().UnixMilli(),
+		})
+
+	if result.Error != nil {
+		logger.ErrorM(consumerModule, traceID, "failed to update running record to final status", "error", result.Error)
+		// Fallback: create a new record
+		record := &models.AgentMessageProcessing{
+			GroupID:       groupID,
+			MessageID:     messageID,
+			AgentID:       agentID,
+			Status:        status,
+			ErrorMessage:  errorMsg,
+			ProcessedAtMs: time.Now().UnixMilli(),
+		}
+		if err := c.db.Create(record).Error; err != nil {
+			logger.ErrorM(consumerModule, traceID, "failed to record processing status", "error", err)
+		}
+		return
 	}
 
-	if !success {
-		record.ErrorMessage = errorMsg
-	}
-
-	record.ProcessedAtMs = time.Now().UnixMilli()
-
-	if err := c.db.Create(record).Error; err != nil {
-		logger.ErrorM(consumerModule, traceID, "failed to record processing status", "error", err)
+	if result.RowsAffected == 0 {
+		// No running record found, create a new one
+		record := &models.AgentMessageProcessing{
+			GroupID:       groupID,
+			MessageID:     messageID,
+			AgentID:       agentID,
+			Status:        status,
+			ErrorMessage:  errorMsg,
+			ProcessedAtMs: time.Now().UnixMilli(),
+		}
+		if err := c.db.Create(record).Error; err != nil {
+			logger.ErrorM(consumerModule, traceID, "failed to record processing status", "error", err)
+		}
 	}
 }
 

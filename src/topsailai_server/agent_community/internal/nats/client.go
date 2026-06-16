@@ -143,15 +143,36 @@ func (c *Client) createStreams() error {
 
 // CreatePendingMessageConsumer creates a durable consumer for pending messages.
 func (c *Client) CreatePendingMessageConsumer(handler nats.MsgHandler) (*nats.Subscription, error) {
+	var subOpts []nats.SubOpt
+
+	subOpts = append(subOpts,
+		nats.Durable("pending-message-consumer"),
+		nats.MaxDeliver(3),
+		nats.MaxAckPending(10),
+	)
+
+	if c.cfg.PendingMessageNoAck {
+		// Fire-and-forget mode: no ack required from consumer
+		subOpts = append(subOpts, nats.AckNone())
+		logger.Info("nats consumer created with no-ack mode (fire-and-forget)")
+	} else {
+		// Reliable mode: manual ack with configurable ack wait
+		subOpts = append(subOpts, nats.ManualAck())
+
+		ackWaitSeconds := c.cfg.AckWaitSeconds
+		if ackWaitSeconds <= 0 {
+			ackWaitSeconds = 3600 // default 1 hour
+		}
+		ackWait := time.Duration(ackWaitSeconds) * time.Second
+		subOpts = append(subOpts, nats.AckWait(ackWait))
+		logger.Info("nats consumer created with manual-ack mode", "ack_wait", ackWait.String())
+	}
+
 	sub, err := c.js.QueueSubscribe(
 		pendingMessageSubjectPrefix+">",
 		queueGroupName,
 		handler,
-		nats.Durable("pending-message-consumer"),
-		nats.ManualAck(),
-		nats.MaxDeliver(3),
-		nats.AckWait(30*time.Second),
-		nats.MaxAckPending(10),
+		subOpts...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pending message consumer: %w", err)

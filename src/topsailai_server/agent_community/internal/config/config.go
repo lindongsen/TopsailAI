@@ -45,6 +45,8 @@ type NATSConfig struct {
 	StreamGroup                      string `mapstructure:"stream_group"`
 	SubjectGroupPendingMessagePrefix string `mapstructure:"subject_group_pending_message_prefix"`
 	SubjectGroupMessagePrefix        string `mapstructure:"subject_group_message_prefix"`
+	PendingMessageNoAck              bool   `mapstructure:"pending_message_no_ack"`
+	AckWaitSeconds                   int    `mapstructure:"ack_wait_seconds"`
 }
 
 // AgentConfig holds manager-agent and trigger settings.
@@ -117,6 +119,8 @@ func Load() (*Config, error) {
 	v.SetDefault("nats.stream_group", "acs_group")
 	v.SetDefault("nats.subject_group_pending_message_prefix", "acs.group.pending-message")
 	v.SetDefault("nats.subject_group_message_prefix", "acs.group.message")
+	v.SetDefault("nats.pending_message_no_ack", false)
+	v.SetDefault("nats.ack_wait_seconds", 3600)
 
 	// Agent defaults
 	v.SetDefault("agent.manager_api_base", "")

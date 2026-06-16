@@ -10,8 +10,13 @@ context:
   _default:
     - project.yaml
     - ORIGIN.md
+    - docs/API.md
+    - docs/Environment_Variables.md
 
   default: []
+
+  bugfix:
+    - issues/91critical-issues.md
 
   cli:
     - ORIGIN_CLI.md
