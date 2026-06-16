@@ -10,6 +10,7 @@ import (
 	"github.com/topsailai/agent-community/internal/agent"
 	"github.com/topsailai/agent-community/internal/api"
 	"github.com/topsailai/agent-community/internal/config"
+	"github.com/topsailai/agent-community/internal/daemon"
 	"github.com/topsailai/agent-community/internal/db"
 	"github.com/topsailai/agent-community/internal/discovery"
 	"github.com/topsailai/agent-community/internal/lock"
@@ -27,6 +28,95 @@ func main() {
 }
 
 func run() error {
+	// Parse command-line arguments
+	if len(os.Args) > 1 {
+		subcommand := os.Args[1]
+		switch subcommand {
+		case "start":
+			return handleStart()
+		case "-d", "--daemon-internal":
+			// Internal flag for daemon mode, remove it from args and continue
+			os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
+			return runServer(true)
+		case "stop":
+			return handleStop()
+		case "restart":
+			return handleRestart()
+		case "status":
+			return handleStatus()
+		default:
+			if subcommand == "-h" || subcommand == "--help" || subcommand == "help" {
+				printUsage()
+				return nil
+			}
+			return fmt.Errorf("unknown command: %s", subcommand)
+		}
+	}
+
+	// Default: run server in foreground
+	return runServer(false)
+}
+
+func printUsage() {
+	fmt.Println("Usage: server [command]")
+	fmt.Println("")
+	fmt.Println("Commands:")
+	fmt.Println("  start   Start the server in daemon mode (background)")
+	fmt.Println("  stop    Stop the running server")
+	fmt.Println("  restart Restart the server")
+	fmt.Println("  status  Show the server status")
+	fmt.Println("  help    Show this help message")
+	fmt.Println("")
+	fmt.Println("Environment variables:")
+	fmt.Println("  TOPSAILAI_HOME    Base directory for logs and PID files (default: /topsailai)")
+	fmt.Println("")
+	fmt.Println("Files:")
+	fmt.Printf("  Log: %s\n", daemon.GetLogPath())
+	fmt.Printf("  PID: %s\n", daemon.GetPIDPath())
+}
+
+func handleStart() error {
+	return daemon.Start()
+}
+
+func handleStop() error {
+	return daemon.Stop()
+}
+
+func handleRestart() error {
+	return daemon.Restart()
+}
+
+func handleStatus() error {
+	result, err := daemon.Status()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error checking status: %v\n", err)
+		os.Exit(1)
+	}
+
+	if result.Running {
+		fmt.Printf("Server is running (PID: %d)\n", result.PID)
+		fmt.Printf("PID file: %s\n", result.PIDPath)
+		fmt.Printf("Log file: %s\n", result.LogPath)
+	} else {
+		fmt.Println("Server is not running")
+		if result.PID > 0 {
+			fmt.Printf("(stale PID file found: %s)\n", result.PIDPath)
+		}
+	}
+	return nil
+}
+
+func runServer(isDaemon bool) error {
+	// If running in daemon mode, setup daemon environment
+	if isDaemon {
+		if err := daemon.SetupDaemon(); err != nil {
+			return fmt.Errorf("failed to setup daemon: %w", err)
+		}
+		// Cleanup PID file on shutdown
+		defer daemon.CleanupDaemon()
+	}
+
 	// 1. Load configuration from environment variables.
 	cfg, err := config.Load()
 	if err != nil {
