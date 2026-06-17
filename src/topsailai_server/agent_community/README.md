@@ -40,6 +40,10 @@
 
 ## Features
 
+- **Account Management**: Create and manage accounts with role-based access control (admin, manager, user)
+- **API Key Management**: Issue and revoke API keys per account with per-owner limits and role constraints
+- **Audit Logging**: Record security-relevant lifecycle and authentication events
+- **Authentication & Authorization**: API key, session key, and password-based login with role hierarchy enforcement
 - **Group Management**: Create, update, delete groups with context and access keys
 - **Member Management**: Join/leave groups with users and AI agents
 - **Message System**: Send, edit, delete (soft-delete) messages with mention support
@@ -89,6 +93,61 @@
 ├── go.mod                # Go module definition
 └── Makefile              # Build automation
 ```
+
+## Authentication & Authorization
+
+ACS protects HTTP endpoints with a role-based access control system.
+
+### Authentication Methods
+
+1. **API Key** — Send `Authorization: Bearer {api_key_id}.{secret}` where `api_key_id` follows the format `ak-{alphanumeric}`. The secret portion is verified against a bcrypt hash stored in the `api_keys` table.
+2. **Session Key** — Send `X-Session-Key: {session_key}`. The session key is verified against `accounts.login_session_key` and must not be expired.
+3. **Login Name / Password** — Call the login endpoint with `login_name` and `login_password` to obtain a session key, then use the session key for subsequent requests.
+
+Authentication priority when multiple credentials are present: login name/password > session key > API key.
+
+### Roles
+
+| Role | Description |
+|------|-------------|
+| `admin` | Full system access; can manage accounts, API keys, and all resources |
+| `manager` | Can create user accounts, query accounts by id/external_id, and create login sessions for user accounts. **Cannot create API keys.** |
+| `user` | Can manage own resources and API keys; can access groups they are a member of |
+
+Role hierarchy: `admin > manager > user`. An API key's role can never exceed the role of its owning account.
+
+---
+
+## Default Accounts
+
+On startup, ACS automatically creates default `admin` and `manager` accounts if they do not already exist. This process is guarded by a NATS KV distributed lock and is only executed by the current `Service-Leader`, ensuring safe startup across a cluster.
+
+### Admin Account
+
+- If `ACS_ACCOUNT_ADMIN_API_KEY` is set, ACS validates that the token matches an existing active API key with `role=admin`. If validation fails, the server logs a clear configuration error and exits.
+- If `ACS_ACCOUNT_ADMIN_API_KEY` is not set, ACS generates a default admin account and API key, then writes the plaintext key to `ACS_ACCOUNT_ADMIN_API_KEY.acs` in the process working directory.
+
+### Manager Account
+
+- If `ACS_ACCOUNT_MANAGER_API_KEY` is set, ACS validates that the token matches an existing active API key with `role=manager`. If validation fails, the server logs a clear configuration error and exits.
+- If `ACS_ACCOUNT_MANAGER_API_KEY` is not set, ACS generates a default manager account and API key, then writes the plaintext key to `ACS_ACCOUNT_MANAGER_API_KEY.acs` in the process working directory.
+
+> **Security Note:** Auto-generated key files contain plaintext secrets. Secure these files appropriately in production.
+
+---
+
+## Audit Logs
+
+Security-relevant lifecycle actions are recorded in the `audit_logs` table, including but not limited to:
+
+- Account creation, update, and soft deletion
+- API key creation and deletion
+- Successful and failed login attempts
+- Password changes
+
+Audit records include the acting `account_id`, `api_key_id` (when applicable), action, resource type/id/name, detail, client IP, and timestamp. The audit middleware writes these records automatically for protected endpoints.
+
+---
 
 ## Getting Started
 
@@ -143,7 +202,7 @@ make run
 
 #### Environment Variables
 
-All environment variables are prefixed with `ACS_`. See [docs/Environment_Variables.md](docs/Environment_Variables.md) for the complete reference.
+All environment variables are prefixed with `ACS_`. See [docs/Environment_Variables.md](docs/Environment_Variables.md) for the complete reference, including account, API key, session, and audit logging settings.
 
 Key variables:
 
@@ -157,6 +216,8 @@ Key variables:
 | `ACS_DB_PASSWORD` | `acs` | Database password |
 | `ACS_NATS_SERVERS` | `nats://localhost:4222` | NATS server URLs |
 | `ACS_GROUP_MANAGER_AGENT_API_BASE` | - | Manager-agent API base URL |
+| `ACS_ACCOUNT_ADMIN_API_KEY` | - | Plaintext admin token for default admin validation/creation |
+| `ACS_ACCOUNT_MANAGER_API_KEY` | - | Plaintext manager token for default manager validation/creation |
 | `TOPSAILAI_HOME` | `/topsailai` | Base directory for logs and PID files |
 
 ### Daemon Configuration
@@ -259,9 +320,58 @@ See [docs/API.md](docs/API.md) for complete API documentation with request/respo
 | `delete_at_ms` | BIGINT | Deletion timestamp |
 | `create_at_ms` | BIGINT | Creation timestamp |
 | `update_at_ms` | BIGINT | Last update timestamp |
+### Table: `accounts`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `account_id` | VARCHAR (PK) | Unique account identifier, format `acc-{id}` |
+| `account_name` | VARCHAR | Account display name |
+| `account_description` | TEXT | Account description |
+| `role` | VARCHAR | `admin`, `manager`, or `user` |
+| `status` | VARCHAR | `active`, `inactive`, or `deleted` |
+| `delete_at_ms` | BIGINT | Soft-deletion timestamp |
+| `creator_id` | VARCHAR | Creator account ID (`system` for defaults) |
+| `external_id` | VARCHAR | External identity (e.g., OIDC subject) |
+| `email` | VARCHAR | Email address |
+| `auth_provider` | VARCHAR | External authentication provider |
+| `avatar_url` | TEXT | Avatar URL |
+| `login_name` | VARCHAR | Unique login name |
+| `login_password` | VARCHAR | Bcrypt hash of login password |
+| `login_session_key` | VARCHAR | Bcrypt hash of current session key |
+| `login_session_expired_time` | BIGINT | Session expiration timestamp |
+| `create_at_ms` | BIGINT | Creation timestamp |
+| `update_at_ms` | BIGINT | Last update timestamp |
+
+### Table: `api_keys`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `api_key_id` | VARCHAR (PK) | Unique API key identifier, format `ak-{id}` |
+| `api_key_name` | VARCHAR | Human-readable key name |
+| `api_key_hash` | VARCHAR | Bcrypt hash of the key secret |
+| `role` | VARCHAR | `admin`, `manager`, or `user` |
+| `status` | VARCHAR | `active` or `inactive` |
+| `creator_id` | VARCHAR | Creator account ID |
+| `owner_id` | VARCHAR | Owning account ID (references `accounts.account_id`) |
+| `create_at_ms` | BIGINT | Creation timestamp |
+| `update_at_ms` | BIGINT | Last update timestamp |
+
+### Table: `audit_logs`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `audit_log_id` | VARCHAR (PK) | Unique audit log identifier, format `al-{id}` |
+| `account_id` | VARCHAR | Acting account ID |
+| `api_key_id` | VARCHAR | Acting API key ID |
+| `action` | VARCHAR | Action name |
+| `resource_type` | VARCHAR | Type of affected resource |
+| `resource_id` | VARCHAR | ID of affected resource |
+| `resource_name` | VARCHAR | Name of affected resource |
+| `detail` | TEXT | Additional details |
+| `client_ip` | VARCHAR | Client IP address |
+| `create_at_ms` | BIGINT | Event timestamp |
 
 ## NATS Messaging
-
 ACS uses NATS JetStream for:
 
 1. **Pending Messages Queue**: `acs.group.pending-message.{group_id}`
