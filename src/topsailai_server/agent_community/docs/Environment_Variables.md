@@ -132,6 +132,24 @@ The following variables are passed to agent adaptors via `member_interface.envir
 | `ACS_MESSAGE_MENTIONS` | Message mentions JSON | Mentions extracted from the message |
 | `ACS_MESSAGE_TRIGGER_TYPE` | Trigger type | `mention` or `auto` |
 
+## Account & API Key Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ACS_ACCOUNT_ADMIN_API_KEY` | - | Plaintext admin token. If set, startup validates it matches an active `role=admin` API key; otherwise a default admin account and key are auto-generated and written to `ACS_ACCOUNT_ADMIN_API_KEY.acs` in the process working directory (PWD). |
+| `ACS_ACCOUNT_MANAGER_API_KEY` | - | Plaintext manager token. If set, startup validates it matches an active `role=manager` API key; otherwise a default manager account and key are auto-generated and written to `ACS_ACCOUNT_MANAGER_API_KEY.acs` in the process working directory (PWD). |
+| `ACS_API_KEY_MAX_PER_ACCOUNT` | `10` | Maximum number of API keys allowed per account owner. |
+| `ACS_LOGIN_SESSION_EXPIRY_SECONDS` | `86400` | Default expiry time in seconds for login session keys. |
+| `ACS_BCRYPT_COST` | `10` | Bcrypt cost factor used for hashing `login_password`, API key secrets, and `login_session_key`. |
+
+### Behavior
+
+- **Default account creation** is guarded by a NATS KV distributed lock and only performed by the current `Service-Leader`. This prevents duplicate default accounts when multiple ACS instances start simultaneously.
+- If `ACS_ACCOUNT_ADMIN_API_KEY` or `ACS_ACCOUNT_MANAGER_API_KEY` is provided but does not match an existing active API key with the expected role, the server logs a clear configuration error and exits.
+- Auto-generated keys are written to plain text files in the process working directory. These files should be secured appropriately in production deployments.
+
+---
+
 ---
 
 ## AgentWorkPool Configuration
@@ -155,6 +173,10 @@ The following variables are passed to agent adaptors via `member_interface.envir
 | `ACS_LOG_MAX_SIZE_MB` | `100` | Maximum log file size in MB before rotation |
 | `ACS_LOG_MAX_AGE_DAYS` | `30` | Maximum number of days to retain log files |
 | `ACS_LOG_MAX_BACKUPS` | `10` | Maximum number of retained log files |
+
+### Audit Logging
+
+Audit logs are written to the `audit_logs` table and record security-relevant events such as account/API key lifecycle actions and authentication attempts. The audit logger is invoked automatically by the HTTP middleware for protected endpoints. There are no dedicated environment variables for audit logging; behavior is controlled by the database connection and the general log configuration above.
 
 ---
 

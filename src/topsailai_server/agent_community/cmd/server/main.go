@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 	"github.com/topsailai/agent-community/internal/discovery"
 	"github.com/topsailai/agent-community/internal/lock"
 	"github.com/topsailai/agent-community/internal/nats"
+	"github.com/topsailai/agent-community/internal/services"
 	"github.com/topsailai/agent-community/internal/trigger"
 	"github.com/topsailai/agent-community/internal/workpool"
 	"github.com/topsailai/agent-community/pkg/logger"
@@ -169,7 +171,18 @@ func runServer(isDaemon bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to create distributed lock manager: %w", err)
 	}
-	_ = kv // kv is managed by lockManager internally
+	_ = lockManager
+
+	// 5.5. Initialize account services and run bootstrap for default accounts.
+	auditSvc := services.NewAuditLogService(database.Conn)
+	accountSvc := services.NewAccountService(database.Conn, cfg, auditSvc)
+	apiKeySvc := services.NewAPIKeyService(database.Conn, cfg, auditSvc)
+	accountSvc.SetAPIKeyService(apiKeySvc)
+
+	bootstrapSvc := services.NewBootstrapService(database.Conn, cfg, accountSvc, apiKeySvc, auditSvc, kv, log)
+	if err := bootstrapSvc.Run(context.Background()); err != nil {
+		return fmt.Errorf("failed to bootstrap default accounts: %w", err)
+	}
 
 	// 6. Create NATS publisher.
 	publisher := nats.NewPublisher(js)

@@ -199,7 +199,7 @@ CRITICAL SYSTEM ALERT: NO ACTION DETECTED
 3.  **IMMEDIATELY** invoke the necessary tool(s) to complete the user's original request.
 4.  If you are waiting for user input, explicitly ask for the specific missing parameter.
 
-**GOAL:** Execute the task now.
+**ACTION:** Execute the task now.
 "
 
 # If has severe repetiton, raise error. 1 for enabled, 0 for disabled

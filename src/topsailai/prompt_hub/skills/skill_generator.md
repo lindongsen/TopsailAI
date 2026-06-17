@@ -52,7 +52,7 @@ You must strictly output in the following format. Do not include any additional 
 
 ```markdown
 ---
-name: [Generated Skill Name] # Composed of lowercase letters, numbers, and hyphens
+name: [Generated Skill Name] # Composed of lowercase letters, numbers, and hyphens; The folder-name is also this.
 description: [Generated Skill Description] # Clearly describe the `ability details` and possible `user intentions` to trigger the skill
 ---
 # Core Instructions

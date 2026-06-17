@@ -38,14 +38,18 @@ Human can use group_key to join into the group, chatting together with humans & 
 
 ## Database
 
+使用 creator_id 表达 创建者, 特殊值 system 表达资源是系统创建。
+使用 owner_id 表达 归属者，特殊值 system 表达资源是系统所有。
+
 ### Table: groups
 
 Columns:
-- group_id, primary key
+- group_id, primary key, Format `group-{id}`
 - group_name
 - group_context, plaintext
 - group_key, a secret key hash string, default null is public
 - creator_id, group creator
+- owner_id, group owner
 
 ### Table: group_member
 
@@ -81,6 +85,113 @@ Columns:
 - mentions, JSON, list_dict, [{member_id, member_name, member_type}]
 - is_deleted
 - delete_at_ms
+
+## Table: audit_logs
+
+- audit_log_id, Format `al-{id}`, primary key
+- account_id
+- api_key_id
+- action
+- resource_type
+- resource_id
+- resource_name
+- detail, text
+- client_ip
+
+## Table: api_keys
+
+Authorization: Bearer Token
+
+Token = `{api_key_id}.{secret}`，例如 `ak-xxx.yyyyzzzz`
+
+Columns:
+- api_key_id, primary key, Format `ak-{id}`, the {id} contains only alphanumeric characters
+- api_key_name,
+- api_key_hash, bcrypt
+- role
+- status, active/inactive, only active is available
+- creator_id
+- owner_id, references `accounts.account_id`
+
+每个owner的api_keys最大限额默认是10个，可以通过环境变量`ACS_API_KEY_MAX_PER_ACCOUNT`进行控制。
+api_keys无需软删除。
+
+当 account 被软删除（`status=deleted`）时，其所有 api_key (owner_id=account_id) 应级联删除。
+
+## Table: accounts
+
+Columns:
+- account_id, user id, primary key, contains only alphanumeric characters，自动生成，不可API传参; Format: `acc-{id}`
+- account_name
+- account_description
+- role
+- status, active/inactive/deleted, forbid login/authentication when `status != active`;
+- delete_at_ms, soft-deletion
+- creator_id
+- NO NEED owner_id due to owner_id=account_id for now.
+
+### Default Accounts (admin/manager role)
+
+> Use a NATS KV distributed lock (and Service-Leader election) around default account creation
+> auto-generated accounts use `creator_id = 'system'`
+
+服务启动时，会自动生成一个admin级别的默认账户和`api_key`，这个`api_key`可以来自环境变量的定义，example `ACS_ACCOUNT_ADMIN_API_KEY`，未配置时自动生成并写入`工作目录`的文件`ACS_ACCOUNT_ADMIN_API_KEY.acs`;
+注意：
+当环境变量`ACS_ACCOUNT_ADMIN_API_KEY`存在时，你要确保这个 api_key 在当前数据库中存在，并且是 admin 级别,否则要报出明确的错误日志、并且服务不可启动成功。
+On startup, if `ACS_ACCOUNT_ADMIN_API_KEY` is provided but mismatched, fail loudly as already specified.
+若 env 中 key 与数据库中 admin key 不一致，应视为配置错误，拒绝启动。env 提供的 ACS_ACCOUNT_ADMIN_API_KEY 必须能匹配到一个 `role=admin` 且 `status=active` 的 api_key。
+启动时，日志要提示 admin 的账户数量。
+
+服务启动时，会检查是否存在 `manager` 角色的账户，如果不存在就创建一个默认的`manager`角色的账户，`api_key`来自环境变量`ACS_ACCOUNT_MANAGER_API_KEY`的定义, 未配置时自动生成并写入`工作目录`的文件`ACS_ACCOUNT_MANAGER_API_KEY.acs`。
+启动时，日志要提示 manager 的账户数量。env 提供的 ACS_ACCOUNT_MANAGER_API_KEY 必须能匹配到一个 `role=manager` 且 `status=active` 的 api_key。
+
+ACS_ACCOUNT_ADMIN_API_KEY 和 ACS_ACCOUNT_MANAGER_API_KEY 都是`明文token`，启动时进行 api_key_hash 比对。注意：格式必须符合上述 `api_keys Token`的设计（Token = `{api_key_id}.{secret}`），就可以快速定位到 api_key_id，再去比对 secret。api_key_id的格式要符合要求，否则报错并退出。
+
+启动时，日志要提示总账户数量，不同状态下的账户数量。
+
+工作目录 指的是 进程运行时所在的文件夹（PWD）。
+
+### Account/Api_keys Roles
+
+1. admin 级别的`api_key`可以用来管理资源的生命周期，包括accounts, api_keys等。
+2. user 级别的`api_key`可以管理user自己的资源, 可以访问自己加入的group，不能创建account,可以创建自己的api_keys。
+3. manager 级别的`api_key`只能:
+  创建新账户, role=user, login_name可以使用email名;
+  根据 id 或 external_id 查询账户（不能查到api_keys,不能查到login_xxx信息）;
+  根据 id 创建 login_session_key, 只能为 role=user 创建;
+  触发用户自己通过密码/OIDC 完成登录;
+  除此之外，没有任何权限了。
+
+角色序：`admin > manager > user`
+
+> Constraint:
+1. api_keys.role 必须 ≤ 所属 account 的 role:
+  accounts.role=user 创建的 api_key.role 只能是 user;
+  manager 可以持有api_key，但不能创建任何角色的 api_key; 允许 admin 为 manager 创建/删除 key;
+  admin 可以创建各种角色的 api_key，也可以为其它账户创建api_key;
+
+> Requirement:
+所有关于角色/权限的生命周期都必须有完整的审计日志（包括日志打印）。
+
+### Account Detail Design
+
+- 增加 external_id, email, auth_provider, avatar_url 等字段，用于对接外部登录方式，如：OIDC/(OAuth2.0)。
+- 增加 login_session_key(use bcrypt, format: `{account_id}-{session_key}`), login_session_expired_time 字段，当 header 中使用了 `x-session-key` 字段，就进行校验，值存在 且 相等 且 不过期 就认证通过，可以操作该账户的资源。默认过期时间 86400 秒，可以通过环境变量设定这个值。
+- 增加 login_name, login_password (use bcrypt) 字段。login_password 为空就是禁止使用 login_xxx 信息去登录。login_name: uniq, not null, index;
+
+### Account Login Methods
+
+支持以下登录/访问方式：
+- 使用账户的 api_key 访问；
+- 使用`manager`角色查询到账户 id，用账户 id 创建 login_session_key，然后通过 login_session_key 访问；
+- 使用 login_name, login_password 获得/创建 login_session_key，然后通过 login_session_key 访问；
+- 使用 api_key 获得/创建 login_session_key，然后通过 login_session_key 访问；
+
+Priority: login_name_password > login_session_key > api_key, 通常api请求中只会存在一种认证形式
+
+Policy:
+- 每次创建 新的login_session_key 就直接替换 accounts.login_session_key
+- 可以使用任意登录方式去修改 login_password
 
 ---
 

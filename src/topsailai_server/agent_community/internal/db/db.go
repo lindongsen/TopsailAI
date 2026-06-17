@@ -153,6 +153,9 @@ func autoMigrate(conn *gorm.DB) error {
 		&models.GroupMember{},
 		&models.GroupMessage{},
 		&models.AgentMessageProcessing{},
+		&models.Account{},
+		&models.APIKey{},
+		&models.AuditLog{},
 	)
 }
 

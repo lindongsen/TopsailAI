@@ -170,7 +170,8 @@ class StepCallBase(object):
                     try:
                         raw_dict = json_tool.json_load(raw_text)
                     except Exception:
-                        raw_dict = format_response(raw_text)
+                        if 'step_name' in step and step["step_name"] == "action":
+                            raw_dict = format_response(raw_text)
                     if isinstance(raw_dict, list):
                         raw_dict = raw_dict[0]
                 if raw_dict and 'tool_call' in raw_dict:

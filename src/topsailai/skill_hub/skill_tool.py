@@ -390,7 +390,19 @@ def overview_skill_native(folder_path:str) -> str:
     with open(file_skill_md, encoding="utf-8") as fd:
         content_skill_md = fd.read()
 
-    folder_content = "\n".join(file_tool.list_files(folder_path, to_exclude_dot_start=True))
+    folder_list = file_tool.list_files(
+        folder_path,
+        to_exclude_dot_start=True,
+        excluded_starts=(
+            '__pycache__',
+        ),
+    )
+    folder_content = "\n".join(
+        [
+            ('- ' + _folder.replace(f"{folder_path}/", ""))
+            for _folder in folder_list
+        ]
+    )
 
     result = f"""
 # skill overview: folder={folder_path}

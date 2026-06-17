@@ -22,6 +22,7 @@ type Config struct {
 	Log           LogConfig           `mapstructure:"log"`
 	Cleanup       CleanupConfig       `mapstructure:"cleanup"`
 	Discovery     DiscoveryConfig     `mapstructure:"discovery"`
+	Account       AccountConfig       `mapstructure:"account"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -111,6 +112,15 @@ type DiscoveryConfig struct {
 	BucketName  string        `mapstructure:"bucket_name"`
 	Heartbeat   time.Duration `mapstructure:"heartbeat"`
 	TTL         time.Duration `mapstructure:"ttl"`
+}
+
+// AccountConfig holds account, API key, and authentication settings.
+type AccountConfig struct {
+	AdminAPIKey               string `mapstructure:"admin_api_key"`
+	ManagerAPIKey             string `mapstructure:"manager_api_key"`
+	APIKeyMaxPerAccount       int    `mapstructure:"api_key_max_per_account"`
+	LoginSessionExpirySeconds int    `mapstructure:"login_session_expiry_seconds"`
+	BcryptCost                int    `mapstructure:"bcrypt_cost"`
 }
 
 // Load reads configuration from environment variables with ACS_ prefix.
@@ -208,6 +218,17 @@ func Load() (*Config, error) {
 	v.SetDefault("discovery.heartbeat", "30s")
 	v.SetDefault("discovery.ttl", "120s")
 
+	// Account defaults
+	v.SetDefault("account.api_key_max_per_account", 10)
+	v.SetDefault("account.login_session_expiry_seconds", 86400)
+	v.SetDefault("account.bcrypt_cost", 10)
+
+	// Bind account settings to the documented ACS_* env vars.
+	_ = v.BindEnv("account.admin_api_key", "ACS_ACCOUNT_ADMIN_API_KEY")
+	_ = v.BindEnv("account.manager_api_key", "ACS_ACCOUNT_MANAGER_API_KEY")
+	_ = v.BindEnv("account.api_key_max_per_account", "ACS_API_KEY_MAX_PER_ACCOUNT")
+	_ = v.BindEnv("account.login_session_expiry_seconds", "ACS_LOGIN_SESSION_EXPIRY_SECONDS")
+	_ = v.BindEnv("account.bcrypt_cost", "ACS_BCRYPT_COST")
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
@@ -227,6 +248,17 @@ func Load() (*Config, error) {
 		} else {
 			cfg.Database.Name = "acs"
 		}
+	}
+
+	// Validate and sanitize account configuration.
+	if cfg.Account.APIKeyMaxPerAccount <= 0 {
+		cfg.Account.APIKeyMaxPerAccount = 10
+	}
+	if cfg.Account.LoginSessionExpirySeconds <= 0 {
+		cfg.Account.LoginSessionExpirySeconds = 86400
+	}
+	if cfg.Account.BcryptCost <= 0 {
+		cfg.Account.BcryptCost = 10
 	}
 
 	return &cfg, nil
