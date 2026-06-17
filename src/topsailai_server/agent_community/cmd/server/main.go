@@ -178,7 +178,7 @@ func runServer(isDaemon bool) error {
 	evaluator := trigger.NewEvaluator(cfg.Agent.AutoTriggerTimeout)
 
 	// 8. Create work pool for concurrency control.
-	pool := workpool.NewPool(cfg.Pool.Global, cfg.Pool.PerUser, cfg.Pool.PerGroup)
+	pool := workpool.NewPool(cfg.AgentWorkPool.PerNode, cfg.AgentWorkPool.PerUser, cfg.AgentWorkPool.PerGroup)
 
 	// 9. Create agent executor.
 	executor := agent.NewExecutor()

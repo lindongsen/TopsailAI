@@ -14,14 +14,14 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
-	Server    ServerConfig    `mapstructure:"server"`
-	Database  DatabaseConfig  `mapstructure:"database"`
-	NATS      NATSConfig      `mapstructure:"nats"`
-	Agent     AgentConfig     `mapstructure:"agent"`
-	Pool      PoolConfig      `mapstructure:"pool"`
-	Log       LogConfig       `mapstructure:"log"`
-	Cleanup   CleanupConfig   `mapstructure:"cleanup"`
-	Discovery DiscoveryConfig `mapstructure:"discovery"`
+	Server        ServerConfig        `mapstructure:"server"`
+	Database      DatabaseConfig      `mapstructure:"database"`
+	NATS          NATSConfig          `mapstructure:"nats"`
+	Agent         AgentConfig         `mapstructure:"agent"`
+	AgentWorkPool AgentWorkPoolConfig `mapstructure:"agent_work_pool"`
+	Log           LogConfig           `mapstructure:"log"`
+	Cleanup       CleanupConfig       `mapstructure:"cleanup"`
+	Discovery     DiscoveryConfig     `mapstructure:"discovery"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -55,16 +55,31 @@ type NATSConfig struct {
 
 // AgentConfig holds manager-agent and trigger settings.
 type AgentConfig struct {
-	ManagerAPIBase     string        `mapstructure:"manager_api_base"`
-	ManagerAPIKey      string        `mapstructure:"manager_api_key"`
-	ManagerAPIAuth     string        `mapstructure:"manager_api_auth"`
-	AutoTriggerTimeout time.Duration `mapstructure:"auto_trigger_timeout"`
-	AgentPrompt        string        `mapstructure:"agent_prompt"`
+	AutoTriggerTimeout time.Duration      `mapstructure:"auto_trigger_timeout"`
+	AgentPrompt        string             `mapstructure:"agent_prompt"`
+	ManagerAgent       ManagerAgentConfig `mapstructure:"manager_agent"`
 }
 
-// PoolConfig holds AgentWorkPool concurrency limits.
-type PoolConfig struct {
-	Global           int           `mapstructure:"global"`
+// ManagerAgentConfig holds default settings used when auto-joining a manager-agent to a new group.
+type ManagerAgentConfig struct {
+	MemberID           string        `mapstructure:"member_id"`
+	MemberName         string        `mapstructure:"member_name"`
+	MemberDescription  string        `mapstructure:"member_description"`
+	Adaptor            string        `mapstructure:"adaptor"`
+	CmdChat            string        `mapstructure:"cmd_chat"`
+	CmdCheckHealth     string        `mapstructure:"cmd_check_health"`
+	CmdCheckStatus     string        `mapstructure:"cmd_check_status"`
+	APIBase            string        `mapstructure:"api_base"`
+	APIKey             string        `mapstructure:"api_key"`
+	APIAuth            string        `mapstructure:"api_auth"`
+	TimeoutChat        time.Duration `mapstructure:"timeout_chat"`
+	TimeoutCheckHealth time.Duration `mapstructure:"timeout_check_health"`
+	TimeoutCheckStatus time.Duration `mapstructure:"timeout_check_status"`
+}
+
+// AgentWorkPoolConfig holds AgentWorkPool concurrency limits.
+type AgentWorkPoolConfig struct {
+	PerNode          int           `mapstructure:"per_node"`
 	PerUser          int           `mapstructure:"per_user"`
 	PerGroup         int           `mapstructure:"per_group"`
 	StatsLogInterval time.Duration `mapstructure:"stats_log_interval"`
@@ -91,11 +106,11 @@ type CleanupConfig struct {
 
 // DiscoveryConfig holds NATS service discovery settings.
 type DiscoveryConfig struct {
-	Enabled         bool          `mapstructure:"enabled"`
-	ServiceName     string        `mapstructure:"service_name"`
-	BucketName      string        `mapstructure:"bucket_name"`
-	Heartbeat       time.Duration `mapstructure:"heartbeat"`
-	TTL             time.Duration `mapstructure:"ttl"`
+	Enabled     bool          `mapstructure:"enabled"`
+	ServiceName string        `mapstructure:"service_name"`
+	BucketName  string        `mapstructure:"bucket_name"`
+	Heartbeat   time.Duration `mapstructure:"heartbeat"`
+	TTL         time.Duration `mapstructure:"ttl"`
 }
 
 // Load reads configuration from environment variables with ACS_ prefix.
@@ -131,17 +146,45 @@ func Load() (*Config, error) {
 	v.SetDefault("nats.max_ack_pending", 10)
 
 	// Agent defaults
-	v.SetDefault("agent.manager_api_base", "")
-	v.SetDefault("agent.manager_api_key", "")
-	v.SetDefault("agent.manager_api_auth", "bearer")
 	v.SetDefault("agent.auto_trigger_timeout", "10m")
 	v.SetDefault("agent.agent_prompt", "")
+	// Manager-agent auto-join defaults.
+	// These settings are used to automatically create a manager-agent member
+	// when a group is created and ACS_GROUP_MANAGER_AGENT_CMD_CHAT is set.
+	v.SetDefault("agent.manager_agent.member_id", "manager-agent")
+	v.SetDefault("agent.manager_agent.member_name", "manager-agent")
+	v.SetDefault("agent.manager_agent.member_description", "Default group manager agent")
+	v.SetDefault("agent.manager_agent.adaptor", "topsailai_agent")
+	v.SetDefault("agent.manager_agent.cmd_chat", "")
+	v.SetDefault("agent.manager_agent.cmd_check_health", "")
+	v.SetDefault("agent.manager_agent.cmd_check_status", "")
+	v.SetDefault("agent.manager_agent.api_base", "")
+	v.SetDefault("agent.manager_agent.api_key", "")
+	v.SetDefault("agent.manager_agent.api_auth", "bearer")
+	v.SetDefault("agent.manager_agent.timeout_chat", "600s")
+	v.SetDefault("agent.manager_agent.timeout_check_health", "5s")
+	v.SetDefault("agent.manager_agent.timeout_check_status", "5s")
 
-	// Pool defaults
-	v.SetDefault("pool.global", 10)
-	v.SetDefault("pool.per_user", 5)
-	v.SetDefault("pool.per_group", 5)
-	v.SetDefault("pool.stats_log_interval", "30s")
+	// Bind manager-agent settings to the documented ACS_GROUP_MANAGER_AGENT_* env vars.
+	_ = v.BindEnv("agent.manager_agent.member_id", "ACS_GROUP_MANAGER_AGENT_MEMBER_ID")
+	_ = v.BindEnv("agent.manager_agent.member_name", "ACS_GROUP_MANAGER_AGENT_MEMBER_NAME")
+	_ = v.BindEnv("agent.manager_agent.member_description", "ACS_GROUP_MANAGER_AGENT_MEMBER_DESCRIPTION")
+	_ = v.BindEnv("agent.manager_agent.adaptor", "ACS_GROUP_MANAGER_AGENT_ADAPTOR")
+	_ = v.BindEnv("agent.manager_agent.cmd_chat", "ACS_GROUP_MANAGER_AGENT_CMD_CHAT")
+	_ = v.BindEnv("agent.manager_agent.cmd_check_health", "ACS_GROUP_MANAGER_AGENT_CMD_CHECK_HEALTH")
+	_ = v.BindEnv("agent.manager_agent.cmd_check_status", "ACS_GROUP_MANAGER_AGENT_CMD_CHECK_STATUS")
+	_ = v.BindEnv("agent.manager_agent.api_base", "ACS_GROUP_MANAGER_AGENT_API_BASE")
+	_ = v.BindEnv("agent.manager_agent.api_key", "ACS_GROUP_MANAGER_AGENT_API_KEY")
+	_ = v.BindEnv("agent.manager_agent.api_auth", "ACS_GROUP_MANAGER_AGENT_API_AUTH")
+	_ = v.BindEnv("agent.manager_agent.timeout_chat", "ACS_GROUP_MANAGER_AGENT_TIMEOUT_CHAT")
+	_ = v.BindEnv("agent.manager_agent.timeout_check_health", "ACS_GROUP_MANAGER_AGENT_TIMEOUT_CHECK_HEALTH")
+	_ = v.BindEnv("agent.manager_agent.timeout_check_status", "ACS_GROUP_MANAGER_AGENT_TIMEOUT_CHECK_STATUS")
+
+	// AgentWorkPool defaults
+	v.SetDefault("agent_work_pool.per_node", 10)
+	v.SetDefault("agent_work_pool.per_user", 5)
+	v.SetDefault("agent_work_pool.per_group", 5)
+	v.SetDefault("agent_work_pool.stats_log_interval", "30s")
 
 	// Log defaults
 	v.SetDefault("log.output", "stdout")

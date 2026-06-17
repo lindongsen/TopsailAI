@@ -45,13 +45,14 @@ Columns:
 - group_name
 - group_context, plaintext
 - group_key, a secret key hash string, default null is public
+- creator_id, group creator
 
 ### Table: group_member
 
 Columns:
 - group_id
-- member_id, the user/agent id
-- member_name, the user/agent name
+- member_id, the user/agent id, contains only alphanumeric characters, hyphens, and underscores
+- member_name, the user/agent name, contains only alphanumeric characters, hyphens, and underscores
 - member_description,
 - member_status, online/offline/idle/processing
 - member_type, user/worker-agent/manager-agent, 下面描述的 xxx_agent/xxx-agent 是指 worker-agent, manager-agent, 可以用后缀 `-agent` 进行判断即可。
@@ -115,6 +116,23 @@ cmd_chat: "" # Execute this command with env to send a message to AI-Agent; opti
 
 manager-agent 的 `ACS_AGENT_API_BASE` 如果没有配置，就使用环境变量 `ACS_GROUP_MANAGER_AGENT_API_BASE`，由此类推：ACS_AGENT_API_KEY和ACS_AGENT_API_AUTH也同理。
 
+当环境变量配置了这些信息时，创建group后，要自动加入1个 manager-agent:
+```
+# required
+ACS_GROUP_MANAGER_AGENT_CMD_CHAT
+
+# optional
+ACS_GROUP_MANAGER_AGENT_CMD_CHECK_HEALTH -> 如果没有配置，就永远是healthy
+ACS_GROUP_MANAGER_AGENT_CMD_CHECK_STATUS
+ACS_GROUP_MANAGER_AGENT_API_BASE
+ACS_GROUP_MANAGER_AGENT_API_KEY
+ACS_GROUP_MANAGER_AGENT_API_AUTH
+
+ACS_GROUP_MANAGER_AGENT_TIMEOUT_CHAT
+ACS_GROUP_MANAGER_AGENT_TIMEOUT_CHECK_HEALTH
+ACS_GROUP_MANAGER_AGENT_TIMEOUT_CHECK_STATUS
+```
+
 ## How to trigger agent
 
 [NO_TRIGGER_CASES] 这些情况下不会触发：
@@ -158,6 +176,7 @@ ACS_AGENT_PROMPT
 ACS_GROUP_ID
 ACS_GROUP_NAME
 ACS_GROUP_CONTEXT
+ACS_GROUP_CREATOR_ID
 ACS_SENDER_ID
 ACS_SENDER_NAME
 ACS_MESSAGE_ID
@@ -206,7 +225,7 @@ The in-memory AgentWorkPool will lose pending messages on restart; consider pers
 
 对各个服务节点的 `AgentWorkPool` 进行并发控制
 
-- AgentWorkPool 的并发数，默认并发数10，整体工作池能同时处理的agent消息数。
+- AgentWorkPoolPerNode 的并发数，默认并发数10，节点中工作池能同时处理的agent消息数。
 - AgentWorkPoolPerUser 的并发数，默认并发数5，能同时处理每个人的agent消息数。
 - AgentWorkPoolPerGroup 的并发数，默认并发数5，能同时处理每个group的agent消息数。
 

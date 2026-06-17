@@ -85,6 +85,28 @@ In reliable mode (`ACS_NATS_PENDING_MESSAGE_NO_ACK=false`), `MaxAckPending` cont
 | `ACS_AGENT_AUTO_TRIGGER_TIMEOUT` | `10m` | Time after which a user message automatically triggers the manager-agent |
 | `ACS_AGENT_PROMPT` | - | Service-wide prompt injected into agent chat environment variables |
 
+### Default Manager-Agent Auto-Join Configuration
+
+When `ACS_GROUP_MANAGER_AGENT_CMD_CHAT` is set, ACS automatically creates a default `manager-agent` member in every new group. This provides an out-of-the-box coordinator for groups without requiring callers to explicitly join a manager-agent via the API.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ACS_GROUP_MANAGER_AGENT_CMD_CHAT` | - | **Required.** Command used to send chat messages to the manager-agent. When set, auto-join is enabled. |
+| `ACS_GROUP_MANAGER_AGENT_CMD_CHECK_HEALTH` | - | Optional command to check manager-agent health. If unset, the agent is always considered healthy. |
+| `ACS_GROUP_MANAGER_AGENT_CMD_CHECK_STATUS` | - | Optional command to check manager-agent status (e.g., `idle`, `processing`). |
+| `ACS_GROUP_MANAGER_AGENT_API_BASE` | - | Optional API base URL passed to the manager-agent via `member_interface.environments`. |
+| `ACS_GROUP_MANAGER_AGENT_API_KEY` | - | Optional API key passed to the manager-agent via `member_interface.environments`. |
+| `ACS_GROUP_MANAGER_AGENT_API_AUTH` | `bearer` | Optional auth method passed to the manager-agent via `member_interface.environments`. |
+| `ACS_GROUP_MANAGER_AGENT_TIMEOUT_CHAT` | `600s` | Timeout for manager-agent chat commands. |
+| `ACS_GROUP_MANAGER_AGENT_TIMEOUT_CHECK_HEALTH` | `5s` | Timeout for manager-agent health-check commands. |
+| `ACS_GROUP_MANAGER_AGENT_TIMEOUT_CHECK_STATUS` | `5s` | Timeout for manager-agent status-check commands. |
+| `ACS_GROUP_MANAGER_AGENT_MEMBER_ID` | `manager-agent` | Member ID of the auto-joined manager-agent. |
+| `ACS_GROUP_MANAGER_AGENT_MEMBER_NAME` | `manager-agent` | Member name of the auto-joined manager-agent. |
+| `ACS_GROUP_MANAGER_AGENT_MEMBER_DESCRIPTION` | `Default group manager agent` | Description of the auto-joined manager-agent. |
+| `ACS_GROUP_MANAGER_AGENT_ADAPTOR` | `topsailai_agent` | Adaptor name used in the manager-agent `member_interface`. |
+
+The auto-joined member uses `member_type=manager-agent` and is created inside the same database transaction as the group, ensuring atomicity. Both `group` and `group_member` create events are published to NATS when the transaction commits.
+
 ### Agent Chat Environment Variables
 
 The following variables are passed to agent adaptors via `member_interface.environments` and built dynamically at runtime. They are documented here for completeness but are not configured directly on the ACS server.
@@ -112,14 +134,14 @@ The following variables are passed to agent adaptors via `member_interface.envir
 
 ---
 
-## WorkPool Configuration
+## AgentWorkPool Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ACS_POOL_GLOBAL` | `10` | Maximum concurrent agent tasks per service node |
-| `ACS_POOL_PER_USER` | `5` | Maximum concurrent agent tasks per user across all groups |
-| `ACS_POOL_PER_GROUP` | `5` | Maximum concurrent agent tasks per group |
-| `ACS_POOL_STATS_LOG_INTERVAL` | `30s` | Interval for logging work pool statistics |
+| `ACS_AGENT_WORK_POOL_PER_NODE` | `10` | Maximum concurrent agent tasks per service node |
+| `ACS_AGENT_WORK_POOL_PER_USER` | `5` | Maximum concurrent agent tasks per user across all groups |
+| `ACS_AGENT_WORK_POOL_PER_GROUP` | `5` | Maximum concurrent agent tasks per group |
+| `ACS_AGENT_WORK_POOL_STATS_LOG_INTERVAL` | `30s` | Interval for logging work pool statistics |
 
 ---
 
@@ -249,11 +271,11 @@ ACS_GROUP_MANAGER_AGENT_API_AUTH=bearer
 ACS_AGENT_AUTO_TRIGGER_TIMEOUT=10m
 ACS_AGENT_PROMPT="You are a helpful AI assistant."
 
-# WorkPool
-ACS_POOL_GLOBAL=10
-ACS_POOL_PER_USER=5
-ACS_POOL_PER_GROUP=5
-ACS_POOL_STATS_LOG_INTERVAL=30s
+# AgentWorkPool
+ACS_AGENT_WORK_POOL_PER_NODE=10
+ACS_AGENT_WORK_POOL_PER_USER=5
+ACS_AGENT_WORK_POOL_PER_GROUP=5
+ACS_AGENT_WORK_POOL_STATS_LOG_INTERVAL=30s
 
 # Log
 ACS_LOG_OUTPUT=stdout

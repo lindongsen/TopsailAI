@@ -75,3 +75,55 @@ func TestCleanupConfig_NegativeRetention(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, -1, cfg.Cleanup.RetentionDays)
 }
+
+// TestManagerAgentConfig_Defaults verifies default manager-agent auto-join values.
+func TestManagerAgentConfig_Defaults(t *testing.T) {
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "manager-agent", cfg.Agent.ManagerAgent.MemberID)
+	assert.Equal(t, "manager-agent", cfg.Agent.ManagerAgent.MemberName)
+	assert.Equal(t, "Default group manager agent", cfg.Agent.ManagerAgent.MemberDescription)
+	assert.Equal(t, "topsailai_agent", cfg.Agent.ManagerAgent.Adaptor)
+	assert.Equal(t, "", cfg.Agent.ManagerAgent.CmdChat)
+	assert.Equal(t, "", cfg.Agent.ManagerAgent.CmdCheckHealth)
+	assert.Equal(t, "", cfg.Agent.ManagerAgent.CmdCheckStatus)
+	assert.Equal(t, "", cfg.Agent.ManagerAgent.APIBase)
+	assert.Equal(t, "", cfg.Agent.ManagerAgent.APIKey)
+	assert.Equal(t, "bearer", cfg.Agent.ManagerAgent.APIAuth)
+	assert.Equal(t, 600*time.Second, cfg.Agent.ManagerAgent.TimeoutChat)
+	assert.Equal(t, 5*time.Second, cfg.Agent.ManagerAgent.TimeoutCheckHealth)
+	assert.Equal(t, 5*time.Second, cfg.Agent.ManagerAgent.TimeoutCheckStatus)
+}
+
+// TestManagerAgentConfig_Override verifies manager-agent env var overrides.
+func TestManagerAgentConfig_Override(t *testing.T) {
+	t.Setenv("ACS_GROUP_MANAGER_AGENT_CMD_CHAT", "my_cmd_chat")
+	t.Setenv("ACS_GROUP_MANAGER_AGENT_CMD_CHECK_HEALTH", "my_cmd_check_health")
+	t.Setenv("ACS_GROUP_MANAGER_AGENT_CMD_CHECK_STATUS", "my_cmd_check_status")
+	t.Setenv("ACS_GROUP_MANAGER_AGENT_API_BASE", "http://manager.example.com")
+	t.Setenv("ACS_GROUP_MANAGER_AGENT_API_KEY", "manager-key")
+	t.Setenv("ACS_GROUP_MANAGER_AGENT_API_AUTH", "token")
+	t.Setenv("ACS_GROUP_MANAGER_AGENT_TIMEOUT_CHAT", "120s")
+	t.Setenv("ACS_GROUP_MANAGER_AGENT_TIMEOUT_CHECK_HEALTH", "10s")
+	t.Setenv("ACS_GROUP_MANAGER_AGENT_TIMEOUT_CHECK_STATUS", "15s")
+	t.Setenv("ACS_GROUP_MANAGER_AGENT_MEMBER_ID", "custom-manager")
+	t.Setenv("ACS_GROUP_MANAGER_AGENT_MEMBER_NAME", "Custom Manager")
+	t.Setenv("ACS_GROUP_MANAGER_AGENT_MEMBER_DESCRIPTION", "Custom description")
+	t.Setenv("ACS_GROUP_MANAGER_AGENT_ADAPTOR", "custom_adaptor")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "my_cmd_chat", cfg.Agent.ManagerAgent.CmdChat)
+	assert.Equal(t, "my_cmd_check_health", cfg.Agent.ManagerAgent.CmdCheckHealth)
+	assert.Equal(t, "my_cmd_check_status", cfg.Agent.ManagerAgent.CmdCheckStatus)
+	assert.Equal(t, "http://manager.example.com", cfg.Agent.ManagerAgent.APIBase)
+	assert.Equal(t, "manager-key", cfg.Agent.ManagerAgent.APIKey)
+	assert.Equal(t, "token", cfg.Agent.ManagerAgent.APIAuth)
+	assert.Equal(t, 120*time.Second, cfg.Agent.ManagerAgent.TimeoutChat)
+	assert.Equal(t, 10*time.Second, cfg.Agent.ManagerAgent.TimeoutCheckHealth)
+	assert.Equal(t, 15*time.Second, cfg.Agent.ManagerAgent.TimeoutCheckStatus)
+	assert.Equal(t, "custom-manager", cfg.Agent.ManagerAgent.MemberID)
+	assert.Equal(t, "Custom Manager", cfg.Agent.ManagerAgent.MemberName)
+	assert.Equal(t, "Custom description", cfg.Agent.ManagerAgent.MemberDescription)
+	assert.Equal(t, "custom_adaptor", cfg.Agent.ManagerAgent.Adaptor)
+}

@@ -2,11 +2,20 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
-)
 
-// TestParseTimeRangeValid verifies valid time range parsing.
+	"github.com/gin-gonic/gin"
+	"github.com/topsailai/agent-community/internal/config"
+	"github.com/topsailai/agent-community/internal/models"
+	"github.com/topsailai/agent-community/pkg/logger"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+)
 func TestParseTimeRangeValid(t *testing.T) {
 	start, end, err := parseTimeRange("1000-2000")
 	if err != nil {
@@ -182,5 +191,343 @@ func TestUpdateGroupRequestStructure(t *testing.T) {
 	}
 	if req.GroupContext != "Updated context" {
 		t.Errorf("group_context = %v", req.GroupContext)
+	}
+}
+
+// TestBuildManagerAgentMemberInterface_Full verifies the interface JSON contains
+// all configured fields when every option is set.
+func TestBuildManagerAgentMemberInterface_Full(t *testing.T) {
+	cfg := &config.ManagerAgentConfig{
+		Adaptor:            "topsailai_agent",
+		CmdChat:            "topsailai_agent_cmd_chat",
+		CmdCheckHealth:     "topsailai_agent_cmd_check_health",
+		CmdCheckStatus:     "topsailai_agent_cmd_check_status",
+		APIBase:            "http://manager.example.com:7373",
+		APIKey:             "secret-key",
+		APIAuth:            "bearer",
+		TimeoutChat:        600 * time.Second,
+		TimeoutCheckHealth: 5 * time.Second,
+		TimeoutCheckStatus: 5 * time.Second,
+	}
+
+	ifaceStr, err := buildManagerAgentMemberInterface(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var iface map[string]interface{}
+	if err := json.Unmarshal([]byte(ifaceStr), &iface); err != nil {
+		t.Fatalf("failed to unmarshal interface: %v", err)
+	}
+
+	if iface["adaptor"] != "topsailai_agent" {
+		t.Errorf("adaptor = %v", iface["adaptor"])
+	}
+	if iface["cmd_chat"] != "topsailai_agent_cmd_chat" {
+		t.Errorf("cmd_chat = %v", iface["cmd_chat"])
+	}
+	if iface["cmd_check_health"] != "topsailai_agent_cmd_check_health" {
+		t.Errorf("cmd_check_health = %v", iface["cmd_check_health"])
+	}
+	if iface["cmd_check_status"] != "topsailai_agent_cmd_check_status" {
+		t.Errorf("cmd_check_status = %v", iface["cmd_check_status"])
+	}
+	if iface["timeout_chat"] != float64(600) {
+		t.Errorf("timeout_chat = %v", iface["timeout_chat"])
+	}
+	if iface["timeout_check_health"] != float64(5) {
+		t.Errorf("timeout_check_health = %v", iface["timeout_check_health"])
+	}
+	if iface["timeout_check_status"] != float64(5) {
+		t.Errorf("timeout_check_status = %v", iface["timeout_check_status"])
+	}
+
+	envs, ok := iface["environments"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("environments not found or wrong type")
+	}
+	if envs["ACS_AGENT_API_BASE"] != "http://manager.example.com:7373" {
+		t.Errorf("ACS_AGENT_API_BASE = %v", envs["ACS_AGENT_API_BASE"])
+	}
+	if envs["ACS_AGENT_API_KEY"] != "secret-key" {
+		t.Errorf("ACS_AGENT_API_KEY = %v", envs["ACS_AGENT_API_KEY"])
+	}
+	if envs["ACS_AGENT_API_AUTH"] != "bearer" {
+		t.Errorf("ACS_AGENT_API_AUTH = %v", envs["ACS_AGENT_API_AUTH"])
+	}
+}
+
+// TestBuildManagerAgentMemberInterface_Minimal verifies the interface JSON omits
+// empty API environment values and still includes required cmd_chat.
+func TestBuildManagerAgentMemberInterface_Minimal(t *testing.T) {
+	cfg := &config.ManagerAgentConfig{
+		Adaptor:     "topsailai_agent",
+		CmdChat:     "topsailai_agent_cmd_chat",
+		TimeoutChat: 600 * time.Second,
+	}
+
+	ifaceStr, err := buildManagerAgentMemberInterface(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var iface map[string]interface{}
+	if err := json.Unmarshal([]byte(ifaceStr), &iface); err != nil {
+		t.Fatalf("failed to unmarshal interface: %v", err)
+	}
+
+	if iface["cmd_chat"] != "topsailai_agent_cmd_chat" {
+		t.Errorf("cmd_chat = %v", iface["cmd_chat"])
+	}
+
+	envs, ok := iface["environments"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("environments not found or wrong type")
+	}
+	if len(envs) != 0 {
+		t.Errorf("expected empty environments, got %v", envs)
+	}
+}
+
+// setupGroupTestDB creates an in-memory SQLite database and auto-migrates models.
+func setupGroupTestDB(t *testing.T) *gorm.DB {
+	db, err := gorm.Open(sqlite.Open("file::memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open sqlite database: %v", err)
+	}
+	if err := db.AutoMigrate(&models.Group{}, &models.GroupMember{}, &models.GroupMessage{}); err != nil {
+		t.Fatalf("failed to migrate database: %v", err)
+	}
+	return db
+}
+
+// setupGroupTestHandler creates a GroupHandler with the given config for testing.
+func setupGroupTestHandler(t *testing.T, db *gorm.DB, cfg *config.Config) *GroupHandler {
+	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
+	return NewGroupHandler(db, nil, cfg, log)
+}
+
+// TestCreateGroupAutoJoinsManagerAgent verifies that creating a group automatically
+// joins a manager-agent member when ACS_GROUP_MANAGER_AGENT_CMD_CHAT is configured.
+func TestCreateGroupAutoJoinsManagerAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	cfg := &config.Config{
+		Agent: config.AgentConfig{
+			ManagerAgent: config.ManagerAgentConfig{
+				Adaptor:            "topsailai_agent",
+				MemberID:           "manager-agent",
+				MemberName:         "manager-agent",
+				MemberDescription:  "Default group manager agent",
+				CmdChat:            "topsailai_agent_cmd_chat",
+				CmdCheckHealth:     "topsailai_agent_cmd_check_health",
+				CmdCheckStatus:     "topsailai_agent_cmd_check_status",
+				APIBase:            "http://manager.example.com:7373",
+				APIKey:             "secret-key",
+				APIAuth:            "bearer",
+				TimeoutChat:        600 * time.Second,
+				TimeoutCheckHealth: 5 * time.Second,
+				TimeoutCheckStatus: 5 * time.Second,
+			},
+		},
+	}
+	handler := setupGroupTestHandler(t, db, cfg)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := CreateGroupRequest{
+		GroupName:    "Test Group",
+		GroupContext: "test context",
+	}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.CreateGroup(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
+	}
+
+	var response GroupResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	groupID := response.GroupID
+	if groupID == "" {
+		t.Fatal("expected group_id in response")
+	}
+
+	var members []models.GroupMember
+	if err := db.Where("group_id = ?", groupID).Find(&members).Error; err != nil {
+		t.Fatalf("failed to query members: %v", err)
+	}
+	if len(members) != 1 {
+		t.Fatalf("expected 1 member, got %d", len(members))
+	}
+	member := members[0]
+	if member.MemberType != models.MemberTypeManagerAgent {
+		t.Errorf("expected member_type %s, got %s", models.MemberTypeManagerAgent, member.MemberType)
+	}
+	if member.MemberID != "manager-agent" {
+		t.Errorf("expected member_id manager-agent, got %s", member.MemberID)
+	}
+	if member.MemberName != "manager-agent" {
+		t.Errorf("expected member_name manager-agent, got %s", member.MemberName)
+	}
+	if member.MemberDescription != "Default group manager agent" {
+		t.Errorf("expected member_description 'Default group manager agent', got %s", member.MemberDescription)
+	}
+	if member.MemberStatus != models.MemberStatusOnline {
+		t.Errorf("expected member_status %s, got %s", models.MemberStatusOnline, member.MemberStatus)
+	}
+	if member.MemberInterface == "" {
+		t.Error("expected non-empty member_interface")
+	}
+}
+
+// TestCreateGroupDoesNotAutoJoinManagerAgentWhenDisabled verifies that no manager-agent
+// member is created when ACS_GROUP_MANAGER_AGENT_CMD_CHAT is not configured.
+func TestCreateGroupDoesNotAutoJoinManagerAgentWhenDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	cfg := &config.Config{
+		Agent: config.AgentConfig{
+			ManagerAgent: config.ManagerAgentConfig{
+				Adaptor:     "topsailai_agent",
+				CmdChat:     "", // not configured
+				TimeoutChat: 600 * time.Second,
+			},
+		},
+	}
+	handler := setupGroupTestHandler(t, db, cfg)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := CreateGroupRequest{
+		GroupName:    "Test Group No Manager",
+		GroupContext: "test context",
+	}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.CreateGroup(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
+	}
+
+	var response GroupResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	var members []models.GroupMember
+	if err := db.Where("group_id = ?", response.GroupID).Find(&members).Error; err != nil {
+		t.Fatalf("failed to query members: %v", err)
+	}
+	if len(members) != 0 {
+		t.Fatalf("expected 0 members, got %d", len(members))
+	}
+}
+
+// TestDeleteGroupNotFound verifies that deleting a non-existent group returns 404.
+func TestDeleteGroupNotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	cfg := &config.Config{}
+	handler := setupGroupTestHandler(t, db, cfg)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodDelete, "/api/v1/groups/non-existent-group-id", nil)
+	c.Params = gin.Params{{Key: "group_id", Value: "non-existent-group-id"}}
+
+	handler.DeleteGroup(c)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusNotFound, w.Code, w.Body.String())
+	}
+}
+
+// TestDeleteGroupCascade verifies that deleting an existing group removes the group,
+// its members, and its messages, and returns 204 No Content.
+func TestDeleteGroupCascade(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	cfg := &config.Config{}
+	handler := setupGroupTestHandler(t, db, cfg)
+
+	// Create a group with a member and a message.
+	group := models.Group{
+		GroupID:      "group-to-delete",
+		GroupName:    "Delete Me",
+		GroupContext: "context",
+		GroupKey:     "",
+		CreateAtMs:   time.Now().UnixMilli(),
+		UpdateAtMs:   time.Now().UnixMilli(),
+	}
+	if err := db.Create(&group).Error; err != nil {
+		t.Fatalf("failed to create group: %v", err)
+	}
+	member := models.GroupMember{
+		GroupID:     group.GroupID,
+		MemberID:    "user-001",
+		MemberName:  "Alice",
+		MemberType:  models.MemberTypeUser,
+		MemberStatus: models.MemberStatusOnline,
+		CreateAtMs:  time.Now().UnixMilli(),
+		UpdateAtMs:  time.Now().UnixMilli(),
+	}
+	if err := db.Create(&member).Error; err != nil {
+		t.Fatalf("failed to create member: %v", err)
+	}
+	msg := models.GroupMessage{
+		MessageID:    "msg-001",
+		GroupID:      group.GroupID,
+		MessageText:  "hello",
+		SenderID:     member.MemberID,
+		SenderType:   models.MemberTypeUser,
+		CreateAtMs:   time.Now().UnixMilli(),
+		UpdateAtMs:   time.Now().UnixMilli(),
+	}
+	if err := db.Create(&msg).Error; err != nil {
+		t.Fatalf("failed to create message: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodDelete, "/api/v1/groups/"+group.GroupID, nil)
+	c.Params = gin.Params{{Key: "group_id", Value: group.GroupID}}
+
+	handler.DeleteGroup(c)
+
+	if c.Writer.Status() != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusNoContent, c.Writer.Status(), w.Body.String())
+	}
+
+	var remainingGroups int64
+	if err := db.Model(&models.Group{}).Where("group_id = ?", group.GroupID).Count(&remainingGroups).Error; err != nil {
+		t.Fatalf("failed to count groups: %v", err)
+	}
+	if remainingGroups != 0 {
+		t.Errorf("expected 0 groups, got %d", remainingGroups)
+	}
+
+	var remainingMembers int64
+	if err := db.Model(&models.GroupMember{}).Where("group_id = ?", group.GroupID).Count(&remainingMembers).Error; err != nil {
+		t.Fatalf("failed to count members: %v", err)
+	}
+	if remainingMembers != 0 {
+		t.Errorf("expected 0 members, got %d", remainingMembers)
+	}
+
+	var remainingMessages int64
+	if err := db.Model(&models.GroupMessage{}).Where("group_id = ?", group.GroupID).Count(&remainingMessages).Error; err != nil {
+		t.Fatalf("failed to count messages: %v", err)
+	}
+	if remainingMessages != 0 {
+		t.Errorf("expected 0 messages, got %d", remainingMessages)
 	}
 }

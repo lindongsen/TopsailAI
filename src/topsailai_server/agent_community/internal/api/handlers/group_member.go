@@ -16,6 +16,9 @@ import (
 	"gorm.io/gorm"
 )
 
+// memberIDRegex validates that member_id contains only alphanumeric characters, hyphens, and underscores.
+var memberIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
 // memberNameRegex validates that member_name contains only alphanumeric characters, hyphens, and underscores.
 var memberNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
@@ -101,6 +104,12 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 		return
 	}
 
+	// Validate member_id
+	if !memberIDRegex.MatchString(req.MemberID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid member_id: must contain only alphanumeric characters, hyphens, and underscores"})
+		return
+	}
+
 	// Validate member_name
 	if !memberNameRegex.MatchString(req.MemberName) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid member_name: must contain only alphanumeric characters, hyphens, and underscores"})
@@ -115,7 +124,6 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid member_type"})
 		return
 	}
-
 	member := models.GroupMember{
 		GroupID:           groupID,
 		MemberID:          req.MemberID,
@@ -131,7 +139,6 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "member already exists in group"})
 		return
 	}
-
 
 	if err := h.db.Create(&member).Error; err != nil {
 		h.log.Error("api", traceID, "failed to join group", "error", err.Error())

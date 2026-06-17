@@ -5,11 +5,12 @@ These tests verify the REST API endpoints for group management,
 member management, and messaging.
 """
 
+import json
+import os
 import time
 
 import pytest
 import requests
-
 
 class TestHealthEndpoints:
     """Test health and readiness endpoints."""
@@ -876,3 +877,72 @@ class TestManualTrigger:
         api_client.delete(
             f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}"
         )
+
+
+class TestAutoJoinManagerAgent:
+    """Test automatic manager-agent join on group creation."""
+
+    def test_manager_agent_auto_joined_when_configured(
+        self, api_client: requests.Session, server_url: str, unique_id: str
+    ):
+        """When ACS_GROUP_MANAGER_AGENT_CMD_CHAT is set, a manager-agent is auto-joined."""
+        manager_cmd_chat = os.environ.get("ACS_GROUP_MANAGER_AGENT_CMD_CHAT", "")
+        if not manager_cmd_chat:
+            pytest.skip("ACS_GROUP_MANAGER_AGENT_CMD_CHAT not configured")
+
+        group_data = {
+            "group_name": f"Auto Manager Group {unique_id}",
+            "group_context": "Testing auto manager-agent join"
+        }
+        response = api_client.post(f"{server_url}/api/v1/groups", json=group_data)
+        assert response.status_code == 201, f"Failed to create group: {response.text}"
+        group_id = response.json()["group_id"]
+
+        try:
+            response = api_client.get(f"{server_url}/api/v1/groups/{group_id}/members")
+            assert response.status_code == 200
+            data = response.json()
+
+            manager_members = [
+                m for m in data["items"]
+                if m["member_type"] == "manager-agent"
+            ]
+            assert len(manager_members) == 1, "Expected exactly one auto-joined manager-agent"
+
+            manager = manager_members[0]
+            assert manager["member_id"] != ""
+            assert manager["member_name"] != ""
+            assert manager["member_interface"] != ""
+
+            interface = json.loads(manager["member_interface"])
+            assert interface.get("cmd_chat") == manager_cmd_chat
+        finally:
+            api_client.delete(f"{server_url}/api/v1/groups/{group_id}")
+
+    def test_manager_agent_not_auto_joined_when_not_configured(
+        self, api_client: requests.Session, server_url: str, unique_id: str
+    ):
+        """When ACS_GROUP_MANAGER_AGENT_CMD_CHAT is not set, no manager-agent is auto-joined."""
+        if os.environ.get("ACS_GROUP_MANAGER_AGENT_CMD_CHAT", ""):
+            pytest.skip("ACS_GROUP_MANAGER_AGENT_CMD_CHAT is configured")
+
+        group_data = {
+            "group_name": f"No Auto Manager Group {unique_id}",
+            "group_context": "Testing no auto manager-agent join"
+        }
+        response = api_client.post(f"{server_url}/api/v1/groups", json=group_data)
+        assert response.status_code == 201, f"Failed to create group: {response.text}"
+        group_id = response.json()["group_id"]
+
+        try:
+            response = api_client.get(f"{server_url}/api/v1/groups/{group_id}/members")
+            assert response.status_code == 200
+            data = response.json()
+
+            manager_members = [
+                m for m in data["items"]
+                if m["member_type"] == "manager-agent"
+            ]
+            assert len(manager_members) == 0, "Expected no auto-joined manager-agent"
+        finally:
+            api_client.delete(f"{server_url}/api/v1/groups/{group_id}")

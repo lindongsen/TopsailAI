@@ -32,7 +32,7 @@ func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evalu
 	engine.Use(middleware.Logger(log))
 
 	// Initialize handlers
-	groupHandler := handlers.NewGroupHandler(db, publisher, log)
+	groupHandler := handlers.NewGroupHandler(db, publisher, cfg, log)
 	memberHandler := handlers.NewGroupMemberHandler(db, publisher, log)
 	messageHandler := handlers.NewMessageHandler(db, publisher, evaluator, log)
 	healthHandler := handlers.NewHealthHandler(db, disc, log)

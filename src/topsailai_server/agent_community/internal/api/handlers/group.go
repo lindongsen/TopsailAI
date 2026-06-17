@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -10,26 +11,36 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 	"github.com/topsailai/agent-community/internal/api/middleware"
+	"github.com/topsailai/agent-community/internal/config"
 	"github.com/topsailai/agent-community/internal/models"
-	"github.com/topsailai/agent-community/internal/nats"
 	"github.com/topsailai/agent-community/pkg/logger"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
+// GroupPublisher defines the interface for publishing group-related events.
+type GroupPublisher interface {
+	PublishGroupCreate(group *models.Group) error
+	PublishGroupModify(group *models.Group) error
+	PublishGroupDelete(groupID string) error
+	PublishGroupMemberCreate(member *models.GroupMember) error
+}
 
 // GroupHandler handles group-related HTTP requests.
 type GroupHandler struct {
 	db        *gorm.DB
-	publisher *nats.Publisher
+	publisher GroupPublisher
+	cfg       *config.Config
 	log       *logger.Logger
 }
 
 // NewGroupHandler creates a new GroupHandler.
-func NewGroupHandler(db *gorm.DB, publisher *nats.Publisher, log *logger.Logger) *GroupHandler {
+func NewGroupHandler(db *gorm.DB, publisher GroupPublisher, cfg *config.Config, log *logger.Logger) *GroupHandler {
 	return &GroupHandler{
 		db:        db,
 		publisher: publisher,
+		cfg:       cfg,
 		log:       log,
 	}
 }
@@ -60,12 +71,12 @@ type GroupResponse struct {
 
 // ListGroupsResponse represents the response for listing groups.
 type ListGroupsResponse struct {
-	Items      []GroupResponse `json:"items"`
-	Total      int64           `json:"total"`
-	Offset     int             `json:"offset"`
-	Limit      int             `json:"limit"`
-	SortKey    string          `json:"sort_key"`
-	OrderBy    string          `json:"order_by"`
+	Items   []GroupResponse `json:"items"`
+	Total   int64           `json:"total"`
+	Offset  int             `json:"offset"`
+	Limit   int             `json:"limit"`
+	SortKey string          `json:"sort_key"`
+	OrderBy string          `json:"order_by"`
 }
 
 // hashGroupKey hashes a group key using bcrypt.
@@ -81,8 +92,11 @@ func hashGroupKey(key string) (string, error) {
 }
 
 // CreateGroup handles POST /api/v1/groups.
+// When ACS_GROUP_MANAGER_AGENT_CMD_CHAT is configured, a default manager-agent
+// member is automatically joined to the new group inside the same transaction.
 func (h *GroupHandler) CreateGroup(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
+
 	var req CreateGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.log.Warn("api", traceID, "invalid create group request", "error", err.Error())
@@ -97,28 +111,128 @@ func (h *GroupHandler) CreateGroup(c *gin.Context) {
 		return
 	}
 
+	now := time.Now().UnixMilli()
 	group := models.Group{
 		GroupID:      uuid.New().String(),
 		GroupName:    req.GroupName,
 		GroupContext: req.GroupContext,
 		GroupKey:     hashedKey,
+		CreateAtMs:   now,
+		UpdateAtMs:   now,
 	}
 
-	if err := h.db.Create(&group).Error; err != nil {
+	var managerMember *models.GroupMember
+
+	// Create group and optional default manager-agent atomically.
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&group).Error; err != nil {
+			return err
+		}
+
+		if h.cfg != nil && h.cfg.Agent.ManagerAgent.CmdChat != "" {
+			member, err := h.buildManagerAgentMember(group.GroupID)
+			if err != nil {
+				return err
+			}
+			if err := tx.Create(member).Error; err != nil {
+				return err
+			}
+			managerMember = member
+		}
+
+		return nil
+	}); err != nil {
 		h.log.Error("api", traceID, "failed to create group", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create group"})
 		return
 	}
 
-	// Publish event
+	// Publish events after the transaction commits.
 	if h.publisher != nil {
 		if err := h.publisher.PublishGroupCreate(&group); err != nil {
 			h.log.Warn("api", traceID, "failed to publish group create event", "error", err.Error())
+		}
+
+		if managerMember != nil {
+			if err := h.publisher.PublishGroupMemberCreate(managerMember); err != nil {
+				h.log.Warn("api", traceID, "failed to publish manager-agent member create event", "error", err.Error())
+			}
 		}
 	}
 
 	h.log.Info("api", traceID, "group created", "group_id", group.GroupID)
 	c.JSON(http.StatusCreated, toGroupResponse(&group))
+}
+
+// buildManagerAgentMember constructs the default manager-agent group member from config.
+func (h *GroupHandler) buildManagerAgentMember(groupID string) (*models.GroupMember, error) {
+	mc := h.cfg.Agent.ManagerAgent
+
+	// Validate configured manager-agent member_id and member_name.
+	if !memberIDRegex.MatchString(mc.MemberID) {
+		return nil, fmt.Errorf("invalid manager-agent member_id %q: must contain only alphanumeric characters, hyphens, and underscores", mc.MemberID)
+	}
+	if !memberNameRegex.MatchString(mc.MemberName) {
+		return nil, fmt.Errorf("invalid manager-agent member_name %q: must contain only alphanumeric characters, hyphens, and underscores", mc.MemberName)
+	}
+
+	iface, err := buildManagerAgentMemberInterface(&mc)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UnixMilli()
+	return &models.GroupMember{
+		GroupID:           groupID,
+		MemberID:          mc.MemberID,
+		MemberName:        mc.MemberName,
+		MemberDescription: mc.MemberDescription,
+		MemberType:        models.MemberTypeManagerAgent,
+		MemberStatus:      models.MemberStatusOnline,
+		MemberInterface:   iface,
+		CreateAtMs:        now,
+		UpdateAtMs:        now,
+	}, nil
+}
+
+// buildManagerAgentMemberInterface builds the member_interface JSON for the default manager-agent.
+func buildManagerAgentMemberInterface(mc *config.ManagerAgentConfig) (string, error) {
+	iface := map[string]interface{}{
+		"adaptor":      mc.Adaptor,
+		"cmd_chat":     mc.CmdChat,
+		"timeout_chat": int64(mc.TimeoutChat.Seconds()),
+	}
+
+	if mc.CmdCheckHealth != "" {
+		iface["cmd_check_health"] = mc.CmdCheckHealth
+	}
+	if mc.CmdCheckStatus != "" {
+		iface["cmd_check_status"] = mc.CmdCheckStatus
+	}
+	if mc.TimeoutCheckHealth > 0 {
+		iface["timeout_check_health"] = int64(mc.TimeoutCheckHealth.Seconds())
+	}
+	if mc.TimeoutCheckStatus > 0 {
+		iface["timeout_check_status"] = int64(mc.TimeoutCheckStatus.Seconds())
+	}
+
+	envs := make(map[string]string)
+	if mc.APIBase != "" {
+		envs["ACS_AGENT_API_BASE"] = mc.APIBase
+	}
+	if mc.APIKey != "" {
+		envs["ACS_AGENT_API_KEY"] = mc.APIKey
+	}
+	if mc.APIAuth != "" {
+		envs["ACS_AGENT_API_AUTH"] = mc.APIAuth
+	}
+	iface["environments"] = envs
+
+	data, err := json.Marshal(iface)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 // GetGroup handles GET /api/v1/groups/:group_id.
@@ -283,18 +397,27 @@ func (h *GroupHandler) DeleteGroup(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	groupID := c.Param("group_id")
 
-	var group models.Group
-	if err := h.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		var group models.Group
+		if err := tx.Where("group_id = ?", groupID).First(&group).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Where("group_id = ?", groupID).Delete(&models.GroupMessage{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("group_id = ?", groupID).Delete(&models.GroupMember{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("group_id = ?", groupID).Delete(&models.Group{}).Error; err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
 			return
 		}
-		h.log.Error("api", traceID, "failed to get group for delete", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete group"})
-		return
-	}
-
-	if err := h.db.Delete(&group).Error; err != nil {
 		h.log.Error("api", traceID, "failed to delete group", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete group"})
 		return

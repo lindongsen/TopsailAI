@@ -242,13 +242,11 @@ Verify that messages from agents do not trigger further agents.
 ## TC-INT-007: Concurrent Agent Processing
 
 ### Objective
-
 Verify that multiple agents can be triggered concurrently within semaphore limits.
 
 ### Setup
-
-- Group with 1 user and 3 worker-agents
-- `ACS_AGENT_WORK_POOL_SIZE=5`
+- `ACS_AGENT_WORK_POOL_PER_NODE=5`
+- `ACS_AGENT_WORK_POOL_PER_USER=5`
 - `ACS_AGENT_WORK_POOL_PER_GROUP=3`
 
 ### Steps

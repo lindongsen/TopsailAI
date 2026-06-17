@@ -102,6 +102,8 @@ Returns detailed health status of all components.
 
 Create a new group (community/session).
 
+When the server is configured with `ACS_GROUP_MANAGER_AGENT_CMD_CHAT`, a default `manager-agent` member is automatically joined to the new group as part of the same transaction. The auto-joined member uses the configured manager-agent adaptor, API settings, and timeouts. See `docs/Environment_Variables.md` for the full list of manager-agent auto-join environment variables.
+
 **Request Body:**
 ```json
 {
