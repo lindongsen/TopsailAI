@@ -37,3 +37,4 @@ environment:
     TOPSAILAI_INTERACTIVE_MODE: "1"
   use:
     TOPSAILAI_PLUGIN_SKILLS: "/TopsailAI/src/topsailai_server/agent_community/skills"
+    SYSTEM_PROMPT: "Note: For some common usages on `skills/agent_community_client`, you need judge and analyze them. If there are no logical issues, update them in the document `skills/agent_community_client/references/USAGE.md`"

@@ -1,12 +1,12 @@
 -- Initial schema for AI-Agent Community Server (ACS)
--- Tables: group, group_member, group_messages, agent_message_processing
+-- Tables: groups, group_member, group_messages, agent_message_processing
 
 -- Enable UUID extension if available (optional, for future use)
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Table: group
+-- Table: groups
 -- Represents a community/session in the ACS system.
-CREATE TABLE IF NOT EXISTS "group" (
+CREATE TABLE IF NOT EXISTS "groups" (
     group_id      VARCHAR(64)  PRIMARY KEY,
     group_name    VARCHAR(255) NOT NULL,
     group_context TEXT         DEFAULT '',
@@ -16,8 +16,8 @@ CREATE TABLE IF NOT EXISTS "group" (
     deleted_at    TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS idx_group_deleted_at ON "group"(deleted_at);
-CREATE INDEX IF NOT EXISTS idx_group_create_at_ms ON "group"(create_at_ms);
+CREATE INDEX IF NOT EXISTS idx_groups_deleted_at ON "groups"(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_groups_create_at_ms ON "groups"(create_at_ms);
 
 -- Table: group_member
 -- Represents a member (user or agent) within a group.

@@ -38,7 +38,7 @@ Human can use group_key to join into the group, chatting together with humans & 
 
 ## Database
 
-### Table: group
+### Table: groups
 
 Columns:
 - group_id, primary key

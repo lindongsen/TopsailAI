@@ -20,7 +20,7 @@ type Group struct {
 
 // TableName specifies the table name for Group.
 func (Group) TableName() string {
-	return "group"
+	return "groups"
 }
 
 // BeforeCreate hook sets create and update timestamps.
