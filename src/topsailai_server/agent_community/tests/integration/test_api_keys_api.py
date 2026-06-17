@@ -114,7 +114,6 @@ class TestAPIKeyConstraints:
     def test_user_can_create_own_api_key(
         self,
         admin_client: requests.Session,
-        api_client: requests.Session,
         server_url: str,
         test_account: dict,
     ):
@@ -124,10 +123,12 @@ class TestAPIKeyConstraints:
         assert response.status_code == 200
         session_key = response.json()["session_key"]
 
-        # Use the session to create an API key.
+        # Use a fresh session so the X-Session-Key header is the only credential.
+        session_client = requests.Session()
+        session_client.headers.update({"Content-Type": "application/json"})
         headers = {"X-Session-Key": session_key}
         key_data = {"api_key_name": "user-own-key", "role": "user"}
-        response = api_client.post(
+        response = session_client.post(
             f"{server_url}/api/v1/accounts/{test_account['account_id']}/api-keys",
             headers=headers,
             json=key_data,
@@ -140,7 +141,6 @@ class TestAPIKeyConstraints:
     def test_user_cannot_create_api_key_for_other_account(
         self,
         admin_client: requests.Session,
-        api_client: requests.Session,
         server_url: str,
         test_account: dict,
         unique_id: str,
@@ -162,10 +162,13 @@ class TestAPIKeyConstraints:
         assert response.status_code == 200
         session_key = response.json()["session_key"]
 
-        # Attempt to create a key for the other account.
+        # Attempt to create a key for the other account using a fresh session
+        # so the X-Session-Key header is the only credential.
+        session_client = requests.Session()
+        session_client.headers.update({"Content-Type": "application/json"})
         headers = {"X-Session-Key": session_key}
         key_data = {"api_key_name": "cross-account-key", "role": "user"}
-        response = api_client.post(
+        response = session_client.post(
             f"{server_url}/api/v1/accounts/{other_account['account_id']}/api-keys",
             headers=headers,
             json=key_data,

@@ -35,22 +35,27 @@ def base_url() -> str:
     """Return the base URL for the ACS server."""
     return f"http://{TEST_SERVER_HOST}:{TEST_SERVER_PORT}"
 
-
 @pytest.fixture(scope="function")
-def api_client() -> Generator[requests.Session, None, None]:
-    """Create a requests session for API tests."""
+def api_client(admin_token: str) -> Generator[requests.Session, None, None]:
+    """Create a requests session for API tests, authenticated as admin."""
     session = requests.Session()
     session.headers.update({"Content-Type": "application/json"})
+    session.headers.update({"Authorization": f"Bearer {admin_token}"})
     yield session
     session.close()
 
 
 @pytest.fixture(scope="function")
+def unauthenticated_client() -> Generator[requests.Session, None, None]:
+    """Create a requests session with no authentication."""
+    session = requests.Session()
+    session.headers.update({"Content-Type": "application/json"})
+    yield session
+    session.close()
+@pytest.fixture(scope="function")
 def unique_id() -> str:
     """Generate a unique identifier for test isolation."""
     return str(uuid.uuid4())[:8]
-
-
 @pytest.fixture(scope="function")
 def server_url(base_url: str) -> str:
     """Return the server URL."""
@@ -293,10 +298,10 @@ def admin_client(api_client: requests.Session, admin_token: str) -> requests.Ses
 def manager_client(api_client: requests.Session, manager_token: str | None) -> requests.Session | None:
     """Return a requests session authenticated with the manager API key."""
     if not manager_token:
-        return None
+        yield None
+        return
     api_client.headers.update({"Authorization": f"Bearer {manager_token}"})
     yield api_client
-
 
 @pytest.fixture(scope="function")
 def test_account(admin_client: requests.Session, server_url: str, unique_id: str) -> dict:

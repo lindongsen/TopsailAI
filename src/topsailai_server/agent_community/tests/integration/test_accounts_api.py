@@ -11,10 +11,9 @@ import requests
 
 class TestAccountAuthentication:
     """Test authentication requirements for account endpoints."""
-
-    def test_unauthenticated_request_rejected(self, api_client: requests.Session, server_url: str):
+    def test_unauthenticated_request_rejected(self, unauthenticated_client: requests.Session, server_url: str):
         """Protected endpoints must reject requests without credentials."""
-        response = api_client.get(f"{server_url}/api/v1/accounts")
+        response = unauthenticated_client.get(f"{server_url}/api/v1/accounts")
         assert response.status_code == 401
         data = response.json()
         assert "error" in data
@@ -151,14 +150,14 @@ class TestAccountCRUD:
 class TestAccountLoginAndSession:
     """Test password login and session key authentication."""
 
-    def test_login_by_password(self, admin_client: requests.Session, api_client: requests.Session, server_url: str, test_account: dict):
+    def test_login_by_password(self, admin_client: requests.Session, unauthenticated_client: requests.Session, server_url: str, test_account: dict):
         """A user should be able to log in with login_name and password."""
         login_data = {
             "login_name": test_account["login_name"],
             "password": "TestPass123!",
         }
 
-        response = api_client.post(f"{server_url}/api/v1/accounts/login", json=login_data)
+        response = unauthenticated_client.post(f"{server_url}/api/v1/accounts/login", json=login_data)
         assert response.status_code == 200
         data = response.json()
         assert "session_key" in data
@@ -166,31 +165,33 @@ class TestAccountLoginAndSession:
         assert "expires_at_ms" in data
         assert data["account_id"] == test_account["account_id"]
 
-    def test_login_with_wrong_password_fails(self, api_client: requests.Session, server_url: str, test_account: dict):
+    def test_login_with_wrong_password_fails(self, unauthenticated_client: requests.Session, server_url: str, test_account: dict):
         """Login with an incorrect password should fail."""
         login_data = {
             "login_name": test_account["login_name"],
             "password": "WrongPassword!",
         }
 
-        response = api_client.post(f"{server_url}/api/v1/accounts/login", json=login_data)
+        response = unauthenticated_client.post(f"{server_url}/api/v1/accounts/login", json=login_data)
         assert response.status_code == 401
 
-    def test_session_key_authentication(self, admin_client: requests.Session, api_client: requests.Session, server_url: str, test_account: dict):
+    def test_session_key_authentication(self, admin_client: requests.Session, server_url: str, test_account: dict):
         """A session key should authenticate requests."""
         # Create a session via the admin API.
         response = admin_client.post(f"{server_url}/api/v1/accounts/{test_account['account_id']}/session")
         assert response.status_code == 200
         session = response.json()
 
-        # Use the session key to fetch the current account.
+        # Use a fresh session so that no Authorization header from admin_client
+        # takes precedence over the X-Session-Key header.
+        session_client = requests.Session()
         headers = {"X-Session-Key": session["session_key"]}
-        response = api_client.get(f"{server_url}/api/v1/accounts/me", headers=headers)
+        response = session_client.get(f"{server_url}/api/v1/accounts/me", headers=headers)
         assert response.status_code == 200
         data = response.json()
         assert data["account_id"] == test_account["account_id"]
 
-    def test_change_password(self, admin_client: requests.Session, api_client: requests.Session, server_url: str, test_account: dict):
+    def test_change_password(self, admin_client: requests.Session, unauthenticated_client: requests.Session, server_url: str, test_account: dict):
         """A user should be able to change their password."""
         new_password = "NewPass123!"
         response = admin_client.post(
@@ -204,12 +205,12 @@ class TestAccountLoginAndSession:
             "login_name": test_account["login_name"],
             "password": new_password,
         }
-        response = api_client.post(f"{server_url}/api/v1/accounts/login", json=login_data)
+        response = unauthenticated_client.post(f"{server_url}/api/v1/accounts/login", json=login_data)
         assert response.status_code == 200
 
         # Login with the old password should fail.
         login_data["password"] = "TestPass123!"
-        response = api_client.post(f"{server_url}/api/v1/accounts/login", json=login_data)
+        response = unauthenticated_client.post(f"{server_url}/api/v1/accounts/login", json=login_data)
         assert response.status_code == 401
 
 

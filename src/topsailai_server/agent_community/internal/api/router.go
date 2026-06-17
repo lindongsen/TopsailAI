@@ -63,6 +63,11 @@ func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evalu
 
 	// API v1 routes
 	v1 := engine.Group("/api/v1")
+
+	// Public account login endpoint (must not require authentication).
+	v1.POST("/accounts/login", accountHandler.Login)
+
+	// Protected routes below require authentication and audit logging.
 	v1.Use(authMiddleware)
 	v1.Use(middleware.AuditLogger(auditSvc))
 	{
@@ -73,7 +78,6 @@ func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evalu
 		v1.GET("/accounts/:account_id", middleware.RequireAuthenticated(), accountHandler.GetAccount)
 		v1.PUT("/accounts/:account_id", middleware.RequireAuthenticated(), accountHandler.UpdateAccount)
 		v1.DELETE("/accounts/:account_id", middleware.RequireRole(models.AccountRoleAdmin), accountHandler.DeleteAccount)
-		v1.POST("/accounts/login", accountHandler.Login)
 		v1.POST("/accounts/:account_id/password", middleware.RequireAuthenticated(), accountHandler.ChangePassword)
 		v1.POST("/accounts/:account_id/session", middleware.RequireRole(models.AccountRoleManager), accountHandler.CreateSession)
 

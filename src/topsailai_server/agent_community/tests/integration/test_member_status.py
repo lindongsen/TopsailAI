@@ -76,9 +76,9 @@ class TestMemberStatusActiveUpdate:
                 pass
 
         sub = await nats_client.subscribe(subject, cb=on_message)
+        await asyncio.sleep(0.5)  # ensure subscription is active before events are published
 
         try:
-            # 2. Add agent member pointing to mock agent server
             agent_interface = {
                 "adaptor": "topsailai_agent",
                 "environments": {
