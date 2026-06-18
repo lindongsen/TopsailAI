@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -220,7 +221,46 @@ func PromptLogin(p *InteractivePrompt) (loginName, loginPassword string, err err
 	}
 	return loginName, loginPassword, nil
 }
+// PromptAuthMethod lets the user choose an authentication method and enter
+// the corresponding credential. Supported methods are login-name/password,
+// session key, and API key. Cancellation returns ErrCancelled.
+func PromptAuthMethod(p *InteractivePrompt) (method, credential string, err error) {
+	printInfo("Login. Press Ctrl+C or Enter without input to cancel.")
+	_, method, err = p.PromptChoice("Authentication method", []string{
+		"login-name/password",
+		"session-key",
+		"api-key",
+	})
+	if err != nil {
+		return "", "", err
+	}
 
+	switch method {
+	case "login-name/password":
+		loginName, err := p.PromptString("Login name", true)
+		if err != nil {
+			return "", "", err
+		}
+		loginPassword, err := p.PromptPassword("Password")
+		if err != nil {
+			return "", "", err
+		}
+		return "login-name/password", loginName + "\n" + loginPassword, nil
+	case "session-key":
+		sessionKey, err := p.PromptString("Session key", true)
+		if err != nil {
+			return "", "", err
+		}
+		return "session-key", sessionKey, nil
+	case "api-key":
+		apiKey, err := p.PromptString("API key", true)
+		if err != nil {
+			return "", "", err
+		}
+		return "api-key", apiKey, nil
+	}
+	return "", "", ErrCancelled
+}
 // PromptAccountCreate prompts for account creation parameters.
 func PromptAccountCreate(p *InteractivePrompt, callerRole string) (req map[string]interface{}, err error) {
 	printInfo("Creating a new account. Press Ctrl+C or Enter without input to cancel.")
@@ -239,7 +279,6 @@ func PromptAccountCreate(p *InteractivePrompt, callerRole string) (req map[strin
 	if desc != "" {
 		req["account_description"] = desc
 	}
-
 	// Only admins can choose a role; managers are forced to user.
 	if callerRole == RoleAdmin {
 		_, role, err := p.PromptChoice("Role", []string{RoleUser, RoleManager, RoleAdmin})
@@ -475,8 +514,45 @@ func PromptMemberAdd(p *InteractivePrompt) (memberID, memberName, memberDesc, me
 	if err != nil {
 		return "", "", "", "", nil, err
 	}
-	// Member interface is optional JSON; skip for simplicity in CLI.
-	return memberID, memberName, memberDesc, memberType, nil, nil
+	// Member interface is optional JSON. Accept either a JSON object or a
+	// JSON-encoded string; leave empty to omit it.
+	ifaceRaw, err := p.PromptString("Member interface JSON (optional)", false)
+	if err != nil {
+		return "", "", "", "", nil, err
+	}
+	if ifaceRaw != "" {
+		memberInterface, err = parseMemberInterface(ifaceRaw)
+		if err != nil {
+			return "", "", "", "", nil, err
+		}
+	}
+	return memberID, memberName, memberDesc, memberType, memberInterface, nil
+}
+
+// parseMemberInterface parses a member_interface value that may be supplied as
+// a JSON object or a JSON-encoded string. It returns a map suitable for the
+// AddMember API payload.
+func parseMemberInterface(raw string) (map[string]interface{}, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	// If the input is a JSON string (starts and ends with quotes), unwrap it.
+	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
+		var s string
+		if err := json.Unmarshal([]byte(raw), &s); err != nil {
+			return nil, fmt.Errorf("invalid JSON string for member_interface: %w", err)
+		}
+		raw = strings.TrimSpace(s)
+	}
+	if raw == "" {
+		return nil, nil
+	}
+	var v map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return nil, fmt.Errorf("member_interface is not valid JSON object: %w", err)
+	}
+	return v, nil
 }
 
 // PromptMemberUpdate prompts for member update parameters.

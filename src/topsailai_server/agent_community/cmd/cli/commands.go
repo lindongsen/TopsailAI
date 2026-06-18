@@ -125,14 +125,22 @@ func DispatchCommand(line string, state *CLIState) error {
 }
 
 // parseInlineArgs parses inline arguments into a map.
-// Supports --key value and key=value formats.
+// Supports --key value, --key=value, and key=value formats.
+// Boolean flags (e.g. --yes) are set to "true" and do not consume a following
+// key=value argument.
 func parseInlineArgs(args []string) map[string]string {
 	result := make(map[string]string)
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if strings.HasPrefix(arg, "--") {
+			// Support --key=value syntax.
+			if idx := strings.Index(arg, "="); idx > 2 {
+				key := arg[2:idx]
+				result[key] = arg[idx+1:]
+				continue
+			}
 			key := strings.TrimPrefix(arg, "--")
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") && !strings.Contains(args[i+1], "=") {
 				result[key] = args[i+1]
 				i++
 			} else {
@@ -233,11 +241,28 @@ func handleLogin(args []string, state *CLIState) error {
 
 	loginName := params["login-name"]
 	loginPassword := params["login-password"]
+	sessionKey := params["session-key"]
+	apiKey := params["api-key"]
 
-	if loginName == "" || loginPassword == "" {
+	// Determine the requested authentication method. Inline args take precedence
+	// in the order: session-key > api-key > login-name/password, matching the
+	// server's auth priority.
+	method := ""
+	switch {
+	case sessionKey != "":
+		method = "session-key"
+	case apiKey != "":
+		method = "api-key"
+	case loginName != "" || loginPassword != "":
+		method = "login-name/password"
+	}
+
+	// If no inline auth args were provided, prompt interactively.
+	if method == "" {
 		prompt := NewInteractivePrompt(state.rl)
+		var credential string
 		var err error
-		loginName, loginPassword, err = PromptLogin(prompt)
+		method, credential, err = PromptAuthMethod(prompt)
 		if err != nil {
 			if err == ErrCancelled {
 				printInfo("Cancelled.")
@@ -245,41 +270,81 @@ func handleLogin(args []string, state *CLIState) error {
 			}
 			return err
 		}
+		switch method {
+		case "login-name/password":
+			parts := strings.SplitN(credential, "\n", 2)
+			loginName = parts[0]
+			if len(parts) > 1 {
+				loginPassword = parts[1]
+			}
+		case "session-key":
+			sessionKey = credential
+		case "api-key":
+			apiKey = credential
+		}
 	}
 
-	resp, err := state.apiClient.Login(loginName, loginPassword)
-	if err != nil {
-		return formatAPIError(err)
+	var accountID, accountName, role string
+	var expiresAtMs int64
+
+	switch method {
+	case "login-name/password":
+		if loginName == "" || loginPassword == "" {
+			printWarning("Both login-name and login-password are required.")
+			return nil
+		}
+		resp, err := state.apiClient.Login(loginName, loginPassword)
+		if err != nil {
+			return formatAPIError(err)
+		}
+		var result struct {
+			AccountID   string `json:"account_id"`
+			SessionKey  string `json:"session_key"`
+			ExpiresAtMs int64  `json:"expires_at_ms"`
+		}
+		if err := resp.GetData(&result); err != nil {
+			return err
+		}
+		accountID = result.AccountID
+		sessionKey = result.SessionKey
+		expiresAtMs = result.ExpiresAtMs
+		updateAuthState(state, AuthMethodSession, sessionKey, accountID, "", "", expiresAtMs)
+
+	case "session-key":
+		state.apiClient.SetSessionKey(sessionKey)
+		updateAuthState(state, AuthMethodSession, sessionKey, "", "", "", 0)
+
+	case "api-key":
+		state.apiClient.SetAPIKey(apiKey)
+		updateAuthState(state, AuthMethodAPIKey, apiKey, "", "", "", 0)
 	}
 
-	var result struct {
-		AccountID   string `json:"account_id"`
-		SessionKey  string `json:"session_key"`
-		ExpiresAtMs int64  `json:"expires_at_ms"`
-	}
-	if err := resp.GetData(&result); err != nil {
-		return err
-	}
-
-	// The server login response only contains account_id, session_key and
-	// expires_at_ms. Fetch /account:me to obtain the account name and role so
-	// the prompt and success message are populated correctly.
-	updateAuthState(state, AuthMethodSession, result.SessionKey, result.AccountID, "", "", result.ExpiresAtMs)
-
+	// Resolve account details from /accounts/me so the prompt and success
+	// message are populated correctly.
 	meResp, err := state.apiClient.GetMe()
 	if err != nil {
+		clearAuthState(state)
 		return formatAPIError(err)
 	}
 	var me map[string]interface{}
 	if err := meResp.GetData(&me); err != nil {
+		clearAuthState(state)
 		return err
 	}
-	accountName, _ := me["account_name"].(string)
-	role, _ := me["role"].(string)
-	updateAuthState(state, AuthMethodSession, result.SessionKey, result.AccountID, accountName, role, result.ExpiresAtMs)
+	accountID, _ = me["account_id"].(string)
+	accountName, _ = me["account_name"].(string)
+	role, _ = me["role"].(string)
+
+	if state.apiClient.AuthMethod() == AuthMethodSession {
+		updateAuthState(state, AuthMethodSession, sessionKey, accountID, accountName, role, expiresAtMs)
+	} else {
+		updateAuthState(state, AuthMethodAPIKey, apiKey, accountID, accountName, role, 0)
+	}
 
 	printSuccess(fmt.Sprintf("Logged in as %s [%s]", accountName, role))
-	promptPrintln(fmt.Sprintf("Session key: %s", result.SessionKey))
+	if state.apiClient.AuthMethod() == AuthMethodSession {
+		promptPrintln(fmt.Sprintf("Session key: %s", sessionKey))
+	}
 	return nil
 }
 
@@ -506,7 +571,11 @@ func handleAccountDelete(args []string, state *CLIState) error {
 	}
 
 	params := parseInlineArgs(args)
-	accountID := params["id"]
+	// Support both legacy "id" and canonical "account-id" argument names.
+	accountID := params["account-id"]
+	if accountID == "" {
+		accountID = params["id"]
+	}
 	if accountID == "" {
 		prompt := NewInteractivePrompt(state.rl)
 		var err error
@@ -520,21 +589,26 @@ func handleAccountDelete(args []string, state *CLIState) error {
 		}
 	}
 
-	prompt := NewInteractivePrompt(state.rl)
-	confirm, err := prompt.PromptBool(fmt.Sprintf("Delete account %s?", accountID), false)
-	if err != nil {
-		if err == ErrCancelled {
-			printInfo("Cancelled.")
-			return nil
+	// Respect the --yes confirmation flag.
+	confirm := params["yes"] == "true"
+	if !confirm {
+		prompt := NewInteractivePrompt(state.rl)
+		var err error
+		confirm, err = prompt.PromptBool(fmt.Sprintf("Delete account %s?", accountID), false)
+		if err != nil {
+			if err == ErrCancelled {
+				printInfo("Cancelled.")
+				return nil
+			}
+			return err
 		}
-		return err
 	}
 	if !confirm {
 		printInfo("Deletion cancelled.")
 		return nil
 	}
 
-	_, err = state.apiClient.DeleteAccount(accountID)
+	_, err := state.apiClient.DeleteAccount(accountID)
 	if err != nil {
 		return formatAPIError(err)
 	}
@@ -1147,7 +1221,6 @@ func handleMemberList(args []string, state *CLIState) error {
 	printSeparator()
 	return nil
 }
-
 func handleMemberAdd(args []string, state *CLIState) error {
 	defer restorePrompt(state)
 	params := parseInlineArgs(args)
@@ -1159,6 +1232,7 @@ func handleMemberAdd(args []string, state *CLIState) error {
 	memberName := params["member-name"]
 	memberDesc := params["member-description"]
 	memberType := params["member-type"]
+	memberInterfaceRaw := params["member-interface"]
 
 	if groupID == "" {
 		prompt := NewInteractivePrompt(state.rl)
@@ -1173,10 +1247,11 @@ func handleMemberAdd(args []string, state *CLIState) error {
 		}
 	}
 
+	var memberInterface map[string]interface{}
 	if memberID == "" || memberName == "" || memberType == "" {
 		prompt := NewInteractivePrompt(state.rl)
 		var err error
-		memberID, memberName, memberDesc, memberType, _, err = PromptMemberAdd(prompt)
+		memberID, memberName, memberDesc, memberType, memberInterface, err = PromptMemberAdd(prompt)
 		if err != nil {
 			if err == ErrCancelled {
 				printInfo("Cancelled.")
@@ -1184,9 +1259,15 @@ func handleMemberAdd(args []string, state *CLIState) error {
 			}
 			return err
 		}
+	} else if memberInterfaceRaw != "" {
+		var err error
+		memberInterface, err = parseMemberInterface(memberInterfaceRaw)
+		if err != nil {
+			return err
+		}
 	}
 
-	_, err := state.apiClient.AddMember(groupID, memberID, memberName, memberDesc, memberType, nil)
+	_, err := state.apiClient.AddMember(groupID, memberID, memberName, memberDesc, memberType, memberInterface)
 	if err != nil {
 		return formatAPIError(err)
 	}
@@ -1194,7 +1275,6 @@ func handleMemberAdd(args []string, state *CLIState) error {
 	printSuccess(fmt.Sprintf("Member %s added to group %s", memberID, groupID))
 	return nil
 }
-
 func handleMemberRemove(args []string, state *CLIState) error {
 	defer restorePrompt(state)
 	params := parseInlineArgs(args)

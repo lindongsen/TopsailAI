@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/topsailai/agent-community/internal/api/middleware"
 	"github.com/topsailai/agent-community/internal/config"
 	"github.com/topsailai/agent-community/internal/models"
@@ -118,10 +117,9 @@ func (h *GroupHandler) CreateGroup(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process group key"})
 		return
 	}
-
 	now := time.Now().UnixMilli()
 	group := models.Group{
-		GroupID:      uuid.New().String(),
+		GroupID:      models.GenerateGroupID(),
 		GroupName:    req.GroupName,
 		GroupContext: req.GroupContext,
 		GroupKey:     hashedKey,
