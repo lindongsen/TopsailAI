@@ -1065,21 +1065,24 @@ func handleGroupDelete(args []string, state *CLIState) error {
 		}
 	}
 
-	prompt := NewInteractivePrompt(state.rl)
-	confirm, err := prompt.PromptBool(fmt.Sprintf("Delete group %s?", groupID), false)
-	if err != nil {
-		if err == ErrCancelled {
-			printInfo("Cancelled.")
+	// Allow scripts and automation to bypass the confirmation prompt.
+	if params["yes"] != "true" {
+		prompt := NewInteractivePrompt(state.rl)
+		confirm, err := prompt.PromptBool(fmt.Sprintf("Delete group %s?", groupID), false)
+		if err != nil {
+			if err == ErrCancelled {
+				printInfo("Cancelled.")
+				return nil
+			}
+			return err
+		}
+		if !confirm {
+			printInfo("Deletion cancelled.")
 			return nil
 		}
-		return err
-	}
-	if !confirm {
-		printInfo("Deletion cancelled.")
-		return nil
 	}
 
-	_, err = state.apiClient.DeleteGroup(groupID)
+	_, err := state.apiClient.DeleteGroup(groupID)
 	if err != nil {
 		return formatAPIError(err)
 	}
@@ -1511,7 +1514,18 @@ func handleHelp(args []string, state *CLIState) error {
 	promptPrintln("  exit, quit      Aliases for /exit")
 	printSeparator()
 	promptPrintln("Interactive mode: type a command without arguments to be prompted.")
-	promptPrintln("Non-interactive mode: /command --arg value")
+	promptPrintln("Non-interactive mode supports two argument styles (can be mixed):")
+	promptPrintln("  /command --key value [--key2 value2] ...")
+	promptPrintln("  /command key=value [key2=value2] ...")
+	promptPrintln()
+	promptPrintln("Examples:")
+	promptPrintln("  /group:create name=MyGroup")
+	promptPrintln("  /group:create --name MyGroup context='AI research'")
+	promptPrintln("  /account:create --role user --login-name alice@example.com")
+	promptPrintln("  /member:add group-id=group-abc member-id=agent-001 member-type=worker-agent")
+	promptPrintln("  /message:list group-id=group-abc --limit 20")
+	promptPrintln()
+	promptPrintln("Boolean flags can be passed as --yes or yes=true.")
 	return nil
 }
 

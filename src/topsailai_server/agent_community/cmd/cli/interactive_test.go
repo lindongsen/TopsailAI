@@ -123,6 +123,40 @@ func TestPromptBool_InputYes(t *testing.T) {
 	}
 }
 
+func TestPromptBool_PromptShowsDefault(t *testing.T) {
+	mr := &mockLineReader{lines: []string{""}}
+	p := newInteractivePromptWithReader(mr)
+
+	_, err := p.PromptBool("Delete group X", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mr.prompts) == 0 {
+		t.Fatal("expected prompt to be set")
+	}
+	got := mr.prompts[len(mr.prompts)-1]
+	want := "Delete group X [y/n] (default: n): "
+	if got != want {
+		t.Fatalf("expected prompt %q, got %q", want, got)
+	}
+}
+
+func TestPromptBool_InputDoesNotAppendToDefault(t *testing.T) {
+	// Simulates a user typing "y" into an empty buffer. With the old
+	// implementation the buffer was pre-filled with "n", so the result would
+	// have been "ny" and parsed as false.
+	mr := &mockLineReader{lines: []string{"y"}}
+	p := newInteractivePromptWithReader(mr)
+
+	got, err := p.PromptBool("Delete group X", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
+		t.Fatal("expected true when user types 'y' with default false")
+	}
+}
+
 func TestPromptChoice_ValidSelection(t *testing.T) {
 	mr := &mockLineReader{lines: []string{"2"}}
 	p := newInteractivePromptWithReader(mr)

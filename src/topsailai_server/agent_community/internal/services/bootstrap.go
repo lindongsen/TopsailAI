@@ -19,6 +19,9 @@ import (
 	"github.com/topsailai/agent-community/internal/models"
 	"github.com/topsailai/agent-community/pkg/logger"
 )
+// ErrBootstrapLockHeld indicates another node is already running bootstrap.
+var ErrBootstrapLockHeld = errors.New("bootstrap lock held by another node")
+
 
 // BootstrapService handles default admin/manager account creation on startup.
 type BootstrapService struct {
@@ -64,6 +67,10 @@ func (s *BootstrapService) Run(ctx context.Context) error {
 
 	release, err := s.acquireLock(ctx, lockKey, lockToken)
 	if err != nil {
+		if errors.Is(err, ErrBootstrapLockHeld) {
+			s.log.Warn("bootstrap", "", "bootstrap lock held by another node, skipping default account creation")
+			return nil
+		}
 		return fmt.Errorf("failed to acquire bootstrap lock: %w", err)
 	}
 	defer release()
@@ -304,14 +311,12 @@ func (s *BootstrapService) acquireLock(ctx context.Context, key, token string) (
 				_ = s.kv.Delete(key)
 			}, nil
 		}
-		if !errors.Is(err, nats.ErrKeyExists) {
-			// NATS KV error but not because key exists; fall back to in-memory.
-			s.log.Warn("bootstrap", "", "failed to acquire distributed lock, falling back to in-memory lock", "error", err.Error())
-		} else {
-			// Another node holds the lock. Wait briefly and then proceed without lock.
-			s.log.Warn("bootstrap", "", "bootstrap lock held by another node, skipping default account creation")
-			return func() {}, nil
+		if errors.Is(err, nats.ErrKeyExists) {
+			// Another node holds the lock; signal the caller to skip bootstrap.
+			return nil, ErrBootstrapLockHeld
 		}
+		// NATS KV error but not because key exists; fall back to in-memory.
+		s.log.Warn("bootstrap", "", "failed to acquire distributed lock, falling back to in-memory lock", "error", err.Error())
 	}
 
 	// In-memory fallback.

@@ -142,6 +142,9 @@ func (p *InteractivePrompt) PromptInt(label string, required bool) (int, error) 
 }
 
 // PromptBool prompts for a boolean value (y/n).
+// The default value is shown in the prompt label, but the input line is left
+// empty so that automation (tmux send-keys, expect scripts, etc.) does not
+// have to clear a pre-filled buffer before typing.
 func (p *InteractivePrompt) PromptBool(label string, defaultValue bool) (bool, error) {
 	defaultStr := "n"
 	if defaultValue {
@@ -149,7 +152,7 @@ func (p *InteractivePrompt) PromptBool(label string, defaultValue bool) (bool, e
 	}
 	p.reader.Clean()
 	p.reader.SetPrompt(fmt.Sprintf("%s [y/n] (default: %s): ", label, defaultStr))
-	line, err := p.reader.ReadlineWithDefault(defaultStr)
+	line, err := p.reader.Readline()
 	if err != nil {
 		return false, ErrCancelled
 	}

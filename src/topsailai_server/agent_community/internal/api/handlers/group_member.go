@@ -2,6 +2,9 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -38,22 +41,82 @@ func NewGroupMemberHandler(db *gorm.DB, publisher *nats.Publisher, log *logger.L
 	}
 }
 
+// MemberInterfaceField accepts either a JSON string or a JSON object and
+// normalizes it to a compact JSON string for storage.
+type MemberInterfaceField struct {
+	value string
+}
+
+// UnmarshalJSON implements json.Unmarshaler. It accepts:
+//   - a JSON string whose content is itself valid JSON (typically an object)
+//   - a JSON object/array/value directly
+// In both cases the stored representation is a compact JSON string.
+func (m *MemberInterfaceField) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		m.value = ""
+		return nil
+	}
+
+	// Case 1: JSON string containing a JSON-encoded value.
+	if trimmed[0] == '"' {
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return fmt.Errorf("member_interface is not a valid JSON string: %w", err)
+		}
+		if s == "" {
+			m.value = ""
+			return nil
+		}
+		if !json.Valid([]byte(s)) {
+			return fmt.Errorf("member_interface string content is not valid JSON")
+		}
+		m.value = s
+		return nil
+	}
+
+	// Case 2: JSON value (object, array, number, bool).
+	if !json.Valid(trimmed) {
+		return fmt.Errorf("member_interface is not valid JSON")
+	}
+	var v interface{}
+	if err := json.Unmarshal(trimmed, &v); err != nil {
+		return fmt.Errorf("member_interface could not be parsed: %w", err)
+	}
+	compact, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("member_interface could not be compacted: %w", err)
+	}
+	m.value = string(compact)
+	return nil
+}
+
+// MarshalJSON implements json.Marshaler.
+func (m MemberInterfaceField) MarshalJSON() ([]byte, error) {
+	return json.Marshal(m.value)
+}
+
+// String returns the normalized JSON string representation.
+func (m MemberInterfaceField) String() string {
+	return m.value
+}
+
 // JoinGroupRequest represents the request body for joining a group.
 type JoinGroupRequest struct {
-	MemberID          string `json:"member_id" binding:"required"`
-	MemberName        string `json:"member_name" binding:"required"`
-	MemberDescription string `json:"member_description"`
-	MemberType        string `json:"member_type" binding:"required"`
-	MemberInterface   string `json:"member_interface"`
+	MemberID          string               `json:"member_id" binding:"required"`
+	MemberName        string               `json:"member_name" binding:"required"`
+	MemberDescription string               `json:"member_description"`
+	MemberType        string               `json:"member_type" binding:"required"`
+	MemberInterface   MemberInterfaceField `json:"member_interface"`
 }
 
 // UpdateMemberRequest represents the request body for updating a member.
 type UpdateMemberRequest struct {
-	MemberName        string `json:"member_name"`
-	MemberDescription string `json:"member_description"`
-	MemberStatus      string `json:"member_status"`
-	MemberInterface   string `json:"member_interface"`
-	LastReadMessageID string `json:"last_read_message_id"`
+	MemberName        string               `json:"member_name"`
+	MemberDescription string               `json:"member_description"`
+	MemberStatus      string               `json:"member_status"`
+	MemberInterface   MemberInterfaceField `json:"member_interface"`
+	LastReadMessageID string               `json:"last_read_message_id"`
 }
 
 // GroupMemberResponse represents a group member in API responses.
@@ -131,7 +194,7 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 		MemberDescription: req.MemberDescription,
 		MemberType:        memberType,
 		MemberStatus:      models.MemberStatusOnline,
-		MemberInterface:   req.MemberInterface,
+		MemberInterface:   req.MemberInterface.String(),
 	}
 	// Check for duplicate member
 	var existingMember models.GroupMember
@@ -287,8 +350,8 @@ func (h *GroupMemberHandler) UpdateMember(c *gin.Context) {
 	if req.MemberStatus != "" {
 		updates["member_status"] = req.MemberStatus
 	}
-	if req.MemberInterface != "" {
-		updates["member_interface"] = req.MemberInterface
+	if req.MemberInterface.String() != "" {
+		updates["member_interface"] = req.MemberInterface.String()
 	}
 	if req.LastReadMessageID != "" {
 		updates["last_read_message_id"] = req.LastReadMessageID
