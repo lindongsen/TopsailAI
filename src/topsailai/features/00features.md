@@ -8,19 +8,42 @@
 
 DONE: TopsailAI/cli/topsailai_session_add_message.py
 
+TIPS: 这种方法也可以 增加message到session `TopsailAI/src/topsailai/context/ctx_manager.py:add_session_message`
+
 ---
 
 ## Context Messages
 
-设置一个上下文消息列表，将该内容按照一定的规则进行组合，call LLM时会作为第一条user message。
+以agent维度设置一个上下文消息列表`context_user_messages`，将此列表按照一定的规则进行组合作为1条message。
+
+组合规则样例:
+```
+---
+ctx_user_msg1
+---
+ctx_user_msg2
+---
+ctx_user_msg3
+---
+```
+
+工作流程:
+Start -> PromptBase:context_user_messages -> 组合成一条message -> PromptBase:add_user_message -> END
+
+References:
+- ai_base/prompt_base.py
+- utils/env_tool.py
+
+Tips: 未来可能还会有 `context_xxx_messages`, 如 context_assistant_messages
 
 ### 读取skill的文档时，可以自动将内容加入到上下文消息中
 
-1. 在 `tools.skill_tool` 中的 `read_skill_file` 方法，判断读取的文件是 文档（.md），就作为新消息保存到 user2agent 的session中。
-2. 要判断历史消息是否存在这个记录，不要重复性加入。
+在 `tools.skill_tool` 中的 `read_skill_file` 方法，判断读取的文件是 文档（.md），且正确读取到了文件内容，就作为新消息append到当前session中。
+
+增加message到session的方法是 `TopsailAI/src/topsailai/context/ctx_manager.py:add_session_message`
 
 ### 用环境变量 TOPSAILAI_CONTEXT_USER_MESSAGE 去传递上下文信息
 
-role=user
+`TOPSAILAI_CONTEXT_USER_MESSAGE` 可能是文件，也可能是文本，它会作为 ctx_user_msg1
 
 ---

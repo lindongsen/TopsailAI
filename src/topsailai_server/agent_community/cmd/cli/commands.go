@@ -22,7 +22,6 @@ var roleRank = map[string]int{
 	RoleManager: 2,
 	RoleUser:    1,
 }
-
 // CLIState holds the runtime state of the CLI.
 type CLIState struct {
 	apiClient   *APIClient
@@ -30,8 +29,6 @@ type CLIState struct {
 	chatMode    *ChatMode
 	userID      string
 	userName    string
-	memberID    string
-	memberName  string
 	accountRole string
 	authMethod  AuthMethod
 	apiKey      string
@@ -864,18 +861,16 @@ func handleGroupEnter(args []string, state *CLIState) error {
 	if _, err := state.apiClient.GetGroup(groupID); err != nil {
 		return fmt.Errorf("failed to enter group: %w", err)
 	}
-
 	// Resolve the group member ID for the current user. The user must already
 	// be a member of the group; auto-join is not allowed.
-	memberID, _, err := resolveMember(state, groupID)
-	if err != nil {
+	if err := resolveMember(state, groupID); err != nil {
 		return fmt.Errorf("failed to enter group: %w", err)
 	}
 
 	// Close main readline to release terminal for chat mode.
 	state.rl.Close()
 
-	err = state.chatMode.EnterChat(groupID, state.userID, state.userName, memberID)
+	chatErr := state.chatMode.EnterChat(groupID, state.userID, state.userName)
 
 	// Recreate main readline after chat mode exits.
 	rl, rerr := readline.NewEx(&readline.Config{
@@ -888,79 +883,34 @@ func handleGroupEnter(args []string, state *CLIState) error {
 	}
 	state.rl = rl
 
-	return err
+	return chatErr
 }
 
 // resolveMember checks whether the current user is already a member of the
-// group. It returns the member_id and member_name to use when sending messages.
-// If the user is not a member, it returns an error and does NOT auto-join.
-func resolveMember(state *CLIState, groupID string) (string, string, error) {
+// group. If the user is not a member, it returns an error and does NOT auto-join.
+func resolveMember(state *CLIState, groupID string) error {
 	resp, err := state.apiClient.ListMembers(groupID, ListQuery{Limit: 1000})
 	if err != nil {
-		return "", "", err
+		return err
 	}
 
 	var result struct {
 		Items []map[string]interface{} `json:"items"`
 	}
 	if err := resp.GetData(&result); err != nil {
-		return "", "", err
+		return err
 	}
 
-	// Prefer an exact match by account_id if the member_id equals it.
+	// Verify the authenticated account is a member of the group.
 	for _, m := range result.Items {
 		id, _ := m["member_id"].(string)
-		name, _ := m["member_name"].(string)
 		mtype, _ := m["member_type"].(string)
 		if id == state.userID && mtype == "user" {
-			return id, name, nil
+			return nil
 		}
 	}
 
-	// Otherwise use the configured CLI member identity.
-	memberID := state.memberID
-	memberName := state.memberName
-	if memberID == "" {
-		memberID = state.userID
-	}
-	if memberName == "" {
-		memberName = state.userName
-	}
-	memberName = sanitizeMemberName(memberName, memberID)
-
-	// Check whether this identity is already a member.
-	for _, m := range result.Items {
-		id, _ := m["member_id"].(string)
-		name, _ := m["member_name"].(string)
-		if id == memberID {
-			return id, name, nil
-		}
-	}
-
-	return "", "", fmt.Errorf("you are not a member of group %s; use /member:add or ask an admin to add you", groupID)
-}
-
-// sanitizeMemberName converts a candidate name into a value that satisfies the
-// server-side member_name validation (alphanumeric, hyphens, underscores). If
-// the sanitized result is empty, it falls back to memberID.
-func sanitizeMemberName(name, memberID string) string {
-	if name == "" {
-		return memberID
-	}
-	var b strings.Builder
-	for _, r := range name {
-		switch {
-		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('_')
-		}
-	}
-	sanitized := b.String()
-	if sanitized == "" {
-		return memberID
-	}
-	return sanitized
+	return fmt.Errorf("you are not a member of group %s; use /member:add or ask an admin to add you", groupID)
 }
 
 func handleGroupUpdate(args []string, state *CLIState) error {
@@ -980,7 +930,6 @@ func handleGroupUpdate(args []string, state *CLIState) error {
 			return err
 		}
 	}
-
 	name := params["name"]
 	context := params["context"]
 	key := params["key"]
@@ -997,7 +946,6 @@ func handleGroupUpdate(args []string, state *CLIState) error {
 			return err
 		}
 	}
-
 	_, err := state.apiClient.UpdateGroup(groupID, name, context, key)
 	if err != nil {
 		return formatAPIError(err)

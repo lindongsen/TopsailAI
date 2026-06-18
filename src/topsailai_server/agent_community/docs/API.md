@@ -47,7 +47,7 @@ Returns 200 if the server process is alive.
 **Response:**
 ```json
 {
-  "status": "ok"
+  "status": "alive"
 }
 ```
 
@@ -61,7 +61,12 @@ Returns 503 if dependencies are not ready.
 **Response (ready):**
 ```json
 {
-  "status": "ready"
+  "status": "ready",
+  "timestamp": "2024-01-01T00:00:00Z",
+  "checks": {
+    "database": "ok",
+    "nats": "ok"
+  }
 }
 ```
 
@@ -69,6 +74,7 @@ Returns 503 if dependencies are not ready.
 ```json
 {
   "status": "not ready",
+  "timestamp": "2024-01-01T00:00:00Z",
   "checks": {
     "database": "unreachable"
   }
@@ -85,6 +91,8 @@ Returns detailed health status of all components.
 ```json
 {
   "status": "healthy",
+  "version": "v0.1.0",
+  "timestamp": "2024-01-01T00:00:00Z",
   "checks": {
     "database": "ok",
     "nats": "ok"
@@ -92,13 +100,69 @@ Returns detailed health status of all components.
 }
 ```
 
+### Service Leader
+
+**GET /health/leader**
+
+Returns whether the current service instance is the elected Service-Leader.
+
+**Response:**
+```json
+{
+  "data": {
+    "is_leader": true,
+    "service_id": "550e8400-e29b-41d4-a716-446655440000"
+  },
+  "trace_id": "..."
+}
+```
+
+**Response 503 Service Unavailable:**
+- Service discovery is disabled (`ACS_DISCOVERY_ENABLED=false`).
+
+---
+
+## Service Discovery Endpoints
+
+### List Registered Services
+
+**GET /discovery/services**
+
+List all service instances currently registered in NATS KV service discovery.
+
+**Authentication:** Required.
+
+**Response:**
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "name": "acs",
+        "address": "http://10.0.0.1:7370",
+        "registered_at_ms": 1704067200000,
+        "last_heartbeat_ms": 1704067230000
+      }
+    ],
+    "leader_id": "550e8400-e29b-41d4-a716-446655440000"
+  },
+  "trace_id": "..."
+}
+```
+
+**Response 503 Service Unavailable:**
+- Service discovery is disabled (`ACS_DISCOVERY_ENABLED=false`).
+
 ---
 
 ## Authentication
 
-All API endpoints except health checks (`/healthz`, `/readyz`, `/health`) and the login endpoint (`POST /api/v1/accounts/login`) require authentication.
+All API endpoints except health checks (`/healthz`, `/readyz`, `/health`, `/health/leader`) and the login endpoint (`POST /api/v1/accounts/login`) require authentication.
 
 ACS supports two authentication methods. Only one method should be used per request.
+
+> **Authentication Priority:** When multiple credentials are present, the server resolves the caller in the following priority: `login_name_password > login_session_key > api_key`. API requests should typically include only one authentication form.
 
 ### API Key Authentication
 
@@ -127,13 +191,13 @@ Include the session key in the `X-Session-Key` header.
 X-Session-Key: {session_key}
 ```
 
-A session key is returned by the login or session creation endpoints. It is valid until `login_session_expired_time`.
+A session key is returned by the login or session creation endpoints. It is valid until `expires_at_ms`.
 
 ### Authorization Roles
 
 ACS uses a role hierarchy: `admin > manager > user`.
 
-- `admin`: Can manage all resources including accounts, API keys, and audit logs.
+- `admin`: Can manage all resources including accounts, API keys, groups, and audit logs.
 - `manager`: Can create user accounts, query accounts by id/external_id, and create login sessions for user accounts. Cannot create API keys.
 - `user`: Can manage their own resources (account, API keys, groups they are members of).
 
@@ -414,10 +478,8 @@ Authenticate with `login_name` and `login_password`. On success, a new login ses
 {
   "data": {
     "account_id": "acc-abc123",
-    "account_name": "Alice Smith",
-    "role": "user",
     "session_key": "acc-abc123-550e8400e29b41d4a716446655440000",
-    "login_session_expired_time": 1704153600000
+    "expires_at_ms": 1704153600000
   },
   "trace_id": "..."
 }
@@ -447,7 +509,6 @@ Change the `login_password` for an account. Any valid authentication method can 
 **Request Body:**
 ```json
 {
-  "old_password": "secure-password",
   "new_password": "new-secure-password"
 }
 ```
@@ -463,7 +524,6 @@ Change the `login_password` for an account. Any valid authentication method can 
 ```
 
 **Response 400 Bad Request:**
-- `old_password` does not match (for non-admin callers).
 - New password is empty.
 
 **Response 403 Forbidden:**
@@ -490,10 +550,8 @@ Create a new login session key for an account.
 {
   "data": {
     "account_id": "acc-abc123",
-    "account_name": "Alice Smith",
-    "role": "user",
     "session_key": "acc-abc123-550e8400e29b41d4a716446655440000",
-    "login_session_expired_time": 1704153600000
+    "expires_at_ms": 1704153600000
   },
   "trace_id": "..."
 }
@@ -718,6 +776,10 @@ Get a single audit log entry.
 
 Create a new group (community/session).
 
+**Authentication:** Required.
+- Any authenticated account can create a group.
+- The caller becomes the group `creator_id` and `owner_id`.
+
 When the server is configured with `ACS_GROUP_MANAGER_AGENT_CMD_CHAT`, a default `manager-agent` member is automatically joined to the new group as part of the same transaction. The auto-joined member uses the configured manager-agent adaptor, API settings, and timeouts. See `docs/Environment_Variables.md` for the full list of manager-agent auto-join environment variables.
 
 **Request Body:**
@@ -729,14 +791,18 @@ When the server is configured with `ACS_GROUP_MANAGER_AGENT_CMD_CHAT`, a default
 }
 ```
 
+> **Note on `group_key`:** The value is stored as a hash. An empty or omitted `group_key` means the group is public. The API never returns the plaintext key.
+
 **Response:**
 ```json
 {
   "data": {
-    "group_id": "550e8400-e29b-41d4-a716-446655440000",
+    "group_id": "group-abc123",
     "group_name": "AI Research Team",
     "group_context": "A group for AI research discussions",
     "group_key": "",
+    "creator_id": "acc-abc123",
+    "owner_id": "acc-abc123",
     "create_at_ms": 1704067200000,
     "update_at_ms": 1704067200000
   },
@@ -750,6 +816,10 @@ When the server is configured with `ACS_GROUP_MANAGER_AGENT_CMD_CHAT`, a default
 
 List all groups with pagination and filtering.
 
+**Authentication:** Required.
+- `admin` can list all groups.
+- `user` can only list groups where they are a member.
+
 **Query Parameters:**
 - offset, limit, sort_key, order_by, create_at_ms, update_at_ms
 
@@ -759,10 +829,12 @@ List all groups with pagination and filtering.
   "data": {
     "items": [
       {
-        "group_id": "550e8400-e29b-41d4-a716-446655440000",
+        "group_id": "group-abc123",
         "group_name": "AI Research Team",
         "group_context": "A group for AI research discussions",
         "group_key": "",
+        "creator_id": "acc-abc123",
+        "owner_id": "acc-abc123",
         "create_at_ms": 1704067200000,
         "update_at_ms": 1704067200000
       }
@@ -781,17 +853,23 @@ List all groups with pagination and filtering.
 
 Get a single group by ID.
 
+**Authentication:** Required.
+- `admin` can access any group.
+- `user` can only access groups where they are a member.
+
 **Path Parameters:**
-- group_id: UUID string
+- group_id: group identifier in `group-{id}` format (e.g., `group-abc123`)
 
 **Response:**
 ```json
 {
   "data": {
-    "group_id": "550e8400-e29b-41d4-a716-446655440000",
+    "group_id": "group-abc123",
     "group_name": "AI Research Team",
     "group_context": "A group for AI research discussions",
     "group_key": "",
+    "creator_id": "acc-abc123",
+    "owner_id": "acc-abc123",
     "create_at_ms": 1704067200000,
     "update_at_ms": 1704067200000
   },
@@ -805,8 +883,12 @@ Get a single group by ID.
 
 Update group information.
 
+**Authentication:** Required.
+- `admin` can update any group.
+- `user` can update only groups they own.
+
 **Path Parameters:**
-- group_id: UUID string
+- group_id: group identifier in `group-{id}` format
 
 **Request Body:**
 ```json
@@ -821,10 +903,12 @@ Update group information.
 ```json
 {
   "data": {
-    "group_id": "550e8400-e29b-41d4-a716-446655440000",
+    "group_id": "group-abc123",
     "group_name": "Updated Name",
     "group_context": "Updated context",
     "group_key": "",
+    "creator_id": "acc-abc123",
+    "owner_id": "acc-abc123",
     "create_at_ms": 1704067200000,
     "update_at_ms": 1704067300000
   },
@@ -838,18 +922,16 @@ Update group information.
 
 Delete a group and all associated data (members, messages).
 
+**Authentication:** Required.
+- `admin` can delete any group.
+- `user` can delete only groups they own.
+
 **Path Parameters:**
-- group_id: UUID string
+- group_id: group identifier in `group-{id}` format
 
 **Response:**
-```json
-{
-  "data": {
-    "message": "group deleted"
-  },
-  "trace_id": "..."
-}
-```
+
+`204 No Content`
 
 ---
 
@@ -861,8 +943,12 @@ Delete a group and all associated data (members, messages).
 
 Add a member (user or agent) to a group.
 
+**Authentication:** Required.
+- `admin` can add members to any group.
+- `user` can add members only to groups they own.
+
 **Path Parameters:**
-- group_id: UUID string
+- group_id: group identifier in `group-{id}` format
 
 **Request Body:**
 ```json
@@ -897,7 +983,7 @@ For agent members:
 ```json
 {
   "data": {
-    "group_id": "550e8400-e29b-41d4-a716-446655440000",
+    "group_id": "group-abc123",
     "member_id": "user-001",
     "member_name": "Alice",
     "member_description": "Project manager",
@@ -918,8 +1004,12 @@ For agent members:
 
 List all members of a group.
 
+**Authentication:** Required.
+- `admin` can list members of any group.
+- `user` can list members only for groups where they are a member.
+
 **Path Parameters:**
-- group_id: UUID string
+- group_id: group identifier in `group-{id}` format
 
 **Query Parameters:**
 - offset, limit, sort_key, order_by
@@ -930,7 +1020,7 @@ List all members of a group.
   "data": {
     "items": [
       {
-        "group_id": "550e8400-e29b-41d4-a716-446655440000",
+        "group_id": "group-abc123",
         "member_id": "user-001",
         "member_name": "Alice",
         "member_description": "Project manager",
@@ -956,8 +1046,12 @@ List all members of a group.
 
 Update member information.
 
+**Authentication:** Required.
+- `admin` can update any member.
+- `user` can update their own member record in groups where they are a member.
+
 **Path Parameters:**
-- group_id: UUID string
+- group_id: group identifier in `group-{id}` format
 - member_id: string
 
 **Request Body:**
@@ -966,7 +1060,8 @@ Update member information.
   "member_name": "Alice_Updated",
   "member_description": "Updated description",
   "member_status": "idle",
-  "member_interface": {}
+  "member_interface": {},
+  "last_read_message_id": "msg-001"
 }
 ```
 
@@ -974,14 +1069,14 @@ Update member information.
 ```json
 {
   "data": {
-    "group_id": "550e8400-e29b-41d4-a716-446655440000",
+    "group_id": "group-abc123",
     "member_id": "user-001",
     "member_name": "Alice_Updated",
     "member_description": "Updated description",
     "member_status": "idle",
     "member_type": "user",
     "member_interface": {},
-    "last_read_message_id": "",
+    "last_read_message_id": "msg-001",
     "create_at_ms": 1704067200000,
     "update_at_ms": 1704067300000
   },
@@ -995,19 +1090,17 @@ Update member information.
 
 Remove a member from a group.
 
+**Authentication:** Required.
+- `admin` can remove any member.
+- `user` can remove only their own member record.
+
 **Path Parameters:**
-- group_id: UUID string
+- group_id: group identifier in `group-{id}` format
 - member_id: string
 
 **Response:**
-```json
-{
-  "data": {
-    "message": "member left group"
-  },
-  "trace_id": "..."
-}
-```
+
+`204 No Content`
 
 ---
 
@@ -1017,10 +1110,16 @@ Remove a member from a group.
 
 **POST /api/v1/groups/:group_id/messages**
 
-Send a message to a group. Mentions in the message text (e.g., `@agent-001`, `@all`) are automatically extracted and may trigger agent responses. Automatic triggers respect `NO_TRIGGER_CASES` (e.g., messages from agents are not re-triggered). To force agent processing on any message regardless of these restrictions, use the **Trigger Message** endpoint.
+Send a message to a group. The authenticated caller is used as the message sender; `sender_id` and `sender_type` are derived from the current account or session and must not be supplied in the request body.
+
+Mentions in the message text (e.g., `@agent-001`, `@all`) are automatically extracted and may trigger agent responses. Automatic triggers respect `NO_TRIGGER_CASES` (e.g., messages from agents are not re-triggered). To force agent processing on any message regardless of these restrictions, use the **Trigger Message** endpoint.
+
+**Authentication:** Required.
+- `admin` can send messages to any group.
+- `user` can send messages only to groups where they are a member.
 
 **Path Parameters:**
-- group_id: UUID string
+- group_id: group identifier in `group-{id}` format
 
 **Request Body:**
 ```json
@@ -1032,9 +1131,7 @@ Send a message to a group. Mentions in the message text (e.g., `@agent-001`, `@a
       "size": 1024,
       "format": "image/png"
     }
-  ],
-  "sender_id": "user-001",
-  "sender_type": "user"
+  ]
 }
 ```
 
@@ -1043,7 +1140,7 @@ Send a message to a group. Mentions in the message text (e.g., `@agent-001`, `@a
 {
   "data": {
     "message_id": "msg-001",
-    "group_id": "550e8400-e29b-41d4-a716-446655440000",
+    "group_id": "group-abc123",
     "message_text": "Hello @agent-001, can you help with this?",
     "message_attachments": [
       {
@@ -1077,15 +1174,19 @@ Send a message to a group. Mentions in the message text (e.g., `@agent-001`, `@a
 
 List messages in a group with pagination and filtering.
 
+**Authentication:** Required.
+- `admin` can list messages in any group.
+- `user` can list messages only in groups where they are a member.
+
 **Path Parameters:**
-- group_id: UUID string
+- group_id: group identifier in `group-{id}` format
 
 **Query Parameters:**
 - offset, limit, sort_key, order_by, create_at_ms, update_at_ms, processed_msg_id
 
 **Example Request:**
 ```bash
-GET /api/v1/groups/550e8400-e29b-41d4-a716-446655440000/messages?processed_msg_id=msg-001&limit=10
+GET /api/v1/groups/group-abc123/messages?processed_msg_id=msg-001&limit=10
 ```
 
 **Response:**
@@ -1095,7 +1196,7 @@ GET /api/v1/groups/550e8400-e29b-41d4-a716-446655440000/messages?processed_msg_i
     "items": [
       {
         "message_id": "msg-001",
-        "group_id": "550e8400-e29b-41d4-a716-446655440000",
+        "group_id": "group-abc123",
         "message_text": "Hello @agent-001, can you help with this?",
         "message_attachments": [],
         "sender_id": "user-001",
@@ -1128,8 +1229,12 @@ GET /api/v1/groups/550e8400-e29b-41d4-a716-446655440000/messages?processed_msg_i
 
 Update a message (e.g., edit content).
 
+**Authentication:** Required.
+- `admin` can update any message.
+- `user` can update only messages they sent.
+
 **Path Parameters:**
-- group_id: UUID string
+- group_id: group identifier in `group-{id}` format
 - message_id: string
 
 **Request Body:**
@@ -1144,7 +1249,7 @@ Update a message (e.g., edit content).
 {
   "data": {
     "message_id": "msg-001",
-    "group_id": "550e8400-e29b-41d4-a716-446655440000",
+    "group_id": "group-abc123",
     "message_text": "Updated message text",
     "message_attachments": [],
     "sender_id": "user-001",
@@ -1166,8 +1271,12 @@ Update a message (e.g., edit content).
 
 Soft-delete a message (clear content, mark as deleted). The message record remains but content is removed.
 
+**Authentication:** Required.
+- `admin` can delete any message.
+- `user` can delete only messages they sent.
+
 **Path Parameters:**
-- group_id: UUID string
+- group_id: group identifier in `group-{id}` format
 - message_id: string
 
 **Response:**
@@ -1179,14 +1288,19 @@ Soft-delete a message (clear content, mark as deleted). The message record remai
   "trace_id": "..."
 }
 ```
+
 ### Trigger Message
 
 **POST /api/v1/groups/:group_id/messages/:message_id/trigger**
 
 Manually trigger agent processing for a specific message. This bypasses `NO_TRIGGER_CASES` restrictions that normally prevent automatic agent triggering (e.g., messages sent by agents, messages with `processed_msg_id` set, or messages in a long sequence of agent messages).
 
+**Authentication:** Required.
+- `admin` can trigger any message.
+- `user` can trigger only messages in groups where they are a member.
+
 **Path Parameters:**
-- group_id: UUID string
+- group_id: group identifier in `group-{id}` format
 - message_id: string
 
 **Request Body (optional):**
@@ -1202,12 +1316,29 @@ Manually trigger agent processing for a specific message. This bypasses `NO_TRIG
 {
   "data": {
     "message_id": "msg-001",
-    "group_id": "550e8400-e29b-41d4-a716-446655440000",
+    "group_id": "group-abc123",
     "trigger": {
       "type": "manual",
       "agent_id": "agent-123"
     },
     "status": "pending"
+  },
+  "trace_id": "..."
+}
+```
+
+When no agents are resolved for the message, the response status is `no_agents_to_trigger`:
+
+```json
+{
+  "data": {
+    "message_id": "msg-001",
+    "group_id": "group-abc123",
+    "trigger": {
+      "type": "manual",
+      "agent_id": ""
+    },
+    "status": "no_agents_to_trigger"
   },
   "trace_id": "..."
 }
@@ -1224,6 +1355,33 @@ Manually trigger agent processing for a specific message. This bypasses `NO_TRIG
 **Response 500 Internal Server Error:**
 - Database or NATS publish failure.
 
+---
+
+## Agent Triggering
+
+The following rules determine whether a message triggers agent processing.
+
+### NO_TRIGGER_CASES
+
+A message will **not** be automatically triggered when any of the following is true:
+
+1. The message `sender_type` ends with `-agent`.
+2. The message has a non-empty `processed_msg_id`.
+3. Within the 10 messages before and 10 messages after the target message, there is a sliding window of more than 10 consecutive messages whose sender type ends with `-agent`.
+
+### Trigger via Mentions
+
+Mentions are extracted from `@member_id` or `@member_name` references in the message text.
+
+1. **Single agent mention:** If the only mentioned member is an agent (type ends with `-agent`), that agent is invoked with `ACS_AGENT_MODE=agent`.
+2. **Multiple agent mentions without manager-agent:** All mentioned agents are invoked concurrently with `ACS_AGENT_MODE=agent`. The message is appended with: `! DONOT INVOKE ANY TOOLS/SKILLS, Think directly and give the final answer !`
+3. **Multiple agent mentions with manager-agent:** If one or more manager-agents are mentioned, a single randomly selected manager-agent is invoked with `ACS_AGENT_MODE=agent`.
+4. **`@all` mention:** Always triggers a manager-agent with `ACS_AGENT_MODE=agent`. This case has the highest priority.
+
+### Auto-Trigger
+
+1. **Single user group:** If a group contains only one user and the message has no mentions, the manager-agent is triggered with `ACS_AGENT_MODE=agent`.
+2. **Idle timeout:** If the last message was sent by a user and more than `ACS_AGENT_AUTO_TRIGGER_TIMEOUT` (default `10m`) has passed, the manager-agent is triggered with `ACS_AGENT_MODE=agent`. This is evaluated by a periodic task that uses a NATS KV distributed lock.
 
 ---
 
@@ -1267,12 +1425,14 @@ Published to: `{ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX}.{group_id}`
 {
   "type": "group",
   "action": "create",
-  "groupId": "550e8400-e29b-41d4-a716-446655440000",
+  "groupId": "group-abc123",
   "data": {
-    "group_id": "550e8400-e29b-41d4-a716-446655440000",
+    "group_id": "group-abc123",
     "group_name": "AI Research Team",
     "group_context": "A group for AI research discussions",
     "group_key": "",
+    "creator_id": "acc-abc123",
+    "owner_id": "acc-abc123",
     "create_at_ms": 1704067200000,
     "update_at_ms": 1704067200000
   }
@@ -1285,10 +1445,10 @@ Published to: `{ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX}.{group_id}`
 {
   "type": "message",
   "action": "create",
-  "groupId": "550e8400-e29b-41d4-a716-446655440000",
+  "groupId": "group-abc123",
   "data": {
     "message_id": "msg-001",
-    "group_id": "550e8400-e29b-41d4-a716-446655440000",
+    "group_id": "group-abc123",
     "message_text": "Hello",
     "sender_id": "user-001",
     "sender_type": "user",
@@ -1303,9 +1463,9 @@ Published to: `{ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX}.{group_id}`
 {
   "type": "group_member",
   "action": "create",
-  "groupId": "550e8400-e29b-41d4-a716-446655440000",
+  "groupId": "group-abc123",
   "data": {
-    "group_id": "550e8400-e29b-41d4-a716-446655440000",
+    "group_id": "group-abc123",
     "member_id": "user-001",
     "member_name": "Alice",
     "member_type": "user",
@@ -1321,7 +1481,7 @@ Published to: `{ACS_NATS_SUBJECT_GROUP_PENDING_MESSAGE_PREFIX}.{group_id}`
 ```json
 {
   "message_id": "msg-001",
-  "group_id": "550e8400-e29b-41d4-a716-446655440000",
+  "group_id": "group-abc123",
   "message_text": "Hello @agent-001",
   "sender_id": "user-001",
   "sender_type": "user",

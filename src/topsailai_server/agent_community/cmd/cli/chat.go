@@ -17,7 +17,6 @@ type ChatMode struct {
 	groupID         string
 	userID          string
 	userName        string
-	memberID        string
 	natsManager     *NATSManager
 	apiClient       *APIClient
 	rl              *readline.Instance
@@ -42,20 +41,16 @@ func NewChatMode(apiClient *APIClient, natsManager *NATSManager) *ChatMode {
 }
 
 // EnterChat enters the chat window for a group.
-// memberID is the sender_id used when posting messages; it must match a
-// group_member record for the current user.
-func (cm *ChatMode) EnterChat(groupID, userID, userName, memberID string) error {
+func (cm *ChatMode) EnterChat(groupID, userID, userName string) error {
 	cm.groupID = groupID
 	cm.userID = userID
 	cm.userName = userName
-	cm.memberID = memberID
 	cm.active = true
 
 	// Create fresh channels for this chat session so re-entering does not
 	// reuse a closed channel from a previous session.
 	cm.inputCh = make(chan string)
 	cm.doneCh = make(chan struct{})
-
 	// Fetch and cache member list for mention resolution.
 	if err := cm.refreshMembers(); err != nil {
 		printWarning(fmt.Sprintf("Failed to fetch members: %v", err))
@@ -186,9 +181,9 @@ func (cm *ChatMode) SendChatMessage(text string) error {
 		}
 	}
 
-	// Display locally using the member identity known to the CLI.
+	// Display locally using the authenticated account identity.
 	promptPrintln(formatMessage(map[string]interface{}{
-		"sender_id":    cm.memberID,
+		"sender_id":    cm.userID,
 		"sender_name":  cm.userName,
 		"sender_type":  "user",
 		"message_text": text,

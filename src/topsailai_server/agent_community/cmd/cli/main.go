@@ -28,8 +28,6 @@ func run() error {
 		apiBase     = flag.String("api-base", getEnv("ACS_SERVER_API_BASE", defaultAPIBase), "ACS server API base URL")
 		natsURL     = flag.String("nats-url", getEnv("ACS_NATS_SERVERS", defaultNATSServers), "NATS server URL(s)")
 		noColorFlag = flag.Bool("no-color", false, "Disable ANSI colors")
-		memberID    = flag.String("member-id", getEnv("ACS_CLI_MEMBER_ID", "cli-user"), "Member ID for this CLI session")
-		memberName  = flag.String("member-name", getEnv("ACS_CLI_MEMBER_NAME", "cli_user"), "Member name for this CLI session")
 		apiKey      = flag.String("api-key", getEnv("ACS_API_KEY", ""), "API key token (ak-{id}.{secret})")
 		sessionKey  = flag.String("session-key", getEnv("ACS_SESSION_KEY", ""), "Login session key")
 	)
@@ -65,7 +63,7 @@ func run() error {
 
 	// Initial userID is empty until authenticated.
 	userID := ""
-	userName := *memberName
+	userName := "anonymous"
 	accountRole := ""
 
 	// If authenticated, fetch the current account so the prompt and group
@@ -88,15 +86,6 @@ func run() error {
 		}
 	}
 
-	// When we know the authenticated account, use it as the member identity
-	// for group operations. Otherwise fall back to CLI defaults.
-	activeMemberID := *memberID
-	activeMemberName := *memberName
-	if userID != "" {
-		activeMemberID = userID
-		activeMemberName = userName
-	}
-
 	// Create readline instance with auto-completion.
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:       ps1Normal(userName, userID, accountRole),
@@ -113,8 +102,6 @@ func run() error {
 		chatMode:    chatMode,
 		userID:      userID,
 		userName:    userName,
-		memberID:    activeMemberID,
-		memberName:  activeMemberName,
 		accountRole: accountRole,
 		authMethod:  authMethod,
 		apiKey:      *apiKey,
@@ -130,9 +117,9 @@ func run() error {
 	promptPrintf("API Base:   %s\n", *apiBase)
 	promptPrintf("NATS:       %s\n", *natsURL)
 	if state.userID != "" {
-		promptPrintf("User:       %s (%s) [id=%s]\n", state.userName, state.memberID, state.userID)
+		promptPrintf("User:       %s [id=%s]\n", state.userName, state.userID)
 	} else {
-		promptPrintf("User:       %s (%s)\n", state.userName, state.memberID)
+		promptPrintf("User:       %s\n", state.userName)
 	}
 	if authMethod != "" {
 		promptPrintf("Auth:       %s\n", authMethod)

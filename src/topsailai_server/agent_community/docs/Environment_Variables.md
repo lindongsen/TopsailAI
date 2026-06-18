@@ -255,8 +255,6 @@ Controls NATS-based service discovery and Service-Leader election.
 |----------|---------|-------------|
 | `ACS_SERVER_API_BASE` | `http://localhost:7370` | ACS server API base URL for CLI client |
 | `ACS_NATS_SERVERS` | `nats://localhost:4222` | NATS server URL(s) for CLI client |
-| `ACS_CLI_MEMBER_ID` | `cli-user` | Default member ID for CLI client |
-| `ACS_CLI_MEMBER_NAME` | `CLI User` | Default member name for CLI client |
 
 ---
 
@@ -338,6 +336,4 @@ TOPSAILAI_HOME=/topsailai
 # CLI
 ACS_SERVER_API_BASE=http://localhost:7370
 ACS_NATS_SERVERS=nats://localhost:4222
-ACS_CLI_MEMBER_ID=cli-user
-ACS_CLI_MEMBER_NAME=CLI User
 ```
