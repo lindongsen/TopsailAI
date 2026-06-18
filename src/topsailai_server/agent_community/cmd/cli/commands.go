@@ -22,6 +22,7 @@ var roleRank = map[string]int{
 	RoleManager: 2,
 	RoleUser:    1,
 }
+
 // CLIState holds the runtime state of the CLI.
 type CLIState struct {
 	apiClient   *APIClient
@@ -56,6 +57,7 @@ func sanitizeMemberName(name string) string {
 
 // CommandHandler is a function that handles a CLI command.
 type CommandHandler func(args []string, state *CLIState) error
+
 var commandHandlers = map[string]CommandHandler{
 	"/login":            handleLogin,
 	"/logout":           handleLogout,
@@ -1197,15 +1199,19 @@ func handleMemberRemove(args []string, state *CLIState) error {
 	memberID := params["member-id"]
 
 	if groupID == "" {
-		prompt := NewInteractivePrompt(state.rl)
-		var err error
-		groupID, err = prompt.PromptString("Group ID", true)
-		if err != nil {
-			if err == ErrCancelled {
-				printInfo("Cancelled.")
-				return nil
+		if state.lastGroupID != "" {
+			groupID = state.lastGroupID
+		} else {
+			prompt := NewInteractivePrompt(state.rl)
+			var err error
+			groupID, err = prompt.PromptString("Group ID", true)
+			if err != nil {
+				if err == ErrCancelled {
+					printInfo("Cancelled.")
+					return nil
+				}
+				return err
 			}
-			return err
 		}
 	}
 
@@ -1238,15 +1244,19 @@ func handleMemberUpdate(args []string, state *CLIState) error {
 	memberID := params["member-id"]
 
 	if groupID == "" {
-		prompt := NewInteractivePrompt(state.rl)
-		var err error
-		groupID, err = prompt.PromptString("Group ID", true)
-		if err != nil {
-			if err == ErrCancelled {
-				printInfo("Cancelled.")
-				return nil
+		if state.lastGroupID != "" {
+			groupID = state.lastGroupID
+		} else {
+			prompt := NewInteractivePrompt(state.rl)
+			var err error
+			groupID, err = prompt.PromptString("Group ID", true)
+			if err != nil {
+				if err == ErrCancelled {
+					printInfo("Cancelled.")
+					return nil
+				}
+				return err
 			}
-			return err
 		}
 	}
 
@@ -1297,15 +1307,19 @@ func handleMessageList(args []string, state *CLIState) error {
 	groupID := params["group-id"]
 
 	if groupID == "" {
-		prompt := NewInteractivePrompt(state.rl)
-		var err error
-		groupID, err = prompt.PromptString("Group ID", true)
-		if err != nil {
-			if err == ErrCancelled {
-				printInfo("Cancelled.")
-				return nil
+		if state.lastGroupID != "" {
+			groupID = state.lastGroupID
+		} else {
+			prompt := NewInteractivePrompt(state.rl)
+			var err error
+			groupID, err = prompt.PromptString("Group ID", true)
+			if err != nil {
+				if err == ErrCancelled {
+					printInfo("Cancelled.")
+					return nil
+				}
+				return err
 			}
-			return err
 		}
 	}
 
@@ -1351,15 +1365,19 @@ func handleMessageEdit(args []string, state *CLIState) error {
 	messageID := params["message-id"]
 
 	if groupID == "" {
-		prompt := NewInteractivePrompt(state.rl)
-		var err error
-		groupID, err = prompt.PromptString("Group ID", true)
-		if err != nil {
-			if err == ErrCancelled {
-				printInfo("Cancelled.")
-				return nil
+		if state.lastGroupID != "" {
+			groupID = state.lastGroupID
+		} else {
+			prompt := NewInteractivePrompt(state.rl)
+			var err error
+			groupID, err = prompt.PromptString("Group ID", true)
+			if err != nil {
+				if err == ErrCancelled {
+					printInfo("Cancelled.")
+					return nil
+				}
+				return err
 			}
-			return err
 		}
 	}
 
@@ -1406,15 +1424,19 @@ func handleMessageDelete(args []string, state *CLIState) error {
 	messageID := params["message-id"]
 
 	if groupID == "" {
-		prompt := NewInteractivePrompt(state.rl)
-		var err error
-		groupID, err = prompt.PromptString("Group ID", true)
-		if err != nil {
-			if err == ErrCancelled {
-				printInfo("Cancelled.")
-				return nil
+		if state.lastGroupID != "" {
+			groupID = state.lastGroupID
+		} else {
+			prompt := NewInteractivePrompt(state.rl)
+			var err error
+			groupID, err = prompt.PromptString("Group ID", true)
+			if err != nil {
+				if err == ErrCancelled {
+					printInfo("Cancelled.")
+					return nil
+				}
+				return err
 			}
-			return err
 		}
 	}
 
@@ -1467,6 +1489,7 @@ func handleHelp(args []string, state *CLIState) error {
 	promptPrintln("Group commands:")
 	promptPrintln("  /group:list     List groups you have joined")
 	promptPrintln("  /group:create   Create a new group")
+	promptPrintln("  /group:join     Join a group using its group key")
 	promptPrintln("  /group:enter    Enter a group you have joined")
 	promptPrintln("  /group:update   Update a group")
 	promptPrintln("  /group:delete   Delete a group")

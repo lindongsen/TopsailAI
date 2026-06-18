@@ -15,6 +15,21 @@ import (
 
 const testBucketName = "acs_test_locks"
 
+// setShortTimeouts overrides the package-level renewal and release timeouts
+// with small values suitable for fast unit tests. It returns a function that
+// restores the original values.
+func setShortTimeouts(t *testing.T) func() {
+	t.Helper()
+	origRenewal := renewalInterval
+	origRelease := releaseWait
+	renewalInterval = 200 * time.Millisecond
+	releaseWait = 500 * time.Millisecond
+	return func() {
+		renewalInterval = origRenewal
+		releaseWait = origRelease
+	}
+}
+
 // startNATSServer starts an in-process NATS server with JetStream enabled and
 // returns the server and a cleanup function.
 func startNATSServer(t *testing.T) (*server.Server, func()) {
@@ -65,6 +80,8 @@ func newTestLock(t *testing.T, js nats.JetStreamContext) *DistributedLock {
 }
 
 func TestAcquireAndRelease(t *testing.T) {
+	defer setShortTimeouts(t)()
+
 	s, cleanup := startNATSServer(t)
 	defer cleanup()
 
@@ -83,7 +100,6 @@ func TestAcquireAndRelease(t *testing.T) {
 	if !held {
 		t.Fatal("expected lock to be held")
 	}
-
 	if err := lock.Release(); err != nil {
 		t.Fatalf("Release failed: %v", err)
 	}
@@ -98,6 +114,8 @@ func TestAcquireAndRelease(t *testing.T) {
 }
 
 func TestAcquireAlreadyHeld(t *testing.T) {
+	defer setShortTimeouts(t)()
+
 	s, cleanup := startNATSServer(t)
 	defer cleanup()
 
@@ -117,6 +135,8 @@ func TestAcquireAlreadyHeld(t *testing.T) {
 }
 
 func TestFencingToken(t *testing.T) {
+	defer setShortTimeouts(t)()
+
 	s, cleanup := startNATSServer(t)
 	defer cleanup()
 
@@ -164,16 +184,17 @@ func TestFencingToken(t *testing.T) {
 }
 
 func TestRenewalKeepsLockAlive(t *testing.T) {
+	defer setShortTimeouts(t)()
+
 	s, cleanup := startNATSServer(t)
 	defer cleanup()
 
 	js := connectJS(t, s)
-	_ = newTestLock(t, js)
 
-	// Use a short TTL bucket to verify renewal works. Since the production code
-	// uses a fixed TTL, we create a separate lock manager with a short TTL by
-	// creating the bucket directly and then constructing the DistributedLock.
-	shortTTL := 2 * time.Second
+	// Use a short TTL bucket to verify renewal works. The renewal interval is
+	// overridden to 200ms by setShortTimeouts, so we use a TTL just long enough
+	// to require at least one renewal during the sleep.
+	shortTTL := 500 * time.Millisecond
 	_, err := js.CreateKeyValue(&nats.KeyValueConfig{
 		Bucket: "acs_test_locks_short_ttl",
 		TTL:    shortTTL,
@@ -206,6 +227,8 @@ func TestRenewalKeepsLockAlive(t *testing.T) {
 }
 
 func TestLostChannelNotClosedOnNormalRelease(t *testing.T) {
+	defer setShortTimeouts(t)()
+
 	s, cleanup := startNATSServer(t)
 	defer cleanup()
 
@@ -230,6 +253,8 @@ func TestLostChannelNotClosedOnNormalRelease(t *testing.T) {
 }
 
 func TestLostChannelClosedOnUnexpectedLoss(t *testing.T) {
+	defer setShortTimeouts(t)()
+
 	s, cleanup := startNATSServer(t)
 	defer cleanup()
 
@@ -252,12 +277,14 @@ func TestLostChannelClosedOnUnexpectedLoss(t *testing.T) {
 	select {
 	case <-lock.Lost():
 		// expected
-	case <-time.After(15 * time.Second):
+	case <-time.After(2 * time.Second):
 		t.Fatal("expected Lost() channel to be closed after key deletion")
 	}
 }
 
 func TestConcurrentBucketCreationRace(t *testing.T) {
+	defer setShortTimeouts(t)()
+
 	s, cleanup := startNATSServer(t)
 	defer cleanup()
 
@@ -288,6 +315,8 @@ func TestConcurrentBucketCreationRace(t *testing.T) {
 }
 
 func TestReleaseTimeoutDoesNotBlock(t *testing.T) {
+	defer setShortTimeouts(t)()
+
 	s, cleanup := startNATSServer(t)
 	defer cleanup()
 
@@ -299,16 +328,17 @@ func TestReleaseTimeoutDoesNotBlock(t *testing.T) {
 		t.Fatalf("Acquire failed: %v", err)
 	}
 
-	// Replace the kv with a wrapper that blocks Update/Get operations to
-	// simulate a stuck renewal goroutine.
-	blocker := &blockingKV{kv: lock.kv, blockAfter: 0}
+	// Replace the kv with a wrapper that blocks Update operations to simulate a
+	// stuck renewal goroutine. Release's own Get calls must remain unblocked so
+	// that the timeout path can complete.
+	blocker := &blockingKV{kv: lock.kv, blockUpdateAfter: 0}
 	lock.kv = blocker
 
 	start := time.Now()
 	err = lock.Release()
 	elapsed := time.Since(start)
 
-	if elapsed > releaseWait+2*time.Second {
+	if elapsed > releaseWait+500*time.Millisecond {
 		t.Fatalf("Release blocked too long: %v", elapsed)
 	}
 
@@ -319,6 +349,8 @@ func TestReleaseTimeoutDoesNotBlock(t *testing.T) {
 }
 
 func TestReleaseTOCTOUSafety(t *testing.T) {
+	defer setShortTimeouts(t)()
+
 	s, cleanup := startNATSServer(t)
 	defer cleanup()
 
@@ -352,6 +384,8 @@ func TestReleaseTOCTOUSafety(t *testing.T) {
 }
 
 func TestIsHeldAfterKeyDisappears(t *testing.T) {
+	defer setShortTimeouts(t)()
+
 	s, cleanup := startNATSServer(t)
 	defer cleanup()
 
@@ -379,6 +413,8 @@ func TestIsHeldAfterKeyDisappears(t *testing.T) {
 }
 
 func TestMultipleConcurrentAcquires(t *testing.T) {
+	defer setShortTimeouts(t)()
+
 	s, cleanup := startNATSServer(t)
 	defer cleanup()
 
@@ -388,7 +424,6 @@ func TestMultipleConcurrentAcquires(t *testing.T) {
 	const numGoroutines = 10
 	var wg sync.WaitGroup
 	acquired := make(chan *Lock, 1)
-	var acquiredCount int64
 
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
@@ -408,7 +443,6 @@ func TestMultipleConcurrentAcquires(t *testing.T) {
 			}
 		}()
 	}
-
 	wg.Wait()
 	close(acquired)
 
@@ -419,26 +453,19 @@ func TestMultipleConcurrentAcquires(t *testing.T) {
 	if err := winner.Release(); err != nil {
 		t.Fatalf("Release winner failed: %v", err)
 	}
-
-	_ = acquiredCount
 }
 
-// blockingKV blocks Get/Update operations after a configurable number of calls.
+// blockingKV blocks Update operations after a configurable number of calls.
+// Get calls are intentionally left unblocked so that Release can still read
+// the lock entry and complete its timeout path.
 type blockingKV struct {
-	kv         nats.KeyValue
-	blockAfter int
-	mu         sync.Mutex
-	calls      int
+	kv               nats.KeyValue
+	blockUpdateAfter int
+	mu               sync.Mutex
+	updateCalls      int
 }
 
 func (b *blockingKV) Get(key string) (nats.KeyValueEntry, error) {
-	b.mu.Lock()
-	b.calls++
-	shouldBlock := b.calls > b.blockAfter
-	b.mu.Unlock()
-	if shouldBlock {
-		<-make(chan struct{}) // block forever
-	}
 	return b.kv.Get(key)
 }
 
@@ -448,8 +475,8 @@ func (b *blockingKV) Create(key string, value []byte) (uint64, error) {
 
 func (b *blockingKV) Update(key string, value []byte, last uint64) (uint64, error) {
 	b.mu.Lock()
-	b.calls++
-	shouldBlock := b.calls > b.blockAfter
+	b.updateCalls++
+	shouldBlock := b.updateCalls > b.blockUpdateAfter
 	b.mu.Unlock()
 	if shouldBlock {
 		<-make(chan struct{}) // block forever

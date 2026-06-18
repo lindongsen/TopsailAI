@@ -15,12 +15,17 @@ import (
 )
 
 const (
-	lockKeyFormat   = "acs.lock.%s.%s"
-	lockTTL         = 7200 * time.Second
+	lockKeyFormat = "acs.lock.%s.%s"
+	lockTTL       = 7200 * time.Second
+)
+
+// renewalInterval and releaseWait are variables (not constants) so that unit
+// tests can override them with short values. They are not part of the public
+// API and must not be modified by production callers.
+var (
 	renewalInterval = 10 * time.Second
 	releaseWait     = 5 * time.Second
 )
-
 // ErrLockHeld is returned by Acquire when the lock is already held by another owner.
 var ErrLockHeld = errors.New("lock is already held")
 
@@ -125,7 +130,7 @@ func (dl *DistributedLock) Acquire(ctx context.Context, lockType, resourceID str
 
 	createRevision, err := kv.Create(key, []byte(token))
 	if err != nil {
-		if err == nats.ErrKeyExists {
+		if errors.Is(err, nats.ErrKeyExists) {
 			return nil, ErrLockHeld
 		}
 		return nil, fmt.Errorf("failed to create lock: %w", err)
