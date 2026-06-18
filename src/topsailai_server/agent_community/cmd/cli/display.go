@@ -9,15 +9,16 @@ import (
 )
 
 const (
-	colorReset  = "\033[0m"
-	colorRed    = "\033[31m"
-	colorGreen  = "\033[32m"
-	colorYellow = "\033[33m"
-	colorBlue   = "\033[34m"
-	colorCyan   = "\033[36m"
-	colorWhite  = "\033[37m"
+	colorReset      = "\033[0m"
+	colorRed        = "\033[1;31m"
+	colorGreen      = "\033[1;32m"
+	colorYellow     = "\033[1;33m"
+	colorBlue       = "\033[1;34m"
+	colorCyan       = "\033[1;36m"
+	colorWhite      = "\033[1;37m"
+	colorBold       = "\033[1m"
+	colorBoldReset  = "\033[22m"
 )
-
 // noColor disables ANSI color output when true.
 var noColor bool
 

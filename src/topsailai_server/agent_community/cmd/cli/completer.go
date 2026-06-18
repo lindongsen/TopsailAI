@@ -3,6 +3,7 @@ package main
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/chzyer/readline"
 )
@@ -26,6 +27,7 @@ func newNormalCompleter() readline.PrefixCompleterInterface {
 		readline.PcItem("/group:list"),
 		readline.PcItem("/group:create"),
 		readline.PcItem("/group:enter"),
+		readline.PcItem("/group:join"),
 		readline.PcItem("/group:update"),
 		readline.PcItem("/group:delete"),
 		readline.PcItem("/member:list"),
@@ -33,7 +35,7 @@ func newNormalCompleter() readline.PrefixCompleterInterface {
 		readline.PcItem("/member:remove"),
 		readline.PcItem("/member:update"),
 		readline.PcItem("/message:list"),
-		readline.PcItem("/message:edit"),
+		readline.PcItem("/message:update"),
 		readline.PcItem("/message:delete"),
 		readline.PcItem("/help"),
 		readline.PcItem("/exit"),
@@ -76,7 +78,9 @@ func filterCommands(prefix string, commands []string) []string {
 }
 
 // chatMentionCompleter provides auto-completion for chat mode,
-// including slash commands and @member_name mentions.
+// including slash commands and @member_id/@member_name mentions.
+// It matches against both member_id and member_name, but always inserts the
+// unambiguous member_id so duplicate display names do not collide.
 type chatMentionCompleter struct {
 	cmdCompleter  readline.PrefixCompleterInterface
 	membersGetter func() []map[string]interface{}
@@ -92,12 +96,11 @@ func newChatMentionCompleter(membersGetter func() []map[string]interface{}) read
 
 // Do implements readline.AutoCompleter.
 // It completes slash commands when the line starts with '/',
-// and completes @member_name when the current word starts with '@'.
+// and completes @member_id/@member_name when the current word starts with '@'.
 //
-// readline contract: offset is the number of shared characters before pos
-// that should be kept; candidates are the suffixes to append after those
-// shared characters.
-// Example: Do("@d", 2) for member "dawson" => ["awson "], 2
+// For @mentions, the entire current word (including '@') is replaced with the
+// selected member ID to avoid ambiguity when multiple members share the same
+// display name.
 func (c *chatMentionCompleter) Do(line []rune, pos int) ([][]rune, int) {
 	if len(line) == 0 || pos == 0 {
 		return nil, 0
@@ -111,41 +114,49 @@ func (c *chatMentionCompleter) Do(line []rune, pos int) ([][]rune, int) {
 	// Find the current word being typed (from last whitespace to cursor).
 	wordStart := pos
 	for i := pos - 1; i >= 0; i-- {
-		if line[i] == ' ' || line[i] == '\t' {
+		if unicode.IsSpace(rune(line[i])) {
+			wordStart = i + 1
 			break
 		}
 		wordStart = i
 	}
-	wordRunes := line[wordStart:pos]
-	word := string(wordRunes)
 
-	if !strings.HasPrefix(word, "@") {
+	wordRunes := line[wordStart:pos]
+	if len(wordRunes) == 0 || wordRunes[0] != '@' {
 		return nil, 0
 	}
 
-	mentionPrefix := strings.ToLower(strings.TrimPrefix(word, "@"))
+	mentionPrefix := strings.ToLower(string(wordRunes[1:]))
 	members := c.membersGetter()
 	var candidates [][]rune
 	seen := make(map[string]bool)
 
 	for _, m := range members {
 		name, _ := m["member_name"].(string)
-		if name == "" || seen[name] {
+		id, _ := m["member_id"].(string)
+		if id == "" || seen[id] {
 			continue
 		}
-		seen[name] = true
-		if mentionPrefix == "" || strings.HasPrefix(strings.ToLower(name), mentionPrefix) {
-			// Return only the suffix after the already-typed prefix.
-			suffix := name[len(mentionPrefix):] + " "
-			candidates = append(candidates, []rune(suffix))
+		seen[id] = true
+
+		nameLower := strings.ToLower(name)
+		idLower := strings.ToLower(id)
+
+		// Match by member_id prefix or member_name prefix.
+		if strings.HasPrefix(idLower, mentionPrefix) || strings.HasPrefix(nameLower, mentionPrefix) {
+			candidates = append(candidates, []rune("@"+id+" "))
 		}
 	}
 
 	// Also suggest @all.
 	if mentionPrefix == "" || strings.HasPrefix("all", mentionPrefix) {
-		suffix := "all"[len(mentionPrefix):] + " "
-		candidates = append(candidates, []rune(suffix))
+		candidates = append(candidates, []rune("@all "))
 	}
 
-	return candidates, len(wordRunes)
+	if len(candidates) == 0 {
+		return nil, 0
+	}
+
+	// Replace the entire current word (including '@') with the candidate.
+	return candidates, wordStart
 }

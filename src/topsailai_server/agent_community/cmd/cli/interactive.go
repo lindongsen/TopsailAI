@@ -20,6 +20,7 @@ type lineReader interface {
 	Clean()
 	Readline() (string, error)
 	ReadlineWithDefault(defaultValue string) (string, error)
+	ReadPassword(label string) (string, error)
 }
 
 // readlineLineReader wraps a readline Instance and clears any stale buffer
@@ -47,6 +48,17 @@ func (r *readlineLineReader) ReadlineWithDefault(defaultValue string) (string, e
 	line, err := r.rl.ReadlineWithDefault(defaultValue)
 	r.rl.Clean()
 	return line, err
+}
+func (r *readlineLineReader) ReadPassword(label string) (string, error) {
+	// Use readline's password mode to hide input. MaskRune '*' hides typed
+	// characters while still providing visual feedback.
+	r.rl.SetPrompt(label + ": ")
+	defer r.rl.SetPrompt("")
+	buf, err := r.rl.ReadPasswordWithConfig(&readline.Config{MaskRune: '*'})
+	if err != nil {
+		return "", ErrCancelled
+	}
+	return strings.TrimSpace(string(buf)), nil
 }
 
 // InteractivePrompt wraps a line reader for step-by-step parameter collection.
@@ -175,13 +187,12 @@ func (p *InteractivePrompt) PromptChoice(label string, options []string) (int, s
 	}
 }
 
-// PromptPassword prompts for a password. Input is currently echoed because
-// readline password mode requires terminal configuration; callers that need
-// hidden input should set the terminal mask externally.
+// PromptPassword prompts for a password without echoing input to the screen.
+// It uses readline's password mode with a '*' mask. Cancellation returns
+// ErrCancelled.
 func (p *InteractivePrompt) PromptPassword(label string) (string, error) {
 	p.reader.Clean()
-	p.reader.SetPrompt(label + ": ")
-	line, err := p.reader.Readline()
+	line, err := p.reader.ReadPassword(label)
 	if err != nil {
 		return "", ErrCancelled
 	}
@@ -514,5 +525,9 @@ func (m *mockLineReader) Readline() (string, error) {
 	return line, nil
 }
 func (m *mockLineReader) ReadlineWithDefault(defaultValue string) (string, error) {
+	return m.Readline()
+}
+func (m *mockLineReader) ReadPassword(label string) (string, error) {
+	m.SetPrompt(label + ": ")
 	return m.Readline()
 }

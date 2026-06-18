@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -92,10 +93,17 @@ func hashGroupKey(key string) (string, error) {
 }
 
 // CreateGroup handles POST /api/v1/groups.
-// When ACS_GROUP_MANAGER_AGENT_CMD_CHAT is configured, a default manager-agent
+// The authenticated creator is automatically joined as a user member, and when
+// ACS_GROUP_MANAGER_AGENT_CMD_CHAT is configured, a default manager-agent
 // member is automatically joined to the new group inside the same transaction.
 func (h *GroupHandler) CreateGroup(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
+
+	authCtx, ok := middleware.GetAuthContext(c)
+	if !ok || !authCtx.IsAuthenticated || authCtx.Account == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 
 	var req CreateGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -121,11 +129,16 @@ func (h *GroupHandler) CreateGroup(c *gin.Context) {
 		UpdateAtMs:   now,
 	}
 
+	creatorMember := buildCreatorMember(&group, authCtx.Account)
 	var managerMember *models.GroupMember
 
-	// Create group and optional default manager-agent atomically.
+	// Create group, creator member, and optional default manager-agent atomically.
 	if err := h.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&group).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Create(creatorMember).Error; err != nil {
 			return err
 		}
 
@@ -153,6 +166,10 @@ func (h *GroupHandler) CreateGroup(c *gin.Context) {
 			h.log.Warn("api", traceID, "failed to publish group create event", "error", err.Error())
 		}
 
+		if err := h.publisher.PublishGroupMemberCreate(creatorMember); err != nil {
+			h.log.Warn("api", traceID, "failed to publish creator member create event", "error", err.Error())
+		}
+
 		if managerMember != nil {
 			if err := h.publisher.PublishGroupMemberCreate(managerMember); err != nil {
 				h.log.Warn("api", traceID, "failed to publish manager-agent member create event", "error", err.Error())
@@ -160,8 +177,37 @@ func (h *GroupHandler) CreateGroup(c *gin.Context) {
 		}
 	}
 
-	h.log.Info("api", traceID, "group created", "group_id", group.GroupID)
+	h.log.Info("api", traceID, "group created", "group_id", group.GroupID, "creator_id", creatorMember.MemberID)
 	c.JSON(http.StatusCreated, toGroupResponse(&group))
+}
+
+// buildCreatorMember constructs a user member record for the group creator.
+func buildCreatorMember(group *models.Group, account *models.Account) *models.GroupMember {
+	now := time.Now().UnixMilli()
+	return &models.GroupMember{
+		GroupID:           group.GroupID,
+		MemberID:          account.AccountID,
+		MemberName:        sanitizeMemberName(account.AccountName),
+		MemberDescription: "Group creator",
+		MemberStatus:      models.MemberStatusOnline,
+		MemberType:        models.MemberTypeUser,
+		MemberInterface:   "{}",
+		CreateAtMs:        now,
+		UpdateAtMs:        now,
+	}
+}
+
+// sanitizeMemberName replaces characters that are not allowed in member_name
+// (alphanumeric, hyphens, underscores) with underscores.
+func sanitizeMemberName(name string) string {
+	if name == "" {
+		return "user"
+	}
+	sanitized := regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(name, "_")
+	if sanitized == "" {
+		return "user"
+	}
+	return sanitized
 }
 
 // buildManagerAgentMember constructs the default manager-agent group member from config.

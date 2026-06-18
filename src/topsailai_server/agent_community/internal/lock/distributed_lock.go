@@ -18,6 +18,7 @@ const (
 	lockKeyFormat   = "acs.lock.%s.%s"
 	lockTTL         = 7200 * time.Second
 	renewalInterval = 10 * time.Second
+	releaseWait     = 5 * time.Second
 )
 
 // ErrLockHeld is returned by Acquire when the lock is already held by another owner.
@@ -56,7 +57,9 @@ func NewDistributedLock(js nats.JetStreamContext, bucketName string) (*Distribut
 	return dl, nil
 }
 
-// ensureBucket creates the KV bucket if it does not exist.
+// ensureBucket creates the KV bucket if it does not exist. If multiple ACS
+// instances race to create the bucket, the loser will re-fetch the existing
+// bucket instead of failing startup.
 func (dl *DistributedLock) ensureBucket() error {
 	_, err := dl.js.KeyValue(dl.bucketName)
 	if err == nil {
@@ -71,9 +74,14 @@ func (dl *DistributedLock) ensureBucket() error {
 		TTL:    lockTTL,
 	})
 	if err != nil {
-		// Another instance may have created the bucket concurrently.
-		if err == nats.ErrBucketExists {
-			return nil
+		// The nats.go CreateKeyValue implementation returns ErrStreamNameAlreadyInUse
+		// when the underlying stream already exists. Treat that as a benign race and
+		// try to re-fetch the existing bucket.
+		if errors.Is(err, nats.ErrStreamNameAlreadyInUse) {
+			if _, getErr := dl.js.KeyValue(dl.bucketName); getErr == nil {
+				return nil
+			}
+			return fmt.Errorf("bucket was created by another process but could not be retrieved: %w", err)
 		}
 		return fmt.Errorf("failed to create kv bucket: %w", err)
 	}
@@ -95,6 +103,10 @@ func validateLockKeyPart(name, value string) error {
 
 // Acquire attempts to acquire a distributed lock for the given resource.
 // Returns the Lock if successful, or ErrLockHeld if the lock is already held.
+//
+// The internal renewal goroutine runs with context.Background(), so the lock
+// will be kept alive until Release() is called. Callers MUST explicitly call
+// Release() to avoid leaking goroutines and leaving stale lock keys in NATS KV.
 func (dl *DistributedLock) Acquire(ctx context.Context, lockType, resourceID string) (*Lock, error) {
 	if err := validateLockKeyPart("lockType", lockType); err != nil {
 		return nil, fmt.Errorf("invalid lock type: %w", err)
@@ -140,6 +152,12 @@ func (dl *DistributedLock) Acquire(ctx context.Context, lockType, resourceID str
 	return lock, nil
 }
 
+// isWrongLastSequence reports whether err indicates a NATS KV revision mismatch.
+func isWrongLastSequence(err error) bool {
+	var jsErr nats.JetStreamError
+	return errors.As(err, &jsErr) && jsErr.APIError().ErrorCode == nats.JSErrCodeStreamWrongLastSequence
+}
+
 // renew periodically renews the lock via Update until the context is cancelled.
 func (l *Lock) renew(ctx context.Context, key, token string) {
 	defer l.renewWg.Done()
@@ -177,7 +195,7 @@ func (l *Lock) renew(ctx context.Context, key, token string) {
 					l.markLost()
 					return
 				}
-				if errors.Is(err, nats.ErrKeyMismatch) {
+				if isWrongLastSequence(err) {
 					logger.Warn("lock revision mismatch during renewal, lock was modified by another owner", "key", key, "token", token)
 					l.markLost()
 					return
@@ -200,9 +218,10 @@ func (l *Lock) markLost() {
 }
 
 // Lost returns a channel that is closed when the lock is detected to be no
-// longer held (for example, due to token mismatch, revision mismatch, or the
-// key disappearing). Callers can use this to abort guarded work when the lock
-// is lost.
+// longer held unexpectedly (for example, due to token mismatch, revision
+// mismatch, or the key disappearing). The channel is NOT closed when Release()
+// is called normally; callers should stop work when Release() returns or when
+// Lost() is closed.
 func (l *Lock) Lost() <-chan struct{} {
 	return l.lostCh
 }
@@ -236,11 +255,31 @@ func (l *Lock) IsHeld() (bool, error) {
 }
 
 // Release releases the distributed lock. It is safe to call multiple times.
+//
+// Release waits up to releaseWait for the internal renewal goroutine to finish.
+// If the goroutine is stuck on NATS I/O, Release logs a warning and continues
+// with best-effort deletion so that graceful shutdown is not blocked.
+//
+// NATS KV Delete does not accept a revision, so Release re-checks the token
+// immediately before Delete. If the token no longer matches (another owner
+// acquired the lock), Release skips deletion and returns an error.
 func (l *Lock) Release() error {
 	var releaseErr error
 	l.releaseOnce.Do(func() {
 		l.cancel()
-		l.renewWg.Wait()
+
+		// Wait for the renewal goroutine with a timeout so that a stuck NATS
+		// operation does not block graceful shutdown indefinitely.
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			l.renewWg.Wait()
+		}()
+		select {
+		case <-done:
+		case <-time.After(releaseWait):
+			logger.Warn("timed out waiting for lock renewal goroutine to finish; proceeding with best-effort release", "lock", l.lockType, "resource", l.resourceID, "token", l.fencingToken)
+		}
 
 		key := fmt.Sprintf(lockKeyFormat, l.lockType, l.resourceID)
 
@@ -257,6 +296,22 @@ func (l *Lock) Release() error {
 		actual := string(entry.Value())
 		if actual != l.fencingToken {
 			releaseErr = fmt.Errorf("fencing token mismatch: cannot release lock held by another owner (expected=%q, actual=%q, revision=%d)", l.fencingToken, actual, entry.Revision())
+			return
+		}
+
+		// Re-fetch the entry immediately before Delete to reduce the TOCTOU
+		// window. NATS KV Delete does not support revision-based CAS, so we can
+		// only verify the token again and skip deletion if it changed.
+		entry, err = l.kv.Get(key)
+		if err != nil {
+			if err == nats.ErrKeyNotFound {
+				logger.Info("lock release: key disappeared before delete", "key", key)
+				return
+			}
+			logger.Warn("failed to re-check lock entry before delete; proceeding with best-effort delete", "key", key, "error", err)
+		} else if string(entry.Value()) != l.fencingToken {
+			logger.Warn("lock token changed between check and delete; skipping delete to avoid removing another owner's lock", "key", key, "expected", l.fencingToken, "actual", string(entry.Value()), "revision", entry.Revision())
+			releaseErr = fmt.Errorf("fencing token changed before delete; lock may be held by another owner")
 			return
 		}
 

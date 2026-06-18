@@ -34,41 +34,57 @@ type CLIState struct {
 	apiKey      string
 	sessionKey  string
 	expiresAtMs int64
+	lastGroupID string
 	running     bool
 	rl          *readline.Instance
 }
 
+// sanitizeMemberName removes characters that are not allowed in ACS member names.
+// Allowed characters are alphanumeric, hyphens, and underscores.
+func sanitizeMemberName(name string) string {
+	var sb strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			sb.WriteRune(r)
+		default:
+			sb.WriteRune('_')
+		}
+	}
+	return sb.String()
+}
+
 // CommandHandler is a function that handles a CLI command.
 type CommandHandler func(args []string, state *CLIState) error
-
 var commandHandlers = map[string]CommandHandler{
-	"/login":          handleLogin,
-	"/logout":         handleLogout,
-	"/account:me":     handleAccountMe,
-	"/account:create": handleAccountCreate,
-	"/account:list":   handleAccountList,
-	"/account:get":    handleAccountGet,
-	"/account:update": handleAccountUpdate,
-	"/account:delete": handleAccountDelete,
+	"/login":            handleLogin,
+	"/logout":           handleLogout,
+	"/account:me":       handleAccountMe,
+	"/account:create":   handleAccountCreate,
+	"/account:list":     handleAccountList,
+	"/account:get":      handleAccountGet,
+	"/account:update":   handleAccountUpdate,
+	"/account:delete":   handleAccountDelete,
 	"/account:password": handleAccountPassword,
 	"/account:session":  handleAccountSession,
-	"/api-key:create": handleAPIKeyCreate,
-	"/api-key:list":   handleAPIKeyList,
-	"/api-key:delete": handleAPIKeyDelete,
-	"/group:list":     handleGroupList,
-	"/group:create":   handleGroupCreate,
-	"/group:enter":    handleGroupEnter,
-	"/group:update":   handleGroupUpdate,
-	"/group:delete":   handleGroupDelete,
-	"/member:list":    handleMemberList,
-	"/member:add":     handleMemberAdd,
-	"/member:remove":  handleMemberRemove,
-	"/member:update":  handleMemberUpdate,
-	"/message:list":   handleMessageList,
-	"/message:edit":   handleMessageEdit,
-	"/message:delete": handleMessageDelete,
-	"/help":           handleHelp,
-	"/exit":           handleExit,
+	"/api-key:create":   handleAPIKeyCreate,
+	"/api-key:list":     handleAPIKeyList,
+	"/api-key:delete":   handleAPIKeyDelete,
+	"/group:list":       handleGroupList,
+	"/group:create":     handleGroupCreate,
+	"/group:enter":      handleGroupEnter,
+	"/group:join":       handleGroupJoin,
+	"/group:update":     handleGroupUpdate,
+	"/group:delete":     handleGroupDelete,
+	"/member:list":      handleMemberList,
+	"/member:add":       handleMemberAdd,
+	"/member:remove":    handleMemberRemove,
+	"/member:update":    handleMemberUpdate,
+	"/message:list":     handleMessageList,
+	"/message:edit":     handleMessageEdit,
+	"/message:delete":   handleMessageDelete,
+	"/help":             handleHelp,
+	"/exit":             handleExit,
 }
 
 var commandAliases = map[string]string{
@@ -867,6 +883,9 @@ func handleGroupEnter(args []string, state *CLIState) error {
 		return fmt.Errorf("failed to enter group: %w", err)
 	}
 
+	// Remember the last active group for contextual commands.
+	state.lastGroupID = groupID
+
 	// Close main readline to release terminal for chat mode.
 	state.rl.Close()
 
@@ -910,13 +929,81 @@ func resolveMember(state *CLIState, groupID string) error {
 		}
 	}
 
-	return fmt.Errorf("you are not a member of group %s; use /member:add or ask an admin to add you", groupID)
+	return fmt.Errorf("you are not a member of group %s; use /group:join or ask an admin to add you", groupID)
+}
+
+func handleGroupJoin(args []string, state *CLIState) error {
+	defer restorePrompt(state)
+	if err := requireAuth(state); err != nil {
+		return err
+	}
+
+	params := parseInlineArgs(args)
+	groupID := params["group-id"]
+	groupKey := params["group-key"]
+
+	if groupID == "" {
+		prompt := NewInteractivePrompt(state.rl)
+		var err error
+		groupID, err = prompt.PromptString("Group ID", true)
+		if err != nil {
+			if err == ErrCancelled {
+				printInfo("Cancelled.")
+				return nil
+			}
+			return err
+		}
+	}
+
+	// Verify group exists and check whether a key is required.
+	resp, err := state.apiClient.GetGroup(groupID)
+	if err != nil {
+		return formatAPIError(err)
+	}
+
+	var group map[string]interface{}
+	if err := resp.GetData(&group); err != nil {
+		return err
+	}
+
+	// If the group has a non-empty group_key hash, prompt for the plaintext key.
+	if keyHash, _ := group["group_key"].(string); keyHash != "" && groupKey == "" {
+		prompt := NewInteractivePrompt(state.rl)
+		var err error
+		groupKey, err = prompt.PromptString("Group key (required)", true)
+		if err != nil {
+			if err == ErrCancelled {
+				printInfo("Cancelled.")
+				return nil
+			}
+			return err
+		}
+	}
+
+	// Join the group as a user member.
+	memberName := sanitizeMemberName(state.userName)
+	if memberName == "" {
+		memberName = state.userID
+	}
+	_, err = state.apiClient.AddMember(groupID, state.userID, memberName, "", "user", nil)
+	if err != nil {
+		return formatAPIError(err)
+	}
+
+	// Remember the last active group.
+	state.lastGroupID = groupID
+
+	printSuccess(fmt.Sprintf("Joined group %s as %s", groupID, memberName))
+	return nil
 }
 
 func handleGroupUpdate(args []string, state *CLIState) error {
 	defer restorePrompt(state)
 	params := parseInlineArgs(args)
 	groupID := params["group-id"]
+	if groupID == "" {
+		groupID = state.lastGroupID
+	}
 
 	if groupID == "" {
 		prompt := NewInteractivePrompt(state.rl)
@@ -959,6 +1046,9 @@ func handleGroupDelete(args []string, state *CLIState) error {
 	defer restorePrompt(state)
 	params := parseInlineArgs(args)
 	groupID := params["group-id"]
+	if groupID == "" {
+		groupID = state.lastGroupID
+	}
 
 	if groupID == "" {
 		prompt := NewInteractivePrompt(state.rl)
@@ -992,6 +1082,9 @@ func handleGroupDelete(args []string, state *CLIState) error {
 		return formatAPIError(err)
 	}
 
+	if state.lastGroupID == groupID {
+		state.lastGroupID = ""
+	}
 	printSuccess(fmt.Sprintf("Group %s deleted", groupID))
 	return nil
 }
@@ -1002,6 +1095,9 @@ func handleMemberList(args []string, state *CLIState) error {
 	defer restorePrompt(state)
 	params := parseInlineArgs(args)
 	groupID := params["group-id"]
+	if groupID == "" {
+		groupID = state.lastGroupID
+	}
 
 	if groupID == "" {
 		prompt := NewInteractivePrompt(state.rl)
@@ -1051,6 +1147,9 @@ func handleMemberAdd(args []string, state *CLIState) error {
 	defer restorePrompt(state)
 	params := parseInlineArgs(args)
 	groupID := params["group-id"]
+	if groupID == "" {
+		groupID = state.lastGroupID
+	}
 	memberID := params["member-id"]
 	memberName := params["member-name"]
 	memberDesc := params["member-description"]

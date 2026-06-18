@@ -337,9 +337,18 @@ func TestCreateGroupAutoJoinsManagerAgent(t *testing.T) {
 		},
 	}
 	handler := setupGroupTestHandler(t, db, cfg)
-
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	creator := &models.Account{
+		AccountID:   "acc-creator-001",
+		AccountName: "Test Creator",
+		Role:        models.AccountRoleUser,
+		Status:      models.AccountStatusActive,
+	}
+	c.Set("auth_context", middleware.AuthContext{
+		Account:         creator,
+		IsAuthenticated: true,
+	})
 	body := CreateGroupRequest{
 		GroupName:    "Test Group",
 		GroupContext: "test context",
@@ -367,27 +376,42 @@ func TestCreateGroupAutoJoinsManagerAgent(t *testing.T) {
 	if err := db.Where("group_id = ?", groupID).Find(&members).Error; err != nil {
 		t.Fatalf("failed to query members: %v", err)
 	}
-	if len(members) != 1 {
-		t.Fatalf("expected 1 member, got %d", len(members))
+	if len(members) != 2 {
+		t.Fatalf("expected 2 members (creator + manager-agent), got %d", len(members))
 	}
-	member := members[0]
-	if member.MemberType != models.MemberTypeManagerAgent {
-		t.Errorf("expected member_type %s, got %s", models.MemberTypeManagerAgent, member.MemberType)
+
+	var managerMember *models.GroupMember
+	var creatorMember *models.GroupMember
+	for i := range members {
+		if members[i].MemberType == models.MemberTypeManagerAgent {
+			managerMember = &members[i]
+		} else if members[i].MemberType == models.MemberTypeUser {
+			creatorMember = &members[i]
+		}
 	}
-	if member.MemberID != "manager-agent" {
-		t.Errorf("expected member_id manager-agent, got %s", member.MemberID)
+	if managerMember == nil {
+		t.Fatal("expected manager-agent member")
 	}
-	if member.MemberName != "manager-agent" {
-		t.Errorf("expected member_name manager-agent, got %s", member.MemberName)
+	if creatorMember == nil {
+		t.Fatal("expected creator user member")
 	}
-	if member.MemberDescription != "Default group manager agent" {
-		t.Errorf("expected member_description 'Default group manager agent', got %s", member.MemberDescription)
+	if creatorMember.MemberID != creator.AccountID {
+		t.Errorf("expected creator member_id %s, got %s", creator.AccountID, creatorMember.MemberID)
 	}
-	if member.MemberStatus != models.MemberStatusOnline {
-		t.Errorf("expected member_status %s, got %s", models.MemberStatusOnline, member.MemberStatus)
+	if managerMember.MemberID != "manager-agent" {
+		t.Errorf("expected manager-agent member_id manager-agent, got %s", managerMember.MemberID)
 	}
-	if member.MemberInterface == "" {
-		t.Error("expected non-empty member_interface")
+	if managerMember.MemberName != "manager-agent" {
+		t.Errorf("expected manager-agent member_name manager-agent, got %s", managerMember.MemberName)
+	}
+	if managerMember.MemberDescription != "Default group manager agent" {
+		t.Errorf("expected manager-agent member_description 'Default group manager agent', got %s", managerMember.MemberDescription)
+	}
+	if managerMember.MemberStatus != models.MemberStatusOnline {
+		t.Errorf("expected manager-agent member_status %s, got %s", models.MemberStatusOnline, managerMember.MemberStatus)
+	}
+	if managerMember.MemberInterface == "" {
+		t.Error("expected non-empty manager-agent member_interface")
 	}
 }
 
@@ -409,6 +433,16 @@ func TestCreateGroupDoesNotAutoJoinManagerAgentWhenDisabled(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	creator := &models.Account{
+		AccountID:   "acc-creator-002",
+		AccountName: "Test Creator Two",
+		Role:        models.AccountRoleUser,
+		Status:      models.AccountStatusActive,
+	}
+	c.Set("auth_context", middleware.AuthContext{
+		Account:         creator,
+		IsAuthenticated: true,
+	})
 	body := CreateGroupRequest{
 		GroupName:    "Test Group No Manager",
 		GroupContext: "test context",
@@ -427,13 +461,21 @@ func TestCreateGroupDoesNotAutoJoinManagerAgentWhenDisabled(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
+	groupID := response.GroupID
+	if groupID == "" {
+		t.Fatal("expected group_id in response")
+	}
 
 	var members []models.GroupMember
-	if err := db.Where("group_id = ?", response.GroupID).Find(&members).Error; err != nil {
+	if err := db.Where("group_id = ?", groupID).Find(&members).Error; err != nil {
 		t.Fatalf("failed to query members: %v", err)
 	}
-	if len(members) != 0 {
-		t.Fatalf("expected 0 members, got %d", len(members))
+
+	if len(members) != 1 {
+		t.Fatalf("expected 1 member (creator), got %d", len(members))
+	}
+	if members[0].MemberID != creator.AccountID {
+		t.Errorf("expected creator member_id %s, got %s", creator.AccountID, members[0].MemberID)
 	}
 }
 
