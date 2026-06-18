@@ -4,10 +4,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
-// ANSI color codes.
 const (
 	colorReset  = "\033[0m"
 	colorRed    = "\033[31m"
@@ -87,22 +87,73 @@ func formatTimeMsFloat(ms float64) string {
 	return formatTimeMs(int64(ms))
 }
 
-// ps1Normal returns the normal mode prompt: acs@{userName}: 
-func ps1Normal(userName string) string {
-	return yellow(fmt.Sprintf("acs@%s: ", userName))
+// ps1Normal returns the normal mode prompt: acs@{userName}({userID})[role]:
+func ps1Normal(userName, userID, role string) string {
+	if role != "" {
+		if noColor {
+			return fmt.Sprintf("acs@%s(%s)[%s]: ", userName, userID, role)
+		}
+		return yellow(fmt.Sprintf("acs@%s(%s)[%s]: ", userName, userID, role))
+	}
+	if noColor {
+		return fmt.Sprintf("acs@%s(%s): ", userName, userID)
+	}
+	return yellow(fmt.Sprintf("acs@%s(%s): ", userName, userID))
 }
 
-// ps1Chat returns the chat mode prompt: acs@{userName}:{groupId}# 
-func ps1Chat(userName, groupID string) string {
-	return yellow(fmt.Sprintf("acs@%s:%s# ", userName, groupID))
+// ps1Chat returns the chat mode prompt: acs@{userName}({userID})[role]:{groupId}#
+func ps1Chat(userName, userID, role, groupID string) string {
+	if role != "" {
+		if noColor {
+			return fmt.Sprintf("acs@%s(%s)[%s]:%s# ", userName, userID, role, groupID)
+		}
+		return yellow(fmt.Sprintf("acs@%s(%s)[%s]:%s# ", userName, userID, role, groupID))
+	}
+	if noColor {
+		return fmt.Sprintf("acs@%s(%s):%s# ", userName, userID, groupID)
+	}
+	return yellow(fmt.Sprintf("acs@%s(%s):%s# ", userName, userID, groupID))
+}
+
+// boxHorizontal returns the horizontal border character used for separators and boxes.
+func boxHorizontal() string {
+	if noColor {
+		return "-"
+	}
+	return "─"
+}
+
+// boxDoubleHorizontal returns the double horizontal border character.
+func boxDoubleHorizontal() string {
+	if noColor {
+		return "="
+	}
+	return "═"
+}
+
+// bannerBorder returns the top, middle, and bottom banner border lines.
+// When colors are disabled, plain ASCII borders are used so that --no-color
+// also suppresses Unicode box-drawing characters.
+func bannerBorder() (top, middle, bottom string) {
+	if noColor {
+		top = "+------------------------------------------+"
+		middle = "|     ACS CLI Terminal                     |"
+		bottom = "+------------------------------------------+"
+		return
+	}
+	top = "╔══════════════════════════════════════════╗"
+	middle = "║     ACS CLI Terminal                     ║"
+	bottom = "╚══════════════════════════════════════════╝"
+	return
 }
 
 // printBanner prints the ACS CLI welcome banner.
 func printBanner() {
+	top, middle, bottom := bannerBorder()
 	promptPrintLines(
-		cyan("╔══════════════════════════════════════════╗"),
-		cyan("║     ACS CLI Terminal                     ║"),
-		cyan("╚══════════════════════════════════════════╝"),
+		cyan(top),
+		cyan(middle),
+		cyan(bottom),
 	)
 }
 
@@ -128,12 +179,44 @@ func printWarning(msg string) {
 
 // printSeparator prints a horizontal separator line.
 func printSeparator() {
-	promptPrintln(white("──────────────────────────────────────────"))
+	promptPrintln(white(strings.Repeat(boxHorizontal(), 42)))
 }
 
 // printDoubleSeparator prints a double horizontal separator line.
 func printDoubleSeparator() {
-	promptPrintln(white("══════════════════════════════════════════"))
+	promptPrintln(white(strings.Repeat(boxDoubleHorizontal(), 42)))
+}
+
+// agentIcon returns the icon or label used for agent senders.
+func agentIcon() string {
+	if noColor {
+		return "[BOT]"
+	}
+	return "🤖"
+}
+
+// eventIcon returns the icon or label used for group events.
+func eventIcon() string {
+	if noColor {
+		return "[EVENT]"
+	}
+	return "📢"
+}
+
+// memberIcon returns the icon or label used for member events.
+func memberIcon() string {
+	if noColor {
+		return "[MEMBER]"
+	}
+	return "👤"
+}
+
+// genericEventIcon returns the icon or label used for generic NATS events.
+func genericEventIcon() string {
+	if noColor {
+		return "[EVENT]"
+	}
+	return "📰"
 }
 
 // formatMessage formats a single message for display.
@@ -161,7 +244,7 @@ func formatMessage(msg map[string]interface{}) string {
 	case "user":
 		prefix = fmt.Sprintf("[%s] %s", cyan(timestamp), white(displayName))
 	case "manager-agent", "worker-agent":
-		prefix = fmt.Sprintf("[%s] %s %s", cyan(timestamp), green("🤖"), green(displayName))
+		prefix = fmt.Sprintf("[%s] %s %s", cyan(timestamp), green(agentIcon()), green(displayName))
 	default:
 		prefix = fmt.Sprintf("[%s] %s", cyan(timestamp), white(displayName))
 	}
@@ -172,19 +255,19 @@ func formatMessage(msg map[string]interface{}) string {
 // formatGroupEvent formats a group event for display.
 func formatGroupEvent(action, groupID string) string {
 	timestamp := formatTime(time.Now())
-	return fmt.Sprintf("[%s] %s Group event: %s %s", cyan(timestamp), yellow("📢"), action, white(groupID))
+	return fmt.Sprintf("[%s] %s Group event: %s %s", cyan(timestamp), yellow(eventIcon()), action, white(groupID))
 }
 
 // formatMemberEvent formats a member event for display.
 func formatMemberEvent(action, groupID string) string {
 	timestamp := formatTime(time.Now())
-	return fmt.Sprintf("[%s] %s Member event: %s %s", cyan(timestamp), blue("👤"), action, white(groupID))
+	return fmt.Sprintf("[%s] %s Member event: %s %s", cyan(timestamp), blue(memberIcon()), action, white(groupID))
 }
 
 // formatGenericEvent formats a generic NATS event for display.
 func formatGenericEvent(eventType, action, groupID string) string {
 	timestamp := formatTime(time.Now())
-	return fmt.Sprintf("[%s] %s Event: %s %s %s", cyan(timestamp), blue("📡"), eventType, action, white(groupID))
+	return fmt.Sprintf("[%s] %s Event: %s %s %s", cyan(timestamp), blue(genericEventIcon()), eventType, action, white(groupID))
 }
 
 // formatGroupLine formats a group list item.
@@ -206,4 +289,104 @@ func formatMemberLine(memberType, memberName, memberID, memberStatus string) str
 		typeColor = white
 	}
 	return fmt.Sprintf("  [%s] %s (%s) - %s", typeColor(memberType), white(memberName), white(memberID), cyan(memberStatus))
+}
+
+// formatAccountLine formats an account list item.
+func formatAccountLine(account map[string]interface{}) string {
+	id, _ := account["account_id"].(string)
+	name, _ := account["account_name"].(string)
+	role, _ := account["role"].(string)
+	status, _ := account["status"].(string)
+	email, _ := account["email"].(string)
+	if email == "" {
+		email = "-"
+	}
+	return fmt.Sprintf("  %s %s [%s] (%s) <%s>", white(id), green(name), cyan(role), blue(status), white(email))
+}
+
+// formatAccountDetail formats full account details for display.
+func formatAccountDetail(account map[string]interface{}) string {
+	var b strings.Builder
+	b.WriteString(printableSeparator())
+	b.WriteString("\n")
+	writeField(&b, "Account ID", account["account_id"])
+	writeField(&b, "Name", account["account_name"])
+	writeField(&b, "Description", account["account_description"])
+	writeField(&b, "Role", account["role"])
+	writeField(&b, "Status", account["status"])
+	writeField(&b, "Login Name", account["login_name"])
+	writeField(&b, "Email", account["email"])
+	writeField(&b, "External ID", account["external_id"])
+	writeField(&b, "Auth Provider", account["auth_provider"])
+	writeField(&b, "Avatar URL", account["avatar_url"])
+	writeField(&b, "Creator ID", account["creator_id"])
+	if ms, ok := account["create_at_ms"].(float64); ok {
+		writeField(&b, "Created", formatTimeMs(int64(ms)))
+	}
+	if ms, ok := account["update_at_ms"].(float64); ok {
+		writeField(&b, "Updated", formatTimeMs(int64(ms)))
+	}
+	b.WriteString(printableSeparator())
+	return b.String()
+}
+
+// formatAPIKeyLine formats an API key list item.
+func formatAPIKeyLine(key map[string]interface{}) string {
+	id, _ := key["api_key_id"].(string)
+	name, _ := key["api_key_name"].(string)
+	role, _ := key["role"].(string)
+	status, _ := key["status"].(string)
+	return fmt.Sprintf("  %s %s [%s] (%s)", white(id), green(name), cyan(role), blue(status))
+}
+
+// formatAPIKeyDetail formats full API key details for display.
+func formatAPIKeyDetail(key map[string]interface{}) string {
+	var b strings.Builder
+	b.WriteString(printableSeparator())
+	b.WriteString("\n")
+	writeField(&b, "API Key ID", key["api_key_id"])
+	writeField(&b, "Name", key["api_key_name"])
+	writeField(&b, "Role", key["role"])
+	writeField(&b, "Status", key["status"])
+	writeField(&b, "Token", key["token"])
+	writeField(&b, "Owner ID", key["owner_id"])
+	writeField(&b, "Creator ID", key["creator_id"])
+	b.WriteString(printableSeparator())
+	return b.String()
+}
+
+// formatSessionInfo formats a login session response for display.
+func formatSessionInfo(session map[string]interface{}) string {
+	var b strings.Builder
+	b.WriteString(printableSeparator())
+	b.WriteString("\n")
+	writeField(&b, "Account ID", session["account_id"])
+	writeField(&b, "Account Name", session["account_name"])
+	writeField(&b, "Role", session["role"])
+	writeField(&b, "Session Key", session["session_key"])
+	if ms, ok := session["login_session_expired_time"].(float64); ok {
+		writeField(&b, "Expires", formatTimeMs(int64(ms)))
+	}
+	b.WriteString(printableSeparator())
+	return b.String()
+}
+
+// writeField appends a labeled field to the builder if the value is non-empty.
+func writeField(b *strings.Builder, label string, value interface{}) {
+	if value == nil {
+		return
+	}
+	s, ok := value.(string)
+	if ok && s == "" {
+		return
+	}
+	if !ok {
+		s = fmt.Sprintf("%v", value)
+	}
+	b.WriteString(fmt.Sprintf("%s: %s\n", cyan(label), white(s)))
+}
+
+// printableSeparator returns a plain separator string suitable for builders.
+func printableSeparator() string {
+	return strings.Repeat(boxHorizontal(), 42)
 }

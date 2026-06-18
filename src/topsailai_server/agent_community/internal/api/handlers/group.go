@@ -255,8 +255,16 @@ func (h *GroupHandler) GetGroup(c *gin.Context) {
 }
 
 // ListGroups handles GET /api/v1/groups.
+// Non-admin callers only see groups they are members of.
 func (h *GroupHandler) ListGroups(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
+
+	// Retrieve authenticated caller.
+	authCtx, ok := middleware.GetAuthContext(c)
+	if !ok || !authCtx.IsAuthenticated || authCtx.Account == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 
 	// Parse pagination
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
@@ -284,6 +292,12 @@ func (h *GroupHandler) ListGroups(c *gin.Context) {
 	// Build query
 	query := h.db.Model(&models.Group{})
 
+	// Non-admin callers can only list groups they have joined.
+	if authCtx.Account.Role != models.AccountRoleAdmin {
+		query = query.Joins("JOIN group_member ON group_member.group_id = groups.group_id").
+			Where("group_member.member_id = ?", authCtx.Account.AccountID)
+	}
+
 	// Time range filtering
 	if createRange := c.Query("create_at_ms"); createRange != "" {
 		start, end, err := parseTimeRange(createRange)
@@ -308,7 +322,7 @@ func (h *GroupHandler) ListGroups(c *gin.Context) {
 
 	// Execute query with pagination and sorting
 	var groups []models.Group
-	orderClause := fmt.Sprintf("%s %s", sortKey, orderBy)
+	orderClause := fmt.Sprintf("groups.%s %s", sortKey, orderBy)
 	if err := query.Order(orderClause).Offset(offset).Limit(limit).Find(&groups).Error; err != nil {
 		h.log.Error("api", traceID, "failed to list groups", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list groups"})

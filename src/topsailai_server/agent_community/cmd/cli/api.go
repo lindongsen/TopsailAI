@@ -12,6 +12,16 @@ import (
 	"time"
 )
 
+// AuthMethod represents the authentication method used by the API client.
+type AuthMethod string
+
+const (
+	// AuthMethodAPIKey uses Authorization: Bearer <api_key>.
+	AuthMethodAPIKey AuthMethod = "api_key"
+	// AuthMethodSession uses X-Session-Key: <session_key>.
+	AuthMethodSession AuthMethod = "session"
+)
+
 // APIResponse is the standard response envelope from ACS server.
 type APIResponse struct {
 	Data    json.RawMessage `json:"data"`
@@ -21,8 +31,11 @@ type APIResponse struct {
 
 // APIClient wraps HTTP calls to the ACS server.
 type APIClient struct {
-	baseURL string
-	client  *http.Client
+	baseURL    string
+	client     *http.Client
+	authMethod AuthMethod
+	apiKey     string
+	sessionKey string
 }
 
 // NewAPIClient creates a new API client.
@@ -33,6 +46,50 @@ func NewAPIClient(baseURL string) *APIClient {
 			Timeout: 30 * time.Second,
 		},
 	}
+}
+
+// SetAPIKey switches the client to API key authentication.
+func (c *APIClient) SetAPIKey(apiKey string) {
+	c.apiKey = apiKey
+	c.sessionKey = ""
+	c.authMethod = AuthMethodAPIKey
+}
+
+// SetSessionKey switches the client to session-key authentication.
+func (c *APIClient) SetSessionKey(sessionKey string) {
+	c.sessionKey = sessionKey
+	c.apiKey = ""
+	c.authMethod = AuthMethodSession
+}
+
+// SetAuthMethod explicitly sets the authentication method and credential.
+func (c *APIClient) SetAuthMethod(method AuthMethod, credential string) {
+	switch method {
+	case AuthMethodAPIKey:
+		c.SetAPIKey(credential)
+	case AuthMethodSession:
+		c.SetSessionKey(credential)
+	default:
+		c.apiKey = ""
+		c.sessionKey = ""
+		c.authMethod = ""
+	}
+}
+
+// AuthMethod returns the current authentication method.
+func (c *APIClient) AuthMethod() AuthMethod {
+	return c.authMethod
+}
+
+// IsAuthenticated returns true when the client has a credential configured.
+func (c *APIClient) IsAuthenticated() bool {
+	if c.authMethod == AuthMethodAPIKey {
+		return c.apiKey != ""
+	}
+	if c.authMethod == AuthMethodSession {
+		return c.sessionKey != ""
+	}
+	return false
 }
 
 // ListQuery holds common list query parameters.
@@ -83,6 +140,18 @@ func (c *APIClient) doRequest(method, path string, body []byte) (*APIResponse, e
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+
+	// Apply authentication header based on the active method.
+	switch c.authMethod {
+	case AuthMethodAPIKey:
+		if c.apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		}
+	case AuthMethodSession:
+		if c.sessionKey != "" {
+			req.Header.Set("X-Session-Key", c.sessionKey)
+		}
 	}
 
 	resp, err := c.client.Do(req)
@@ -160,6 +229,122 @@ func (r *APIResponse) GetData(target interface{}) error {
 }
 
 // --- Convenience methods for ACS API ---
+
+// Login authenticates with login_name and login_password.
+func (c *APIClient) Login(loginName, loginPassword string) (*APIResponse, error) {
+	payload := map[string]interface{}{
+		"login_name":     loginName,
+		"password": loginPassword,
+	}
+	return c.Post("/api/v1/accounts/login", payload)
+}
+
+// GetMe returns the current authenticated account.
+func (c *APIClient) GetMe() (*APIResponse, error) {
+	return c.Get("/api/v1/accounts/me")
+}
+
+// CreateAccount creates a new account.
+func (c *APIClient) CreateAccount(req map[string]interface{}) (*APIResponse, error) {
+	return c.Post("/api/v1/accounts", req)
+}
+
+// ListAccounts lists accounts with optional filters.
+func (c *APIClient) ListAccounts(q ListQuery, role, status, externalID string) (*APIResponse, error) {
+	values := url.Values{}
+	qs := q.ToQueryString()
+	if qs != "" {
+		parsed, err := url.ParseQuery(qs)
+		if err == nil {
+			for k, v := range parsed {
+				values[k] = v
+			}
+		}
+	}
+	if role != "" {
+		values.Set("role", role)
+	}
+	if status != "" {
+		values.Set("status", status)
+	}
+	if externalID != "" {
+		values.Set("external_id", externalID)
+	}
+	path := "/api/v1/accounts"
+	if len(values) > 0 {
+		path += "?" + values.Encode()
+	}
+	return c.Get(path)
+}
+
+// GetAccount returns a single account by ID.
+func (c *APIClient) GetAccount(accountID string) (*APIResponse, error) {
+	return c.Get(fmt.Sprintf("/api/v1/accounts/%s", accountID))
+}
+
+// UpdateAccount updates an account.
+func (c *APIClient) UpdateAccount(accountID string, req map[string]interface{}) (*APIResponse, error) {
+	return c.Put(fmt.Sprintf("/api/v1/accounts/%s", accountID), req)
+}
+
+// DeleteAccount soft-deletes an account.
+func (c *APIClient) DeleteAccount(accountID string) (*APIResponse, error) {
+	return c.Delete(fmt.Sprintf("/api/v1/accounts/%s", accountID))
+}
+
+// ChangePassword changes the login_password for an account.
+func (c *APIClient) ChangePassword(accountID, oldPassword, newPassword string) (*APIResponse, error) {
+	payload := map[string]interface{}{
+		"new_password": newPassword,
+	}
+	if oldPassword != "" {
+		payload["old_password"] = oldPassword
+	}
+	return c.Post(fmt.Sprintf("/api/v1/accounts/%s/password", accountID), payload)
+}
+
+// CreateSession creates a new login session for an account.
+func (c *APIClient) CreateSession(accountID string) (*APIResponse, error) {
+	return c.Post(fmt.Sprintf("/api/v1/accounts/%s/session", accountID), map[string]interface{}{})
+}
+
+// CreateAPIKey creates a new API key for an account.
+func (c *APIClient) CreateAPIKey(accountID, name, role string) (*APIResponse, error) {
+	payload := map[string]interface{}{
+		"api_key_name": name,
+	}
+	if role != "" {
+		payload["role"] = role
+	}
+	return c.Post(fmt.Sprintf("/api/v1/accounts/%s/api-keys", accountID), payload)
+}
+
+// ListAPIKeys lists API keys for an account.
+func (c *APIClient) ListAPIKeys(accountID string, q ListQuery, status string) (*APIResponse, error) {
+	values := url.Values{}
+	qs := q.ToQueryString()
+	if qs != "" {
+		parsed, err := url.ParseQuery(qs)
+		if err == nil {
+			for k, v := range parsed {
+				values[k] = v
+			}
+		}
+	}
+	if status != "" {
+		values.Set("status", status)
+	}
+	path := fmt.Sprintf("/api/v1/accounts/%s/api-keys", accountID)
+	if len(values) > 0 {
+		path += "?" + values.Encode()
+	}
+	return c.Get(path)
+}
+
+// DeleteAPIKey deletes an API key.
+func (c *APIClient) DeleteAPIKey(accountID, apiKeyID string) (*APIResponse, error) {
+	return c.Delete(fmt.Sprintf("/api/v1/accounts/%s/api-keys/%s", accountID, apiKeyID))
+}
 
 // ListGroups lists all groups.
 func (c *APIClient) ListGroups(q ListQuery) (*APIResponse, error) {
@@ -273,11 +458,12 @@ func (c *APIClient) ListMessages(groupID string, q ListQuery) (*APIResponse, err
 }
 
 // SendMessage sends a message to a group.
-func (c *APIClient) SendMessage(groupID, text, senderID, senderType string, attachments []map[string]interface{}) (*APIResponse, error) {
+// SendMessage sends a message to a group. The server derives sender_id and
+// sender_type from the authenticated account/session, so the client must not
+// send them.
+func (c *APIClient) SendMessage(groupID, text string, attachments []map[string]interface{}) (*APIResponse, error) {
 	payload := map[string]interface{}{
 		"message_text": text,
-		"sender_id":    senderID,
-		"sender_type":  senderType,
 	}
 	if attachments != nil {
 		payload["message_attachments"] = attachments

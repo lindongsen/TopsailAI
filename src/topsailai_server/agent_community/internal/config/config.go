@@ -130,6 +130,22 @@ func Load() (*Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
+	// Explicitly bind the primary server and database environment variables.
+	// Viper's AutomaticEnv with SetEnvKeyReplacer does not reliably map these
+	// keys for IsSet/Unmarshal in all cases, so explicit binding ensures the
+	// documented ACS_* variables are always honored.
+	_ = v.BindEnv("server.port", "ACS_HTTP_PORT")
+	_ = v.BindEnv("server.read_timeout", "ACS_SERVER_READ_TIMEOUT")
+	_ = v.BindEnv("server.write_timeout", "ACS_SERVER_WRITE_TIMEOUT")
+	_ = v.BindEnv("database.driver", "ACS_DATABASE_DRIVER")
+	_ = v.BindEnv("database.host", "ACS_DATABASE_HOST")
+	_ = v.BindEnv("database.port", "ACS_DATABASE_PORT")
+	_ = v.BindEnv("database.user", "ACS_DATABASE_USER")
+	_ = v.BindEnv("database.password", "ACS_DATABASE_PASSWORD")
+	_ = v.BindEnv("database.name", "ACS_DATABASE_NAME")
+	_ = v.BindEnv("database.sslmode", "ACS_DATABASE_SSLMODE")
+	_ = v.BindEnv("nats.servers", "ACS_NATS_SERVERS")
+
 	// Check if database.name was explicitly set before applying defaults.
 	nameExplicitlySet := v.IsSet("database.name")
 

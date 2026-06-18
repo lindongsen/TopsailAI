@@ -17,6 +17,7 @@ type ChatMode struct {
 	groupID         string
 	userID          string
 	userName        string
+	memberID        string
 	natsManager     *NATSManager
 	apiClient       *APIClient
 	rl              *readline.Instance
@@ -26,6 +27,7 @@ type ChatMode struct {
 	displayedMsgIDs map[string]struct{}
 	eventCh         chan *nats.PendingPublishMessage
 	inputCh         chan string
+	doneCh          chan struct{}
 	oldHandler      func(*nats.PendingPublishMessage)
 }
 
@@ -36,16 +38,23 @@ func NewChatMode(apiClient *APIClient, natsManager *NATSManager) *ChatMode {
 		natsManager:     natsManager,
 		displayedMsgIDs: make(map[string]struct{}),
 		eventCh:         make(chan *nats.PendingPublishMessage, 100),
-		inputCh:         make(chan string),
 	}
 }
 
 // EnterChat enters the chat window for a group.
-func (cm *ChatMode) EnterChat(groupID, userID, userName string) error {
+// memberID is the sender_id used when posting messages; it must match a
+// group_member record for the current user.
+func (cm *ChatMode) EnterChat(groupID, userID, userName, memberID string) error {
 	cm.groupID = groupID
 	cm.userID = userID
 	cm.userName = userName
+	cm.memberID = memberID
 	cm.active = true
+
+	// Create fresh channels for this chat session so re-entering does not
+	// reuse a closed channel from a previous session.
+	cm.inputCh = make(chan string)
+	cm.doneCh = make(chan struct{})
 
 	// Fetch and cache member list for mention resolution.
 	if err := cm.refreshMembers(); err != nil {
@@ -68,10 +77,9 @@ func (cm *ChatMode) EnterChat(groupID, userID, userName string) error {
 			cm.oldHandler(event)
 		}
 	}
-
 	// Create readline with chat PS1 and auto-completion.
 	rl, err := readline.NewEx(&readline.Config{
-		Prompt:       ps1Chat(userName, groupID),
+		Prompt:       ps1Chat(userName, userID, "", groupID),
 		AutoComplete: newChatMentionCompleter(func() []map[string]interface{} {
 			cm.mu.Lock()
 			defer cm.mu.Unlock()
@@ -110,14 +118,28 @@ func (cm *ChatMode) EnterChat(groupID, userID, userName string) error {
 }
 
 // readInput reads lines from readline and sends to inputCh.
+// It exits when the readline instance returns an error or when doneCh is closed.
 func (cm *ChatMode) readInput() {
 	for {
+		select {
+		case <-cm.doneCh:
+			return
+		default:
+		}
+
 		line, err := cm.rl.Readline()
 		if err != nil {
-			close(cm.inputCh)
+			// Signal the main loop to leave chat mode without closing the
+			// channel here; LeaveChat will perform cleanup.
+			cm.LeaveChat()
 			return
 		}
-		cm.inputCh <- line
+
+		select {
+		case cm.inputCh <- line:
+		case <-cm.doneCh:
+			return
+		}
 	}
 }
 
@@ -147,20 +169,11 @@ func (cm *ChatMode) handleInput(line string) {
 	}
 }
 
-// SendChatMessage sends a message to the group with mention parsing.
+// SendChatMessage sends a message to the group. The server derives sender_id
+// and sender_type from the authenticated account/session, so the client only
+// sends the message text. Mentions are automatically extracted by the server.
 func (cm *ChatMode) SendChatMessage(text string) error {
-	mentions := cm.parseMentions(text)
-
-	payload := map[string]interface{}{
-		"message_text": text,
-		"sender_id":    cm.userID,
-		"sender_type":  "user",
-	}
-	if len(mentions) > 0 {
-		payload["mentions"] = mentions
-	}
-
-	resp, err := cm.apiClient.Post(fmt.Sprintf("/api/v1/groups/%s/messages", cm.groupID), payload)
+	resp, err := cm.apiClient.SendMessage(cm.groupID, text, nil)
 	if err != nil {
 		return err
 	}
@@ -173,9 +186,9 @@ func (cm *ChatMode) SendChatMessage(text string) error {
 		}
 	}
 
-	// Display locally.
+	// Display locally using the member identity known to the CLI.
 	promptPrintln(formatMessage(map[string]interface{}{
-		"sender_id":    cm.userID,
+		"sender_id":    cm.memberID,
 		"sender_name":  cm.userName,
 		"sender_type":  "user",
 		"message_text": text,
@@ -193,6 +206,12 @@ func (cm *ChatMode) LeaveChat() {
 	}
 	cm.active = false
 	cm.mu.Unlock()
+
+	// Signal the reader goroutine to stop. Do not close inputCh here to avoid
+	// a panic if EnterChat is called again.
+	if cm.doneCh != nil {
+		close(cm.doneCh)
+	}
 
 	cm.natsManager.Unsubscribe()
 	cm.restoreHandler()

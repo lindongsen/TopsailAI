@@ -47,8 +47,6 @@ func NewMessageHandler(db *gorm.DB, publisher Publisher, evaluator *trigger.Eval
 type CreateMessageRequest struct {
 	MessageText        string `json:"message_text" binding:"required"`
 	MessageAttachments string `json:"message_attachments"`
-	SenderID           string `json:"sender_id" binding:"required"`
-	SenderType         string `json:"sender_type" binding:"required"`
 }
 
 // UpdateMessageRequest represents the request body for updating a message.
@@ -107,20 +105,21 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 		return
 	}
 
-	// Validate sender type
-	senderType := models.MemberType(req.SenderType)
-	if senderType != models.MemberTypeUser &&
-		senderType != models.MemberTypeManagerAgent &&
-		senderType != models.MemberTypeWorkerAgent {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sender_type"})
+	// Derive sender from authenticated account/session.
+	authCtx, ok := middleware.GetAuthContext(c)
+	if !ok || authCtx.Account == nil {
+		h.log.Warn("api", traceID, "unauthenticated create message request")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
+	senderID := authCtx.Account.AccountID
+	senderType := models.MemberTypeUser
 
 	// Verify sender is a member of the group
 	var senderMember models.GroupMember
-	if err := h.db.Where("group_id = ? AND member_id = ?", groupID, req.SenderID).First(&senderMember).Error; err != nil {
+	if err := h.db.Where("group_id = ? AND member_id = ?", groupID, senderID).First(&senderMember).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "sender is not a member of the group"})
+			c.JSON(http.StatusForbidden, gin.H{"error": "sender is not a member of the group"})
 			return
 		}
 		h.log.Error("api", traceID, "failed to verify sender membership", "error", err.Error())
@@ -151,7 +150,7 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 		MessageID:          uuid.New().String(),
 		MessageText:        req.MessageText,
 		MessageAttachments: attachments,
-		SenderID:           req.SenderID,
+		SenderID:           senderID,
 		SenderType:         senderType,
 		Mentions:           string(mentionsJSON),
 	}

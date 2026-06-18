@@ -10,12 +10,17 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/topsailai/agent-community/internal/api/middleware"
 	"github.com/topsailai/agent-community/internal/config"
 	"github.com/topsailai/agent-community/internal/models"
 	"github.com/topsailai/agent-community/pkg/logger"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+// TestParseTimeRangeValid verifies a valid time range string is parsed correctly.
 func TestParseTimeRangeValid(t *testing.T) {
 	start, end, err := parseTimeRange("1000-2000")
 	if err != nil {
@@ -530,4 +535,113 @@ func TestDeleteGroupCascade(t *testing.T) {
 	if remainingMessages != 0 {
 		t.Errorf("expected 0 messages, got %d", remainingMessages)
 	}
+}
+
+// TestListGroups_UserOnlyJoined verifies that a non-admin caller only sees
+// groups they are a member of.
+func TestListGroups_UserOnlyJoined(t *testing.T) {
+	db := setupGroupTestDB(t)
+
+	userID := "acc-user-list-001"
+	joinedGroupID := "group-joined-001"
+	otherGroupID := "group-other-001"
+
+	now := time.Now().UnixMilli()
+	require.NoError(t, db.Create(&models.Group{
+		GroupID:    joinedGroupID,
+		GroupName:  "Joined Group",
+		CreateAtMs: now,
+		UpdateAtMs: now,
+	}).Error)
+	require.NoError(t, db.Create(&models.Group{
+		GroupID:    otherGroupID,
+		GroupName:  "Other Group",
+		CreateAtMs: now,
+		UpdateAtMs: now,
+	}).Error)
+	require.NoError(t, db.Create(&models.GroupMember{
+		GroupID:      joinedGroupID,
+		MemberID:     userID,
+		MemberName:   "Joined User",
+		MemberType:   models.MemberTypeUser,
+		MemberStatus: models.MemberStatusOnline,
+		CreateAtMs:   now,
+		UpdateAtMs:   now,
+	}).Error)
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(authContextMiddleware(middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: userID,
+			Role:      models.AccountRoleUser,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	}))
+	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
+	handler := NewGroupHandler(db, nil, &config.Config{}, log)
+	r.GET("/api/v1/groups", handler.ListGroups)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp ListGroupsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, int64(1), resp.Total)
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, joinedGroupID, resp.Items[0].GroupID)
+}
+
+// TestListGroups_AdminSeesAll verifies that an admin caller sees every group
+// regardless of membership.
+func TestListGroups_AdminSeesAll(t *testing.T) {
+	db := setupGroupTestDB(t)
+
+	adminID := "acc-admin-list-001"
+	groupA := "group-admin-a"
+	groupB := "group-admin-b"
+
+	now := time.Now().UnixMilli()
+	require.NoError(t, db.Create(&models.Group{
+		GroupID:    groupA,
+		GroupName:  "Group A",
+		CreateAtMs: now,
+		UpdateAtMs: now,
+	}).Error)
+	require.NoError(t, db.Create(&models.Group{
+		GroupID:    groupB,
+		GroupName:  "Group B",
+		CreateAtMs: now,
+		UpdateAtMs: now,
+	}).Error)
+	// Admin is not a member of any group.
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(authContextMiddleware(middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: adminID,
+			Role:      models.AccountRoleAdmin,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	}))
+	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
+	handler := NewGroupHandler(db, nil, &config.Config{}, log)
+	r.GET("/api/v1/groups", handler.ListGroups)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp ListGroupsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, int64(2), resp.Total)
+	require.Len(t, resp.Items, 2)
 }

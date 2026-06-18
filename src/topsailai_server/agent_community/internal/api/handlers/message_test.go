@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/topsailai/agent-community/internal/api/middleware"
 	"github.com/topsailai/agent-community/internal/models"
 	"github.com/topsailai/agent-community/pkg/logger"
 	"gorm.io/driver/sqlite"
@@ -253,4 +255,93 @@ func TestListMessagesWithNonExistentProcessedMsgID(t *testing.T) {
 
 	assert.Equal(t, int64(0), resp.Total)
 	assert.Len(t, resp.Items, 0)
+}
+
+// authContextMiddleware returns a Gin middleware that injects the provided
+// AuthContext for handler tests.
+func authContextMiddleware(ac middleware.AuthContext) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set("auth_context", ac)
+		c.Next()
+	}
+}
+
+// TestCreateMessage_DerivesSenderFromAuth verifies that the handler derives
+// sender_id and sender_type from the authenticated account and does not read
+// them from the request body.
+func TestCreateMessage_DerivesSenderFromAuth(t *testing.T) {
+	db := setupMessageTestDB(t)
+
+	accountID := "acc-test-user-001"
+	groupID := "group-create-1"
+	createTestGroup(t, db, groupID, "Create Message Test Group")
+	createTestGroupMember(t, db, groupID, accountID, models.MemberTypeUser)
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(authContextMiddleware(middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: accountID,
+			Role:      models.AccountRoleUser,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	}))
+	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
+	handler := NewMessageHandler(db, nil, nil, log)
+	r.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text": "hello from auth",
+		// Intentionally omit sender_id and sender_type; the server must derive them.
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	var resp MessageResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, accountID, resp.SenderID)
+	assert.Equal(t, string(models.MemberTypeUser), resp.SenderType)
+	assert.Equal(t, "hello from auth", resp.MessageText)
+}
+
+// TestCreateMessage_RejectNonMember verifies that an authenticated user who is
+// not a member of the group receives 403 Forbidden.
+func TestCreateMessage_RejectNonMember(t *testing.T) {
+	db := setupMessageTestDB(t)
+
+	memberID := "acc-member-002"
+	nonMemberID := "acc-non-member-002"
+	groupID := "group-create-2"
+	createTestGroup(t, db, groupID, "Create Message Non Member Group")
+	createTestGroupMember(t, db, groupID, memberID, models.MemberTypeUser)
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(authContextMiddleware(middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: nonMemberID,
+			Role:      models.AccountRoleUser,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	}))
+	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
+	handler := NewMessageHandler(db, nil, nil, log)
+	r.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{"message_text": "hello from non-member"}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
 }

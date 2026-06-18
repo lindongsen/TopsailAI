@@ -501,7 +501,36 @@ func TestConvenienceMethods(t *testing.T) {
 	})
 
 	t.Run("SendMessage", func(t *testing.T) {
-		resp, err := client.SendMessage("g1", "Hello", "u1", "user", nil)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				t.Errorf("method = %q, want %q", r.Method, http.MethodPost)
+			}
+			var body map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if _, ok := body["sender_id"]; ok {
+				t.Errorf("body contains sender_id, want omitted")
+			}
+			if _, ok := body["sender_type"]; ok {
+				t.Errorf("body contains sender_type, want omitted")
+			}
+			if got, want := body["message_text"], "Hello"; got != want {
+				t.Errorf("message_text = %v, want %v", got, want)
+			}
+			resp := APIResponse{
+				Data:    json.RawMessage(`{"success":true}`),
+				Error:   "",
+				TraceID: "trace-conv",
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(resp)
+		}))
+		defer server.Close()
+
+		client := NewAPIClient(server.URL)
+		resp, err := client.SendMessage("g1", "Hello", nil)
 		if err != nil {
 			t.Fatalf("SendMessage() error = %v", err)
 		}
@@ -616,5 +645,315 @@ func TestAPIClientServerURL(t *testing.T) {
 	_, err := client.Get("/test")
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
+	}
+}
+
+func TestAPIClientAuthHeaders(t *testing.T) {
+	tests := []struct {
+		name           string
+		setup          func(*APIClient)
+		wantAuthHeader string
+		wantValue      string
+	}{
+		{
+			name: "api key auth",
+			setup: func(c *APIClient) {
+				c.SetAPIKey("ak-test.secret")
+			},
+			wantAuthHeader: "Authorization",
+			wantValue:      "Bearer ak-test.secret",
+		},
+		{
+			name: "session key auth",
+			setup: func(c *APIClient) {
+				c.SetSessionKey("acc-test-sessionkey")
+			},
+			wantAuthHeader: "X-Session-Key",
+			wantValue:      "acc-test-sessionkey",
+		},
+		{
+			name: "switch from api key to session",
+			setup: func(c *APIClient) {
+				c.SetAPIKey("ak-test.secret")
+				c.SetSessionKey("acc-test-sessionkey")
+			},
+			wantAuthHeader: "X-Session-Key",
+			wantValue:      "acc-test-sessionkey",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotValue string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotValue = r.Header.Get(tt.wantAuthHeader)
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(APIResponse{Data: json.RawMessage(`{}`)})
+			}))
+			defer server.Close()
+
+			client := NewAPIClient(server.URL)
+			tt.setup(client)
+			_, err := client.Get("/api/v1/accounts/me")
+			if err != nil {
+				t.Fatalf("Get() error = %v", err)
+			}
+			if gotValue != tt.wantValue {
+				t.Errorf("%s = %q, want %q", tt.wantAuthHeader, gotValue, tt.wantValue)
+			}
+		})
+	}
+}
+
+func TestAPIClientSetAuthMethod(t *testing.T) {
+	client := NewAPIClient("http://localhost")
+
+	client.SetAuthMethod(AuthMethodAPIKey, "ak-test.secret")
+	if client.AuthMethod() != AuthMethodAPIKey {
+		t.Errorf("AuthMethod = %q, want %q", client.AuthMethod(), AuthMethodAPIKey)
+	}
+	if !client.IsAuthenticated() {
+		t.Error("IsAuthenticated() = false, want true")
+	}
+
+	client.SetAuthMethod(AuthMethodSession, "session-key")
+	if client.AuthMethod() != AuthMethodSession {
+		t.Errorf("AuthMethod = %q, want %q", client.AuthMethod(), AuthMethodSession)
+	}
+
+	client.SetAuthMethod("unknown", "value")
+	if client.IsAuthenticated() {
+		t.Error("IsAuthenticated() = true after unknown method, want false")
+	}
+}
+
+func TestAPIClientLogin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/v1/accounts/login" {
+			t.Errorf("expected path /api/v1/accounts/login, got %s", r.URL.Path)
+		}
+
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode body: %v", err)
+		}
+		if payload["login_name"] != "alice@example.com" {
+			t.Errorf("login_name = %v, want 'alice@example.com'", payload["login_name"])
+		}
+		if payload["password"] != "secret" {
+			t.Errorf("password = %v, want 'secret'", payload["password"])
+		}
+
+		resp := APIResponse{
+			Data:    json.RawMessage(`{"account_id":"acc-123","session_key":"acc-123-key","expires_at_ms":1704153600000}`),
+			Error:   "",
+			TraceID: "trace-login",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(server.URL)
+	resp, err := client.Login("alice@example.com", "secret")
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	if resp.TraceID != "trace-login" {
+		t.Errorf("TraceID = %q, want %q", resp.TraceID, "trace-login")
+	}
+}
+
+func TestAPIClientAccountMethods(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := APIResponse{
+			Data:    json.RawMessage(`{"success":true}`),
+			Error:   "",
+			TraceID: "trace-account",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(server.URL)
+
+	t.Run("GetMe", func(t *testing.T) {
+		resp, err := client.GetMe()
+		if err != nil {
+			t.Fatalf("GetMe() error = %v", err)
+		}
+		if resp.TraceID != "trace-account" {
+			t.Errorf("TraceID = %q, want %q", resp.TraceID, "trace-account")
+		}
+	})
+
+	t.Run("CreateAccount", func(t *testing.T) {
+		resp, err := client.CreateAccount(map[string]interface{}{"account_name": "Bob"})
+		if err != nil {
+			t.Fatalf("CreateAccount() error = %v", err)
+		}
+		if resp.TraceID != "trace-account" {
+			t.Errorf("TraceID = %q, want %q", resp.TraceID, "trace-account")
+		}
+	})
+
+	t.Run("ListAccounts", func(t *testing.T) {
+		resp, err := client.ListAccounts(ListQuery{Limit: 10}, "user", "active", "ext-1")
+		if err != nil {
+			t.Fatalf("ListAccounts() error = %v", err)
+		}
+		if resp.TraceID != "trace-account" {
+			t.Errorf("TraceID = %q, want %q", resp.TraceID, "trace-account")
+		}
+	})
+
+	t.Run("GetAccount", func(t *testing.T) {
+		resp, err := client.GetAccount("acc-123")
+		if err != nil {
+			t.Fatalf("GetAccount() error = %v", err)
+		}
+		if resp.TraceID != "trace-account" {
+			t.Errorf("TraceID = %q, want %q", resp.TraceID, "trace-account")
+		}
+	})
+
+	t.Run("UpdateAccount", func(t *testing.T) {
+		resp, err := client.UpdateAccount("acc-123", map[string]interface{}{"account_name": "Bob Updated"})
+		if err != nil {
+			t.Fatalf("UpdateAccount() error = %v", err)
+		}
+		if resp.TraceID != "trace-account" {
+			t.Errorf("TraceID = %q, want %q", resp.TraceID, "trace-account")
+		}
+	})
+
+	t.Run("DeleteAccount", func(t *testing.T) {
+		resp, err := client.DeleteAccount("acc-123")
+		if err != nil {
+			t.Fatalf("DeleteAccount() error = %v", err)
+		}
+		if resp.TraceID != "trace-account" {
+			t.Errorf("TraceID = %q, want %q", resp.TraceID, "trace-account")
+		}
+	})
+
+	t.Run("ChangePassword", func(t *testing.T) {
+		resp, err := client.ChangePassword("acc-123", "old", "new")
+		if err != nil {
+			t.Fatalf("ChangePassword() error = %v", err)
+		}
+		if resp.TraceID != "trace-account" {
+			t.Errorf("TraceID = %q, want %q", resp.TraceID, "trace-account")
+		}
+	})
+
+	t.Run("CreateSession", func(t *testing.T) {
+		resp, err := client.CreateSession("acc-123")
+		if err != nil {
+			t.Fatalf("CreateSession() error = %v", err)
+		}
+		if resp.TraceID != "trace-account" {
+			t.Errorf("TraceID = %q, want %q", resp.TraceID, "trace-account")
+		}
+	})
+}
+
+func TestAPIClientAPIKeyMethods(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := APIResponse{
+			Data:    json.RawMessage(`{"success":true}`),
+			Error:   "",
+			TraceID: "trace-ak",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(server.URL)
+
+	t.Run("CreateAPIKey", func(t *testing.T) {
+		resp, err := client.CreateAPIKey("acc-123", "CLI Key", "user")
+		if err != nil {
+			t.Fatalf("CreateAPIKey() error = %v", err)
+		}
+		if resp.TraceID != "trace-ak" {
+			t.Errorf("TraceID = %q, want %q", resp.TraceID, "trace-ak")
+		}
+	})
+
+	t.Run("ListAPIKeys", func(t *testing.T) {
+		resp, err := client.ListAPIKeys("acc-123", ListQuery{Limit: 10}, "active")
+		if err != nil {
+			t.Fatalf("ListAPIKeys() error = %v", err)
+		}
+		if resp.TraceID != "trace-ak" {
+			t.Errorf("TraceID = %q, want %q", resp.TraceID, "trace-ak")
+		}
+	})
+
+	t.Run("DeleteAPIKey", func(t *testing.T) {
+		resp, err := client.DeleteAPIKey("acc-123", "ak-xyz")
+		if err != nil {
+			t.Fatalf("DeleteAPIKey() error = %v", err)
+		}
+		if resp.TraceID != "trace-ak" {
+			t.Errorf("TraceID = %q, want %q", resp.TraceID, "trace-ak")
+		}
+	})
+}
+
+func TestListAccountsQueryString(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		if query.Get("role") != "user" {
+			t.Errorf("role = %q, want %q", query.Get("role"), "user")
+		}
+		if query.Get("status") != "active" {
+			t.Errorf("status = %q, want %q", query.Get("status"), "active")
+		}
+		if query.Get("external_id") != "ext-1" {
+			t.Errorf("external_id = %q, want %q", query.Get("external_id"), "ext-1")
+		}
+		if query.Get("limit") != "10" {
+			t.Errorf("limit = %q, want %q", query.Get("limit"), "10")
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(APIResponse{Data: json.RawMessage(`{}`)})
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(server.URL)
+	_, err := client.ListAccounts(ListQuery{Limit: 10}, "user", "active", "ext-1")
+	if err != nil {
+		t.Fatalf("ListAccounts() error = %v", err)
+	}
+}
+
+func TestListAPIKeysQueryString(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		if query.Get("status") != "active" {
+			t.Errorf("status = %q, want %q", query.Get("status"), "active")
+		}
+		if query.Get("limit") != "5" {
+			t.Errorf("limit = %q, want %q", query.Get("limit"), "5")
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(APIResponse{Data: json.RawMessage(`{}`)})
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(server.URL)
+	_, err := client.ListAPIKeys("acc-123", ListQuery{Limit: 5}, "active")
+	if err != nil {
+		t.Fatalf("ListAPIKeys() error = %v", err)
 	}
 }

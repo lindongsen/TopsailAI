@@ -114,6 +114,7 @@ def exec_cmd(
         no_need_stderr:int=0,
         timeout:int=120,
         cwd:str="/tmp",
+        env:dict|None=None,
     ):
     """ execute command
 
@@ -123,6 +124,7 @@ def exec_cmd(
         timeout (int, optional): Timeout in seconds. If the command does not finish
                                  within this time, a exception will be raised.
                                  Defaults to 120.
+        env: (dict, optional): environment variables
     Returns:
         tuple: (code, stdout, stderr)
     """
@@ -135,11 +137,15 @@ def exec_cmd(
     if not isinstance(cmd, str) and not isinstance(cmd, list):
         return "illegal cmd"
 
+    if env:
+        env = safe_json_load(env)
+
     result = exec_command(
         cmd,
         no_need_stderr=True if int(no_need_stderr) else False,
         timeout=get_cmd_timeout(cmd, timeout),
         cwd=cwd,
+        env_info=env,
     )
 
     cmd_string = " ".join(cmd) if isinstance(cmd, list) else cmd

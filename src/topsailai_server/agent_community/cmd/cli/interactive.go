@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -12,33 +13,65 @@ import (
 // ErrCancelled is returned when the user cancels an interactive prompt.
 var ErrCancelled = fmt.Errorf("cancelled")
 
-// InteractivePrompt wraps readline for step-by-step parameter collection.
-type InteractivePrompt struct {
+// lineReader abstracts the readline operations used by InteractivePrompt so
+// that prompts can be unit-tested without a real terminal.
+type lineReader interface {
+	SetPrompt(prompt string)
+	Clean()
+	Readline() (string, error)
+	ReadlineWithDefault(defaultValue string) (string, error)
+}
+
+// readlineLineReader wraps a readline Instance and clears any stale buffer
+// before and after each read to prevent input from one prompt leaking into
+// the next. This works around chzyer/readline buffer reuse issues when the
+// same instance is shared between the command loop and interactive flows.
+type readlineLineReader struct {
 	rl *readline.Instance
 }
 
-// NewInteractivePrompt creates a new interactive prompt with the given prompt string.
-func NewInteractivePrompt(prompt string) (*InteractivePrompt, error) {
-	rl, err := readline.New(prompt)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create readline: %w", err)
-	}
-	return &InteractivePrompt{rl: rl}, nil
+func (r *readlineLineReader) SetPrompt(prompt string) { r.rl.SetPrompt(prompt) }
+func (r *readlineLineReader) Clean()                  { r.rl.Clean() }
+func (r *readlineLineReader) Readline() (string, error) {
+	// Defensive: ensure no stale input from a previous prompt remains in the
+	// readline buffer before starting a fresh read.
+	r.rl.Clean()
+	line, err := r.rl.Readline()
+	// Defensive: clear the buffer again so the next prompt starts clean.
+	r.rl.Clean()
+	return line, err
+}
+func (r *readlineLineReader) ReadlineWithDefault(defaultValue string) (string, error) {
+	// Defensive: same cleaning strategy as Readline.
+	r.rl.Clean()
+	line, err := r.rl.ReadlineWithDefault(defaultValue)
+	r.rl.Clean()
+	return line, err
 }
 
-// Close closes the readline instance.
-func (p *InteractivePrompt) Close() error {
-	if p.rl != nil {
-		return p.rl.Close()
-	}
-	return nil
+// InteractivePrompt wraps a line reader for step-by-step parameter collection.
+type InteractivePrompt struct {
+	reader lineReader
+}
+
+// NewInteractivePrompt creates a new interactive prompt that reuses the
+// provided readline instance. The caller retains ownership of the readline
+// instance; this prompt only borrows it while collecting input.
+func NewInteractivePrompt(rl *readline.Instance) *InteractivePrompt {
+	return &InteractivePrompt{reader: &readlineLineReader{rl: rl}}
+}
+
+// newInteractivePromptWithReader is an internal constructor used by tests.
+func newInteractivePromptWithReader(reader lineReader) *InteractivePrompt {
+	return &InteractivePrompt{reader: reader}
 }
 
 // PromptString prompts for a string value. Returns ErrCancelled if input is empty.
 func (p *InteractivePrompt) PromptString(label string, required bool) (string, error) {
 	for {
-		p.rl.SetPrompt(label + ": ")
-		line, err := p.rl.Readline()
+		p.reader.Clean()
+		p.reader.SetPrompt(label + ": ")
+		line, err := p.reader.Readline()
 		if err != nil {
 			return "", ErrCancelled
 		}
@@ -55,9 +88,11 @@ func (p *InteractivePrompt) PromptString(label string, required bool) (string, e
 }
 
 // PromptStringWithDefault prompts for a string with a default value.
+// Pressing Enter without input accepts the default.
 func (p *InteractivePrompt) PromptStringWithDefault(label, defaultValue string) (string, error) {
-	p.rl.SetPrompt(fmt.Sprintf("%s [%s]: ", label, defaultValue))
-	line, err := p.rl.Readline()
+	p.reader.Clean()
+	p.reader.SetPrompt(fmt.Sprintf("%s [%s]: ", label, defaultValue))
+	line, err := p.reader.ReadlineWithDefault(defaultValue)
 	if err != nil {
 		return "", ErrCancelled
 	}
@@ -71,8 +106,9 @@ func (p *InteractivePrompt) PromptStringWithDefault(label, defaultValue string) 
 // PromptInt prompts for an integer value.
 func (p *InteractivePrompt) PromptInt(label string, required bool) (int, error) {
 	for {
-		p.rl.SetPrompt(label + ": ")
-		line, err := p.rl.Readline()
+		p.reader.Clean()
+		p.reader.SetPrompt(label + ": ")
+		line, err := p.reader.Readline()
 		if err != nil {
 			return 0, ErrCancelled
 		}
@@ -99,8 +135,9 @@ func (p *InteractivePrompt) PromptBool(label string, defaultValue bool) (bool, e
 	if defaultValue {
 		defaultStr = "y"
 	}
-	p.rl.SetPrompt(fmt.Sprintf("%s [y/N] [%s]: ", label, defaultStr))
-	line, err := p.rl.Readline()
+	p.reader.Clean()
+	p.reader.SetPrompt(fmt.Sprintf("%s [y/n] (default: %s): ", label, defaultStr))
+	line, err := p.reader.ReadlineWithDefault(defaultStr)
 	if err != nil {
 		return false, ErrCancelled
 	}
@@ -118,8 +155,9 @@ func (p *InteractivePrompt) PromptChoice(label string, options []string) (int, s
 		fmt.Printf("  %d) %s\n", i+1, opt)
 	}
 	for {
-		p.rl.SetPrompt("Select (number): ")
-		line, err := p.rl.Readline()
+		p.reader.Clean()
+		p.reader.SetPrompt("Select (number): ")
+		line, err := p.reader.Readline()
 		if err != nil {
 			return -1, "", ErrCancelled
 		}
@@ -137,12 +175,13 @@ func (p *InteractivePrompt) PromptChoice(label string, options []string) (int, s
 	}
 }
 
-// PromptPassword prompts for a password (hidden input).
+// PromptPassword prompts for a password. Input is currently echoed because
+// readline password mode requires terminal configuration; callers that need
+// hidden input should set the terminal mask externally.
 func (p *InteractivePrompt) PromptPassword(label string) (string, error) {
-	p.rl.SetPrompt(label + ": ")
-	// Note: readline does not natively support hidden input.
-	// We use standard readline here; for production, consider term.ReadPassword.
-	line, err := p.rl.Readline()
+	p.reader.Clean()
+	p.reader.SetPrompt(label + ": ")
+	line, err := p.reader.Readline()
 	if err != nil {
 		return "", ErrCancelled
 	}
@@ -150,6 +189,222 @@ func (p *InteractivePrompt) PromptPassword(label string) (string, error) {
 }
 
 // --- Predefined interactive flows ---
+
+// PromptLogin prompts for login credentials.
+func PromptLogin(p *InteractivePrompt) (loginName, loginPassword string, err error) {
+	printInfo("Login. Press Ctrl+C or Enter without input to cancel.")
+	loginName, err = p.PromptString("Login name", true)
+	if err != nil {
+		return "", "", err
+	}
+	loginPassword, err = p.PromptPassword("Password")
+	if err != nil {
+		return "", "", err
+	}
+	if loginPassword == "" {
+		printWarning("Empty password.")
+	}
+	return loginName, loginPassword, nil
+}
+
+// PromptAccountCreate prompts for account creation parameters.
+func PromptAccountCreate(p *InteractivePrompt, callerRole string) (req map[string]interface{}, err error) {
+	printInfo("Creating a new account. Press Ctrl+C or Enter without input to cancel.")
+	req = map[string]interface{}{}
+
+	name, err := p.PromptString("Account name", true)
+	if err != nil {
+		return nil, err
+	}
+	req["account_name"] = name
+
+	desc, err := p.PromptString("Account description", false)
+	if err != nil {
+		return nil, err
+	}
+	if desc != "" {
+		req["account_description"] = desc
+	}
+
+	// Only admins can choose a role; managers are forced to user.
+	if callerRole == RoleAdmin {
+		_, role, err := p.PromptChoice("Role", []string{RoleUser, RoleManager, RoleAdmin})
+		if err != nil {
+			return nil, err
+		}
+		req["role"] = role
+	} else {
+		req["role"] = RoleUser
+	}
+
+	loginName, err := p.PromptString("Login name (email)", false)
+	if err != nil {
+		return nil, err
+	}
+	if loginName != "" {
+		req["login_name"] = loginName
+	}
+
+	loginPassword, err := p.PromptPassword("Login password")
+	if err != nil {
+		return nil, err
+	}
+	if loginPassword != "" {
+		req["login_password"] = loginPassword
+	}
+
+	email, err := p.PromptString("Email", false)
+	if err != nil {
+		return nil, err
+	}
+	if email != "" {
+		req["email"] = email
+	}
+
+	externalID, err := p.PromptString("External ID", false)
+	if err != nil {
+		return nil, err
+	}
+	if externalID != "" {
+		req["external_id"] = externalID
+	}
+
+	authProvider, err := p.PromptString("Auth provider", false)
+	if err != nil {
+		return nil, err
+	}
+	if authProvider != "" {
+		req["auth_provider"] = authProvider
+	}
+
+	avatarURL, err := p.PromptString("Avatar URL", false)
+	if err != nil {
+		return nil, err
+	}
+	if avatarURL != "" {
+		req["avatar_url"] = avatarURL
+	}
+
+	return req, nil
+}
+
+// PromptAccountUpdate prompts for account update parameters.
+func PromptAccountUpdate(p *InteractivePrompt) (req map[string]interface{}, err error) {
+	printInfo("Updating account. Press Ctrl+C or Enter without input to cancel.")
+	req = map[string]interface{}{}
+
+	name, err := p.PromptString("New account name (leave empty to keep current)", false)
+	if err != nil {
+		return nil, err
+	}
+	if name != "" {
+		req["account_name"] = name
+	}
+
+	desc, err := p.PromptString("New account description (leave empty to keep current)", false)
+	if err != nil {
+		return nil, err
+	}
+	if desc != "" {
+		req["account_description"] = desc
+	}
+
+	avatarURL, err := p.PromptString("New avatar URL (leave empty to keep current)", false)
+	if err != nil {
+		return nil, err
+	}
+	if avatarURL != "" {
+		req["avatar_url"] = avatarURL
+	}
+
+	return req, nil
+}
+
+// PromptPasswordChange prompts for password change parameters.
+func PromptPasswordChange(p *InteractivePrompt, requireOld bool) (oldPassword, newPassword string, err error) {
+	printInfo("Changing password. Press Ctrl+C or Enter without input to cancel.")
+	if requireOld {
+		oldPassword, err = p.PromptPassword("Old password")
+		if err != nil {
+			return "", "", err
+		}
+	}
+	newPassword, err = p.PromptPassword("New password")
+	if err != nil {
+		return "", "", err
+	}
+	if newPassword == "" {
+		return "", "", fmt.Errorf("new password cannot be empty")
+	}
+	confirm, err := p.PromptPassword("Confirm new password")
+	if err != nil {
+		return "", "", err
+	}
+	if confirm != newPassword {
+		return "", "", fmt.Errorf("passwords do not match")
+	}
+	return oldPassword, newPassword, nil
+}
+
+// PromptAPIKeyCreate prompts for API key creation parameters.
+func PromptAPIKeyCreate(p *InteractivePrompt, callerRole, callerID string) (accountID, name, role string, err error) {
+	printInfo("Creating an API key. Press Ctrl+C or Enter without input to cancel.")
+
+	accountID, err = p.PromptStringWithDefault("Account ID", callerID)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	name, err = p.PromptString("API key name", true)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	if callerRole == RoleAdmin {
+		_, role, err = p.PromptChoice("Role", []string{RoleUser, RoleManager, RoleAdmin})
+		if err != nil {
+			return "", "", "", err
+		}
+	} else {
+		role = RoleUser
+	}
+
+	return accountID, name, role, nil
+}
+
+// PromptAPIKeyList prompts for API key list parameters.
+func PromptAPIKeyList(p *InteractivePrompt, defaultAccountID string) (accountID, status string, err error) {
+	printInfo("Listing API keys. Press Ctrl+C or Enter without input to cancel.")
+
+	accountID, err = p.PromptStringWithDefault("Account ID", defaultAccountID)
+	if err != nil {
+		return "", "", err
+	}
+
+	status, err = p.PromptString("Status filter (active/inactive, leave empty for all)", false)
+	if err != nil {
+		return "", "", err
+	}
+	if status != "" && status != "active" && status != "inactive" {
+		return "", "", fmt.Errorf("invalid status filter: %s", status)
+	}
+
+	return accountID, status, nil
+}
+
+// PromptAPIKeyDelete prompts for API key deletion parameters.
+func PromptAPIKeyDelete(p *InteractivePrompt, defaultAccountID string) (accountID, apiKeyID string, err error) {
+	printInfo("Deleting an API key. Press Ctrl+C or Enter without input to cancel.")
+	accountID, err = p.PromptStringWithDefault("Account ID", defaultAccountID)
+	if err != nil {
+		return "", "", err
+	}
+	apiKeyID, err = p.PromptString("API Key ID", true)
+	if err != nil {
+		return "", "", err
+	}
+	return accountID, apiKeyID, nil
+}
 
 // PromptGroupCreate prompts for group creation parameters.
 func PromptGroupCreate(p *InteractivePrompt) (name, context, key string, err error) {
@@ -236,4 +491,28 @@ func PromptMessageEdit(p *InteractivePrompt) (text string, err error) {
 		return "", err
 	}
 	return text, nil
+}
+
+// Compile-time check that mockLineReader implements lineReader.
+var _ lineReader = (*mockLineReader)(nil)
+
+// mockLineReader is a test double that returns a scripted sequence of lines.
+type mockLineReader struct {
+	lines   []string
+	idx     int
+	prompts []string
+}
+
+func (m *mockLineReader) SetPrompt(prompt string) { m.prompts = append(m.prompts, prompt) }
+func (m *mockLineReader) Clean()                  {}
+func (m *mockLineReader) Readline() (string, error) {
+	if m.idx >= len(m.lines) {
+		return "", io.EOF
+	}
+	line := m.lines[m.idx]
+	m.idx++
+	return line, nil
+}
+func (m *mockLineReader) ReadlineWithDefault(defaultValue string) (string, error) {
+	return m.Readline()
 }

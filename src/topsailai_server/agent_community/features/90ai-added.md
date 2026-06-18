@@ -132,13 +132,6 @@ pytest -v --color=no --cov=.
 
 A fully-featured command-line terminal for interacting with the AI-Agent Community Server (ACS). Supports real-time chat via NATS JetStream, interactive command prompts, and comprehensive group/member/message management.
 
-## Build
-
-```bash
-cd /TopsailAI/src/topsailai_server/agent_community
-go build -o acs-cli ./cmd/cli
-```
-
 ## Files Added
 
 1. `cmd/cli/main.go` - Entry point, flag parsing, main readline loop, yellow PS1 prompt
@@ -223,8 +216,10 @@ All management commands support interactive mode:
 
 ## PS1 Prompt
 
-- **Normal mode**: `acs@{userName}: ` (yellow)
-- **Chat mode**: `acs@{userName}:{groupId}# ` (yellow)
+- **Normal mode**: `acs@{userName}({userId})[{role}]: `
+- **Chat mode**: `acs@{userName}({userId})[{role}]:{groupId}# `
+
+> The authenticated user id is now displayed in the prompt so users can visually verify the current identity.
 
 ## Dependencies Added
 
@@ -450,3 +445,7 @@ Implemented NATS-based service discovery and Service-Leader election for the AI-
 - **Files**: `cmd/cli/completer.go`, `cmd/cli/chat.go`, `cmd/cli/completer_test.go`
 - **Description**: After entering a group chat (`/group:enter`), typing `@` triggers auto-completion for member names. Supports case-insensitive prefix filtering, deduplication, and `@all` suggestion. Slash commands continue to work normally.
 - **Tests**: 12 unit tests in `completer_test.go`
+
+## 3. CLI PS1 User ID Display
+- **Files**: `cmd/cli/display.go`, `cmd/cli/main.go`, `cmd/cli/commands.go`, `cmd/cli/chat.go`
+- **Description**: The CLI prompt now renders the authenticated account id in both normal and chat modes, e.g. `acs@{userName}({userId})[{role}]: ` and `acs@{userName}({userId})[{role}]:{groupId}# `. This allows users to visually verify the current authenticated identity.

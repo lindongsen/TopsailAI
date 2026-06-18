@@ -10,6 +10,19 @@ import (
 // newNormalCompleter returns a readline PrefixCompleter for normal mode commands.
 func newNormalCompleter() readline.PrefixCompleterInterface {
 	return readline.NewPrefixCompleter(
+		readline.PcItem("/login"),
+		readline.PcItem("/logout"),
+		readline.PcItem("/account:me"),
+		readline.PcItem("/account:create"),
+		readline.PcItem("/account:list"),
+		readline.PcItem("/account:get"),
+		readline.PcItem("/account:update"),
+		readline.PcItem("/account:delete"),
+		readline.PcItem("/account:password"),
+		readline.PcItem("/account:session"),
+		readline.PcItem("/api-key:create"),
+		readline.PcItem("/api-key:list"),
+		readline.PcItem("/api-key:delete"),
 		readline.PcItem("/group:list"),
 		readline.PcItem("/group:create"),
 		readline.PcItem("/group:enter"),
