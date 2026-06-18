@@ -50,11 +50,11 @@ func (r *readlineLineReader) ReadlineWithDefault(defaultValue string) (string, e
 	return line, err
 }
 func (r *readlineLineReader) ReadPassword(label string) (string, error) {
-	// Use readline's password mode to hide input. MaskRune '*' hides typed
-	// characters while still providing visual feedback.
-	r.rl.SetPrompt(label + ": ")
-	defer r.rl.SetPrompt("")
-	buf, err := r.rl.ReadPasswordWithConfig(&readline.Config{MaskRune: '*'})
+	// Use the existing readline instance's configured terminal/writers rather
+	// than creating a new operation with an incomplete Config. Passing a bare
+	// Config to ReadPasswordWithConfig leaves Stdout/Stderr/Stdin nil, which
+	// causes a nil-pointer panic in RuneBuffer.output when running under tmux.
+	buf, err := r.rl.ReadPassword(label + ": ")
 	if err != nil {
 		return "", ErrCancelled
 	}

@@ -1521,12 +1521,14 @@ func handleExit(args []string, state *CLIState) error {
 }
 
 // buildAccountCreateRequest builds a create-account request from inline args.
+// Supports both short keys (--name) and explicit keys (--account-name) so that
+// intuitive inline invocations bypass interactive mode.
 func buildAccountCreateRequest(params map[string]string) map[string]interface{} {
 	req := map[string]interface{}{}
-	if v := params["name"]; v != "" {
+	if v := firstNonEmpty(params, "account-name", "name"); v != "" {
 		req["account_name"] = v
 	}
-	if v := params["description"]; v != "" {
+	if v := firstNonEmpty(params, "account-description", "description"); v != "" {
 		req["account_description"] = v
 	}
 	if v := params["role"]; v != "" {
@@ -1556,10 +1558,10 @@ func buildAccountCreateRequest(params map[string]string) map[string]interface{} 
 // buildAccountUpdateRequest builds an update-account request from inline args.
 func buildAccountUpdateRequest(params map[string]string) map[string]interface{} {
 	req := map[string]interface{}{}
-	if v := params["name"]; v != "" {
+	if v := firstNonEmpty(params, "account-name", "name"); v != "" {
 		req["account_name"] = v
 	}
-	if v := params["description"]; v != "" {
+	if v := firstNonEmpty(params, "account-description", "description"); v != "" {
 		req["account_description"] = v
 	}
 	if v := params["role"]; v != "" {
@@ -1572,4 +1574,14 @@ func buildAccountUpdateRequest(params map[string]string) map[string]interface{} 
 		req["avatar_url"] = v
 	}
 	return req
+}
+
+// firstNonEmpty returns the first non-empty value from params for the given keys.
+func firstNonEmpty(params map[string]string, keys ...string) string {
+	for _, k := range keys {
+		if v := params[k]; v != "" {
+			return v
+		}
+	}
+	return ""
 }

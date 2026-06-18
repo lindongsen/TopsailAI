@@ -649,3 +649,283 @@ func (f *fakeEntry) Revision() uint64          { return f.revision }
 func (f *fakeEntry) Created() time.Time        { return time.Now() }
 func (f *fakeEntry) Delta() uint64             { return 0 }
 func (f *fakeEntry) Operation() nats.KeyValueOp { return nats.KeyValuePut }
+
+// TestRenewalUpdateInFlightDuringRelease verifies that if the renewal
+// goroutine is inside kv.Update() when Release() is called, the lock is still
+// deleted and is not accidentally re-created by the late Update.
+func TestRenewalUpdateInFlightDuringRelease(t *testing.T) {
+	restore := setShortTimeouts(t)
+	defer restore()
+
+	s, cleanup := startNATSServer(t)
+	defer cleanup()
+
+	js := connectJS(t, s)
+
+	// Wrap JetStream so that the gating KV is used from the start. This avoids
+	// mutating lock.kv after Acquire, which would race with the renewal goroutine.
+	gate := make(chan struct{})
+	var closeGateOnce sync.Once
+	gjs := &gatingJetStream{
+		JetStreamContext: js,
+		bucketName:       testBucketName,
+		gate:             gate,
+	}
+
+	dl, err := NewDistributedLock(gjs, testBucketName)
+	if err != nil {
+		t.Fatalf("failed to create distributed lock: %v", err)
+	}
+
+	var lock *Lock
+	lock, err = dl.Acquire(context.Background(), "test", "resource-release-renew-race")
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+
+	// Ensure the renewal goroutine always exits before the test returns and
+	// before the deferred timeout restore runs.
+	defer func() {
+		closeGateOnce.Do(func() { close(gate) })
+		lock.renewWg.Wait()
+	}()
+
+	// Wait until the renewal goroutine is blocked inside Update.
+	select {
+	case <-gate:
+		// The wrapper has signaled it is inside Update.
+	case <-time.After(2 * time.Second):
+		t.Fatal("renewal goroutine did not enter Update in time")
+	}
+
+	// Release while the renewal Update is blocked. Because the wrapper's
+	// Update is blocked, Release's Get calls will see the original token and
+	// proceed to delete the key.
+	releaseDone := make(chan error, 1)
+	go func() {
+		releaseDone <- lock.Release()
+	}()
+
+	// Give Release time to delete the key before unblocking the late Update.
+	time.Sleep(100 * time.Millisecond)
+
+	// Unblock the renewal goroutine. Its Update should now fail (key gone or
+	// revision mismatch), not recreate the lock.
+	closeGateOnce.Do(func() { close(gate) })
+
+	select {
+	case err := <-releaseDone:
+		if err != nil {
+			t.Fatalf("Release returned unexpected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Release did not complete in time")
+	}
+
+	// The lock key must not exist anymore. Use the underlying JetStream KV
+	// directly so we do not spawn another renewal goroutine.
+	key := fmt.Sprintf(lockKeyFormat, lock.LockType(), lock.ResourceID())
+	rawKV, err := js.KeyValue(testBucketName)
+	if err != nil {
+		t.Fatalf("failed to get underlying kv: %v", err)
+	}
+	if _, err := rawKV.Get(key); err != nats.ErrKeyNotFound {
+		t.Fatalf("expected key to be deleted, got err=%v", err)
+	}
+}
+
+// TestTokenMismatchDuringRenewal verifies that if another owner overwrites the
+// lock value, the original holder's renewal loop detects the token mismatch,
+// marks the lock as lost, and stops renewing.
+func TestTokenMismatchDuringRenewal(t *testing.T) {
+	defer setShortTimeouts(t)()
+
+	s, cleanup := startNATSServer(t)
+	defer cleanup()
+
+	js := connectJS(t, s)
+	dl := newTestLock(t, js)
+
+	lock, err := dl.Acquire(context.Background(), "test", "resource-token-mismatch")
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	defer lock.Release()
+
+	// Simulate another owner taking the lock by overwriting the value.
+	key := fmt.Sprintf(lockKeyFormat, lock.LockType(), lock.ResourceID())
+	if _, err := lock.kv.Put(key, []byte("other-owner-token")); err != nil {
+		t.Fatalf("failed to overwrite lock value: %v", err)
+	}
+
+	// Wait for the renewal loop to detect the mismatch and close Lost().
+	select {
+	case <-lock.Lost():
+		// expected
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected Lost() channel to be closed after token mismatch")
+	}
+
+	held, err := lock.IsHeld()
+	if err != nil {
+		t.Fatalf("IsHeld failed: %v", err)
+	}
+	if held {
+		t.Fatal("expected lock to not be held after token mismatch")
+	}
+}
+
+// TestConcurrentNewDistributedLock verifies that multiple goroutines calling
+// NewDistributedLock concurrently with the same bucket name all succeed and do
+// not leave inconsistent state.
+func TestConcurrentNewDistributedLock(t *testing.T) {
+	defer setShortTimeouts(t)()
+
+	s, cleanup := startNATSServer(t)
+	defer cleanup()
+
+	js := connectJS(t, s)
+
+	const numGoroutines = 10
+	var wg sync.WaitGroup
+	errs := make(chan error, numGoroutines)
+	locks := make(chan *DistributedLock, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dl, err := NewDistributedLock(js, "acs_test_locks_race_bucket")
+			if err != nil {
+				errs <- err
+				return
+			}
+			locks <- dl
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	close(locks)
+
+	for err := range errs {
+		t.Fatalf("NewDistributedLock failed in race: %v", err)
+	}
+
+	// All instances should be usable.
+	var usable int
+	for dl := range locks {
+		lock, err := dl.Acquire(context.Background(), "test", fmt.Sprintf("resource-%d", usable))
+		if err != nil {
+			t.Fatalf("Acquire failed after race creation: %v", err)
+		}
+		if err := lock.Release(); err != nil {
+			t.Fatalf("Release failed after race creation: %v", err)
+		}
+		usable++
+	}
+	if usable != numGoroutines {
+		t.Fatalf("expected %d usable lock managers, got %d", numGoroutines, usable)
+	}
+}
+
+// gatingJetStream wraps a JetStream context so that KeyValue(bucketName)
+// returns an updateGatingKV. This lets tests inject the gate before Acquire
+// starts the renewal goroutine, avoiding a race on lock.kv.
+type gatingJetStream struct {
+	nats.JetStreamContext
+	bucketName string
+	gate       chan struct{}
+}
+
+func (g *gatingJetStream) KeyValue(bucket string) (nats.KeyValue, error) {
+	kv, err := g.JetStreamContext.KeyValue(bucket)
+	if err != nil {
+		return nil, err
+	}
+	if bucket == g.bucketName {
+		return &updateGatingKV{kv: kv, gate: g.gate}, nil
+	}
+	return kv, nil
+}
+
+// updateGatingKV blocks the first Update call until the gate is closed, then
+// forwards to the underlying KV. It signals when it has entered Update so tests
+// can coordinate Release with an in-flight renewal.
+type updateGatingKV struct {
+	kv   nats.KeyValue
+	gate chan struct{}
+	once sync.Once
+}
+
+func (g *updateGatingKV) Get(key string) (nats.KeyValueEntry, error) {
+	return g.kv.Get(key)
+}
+
+func (g *updateGatingKV) Create(key string, value []byte) (uint64, error) {
+	return g.kv.Create(key, value)
+}
+
+func (g *updateGatingKV) Update(key string, value []byte, last uint64) (uint64, error) {
+	g.once.Do(func() {
+		// Signal that we are inside Update, then wait for the gate.
+		g.gate <- struct{}{}
+		<-g.gate
+	})
+	return g.kv.Update(key, value, last)
+}
+
+func (g *updateGatingKV) Delete(key string, opts ...nats.DeleteOpt) error {
+	return g.kv.Delete(key, opts...)
+}
+
+func (g *updateGatingKV) Put(key string, value []byte) (uint64, error) {
+	return g.kv.Put(key, value)
+}
+
+func (g *updateGatingKV) PutString(key string, value string) (uint64, error) {
+	return g.kv.PutString(key, value)
+}
+
+func (g *updateGatingKV) GetRevision(key string, revision uint64) (nats.KeyValueEntry, error) {
+	return g.kv.GetRevision(key, revision)
+}
+
+func (g *updateGatingKV) Purge(key string, opts ...nats.DeleteOpt) error {
+	return g.kv.Purge(key, opts...)
+}
+
+func (g *updateGatingKV) Watch(keys string, opts ...nats.WatchOpt) (nats.KeyWatcher, error) {
+	return g.kv.Watch(keys, opts...)
+}
+
+func (g *updateGatingKV) WatchAll(opts ...nats.WatchOpt) (nats.KeyWatcher, error) {
+	return g.kv.WatchAll(opts...)
+}
+
+func (g *updateGatingKV) WatchFiltered(keys []string, opts ...nats.WatchOpt) (nats.KeyWatcher, error) {
+	return g.kv.WatchFiltered(keys, opts...)
+}
+
+func (g *updateGatingKV) Keys(opts ...nats.WatchOpt) ([]string, error) {
+	return g.kv.Keys(opts...)
+}
+
+func (g *updateGatingKV) ListKeys(opts ...nats.WatchOpt) (nats.KeyLister, error) {
+	return g.kv.ListKeys(opts...)
+}
+
+func (g *updateGatingKV) History(key string, opts ...nats.WatchOpt) ([]nats.KeyValueEntry, error) {
+	return g.kv.History(key, opts...)
+}
+
+func (g *updateGatingKV) Bucket() string {
+	return g.kv.Bucket()
+}
+
+func (g *updateGatingKV) PurgeDeletes(opts ...nats.PurgeOpt) error {
+	return g.kv.PurgeDeletes(opts...)
+}
+
+func (g *updateGatingKV) Status() (nats.KeyValueStatus, error) {
+	return g.kv.Status()
+}
