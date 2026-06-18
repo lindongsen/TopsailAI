@@ -34,15 +34,17 @@ os.chdir(project_root)
 
 from topsailai.workspace.llm_shell import get_llm_chat
 from topsailai.workspace.input_tool import input_message
+from topsailai.utils import env_tool
+
 
 def main():
     """
     Main entry point for multi-turn LLM chat.
-    
+
     This function creates and runs a continuous chat session directly with
     an LLM (Language Model). It allows for multiple back-and-forth exchanges
     with a maximum of 100 turns.
-    
+
     The function:
     1. Gets an LLM chat instance
     2. Runs a loop for up to 100 iterations
@@ -53,18 +55,22 @@ def main():
        - If max iterations reached, breaks the loop
        - Otherwise, gets user input for the next message
     4. Returns None after the conversation ends
-    
+
     Returns:
         None: The LLM's responses are printed to stdout during execution
-        
+
     Note:
         - This is a multi-turn chat with a maximum of 100 iterations
         - No tools are available in this mode
         - Session history can be maintained via SESSION_ID environment variable
         - User can exit by pressing Ctrl+C
     """
-    """ main entry """
-    llm_chat = get_llm_chat()
+    need_tips = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CLI_NEED_TIPS", default=True)
+    if not env_tool.is_debug_mode():
+        need_tips = False
+    llm_chat = get_llm_chat(
+        need_print_session=need_tips,
+    )
     message = ""
     max_count = 100
     while True:

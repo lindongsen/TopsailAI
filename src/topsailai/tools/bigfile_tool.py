@@ -10,3 +10,6 @@ from topsailai.tools import file_tool
 TOOLS = dict(
     read_file=file_tool.read_file,
 )
+
+
+FLAG_TOOL_ENABLED = False

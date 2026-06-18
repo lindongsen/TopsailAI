@@ -20,12 +20,22 @@ def show_skills(word:str=None):
         return
     print()
     print("# SKILLS")
+    skill_list = []
     for skill in skills:
         if word:
             if word in skill.name:
                 print(str(skill))
+                skill_list.append(skill.folder)
         else:
             print(str(skill))
+            skill_list.append(skill.folder)
+    print(
+f"""
+---
+
+## ALL OF SKILL FOLDERS ({len(skill_list)})
+{"\n".join(skill_list)}
+""")
     return
 
 def unload_skill(folder:str):

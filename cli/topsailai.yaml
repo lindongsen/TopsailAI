@@ -226,3 +226,35 @@ instructions:
         grep ^$(date +%Y-%m-%d) | grep -v RateLimit | grep -v blocking | grep -v ReadError |
         grep -v 'parsing response:' | grep -v 'Expecting value:' | grep -v 'LLM Mistake:'
       "
+
+  # QuickStart
+  - cmd: "/chat"
+    scopes:
+      - workspace
+    desc: "Chatting to LLM, NO TOOLS"
+    example: ""
+    shell: |
+      bash -c "TOPSAILAI_SESSION_ID=$(date +%s) topsailai_llm_chats"
+    environ:
+      DEBUG: "0"
+      TOPSAILAI_INTERACTIVE_MODE: "1"
+      TOPSAILAI_CLI_NEED_TIPS: "0"
+      TOPSAILAI_HOME: "~/.topsailai"
+    use_os_system: 1
+
+  - cmd: "/agent"
+    scopes:
+      - workspace
+    desc: "AI-Agent Mode"
+    example: ""
+    shell: |
+      bash -c "TOPSAILAI_SESSION_ID=$(date +%s) topsailai_agent_chats"
+    environ:
+      TOPSAILAI_PLUGIN_SKILLS: "/work/skills"
+      DEBUG: "0"
+      TOPSAILAI_INTERACTIVE_MODE: "1"
+      TOPSAILAI_USE_TOOL_CALLS: "1"
+      TOPSAILAI_ENABLE_SESSION_TEE_OUT: "1"
+      TOPSAILAI_CLI_NEED_TIPS: "0"
+      TOPSAILAI_HOME: "~/.topsailai"
+    use_os_system: 1

@@ -396,8 +396,7 @@ class TestFileReadOnlyToolWithEnabledTools:
         """Test that FILE_RO_TOOLS are accessible when file_tool is enabled.
 
         When file_tool is enabled, FILE_RO_TOOLS are available via file_tool.FILE_RO_TOOLS.
-        read_file remains part of FILE_RO_TOOLS (it is only removed from TOOLS,
-        where bigfile_tool provides the agent-facing entry).
+        read_file is present in both TOOLS and FILE_RO_TOOLS.
         This test verifies the correct behavior.
         """
         # Enable file_tool via environment variable (file_readonly_tool depends on it)
@@ -417,9 +416,8 @@ class TestFileReadOnlyToolWithEnabledTools:
         assert "read_file_around_line" in ft_module.FILE_RO_TOOLS
         assert "read_file_lines" in ft_module.FILE_RO_TOOLS
         assert "read_file_with_context" in ft_module.FILE_RO_TOOLS
-        # read_file is removed from file_tool.TOOLS (bigfile_tool exposes it),
-        # but it is still present in FILE_RO_TOOLS for read-only access.
-        assert "read_file" not in ft_module.TOOLS
+        # read_file is present in file_tool.TOOLS and FILE_RO_TOOLS.
+        assert "read_file" in ft_module.TOOLS
         assert "read_file" in ft_module.FILE_RO_TOOLS
         # file_readonly_tool.TOOLS should be empty (by design)
         assert len(file_readonly_tool.TOOLS) == 0

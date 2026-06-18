@@ -439,8 +439,8 @@ def list_dirs(dirs:list[str]) -> dict:
         result[dir_path] = list_dir(dir_path)
     return result
 
-# Move read_file to bigfile_tool.py
 TOOLS = dict(
+    read_file=read_file,
     write_file=write_file_simple,
     append_file=append_file,
     check_files_existing=check_files_existing,
@@ -454,18 +454,18 @@ TOOLS.update(file_read_line.TOOLS)
 TOOLS.update(file_stat.TOOLS)
 
 # Just a example
-TOOLS_INFO = dict(
-    check_files_existing={
-        "type": "function",
-        "function": {
-            "name": "",
-            "description": check_files_existing.__doc__,
-            "parameters": {
-                "type": "object",
-            }
-        }
-    },
-)
+# TOOLS_INFO = dict(
+#     check_files_existing={
+#         "type": "function",
+#         "function": {
+#             "name": "",
+#             "description": check_files_existing.__doc__,
+#             "parameters": {
+#                 "type": "object",
+#             }
+#         }
+#     },
+# )
 
 FILE_RO_TOOLS = dict(
     read_file=read_file,
@@ -473,12 +473,16 @@ FILE_RO_TOOLS = dict(
     list_dirs=list_dirs,
     read_files=read_files,
 )
-
 FILE_RO_TOOLS.update(file_read_line.TOOLS)
 FILE_RO_TOOLS.update(file_stat.TOOLS)
 
 PROMPT = """
-# Requirements for `overwrite_lines_in_file`
+# About file_tool
+
+## Mandatory Tool Mapping
+- Read-Multiple-Files -> read_files
+- Read-One-Code-File -> read_file_lines or read_file_around_line or read_file_with_context
+
+## Requirements for `overwrite_lines_in_file`
 You MUST confirm the line number using either `read_file_lines` or `read_file_around_line` or `read_file_with_context`.
-Best practice: Read the entire CODE/Markdown file via `read_file_lines` FIRST!
 """

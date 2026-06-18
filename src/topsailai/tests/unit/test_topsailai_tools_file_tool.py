@@ -15,7 +15,6 @@ Test coverage:
 - list_dirs: Multiple directory listing
 - is_need_truncate: Truncation check
 - TOOLS dictionary
-- TOOLS_INFO dictionary
 - FILE_RO_TOOLS dictionary
 
 Author: mm-m25
@@ -41,7 +40,6 @@ from topsailai.tools.file_tool import (
     list_dirs,
     is_need_truncate,
     TOOLS,
-    TOOLS_INFO,
     FILE_RO_TOOLS,
 )
 from topsailai.tools.file_tool_utils.file_write_line import (
@@ -793,25 +791,9 @@ class TestToolsDictionary:
         """Verify TOOLS write_file is the actual function."""
         assert TOOLS["write_file"] is write_file_simple
 
-    def test_tools_read_file_not_in_tools(self):
-        """Verify TOOLS does not contain read_file (moved to bigfile_tool)."""
-        assert "read_file" not in TOOLS
-
-
-class TestToolsInfo:
-    """Test TOOLS_INFO dictionary structure."""
-
-    def test_tools_info_is_dict(self):
-        """Verify TOOLS_INFO is a dictionary."""
-        assert isinstance(TOOLS_INFO, dict)
-
-    def test_tools_info_contains_check_files_existing(self):
-        """Verify TOOLS_INFO contains check_files_existing entry."""
-        assert "check_files_existing" in TOOLS_INFO
-        info = TOOLS_INFO["check_files_existing"]
-        assert "type" in info
-        assert info["type"] == "function"
-        assert "function" in info
+    def test_tools_read_file_in_tools(self):
+        """Verify TOOLS contains read_file."""
+        assert "read_file" in TOOLS
 
 
 class TestFileRoTools:

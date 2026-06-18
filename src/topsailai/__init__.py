@@ -14,7 +14,6 @@ from dotenv import load_dotenv
 # Original Environ
 _env_topsailai_use_tool_calls = os.getenv("TOPSAILAI_USE_TOOL_CALLS")
 
-from topsailai.logger import logger
 from topsailai.workspace import folder_constants
 
 # SYSTEM home folder
@@ -42,6 +41,7 @@ for WORK_FOLDER in [
 
 def customize_for_llm():
     """ Customize according to the large model """
+    from topsailai.logger import logger
 
     # case: TOPSAILAI_USE_TOOL_CALLS
     if _env_topsailai_use_tool_calls is None:

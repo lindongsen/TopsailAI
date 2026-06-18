@@ -31,6 +31,10 @@ FOLDER_ROOT = "/topsailai"
 ###################################################################################
 if os.getenv("TOPSAILAI_HOME"):
     FOLDER_ROOT = os.getenv("TOPSAILAI_HOME")
+    if FOLDER_ROOT[0] == "~":
+        FOLDER_ROOT = os.getenv("HOME") + FOLDER_ROOT[1:]
+    FOLDER_ROOT = os.path.abspath(FOLDER_ROOT)
+    os.environ["TOPSAILAI_HOME"] = FOLDER_ROOT
 
 TOPSAILAI_HOME=FOLDER_ROOT
 
