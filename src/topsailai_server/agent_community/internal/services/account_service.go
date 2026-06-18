@@ -87,6 +87,12 @@ func (s *AccountService) SetAPIKeyService(apiKeySvc *APIKeyService) {
 	s.apiKeySvc = apiKeySvc
 }
 
+// DB returns the underlying GORM database handle.
+// Exposed for tests that need to manipulate state directly.
+func (s *AccountService) DB() *gorm.DB {
+	return s.db
+}
+
 // CreateAccount creates a new account with optional password hashing.
 func (s *AccountService) CreateAccount(ctx context.Context, req *CreateAccountRequest) (*models.Account, error) {
 	if req.Role == "" {

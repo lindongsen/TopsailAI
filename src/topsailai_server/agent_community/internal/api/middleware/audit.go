@@ -3,6 +3,7 @@ package middleware
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,12 +12,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/topsailai/agent-community/internal/models"
 	"github.com/topsailai/agent-community/internal/services"
 )
 
+// AuditLogService is the minimal interface required by the audit middleware.
+// It mirrors the Log method of *services.AuditLogService so that tests can
+// inject mocks without importing the full services package.
+type AuditLogService interface {
+	Log(ctx context.Context, req *services.AuditLogRequest) (*models.AuditLog, error)
+}
+
 // AuditLogger returns a Gin middleware that writes audit log records for
 // lifecycle actions (POST, PUT, DELETE) after the handler completes.
-func AuditLogger(auditSvc *services.AuditLogService) gin.HandlerFunc {
+func AuditLogger(auditSvc AuditLogService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Capture request body for resource name extraction.
 		var bodyBytes []byte
@@ -91,6 +100,22 @@ func extractResource(c *gin.Context) (string, string) {
 		return "api_key", c.Param("account_id")
 	}
 
+	// Message routes: /api/v1/groups/:group_id/messages/:message_id
+	if strings.Contains(path, "/messages/") {
+		return "group_message", c.Param("message_id")
+	}
+	if strings.Contains(path, "/messages") && c.Request.Method == http.MethodPost {
+		return "group_message", ""
+	}
+
+	// Group member routes: /api/v1/groups/:group_id/members/:member_id
+	if strings.Contains(path, "/members/") {
+		return "group_member", c.Param("member_id")
+	}
+	if strings.Contains(path, "/members") && c.Request.Method == http.MethodPost {
+		return "group_member", ""
+	}
+
 	// Account routes: /api/v1/accounts/:account_id
 	if strings.Contains(path, "/accounts/") {
 		return "account", c.Param("account_id")
@@ -110,22 +135,6 @@ func extractResource(c *gin.Context) (string, string) {
 	}
 	if strings.Contains(path, "/groups") && c.Request.Method == http.MethodPost {
 		return "group", ""
-	}
-
-	// Group member routes: /api/v1/groups/:group_id/members/:member_id
-	if strings.Contains(path, "/members/") {
-		return "group_member", c.Param("member_id")
-	}
-	if strings.Contains(path, "/members") && c.Request.Method == http.MethodPost {
-		return "group_member", ""
-	}
-
-	// Message routes: /api/v1/groups/:group_id/messages/:message_id
-	if strings.Contains(path, "/messages/") {
-		return "group_message", c.Param("message_id")
-	}
-	if strings.Contains(path, "/messages") && c.Request.Method == http.MethodPost {
-		return "group_message", ""
 	}
 
 	return "", ""

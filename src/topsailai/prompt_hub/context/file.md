@@ -6,8 +6,8 @@
 
 ## File Content Inspection
 
-- When the user hasn't explicitly requested a full-content inspection, only read partial content during file checks.
-  Example: For text material inspection, only read the first 100 bytes. Applicable commands: `head -c 100 file`, `tail -c 100 file`.
+Scope: Apply ONLY to file inspection/probing. IGNORE if the goal is analysis, summarization, or data extraction.
+Rule: For inspection/probing, unless full-content is explicitly requested, read only partial content (e.g., head/tail -c 100 file).
 
 ## Command Output Control
 

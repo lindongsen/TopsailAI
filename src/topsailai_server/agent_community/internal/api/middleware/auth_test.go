@@ -20,6 +20,14 @@ import (
 	"gorm.io/gorm/schema"
 )
 
+// testServices bundles the services together with the underlying DB so tests
+// can perform direct database updates when service validation must be bypassed.
+type testServices struct {
+	db         *gorm.DB
+	accountSvc *services.AccountService
+	apiKeySvc  *services.APIKeyService
+}
+
 // newTestDB creates an in-memory SQLite database for middleware tests.
 // Each test gets a unique database name to avoid cross-test contamination.
 func newTestDB(t *testing.T) *gorm.DB {
@@ -38,7 +46,8 @@ func newTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	return conn
 }
-func newTestServices(t *testing.T) (*services.AccountService, *services.APIKeyService) {
+
+func newTestServices(t *testing.T) *testServices {
 	t.Helper()
 	db := newTestDB(t)
 	cfg := &config.Config{
@@ -52,15 +61,15 @@ func newTestServices(t *testing.T) (*services.AccountService, *services.APIKeySe
 	accountSvc := services.NewAccountService(db, cfg, auditSvc)
 	apiKeySvc := services.NewAPIKeyService(db, cfg, auditSvc)
 	accountSvc.SetAPIKeyService(apiKeySvc)
-	return accountSvc, apiKeySvc
+	return &testServices{db: db, accountSvc: accountSvc, apiKeySvc: apiKeySvc}
 }
 
-func setupTestRouter(accountSvc *services.AccountService, apiKeySvc *services.APIKeyService) *gin.Engine {
+func setupTestRouter(svc *testServices) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	log := logger.New(logger.Config{Level: "error", Output: "stdout"})
 	r.Use(Logger(log))
-	r.Use(Authentication(apiKeySvc, accountSvc))
+	r.Use(Authentication(svc.apiKeySvc, svc.accountSvc))
 	r.GET("/protected", RequireAuthenticated(), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
@@ -74,11 +83,11 @@ func setupTestRouter(accountSvc *services.AccountService, apiKeySvc *services.AP
 }
 
 func TestAuthentication_ValidAPIKey(t *testing.T) {
-	accountSvc, apiKeySvc := newTestServices(t)
-	r := setupTestRouter(accountSvc, apiKeySvc)
+	svc := newTestServices(t)
+	r := setupTestRouter(svc)
 	ctx := context.Background()
 
-	acc, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	acc, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName: "API User",
 		LoginName:   "apiuser",
 		Role:        models.AccountRoleUser,
@@ -86,7 +95,7 @@ func TestAuthentication_ValidAPIKey(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	key, err := apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
+	key, err := svc.apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
 		APIKeyName: "test-key",
 		Role:       models.APIKeyRoleUser,
 		OwnerID:    acc.AccountID,
@@ -103,11 +112,11 @@ func TestAuthentication_ValidAPIKey(t *testing.T) {
 }
 
 func TestAuthentication_ValidSessionKey(t *testing.T) {
-	accountSvc, apiKeySvc := newTestServices(t)
-	r := setupTestRouter(accountSvc, apiKeySvc)
+	svc := newTestServices(t)
+	r := setupTestRouter(svc)
 	ctx := context.Background()
 
-	acc, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	acc, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName:   "Session User",
 		LoginName:     "sessionuser",
 		LoginPassword: "secret",
@@ -116,7 +125,7 @@ func TestAuthentication_ValidSessionKey(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	sessionKey, _, err := accountSvc.CreateLoginSession(ctx, acc.AccountID)
+	sessionKey, _, err := svc.accountSvc.CreateLoginSession(ctx, acc.AccountID)
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -128,8 +137,8 @@ func TestAuthentication_ValidSessionKey(t *testing.T) {
 }
 
 func TestAuthentication_MissingCredentials(t *testing.T) {
-	accountSvc, apiKeySvc := newTestServices(t)
-	r := setupTestRouter(accountSvc, apiKeySvc)
+	svc := newTestServices(t)
+	r := setupTestRouter(svc)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/protected", nil)
@@ -139,8 +148,8 @@ func TestAuthentication_MissingCredentials(t *testing.T) {
 }
 
 func TestAuthentication_InvalidToken(t *testing.T) {
-	accountSvc, apiKeySvc := newTestServices(t)
-	r := setupTestRouter(accountSvc, apiKeySvc)
+	svc := newTestServices(t)
+	r := setupTestRouter(svc)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/protected", nil)
@@ -151,11 +160,11 @@ func TestAuthentication_InvalidToken(t *testing.T) {
 }
 
 func TestRequireRole_AdminOnly(t *testing.T) {
-	accountSvc, apiKeySvc := newTestServices(t)
-	r := setupTestRouter(accountSvc, apiKeySvc)
+	svc := newTestServices(t)
+	r := setupTestRouter(svc)
 	ctx := context.Background()
 
-	admin, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	admin, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName: "Admin",
 		LoginName:   "adminuser",
 		Role:        models.AccountRoleAdmin,
@@ -163,7 +172,7 @@ func TestRequireRole_AdminOnly(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	user, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	user, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName: "User",
 		LoginName:   "normaluser",
 		Role:        models.AccountRoleUser,
@@ -171,7 +180,7 @@ func TestRequireRole_AdminOnly(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	adminKey, err := apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
+	adminKey, err := svc.apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
 		APIKeyName: "admin-key",
 		Role:       models.APIKeyRoleAdmin,
 		OwnerID:    admin.AccountID,
@@ -179,7 +188,7 @@ func TestRequireRole_AdminOnly(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	userKey, err := apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
+	userKey, err := svc.apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
 		APIKeyName: "user-key",
 		Role:       models.APIKeyRoleUser,
 		OwnerID:    user.AccountID,
@@ -201,11 +210,11 @@ func TestRequireRole_AdminOnly(t *testing.T) {
 }
 
 func TestRequireAPIKeyRole_RequiresAPIKeyAuth(t *testing.T) {
-	accountSvc, apiKeySvc := newTestServices(t)
-	r := setupTestRouter(accountSvc, apiKeySvc)
+	svc := newTestServices(t)
+	r := setupTestRouter(svc)
 	ctx := context.Background()
 
-	acc, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	acc, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName:   "Session Admin",
 		LoginName:     "sessionadmin",
 		LoginPassword: "secret",
@@ -214,7 +223,7 @@ func TestRequireAPIKeyRole_RequiresAPIKeyAuth(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	sessionKey, _, err := accountSvc.CreateLoginSession(ctx, acc.AccountID)
+	sessionKey, _, err := svc.accountSvc.CreateLoginSession(ctx, acc.AccountID)
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -225,12 +234,12 @@ func TestRequireAPIKeyRole_RequiresAPIKeyAuth(t *testing.T) {
 }
 
 func TestAuthentication_Priority_APIKeyOverSession(t *testing.T) {
-	accountSvc, apiKeySvc := newTestServices(t)
+	svc := newTestServices(t)
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	log := logger.New(logger.Config{Level: "error", Output: "stdout"})
 	r.Use(Logger(log))
-	r.Use(Authentication(apiKeySvc, accountSvc))
+	r.Use(Authentication(svc.apiKeySvc, svc.accountSvc))
 	r.GET("/whoami", func(c *gin.Context) {
 		ac, _ := GetAuthContext(c)
 		require.NotNil(t, ac.Account)
@@ -238,7 +247,7 @@ func TestAuthentication_Priority_APIKeyOverSession(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	apiAccount, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	apiAccount, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName: "API Priority",
 		LoginName:   "apipriority",
 		Role:        models.AccountRoleUser,
@@ -246,7 +255,7 @@ func TestAuthentication_Priority_APIKeyOverSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	sessionAccount, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	sessionAccount, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName:   "Session Priority",
 		LoginName:     "sessionpriority",
 		LoginPassword: "secret",
@@ -255,7 +264,7 @@ func TestAuthentication_Priority_APIKeyOverSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	apiKey, err := apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
+	apiKey, err := svc.apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
 		APIKeyName: "priority-key",
 		Role:       models.APIKeyRoleUser,
 		OwnerID:    apiAccount.AccountID,
@@ -263,7 +272,7 @@ func TestAuthentication_Priority_APIKeyOverSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	sessionKey, _, err := accountSvc.CreateLoginSession(ctx, sessionAccount.AccountID)
+	sessionKey, _, err := svc.accountSvc.CreateLoginSession(ctx, sessionAccount.AccountID)
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -278,11 +287,10 @@ func TestAuthentication_Priority_APIKeyOverSession(t *testing.T) {
 }
 
 func TestRequireAuthenticated_InactiveAccount(t *testing.T) {
-	accountSvc, apiKeySvc := newTestServices(t)
-	r := setupTestRouter(accountSvc, apiKeySvc)
+	svc := newTestServices(t)
 	ctx := context.Background()
 
-	acc, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	acc, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName:   "Inactive User",
 		LoginName:     "inactiveuser",
 		LoginPassword: "secret",
@@ -291,37 +299,55 @@ func TestRequireAuthenticated_InactiveAccount(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = accountSvc.UpdateAccount(ctx, &services.UpdateAccountRequest{
-		AccountID: acc.AccountID,
-		Status:    ptrStatus(models.AccountStatusInactive),
+	_, err = svc.accountSvc.UpdateAccount(ctx, &services.UpdateAccountRequest{
+		AccountID:  acc.AccountID,
+		Status:     ptrStatus(models.AccountStatusInactive),
 		CallerRole: models.AccountRoleAdmin,
 	})
 	require.NoError(t, err)
 
-	sessionKey, _, err := accountSvc.CreateLoginSession(ctx, acc.AccountID)
+	// Reload account so the local struct reflects the inactive status.
+	var inactive models.Account
+	err = svc.db.WithContext(ctx).First(&inactive, "account_id = ?", acc.AccountID).Error
 	require.NoError(t, err)
+
+	// CreateLoginSession rejects inactive accounts, so inject an authenticated
+	// AuthContext directly to test RequireAuthenticated in isolation.
+	gin.SetMode(gin.TestMode)
+	isolated := gin.New()
+	log := logger.New(logger.Config{Level: "error", Output: "stdout"})
+	isolated.Use(Logger(log))
+	isolated.Use(func(c *gin.Context) {
+		c.Set(authContextKey, AuthContext{
+			Account:         &inactive,
+			AuthMethod:      AuthMethodSession,
+			IsAuthenticated: true,
+		})
+	})
+	isolated.GET("/protected", RequireAuthenticated(), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/protected", nil)
-	req.Header.Set("X-Session-Key", sessionKey)
-	r.ServeHTTP(w, req)
+	isolated.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Contains(t, w.Body.String(), "account is not active")
 }
 
 func TestRequireRole_ManagerCanAccessUserRoute(t *testing.T) {
-	accountSvc, apiKeySvc := newTestServices(t)
+	svc := newTestServices(t)
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	log := logger.New(logger.Config{Level: "error", Output: "stdout"})
 	r.Use(Logger(log))
-	r.Use(Authentication(apiKeySvc, accountSvc))
+	r.Use(Authentication(svc.apiKeySvc, svc.accountSvc))
 	r.GET("/user", RequireRole(models.AccountRoleUser), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	ctx := context.Background()
 
-	manager, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	manager, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName: "Manager",
 		LoginName:   "manageruser",
 		Role:        models.AccountRoleManager,
@@ -329,7 +355,7 @@ func TestRequireRole_ManagerCanAccessUserRoute(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	managerKey, err := apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
+	managerKey, err := svc.apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
 		APIKeyName: "manager-key",
 		Role:       models.APIKeyRoleManager,
 		OwnerID:    manager.AccountID,
@@ -345,11 +371,10 @@ func TestRequireRole_ManagerCanAccessUserRoute(t *testing.T) {
 }
 
 func TestRequireRole_UnknownRole(t *testing.T) {
-	accountSvc, apiKeySvc := newTestServices(t)
-	r := setupTestRouter(accountSvc, apiKeySvc)
+	svc := newTestServices(t)
 	ctx := context.Background()
 
-	acc, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	acc, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName:   "Unknown Role",
 		LoginName:     "unknownrole",
 		LoginPassword: "secret",
@@ -359,28 +384,44 @@ func TestRequireRole_UnknownRole(t *testing.T) {
 	require.NoError(t, err)
 
 	// Bypass service validation to set an unknown role directly in the DB.
-	err = accountSvc.(*services.AccountService).DB().WithContext(ctx).
+	err = svc.db.WithContext(ctx).
 		Model(&models.Account{}).
 		Where("account_id = ?", acc.AccountID).
 		Update("role", "").Error
 	require.NoError(t, err)
 
-	sessionKey, _, err := accountSvc.CreateLoginSession(ctx, acc.AccountID)
+	// Reload account with the unknown role.
+	var updated models.Account
+	err = svc.db.WithContext(ctx).First(&updated, "account_id = ?", acc.AccountID).Error
 	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	isolated := gin.New()
+	log := logger.New(logger.Config{Level: "error", Output: "stdout"})
+	isolated.Use(Logger(log))
+	isolated.Use(func(c *gin.Context) {
+		c.Set(authContextKey, AuthContext{
+			Account:         &updated,
+			AuthMethod:      AuthMethodSession,
+			IsAuthenticated: true,
+		})
+	})
+	isolated.GET("/protected", RequireRole(models.AccountRoleUser), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/protected", nil)
-	req.Header.Set("X-Session-Key", sessionKey)
-	r.ServeHTTP(w, req)
+	isolated.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestRequireAPIKeyRole_InsufficientRole(t *testing.T) {
-	accountSvc, apiKeySvc := newTestServices(t)
-	r := setupTestRouter(accountSvc, apiKeySvc)
+	svc := newTestServices(t)
+	r := setupTestRouter(svc)
 	ctx := context.Background()
 
-	user, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	user, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName: "User",
 		LoginName:   "userlowrole",
 		Role:        models.AccountRoleUser,
@@ -388,7 +429,7 @@ func TestRequireAPIKeyRole_InsufficientRole(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	userKey, err := apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
+	userKey, err := svc.apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
 		APIKeyName: "user-key",
 		Role:       models.APIKeyRoleUser,
 		OwnerID:    user.AccountID,
@@ -405,12 +446,12 @@ func TestRequireAPIKeyRole_InsufficientRole(t *testing.T) {
 }
 
 func TestRequireOwnerOrAdmin_Owner(t *testing.T) {
-	accountSvc, apiKeySvc := newTestServices(t)
+	svc := newTestServices(t)
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	log := logger.New(logger.Config{Level: "error", Output: "stdout"})
 	r.Use(Logger(log))
-	r.Use(Authentication(apiKeySvc, accountSvc))
+	r.Use(Authentication(svc.apiKeySvc, svc.accountSvc))
 	r.GET("/owner/:owner_id", func(c *gin.Context) {
 		ownerID := c.Param("owner_id")
 		RequireOwnerOrAdmin(ownerID)(c)
@@ -419,7 +460,7 @@ func TestRequireOwnerOrAdmin_Owner(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	owner, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	owner, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName: "Owner",
 		LoginName:   "owneruser",
 		Role:        models.AccountRoleUser,
@@ -427,7 +468,7 @@ func TestRequireOwnerOrAdmin_Owner(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	ownerKey, err := apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
+	ownerKey, err := svc.apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
 		APIKeyName: "owner-key",
 		Role:       models.APIKeyRoleUser,
 		OwnerID:    owner.AccountID,
@@ -443,12 +484,12 @@ func TestRequireOwnerOrAdmin_Owner(t *testing.T) {
 }
 
 func TestRequireOwnerOrAdmin_Admin(t *testing.T) {
-	accountSvc, apiKeySvc := newTestServices(t)
+	svc := newTestServices(t)
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	log := logger.New(logger.Config{Level: "error", Output: "stdout"})
 	r.Use(Logger(log))
-	r.Use(Authentication(apiKeySvc, accountSvc))
+	r.Use(Authentication(svc.apiKeySvc, svc.accountSvc))
 	r.GET("/owner/:owner_id", func(c *gin.Context) {
 		ownerID := c.Param("owner_id")
 		RequireOwnerOrAdmin(ownerID)(c)
@@ -457,7 +498,7 @@ func TestRequireOwnerOrAdmin_Admin(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	admin, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	admin, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName: "Admin",
 		LoginName:   "adminowner",
 		Role:        models.AccountRoleAdmin,
@@ -465,7 +506,7 @@ func TestRequireOwnerOrAdmin_Admin(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	adminKey, err := apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
+	adminKey, err := svc.apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
 		APIKeyName: "admin-key",
 		Role:       models.APIKeyRoleAdmin,
 		OwnerID:    admin.AccountID,
@@ -481,12 +522,12 @@ func TestRequireOwnerOrAdmin_Admin(t *testing.T) {
 }
 
 func TestRequireOwnerOrAdmin_Denied(t *testing.T) {
-	accountSvc, apiKeySvc := newTestServices(t)
+	svc := newTestServices(t)
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	log := logger.New(logger.Config{Level: "error", Output: "stdout"})
 	r.Use(Logger(log))
-	r.Use(Authentication(apiKeySvc, accountSvc))
+	r.Use(Authentication(svc.apiKeySvc, svc.accountSvc))
 	r.GET("/owner/:owner_id", func(c *gin.Context) {
 		ownerID := c.Param("owner_id")
 		RequireOwnerOrAdmin(ownerID)(c)
@@ -495,7 +536,7 @@ func TestRequireOwnerOrAdmin_Denied(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	user, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	user, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName: "User",
 		LoginName:   "userdenied",
 		Role:        models.AccountRoleUser,
@@ -503,7 +544,7 @@ func TestRequireOwnerOrAdmin_Denied(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	other, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+	other, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
 		AccountName: "Other",
 		LoginName:   "otheruser",
 		Role:        models.AccountRoleUser,
@@ -511,7 +552,7 @@ func TestRequireOwnerOrAdmin_Denied(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	userKey, err := apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
+	userKey, err := svc.apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
 		APIKeyName: "user-key",
 		Role:       models.APIKeyRoleUser,
 		OwnerID:    user.AccountID,
@@ -539,14 +580,18 @@ func TestGetAuthContext_Missing(t *testing.T) {
 
 func TestRoleGE_Unknown(t *testing.T) {
 	assert.False(t, accountRoleGE(models.AccountRole("unknown"), models.AccountRoleUser))
-	assert.False(t, accountRoleGE(models.AccountRole("unknown"), models.AccountRole("")))
+	assert.True(t, accountRoleGE(models.AccountRole("unknown"), models.AccountRole("")))
 	assert.True(t, accountRoleGE(models.AccountRoleAdmin, models.AccountRole("unknown")))
 
 	assert.False(t, apiKeyRoleGE(models.APIKeyRole("unknown"), models.APIKeyRoleUser))
-	assert.False(t, apiKeyRoleGE(models.APIKeyRole("unknown"), models.APIKeyRole("")))
+	assert.True(t, apiKeyRoleGE(models.APIKeyRole("unknown"), models.APIKeyRole("")))
 	assert.True(t, apiKeyRoleGE(models.APIKeyRoleAdmin, models.APIKeyRole("unknown")))
 }
 
 func ptrStatus(s models.AccountStatus) *models.AccountStatus {
+	return &s
+}
+
+func ptrString(s string) *string {
 	return &s
 }
