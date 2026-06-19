@@ -553,3 +553,116 @@ func TestBootstrapService_renewLock_TokenMismatchStops(t *testing.T) {
 		t.Fatal("renewLock did not stop after token mismatch")
 	}
 }
+
+func TestBootstrapService_validateConfiguredToken_InactiveKey(t *testing.T) {
+	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
+	ctx := context.Background()
+
+	admin, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Inactive Admin",
+		LoginName:   "inactive-admin",
+		Role:        models.AccountRoleAdmin,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	key, err := apiKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
+		APIKeyName: "Inactive Key",
+		Role:       models.APIKeyRoleAdmin,
+		OwnerID:    admin.AccountID,
+		CreatorID:  "system",
+	})
+	require.NoError(t, err)
+
+	// Deactivate the key directly.
+	require.NoError(t, db.WithContext(ctx).Model(&models.APIKey{}).Where("api_key_id = ?", key.APIKey.APIKeyID).Update("status", models.APIKeyStatusInactive).Error)
+
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, nil, newDiscardLogger(t))
+	err = svc.validateConfiguredToken(ctx, key.Token, models.AccountRoleAdmin)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "inactive")
+}
+
+func TestBootstrapService_writeTokenFile_Failure(t *testing.T) {
+	svc := newTestBootstrapService(t, nil)
+
+	// Use a path that cannot be created to force a write error.
+	err := svc.writeTokenFile("/nonexistent-dir/test-token.acs", "ak-test.secretvalue")
+	require.Error(t, err)
+}
+
+func TestBootstrapService_acquireLock_CreateSuccess(t *testing.T) {
+	kv := newStubKeyValue()
+	svc := newTestBootstrapService(t, kv)
+	ctx := context.Background()
+
+	release, err := svc.acquireLock(ctx, "acs:lock:bootstrap:create-success", "token")
+	require.NoError(t, err)
+	require.NotNil(t, release)
+
+	// Verify the key was created.
+	_, err = kv.Get("acs:lock:bootstrap:create-success")
+	require.NoError(t, err)
+
+	release()
+
+	// After release the key should be deleted.
+	_, err = kv.Get("acs:lock:bootstrap:create-success")
+	require.ErrorIs(t, err, nats.ErrKeyNotFound)
+}
+
+func TestBootstrapService_acquireLock_CreateOtherError(t *testing.T) {
+	kv := newStubKeyValue()
+	kv.createErr = errors.New("nats unavailable")
+
+	svc := newTestBootstrapService(t, kv)
+	ctx := context.Background()
+
+	release, err := svc.acquireLock(ctx, "acs:lock:bootstrap:create-error", "token")
+	require.NoError(t, err)
+	require.NotNil(t, release)
+
+	// Should fall back to in-memory lock.
+	release()
+}
+
+func TestBootstrapService_renewLock_UpdateErrorContinues(t *testing.T) {
+	kv := newStubKeyValue()
+	key := "acs:lock:bootstrap:renew-update-error"
+	_, err := kv.Create(key, []byte("token"))
+	require.NoError(t, err)
+
+	kv.updateErr = errors.New("update failed")
+
+	svc := newTestBootstrapService(t, kv)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go svc.renewLock(ctx, key, "token", done)
+
+	// Wait briefly to allow at least one renewal attempt with the error.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+		// Expected after context cancellation.
+	case <-time.After(2 * time.Second):
+		t.Fatal("renewLock did not stop after context cancellation")
+	}
+}
+
+func TestBootstrapService_hasAccountWithRole_Error(t *testing.T) {
+	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, nil, newDiscardLogger(t))
+	ctx := context.Background()
+
+	// Close the DB to force an error.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	_, err = svc.hasAccountWithRole(ctx, models.AccountRoleAdmin)
+	require.Error(t, err)
+}

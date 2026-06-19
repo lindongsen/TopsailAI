@@ -85,6 +85,14 @@ func createTestAPIKey(t *testing.T, apiKeySvc *services.APIKeyService, name stri
 	require.NoError(t, err)
 	return result.APIKey
 }
+// toJSON marshals v to JSON and fails the test on error.
+func toJSON(t *testing.T, v interface{}) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	return b
+}
+
 
 func TestAPIKeyHandler_CreateAPIKey_AdminCreatesAdminForAnother(t *testing.T) {
 	db := setupAPIKeyTestDB(t)
