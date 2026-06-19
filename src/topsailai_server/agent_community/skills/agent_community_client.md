@@ -6,17 +6,23 @@ programming_language: python
 
 根据API文档实现对 group 全生命周期管理的skill，只需要关注 group。
 
-## call_agent
+## Environment Variables
 
-有一个专门用于调用agent的脚本，参数 `-m, --message` 用于传递 message_text。
-
-环境变量有：
+使用这个SKILL需要的环境变量，你可以认为使用者会自带这些环境变量：
+```
 ACS_AGENT_ID   -> member_id
 ACS_AGENT_NAME -> member_name
 ACS_AGENT_TYPE -> member_type
 ACS_AGENT_TIMEOUT
 ACS_GROUP_ID
 ACS_MESSAGE_ID
+
+ACS_LOGIN_SESSION_KEY -> Header: x-session-key
+```
+
+## Script: call_agent
+
+有一个专门用于调用agent的脚本，参数 `-m, --message` 用于传递 message_text。
 
 工作逻辑是：
 
