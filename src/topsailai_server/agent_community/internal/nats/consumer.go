@@ -46,12 +46,19 @@ type AgentExecutor interface {
 	CheckStatus(ctx context.Context, iface *agent.Interface, env map[string]string, traceID string) (*agent.ExecutionResult, error)
 	Chat(ctx context.Context, iface *agent.Interface, env map[string]string, traceID string) (*agent.ExecutionResult, error)
 }
+// AccountService provides account login session operations for the consumer.
+// A minimal interface is used here to avoid an import cycle with services.
+type AccountService interface {
+	EnsureLoginSession(ctx context.Context, accountID string) (string, int64, error)
+}
+
 
 // Consumer processes pending messages from NATS and dispatches them to agents.
 type Consumer struct {
 	db             *gorm.DB
 	publisher      EventPublisher
 	executor       AgentExecutor
+	accountService AccountService
 	pool           *workpool.Pool
 	contextBuilder *message.ContextBuilder
 	maxChainLength int
@@ -64,6 +71,7 @@ func NewConsumer(
 	db *gorm.DB,
 	publisher EventPublisher,
 	executor AgentExecutor,
+	accountService AccountService,
 	pool *workpool.Pool,
 	cfg *config.Config,
 ) *Consumer {
@@ -75,6 +83,7 @@ func NewConsumer(
 		db:             db,
 		publisher:      publisher,
 		executor:       executor,
+		accountService: accountService,
 		pool:           pool,
 		contextBuilder: message.NewContextBuilder(),
 		maxChainLength: 5,
@@ -473,6 +482,28 @@ func (c *Consumer) processAgentTarget(
 		groupContext = group.GroupContext
 	}
 
+	// Determine login session key for manager-agent triggers.
+	var loginSessionKey string
+	if agentMember.MemberType == models.MemberTypeManagerAgent {
+		if c.accountService != nil {
+			sessionKey, _, err := c.accountService.EnsureLoginSession(ctx, pendingMsg.SenderID)
+			if err != nil {
+				logger.WarnM(consumerModule, traceID, "failed to ensure login session for manager-agent trigger",
+					"sender_id", pendingMsg.SenderID,
+					"agent_id", agentMember.MemberID,
+					"error", err,
+				)
+			} else {
+				loginSessionKey = sessionKey
+			}
+		} else {
+			logger.WarnM(consumerModule, traceID, "account service not configured, cannot provide login session key",
+				"sender_id", pendingMsg.SenderID,
+				"agent_id", agentMember.MemberID,
+			)
+		}
+	}
+
 	// Build chat environment with all required variables
 	chatEnv := iface.BuildChatEnv(
 		agentMember.MemberID,
@@ -489,6 +520,7 @@ func (c *Consumer) processAgentTarget(
 		groupContext,
 		pendingMsg.Mentions,
 		string(triggerInfo.Type),
+		loginSessionKey,
 	)
 
 	// Execute agent chat

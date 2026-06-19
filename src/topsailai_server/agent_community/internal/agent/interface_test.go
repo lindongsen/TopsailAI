@@ -202,6 +202,7 @@ func TestBuildChatEnv(t *testing.T) {
 		"user1", "Alice", "msg1", "Hello world",
 		"agent",
 		"system-prompt", "group-context", `[{"member_id":"user1"}]`, "mention",
+		"",
 	)
 
 	// Base environments should be copied
@@ -261,6 +262,38 @@ func TestBuildChatEnv(t *testing.T) {
 	}
 	if env["ACS_MESSAGE_TRIGGER_TYPE"] != "mention" {
 		t.Errorf("message_trigger_type = %v", env["ACS_MESSAGE_TRIGGER_TYPE"])
+	}
+
+	// Login session key should not be set when empty
+	if _, ok := env["ACS_LOGIN_SESSION_KEY"]; ok {
+		t.Errorf("ACS_LOGIN_SESSION_KEY should not be set when loginSessionKey is empty")
+	}
+}
+
+// TestBuildChatEnvWithLoginSessionKey verifies the login session key is forwarded.
+func TestBuildChatEnvWithLoginSessionKey(t *testing.T) {
+	jsonStr := `{
+		"adaptor": "test",
+		"environments": {
+			"ACS_AGENT_API_BASE": "http://agent.local:8080"
+		}
+	}`
+
+	iface, err := ParseInterface(jsonStr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	env := iface.BuildChatEnv(
+		"manager1", "Manager", "manager-agent", "group1", "TestGroup",
+		"user1", "Alice", "msg1", "Hello manager",
+		"agent",
+		"", "", "", "auto",
+		"acc-abc123-550e8400e29b41d4a716446655440000",
+	)
+
+	if env["ACS_LOGIN_SESSION_KEY"] != "acc-abc123-550e8400e29b41d4a716446655440000" {
+		t.Errorf("ACS_LOGIN_SESSION_KEY = %v", env["ACS_LOGIN_SESSION_KEY"])
 	}
 }
 

@@ -3,7 +3,10 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,6 +36,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	return conn
 }
+
 func newTestConfig() *config.Config {
 	return &config.Config{
 		Account: config.AccountConfig{
@@ -199,6 +203,46 @@ func TestAccountService_CreateAndValidateLoginSession(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidSession)
 }
 
+func TestAccountService_EnsureLoginSession(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	acc, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName:   "Grace",
+		LoginName:     "grace",
+		LoginPassword: "secret",
+		Role:          models.AccountRoleUser,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	// Successful creation for active account.
+	sessionKey, expiry, err := accountSvc.EnsureLoginSession(ctx, acc.AccountID)
+	require.NoError(t, err)
+	assert.Contains(t, sessionKey, acc.AccountID)
+	assert.Greater(t, expiry, time.Now().UnixMilli())
+
+	validated, err := accountSvc.ValidateLoginSession(ctx, sessionKey)
+	require.NoError(t, err)
+	assert.Equal(t, acc.AccountID, validated.AccountID)
+
+	// Error for non-existent account.
+	_, _, err = accountSvc.EnsureLoginSession(ctx, "acc-doesnotexist")
+	assert.ErrorIs(t, err, ErrAccountNotFound)
+
+	// Error for inactive/deleted account.
+	deletedStatus := models.AccountStatusDeleted
+	_, err = accountSvc.UpdateAccount(ctx, &UpdateAccountRequest{
+		AccountID:  acc.AccountID,
+		Status:     &deletedStatus,
+		CallerRole: models.AccountRoleAdmin,
+	})
+	require.NoError(t, err)
+	_, _, err = accountSvc.EnsureLoginSession(ctx, acc.AccountID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "account is not active")
+}
+
 func TestAccountService_UpdateAccount_RoleConstraints(t *testing.T) {
 	_, accountSvc, _, _ := newTestServices(t)
 	ctx := context.Background()
@@ -229,4 +273,403 @@ func TestAccountService_UpdateAccount_RoleConstraints(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, models.AccountRoleManager, updated.Role)
+}
+
+func TestAccountService_CreateAccount_DefaultRoleAndInvalidRole(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	// Empty role defaults to user.
+	acc, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Default Role",
+		LoginName:   "default-role",
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, models.AccountRoleUser, acc.Role)
+
+	// Invalid role is rejected.
+	_, err = accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Invalid Role",
+		LoginName:   "invalid-role",
+		Role:        "superuser",
+		CreatorID:   "system",
+	})
+	assert.ErrorIs(t, err, ErrInvalidRole)
+}
+
+func TestAccountService_CreateAccount_EmptyLoginName(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	_, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "No Login Name",
+		LoginName:   "",
+		CreatorID:   "system",
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "login_name is required")
+}
+
+func TestAccountService_GetAccountByExternalID(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	created, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "External ID",
+		LoginName:   "external-id",
+		ExternalID:  "ext-12345",
+		Role:        models.AccountRoleUser,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	found, err := accountSvc.GetAccountByExternalID(ctx, "ext-12345")
+	require.NoError(t, err)
+	assert.Equal(t, created.AccountID, found.AccountID)
+	assert.Equal(t, "ext-12345", found.ExternalID)
+
+	_, err = accountSvc.GetAccountByExternalID(ctx, "ext-missing")
+	assert.ErrorIs(t, err, ErrAccountNotFound)
+}
+
+func TestAccountService_ListAccounts_PaginationAndErrors(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		_, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+			AccountName: "User",
+			LoginName:   fmt.Sprintf("list-user-%d", i),
+			Role:        models.AccountRoleUser,
+			CreatorID:   "system",
+		})
+		require.NoError(t, err)
+	}
+
+	// Default pagination.
+	items, total, err := accountSvc.ListAccounts(ctx, 0, 0)
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), total)
+	assert.Len(t, items, 5)
+
+	// Limit and offset.
+	items, total, err = accountSvc.ListAccounts(ctx, 1, 2)
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), total)
+	assert.Len(t, items, 2)
+
+	// Offset beyond total.
+	items, total, err = accountSvc.ListAccounts(ctx, 10, 10)
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), total)
+	assert.Empty(t, items)
+}
+
+func TestAccountService_UpdateAccount_CallerWeightZero(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	user, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Caller Weight Zero",
+		LoginName:   "caller-weight-zero",
+		Role:        models.AccountRoleUser,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	newName := "Updated"
+	_, err = accountSvc.UpdateAccount(ctx, &UpdateAccountRequest{
+		AccountID:   user.AccountID,
+		AccountName: &newName,
+		CallerRole:  "",
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid caller role")
+}
+
+func TestAccountService_UpdateAccount_TargetRoleHigher(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	admin, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Admin Target",
+		LoginName:   "admin-target",
+		Role:        models.AccountRoleAdmin,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	newName := "Should Fail"
+	_, err = accountSvc.UpdateAccount(ctx, &UpdateAccountRequest{
+		AccountID:   admin.AccountID,
+		AccountName: &newName,
+		CallerRole:  models.AccountRoleUser,
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "insufficient privileges")
+}
+
+func TestAccountService_UpdateAccount_InvalidStatus(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	user, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Invalid Status",
+		LoginName:   "invalid-status",
+		Role:        models.AccountRoleUser,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	badStatus := models.AccountStatus("unknown")
+	_, err = accountSvc.UpdateAccount(ctx, &UpdateAccountRequest{
+		AccountID:  user.AccountID,
+		Status:     &badStatus,
+		CallerRole: models.AccountRoleAdmin,
+	})
+	assert.ErrorIs(t, err, ErrInvalidStatus)
+}
+
+func TestAccountService_UpdateAccount_PartialFields(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	user, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName:  "Partial",
+		LoginName:    "partial",
+		Role:         models.AccountRoleUser,
+		CreatorID:    "system",
+		ExternalID:   "ext-old",
+		Email:        "old@example.com",
+		AuthProvider: "oidc",
+		AvatarURL:    "http://old.example.com/avatar.png",
+	})
+	require.NoError(t, err)
+
+	newName := "Partial Updated"
+	newEmail := "new@example.com"
+	updated, err := accountSvc.UpdateAccount(ctx, &UpdateAccountRequest{
+		AccountID:   user.AccountID,
+		AccountName: &newName,
+		Email:       &newEmail,
+		CallerRole:  models.AccountRoleAdmin,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Partial Updated", updated.AccountName)
+	assert.Equal(t, "new@example.com", updated.Email)
+	// Fields not supplied should remain unchanged.
+	assert.Equal(t, "ext-old", updated.ExternalID)
+	assert.Equal(t, "oidc", updated.AuthProvider)
+	assert.Equal(t, "http://old.example.com/avatar.png", updated.AvatarURL)
+}
+
+func TestAccountService_SoftDeleteAccount_APIKeySvcNil(t *testing.T) {
+	// Create a service without API key service injection.
+	cfg := newTestConfig()
+	db := newTestDB(t)
+	auditSvc := NewAuditLogService(db)
+	standaloneSvc := NewAccountService(db, cfg, auditSvc)
+
+	ctx := context.Background()
+	acc, err := standaloneSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Nil APIKeySvc",
+		LoginName:   "nil-apikeysvc",
+		Role:        models.AccountRoleUser,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	err = standaloneSvc.SoftDeleteAccount(ctx, acc.AccountID)
+	require.NoError(t, err)
+
+	deleted, err := standaloneSvc.GetAccountByID(ctx, acc.AccountID)
+	require.NoError(t, err)
+	assert.Equal(t, models.AccountStatusDeleted, deleted.Status)
+}
+
+func TestAccountService_ChangePassword_EmptyAndNotFound(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	acc, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName:   "Password",
+		LoginName:     "password",
+		LoginPassword: "oldpassword",
+		Role:          models.AccountRoleUser,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	// Empty password should fail.
+	err = accountSvc.ChangePassword(ctx, acc.AccountID, "")
+	assert.Error(t, err)
+
+	// Non-existent account should fail.
+	err = accountSvc.ChangePassword(ctx, "acc-missing", "newpassword")
+	assert.ErrorIs(t, err, ErrAccountNotFound)
+
+	// Valid password change should succeed.
+	err = accountSvc.ChangePassword(ctx, acc.AccountID, "newpassword")
+	require.NoError(t, err)
+
+	_, _, _, err = accountSvc.LoginByPassword(ctx, "password", "newpassword")
+	require.NoError(t, err)
+}
+
+func TestAccountService_CreateLoginSession_InactiveAccount(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	acc, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Inactive Session",
+		LoginName:   "inactive-session",
+		Role:        models.AccountRoleUser,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	inactiveStatus := models.AccountStatusInactive
+	_, err = accountSvc.UpdateAccount(ctx, &UpdateAccountRequest{
+		AccountID:  acc.AccountID,
+		Status:     &inactiveStatus,
+		CallerRole: models.AccountRoleAdmin,
+	})
+	require.NoError(t, err)
+
+	_, _, err = accountSvc.CreateLoginSession(ctx, acc.AccountID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "account is not active")
+}
+
+func TestAccountService_ValidateLoginSession_Expired(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	acc, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Expired Session",
+		LoginName:   "expired-session",
+		Role:        models.AccountRoleUser,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	sessionKey, _, err := accountSvc.CreateLoginSession(ctx, acc.AccountID)
+	require.NoError(t, err)
+
+	// Manually expire the session in the database.
+	err = accountSvc.db.Model(&models.Account{}).
+		Where("account_id = ?", acc.AccountID).
+		Update("login_session_expired_time", time.Now().UnixMilli()-1000).Error
+	require.NoError(t, err)
+
+	_, err = accountSvc.ValidateLoginSession(ctx, sessionKey)
+	assert.ErrorIs(t, err, ErrInvalidSession)
+}
+
+func TestAccountService_ValidateLoginSession_WrongSecret(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	acc, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Wrong Secret",
+		LoginName:   "wrong-secret",
+		Role:        models.AccountRoleUser,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	_, _, err = accountSvc.CreateLoginSession(ctx, acc.AccountID)
+	require.NoError(t, err)
+
+	_, err = accountSvc.ValidateLoginSession(ctx, acc.AccountID+"-wrongsecretvalue")
+	assert.ErrorIs(t, err, ErrInvalidSession)
+}
+
+func TestAccountService_ValidateLoginSession_ExtraHyphens(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	acc, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Extra Hyphens",
+		LoginName:   "extra-hyphens",
+		Role:        models.AccountRoleUser,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	sessionKey, _, err := accountSvc.CreateLoginSession(ctx, acc.AccountID)
+	require.NoError(t, err)
+
+	// Split the session key into account_id and secret parts.
+	// Format is {account_id}-{secret}, e.g. acc-xxx-{base64url secret}.
+	parts := strings.SplitN(sessionKey, "-", 3)
+	require.Len(t, parts, 3)
+	accountIDPart := parts[0] + "-" + parts[1]
+	secretPart := parts[2]
+
+	// Reconstruct with extra hyphens in the secret part.
+	malformedKey := accountIDPart + "-extra-" + secretPart
+	_, err = accountSvc.ValidateLoginSession(ctx, malformedKey)
+	assert.ErrorIs(t, err, ErrInvalidSession)
+}
+
+func TestAccountService_LoginByPassword_InactiveAndNoPassword(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	acc, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName:   "Inactive Login",
+		LoginName:     "inactive-login",
+		LoginPassword: "password",
+		Role:          models.AccountRoleUser,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	inactiveStatus := models.AccountStatusInactive
+	_, err = accountSvc.UpdateAccount(ctx, &UpdateAccountRequest{
+		AccountID:  acc.AccountID,
+		Status:     &inactiveStatus,
+		CallerRole: models.AccountRoleAdmin,
+	})
+	require.NoError(t, err)
+
+	_, _, _, err = accountSvc.LoginByPassword(ctx, "inactive-login", "password")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "account is not active")
+
+	// Account without password.
+	_, err = accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "No Password",
+		LoginName:   "no-password",
+		Role:        models.AccountRoleUser,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	_, _, _, err = accountSvc.LoginByPassword(ctx, "no-password", "anypassword")
+	assert.ErrorIs(t, err, ErrPasswordNotSet)
+}
+
+func TestAccountService_Helpers_Validators(t *testing.T) {
+	assert.True(t, isValidAccountRole(models.AccountRoleAdmin))
+	assert.True(t, isValidAccountRole(models.AccountRoleManager))
+	assert.True(t, isValidAccountRole(models.AccountRoleUser))
+	assert.False(t, isValidAccountRole("unknown"))
+	assert.False(t, isValidAccountRole(""))
+
+	assert.True(t, isValidAccountStatus(models.AccountStatusActive))
+	assert.True(t, isValidAccountStatus(models.AccountStatusInactive))
+	assert.True(t, isValidAccountStatus(models.AccountStatusDeleted))
+	assert.False(t, isValidAccountStatus("unknown"))
+	assert.False(t, isValidAccountStatus(""))
+}
+
+func TestAccountService_Helpers_UniqueViolation(t *testing.T) {
+	assert.False(t, isUniqueViolation(nil))
+	assert.True(t, isUniqueViolation(fmt.Errorf("UNIQUE constraint failed")))
+	assert.True(t, isUniqueViolation(fmt.Errorf("duplicate key value violates unique constraint")))
+	assert.True(t, isUniqueViolation(fmt.Errorf("Duplicate entry")))
+	assert.False(t, isUniqueViolation(fmt.Errorf("some other error")))
 }

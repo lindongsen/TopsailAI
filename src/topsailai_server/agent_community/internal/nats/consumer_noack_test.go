@@ -21,7 +21,7 @@ func TestConsumer_NoAckMode_Enabled(t *testing.T) {
 			PendingMessageNoAck: true,
 		},
 	}
-	c := NewConsumer(db, nil, nil, nil, cfg)
+	c := NewConsumer(db, nil, nil, nil, nil, cfg)
 
 	assert.True(t, c.noAck, "noAck should be true when PendingMessageNoAck is enabled")
 }
@@ -33,7 +33,7 @@ func TestConsumer_NoAckMode_Disabled(t *testing.T) {
 			PendingMessageNoAck: false,
 		},
 	}
-	c := NewConsumer(db, nil, nil, nil, cfg)
+	c := NewConsumer(db, nil, nil, nil, nil, cfg)
 
 	assert.False(t, c.noAck, "noAck should be false when PendingMessageNoAck is disabled")
 }
@@ -43,14 +43,14 @@ func TestConsumer_NoAckMode_Default(t *testing.T) {
 	cfg := &config.Config{
 		NATS: config.NATSConfig{},
 	}
-	c := NewConsumer(db, nil, nil, nil, cfg)
+	c := NewConsumer(db, nil, nil, nil, nil, cfg)
 
 	assert.False(t, c.noAck, "noAck should default to false")
 }
 
 func TestConsumer_NoAckMode_NilConfig(t *testing.T) {
 	db := setupConsumerTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	assert.False(t, c.noAck, "noAck should default to false when config is nil")
 }
@@ -69,7 +69,7 @@ func TestHandler_NoAckMode_Success(t *testing.T) {
 	group := createTestGroup(t, db, "g-noack-success", "Test Group")
 	_ = createTestAgentMember(t, db, group.GroupID, "user1", "")
 
-	c := NewConsumer(db, nil, nil, nil, cfg)
+	c := NewConsumer(db, nil, nil, nil, nil, cfg)
 
 	// Create a mock message
 	payload := PendingMessagePayload{
@@ -110,7 +110,7 @@ func TestHandler_NoAckMode_DoesNotCallAck(t *testing.T) {
 		},
 	}
 
-	c := NewConsumer(db, nil, nil, nil, cfg)
+	c := NewConsumer(db, nil, nil, nil, nil, cfg)
 
 	payload := PendingMessagePayload{
 		GroupMessage: models.GroupMessage{
@@ -148,7 +148,7 @@ func TestHandler_NoAckMode_PanicRecovery(t *testing.T) {
 		},
 	}
 
-	c := NewConsumer(db, nil, nil, nil, cfg)
+	c := NewConsumer(db, nil, nil, nil, nil, cfg)
 
 	// Create invalid payload that will cause panic in processMessage
 	msg := &nats.Msg{
@@ -173,7 +173,7 @@ func TestHandler_NoAckMode_NoGoroutineLeak(t *testing.T) {
 		},
 	}
 
-	c := NewConsumer(db, nil, nil, nil, cfg)
+	c := NewConsumer(db, nil, nil, nil, nil, cfg)
 
 	payload := PendingMessagePayload{
 		GroupMessage: models.GroupMessage{
@@ -220,7 +220,7 @@ func TestHandler_AckMode_CallsAckOnSuccess(t *testing.T) {
 	group := createTestGroup(t, db, "g-ack-success", "Test Group")
 	_ = createTestAgentMember(t, db, group.GroupID, "user1", "")
 
-	c := NewConsumer(db, nil, nil, nil, cfg)
+	c := NewConsumer(db, nil, nil, nil, nil, cfg)
 
 	payload := PendingMessagePayload{
 		GroupMessage: models.GroupMessage{
@@ -331,7 +331,7 @@ func TestHandler_NoAckMode_DoesNotStartHeartbeat(t *testing.T) {
 		},
 	}
 
-	c := NewConsumer(db, nil, nil, nil, cfg)
+	c := NewConsumer(db, nil, nil, nil, nil, cfg)
 
 	payload := PendingMessagePayload{
 		GroupMessage: models.GroupMessage{
@@ -376,7 +376,7 @@ func TestHandler_AckMode_StartsHeartbeat(t *testing.T) {
 		},
 	}
 
-	c := NewConsumer(db, nil, nil, nil, cfg)
+	c := NewConsumer(db, nil, nil, nil, nil, cfg)
 
 	payload := PendingMessagePayload{
 		GroupMessage: models.GroupMessage{
@@ -418,7 +418,7 @@ func TestHandler_NoAckMode_EmptyPayload(t *testing.T) {
 		},
 	}
 
-	c := NewConsumer(db, nil, nil, nil, cfg)
+	c := NewConsumer(db, nil, nil, nil, nil, cfg)
 
 	msg := &nats.Msg{
 		Data: []byte{},
@@ -444,7 +444,7 @@ func TestHandler_NoAckMode_NilTrigger(t *testing.T) {
 	group := createTestGroup(t, db, "g-nil-trigger", "Test Group")
 	_ = createTestAgentMember(t, db, group.GroupID, "user1", "")
 
-	c := NewConsumer(db, nil, nil, nil, cfg)
+	c := NewConsumer(db, nil, nil, nil, nil, cfg)
 
 	payload := PendingMessagePayload{
 		GroupMessage: models.GroupMessage{

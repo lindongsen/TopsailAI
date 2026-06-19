@@ -1390,6 +1390,7 @@ Mentions are extracted from `@member_id` or `@member_name` references in the mes
 All endpoints may return the following error responses:
 
 ### 400 Bad Request
+
 ```json
 {
   "error": "invalid request body",
@@ -1398,6 +1399,7 @@ All endpoints may return the following error responses:
 ```
 
 ### 404 Not Found
+
 ```json
 {
   "error": "group not found",
@@ -1406,6 +1408,7 @@ All endpoints may return the following error responses:
 ```
 
 ### 500 Internal Server Error
+
 ```json
 {
   "error": "internal server error",
@@ -1524,3 +1527,11 @@ The `member_interface` field for agent members is a JSON object:
 ```
 
 For manager-agents, if `ACS_AGENT_API_BASE` is not set in the interface, it falls back to the environment variable `ACS_GROUP_MANAGER_AGENT_API_BASE`. Same for `ACS_AGENT_API_KEY` and `ACS_AGENT_API_AUTH`.
+
+### Runtime Environment Variables
+
+In addition to the variables declared in `member_interface.environments`, ACS injects the following runtime variables when invoking an agent:
+
+| Variable | Description |
+|----------|-------------|
+| `ACS_LOGIN_SESSION_KEY` | Plaintext login session key of the original message sender. Only injected when the triggered agent is a `manager-agent`. If the sender has no valid session or it has expired, a new session key is generated automatically. |

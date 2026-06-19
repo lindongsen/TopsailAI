@@ -392,6 +392,24 @@ func (s *AccountService) ValidateLoginSession(ctx context.Context, sessionKey st
 	}
 	return account, nil
 }
+// EnsureLoginSession returns a valid plaintext login session key for the account.
+// If the account has no session or the existing session has expired, a new session
+// is generated, persisted, and returned. The caller receives the plaintext key
+// suitable for forwarding to agent environments.
+func (s *AccountService) EnsureLoginSession(ctx context.Context, accountID string) (string, int64, error) {
+	account, err := s.GetAccountByID(ctx, accountID)
+	if err != nil {
+		return "", 0, err
+	}
+	if !account.IsActive() {
+		return "", 0, fmt.Errorf("account is not active")
+	}
+
+	// Because we only store a bcrypt hash of the session key, the plaintext key
+	// is not recoverable. Always create a fresh session so the caller has a
+	// usable plaintext key.
+	return s.CreateLoginSession(ctx, accountID)
+}
 
 // LoginByPassword validates login credentials and creates a session.
 func (s *AccountService) LoginByPassword(ctx context.Context, loginName, password string) (*models.Account, string, int64, error) {

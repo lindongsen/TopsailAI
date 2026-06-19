@@ -98,7 +98,7 @@ func createTestPendingMessage(t *testing.T, db *gorm.DB, groupID, messageID, sen
 // TestUpdateMemberStatusToProcessing verifies status is updated to processing.
 func TestUpdateMemberStatusToProcessing(t *testing.T) {
 	db := setupConsumerTestDB(t)
-	consumer := NewConsumer(db, nil, nil, nil, nil)
+	consumer := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	group := createTestGroup(t, db, "g-processing", "Test Group")
 	member := createTestAgentMember(t, db, group.GroupID, "agent-processing", "")
@@ -118,7 +118,7 @@ func TestUpdateMemberStatusToProcessing(t *testing.T) {
 // TestUpdateMemberStatusToIdle verifies status is updated to idle.
 func TestUpdateMemberStatusToIdle(t *testing.T) {
 	db := setupConsumerTestDB(t)
-	consumer := NewConsumer(db, nil, nil, nil, nil)
+	consumer := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	group := createTestGroup(t, db, "g-idle", "Test Group")
 	member := createTestAgentMember(t, db, group.GroupID, "agent-idle", "")
@@ -142,7 +142,7 @@ func TestUpdateMemberStatusToIdle(t *testing.T) {
 // TestUpdateMemberStatusNotFound verifies error when member does not exist.
 func TestUpdateMemberStatusNotFound(t *testing.T) {
 	db := setupConsumerTestDB(t)
-	consumer := NewConsumer(db, nil, nil, nil, nil)
+	consumer := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	traceID := "test-trace-3"
 	err := consumer.updateMemberStatus("nonexistent-group", "nonexistent-agent", models.MemberStatusProcessing, traceID)
@@ -153,7 +153,7 @@ func TestUpdateMemberStatusNotFound(t *testing.T) {
 // TestUpdateMemberStatusUpdatesTimestamp verifies update_at_ms is refreshed.
 func TestUpdateMemberStatusUpdatesTimestamp(t *testing.T) {
 	db := setupConsumerTestDB(t)
-	consumer := NewConsumer(db, nil, nil, nil, nil)
+	consumer := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	group := createTestGroup(t, db, "g-timestamp", "Test Group")
 	member := createTestAgentMember(t, db, group.GroupID, "agent-timestamp", "")
@@ -175,7 +175,7 @@ func TestUpdateMemberStatusUpdatesTimestamp(t *testing.T) {
 // TestUpdateMemberStatusSequence verifies processing -> idle sequence.
 func TestUpdateMemberStatusSequence(t *testing.T) {
 	db := setupConsumerTestDB(t)
-	consumer := NewConsumer(db, nil, nil, nil, nil)
+	consumer := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	group := createTestGroup(t, db, "g-sequence", "Test Group")
 	member := createTestAgentMember(t, db, group.GroupID, "agent-sequence", "")
@@ -203,7 +203,7 @@ func TestUpdateMemberStatusSequence(t *testing.T) {
 // TestUpdateMemberStatusMultipleTransitions verifies multiple status transitions.
 func TestUpdateMemberStatusMultipleTransitions(t *testing.T) {
 	db := setupConsumerTestDB(t)
-	consumer := NewConsumer(db, nil, nil, nil, nil)
+	consumer := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	group := createTestGroup(t, db, "g-multi", "Test Group")
 	member := createTestAgentMember(t, db, group.GroupID, "agent-multi", "")
@@ -349,7 +349,7 @@ func TestProcessAgentTarget_HealthCheckFailed_StatusUnchanged(t *testing.T) {
 	}
 	pub := EventPublisher(mockPub)
 	exec := AgentExecutor(mockExec)
-	consumer := NewConsumer(db, pub, exec, nil, testConsumerConfig())
+	consumer := NewConsumer(db, pub, exec, nil, nil, testConsumerConfig())
 
 	group := createTestGroup(t, db, "g-health-fail", "Test Group")
 	agent := createTestAgentMember(t, db, group.GroupID, "agent-health-fail", `{"adaptor":"topsailai_agent","environments":{"ACS_AGENT_API_BASE":"http://localhost:1"}}`)
@@ -385,7 +385,7 @@ func TestProcessAgentTarget_DuplicateRunningRecord_StatusUnchanged(t *testing.T)
 	}
 	pub := EventPublisher(mockPub)
 	exec := AgentExecutor(mockExec)
-	consumer := NewConsumer(db, pub, exec, nil, testConsumerConfig())
+	consumer := NewConsumer(db, pub, exec, nil, nil, testConsumerConfig())
 
 	group := createTestGroup(t, db, "g-dup", "Test Group")
 	agent := createTestAgentMember(t, db, group.GroupID, "agent-dup", `{"adaptor":"topsailai_agent","environments":{"ACS_AGENT_API_BASE":"http://localhost:1"}}`)
@@ -433,7 +433,7 @@ func TestProcessAgentTarget_Success_PublishesProcessingAndIdle(t *testing.T) {
 	}
 	pub := EventPublisher(mockPub)
 	exec := AgentExecutor(mockExec)
-	consumer := NewConsumer(db, pub, exec, nil, testConsumerConfig())
+	consumer := NewConsumer(db, pub, exec, nil, nil, testConsumerConfig())
 
 	group := createTestGroup(t, db, "g-success", "Test Group")
 	agent := createTestAgentMember(t, db, group.GroupID, "agent-success", `{"adaptor":"topsailai_agent","environments":{"ACS_AGENT_API_BASE":"http://localhost:1"}}`)
@@ -471,7 +471,7 @@ func TestProcessAgentTarget_PublishModifyErrorDoesNotFailExecution(t *testing.T)
 	}
 	pub := EventPublisher(mockPub)
 	exec := AgentExecutor(mockExec)
-	consumer := NewConsumer(db, pub, exec, nil, testConsumerConfig())
+	consumer := NewConsumer(db, pub, exec, nil, nil, testConsumerConfig())
 
 	group := createTestGroup(t, db, "g-pub-err", "Test Group")
 	agent := createTestAgentMember(t, db, group.GroupID, "agent-pub-err", `{"adaptor":"topsailai_agent","environments":{"ACS_AGENT_API_BASE":"http://localhost:1"}}`)

@@ -25,7 +25,7 @@ func setupDuplicateTestDB(t *testing.T) *gorm.DB {
 
 func TestIsAgentAlreadyRunning_NoRecord(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	isRunning, err := c.isAgentAlreadyRunning("g1", "m1", "a1", "trace-1")
 	assert.NoError(t, err)
@@ -34,7 +34,7 @@ func TestIsAgentAlreadyRunning_NoRecord(t *testing.T) {
 
 func TestIsAgentAlreadyRunning_SameAgentRunning(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	record := &models.AgentMessageProcessing{
 		GroupID:   "g1",
@@ -51,7 +51,7 @@ func TestIsAgentAlreadyRunning_SameAgentRunning(t *testing.T) {
 
 func TestIsAgentAlreadyRunning_DifferentAgentRunning(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	// Running record for agent a1
 	runningRecord := &models.AgentMessageProcessing{
@@ -70,7 +70,7 @@ func TestIsAgentAlreadyRunning_DifferentAgentRunning(t *testing.T) {
 
 func TestIsAgentAlreadyRunning_CompletedRecord(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	record := &models.AgentMessageProcessing{
 		GroupID:   "g1",
@@ -87,7 +87,7 @@ func TestIsAgentAlreadyRunning_CompletedRecord(t *testing.T) {
 
 func TestIsAgentAlreadyRunning_FailedRecord(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	record := &models.AgentMessageProcessing{
 		GroupID:   "g1",
@@ -106,7 +106,7 @@ func TestIsAgentAlreadyRunning_FailedRecord(t *testing.T) {
 
 func TestCreateRunningRecord(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	err := c.createRunningRecord("g1", "m1", "a1", "trace-1")
 	assert.NoError(t, err)
@@ -120,7 +120,7 @@ func TestCreateRunningRecord(t *testing.T) {
 
 func TestRecordProcessingStatus_UpdateRunningRecord(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	// Create running record first
 	runningRecord := &models.AgentMessageProcessing{
@@ -142,7 +142,7 @@ func TestRecordProcessingStatus_UpdateRunningRecord(t *testing.T) {
 
 func TestRecordProcessingStatus_UpdateRunningRecordToFailed(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	// Create running record first
 	runningRecord := &models.AgentMessageProcessing{
@@ -165,7 +165,7 @@ func TestRecordProcessingStatus_UpdateRunningRecordToFailed(t *testing.T) {
 
 func TestRecordProcessingStatus_NoRunningRecord_CreatesNew(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	// No running record exists, recordProcessingStatus should create a new one
 	c.recordProcessingStatus("g1", "m1", "a1", true, "", "trace-1")
@@ -178,7 +178,7 @@ func TestRecordProcessingStatus_NoRunningRecord_CreatesNew(t *testing.T) {
 
 func TestRecordProcessingStatus_UpdatesTimestamp(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	runningRecord := &models.AgentMessageProcessing{
 		GroupID:   "g1",
@@ -203,7 +203,7 @@ func TestRecordProcessingStatus_UpdatesTimestamp(t *testing.T) {
 
 func TestAgentLevelDeduplication_SameAgentSameMessage(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	// Simulate first node creating running record for agent a1 on message m1
 	runningRecord := &models.AgentMessageProcessing{
@@ -222,7 +222,7 @@ func TestAgentLevelDeduplication_SameAgentSameMessage(t *testing.T) {
 
 func TestAgentLevelDeduplication_DifferentAgentsSameMessage(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	// Simulate first node creating running record for agent a1 on message m1
 	runningRecord := &models.AgentMessageProcessing{
@@ -242,7 +242,7 @@ func TestAgentLevelDeduplication_DifferentAgentsSameMessage(t *testing.T) {
 
 func TestAgentLevelDeduplication_MultipleAgentsCanRun(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	// Create running records for multiple agents on the same message
 	agents := []string{"a1", "a2", "a3"}
@@ -273,7 +273,7 @@ func TestAgentLevelDeduplication_MultipleAgentsCanRun(t *testing.T) {
 
 func TestCheckAndCreateRunningRecord_NewRecord(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	created, err := c.checkAndCreateRunningRecord("g1", "m1", "a1", "trace-1")
 	assert.NoError(t, err)
@@ -286,7 +286,7 @@ func TestCheckAndCreateRunningRecord_NewRecord(t *testing.T) {
 
 func TestCheckAndCreateRunningRecord_AlreadyRunning(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	// Pre-create a running record
 	runningRecord := &models.AgentMessageProcessing{
@@ -310,7 +310,7 @@ func TestCheckAndCreateRunningRecord_AlreadyRunning(t *testing.T) {
 
 func TestCheckAndCreateRunningRecord_CompletedRecord(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	// Pre-create a completed record
 	completedRecord := &models.AgentMessageProcessing{
@@ -334,7 +334,7 @@ func TestCheckAndCreateRunningRecord_CompletedRecord(t *testing.T) {
 
 func TestCheckAndCreateRunningRecord_DifferentAgentRunning(t *testing.T) {
 	db := setupDuplicateTestDB(t)
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	// Pre-create a running record for a different agent
 	runningRecord := &models.AgentMessageProcessing{
@@ -376,7 +376,7 @@ func TestCheckAndCreateRunningRecord_Concurrent(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
 
-	c := NewConsumer(db, nil, nil, nil, nil)
+	c := NewConsumer(db, nil, nil, nil, nil, nil)
 
 	const numGoroutines = 10
 	results := make(chan bool, numGoroutines)

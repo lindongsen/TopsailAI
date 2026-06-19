@@ -131,7 +131,8 @@ The following variables are passed to agent adaptors via `member_interface.envir
 | `ACS_SENDER_NAME` | Message sender name | Original message sender name |
 | `ACS_MESSAGE_ID` | Message ID | ID of the message being processed |
 | `ACS_MESSAGE_MENTIONS` | Message mentions JSON | Mentions extracted from the message |
-| `ACS_MESSAGE_TRIGGER_TYPE` | Trigger type | `mention` or `auto` |
+| `ACS_MESSAGE_TRIGGER_TYPE` | Trigger type | `mention`, `auto`, or `manual` |
+| `ACS_LOGIN_SESSION_KEY` | `accounts.login_session_key` | Plaintext login session key of the original message sender. Only injected when the triggered agent is a `manager-agent`. If the sender has no valid session or it has expired, a new session key is generated automatically. |
 
 ## Account & API Key Configuration
 

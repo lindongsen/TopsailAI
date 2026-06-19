@@ -97,6 +97,7 @@ func (iface *Interface) BuildChatEnv(
 	senderID, senderName, messageID, messageText string,
 	mode string,
 	agentPrompt, groupContext, mentionsJSON, triggerType string,
+	loginSessionKey string,
 ) map[string]string {
 	env := make(map[string]string)
 
@@ -138,6 +139,11 @@ func (iface *Interface) BuildChatEnv(
 	}
 	if triggerType != "" {
 		env["ACS_MESSAGE_TRIGGER_TYPE"] = triggerType
+	}
+
+	// Pass the sender's login session key when available (e.g. for manager-agent triggers)
+	if loginSessionKey != "" {
+		env["ACS_LOGIN_SESSION_KEY"] = loginSessionKey
 	}
 
 	return env

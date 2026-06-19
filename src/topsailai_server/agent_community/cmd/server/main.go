@@ -197,7 +197,7 @@ func runServer(isDaemon bool) error {
 	executor := agent.NewExecutor()
 
 	// 10. Create NATS consumer (AgentWorkPool processor).
-	consumer := nats.NewConsumer(database.Conn, publisher, executor, pool, cfg)
+	consumer := nats.NewConsumer(database.Conn, publisher, executor, accountSvc, pool, cfg)
 	// 11. Create and start NATS consumer subscription.
 	sub, err := natsClient.CreatePendingMessageConsumer(consumer.Handler())
 	if err != nil {
