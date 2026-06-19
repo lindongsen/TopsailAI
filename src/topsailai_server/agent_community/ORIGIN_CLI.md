@@ -20,7 +20,7 @@ Show detail group info, including of name, creator etc..
 
 ### Interactive
 
-> 不要传参，而是要引导用户输入参数值
+> 当命令没有传参时，要引导用户输入参数值
 
 Example:
 ```

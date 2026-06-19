@@ -69,6 +69,9 @@ export TOPSAILAI_PLUGIN_SKILLS
 export TOPSAILAI_ENABLED_TOOLS="ctx_tool,file_readonly_tool,multimodal_tool,skill_tool,memory_tool,time_tool"
 export TOPSAILAI_DISABLED_TOOLS="file_tool,cmd_tool,agent_tool,sandbox_tool"
 
+# Set Environment Variables
+export TOPSAILAI_CMD_ENV_KEYS="${TOPSAILAI_CMD_ENV_KEYS:-},ACS_AGENT_ID,ACS_AGENT_NAME,ACS_AGENT_TYPE,ACS_AGENT_TIMEOUT,ACS_GROUP_ID,ACS_GROUP_NAME,ACS_MESSAGE_ID"
+
 # Validate required parameters
 if [[ -z "$SESSION_ID" ]]; then
     echo "Error: SESSION_ID is required but not set (check ACS_GROUP_ID)" >&2

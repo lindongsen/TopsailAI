@@ -4,7 +4,7 @@ programming_language: python
 ---
 # Agent Community Client
 
-根据API文档实现对 group 全生命周期管理的skill
+根据API文档实现对 group 全生命周期管理的skill，只需要关注 group。
 
 ## call_agent
 

@@ -26,10 +26,10 @@
 │  │  (Gin)      │  │  (Pub/Sub)  │  │   (Semaphore)      │  │
 │  └──────┬──────┘  └──────┬──────┘  └─────────────────────┘  │
 │         │                │                                   │
-│  ┌──────┴──────┐  ┌──────┴──────┐  ┌─────────────────────┐│
-│  │  Group Mgmt │  │  Message    │  │  Trigger Evaluator   ││
-│  │  Member Mgmt│  │  Processing │  │  (Mentions/Auto)    ││
-│  └─────────────┘  └─────────────┘  └─────────────────────┘│
+│  ┌──────┴──────┐  ┌──────┴──────┐  ┌─────────────────────┐  │
+│  │  Group Mgmt │  │  Message    │  │  Trigger Evaluator  │  │
+│  │  Member Mgmt│  │  Processing │  │  (Mentions/Auto)    │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
          │                    │                    │
     ┌────┴────┐          ┌────┴────┐         ┌────┴────┐
@@ -61,7 +61,8 @@
 .
 ├── cmd/
 │   ├── server/           # ACS HTTP server entry point
-│   └── cli/              # Interactive CLI terminal
+│   ├── cli/              # Interactive CLI terminal
+│   └── natsctl/          # NATS control utility
 ├── internal/
 │   ├── agent/            # Agent execution and interface
 │   ├── api/              # HTTP API handlers and routing
@@ -73,11 +74,13 @@
 │   ├── message/          # Message context building
 │   ├── models/           # Data models (GORM)
 │   ├── nats/             # NATS client, consumer, publisher
+│   ├── services/         # Business logic services
 │   ├── trigger/          # Agent trigger evaluation
 │   └── workpool/         # Concurrency control (semaphore)
 ├── pkg/
 │   └── logger/           # Structured logging
 ├── scripts/
+│   ├── agent_interface.adaptor.md  # Agent interface adaptor documentation
 │   ├── hermes_agent_cmd/ # Hermes agent adaptor scripts
 │   └── topsailai_agent_cmd/ # TopsailAI agent adaptor scripts
 ├── tests/
@@ -116,7 +119,7 @@ Authentication priority when multiple credentials are present: login name/passwo
 
 Role hierarchy: `admin > manager > user`. An API key's role can never exceed the role of its owning account.
 
----
+----
 
 ## Default Accounts
 
@@ -124,13 +127,17 @@ On startup, ACS automatically creates default `admin` and `manager` accounts if 
 
 ### Admin Account
 
-- If `ACS_ACCOUNT_ADMIN_API_KEY` is set, ACS validates that the token matches an existing active API key with `role=admin`. If validation fails, the server logs a clear configuration error and exits.
+- If `ACS_ACCOUNT_ADMIN_API_KEY` is set, ACS validates that the token matches an existing active API key with `role=admin`. The token must follow the format `{api_key_id}.{secret}` with a valid `ak-{id}` identifier. If validation fails, the server logs a clear configuration error and exits.
 - If `ACS_ACCOUNT_ADMIN_API_KEY` is not set, ACS generates a default admin account and API key, then writes the plaintext key to `ACS_ACCOUNT_ADMIN_API_KEY.acs` in the process working directory.
 
 ### Manager Account
 
-- If `ACS_ACCOUNT_MANAGER_API_KEY` is set, ACS validates that the token matches an existing active API key with `role=manager`. If validation fails, the server logs a clear configuration error and exits.
+- If `ACS_ACCOUNT_MANAGER_API_KEY` is set, ACS validates that the token matches an existing active API key with `role=manager`. The token must follow the format `{api_key_id}.{secret}` with a valid `ak-{id}` identifier. If validation fails, the server logs a clear configuration error and exits.
 - If `ACS_ACCOUNT_MANAGER_API_KEY` is not set, ACS generates a default manager account and API key, then writes the plaintext key to `ACS_ACCOUNT_MANAGER_API_KEY.acs` in the process working directory.
+
+### Startup Logging
+
+During startup, ACS logs the number of admin accounts, manager accounts, and total accounts broken down by status. This helps operators verify that default accounts were created correctly and that configured tokens match existing records.
 
 > **Security Note:** Auto-generated key files contain plaintext secrets. Secure these files appropriately in production.
 
@@ -209,11 +216,11 @@ Key variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ACS_HTTP_PORT` | `7370` | HTTP server port |
-| `ACS_DB_HOST` | `localhost` | PostgreSQL host |
-| `ACS_DB_PORT` | `5432` | PostgreSQL port |
-| `ACS_DB_NAME` | `acs` | Database name |
-| `ACS_DB_USER` | `acs` | Database user |
-| `ACS_DB_PASSWORD` | `acs` | Database password |
+| `ACS_DATABASE_HOST` | `localhost` | PostgreSQL host |
+| `ACS_DATABASE_PORT` | `5432` | PostgreSQL port |
+| `ACS_DATABASE_NAME` | `acs` | Database name |
+| `ACS_DATABASE_USER` | `acs` | Database user |
+| `ACS_DATABASE_PASSWORD` | `acs` | Database password |
 | `ACS_NATS_SERVERS` | `nats://localhost:4222` | NATS server URLs |
 | `ACS_GROUP_MANAGER_AGENT_API_BASE` | - | Manager-agent API base URL |
 | `ACS_ACCOUNT_ADMIN_API_KEY` | - | Plaintext admin token for default admin validation/creation |
@@ -244,6 +251,42 @@ The server exposes a RESTful API on port `7370` (configurable).
 | GET | `/healthz` | Liveness probe |
 | GET | `/readyz` | Readiness probe |
 | GET | `/health` | Comprehensive health status |
+| GET | `/health/leader` | Service-Leader status |
+
+### Discovery Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/discovery/services` | List registered service instances |
+
+### Account Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/accounts` | Create account |
+| GET | `/api/v1/accounts` | List accounts |
+| GET | `/api/v1/accounts/me` | Get current account |
+| GET | `/api/v1/accounts/:account_id` | Get account |
+| PUT | `/api/v1/accounts/:account_id` | Update account |
+| DELETE | `/api/v1/accounts/:account_id` | Soft-delete account |
+| POST | `/api/v1/accounts/login` | Login with password |
+| POST | `/api/v1/accounts/:account_id/password` | Change password |
+| POST | `/api/v1/accounts/:account_id/session` | Create login session |
+
+### API Key Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/accounts/:account_id/api-keys` | Create API key |
+| GET | `/api/v1/accounts/:account_id/api-keys` | List API keys |
+| DELETE | `/api/v1/accounts/:account_id/api-keys/:api_key_id` | Delete API key |
+
+### Audit Log Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/audit-logs` | List audit logs |
+| GET | `/api/v1/audit-logs/:audit_log_id` | Get audit log |
 
 ### Group Endpoints
 
@@ -282,18 +325,21 @@ See [docs/API.md](docs/API.md) for complete API documentation with request/respo
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `group_id` | UUID (PK) | Unique group identifier |
+| `group_id` | VARCHAR(64) (PK) | Unique group identifier |
 | `group_name` | VARCHAR | Group display name |
 | `group_context` | TEXT | Group context/description |
 | `group_key` | VARCHAR | Secret key hash (NULL = public) |
+| `creator_id` | VARCHAR | Group creator account ID |
+| `owner_id` | VARCHAR | Group owner account ID |
 | `create_at_ms` | BIGINT | Creation timestamp (ms) |
 | `update_at_ms` | BIGINT | Last update timestamp (ms) |
+| `deleted_at` | TIMESTAMPTZ | Soft-deletion timestamp |
 
-### Table: `group_members`
+### Table: `group_member`
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `group_id` | UUID (PK) | Group identifier |
+| `group_id` | VARCHAR(64) (PK) | Group identifier |
 | `member_id` | VARCHAR (PK) | Member identifier |
 | `member_name` | VARCHAR | Member display name |
 | `member_description` | TEXT | Member description |
@@ -303,13 +349,14 @@ See [docs/API.md](docs/API.md) for complete API documentation with request/respo
 | `last_read_message_id` | VARCHAR | Last processed message ID |
 | `create_at_ms` | BIGINT | Creation timestamp |
 | `update_at_ms` | BIGINT | Last update timestamp |
+| `deleted_at` | TIMESTAMPTZ | Soft-deletion timestamp |
 
 ### Table: `group_messages`
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `message_id` | VARCHAR (PK) | Unique message identifier |
-| `group_id` | UUID | Group identifier |
+| `group_id` | VARCHAR(64) | Group identifier |
 | `message_text` | TEXT | Message content |
 | `message_attachments` | JSON | Attachments (images, files) |
 | `sender_id` | VARCHAR | Sender member ID |
@@ -320,6 +367,22 @@ See [docs/API.md](docs/API.md) for complete API documentation with request/respo
 | `delete_at_ms` | BIGINT | Deletion timestamp |
 | `create_at_ms` | BIGINT | Creation timestamp |
 | `update_at_ms` | BIGINT | Last update timestamp |
+| `deleted_at` | TIMESTAMPTZ | Soft-deletion timestamp |
+
+### Table: `agent_message_processing`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | BIGSERIAL (PK) | Internal processing record ID |
+| `group_id` | VARCHAR(64) | Group identifier |
+| `message_id` | VARCHAR | Message being processed |
+| `agent_id` | VARCHAR | Agent assigned to process the message |
+| `status` | VARCHAR | Processing status |
+| `error_message` | TEXT | Error message if processing failed |
+| `processed_at_ms` | BIGINT | Processing completion timestamp |
+| `create_at_ms` | BIGINT | Creation timestamp |
+| `update_at_ms` | BIGINT | Last update timestamp |
+
 ### Table: `accounts`
 
 | Column | Type | Description |
@@ -385,7 +448,7 @@ ACS uses NATS JetStream for:
    - Publishes member join/leave events
 
 3. **Distributed Locks**: NATS KV Store
-   - Key format: `acs:lock:{lock_type}:{resource_id}`
+   - Key format: `acs.lock.{lock_type}.{resource_id}`
    - TTL: 7200 seconds
    - Fencing token with UUID validation
 

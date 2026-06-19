@@ -1,9 +1,10 @@
-// Package handlers provides group handler tests.
 package handlers
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -686,4 +687,540 @@ func TestListGroups_AdminSeesAll(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, int64(2), resp.Total)
 	require.Len(t, resp.Items, 2)
+}
+
+// mockGroupPublisher is a test double for the GroupPublisher interface.
+type mockGroupPublisher struct {
+	createErr          error
+	modifyErr          error
+	deleteErr          error
+	memberCreateErr    error
+	createCalled       bool
+	modifyCalled       bool
+	deleteCalled       bool
+	memberCreateCalled bool
+}
+
+func (m *mockGroupPublisher) PublishGroupCreate(group *models.Group) error {
+	m.createCalled = true
+	return m.createErr
+}
+
+func (m *mockGroupPublisher) PublishGroupModify(group *models.Group) error {
+	m.modifyCalled = true
+	return m.modifyErr
+}
+
+func (m *mockGroupPublisher) PublishGroupDelete(groupID string) error {
+	m.deleteCalled = true
+	return m.deleteErr
+}
+
+func (m *mockGroupPublisher) PublishGroupMemberCreate(member *models.GroupMember) error {
+	m.memberCreateCalled = true
+	return m.memberCreateErr
+}
+
+// TestCreateGroup_Unauthorized verifies that creating a group without an auth
+// context returns 401 Unauthorized.
+func TestCreateGroup_Unauthorized(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	handler := setupGroupTestHandler(t, db, &config.Config{})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := CreateGroupRequest{GroupName: "Unauthorized Group"}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.CreateGroup(c)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestCreateGroup_InvalidJSON verifies that malformed JSON returns 400.
+func TestCreateGroup_InvalidJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	handler := setupGroupTestHandler(t, db, &config.Config{})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		Account: &models.Account{
+			AccountID:   "acc-001",
+			AccountName: "Test",
+			Role:        models.AccountRoleUser,
+			Status:      models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	})
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups", bytes.NewBufferString("{invalid json"))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.CreateGroup(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestCreateGroup_HashKeyFailure verifies that a bcrypt failure during group
+// key hashing returns 500 Internal Server Error.
+func TestCreateGroup_HashKeyFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	handler := setupGroupTestHandler(t, db, &config.Config{})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		Account: &models.Account{
+			AccountID:   "acc-001",
+			AccountName: "Test",
+			Role:        models.AccountRoleUser,
+			Status:      models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	})
+	body := CreateGroupRequest{GroupName: "Secret Group", GroupKey: "secret"}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	oldCost := bcryptCost
+	bcryptCost = 32 // invalid cost > bcrypt.MaxCost
+	defer func() { bcryptCost = oldCost }()
+
+	handler.CreateGroup(c)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// TestCreateGroup_PublisherFailureStillSucceeds verifies that group creation
+// succeeds even when NATS publishing fails.
+func TestCreateGroup_PublisherFailureStillSucceeds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	cfg := &config.Config{
+		Agent: config.AgentConfig{
+			ManagerAgent: config.ManagerAgentConfig{
+				Adaptor:            "topsailai_agent",
+				MemberID:           "manager-agent",
+				MemberName:         "manager-agent",
+				MemberDescription:  "Default group manager agent",
+				CmdChat:            "topsailai_agent_cmd_chat",
+				TimeoutChat:        600 * time.Second,
+			},
+		},
+	}
+	pub := &mockGroupPublisher{
+		createErr:       errors.New("nats create failure"),
+		memberCreateErr: errors.New("nats member create failure"),
+	}
+	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
+	handler := NewGroupHandler(db, pub, cfg, log)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		Account: &models.Account{
+			AccountID:   "acc-001",
+			AccountName: "Test",
+			Role:        models.AccountRoleUser,
+			Status:      models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	})
+	body := CreateGroupRequest{GroupName: "Publisher Failure Group"}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.CreateGroup(c)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	assert.True(t, pub.createCalled)
+	assert.True(t, pub.memberCreateCalled)
+}
+
+// TestGetGroup_Success verifies retrieving an existing group by ID.
+func TestGetGroup_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	now := time.Now().UnixMilli()
+	group := models.Group{
+		GroupID:      "group-get-success",
+		GroupName:    "Get Group",
+		GroupContext: "context",
+		CreateAtMs:   now,
+		UpdateAtMs:   now,
+	}
+	require.NoError(t, db.Create(&group).Error)
+
+	handler := setupGroupTestHandler(t, db, &config.Config{})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+group.GroupID, nil)
+	c.Params = gin.Params{{Key: "group_id", Value: group.GroupID}}
+
+	handler.GetGroup(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp GroupResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, group.GroupID, resp.GroupID)
+	assert.Equal(t, group.GroupName, resp.GroupName)
+	assert.Equal(t, group.GroupContext, resp.GroupContext)
+}
+
+// TestGetGroup_NotFound verifies that a missing group returns 404.
+func TestGetGroup_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	handler := setupGroupTestHandler(t, db, &config.Config{})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/groups/non-existent", nil)
+	c.Params = gin.Params{{Key: "group_id", Value: "non-existent"}}
+
+	handler.GetGroup(c)
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestUpdateGroup_Success verifies updating group name and context.
+func TestUpdateGroup_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	now := time.Now().UnixMilli()
+	group := models.Group{
+		GroupID:      "group-update-success",
+		GroupName:    "Old Name",
+		GroupContext: "Old Context",
+		CreateAtMs:   now,
+		UpdateAtMs:   now,
+	}
+	require.NoError(t, db.Create(&group).Error)
+
+	handler := setupGroupTestHandler(t, db, &config.Config{})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := UpdateGroupRequest{GroupName: "New Name", GroupContext: "New Context"}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/groups/"+group.GroupID, bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: group.GroupID}}
+
+	handler.UpdateGroup(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp GroupResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "New Name", resp.GroupName)
+	assert.Equal(t, "New Context", resp.GroupContext)
+}
+
+// TestUpdateGroup_UpdateKey verifies that updating the group key re-hashes it.
+func TestUpdateGroup_UpdateKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	now := time.Now().UnixMilli()
+	group := models.Group{
+		GroupID:    "group-update-key",
+		GroupName:  "Key Group",
+		GroupKey:   "",
+		CreateAtMs: now,
+		UpdateAtMs: now,
+	}
+	require.NoError(t, db.Create(&group).Error)
+
+	handler := setupGroupTestHandler(t, db, &config.Config{})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := UpdateGroupRequest{GroupKey: "new-secret"}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/groups/"+group.GroupID, bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: group.GroupID}}
+
+	handler.UpdateGroup(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp GroupResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.NotEmpty(t, resp.GroupKey)
+	assert.NotEqual(t, "new-secret", resp.GroupKey)
+
+	var stored models.Group
+	require.NoError(t, db.First(&stored, "group_id = ?", group.GroupID).Error)
+	assert.NotEmpty(t, stored.GroupKey)
+	assert.NotEqual(t, "new-secret", stored.GroupKey)
+}
+
+// TestUpdateGroup_NotFound verifies that updating a missing group returns 404.
+func TestUpdateGroup_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	handler := setupGroupTestHandler(t, db, &config.Config{})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := UpdateGroupRequest{GroupName: "New Name"}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/groups/non-existent", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "non-existent"}}
+
+	handler.UpdateGroup(c)
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestListGroups_InvalidSortKey verifies that an unknown sort_key returns 400.
+func TestListGroups_InvalidSortKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	r := gin.New()
+	r.Use(authContextMiddleware(middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: "acc-admin",
+			Role:      models.AccountRoleAdmin,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	}))
+	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
+	handler := NewGroupHandler(db, nil, &config.Config{}, log)
+	r.GET("/api/v1/groups", handler.ListGroups)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups?sort_key=invalid", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestListGroups_TimeRangeFilter verifies create_at_ms filtering.
+func TestListGroups_TimeRangeFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	now := time.Now().UnixMilli()
+
+	oldGroup := models.Group{GroupID: "group-time-old", GroupName: "Old Group"}
+	require.NoError(t, db.Create(&oldGroup).Error)
+	require.NoError(t, db.Model(&oldGroup).UpdateColumns(map[string]interface{}{
+		"create_at_ms": now - 1000,
+		"update_at_ms": now - 1000,
+	}).Error)
+
+	newGroup := models.Group{GroupID: "group-time-new", GroupName: "New Group"}
+	require.NoError(t, db.Create(&newGroup).Error)
+	require.NoError(t, db.Model(&newGroup).UpdateColumns(map[string]interface{}{
+		"create_at_ms": now + 1000,
+		"update_at_ms": now + 1000,
+	}).Error)
+
+	r := gin.New()
+	r.Use(authContextMiddleware(middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: "acc-admin",
+			Role:      models.AccountRoleAdmin,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	}))
+	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
+	handler := NewGroupHandler(db, nil, &config.Config{}, log)
+	r.GET("/api/v1/groups", handler.ListGroups)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/groups?create_at_ms=%d-%d", now-2000, now-500), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp ListGroupsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, int64(1), resp.Total)
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, "group-time-old", resp.Items[0].GroupID)
+}
+
+// TestListGroups_PaginationClamping verifies negative offset and zero limit
+// are clamped to their defaults.
+func TestListGroups_PaginationClamping(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	now := time.Now().UnixMilli()
+	for i := 0; i < 5; i++ {
+		require.NoError(t, db.Create(&models.Group{
+			GroupID:    fmt.Sprintf("group-page-%d", i),
+			GroupName:  fmt.Sprintf("Group %d", i),
+			CreateAtMs: now,
+			UpdateAtMs: now,
+		}).Error)
+	}
+
+	r := gin.New()
+	r.Use(authContextMiddleware(middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: "acc-admin",
+			Role:      models.AccountRoleAdmin,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	}))
+	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
+	handler := NewGroupHandler(db, nil, &config.Config{}, log)
+	r.GET("/api/v1/groups", handler.ListGroups)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups?offset=-1&limit=0", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp ListGroupsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, 0, resp.Offset)
+	assert.Equal(t, 1000, resp.Limit)
+	assert.Equal(t, int64(5), resp.Total)
+}
+
+// TestHashGroupKey verifies empty and non-empty key hashing behavior.
+func TestHashGroupKey(t *testing.T) {
+	empty, err := hashGroupKey("")
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+
+	hashed, err := hashGroupKey("secret-key")
+	require.NoError(t, err)
+	assert.NotEmpty(t, hashed)
+	assert.NotEqual(t, "secret-key", hashed)
+}
+
+// TestSanitizeMemberName verifies member name sanitization rules.
+func TestSanitizeMemberName(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Alice", "Alice"},
+		{"Alice Smith", "Alice_Smith"},
+		{"", "user"},
+		{"!@#$%", "_____"},
+		{"user_123-test", "user_123-test"},
+		{"日本語", "___"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			assert.Equal(t, tc.want, sanitizeMemberName(tc.input))
+		})
+	}
+}
+
+// TestBuildCreatorMember verifies the creator member built from an account.
+func TestBuildCreatorMember(t *testing.T) {
+	group := &models.Group{GroupID: "group-1", GroupName: "Test Group"}
+	account := &models.Account{AccountID: "acc-creator", AccountName: "Alice Smith"}
+	member := buildCreatorMember(group, account)
+
+	assert.Equal(t, group.GroupID, member.GroupID)
+	assert.Equal(t, account.AccountID, member.MemberID)
+	assert.Equal(t, "Alice_Smith", member.MemberName)
+	assert.Equal(t, models.MemberTypeUser, member.MemberType)
+	assert.Equal(t, models.MemberStatusOnline, member.MemberStatus)
+	assert.Equal(t, "Group creator", member.MemberDescription)
+	assert.NotZero(t, member.CreateAtMs)
+	assert.NotZero(t, member.UpdateAtMs)
+}
+
+// TestCreateGroup_ManagerAgentInvalidMemberID verifies that creating a group
+// with an invalid configured manager-agent member_id returns 500 and does not
+// persist the group.
+func TestCreateGroup_ManagerAgentInvalidMemberID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	cfg := &config.Config{
+		Agent: config.AgentConfig{
+			ManagerAgent: config.ManagerAgentConfig{
+				Adaptor:           "topsailai_agent",
+				MemberID:          "manager agent!",
+				MemberName:        "manager-agent",
+				MemberDescription: "Default group manager agent",
+				CmdChat:           "topsailai_agent_cmd_chat",
+				TimeoutChat:       600 * time.Second,
+			},
+		},
+	}
+	handler := setupGroupTestHandler(t, db, cfg)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		Account: &models.Account{
+			AccountID:   "acc-001",
+			AccountName: "Test",
+			Role:        models.AccountRoleUser,
+			Status:      models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	})
+	body := CreateGroupRequest{GroupName: "Invalid Manager ID Group"}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.CreateGroup(c)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+
+	var count int64
+	require.NoError(t, db.Model(&models.Group{}).Count(&count).Error)
+	assert.Equal(t, int64(0), count)
+}
+
+// TestCreateGroup_ManagerAgentInvalidMemberName verifies that creating a group
+// with an invalid configured manager-agent member_name returns 500 and does not
+// persist the group.
+func TestCreateGroup_ManagerAgentInvalidMemberName(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	cfg := &config.Config{
+		Agent: config.AgentConfig{
+			ManagerAgent: config.ManagerAgentConfig{
+				Adaptor:           "topsailai_agent",
+				MemberID:          "manager-agent",
+				MemberName:        "manager agent!",
+				MemberDescription: "Default group manager agent",
+				CmdChat:           "topsailai_agent_cmd_chat",
+				TimeoutChat:       600 * time.Second,
+			},
+		},
+	}
+	handler := setupGroupTestHandler(t, db, cfg)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		Account: &models.Account{
+			AccountID:   "acc-001",
+			AccountName: "Test",
+			Role:        models.AccountRoleUser,
+			Status:      models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	})
+	body := CreateGroupRequest{GroupName: "Invalid Manager Name Group"}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.CreateGroup(c)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+
+	var count int64
+	require.NoError(t, db.Model(&models.Group{}).Count(&count).Error)
+	assert.Equal(t, int64(0), count)
 }

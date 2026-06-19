@@ -14,7 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/topsailai/agent-community/internal/api/middleware"
 	"github.com/topsailai/agent-community/internal/models"
-	"github.com/topsailai/agent-community/internal/nats"
 	"github.com/topsailai/agent-community/pkg/logger"
 	"gorm.io/gorm"
 )
@@ -25,15 +24,23 @@ var memberIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 // memberNameRegex validates that member_name contains only alphanumeric characters, hyphens, and underscores.
 var memberNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
+// GroupMemberPublisher is the subset of the NATS publisher used by
+// GroupMemberHandler. It is kept minimal to keep handler tests isolated.
+type GroupMemberPublisher interface {
+	PublishGroupMemberCreate(member *models.GroupMember) error
+	PublishGroupMemberModify(member *models.GroupMember) error
+	PublishGroupMemberDelete(groupID, memberID string) error
+}
+
 // GroupMemberHandler handles group member-related HTTP requests.
 type GroupMemberHandler struct {
 	db        *gorm.DB
-	publisher *nats.Publisher
+	publisher GroupMemberPublisher
 	log       *logger.Logger
 }
 
 // NewGroupMemberHandler creates a new GroupMemberHandler.
-func NewGroupMemberHandler(db *gorm.DB, publisher *nats.Publisher, log *logger.Logger) *GroupMemberHandler {
+func NewGroupMemberHandler(db *gorm.DB, publisher GroupMemberPublisher, log *logger.Logger) *GroupMemberHandler {
 	return &GroupMemberHandler{
 		db:        db,
 		publisher: publisher,
@@ -409,10 +416,8 @@ func (h *GroupMemberHandler) LeaveGroup(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "member left group", "group_id", groupID, "member_id", memberID)
-	c.Status(http.StatusNoContent)
+	c.String(http.StatusNoContent, "")
 }
-
-// toGroupMemberResponse converts a GroupMember model to API response.
 func toGroupMemberResponse(m *models.GroupMember) GroupMemberResponse {
 	return GroupMemberResponse{
 		GroupID:           m.GroupID,

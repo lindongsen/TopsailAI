@@ -79,12 +79,16 @@ type ListGroupsResponse struct {
 	OrderBy string          `json:"order_by"`
 }
 
+// bcryptCost is the cost factor used by hashGroupKey. It is a variable so
+// tests can inject an invalid cost to exercise the error path.
+var bcryptCost = bcrypt.DefaultCost
+
 // hashGroupKey hashes a group key using bcrypt.
 func hashGroupKey(key string) (string, error) {
 	if key == "" {
 		return "", nil
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(key), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(key), bcryptCost)
 	if err != nil {
 		return "", err
 	}

@@ -1,8 +1,6 @@
 ---
 name: Agent Community Client
 description: Python client for AI-Agent Community Server (ACS) REST API
-workspace: /TopsailAI/src/topsailai_server/agent_community/skills
-programming_language: python
 references:
   - references/API_REFERENCE.md
 ---
