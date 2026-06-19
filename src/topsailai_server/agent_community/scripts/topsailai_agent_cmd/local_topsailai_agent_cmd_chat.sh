@@ -66,6 +66,8 @@ _SKILL_FOLDER=$(dirname "${_SKILL_FOLDER}")
 _SKILL_FOLDER="${_SKILL_FOLDER}/skills"
 TOPSAILAI_PLUGIN_SKILLS="${_SKILL_FOLDER};${TOPSAILAI_PLUGIN_SKILLS:-}"
 export TOPSAILAI_PLUGIN_SKILLS
+export TOPSAILAI_ENABLED_TOOLS="ctx_tool,file_readonly_tool,multimodal_tool,skill_tool,memory_tool,time_tool"
+export TOPSAILAI_DISABLED_TOOLS="file_tool,cmd_tool,agent_tool,sandbox_tool"
 
 # Validate required parameters
 if [[ -z "$SESSION_ID" ]]; then
