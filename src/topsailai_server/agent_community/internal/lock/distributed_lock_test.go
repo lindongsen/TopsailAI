@@ -929,3 +929,384 @@ func (g *updateGatingKV) PurgeDeletes(opts ...nats.PurgeOpt) error {
 func (g *updateGatingKV) Status() (nats.KeyValueStatus, error) {
 	return g.kv.Status()
 }
+
+// errJetStream is a JetStream stub that returns configurable errors for
+// KeyValue and CreateKeyValue. It is used to exercise NewDistributedLock and
+// Acquire error paths without a real NATS server.
+type errJetStream struct {
+	nats.JetStreamContext
+	keyValueErr error
+	createErr   error
+}
+
+func (e *errJetStream) KeyValue(bucket string) (nats.KeyValue, error) {
+	return nil, e.keyValueErr
+}
+
+func (e *errJetStream) CreateKeyValue(cfg *nats.KeyValueConfig) (nats.KeyValue, error) {
+	return nil, e.createErr
+}
+
+// fixedKVJetStream always returns the configured KeyValue, ignoring the bucket.
+type fixedKVJetStream struct {
+	nats.JetStreamContext
+	kv nats.KeyValue
+}
+
+func (f *fixedKVJetStream) KeyValue(bucket string) (nats.KeyValue, error) {
+	return f.kv, nil
+}
+
+// raceReFetchJetStream simulates the bucket-create race where CreateKeyValue
+// returns ErrStreamNameAlreadyInUse but the subsequent re-fetch fails.
+type raceReFetchJetStream struct {
+	nats.JetStreamContext
+	keyValueErr    error
+	keyValueCall   int
+}
+
+func (r *raceReFetchJetStream) KeyValue(bucket string) (nats.KeyValue, error) {
+	r.keyValueCall++
+	if r.keyValueCall == 1 {
+		return nil, nats.ErrBucketNotFound
+	}
+	return nil, r.keyValueErr
+}
+
+func (r *raceReFetchJetStream) CreateKeyValue(cfg *nats.KeyValueConfig) (nats.KeyValue, error) {
+	return nil, nats.ErrStreamNameAlreadyInUse
+}
+
+// failingKV is a KeyValue stub that returns configured errors for Get, Create
+// and Delete. All other methods are not expected to be called.
+type failingKV struct {
+	nats.KeyValue
+	getErr    error
+	createErr error
+	deleteErr error
+}
+
+func (f *failingKV) Get(key string) (nats.KeyValueEntry, error) {
+	return nil, f.getErr
+}
+
+func (f *failingKV) Create(key string, value []byte) (uint64, error) {
+	return 0, f.createErr
+}
+
+func (f *failingKV) Delete(key string, opts ...nats.DeleteOpt) error {
+	return f.deleteErr
+}
+
+// countingFailingKV counts how many times Get is called and always returns an
+// error. It is used to verify that renew keeps retrying on transient Get errors.
+type countingFailingKV struct {
+	nats.KeyValue
+	mu       sync.Mutex
+	getCount int
+}
+
+func (c *countingFailingKV) Get(key string) (nats.KeyValueEntry, error) {
+	c.mu.Lock()
+	c.getCount++
+	c.mu.Unlock()
+	return nil, errors.New("repeated get error")
+}
+
+// wrongSeqError implements nats.JetStreamError with the wrong-last-sequence
+// error code so that isWrongLastSequence returns true.
+type wrongSeqError struct{}
+
+func (e *wrongSeqError) Error() string { return "wrong last sequence" }
+
+func (e *wrongSeqError) APIError() *nats.APIError {
+	return &nats.APIError{ErrorCode: nats.JSErrCodeStreamWrongLastSequence}
+}
+
+// wrongSequenceKV returns a matching token on Get and a wrong-last-sequence
+// error on Update.
+type wrongSequenceKV struct {
+	nats.KeyValue
+	token string
+}
+
+func (w *wrongSequenceKV) Get(key string) (nats.KeyValueEntry, error) {
+	return &fakeEntry{bucket: "test", value: []byte(w.token), revision: 1}, nil
+}
+
+func (w *wrongSequenceKV) Update(key string, value []byte, last uint64) (uint64, error) {
+	return 0, &wrongSeqError{}
+}
+
+// tokenMismatchKV always returns a different token on Get.
+type tokenMismatchKV struct {
+	nats.KeyValue
+	actualToken string
+}
+
+func (tm *tokenMismatchKV) Get(key string) (nats.KeyValueEntry, error) {
+	return &fakeEntry{bucket: "test", value: []byte(tm.actualToken), revision: 1}, nil
+}
+
+// deleteFailureKV returns a matching token on Get and fails on Delete.
+type deleteFailureKV struct {
+	nats.KeyValue
+	token     string
+	deleteErr error
+}
+
+func (d *deleteFailureKV) Get(key string) (nats.KeyValueEntry, error) {
+	return &fakeEntry{bucket: "test", value: []byte(d.token), revision: 1}, nil
+}
+
+func (d *deleteFailureKV) Delete(key string, opts ...nats.DeleteOpt) error {
+	return d.deleteErr
+}
+
+func TestNewDistributedLock_NilJetStream(t *testing.T) {
+	_, err := NewDistributedLock(nil, testBucketName)
+	if err == nil {
+		t.Fatal("expected error when JetStream context is nil")
+	}
+	if err.Error() != "jetstream context is nil" {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestNewDistributedLock_CreateOtherError(t *testing.T) {
+	js := &errJetStream{
+		keyValueErr: nats.ErrBucketNotFound,
+		createErr:   errors.New("create failed"),
+	}
+	_, err := NewDistributedLock(js, testBucketName)
+	if err == nil {
+		t.Fatal("expected error when CreateKeyValue fails")
+	}
+	want := "failed to ensure lock bucket: failed to create kv bucket: create failed"
+	if err.Error() != want {
+		t.Fatalf("expected error %q, got %q", want, err.Error())
+	}
+}
+
+func TestNewDistributedLock_RaceReFetchFails(t *testing.T) {
+	js := &raceReFetchJetStream{
+		keyValueErr: errors.New("re-fetch failed"),
+	}
+	_, err := NewDistributedLock(js, testBucketName)
+	if err == nil {
+		t.Fatal("expected error when bucket race re-fetch fails")
+	}
+	if !errors.Is(err, nats.ErrStreamNameAlreadyInUse) {
+		t.Fatalf("expected error to wrap ErrStreamNameAlreadyInUse, got %v", err)
+	}
+}
+
+func TestAcquire_InvalidKeyParts(t *testing.T) {
+	defer setShortTimeouts(t)()
+
+	s, cleanup := startNATSServer(t)
+	defer cleanup()
+
+	js := connectJS(t, s)
+	dl := newTestLock(t, js)
+
+	_, err := dl.Acquire(context.Background(), "", "resource")
+	if err == nil {
+		t.Fatal("expected error for empty lockType")
+	}
+	want := "invalid lock type: lockType must not be empty"
+	if err.Error() != want {
+		t.Fatalf("expected %q, got %q", want, err.Error())
+	}
+
+	_, err = dl.Acquire(context.Background(), "type", "res.ource")
+	if err == nil {
+		t.Fatal("expected error for resourceID containing '.'")
+	}
+	want = "invalid resource id: resourceID must not contain '.'"
+	if err.Error() != want {
+		t.Fatalf("expected %q, got %q", want, err.Error())
+	}
+}
+
+func TestAcquire_KeyValueFailure(t *testing.T) {
+	defer setShortTimeouts(t)()
+
+	js := &errJetStream{keyValueErr: errors.New("kv unavailable")}
+	dl := &DistributedLock{js: js, bucketName: testBucketName}
+
+	_, err := dl.Acquire(context.Background(), "test", "resource")
+	if err == nil {
+		t.Fatal("expected error when KeyValue fails")
+	}
+	want := "failed to get kv bucket: kv unavailable"
+	if err.Error() != want {
+		t.Fatalf("expected %q, got %q", want, err.Error())
+	}
+}
+
+func TestAcquire_CreateOtherError(t *testing.T) {
+	defer setShortTimeouts(t)()
+
+	s, cleanup := startNATSServer(t)
+	defer cleanup()
+
+	js := connectJS(t, s)
+	// Ensure the bucket exists so that Acquire only fails at kv.Create.
+	if _, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: testBucketName, TTL: lockTTL}); err != nil && !errors.Is(err, nats.ErrStreamNameAlreadyInUse) {
+		t.Fatalf("failed to create test bucket: %v", err)
+	}
+
+	fkv := &failingKV{createErr: errors.New("create failed")}
+	fjs := &fixedKVJetStream{JetStreamContext: js, kv: fkv}
+	dl := &DistributedLock{js: fjs, bucketName: testBucketName}
+
+	_, err := dl.Acquire(context.Background(), "test", "resource")
+	if err == nil {
+		t.Fatal("expected error when kv.Create fails")
+	}
+	want := "failed to create lock: create failed"
+	if err.Error() != want {
+		t.Fatalf("expected %q, got %q", want, err.Error())
+	}
+}
+
+func TestRenew_ContextCancelledImmediately(t *testing.T) {
+	defer setShortTimeouts(t)()
+
+	lock := &Lock{
+		kv:     &failingKV{},
+		lostCh: make(chan struct{}),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	lock.renewWg.Add(1)
+	lock.renew(ctx, "key", "token")
+
+	select {
+	case <-lock.Lost():
+		t.Fatal("Lost() should not be closed when context is already cancelled")
+	default:
+	}
+}
+
+func TestRenew_GetRepeatedError(t *testing.T) {
+	defer setShortTimeouts(t)()
+
+	kv := &countingFailingKV{}
+	lock := &Lock{
+		kv:     kv,
+		lostCh: make(chan struct{}),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	lock.renewWg.Add(1)
+	lock.renew(ctx, "key", "token")
+
+	kv.mu.Lock()
+	count := kv.getCount
+	kv.mu.Unlock()
+	if count == 0 {
+		t.Fatal("expected renew to call Get at least once before context cancellation")
+	}
+}
+
+func TestRenew_UpdateWrongLastSequence(t *testing.T) {
+	defer setShortTimeouts(t)()
+
+	lock := &Lock{
+		kv:     &wrongSequenceKV{token: "token"},
+		lostCh: make(chan struct{}),
+	}
+
+	lock.renewWg.Add(1)
+	go lock.renew(context.Background(), "key", "token")
+
+	select {
+	case <-lock.Lost():
+		// expected
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected Lost() to be closed after wrong-last-sequence error")
+	}
+}
+
+func TestIsHeld_GetError(t *testing.T) {
+	lock := &Lock{
+		kv:     &failingKV{getErr: errors.New("get failed")},
+		lostCh: make(chan struct{}),
+	}
+
+	_, err := lock.IsHeld()
+	if err == nil {
+		t.Fatal("expected error when Get fails")
+	}
+	want := "failed to get lock entry: get failed"
+	if err.Error() != want {
+		t.Fatalf("expected %q, got %q", want, err.Error())
+	}
+}
+
+func TestRelease_AlreadyReleased(t *testing.T) {
+	defer setShortTimeouts(t)()
+
+	s, cleanup := startNATSServer(t)
+	defer cleanup()
+
+	js := connectJS(t, s)
+	dl := newTestLock(t, js)
+
+	lock, err := dl.Acquire(context.Background(), "test", "resource-release-twice")
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+
+	if err := lock.Release(); err != nil {
+		t.Fatalf("first Release failed: %v", err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatalf("second Release should be idempotent, got: %v", err)
+	}
+}
+
+func TestRelease_FirstGetTokenMismatch(t *testing.T) {
+	lock := &Lock{
+		lockType:     "test",
+		resourceID:   "resource",
+		fencingToken: "my-token",
+		kv:           &tokenMismatchKV{actualToken: "other-token"},
+		lostCh:       make(chan struct{}),
+		cancel:       func() {},
+	}
+
+	err := lock.Release()
+	if err == nil {
+		t.Fatal("expected error when token mismatches on first Get")
+	}
+	if !errors.Is(err, ErrLockHeld) && err.Error() != `fencing token mismatch: cannot release lock held by another owner (expected="my-token", actual="other-token", revision=1)` {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRelease_DeleteFailure(t *testing.T) {
+	lock := &Lock{
+		lockType:     "test",
+		resourceID:   "resource",
+		fencingToken: "my-token",
+		kv:           &deleteFailureKV{token: "my-token", deleteErr: errors.New("delete failed")},
+		lostCh:       make(chan struct{}),
+		cancel:       func() {},
+	}
+
+	err := lock.Release()
+	if err == nil {
+		t.Fatal("expected error when Delete fails")
+	}
+	want := "failed to delete lock: delete failed"
+	if err.Error() != want {
+		t.Fatalf("expected %q, got %q", want, err.Error())
+	}
+}

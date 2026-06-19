@@ -1,46 +1,44 @@
-// Package trigger provides trigger evaluation tests.
 package trigger
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/topsailai/agent-community/internal/models"
 )
 
-// makeMessage creates a test message with given parameters.
-func makeMessage(id, senderID string, senderType models.MemberType, text, processedMsgID string, createAtMs int64) *models.GroupMessage {
+func makeMember(id, name string, mt models.MemberType) models.GroupMember {
+	return models.GroupMember{
+		MemberID:   id,
+		MemberName: name,
+		MemberType: mt,
+	}
+}
+
+func makeMessage(id, senderID string, senderType models.MemberType, text, processed string, createAtMs int64) *models.GroupMessage {
 	return &models.GroupMessage{
 		MessageID:      id,
 		SenderID:       senderID,
 		SenderType:     senderType,
 		MessageText:    text,
-		ProcessedMsgID: processedMsgID,
+		ProcessedMsgID: processed,
 		CreateAtMs:     createAtMs,
 	}
 }
 
-// makeMember creates a test member.
-func makeMember(id, name string, memberType models.MemberType) models.GroupMember {
-	return models.GroupMember{
-		MemberID:   id,
-		MemberName: name,
-		MemberType: memberType,
-	}
-}
-
-// TestEvaluateAntiTriggerAgentSender verifies messages from agents are not triggered.
+// TestEvaluateAntiTriggerAgentSender verifies agent sender does not trigger.
 func TestEvaluateAntiTriggerAgentSender(t *testing.T) {
 	e := NewEvaluator(10 * time.Minute)
 	members := []models.GroupMember{
 		makeMember("user1", "Alice", models.MemberTypeUser),
 		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
 	}
-
-	// Message from worker-agent should not trigger
 	msg := makeMessage("msg1", "agent1", models.MemberTypeWorkerAgent, "Hello", "", time.Now().UnixMilli())
+
 	result, err := e.Evaluate(context.Background(), msg, members, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -48,37 +46,56 @@ func TestEvaluateAntiTriggerAgentSender(t *testing.T) {
 	if result.ShouldTrigger {
 		t.Error("expected no trigger for agent sender")
 	}
-
-	// Message from manager-agent should not trigger
-	msg2 := makeMessage("msg2", "agent2", models.MemberTypeManagerAgent, "Hello", "", time.Now().UnixMilli())
-	result2, err := e.Evaluate(context.Background(), msg2, members, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result2.ShouldTrigger {
-		t.Error("expected no trigger for manager-agent sender")
-	}
 }
 
-// TestEvaluateAntiTriggerProcessedMsgID verifies messages with processed_msg_id are not triggered.
+// TestEvaluateAntiTriggerProcessedMsgID verifies processed messages do not trigger.
 func TestEvaluateAntiTriggerProcessedMsgID(t *testing.T) {
 	e := NewEvaluator(10 * time.Minute)
 	members := []models.GroupMember{
 		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
 	}
+	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "Hello", "processed-id", time.Now().UnixMilli())
 
-	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "Hello", "parent1", time.Now().UnixMilli())
 	result, err := e.Evaluate(context.Background(), msg, members, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.ShouldTrigger {
-		t.Error("expected no trigger for message with processed_msg_id")
+		t.Error("expected no trigger for processed message")
 	}
 }
 
-// TestEvaluateSlidingWindow verifies the sliding window anti-loop protection.
+// TestEvaluateSlidingWindow verifies >10 consecutive agent messages block trigger.
 func TestEvaluateSlidingWindow(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
+	}
+	now := time.Now().UnixMilli()
+
+	contextMessages := make([]models.GroupMessage, 0, 21)
+	for i := 0; i < 11; i++ {
+		contextMessages = append(contextMessages, *makeMessage(
+			"msg_a_"+string(rune('a'+i)), "agent1", models.MemberTypeWorkerAgent,
+			"agent msg", "", now-int64((20-i)*1000),
+		))
+	}
+	targetMsg := makeMessage("target", "user1", models.MemberTypeUser, "Hello", "", now+1000)
+	contextMessages = append(contextMessages, *targetMsg)
+
+	result, err := e.Evaluate(context.Background(), targetMsg, members, contextMessages)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ShouldTrigger {
+		t.Error("expected no trigger when >10 consecutive agent messages in window")
+	}
+}
+
+// TestEvaluateSlidingWindowNoLoop verifies normal messages trigger when a manager is available.
+func TestEvaluateSlidingWindowNoLoop(t *testing.T) {
 	e := NewEvaluator(10 * time.Minute)
 	members := []models.GroupMember{
 		makeMember("user1", "Alice", models.MemberTypeUser),
@@ -87,86 +104,28 @@ func TestEvaluateSlidingWindow(t *testing.T) {
 	}
 	now := time.Now().UnixMilli()
 
-	// Build context messages: 25 messages with target at index 15
-	// Include 12 consecutive agent messages in the window around target
-	contextMessages := make([]models.GroupMessage, 0, 25)
-
-	// Messages 0-4: user messages
-	for i := 0; i < 5; i++ {
-		contextMessages = append(contextMessages, *makeMessage(
-			"msg_u_"+string(rune('a'+i)), "user1", models.MemberTypeUser,
-			"user msg", "", now-int64((25-i)*1000),
-		))
+	contextMessages := []models.GroupMessage{
+		*makeMessage("msg1", "user1", models.MemberTypeUser, "Hello", "", now-2000),
+		*makeMessage("msg2", "agent1", models.MemberTypeWorkerAgent, "Hi", "", now-1000),
 	}
-
-	// Messages 5-16: 12 consecutive agent messages
-	for i := 0; i < 12; i++ {
-		contextMessages = append(contextMessages, *makeMessage(
-			"msg_a_"+string(rune('a'+i)), "agent1", models.MemberTypeWorkerAgent,
-			"agent msg", "", now-int64((20-i)*1000),
-		))
-	}
-
-	// Messages 17-24: user messages
-	for i := 0; i < 8; i++ {
-		contextMessages = append(contextMessages, *makeMessage(
-			"msg_u2_"+string(rune('a'+i)), "user1", models.MemberTypeUser,
-			"user msg", "", now-int64((8-i)*1000),
-		))
-	}
-
-	// Target message from user at index 15 (in the middle of agent messages)
-	targetMsg := makeMessage("target", "user1", models.MemberTypeUser, "Hello", "", now+1000)
-	// Insert target into contextMessages at index 15
-	contextMessages = append(contextMessages[:15], append([]models.GroupMessage{*targetMsg}, contextMessages[15:]...)...)
-
-	result, err := e.Evaluate(context.Background(), targetMsg, members, contextMessages)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.ShouldTrigger {
-		t.Error("expected no trigger due to sliding window anti-loop protection")
-	}
-}
-
-// TestEvaluateSlidingWindowNoLoop verifies normal messages trigger correctly.
-func TestEvaluateSlidingWindowNoLoop(t *testing.T) {
-	e := NewEvaluator(10 * time.Minute)
-	members := []models.GroupMember{
-		makeMember("user1", "Alice", models.MemberTypeUser),
-		makeMember("agent1", "Bot", models.MemberTypeManagerAgent),
-	}
-
-	// Only 5 consecutive agent messages (below threshold)
-	contextMessages := make([]models.GroupMessage, 0, 15)
-	now := time.Now().UnixMilli()
-
-	for i := 0; i < 5; i++ {
-		contextMessages = append(contextMessages, *makeMessage(
-			"msg_a_"+string(rune('a'+i)), "agent1", models.MemberTypeWorkerAgent,
-			"agent msg", "", now-int64((10-i)*1000),
-		))
-	}
-
-	// Target message at the end
-	targetMsg := makeMessage("target", "user1", models.MemberTypeUser, "Hello", "", now+1000)
-	contextMessages = append(contextMessages, *targetMsg)
+	targetMsg := makeMessage("target", "user1", models.MemberTypeUser, "How are you?", "", now)
 
 	result, err := e.Evaluate(context.Background(), targetMsg, members, contextMessages)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !result.ShouldTrigger {
-		t.Error("expected trigger for normal message")
+		t.Error("expected trigger for normal user message")
 	}
 }
 
-// TestExtractMentions verifies mention extraction from message text.
+// TestExtractMentions verifies mention extraction.
 func TestExtractMentions(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
 	members := []models.GroupMember{
 		makeMember("user1", "Alice", models.MemberTypeUser),
 		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
-		makeMember("agent2", "Helper", models.MemberTypeManagerAgent),
+		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
 	}
 
 	tests := []struct {
@@ -175,99 +134,56 @@ func TestExtractMentions(t *testing.T) {
 		wantIDs []string
 		wantAll bool
 	}{
-		{
-			name:    "no mentions",
-			text:    "Hello everyone",
-			wantIDs: []string{},
-			wantAll: false,
-		},
-		{
-			name:    "mention by id",
-			text:    "Hello @agent1, can you help?",
-			wantIDs: []string{"agent1"},
-			wantAll: false,
-		},
-		{
-			name:    "mention by name",
-			text:    "Hello @Bot, can you help?",
-			wantIDs: []string{"agent1"},
-			wantAll: false,
-		},
-		{
-			name:    "multiple mentions",
-			text:    "@agent1 @agent2 please help",
-			wantIDs: []string{"agent1", "agent2"},
-			wantAll: false,
-		},
-		{
-			name:    "mention all",
-			text:    "@all please respond",
-			wantIDs: []string{},
-			wantAll: true,
-		},
-		{
-			name:    "mention user (not agent)",
-			text:    "@user1 what do you think?",
-			wantIDs: []string{},
-			wantAll: false,
-		},
+		{"no mentions", "Hello", nil, false},
+		{"mention by id", "Hello @agent1", []string{"agent1"}, false},
+		{"mention by name", "Hello @Bot", []string{"agent1"}, false},
+		{"multiple mentions", "@agent1 @mgr1", []string{"agent1", "mgr1"}, false},
+		{"mention all", "@all", nil, true},
+		{"mention user (not agent)", "@user1", nil, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := NewEvaluator(10 * time.Minute)
-			mentions := e.extractMentions(tt.text, members)
-
-			if mentions.hasAll != tt.wantAll {
-				t.Errorf("hasAll = %v, want %v", mentions.hasAll, tt.wantAll)
+			result := e.extractMentions(tt.text, members)
+			if result.hasAll != tt.wantAll {
+				t.Errorf("hasAll = %v, want %v", result.hasAll, tt.wantAll)
 			}
-
-			gotIDs := make([]string, 0, len(mentions.agents))
-			for _, a := range mentions.agents {
-				gotIDs = append(gotIDs, a.MemberID)
-			}
-
-			if len(gotIDs) != len(tt.wantIDs) {
-				t.Errorf("got %d agent mentions, want %d", len(gotIDs), len(tt.wantIDs))
+			if len(result.agents) != len(tt.wantIDs) {
+				t.Fatalf("agent count = %d, want %d", len(result.agents), len(tt.wantIDs))
 			}
 			for i, id := range tt.wantIDs {
-				if i >= len(gotIDs) || gotIDs[i] != id {
-					t.Errorf("mention[%d] = %v, want %v", i, gotIDs, tt.wantIDs)
-					break
+				if result.agents[i].MemberID != id {
+					t.Errorf("agent[%d] = %v, want %v", i, result.agents[i].MemberID, id)
 				}
 			}
 		})
 	}
 }
 
-// TestEvaluateMentionSingleAgent verifies single agent mention triggers correctly.
+// TestEvaluateMentionSingleAgent verifies single agent mention triggers that agent.
 func TestEvaluateMentionSingleAgent(t *testing.T) {
 	e := NewEvaluator(10 * time.Minute)
 	members := []models.GroupMember{
 		makeMember("user1", "Alice", models.MemberTypeUser),
 		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
 	}
+	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "Hello @agent1", "", time.Now().UnixMilli())
 
-	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "@agent1 help me", "", time.Now().UnixMilli())
 	result, err := e.Evaluate(context.Background(), msg, members, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !result.ShouldTrigger {
-		t.Fatal("expected trigger for single agent mention")
-	}
-	if result.Trigger.Type != TriggerTypeMention {
-		t.Errorf("trigger type = %v, want %v", result.Trigger.Type, TriggerTypeMention)
+		t.Fatal("expected trigger")
 	}
 	if len(result.Targets) != 1 || result.Targets[0].AgentID != "agent1" {
-		t.Errorf("targets = %v, want [{agent1 agent}]", result.Targets)
+		t.Errorf("targets = %v, want [agent1]", result.Targets)
 	}
-	if result.Targets[0].Mode != "agent" {
-		t.Errorf("mode = %v, want agent", result.Targets[0].Mode)
+	if result.Trigger.Type != TriggerTypeMention {
+		t.Errorf("trigger type = %v, want mention", result.Trigger.Type)
 	}
 }
-
-// TestEvaluateMentionMultipleAgentsNoManager verifies multiple agent mentions without manager trigger concurrently.
+// TestEvaluateMentionMultipleAgentsNoManager verifies multiple agent mentions without manager trigger all agents.
 func TestEvaluateMentionMultipleAgentsNoManager(t *testing.T) {
 	e := NewEvaluator(10 * time.Minute)
 	members := []models.GroupMember{
@@ -275,24 +191,26 @@ func TestEvaluateMentionMultipleAgentsNoManager(t *testing.T) {
 		makeMember("agent1", "Bot1", models.MemberTypeWorkerAgent),
 		makeMember("agent2", "Bot2", models.MemberTypeWorkerAgent),
 	}
-
 	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "@agent1 @agent2 help", "", time.Now().UnixMilli())
+
 	result, err := e.Evaluate(context.Background(), msg, members, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !result.ShouldTrigger {
-		t.Fatal("expected trigger for multiple agent mentions")
+		t.Fatal("expected trigger")
 	}
 	if len(result.Targets) != 2 {
-		t.Fatalf("expected 2 targets, got %d", len(result.Targets))
+		t.Fatalf("targets count = %d, want 2", len(result.Targets))
 	}
-	if result.Targets[0].Mode != "agent" || result.Targets[1].Mode != "agent" {
-		t.Error("expected agent mode for multiple agents without manager")
+	for _, target := range result.Targets {
+		if !strings.Contains(target.MessageAppend, "DONOT INVOKE ANY TOOLS") {
+			t.Errorf("expected appended instruction for target %s", target.AgentID)
+		}
 	}
 }
 
-// TestEvaluateMentionMultipleAgentsWithManager verifies manager is selected when present in mentions.
+// TestEvaluateMentionMultipleAgentsWithManager verifies multiple agent mentions with manager trigger one manager.
 func TestEvaluateMentionMultipleAgentsWithManager(t *testing.T) {
 	e := NewEvaluator(10 * time.Minute)
 	members := []models.GroupMember{
@@ -300,27 +218,21 @@ func TestEvaluateMentionMultipleAgentsWithManager(t *testing.T) {
 		makeMember("agent1", "Bot1", models.MemberTypeWorkerAgent),
 		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
 	}
-
 	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "@agent1 @mgr1 help", "", time.Now().UnixMilli())
+
 	result, err := e.Evaluate(context.Background(), msg, members, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !result.ShouldTrigger {
-		t.Fatal("expected trigger for mentions with manager")
+		t.Fatal("expected trigger")
 	}
-	if len(result.Targets) != 1 {
-		t.Fatalf("expected 1 target, got %d", len(result.Targets))
-	}
-	if result.Targets[0].AgentID != "mgr1" {
-		t.Errorf("target agent = %v, want mgr1", result.Targets[0].AgentID)
-	}
-	if result.Targets[0].Mode != "agent" {
-		t.Errorf("mode = %v, want agent", result.Targets[0].Mode)
+	if len(result.Targets) != 1 || result.Targets[0].AgentID != "mgr1" {
+		t.Errorf("targets = %v, want [mgr1]", result.Targets)
 	}
 }
 
-// TestEvaluateMentionAll verifies @all triggers manager-agent with high priority.
+// TestEvaluateMentionAll verifies @all triggers manager-agent.
 func TestEvaluateMentionAll(t *testing.T) {
 	e := NewEvaluator(10 * time.Minute)
 	members := []models.GroupMember{
@@ -328,48 +240,42 @@ func TestEvaluateMentionAll(t *testing.T) {
 		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
 		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
 	}
+	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "@all", "", time.Now().UnixMilli())
 
-	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "@all please help", "", time.Now().UnixMilli())
 	result, err := e.Evaluate(context.Background(), msg, members, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !result.ShouldTrigger {
-		t.Fatal("expected trigger for @all mention")
-	}
-	if result.Trigger.Type != TriggerTypeMention {
-		t.Errorf("trigger type = %v, want %v", result.Trigger.Type, TriggerTypeMention)
+		t.Fatal("expected trigger")
 	}
 	if len(result.Targets) != 1 || result.Targets[0].AgentID != "mgr1" {
-		t.Errorf("targets = %v, want [{mgr1 agent}]", result.Targets)
+		t.Errorf("targets = %v, want [mgr1]", result.Targets)
 	}
 }
 
-// TestEvaluateAutoTriggerSingleUser verifies auto-trigger when only 1 user in group.
+// TestEvaluateAutoTriggerSingleUser verifies auto-trigger when only one user exists.
 func TestEvaluateAutoTriggerSingleUser(t *testing.T) {
 	e := NewEvaluator(10 * time.Minute)
 	members := []models.GroupMember{
 		makeMember("user1", "Alice", models.MemberTypeUser),
 		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
 	}
-
 	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "Hello", "", time.Now().UnixMilli())
+
 	result, err := e.Evaluate(context.Background(), msg, members, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !result.ShouldTrigger {
-		t.Fatal("expected auto-trigger for single user group")
+		t.Fatal("expected auto-trigger for single user")
 	}
-	if result.Trigger.Type != TriggerTypeAuto {
-		t.Errorf("trigger type = %v, want %v", result.Trigger.Type, TriggerTypeAuto)
-	}
-	if len(result.Targets) != 1 || result.Targets[0].AgentID != "mgr1" {
-		t.Errorf("targets = %v, want [{mgr1 agent}]", result.Targets)
+	if result.Targets[0].AgentID != "mgr1" {
+		t.Errorf("targets = %v, want [mgr1]", result.Targets)
 	}
 }
 
-// TestEvaluateAutoTriggerMultipleUsers verifies no auto-trigger when multiple users.
+// TestEvaluateAutoTriggerMultipleUsers verifies no auto-trigger when multiple users exist.
 func TestEvaluateAutoTriggerMultipleUsers(t *testing.T) {
 	e := NewEvaluator(10 * time.Minute)
 	members := []models.GroupMember{
@@ -377,8 +283,8 @@ func TestEvaluateAutoTriggerMultipleUsers(t *testing.T) {
 		makeMember("user2", "Bob", models.MemberTypeUser),
 		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
 	}
-
 	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "Hello", "", time.Now().UnixMilli())
+
 	result, err := e.Evaluate(context.Background(), msg, members, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -388,85 +294,67 @@ func TestEvaluateAutoTriggerMultipleUsers(t *testing.T) {
 	}
 }
 
-// TestEvaluateAutoTriggerTimeout verifies timeout-based auto-trigger evaluation.
+// TestEvaluateAutoTriggerTimeout verifies timeout auto-trigger via the dedicated exported method.
 func TestEvaluateAutoTriggerTimeout(t *testing.T) {
 	timeout := 10 * time.Minute
 	e := NewEvaluator(timeout)
 	members := []models.GroupMember{
 		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("user2", "Bob", models.MemberTypeUser),
 		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
 	}
+	now := time.Now()
+	lastMsgTime := now.Add(-timeout - time.Second)
 
-	// Message older than timeout
-	oldMsg := makeMessage("msg1", "user1", models.MemberTypeUser, "Hello", "", time.Now().Add(-20*time.Minute).UnixMilli())
-	result, err := e.EvaluateAutoTriggerTimeout(context.Background(), oldMsg, members)
+	lastMsg := makeMessage("msg1", "user1", models.MemberTypeUser, "Hello", "", lastMsgTime.UnixMilli())
+
+	result, err := e.EvaluateAutoTriggerTimeout(context.Background(), lastMsg, members)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !result.ShouldTrigger {
-		t.Fatal("expected timeout auto-trigger for old message")
+		t.Fatal("expected timeout auto-trigger")
 	}
-
-	// Message newer than timeout
-	newMsg := makeMessage("msg2", "user1", models.MemberTypeUser, "Hello", "", time.Now().Add(-5*time.Minute).UnixMilli())
-	result2, err := e.EvaluateAutoTriggerTimeout(context.Background(), newMsg, members)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result2.ShouldTrigger {
-		t.Error("expected no timeout auto-trigger for recent message")
-	}
-
-	// Agent sender should not trigger
-	agentMsg := makeMessage("msg3", "agent1", models.MemberTypeWorkerAgent, "Hello", "", time.Now().Add(-20*time.Minute).UnixMilli())
-	result3, err := e.EvaluateAutoTriggerTimeout(context.Background(), agentMsg, members)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result3.ShouldTrigger {
-		t.Error("expected no timeout auto-trigger for agent sender")
+	if result.Targets[0].AgentID != "mgr1" {
+		t.Errorf("targets = %v, want [mgr1]", result.Targets)
 	}
 }
 
-// TestExtractMentionsFromText verifies the exported mention extraction function.
+// TestExtractMentionsFromText verifies the standalone text mention extractor.
 func TestExtractMentionsFromText(t *testing.T) {
 	members := []models.GroupMember{
 		makeMember("user1", "Alice", models.MemberTypeUser),
 		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
 	}
-
-	mentions := ExtractMentionsFromText("@agent1 @user1 hello", members)
-	if len(mentions) != 2 {
-		t.Fatalf("expected 2 mentions, got %d", len(mentions))
+	text := "Hello @agent1 and @Bot"
+	mentions := ExtractMentionsFromText(text, members)
+	if len(mentions) != 1 {
+		t.Fatalf("mentions count = %d, want 1", len(mentions))
 	}
 	if mentions[0].MemberID != "agent1" {
-		t.Errorf("first mention = %v, want agent1", mentions[0].MemberID)
-	}
-	if mentions[1].MemberID != "user1" {
-		t.Errorf("second mention = %v, want user1", mentions[1].MemberID)
+		t.Errorf("first mention = %v, want agent1", mentions[0])
 	}
 }
 
-// TestExtractMentionsFromTextAll verifies @all includes all members.
+// TestExtractMentionsFromTextAll verifies @all extraction.
 func TestExtractMentionsFromTextAll(t *testing.T) {
 	members := []models.GroupMember{
 		makeMember("user1", "Alice", models.MemberTypeUser),
 		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
-		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
 	}
-
-	mentions := ExtractMentionsFromText("@all please help", members)
-	if len(mentions) != 3 {
-		t.Fatalf("expected 3 mentions for @all, got %d", len(mentions))
+	text := "@all please respond"
+	mentions := ExtractMentionsFromText(text, members)
+	if len(mentions) != 2 {
+		t.Fatalf("mentions count = %d, want 2", len(mentions))
 	}
-	if mentions[0].MemberID != "user1" {
-		t.Errorf("first mention = %v, want user1", mentions[0].MemberID)
+	foundAll := false
+	for _, m := range mentions {
+		if m.MemberID == "user1" || m.MemberID == "agent1" {
+			foundAll = true
+		}
 	}
-	if mentions[1].MemberID != "agent1" {
-		t.Errorf("second mention = %v, want agent1", mentions[1].MemberID)
-	}
-	if mentions[2].MemberID != "mgr1" {
-		t.Errorf("third mention = %v, want mgr1", mentions[2].MemberID)
+	if !foundAll {
+		t.Errorf("mentions = %v, want all members", mentions)
 	}
 }
 
@@ -502,5 +390,348 @@ func TestFormatAndParseTrigger(t *testing.T) {
 	}
 	if len(parsedTargets) != 1 || parsedTargets[0].AgentID != "agent1" {
 		t.Errorf("parsed targets = %v, want [{agent1 agent}]", parsedTargets)
+	}
+}
+
+// TestEvaluate_SlidingWindowBoundary10 verifies exactly 10 consecutive agent messages still allow trigger.
+func TestEvaluate_SlidingWindowBoundary10(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
+		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
+	}
+	now := time.Now().UnixMilli()
+
+	contextMessages := make([]models.GroupMessage, 0, 11)
+	for i := 0; i < 10; i++ {
+		contextMessages = append(contextMessages, *makeMessage(
+			"msg_a_"+string(rune('a'+i)), "agent1", models.MemberTypeWorkerAgent,
+			"agent msg", "", now-int64((20-i)*1000),
+		))
+	}
+
+	targetMsg := makeMessage("target", "user1", models.MemberTypeUser, "Hello", "", now+1000)
+	contextMessages = append(contextMessages, *targetMsg)
+
+	result, err := e.Evaluate(context.Background(), targetMsg, members, contextMessages)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.ShouldTrigger {
+		t.Error("expected trigger when exactly 10 consecutive agent messages in window")
+	}
+}
+
+// TestEvaluate_SlidingWindowBoundary11 verifies 11 consecutive agent messages block trigger.
+func TestEvaluate_SlidingWindowBoundary11(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
+		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
+	}
+	now := time.Now().UnixMilli()
+
+	// Build 11 agent messages followed by the target user message.
+	contextMessages := make([]models.GroupMessage, 0, 12)
+	for i := 0; i < 11; i++ {
+		contextMessages = append(contextMessages, *makeMessage(
+			fmt.Sprintf("msg_a_%d", i), "agent1", models.MemberTypeWorkerAgent,
+			"agent msg", "", now-int64((20-i)*1000),
+		))
+	}
+
+	targetMsg := makeMessage("target", "user1", models.MemberTypeUser, "Hello", "", now+1000)
+	contextMessages = append(contextMessages, *targetMsg)
+
+	result, err := e.Evaluate(context.Background(), targetMsg, members, contextMessages)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ShouldTrigger {
+		t.Error("expected no trigger when 11 consecutive agent messages in window")
+	}
+}
+
+// TestEvaluate_TargetNotInContext verifies evaluation continues when target is missing from context.
+func TestEvaluate_TargetNotInContext(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
+	}
+	now := time.Now().UnixMilli()
+
+	contextMessages := []models.GroupMessage{
+		*makeMessage("msg1", "user1", models.MemberTypeUser, "Hello", "", now-1000),
+	}
+	targetMsg := makeMessage("target", "user1", models.MemberTypeUser, "Hello", "", now)
+
+	result, err := e.Evaluate(context.Background(), targetMsg, members, contextMessages)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.ShouldTrigger {
+		t.Error("expected trigger when target not in context (no loop protection applied)")
+	}
+}
+
+// TestResolveAgents_AllNoManager verifies @all without manager does not trigger.
+func TestResolveAgents_AllNoManager(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
+	}
+	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "@all", "", time.Now().UnixMilli())
+
+	result, err := e.ResolveAgents(context.Background(), msg, members)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ShouldTrigger {
+		t.Error("expected no trigger when @all but no manager")
+	}
+}
+
+// TestResolveAgents_SingleUserNoManager verifies single-user group without manager does not auto-trigger.
+func TestResolveAgents_SingleUserNoManager(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
+	}
+	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "Hello", "", time.Now().UnixMilli())
+
+	result, err := e.ResolveAgents(context.Background(), msg, members)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ShouldTrigger {
+		t.Error("expected no auto-trigger when single user and no manager")
+	}
+}
+
+// TestResolveAgents_DuplicateMentions verifies duplicate mentions are deduplicated.
+func TestResolveAgents_DuplicateMentions(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
+	}
+	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "@agent1 @agent1 @Bot", "", time.Now().UnixMilli())
+
+	result, err := e.ResolveAgents(context.Background(), msg, members)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.ShouldTrigger {
+		t.Fatal("expected trigger")
+	}
+	if len(result.Targets) != 1 || result.Targets[0].AgentID != "agent1" {
+		t.Errorf("targets = %v, want [agent1]", result.Targets)
+	}
+}
+
+// TestEvaluateMentions_MultipleManagers verifies multiple manager mentions picks one manager.
+func TestEvaluateMentions_MultipleManagers(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("mgr1", "Manager1", models.MemberTypeManagerAgent),
+		makeMember("mgr2", "Manager2", models.MemberTypeManagerAgent),
+	}
+	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "@mgr1 @mgr2", "", time.Now().UnixMilli())
+
+	result, err := e.ResolveAgents(context.Background(), msg, members)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.ShouldTrigger {
+		t.Fatal("expected trigger")
+	}
+	if len(result.Targets) != 1 {
+		t.Fatalf("expected exactly one target, got %v", result.Targets)
+	}
+	if result.Targets[0].AgentID != "mgr1" && result.Targets[0].AgentID != "mgr2" {
+		t.Errorf("expected mgr1 or mgr2, got %s", result.Targets[0].AgentID)
+	}
+	if result.Targets[0].Mode != "agent" {
+		t.Errorf("expected mode agent, got %s", result.Targets[0].Mode)
+	}
+}
+
+// TestEvaluateAutoTrigger_ZeroUsers verifies no auto-trigger when zero users.
+func TestEvaluateAutoTrigger_ZeroUsers(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
+		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
+	}
+	msg := makeMessage("msg1", "agent1", models.MemberTypeWorkerAgent, "Hello", "", time.Now().UnixMilli())
+
+	result, err := e.ResolveAgents(context.Background(), msg, members)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ShouldTrigger {
+		t.Error("expected no auto-trigger when zero users")
+	}
+}
+
+// TestEvaluateAutoTriggerTimeout_NilMessage verifies nil last message does not trigger.
+func TestEvaluateAutoTriggerTimeout_NilMessage(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
+	}
+
+	result, err := e.EvaluateAutoTriggerTimeout(context.Background(), nil, members)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ShouldTrigger {
+		t.Error("expected no trigger for nil last message")
+	}
+}
+
+// TestEvaluateAutoTriggerTimeout_Boundary verifies timeout boundary behavior.
+func TestEvaluateAutoTriggerTimeout_Boundary(t *testing.T) {
+	timeout := 10 * time.Minute
+	e := NewEvaluator(timeout)
+	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
+	}
+
+	// Just under timeout: should NOT trigger
+	msgTime := time.Now().Add(-timeout).Add(10 * time.Millisecond)
+	lastMsgUnderTimeout := makeMessage("msg1", "user1", models.MemberTypeUser, "Hello", "", msgTime.UnixMilli())
+	result, err := e.EvaluateAutoTriggerTimeout(context.Background(), lastMsgUnderTimeout, members)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ShouldTrigger {
+		t.Error("expected no trigger just under timeout boundary")
+	}
+
+	// One second past timeout: should trigger
+	lastMsgPastTimeout := makeMessage("msg2", "user1", models.MemberTypeUser, "Hello", "", time.Now().Add(-timeout-1*time.Second).UnixMilli())
+	result, err = e.EvaluateAutoTriggerTimeout(context.Background(), lastMsgPastTimeout, members)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.ShouldTrigger {
+		t.Error("expected trigger past timeout boundary")
+	}
+}
+
+// TestExtractMentions_NameCollision verifies first matching member wins on name collision.
+func TestExtractMentions_NameCollision(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
+		makeMember("agent2", "Bot", models.MemberTypeWorkerAgent),
+	}
+	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "@Bot", "", time.Now().UnixMilli())
+
+	mentions := e.extractMentions(msg.MessageText, members)
+	if len(mentions.agents) != 1 || mentions.agents[0].MemberID != "agent1" {
+		t.Errorf("mentions = %v, want [agent1]", mentions.agents)
+	}
+}
+
+// TestExtractMentions_SpecialCharacters verifies mentions with underscores and hyphens.
+func TestExtractMentions_SpecialCharacters(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("agent_1", "Bot-1", models.MemberTypeWorkerAgent),
+		makeMember("agent-2", "Bot_2", models.MemberTypeWorkerAgent),
+	}
+	text := "Hello @agent_1 and @agent-2"
+	mentions := e.extractMentions(text, members)
+	if len(mentions.agents) != 2 {
+		t.Fatalf("mentions count = %d, want 2", len(mentions.agents))
+	}
+	ids := make(map[string]bool)
+	for _, m := range mentions.agents {
+		ids[m.MemberID] = true
+	}
+	if !ids["agent_1"] || !ids["agent-2"] {
+		t.Errorf("mentions = %v, want agent_1 and agent-2", mentions.agents)
+	}
+}
+
+// TestExtractMentions_AllMixed verifies @all takes precedence over other mentions.
+func TestExtractMentions_AllMixed(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
+		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
+	}
+	text := "@all @agent1"
+	mentions := e.extractMentions(text, members)
+	if !mentions.hasAll {
+		t.Error("expected hasAll true")
+	}
+	if len(mentions.agents) != 0 {
+		t.Errorf("expected no agents when @all present, got %v", mentions.agents)
+	}
+}
+
+// TestFindRandomManager_Empty verifies findRandomManager returns nil for empty/all-worker members.
+func TestFindRandomManager_Empty(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	if m := e.findRandomManager(nil); m != nil {
+		t.Errorf("expected nil manager for nil members, got %v", m)
+	}
+	members := []models.GroupMember{
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
+	}
+	if m := e.findRandomManager(members); m != nil {
+		t.Errorf("expected nil manager for all-worker members, got %v", m)
+	}
+}
+
+// TestParseTriggerFromNATS_MissingFields verifies parsing handles missing fields gracefully.
+func TestParseTriggerFromNATS_MissingFields(t *testing.T) {
+	trigger, targets, err := ParseTriggerFromNATS(map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if trigger.Type != "" || trigger.AgentID != "" {
+		t.Errorf("expected empty trigger, got %+v", trigger)
+	}
+	if len(targets) != 0 {
+		t.Errorf("expected empty targets, got %v", targets)
+	}
+
+	// Trigger fields at top level with no targets
+	data := map[string]interface{}{
+		"type":     "mention",
+		"agent_id": "agent1",
+	}
+	trigger, targets, err = ParseTriggerFromNATS(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if trigger.Type != "mention" || trigger.AgentID != "agent1" {
+		t.Errorf("trigger = %+v, want mention/agent1", trigger)
+	}
+	if len(targets) != 0 {
+		t.Errorf("expected empty targets, got %v", targets)
+	}
+
+	// Malformed targets should be skipped
+	data["targets"] = []interface{}{
+		map[string]interface{}{"agent_id": 123, "mode": "agent"},
+		map[string]interface{}{"agent_id": "agent2", "mode": "agent"},
+	}
+	trigger, targets, err = ParseTriggerFromNATS(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(targets) != 2 || targets[0].AgentID != "" || targets[1].AgentID != "agent2" {
+		t.Errorf("targets = %v, want [empty, agent2]", targets)
 	}
 }

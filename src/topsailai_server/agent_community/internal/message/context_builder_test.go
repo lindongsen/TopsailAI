@@ -446,3 +446,329 @@ func TestBuildSystemErrorMessage(t *testing.T) {
 		t.Errorf("processed_msg_id = %v", msg.ProcessedMsgID)
 	}
 }
+
+// TestBuildContext_LastReadNotFound verifies empty message context when last_read is not found.
+func TestBuildContext_LastReadNotFound(t *testing.T) {
+	cb := NewContextBuilder()
+	group := makeGroup("g1", "TestGroup", "Context")
+	members := []models.GroupMember{
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
+	}
+	agentMember := &members[0]
+	now := time.Now().UnixMilli()
+
+	allMessages := []models.GroupMessage{
+		makeMessage("m1", "g1", "user1", models.MemberTypeUser, "Msg1", now-2000),
+		makeMessage("m2", "g1", "user1", models.MemberTypeUser, "Msg2", now-1000),
+	}
+	pendingMsg := makeMessage("m2", "g1", "user1", models.MemberTypeUser, "Msg2", now-1000)
+
+	context, err := cb.BuildContext(group, members, agentMember, allMessages, "not-found", &pendingMsg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Init context should not be present when last_read_message_id exists
+	if strings.Contains(context, "GROUP CONTEXT START") {
+		t.Error("init context should not be included")
+	}
+	// No messages should be included because last_read was not found
+	if strings.Contains(context, "Msg1") || strings.Contains(context, "Msg2") {
+		t.Error("messages should not be included when last_read not found")
+	}
+}
+
+// TestBuildContext_PendingNotFound verifies messages from last_read to end when pending is not found.
+func TestBuildContext_PendingNotFound(t *testing.T) {
+	cb := NewContextBuilder()
+	group := makeGroup("g1", "TestGroup", "Context")
+	members := []models.GroupMember{
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
+	}
+	agentMember := &members[0]
+	now := time.Now().UnixMilli()
+
+	allMessages := []models.GroupMessage{
+		makeMessage("m1", "g1", "user1", models.MemberTypeUser, "Msg1", now-3000),
+		makeMessage("m2", "g1", "user1", models.MemberTypeUser, "Msg2", now-2000),
+		makeMessage("m3", "g1", "user1", models.MemberTypeUser, "Msg3", now-1000),
+	}
+	pendingMsg := makeMessage("pending-not-found", "g1", "user1", models.MemberTypeUser, "Pending", now)
+
+	context, err := cb.BuildContext(group, members, agentMember, allMessages, "m1", &pendingMsg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(context, "Msg1") {
+		t.Error("missing Msg1")
+	}
+	if !strings.Contains(context, "Msg2") {
+		t.Error("missing Msg2")
+	}
+	if !strings.Contains(context, "Msg3") {
+		t.Error("missing Msg3")
+	}
+}
+
+// TestGetRecentMessages_CutoffBoundary verifies messages exactly at the cutoff are included.
+func TestGetRecentMessages_CutoffBoundary(t *testing.T) {
+	cb := NewContextBuilder()
+	now := time.Now()
+	cutoff := now.Add(-24 * time.Hour)
+
+	allMessages := []models.GroupMessage{
+		makeMessage("m1", "g1", "user1", models.MemberTypeUser, "At cutoff", cutoff.UnixMilli()),
+		makeMessage("m2", "g1", "user1", models.MemberTypeUser, "Before cutoff", cutoff.Add(-1*time.Millisecond).UnixMilli()),
+	}
+	pendingMsg := makeMessage("m3", "g1", "user1", models.MemberTypeUser, "Pending", now.UnixMilli())
+
+	recent := cb.getRecentMessages(allMessages, &pendingMsg, 24*time.Hour)
+
+	foundAtCutoff := false
+	foundBeforeCutoff := false
+	for _, m := range recent {
+		if m.MessageID == "m1" {
+			foundAtCutoff = true
+		}
+		if m.MessageID == "m2" {
+			foundBeforeCutoff = true
+		}
+	}
+	if !foundAtCutoff {
+		t.Error("message exactly at cutoff should be included")
+	}
+	if foundBeforeCutoff {
+		t.Error("message before cutoff should not be included")
+	}
+}
+
+// TestGetRecentMessages_FutureMessagesExcluded verifies messages after pending are excluded.
+func TestGetRecentMessages_FutureMessagesExcluded(t *testing.T) {
+	cb := NewContextBuilder()
+	now := time.Now().UnixMilli()
+
+	allMessages := []models.GroupMessage{
+		makeMessage("m1", "g1", "user1", models.MemberTypeUser, "Before pending", now-1000),
+		makeMessage("m2", "g1", "user1", models.MemberTypeUser, "After pending", now+1000),
+	}
+	pendingMsg := makeMessage("m3", "g1", "user1", models.MemberTypeUser, "Pending", now)
+
+	recent := cb.getRecentMessages(allMessages, &pendingMsg, 24*time.Hour)
+
+	foundBefore := false
+	foundAfter := false
+	for _, m := range recent {
+		if m.MessageID == "m1" {
+			foundBefore = true
+		}
+		if m.MessageID == "m2" {
+			foundAfter = true
+		}
+	}
+	if !foundBefore {
+		t.Error("message before pending should be included")
+	}
+	if foundAfter {
+		t.Error("message after pending should be excluded")
+	}
+}
+
+// TestGetRecentMessages_OnlyPending verifies only pending is returned when all others are too old.
+func TestGetRecentMessages_OnlyPending(t *testing.T) {
+	cb := NewContextBuilder()
+	now := time.Now().UnixMilli()
+
+	allMessages := []models.GroupMessage{
+		makeMessage("m1", "g1", "user1", models.MemberTypeUser, "Old", now-int64(25*time.Hour/time.Millisecond)),
+		makeMessage("m2", "g1", "user1", models.MemberTypeUser, "Also old", now-int64(26*time.Hour/time.Millisecond)),
+	}
+	pendingMsg := makeMessage("m3", "g1", "user1", models.MemberTypeUser, "Pending", now)
+
+	recent := cb.getRecentMessages(allMessages, &pendingMsg, 24*time.Hour)
+
+	if len(recent) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(recent))
+	}
+	if recent[0].MessageID != "m3" {
+		t.Errorf("expected pending message m3, got %v", recent[0].MessageID)
+	}
+}
+
+// TestGetMessagesFromLastRead_LastReadAfterPending verifies behavior when last_read appears after pending.
+func TestGetMessagesFromLastRead_LastReadAfterPending(t *testing.T) {
+	cb := NewContextBuilder()
+	now := time.Now().UnixMilli()
+
+	allMessages := []models.GroupMessage{
+		makeMessage("m1", "g1", "user1", models.MemberTypeUser, "Pending", now-3000),
+		makeMessage("m2", "g1", "user1", models.MemberTypeUser, "Middle", now-2000),
+		makeMessage("m3", "g1", "user1", models.MemberTypeUser, "LastRead", now-1000),
+		makeMessage("m4", "g1", "user1", models.MemberTypeUser, "After", now),
+	}
+	pendingMsg := makeMessage("m1", "g1", "user1", models.MemberTypeUser, "Pending", now-3000)
+
+	result := cb.getMessagesFromLastRead(allMessages, "m3", &pendingMsg)
+
+	// Current implementation returns messages from last_read to end
+	if len(result) != 2 {
+		t.Fatalf("expected 2 messages, got %d: %v", len(result), result)
+	}
+	if result[0].MessageID != "m3" {
+		t.Errorf("first message = %v, want m3", result[0].MessageID)
+	}
+	if result[1].MessageID != "m4" {
+		t.Errorf("second message = %v, want m4", result[1].MessageID)
+	}
+}
+
+// TestGetMessagesFromLastRead_DuplicateLastRead verifies range starts at first occurrence of last_read.
+func TestGetMessagesFromLastRead_DuplicateLastRead(t *testing.T) {
+	cb := NewContextBuilder()
+	now := time.Now().UnixMilli()
+
+	allMessages := []models.GroupMessage{
+		makeMessage("m1", "g1", "user1", models.MemberTypeUser, "First last_read", now-4000),
+		makeMessage("m2", "g1", "user1", models.MemberTypeUser, "Msg2", now-3000),
+		makeMessage("m1", "g1", "user1", models.MemberTypeUser, "Duplicate last_read", now-2000),
+		makeMessage("m3", "g1", "user1", models.MemberTypeUser, "Msg3", now-1000),
+	}
+	pendingMsg := makeMessage("m3", "g1", "user1", models.MemberTypeUser, "Pending", now-1000)
+
+	result := cb.getMessagesFromLastRead(allMessages, "m1", &pendingMsg)
+
+	if len(result) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(result))
+	}
+	if result[0].MessageID != "m1" || result[0].MessageText != "First last_read" {
+		t.Errorf("first message should be first occurrence of m1, got %v/%v", result[0].MessageID, result[0].MessageText)
+	}
+	if result[3].MessageID != "m3" {
+		t.Errorf("last message = %v, want m3", result[3].MessageID)
+	}
+}
+
+// TestBuildInitContext_EmptyContextAndMembers verifies init context with empty context and members.
+func TestBuildInitContext_EmptyContextAndMembers(t *testing.T) {
+	cb := NewContextBuilder()
+	group := makeGroup("g1", "TestGroup", "")
+	agentMember := &models.GroupMember{
+		MemberID:   "agent1",
+		MemberName: "Bot",
+		MemberType: models.MemberTypeWorkerAgent,
+	}
+
+	initCtx := cb.buildInitContext(group, []models.GroupMember{}, agentMember)
+
+	if !strings.Contains(initCtx, "GROUP CONTEXT START") {
+		t.Error("missing group context start marker")
+	}
+	if !strings.Contains(initCtx, "GROUP CONTEXT END") {
+		t.Error("missing group context end marker")
+	}
+	if strings.Contains(initCtx, "This is a test group context") {
+		t.Error("empty group context should not contain content")
+	}
+	if !strings.Contains(initCtx, "## group_member") {
+		t.Error("missing group_member section")
+	}
+	if strings.Contains(initCtx, "id: user1") {
+		t.Error("empty members list should not contain member entries")
+	}
+	if !strings.Contains(initCtx, "I AM `Bot`(agent1)") {
+		t.Error("missing ME section")
+	}
+}
+
+// TestBuildMessageContext_AllDeleted verifies header-only output when all messages are deleted.
+func TestBuildMessageContext_AllDeleted(t *testing.T) {
+	cb := NewContextBuilder()
+	now := time.Now().UnixMilli()
+
+	messages := []models.GroupMessage{
+		{MessageID: "m1", GroupID: "g1", SenderID: "user1", SenderType: models.MemberTypeUser, MessageText: "Deleted1", CreateAtMs: now - 2000, IsDeleted: true},
+		{MessageID: "m2", GroupID: "g1", SenderID: "agent1", SenderType: models.MemberTypeWorkerAgent, MessageText: "Deleted2", CreateAtMs: now - 1000, IsDeleted: true},
+	}
+
+	msgCtx := cb.buildMessageContext(messages)
+
+	if !strings.Contains(msgCtx, "## Messages") {
+		t.Error("missing Messages header")
+	}
+	if strings.Contains(msgCtx, "Deleted1") || strings.Contains(msgCtx, "Deleted2") {
+		t.Error("deleted messages should not appear")
+	}
+	if strings.Contains(msgCtx, "---") {
+		t.Error("no separators expected when all messages deleted")
+	}
+}
+
+// TestBuildMessageContext_SingleMessage verifies formatting with a single message.
+func TestBuildMessageContext_SingleMessage(t *testing.T) {
+	cb := NewContextBuilder()
+	now := time.Now().UnixMilli()
+
+	messages := []models.GroupMessage{
+		makeMessage("m1", "g1", "user1", models.MemberTypeUser, "Hello", now),
+	}
+
+	msgCtx := cb.buildMessageContext(messages)
+
+	if !strings.Contains(msgCtx, "## Messages") {
+		t.Error("missing Messages header")
+	}
+	if !strings.Contains(msgCtx, "Hello") {
+		t.Error("missing message text")
+	}
+	if !strings.HasPrefix(msgCtx, "\n## Messages\n\n---\n") {
+		t.Errorf("expected header followed by separator, got %q", msgCtx)
+	}
+	if !strings.HasSuffix(msgCtx, "---\n") {
+		t.Errorf("expected trailing separator, got %q", msgCtx)
+	}
+}
+
+// TestFormatMessage_EmptyAndMultiline verifies message formatting for empty and multiline text.
+func TestFormatMessage_EmptyAndMultiline(t *testing.T) {
+	cb := NewContextBuilder()
+
+	emptyMsg := makeMessage("m1", "g1", "user1", models.MemberTypeUser, "", time.Now().UnixMilli())
+	formatted := cb.formatMessage(&emptyMsg)
+	if !strings.Contains(formatted, "> message:") {
+		t.Error("missing message marker")
+	}
+	if !strings.HasSuffix(formatted, "> message:\n") {
+		t.Errorf("empty message should end after marker, got %q", formatted)
+	}
+
+	multilineMsg := makeMessage("m2", "g1", "user1", models.MemberTypeUser, "Line1\nLine2\nLine3", time.Now().UnixMilli())
+	formatted = cb.formatMessage(&multilineMsg)
+	if !strings.Contains(formatted, "Line1\nLine2\nLine3") {
+		t.Error("multiline content should be preserved")
+	}
+}
+
+// TestBuildAgentResponseMessage_EmptyFields verifies response message with empty fields.
+func TestBuildAgentResponseMessage_EmptyFields(t *testing.T) {
+	cb := NewContextBuilder()
+	agentMember := &models.GroupMember{
+		MemberID:   "agent1",
+		MemberName: "Bot",
+		MemberType: models.MemberTypeWorkerAgent,
+	}
+
+	msg := cb.BuildAgentResponseMessage("g1", agentMember, "", "", "resp1")
+
+	if msg.MessageText != "" {
+		t.Errorf("expected empty message text, got %q", msg.MessageText)
+	}
+	if msg.ProcessedMsgID != "" {
+		t.Errorf("expected empty processed_msg_id, got %q", msg.ProcessedMsgID)
+	}
+	if msg.MessageID != "resp1" {
+		t.Errorf("message_id = %v, want resp1", msg.MessageID)
+	}
+	if msg.SenderID != "agent1" {
+		t.Errorf("sender_id = %v, want agent1", msg.SenderID)
+	}
+}

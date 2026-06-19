@@ -128,13 +128,142 @@ func TestManagerAgentConfig_Override(t *testing.T) {
 	assert.Equal(t, "custom_adaptor", cfg.Agent.ManagerAgent.Adaptor)
 }
 
-// TestServerConfig_Defaults verifies default server configuration values.
-func TestServerConfig_Defaults(t *testing.T) {
+// TestLoad_ServerDefaults verifies default server configuration values.
+func TestLoad_ServerDefaults(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 	assert.Equal(t, "", cfg.Server.Host)
 	assert.Equal(t, 7370, cfg.Server.Port)
-	assert.Equal(t, "0.0.0.0", cfg.Server.GetListenAddress())
+	assert.Equal(t, 30*time.Second, cfg.Server.ReadTimeout)
+	assert.Equal(t, 30*time.Second, cfg.Server.WriteTimeout)
+}
+
+// TestLoad_ServerEnvOverrides verifies server env var overrides.
+func TestLoad_ServerEnvOverrides(t *testing.T) {
+	t.Setenv("ACS_HTTP_PORT", "8080")
+	t.Setenv("ACS_HTTP_HOST", "127.0.0.1")
+	t.Setenv("ACS_SERVER_READ_TIMEOUT", "45s")
+	t.Setenv("ACS_SERVER_WRITE_TIMEOUT", "60s")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "127.0.0.1", cfg.Server.Host)
+	assert.Equal(t, 8080, cfg.Server.Port)
+	assert.Equal(t, 45*time.Second, cfg.Server.ReadTimeout)
+	assert.Equal(t, 60*time.Second, cfg.Server.WriteTimeout)
+}
+
+// TestLoad_DatabaseDefaults verifies default database configuration values.
+func TestLoad_DatabaseDefaults(t *testing.T) {
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "postgres", cfg.Database.Driver)
+	assert.Equal(t, "localhost", cfg.Database.Host)
+	assert.Equal(t, 5432, cfg.Database.Port)
+	assert.Equal(t, "acs", cfg.Database.User)
+	assert.Equal(t, "acs", cfg.Database.Password)
+	assert.Equal(t, "acs", cfg.Database.Name)
+	assert.Equal(t, "disable", cfg.Database.SSLMode)
+}
+
+// TestLoad_DatabaseNameExplicitlySet verifies ACS_DATABASE_NAME is honored when set.
+func TestLoad_DatabaseNameExplicitlySet(t *testing.T) {
+	t.Setenv("ACS_DATABASE_NAME", "custom_db")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "custom_db", cfg.Database.Name)
+}
+
+// TestLoad_NATSDefaults verifies default NATS configuration values.
+func TestLoad_NATSDefaults(t *testing.T) {
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "nats://localhost:4222", cfg.NATS.Servers)
+	assert.Equal(t, "acs_group", cfg.NATS.StreamGroup)
+	assert.Equal(t, "acs.group.pending-message", cfg.NATS.SubjectGroupPendingMessagePrefix)
+	assert.Equal(t, "acs.group.message", cfg.NATS.SubjectGroupMessagePrefix)
+	assert.False(t, cfg.NATS.PendingMessageNoAck)
+	assert.Equal(t, 3600, cfg.NATS.AckWaitSeconds)
+	assert.Equal(t, 10, cfg.NATS.MaxAckPending)
+}
+
+// TestLoad_AgentWorkPoolDefaults verifies default AgentWorkPool configuration values.
+func TestLoad_AgentWorkPoolDefaults(t *testing.T) {
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 10, cfg.AgentWorkPool.PerNode)
+	assert.Equal(t, 5, cfg.AgentWorkPool.PerUser)
+	assert.Equal(t, 5, cfg.AgentWorkPool.PerGroup)
+	assert.Equal(t, 30*time.Second, cfg.AgentWorkPool.StatsLogInterval)
+}
+
+// TestLoad_LogDefaults verifies default log configuration values.
+func TestLoad_LogDefaults(t *testing.T) {
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "stdout", cfg.Log.Output)
+	assert.Equal(t, "info", cfg.Log.Level)
+	assert.Equal(t, "/var/log/acs/acs.log", cfg.Log.FilePath)
+	assert.Equal(t, 100, cfg.Log.MaxSize)
+	assert.Equal(t, 30, cfg.Log.MaxAge)
+	assert.Equal(t, 10, cfg.Log.MaxBackups)
+}
+
+// TestLoad_DiscoveryDefaults verifies default service discovery configuration values.
+func TestLoad_DiscoveryDefaults(t *testing.T) {
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.Discovery.Enabled)
+	assert.Equal(t, "acs", cfg.Discovery.ServiceName)
+	assert.Equal(t, "acs_service_discovery", cfg.Discovery.BucketName)
+	assert.Equal(t, 30*time.Second, cfg.Discovery.Heartbeat)
+	assert.Equal(t, 120*time.Second, cfg.Discovery.TTL)
+}
+
+// TestLoad_AccountDefaults verifies default account configuration values.
+func TestLoad_AccountDefaults(t *testing.T) {
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "", cfg.Account.AdminAPIKey)
+	assert.Equal(t, "", cfg.Account.ManagerAPIKey)
+	assert.Equal(t, 10, cfg.Account.APIKeyMaxPerAccount)
+	assert.Equal(t, 86400, cfg.Account.LoginSessionExpirySeconds)
+	assert.Equal(t, 10, cfg.Account.BcryptCost)
+}
+
+// TestLoad_AccountSanitization verifies invalid/zero account config values fall back to defaults.
+func TestLoad_AccountSanitization(t *testing.T) {
+	t.Setenv("ACS_API_KEY_MAX_PER_ACCOUNT", "0")
+	t.Setenv("ACS_LOGIN_SESSION_EXPIRY_SECONDS", "-1")
+	t.Setenv("ACS_BCRYPT_COST", "-5")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 10, cfg.Account.APIKeyMaxPerAccount)
+	assert.Equal(t, 86400, cfg.Account.LoginSessionExpirySeconds)
+	assert.Equal(t, 10, cfg.Account.BcryptCost)
+}
+
+// TestDatabaseConfig_DSN verifies the PostgreSQL DSN format.
+func TestDatabaseConfig_DSN(t *testing.T) {
+	d := DatabaseConfig{
+		Host:     "db.example.com",
+		Port:     5433,
+		User:     "user",
+		Password: "pass",
+		Name:     "mydb",
+		SSLMode:  "require",
+	}
+	expected := "host=db.example.com port=5433 user=user password=pass dbname=mydb sslmode=require"
+	assert.Equal(t, expected, d.DSN())
+}
+
+// TestServerConfig_GetListenAddress verifies GetListenAddress behavior.
+func TestServerConfig_GetListenAddress(t *testing.T) {
+	assert.Equal(t, "0.0.0.0", (&ServerConfig{}).GetListenAddress())
+	assert.Equal(t, "127.0.0.1", (&ServerConfig{Host: "127.0.0.1"}).GetListenAddress())
+	assert.Equal(t, "0.0.0.0", (&ServerConfig{Host: ""}).GetListenAddress())
 }
 
 // TestServerConfig_HostOverride verifies ACS_HTTP_HOST env var override.

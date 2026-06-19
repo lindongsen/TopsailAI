@@ -47,6 +47,7 @@ func (s *Server) Start() error {
 		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errChan <- err
 		}
+		close(errChan)
 	}()
 
 	// Wait for interrupt signal or server error
@@ -55,8 +56,12 @@ func (s *Server) Start() error {
 
 	select {
 	case err := <-errChan:
-		s.log.Error("api", "", "http server error", "error", err.Error())
-		return err
+		if err != nil && err != http.ErrServerClosed {
+			s.log.Error("api", "", "http server error", "error", err.Error())
+			return err
+		}
+		s.log.Info("api", "", "http server stopped")
+		return nil
 	case sig := <-sigChan:
 		s.log.Info("api", "", "received shutdown signal", "signal", sig.String())
 		return s.Shutdown()

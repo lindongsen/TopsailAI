@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -343,4 +344,334 @@ func TestDiscovery_SelfInfo(t *testing.T) {
 	assert.Equal(t, "2.0.0", info.Version)
 	assert.NotEmpty(t, info.ID)
 	assert.NotZero(t, info.StartedAtMs)
+}
+
+// errJetStream is a JetStream stub that returns configurable errors for
+// KeyValue and CreateKeyValue. It is used to exercise New error paths
+// without a real NATS server.
+type errJetStream struct {
+	nats.JetStreamContext
+	keyValueErr error
+	createErr   error
+}
+
+func (e *errJetStream) KeyValue(bucket string) (nats.KeyValue, error) {
+	return nil, e.keyValueErr
+}
+
+func (e *errJetStream) CreateKeyValue(cfg *nats.KeyValueConfig) (nats.KeyValue, error) {
+	return nil, e.createErr
+}
+
+// fixedKVJetStream always returns the configured KeyValue, ignoring the bucket.
+type fixedKVJetStream struct {
+	nats.JetStreamContext
+	kv nats.KeyValue
+}
+
+func (f *fixedKVJetStream) KeyValue(bucket string) (nats.KeyValue, error) {
+	return f.kv, nil
+}
+
+// fakeEntry is a minimal KeyValueEntry implementation for stubs.
+type fakeEntry struct {
+	bucket   string
+	key      string
+	value    []byte
+	revision uint64
+}
+
+func (f *fakeEntry) Bucket() string             { return f.bucket }
+func (f *fakeEntry) Key() string                { return f.key }
+func (f *fakeEntry) Value() []byte              { return f.value }
+func (f *fakeEntry) Revision() uint64           { return f.revision }
+func (f *fakeEntry) Created() time.Time         { return time.Now() }
+func (f *fakeEntry) Delta() uint64              { return 0 }
+func (f *fakeEntry) Operation() nats.KeyValueOp { return nats.KeyValuePut }
+
+// failingKV is a KeyValue stub that returns configured errors for Get, Keys,
+// Put and Delete. All other methods are not expected to be called.
+type failingKV struct {
+	nats.KeyValue
+	keysErr   error
+	putErr    error
+	deleteErr error
+}
+
+func (f *failingKV) Get(key string) (nats.KeyValueEntry, error) {
+	return nil, f.keysErr
+}
+
+func (f *failingKV) Keys(opts ...nats.WatchOpt) ([]string, error) {
+	return nil, f.keysErr
+}
+
+func (f *failingKV) Put(key string, value []byte) (uint64, error) {
+	return 0, f.putErr
+}
+
+func (f *failingKV) Delete(key string, opts ...nats.DeleteOpt) error {
+	return f.deleteErr
+}
+
+// invalidJSONKV returns an entry whose value is not valid JSON.
+type invalidJSONKV struct {
+	nats.KeyValue
+}
+
+func (i *invalidJSONKV) Keys(opts ...nats.WatchOpt) ([]string, error) {
+	return []string{"bad-key"}, nil
+}
+
+func (i *invalidJSONKV) Get(key string) (nats.KeyValueEntry, error) {
+	return &fakeEntry{bucket: "test", key: key, value: []byte("not-json")}, nil
+}
+
+// mixedKV returns one valid and one invalid entry.
+type mixedKV struct {
+	nats.KeyValue
+}
+
+func (m *mixedKV) Keys(opts ...nats.WatchOpt) ([]string, error) {
+	return []string{"valid", "invalid"}, nil
+}
+
+func (m *mixedKV) Get(key string) (nats.KeyValueEntry, error) {
+	if key == "valid" {
+		data, _ := json.Marshal(ServiceInfo{ID: "valid-id", Name: "acs"})
+		return &fakeEntry{bucket: "test", key: key, value: data}, nil
+	}
+	return &fakeEntry{bucket: "test", key: key, value: []byte("not-json")}, nil
+}
+
+func TestNewDiscovery_NilJetStream(t *testing.T) {
+	_, err := New(nil, Config{BucketName: "test"})
+	require.Error(t, err)
+	assert.Equal(t, "jetstream context is nil", err.Error())
+}
+
+func TestNewDiscovery_CreateKeyValueOtherError(t *testing.T) {
+	// New first calls KeyValue (which fails with "bucket not found"), then
+	// falls back to CreateKeyValue (which also fails with "create failed").
+	// The returned error combines both failures.
+	js := &errJetStream{
+		keyValueErr: errors.New("bucket not found"),
+		createErr:   errors.New("create failed"),
+	}
+	_, err := New(js, Config{BucketName: "test"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bucket not found")
+}
+
+func TestNewDiscovery_BucketAlreadyExists(t *testing.T) {
+	_, js := startEmbeddedNATSServer(t)
+
+	bucketName := "test_bucket_already_exists"
+	_, err := js.CreateKeyValue(&nats.KeyValueConfig{
+		Bucket: bucketName,
+		TTL:    30 * time.Second,
+	})
+	require.NoError(t, err)
+
+	d, err := New(js, Config{BucketName: bucketName})
+	require.NoError(t, err)
+	assert.NotNil(t, d)
+	assert.NotNil(t, d.kv)
+}
+
+func TestRegister_AlreadyRegistered(t *testing.T) {
+	_, js := startEmbeddedNATSServer(t)
+
+	d, err := New(js, Config{
+		ServiceName: "acs",
+		Address:     "127.0.0.1",
+		Port:        7370,
+		BucketName:  "test_already_registered",
+		Heartbeat:   5 * time.Second,
+		TTL:         30 * time.Second,
+	})
+	require.NoError(t, err)
+
+	err = d.Register()
+	require.NoError(t, err)
+	defer d.Deregister()
+
+	err = d.Register()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already registered")
+}
+
+func TestRegister_UpsertSelfFailure(t *testing.T) {
+	fkv := &failingKV{putErr: errors.New("put failed")}
+	fjs := &fixedKVJetStream{kv: fkv}
+
+	d := &Discovery{
+		js:     fjs,
+		config: Config{BucketName: "test_upsert_failure"},
+		self:   ServiceInfo{ID: "self-id"},
+		kv:     fkv,
+		stopCh: make(chan struct{}),
+	}
+
+	err := d.Register()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "put failed")
+	assert.False(t, d.started)
+}
+
+func TestDeregister_NotRegistered(t *testing.T) {
+	_, js := startEmbeddedNATSServer(t)
+
+	d, err := New(js, Config{
+		ServiceName: "acs",
+		Address:     "127.0.0.1",
+		Port:        7370,
+		BucketName:  "test_deregister_not_registered",
+		Heartbeat:   5 * time.Second,
+		TTL:         30 * time.Second,
+	})
+	require.NoError(t, err)
+
+	err = d.Deregister()
+	require.NoError(t, err)
+}
+
+func TestDeregister_DeleteFailure(t *testing.T) {
+	fkv := &failingKV{deleteErr: errors.New("delete failed")}
+	fjs := &fixedKVJetStream{kv: fkv}
+
+	d := &Discovery{
+		js:      fjs,
+		config:  Config{BucketName: "test_delete_failure"},
+		self:    ServiceInfo{ID: "self-id"},
+		kv:      fkv,
+		stopCh:  make(chan struct{}),
+		started: true,
+	}
+
+	err := d.Deregister()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete failed")
+}
+
+func TestDiscover_KVNil(t *testing.T) {
+	d := &Discovery{kv: nil}
+	_, err := d.Discover()
+	require.Error(t, err)
+	assert.Equal(t, "kv store not initialized", err.Error())
+}
+
+func TestDiscover_KeysError(t *testing.T) {
+	fkv := &failingKV{keysErr: errors.New("keys failed")}
+	fjs := &fixedKVJetStream{kv: fkv}
+
+	d := &Discovery{
+		js: fjs,
+		kv: fkv,
+	}
+
+	_, err := d.Discover()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "keys failed")
+}
+
+func TestDiscover_InvalidJSONEntry(t *testing.T) {
+	fkv := &invalidJSONKV{}
+	fjs := &fixedKVJetStream{kv: fkv}
+
+	d := &Discovery{
+		js: fjs,
+		kv: fkv,
+	}
+
+	services, err := d.Discover()
+	require.NoError(t, err)
+	assert.Empty(t, services)
+}
+
+func TestDiscover_MixedValidInvalidEntries(t *testing.T) {
+	fkv := &mixedKV{}
+	fjs := &fixedKVJetStream{kv: fkv}
+
+	d := &Discovery{
+		js: fjs,
+		kv: fkv,
+	}
+
+	services, err := d.Discover()
+	require.NoError(t, err)
+	require.Len(t, services, 1)
+	assert.Equal(t, "valid-id", services[0].ID)
+}
+
+func TestIsLeader_EmptyServices(t *testing.T) {
+	fkv := &failingKV{keysErr: nats.ErrNoKeysFound}
+	fjs := &fixedKVJetStream{kv: fkv}
+
+	d := &Discovery{
+		js:   fjs,
+		kv:   fkv,
+		self: ServiceInfo{ID: "self-id"},
+	}
+
+	isLeader, err := d.IsLeader()
+	require.NoError(t, err)
+	assert.True(t, isLeader)
+}
+
+func TestLeaderInfo_EmptyServices(t *testing.T) {
+	fkv := &failingKV{keysErr: nats.ErrNoKeysFound}
+	fjs := &fixedKVJetStream{kv: fkv}
+
+	d := &Discovery{
+		js:   fjs,
+		kv:   fkv,
+		self: ServiceInfo{ID: "self-id"},
+	}
+
+	leader, err := d.LeaderInfo()
+	require.NoError(t, err)
+	assert.Nil(t, leader)
+}
+
+func TestUpsertSelf_PutFailure(t *testing.T) {
+	fkv := &failingKV{putErr: errors.New("put failed")}
+
+	d := &Discovery{
+		kv:   fkv,
+		self: ServiceInfo{ID: "self-id"},
+	}
+
+	err := d.upsertSelf()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "put failed")
+}
+
+func TestHeartbeatLoop_StopWhileWaiting(t *testing.T) {
+	fkv := &failingKV{}
+
+	d := &Discovery{
+		config: Config{Heartbeat: 10 * time.Second},
+		kv:     fkv,
+		stopCh: make(chan struct{}),
+	}
+
+	d.wg.Add(1)
+	go d.heartbeatLoop()
+
+	// Stop immediately while the goroutine is waiting on the ticker.
+	close(d.stopCh)
+
+	done := make(chan struct{})
+	go func() {
+		d.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// expected
+	case <-time.After(2 * time.Second):
+		t.Fatal("heartbeatLoop did not stop in time")
+	}
 }

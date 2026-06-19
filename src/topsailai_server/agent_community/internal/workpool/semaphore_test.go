@@ -3,6 +3,7 @@ package workpool
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -352,4 +353,189 @@ func TestPoolStats(t *testing.T) {
 	pool.Release("user1", "group1", "")
 	pool.Release("user1", "group1", "")
 	pool.Release("user2", "group2", "")
+}
+
+// TestSemaphore_Acquire_AlreadyCancelledContext verifies Acquire fails immediately on a cancelled context.
+func TestSemaphore_Acquire_AlreadyCancelledContext(t *testing.T) {
+	sem := NewSemaphore(0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before acquire
+
+	err := sem.Acquire(ctx)
+	if err == nil {
+		t.Fatal("expected error on cancelled context")
+	}
+	if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+}
+
+// TestSemaphore_AcquireWithTimeout_ZeroTimeout verifies zero timeout returns an error.
+func TestSemaphore_AcquireWithTimeout_ZeroTimeout(t *testing.T) {
+	sem := NewSemaphore(1)
+
+	// Exhaust the semaphore so the next acquire must wait.
+	if err := sem.Acquire(context.Background()); err != nil {
+		t.Fatalf("failed to acquire: %v", err)
+	}
+	defer sem.Release()
+
+	err := sem.AcquireWithTimeout(0)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if err != context.DeadlineExceeded {
+		t.Errorf("expected DeadlineExceeded, got %v", err)
+	}
+}
+
+// TestPool_Acquire_PartialFailureRollback verifies that partial acquisition failures
+// release already-acquired semaphores.
+func TestPool_Acquire_PartialFailureRollback(t *testing.T) {
+	pool := NewPool(5, 2, 2)
+
+	// Exhaust the per-user semaphore for "user1".
+	userSem := pool.getOrCreateUserSemaphore("user1")
+	if err := userSem.Acquire(context.Background()); err != nil {
+		t.Fatalf("failed to acquire user semaphore: %v", err)
+	}
+	if err := userSem.Acquire(context.Background()); err != nil {
+		t.Fatalf("failed to acquire user semaphore: %v", err)
+	}
+	defer userSem.Release()
+	defer userSem.Release()
+
+	// Global should be acquired, then user acquire should fail and global released.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := pool.Acquire(ctx, "user1", "group1")
+	if err == nil {
+		t.Fatal("expected acquire to fail when user semaphore is exhausted")
+	}
+
+	stats := pool.GetStats()
+	if stats.GlobalAvailable != 5 {
+		t.Errorf("global available = %d, want 5 (rollback failed)", stats.GlobalAvailable)
+	}
+
+	// Release the user semaphore and exhaust the per-group semaphore for "group1".
+	userSem.Release()
+	userSem.Release()
+	groupSem := pool.getOrCreateGroupSemaphore("group1")
+	if err := groupSem.Acquire(context.Background()); err != nil {
+		t.Fatalf("failed to acquire group semaphore: %v", err)
+	}
+	if err := groupSem.Acquire(context.Background()); err != nil {
+		t.Fatalf("failed to acquire group semaphore: %v", err)
+	}
+	defer groupSem.Release()
+	defer groupSem.Release()
+
+	// Global and user should be acquired, then group acquire should fail and both released.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel2()
+	err = pool.Acquire(ctx2, "user1", "group1")
+	if err == nil {
+		t.Fatal("expected acquire to fail when group semaphore is exhausted")
+	}
+
+	stats = pool.GetStats()
+	if stats.GlobalAvailable != 5 {
+		t.Errorf("global available = %d, want 5 (rollback failed)", stats.GlobalAvailable)
+	}
+	if stats.PerUserAvailable["user1"] != 2 {
+		t.Errorf("user1 available = %d, want 2 (rollback failed)", stats.PerUserAvailable["user1"])
+	}
+}
+
+// TestPool_AcquireWithTimeout_SuccessAndTimeout verifies both success and timeout paths.
+func TestPool_AcquireWithTimeout_SuccessAndTimeout(t *testing.T) {
+	pool := NewPool(1, 1, 1)
+
+	// Success path.
+	if err := pool.AcquireWithTimeout(100*time.Millisecond, "user1", "group1", "trace-1"); err != nil {
+		t.Fatalf("failed to acquire: %v", err)
+	}
+
+	// Timeout path: global semaphore is already held.
+	err := pool.AcquireWithTimeout(50*time.Millisecond, "user2", "group2", "trace-2")
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected DeadlineExceeded, got %v", err)
+	}
+
+	pool.Release("user1", "group1", "")
+}
+
+// TestPool_Release_NonExistentUserGroup verifies releasing unknown user/group does not panic.
+func TestPool_Release_NonExistentUserGroup(t *testing.T) {
+	pool := NewPool(5, 5, 5)
+
+	// Should not panic even though the user/group were never acquired.
+	pool.Release("unknown-user", "unknown-group", "")
+
+	stats := pool.GetStats()
+	if stats.GlobalAvailable != 5 {
+		t.Errorf("global available = %d, want 5", stats.GlobalAvailable)
+	}
+}
+
+// TestPool_ZeroCapacities verifies behavior when all capacities are zero.
+func TestPool_ZeroCapacities(t *testing.T) {
+	pool := NewPool(0, 0, 0)
+
+	stats := pool.GetStats()
+	if stats.GlobalCapacity != 0 {
+		t.Errorf("global capacity = %d, want 0", stats.GlobalCapacity)
+	}
+	if stats.GlobalAvailable != 0 {
+		t.Errorf("global available = %d, want 0", stats.GlobalAvailable)
+	}
+
+	err := pool.AcquireWithTimeout(50*time.Millisecond, "user1", "group1", "")
+	if err == nil {
+		t.Fatal("expected timeout error with zero capacity")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected DeadlineExceeded, got %v", err)
+	}
+}
+
+// TestPool_GetStats_NoDataRace verifies GetStats is safe under concurrent acquire/release.
+func TestPool_GetStats_NoDataRace(t *testing.T) {
+	pool := NewPool(10, 5, 5)
+	var wg sync.WaitGroup
+
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			userID := "user" + string(rune('0'+idx%3))
+			groupID := "group" + string(rune('0'+idx%2))
+
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+
+			if err := pool.Acquire(ctx, userID, groupID); err != nil {
+				return
+			}
+			_ = pool.GetStats()
+			pool.Release(userID, groupID, "")
+		}(i)
+	}
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				_ = pool.GetStats()
+			}
+		}()
+	}
+
+	wg.Wait()
 }

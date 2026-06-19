@@ -50,6 +50,10 @@ type Lock struct {
 
 // NewDistributedLock creates a new distributed lock manager.
 func NewDistributedLock(js nats.JetStreamContext, bucketName string) (*DistributedLock, error) {
+	if js == nil {
+		return nil, errors.New("jetstream context is nil")
+	}
+
 	dl := &DistributedLock{
 		js:         js,
 		bucketName: bucketName,

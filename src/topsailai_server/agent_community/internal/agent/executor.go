@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"syscall"
 	"time"
 
 	"github.com/topsailai/agent-community/pkg/logger"
@@ -64,6 +65,10 @@ func (e *Executor) execute(
 
 	// Build command
 	command := exec.CommandContext(execCtx, "sh", "-c", cmd)
+	// Start the command in its own process group so that we can terminate
+	// all child processes (e.g. "sleep 5" spawned by "sh -c") on timeout or
+	// context cancellation.
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	// Set environment variables
 	command.Env = append(command.Environ(), ToEnvSlice(env)...)
@@ -79,7 +84,50 @@ func (e *Executor) execute(
 	)
 
 	// Run command
-	err := command.Run()
+	err := command.Start()
+	if err != nil {
+		duration := time.Since(start).Milliseconds()
+		result := &ExecutionResult{
+			ExitCode: -1,
+			Stdout:   stdoutBuf.String(),
+			Stderr:   stderrBuf.String(),
+			Duration: duration,
+		}
+		logger.ErrorM(executorModule, traceID, "agent command failed to start",
+			"cmd", cmd,
+			"error", err.Error(),
+		)
+		return result, fmt.Errorf("command failed to start: %w", err)
+	}
+
+	// Wait for the command to finish in a goroutine so the main goroutine can
+	// react to context cancellation and kill the process group.
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- command.Wait()
+	}()
+
+	select {
+	case err = <-waitDone:
+		// Command finished before timeout/cancellation.
+	case <-execCtx.Done():
+		// Context expired or was cancelled. Kill the whole process group to
+		// ensure child processes are also terminated.
+		if command.Process != nil {
+			pgid := -command.Process.Pid
+			if killErr := syscall.Kill(pgid, syscall.SIGKILL); killErr != nil {
+				logger.WarnM(executorModule, traceID, "failed to kill agent process group",
+					"cmd", cmd,
+					"pgid", pgid,
+					"error", killErr.Error(),
+				)
+				// Fallback: kill the direct child only.
+				_ = command.Process.Kill()
+			}
+		}
+		// Wait for the goroutine to reap the process and avoid zombies.
+		err = <-waitDone
+	}
 
 	duration := time.Since(start).Milliseconds()
 	result := &ExecutionResult{
@@ -89,15 +137,17 @@ func (e *Executor) execute(
 	}
 
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			result.ExitCode = exitErr.ExitCode()
-		} else if execCtx.Err() == context.DeadlineExceeded {
+		if execCtx.Err() == context.DeadlineExceeded {
 			result.ExitCode = -1
 			logger.ErrorM(executorModule, traceID, "agent command timed out",
 				"cmd", cmd,
 				"timeout", timeout.String(),
 			)
 			return result, fmt.Errorf("command timed out after %v: %w", timeout, err)
+		}
+
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			result.ExitCode = exitErr.ExitCode()
 		} else {
 			result.ExitCode = -1
 		}
