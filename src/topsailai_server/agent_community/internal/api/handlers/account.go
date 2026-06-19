@@ -384,8 +384,13 @@ func (h *AccountHandler) CreateSession(c *gin.Context) {
 		return
 	}
 	if ac.Account.Role != models.AccountRoleAdmin && ac.Account.AccountID != accountID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "access denied", "trace_id": traceID})
-		return
+		// Managers creating sessions for user accounts are allowed above.
+		if ac.Account.Role == models.AccountRoleManager && account.Role == models.AccountRoleUser {
+			// allowed
+		} else {
+			c.JSON(http.StatusForbidden, gin.H{"error": "access denied", "trace_id": traceID})
+			return
+		}
 	}
 
 	sessionKey, expiry, err := h.accountSvc.CreateLoginSession(c.Request.Context(), accountID)

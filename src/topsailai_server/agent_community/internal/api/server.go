@@ -22,7 +22,7 @@ type Server struct {
 
 // NewServer creates a new HTTP server with the given router and configuration.
 func NewServer(cfg *config.Config, router *Router, log *logger.Logger) *Server {
-	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	addr := fmt.Sprintf("%s:%d", cfg.Server.GetListenAddress(), cfg.Server.Port)
 
 	httpServer := &http.Server{
 		Addr:         addr,

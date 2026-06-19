@@ -793,20 +793,11 @@ func TestAccountHandler_CreateSession_ManagerCanCreateForUser(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/accounts/"+user.AccountID+"/session", nil)
 
 	handler.CreateSession(c)
-	// NOTE: The current handler implementation falls through to the generic
-	// "access denied" check after the manager/user check, so a manager cannot
-	// create a session for a user other than themselves. This contradicts the
-	// API documentation and the unit-test proposal. The test accepts either a
-	// successful response (once fixed) or the current 403 to keep the suite green.
-	if w.Code == http.StatusOK {
-		var resp LoginResponse
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.Equal(t, user.AccountID, resp.AccountID)
-		assert.NotEmpty(t, resp.SessionKey)
-	} else {
-		assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
-		t.Log("known issue: manager cannot create session for user due to handler authorization order")
-	}
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var resp LoginResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, user.AccountID, resp.AccountID)
+	assert.NotEmpty(t, resp.SessionKey)
 }
 
 func TestAccountHandler_CreateSession_ManagerCannotCreateForAdmin(t *testing.T) {

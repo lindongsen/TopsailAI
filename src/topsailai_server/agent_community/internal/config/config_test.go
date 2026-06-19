@@ -127,3 +127,29 @@ func TestManagerAgentConfig_Override(t *testing.T) {
 	assert.Equal(t, "Custom description", cfg.Agent.ManagerAgent.MemberDescription)
 	assert.Equal(t, "custom_adaptor", cfg.Agent.ManagerAgent.Adaptor)
 }
+
+// TestServerConfig_Defaults verifies default server configuration values.
+func TestServerConfig_Defaults(t *testing.T) {
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "", cfg.Server.Host)
+	assert.Equal(t, 7370, cfg.Server.Port)
+	assert.Equal(t, "0.0.0.0", cfg.Server.GetListenAddress())
+}
+
+// TestServerConfig_HostOverride verifies ACS_HTTP_HOST env var override.
+func TestServerConfig_HostOverride(t *testing.T) {
+	t.Setenv("ACS_HTTP_HOST", "127.1.0.1")
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "127.1.0.1", cfg.Server.Host)
+	assert.Equal(t, "127.1.0.1", cfg.Server.GetListenAddress())
+}
+
+// TestServerConfig_PortOverride verifies ACS_HTTP_PORT env var override.
+func TestServerConfig_PortOverride(t *testing.T) {
+	t.Setenv("ACS_HTTP_PORT", "8080")
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 8080, cfg.Server.Port)
+}

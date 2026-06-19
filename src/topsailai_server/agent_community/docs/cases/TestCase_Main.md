@@ -4,6 +4,8 @@ maintainer: human
 
 # Main TestCases
 
+WorkFlow: Make Test-Plans(CAN BE Multiple Files) according to docs (NO NEED READ CODE) -> Perform Test-Plans -> Found Any Issues And STOP -> Fix Issues -> Review Code for the Issues -> Continue Test-Plans
+
 ## 测试维度
 
 1. 权限测试，api_key.role，不同角色的权限不同
@@ -15,5 +17,7 @@ maintainer: human
 
 ---
 
-GOAL: Finish xxx-Test for all of functionals/features. `xxx` can be Manual/Unit/Integration!
-WorkFlow: Make Test-Plans according to docs (NO NEED READ CODE) -> Perform Test-Plans -> Found Any Issues And STOP -> Fix Issues -> Review Code for the Issues -> Continue Test-Plans
+## Manual-Test
+
+TASK: Use cli-terminal to do test, ! cli-terminal MUST run in tmux !
+GOAL: Finish Manual-Test for all of functionals/features.

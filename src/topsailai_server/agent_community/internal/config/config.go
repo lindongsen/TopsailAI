@@ -24,9 +24,9 @@ type Config struct {
 	Discovery     DiscoveryConfig     `mapstructure:"discovery"`
 	Account       AccountConfig       `mapstructure:"account"`
 }
-
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
+	Host         string        `mapstructure:"host"`
 	Port         int           `mapstructure:"port"`
 	ReadTimeout  time.Duration `mapstructure:"read_timeout"`
 	WriteTimeout time.Duration `mapstructure:"write_timeout"`
@@ -135,6 +135,7 @@ func Load() (*Config, error) {
 	// keys for IsSet/Unmarshal in all cases, so explicit binding ensures the
 	// documented ACS_* variables are always honored.
 	_ = v.BindEnv("server.port", "ACS_HTTP_PORT")
+	_ = v.BindEnv("server.host", "ACS_HTTP_HOST")
 	_ = v.BindEnv("server.read_timeout", "ACS_SERVER_READ_TIMEOUT")
 	_ = v.BindEnv("server.write_timeout", "ACS_SERVER_WRITE_TIMEOUT")
 	_ = v.BindEnv("database.driver", "ACS_DATABASE_DRIVER")
@@ -150,6 +151,7 @@ func Load() (*Config, error) {
 	nameExplicitlySet := v.IsSet("database.name")
 
 	// Server defaults
+	v.SetDefault("server.host", "")
 	v.SetDefault("server.port", 7370)
 	v.SetDefault("server.read_timeout", "30s")
 	v.SetDefault("server.write_timeout", "30s")
@@ -290,5 +292,8 @@ func (d *DatabaseConfig) DSN() string {
 
 // GetListenAddress returns the listen address for the server.
 func (s *ServerConfig) GetListenAddress() string {
-	return "0.0.0.0"
+	if s.Host == "" {
+		return "0.0.0.0"
+	}
+	return s.Host
 }
