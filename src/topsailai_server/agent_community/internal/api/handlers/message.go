@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -25,16 +26,22 @@ type Publisher interface {
 	PublishMessageDelete(msg *models.GroupMessage) error
 }
 
+// Evaluator defines the interface for trigger evaluation.
+type Evaluator interface {
+	Evaluate(ctx context.Context, msg *models.GroupMessage, members []models.GroupMember, contextMessages []models.GroupMessage) (*trigger.TriggerResult, error)
+	ResolveAgents(ctx context.Context, msg *models.GroupMessage, members []models.GroupMember) (*trigger.TriggerResult, error)
+}
+
 // MessageHandler handles message-related HTTP requests.
 type MessageHandler struct {
 	db        *gorm.DB
 	publisher Publisher
-	evaluator *trigger.Evaluator
+	evaluator Evaluator
 	log       *logger.Logger
 }
 
 // NewMessageHandler creates a new MessageHandler.
-func NewMessageHandler(db *gorm.DB, publisher Publisher, evaluator *trigger.Evaluator, log *logger.Logger) *MessageHandler {
+func NewMessageHandler(db *gorm.DB, publisher Publisher, evaluator Evaluator, log *logger.Logger) *MessageHandler {
 	return &MessageHandler{
 		db:        db,
 		publisher: publisher,

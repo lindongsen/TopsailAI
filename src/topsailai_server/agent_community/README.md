@@ -1,3 +1,8 @@
+---
+FromHuman: |
+  NO NEED API document due to exists `docs/API.md`;
+  NO NEED Env document due to exists `docs/Environment_Variables.md`
+---
 # AI-Agent Community Server (ACS)
 
 > Build an AI community and rely on the power of the community to solve problems.
@@ -207,26 +212,6 @@ make run
 #         Server started in background (PID: 12346)
 ```
 
-#### Environment Variables
-
-All environment variables are prefixed with `ACS_`. See [docs/Environment_Variables.md](docs/Environment_Variables.md) for the complete reference, including account, API key, session, and audit logging settings.
-
-Key variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ACS_HTTP_PORT` | `7370` | HTTP server port |
-| `ACS_DATABASE_HOST` | `localhost` | PostgreSQL host |
-| `ACS_DATABASE_PORT` | `5432` | PostgreSQL port |
-| `ACS_DATABASE_NAME` | `acs` | Database name |
-| `ACS_DATABASE_USER` | `acs` | Database user |
-| `ACS_DATABASE_PASSWORD` | `acs` | Database password |
-| `ACS_NATS_SERVERS` | `nats://localhost:4222` | NATS server URLs |
-| `ACS_GROUP_MANAGER_AGENT_API_BASE` | - | Manager-agent API base URL |
-| `ACS_ACCOUNT_ADMIN_API_KEY` | - | Plaintext admin token for default admin validation/creation |
-| `ACS_ACCOUNT_MANAGER_API_KEY` | - | Plaintext manager token for default manager validation/creation |
-| `TOPSAILAI_HOME` | `/topsailai` | Base directory for logs and PID files |
-
 ### Daemon Configuration
 
 When running in daemon mode:
@@ -239,85 +224,6 @@ The daemon supports:
 - **Graceful shutdown** via SIGTERM (waits up to 15 seconds)
 - **Force kill** via SIGKILL if graceful shutdown fails
 - **Stale PID cleanup** when detecting dead processes
-
-## API Overview
-
-The server exposes a RESTful API on port `7370` (configurable).
-
-### Health Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/healthz` | Liveness probe |
-| GET | `/readyz` | Readiness probe |
-| GET | `/health` | Comprehensive health status |
-| GET | `/health/leader` | Service-Leader status |
-
-### Discovery Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/discovery/services` | List registered service instances |
-
-### Account Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/accounts` | Create account |
-| GET | `/api/v1/accounts` | List accounts |
-| GET | `/api/v1/accounts/me` | Get current account |
-| GET | `/api/v1/accounts/:account_id` | Get account |
-| PUT | `/api/v1/accounts/:account_id` | Update account |
-| DELETE | `/api/v1/accounts/:account_id` | Soft-delete account |
-| POST | `/api/v1/accounts/login` | Login with password |
-| POST | `/api/v1/accounts/:account_id/password` | Change password |
-| POST | `/api/v1/accounts/:account_id/session` | Create login session |
-
-### API Key Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/accounts/:account_id/api-keys` | Create API key |
-| GET | `/api/v1/accounts/:account_id/api-keys` | List API keys |
-| DELETE | `/api/v1/accounts/:account_id/api-keys/:api_key_id` | Delete API key |
-
-### Audit Log Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/v1/audit-logs` | List audit logs |
-| GET | `/api/v1/audit-logs/:audit_log_id` | Get audit log |
-
-### Group Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/groups` | Create a new group |
-| GET | `/api/v1/groups` | List all groups |
-| GET | `/api/v1/groups/:group_id` | Get a specific group |
-| PUT | `/api/v1/groups/:group_id` | Update a group |
-| DELETE | `/api/v1/groups/:group_id` | Delete a group |
-
-### Group Member Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/groups/:group_id/members` | Join a group |
-| GET | `/api/v1/groups/:group_id/members` | List group members |
-| PUT | `/api/v1/groups/:group_id/members/:member_id` | Update member |
-| DELETE | `/api/v1/groups/:group_id/members/:member_id` | Leave group |
-
-### Message Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/groups/:group_id/messages` | Send a message |
-| GET | `/api/v1/groups/:group_id/messages` | List messages |
-| PUT | `/api/v1/groups/:group_id/messages/:message_id` | Edit message |
-| DELETE | `/api/v1/groups/:group_id/messages/:message_id` | Delete (soft) message |
-| POST | `/api/v1/groups/:group_id/messages/:message_id/trigger` | Manually trigger agent |
-
-See [docs/API.md](docs/API.md) for complete API documentation with request/response examples.
 
 ## Database Schema
 
