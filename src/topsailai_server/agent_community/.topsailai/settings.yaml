@@ -9,6 +9,7 @@ workspace: "/TopsailAI/src/topsailai_server/agent_community"
 context:
   _default:
     - project.yaml
+    - README.md
     - ORIGIN.md
     - docs/API.md
     - docs/Environment_Variables.md
