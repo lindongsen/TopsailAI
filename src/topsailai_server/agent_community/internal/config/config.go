@@ -146,7 +146,6 @@ func Load() (*Config, error) {
 	_ = v.BindEnv("database.name", "ACS_DATABASE_NAME")
 	_ = v.BindEnv("database.sslmode", "ACS_DATABASE_SSLMODE")
 	_ = v.BindEnv("nats.servers", "ACS_NATS_SERVERS")
-
 	// Check if database.name was explicitly set before applying defaults.
 	nameExplicitlySet := v.IsSet("database.name")
 
@@ -172,7 +171,6 @@ func Load() (*Config, error) {
 	v.SetDefault("nats.pending_message_no_ack", false)
 	v.SetDefault("nats.ack_wait_seconds", 3600)
 	v.SetDefault("nats.max_ack_pending", 10)
-
 	// Agent defaults
 	v.SetDefault("agent.auto_trigger_timeout", "10m")
 	v.SetDefault("agent.agent_prompt", "")

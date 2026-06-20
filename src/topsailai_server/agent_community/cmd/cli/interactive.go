@@ -70,8 +70,32 @@ type InteractivePrompt struct {
 // NewInteractivePrompt creates a new interactive prompt that reuses the
 // provided readline instance. The caller retains ownership of the readline
 // instance; this prompt only borrows it while collecting input.
+//
+// If rl is nil, the returned prompt returns ErrCancelled for any input
+// operation. This prevents nil-pointer panics when command handlers are
+// invoked in non-interactive contexts (e.g., unit tests or piped input).
 func NewInteractivePrompt(rl *readline.Instance) *InteractivePrompt {
+	if rl == nil {
+		return &InteractivePrompt{reader: &nilLineReader{}}
+	}
 	return &InteractivePrompt{reader: &readlineLineReader{rl: rl}}
+}
+
+// nilLineReader is a no-op line reader used when no readline instance is
+// available. It returns ErrCancelled for any read operation so that
+// interactive parameter collection fails gracefully.
+type nilLineReader struct{}
+
+func (n *nilLineReader) SetPrompt(prompt string) {}
+func (n *nilLineReader) Clean()                  {}
+func (n *nilLineReader) Readline() (string, error) {
+	return "", ErrCancelled
+}
+func (n *nilLineReader) ReadlineWithDefault(defaultValue string) (string, error) {
+	return "", ErrCancelled
+}
+func (n *nilLineReader) ReadPassword(label string) (string, error) {
+	return "", ErrCancelled
 }
 
 // newInteractivePromptWithReader is an internal constructor used by tests.

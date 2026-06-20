@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -17,46 +16,56 @@ const (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// hasHelpFlag checks if --help or -h appears anywhere in the remaining args.
+// hasHelpFlag reports whether the only argument is a help flag.
 func hasHelpFlag(args []string) bool {
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			return true
-		}
+	if len(args) != 1 {
+		return false
 	}
-	return false
+	switch args[0] {
+	case "--help", "-h", "help":
+		return true
+	default:
+		return false
+	}
 }
 
-func run() error {
+func run(args []string) error {
 	// Global flags (do NOT register --help/-h here, let them pass through to subcommands)
 	var (
-		natsURL      = flagString("nats-url", getEnv("NATS_URL", defaultNatsURL), "NATS server URL(s), comma-separated")
-		natsUser     = flagString("user", getEnv("NATS_USER", ""), "NATS username")
-		natsPassword = flagString("password", getEnv("NATS_PASSWORD", ""), "NATS password")
-		natsToken    = flagString("token", getEnv("NATS_TOKEN", ""), "NATS authentication token")
-		natsCreds    = flagString("creds", getEnv("NATS_CREDS", ""), "NATS credentials file path")
-		natsNKey     = flagString("nkey", getEnv("NATS_NKEY", ""), "NATS nkey file path")
+		natsURL      = flagString("nats-url", getACSEnv("ACS_NATS_SERVERS", "NATS_URL", defaultNatsURL), "NATS server URL(s), comma-separated")
+		natsUser     = flagString("user", getACSEnv("ACS_NATS_USER", "NATS_USER", ""), "NATS username")
+		natsPassword = flagString("password", getACSEnv("ACS_NATS_PASSWORD", "NATS_PASSWORD", ""), "NATS password")
+		natsToken    = flagString("token", getACSEnv("ACS_NATS_TOKEN", "NATS_TOKEN", ""), "NATS authentication token")
+		natsCreds    = flagString("creds", getACSEnv("ACS_NATS_CREDS", "NATS_CREDS", ""), "NATS credentials file path")
+		natsNKey     = flagString("nkey", getACSEnv("ACS_NATS_NKEY", "NATS_NKEY", ""), "NATS nkey file path")
 		showVersion  = flagBool("version", false, "Show version information")
 	)
 
 	// Parse flags
-	flagParse()
+	flagParse(args)
 
 	if *showVersion {
 		fmt.Printf("natsctl version %s\n", version)
 		return nil
 	}
 
-	args := flagArgs()
-
 	// Handle top-level help: no args, or only --help/-h in the remaining args
 	if len(args) == 0 || (len(args) == 1 && hasHelpFlag(args)) {
+		printUsage()
+		return nil
+	}
+
+	// Strip global flags so command dispatch works regardless of where global
+	// flags appear on the command line. Unknown flags are preserved for
+	// subcommand parsing.
+	positional := flagArgs(args)
+	if len(positional) == 0 {
 		printUsage()
 		return nil
 	}
@@ -79,14 +88,14 @@ func run() error {
 		opts = append(opts, nats.UserCredentials(*natsNKey))
 	}
 
-	switch args[0] {
+	switch positional[0] {
 	case "consumer":
-		return handleConsumerCommand(args[1:], *natsURL, opts)
+		return handleConsumerCommand(positional[1:], *natsURL, opts)
 	case "help":
 		printUsage()
 		return nil
 	default:
-		return fmt.Errorf("unknown command: %s", args[0])
+		return fmt.Errorf("unknown command: %s", positional[0])
 	}
 }
 
@@ -132,21 +141,19 @@ func handleConsumerRemove(args []string, natsURL string, opts []nats.Option) err
 
 	// Confirm deletion unless force flag is set
 	if !force {
-		fmt.Printf("Are you sure you want to delete consumer '%s' from stream '%s'? [y/N]: ", consumerName, streamName)
-		reader := bufio.NewReader(os.Stdin)
-		response, err := reader.ReadString('\n')
-		if err != nil {
+		fmt.Printf("Are you sure you want to delete consumer %q from stream %q? [y/N]: ", consumerName, streamName)
+		var response string
+		if _, err := fmt.Scanln(&response); err != nil {
 			return fmt.Errorf("failed to read confirmation: %w", err)
 		}
-		response = strings.TrimSpace(strings.ToLower(response))
+		response = strings.ToLower(strings.TrimSpace(response))
 		if response != "y" && response != "yes" {
-			fmt.Println("Operation cancelled.")
+			fmt.Println("Cancelled")
 			return nil
 		}
 	}
 
 	// Connect to NATS
-	fmt.Printf("Connecting to NATS at %s...\n", natsURL)
 	nc, err := nats.Connect(natsURL, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to connect to NATS: %w", err)
@@ -159,17 +166,12 @@ func handleConsumerRemove(args []string, natsURL string, opts []nats.Option) err
 		return fmt.Errorf("failed to get JetStream context: %w", err)
 	}
 
-	// Delete the consumer
-	fmt.Printf("Deleting consumer '%s' from stream '%s'...\n", consumerName, streamName)
-	err = js.DeleteConsumer(streamName, consumerName)
-	if err != nil {
-		if err == nats.ErrConsumerNotFound {
-			return fmt.Errorf("consumer '%s' not found in stream '%s'", consumerName, streamName)
-		}
-		return fmt.Errorf("failed to delete consumer: %w", err)
+	// Delete consumer
+	if err := js.DeleteConsumer(streamName, consumerName); err != nil {
+		return fmt.Errorf("failed to delete consumer %q from stream %q: %w", consumerName, streamName, err)
 	}
 
-	fmt.Printf("Successfully deleted consumer '%s' from stream '%s'\n", consumerName, streamName)
+	fmt.Printf("Consumer %q deleted from stream %q\n", consumerName, streamName)
 	return nil
 }
 
@@ -189,46 +191,44 @@ func printUsage() {
 	fmt.Println("  --help, -h           Show this help message")
 	fmt.Println()
 	fmt.Println("Commands:")
-	fmt.Println("  consumer             Manage NATS consumers")
-	fmt.Println("  help                 Show this help message")
-	fmt.Println()
-	fmt.Println("Examples:")
-	fmt.Println("  natsctl consumer rm acs_pending_messages pending-message-consumer -f")
-	fmt.Println("  natsctl --nats-url nats://localhost:4222 consumer rm mystream myconsumer --force")
-	fmt.Println("  natsctl --user admin --password secret consumer rm mystream myconsumer")
+	fmt.Println("  consumer rm <stream> <consumer>   Remove a JetStream consumer")
+	fmt.Println("  help                              Show this help message")
 }
 
 func printConsumerUsage() {
 	fmt.Println("Usage: natsctl consumer <subcommand> [args...]")
 	fmt.Println()
 	fmt.Println("Subcommands:")
-	fmt.Println("  rm, remove, delete, del   Delete a consumer from a stream")
-	fmt.Println("  help                      Show this help message")
-	fmt.Println()
-	fmt.Println("Use 'natsctl consumer rm --help' for more information.")
+	fmt.Println("  rm <stream> <consumer>   Remove a JetStream consumer")
+	fmt.Println("  help                     Show this help message")
 }
 
 func printConsumerRemoveUsage() {
-	fmt.Println("Usage: natsctl consumer rm <stream> <consumer> [options]")
-	fmt.Println()
-	fmt.Println("Delete a consumer from a NATS JetStream stream.")
-	fmt.Println()
-	fmt.Println("Arguments:")
-	fmt.Println("  stream    The name of the JetStream stream")
-	fmt.Println("  consumer  The name of the consumer to delete")
+	fmt.Println("Usage: natsctl consumer rm [options] <stream> <consumer>")
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  -f, --force    Skip confirmation prompt")
-	fmt.Println()
-	fmt.Println("Examples:")
-	fmt.Println("  natsctl consumer rm acs_pending_messages pending-message-consumer -f")
-	fmt.Println("  natsctl consumer rm mystream myconsumer --force")
+	fmt.Println("  -h, --help     Show this help message")
 }
 
 // getEnv returns the value of an environment variable or a default.
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+// getACSEnv returns the value of an ACS-prefixed environment variable.
+// For backward compatibility, it also checks the legacy non-prefixed name.
+func getACSEnv(acsKey, legacyKey, defaultValue string) string {
+	if value := os.Getenv(acsKey); value != "" {
+		return value
+	}
+	if legacyKey != "" {
+		if value := os.Getenv(legacyKey); value != "" {
+			return value
+		}
 	}
 	return defaultValue
 }
@@ -240,98 +240,107 @@ var (
 	flagBools   = make(map[string]*bool)
 )
 
+// flagString registers a string flag and returns a pointer to its value.
 func flagString(name, value, usage string) *string {
-	p := new(string)
-	*p = value
+	p := &value
 	flagStrings[name] = p
 	return p
 }
 
+// flagBool registers a bool flag and returns a pointer to its value.
 func flagBool(name string, value bool, usage string) *bool {
-	p := new(bool)
-	*p = value
+	p := &value
 	flagBools[name] = p
 	return p
 }
 
-func flagParse() {
-	// We parse manually to avoid conflicts with subcommand args
-	args := os.Args[1:]
-	var i int
-	for i < len(args) {
+// flagParse parses args using the registered flags.
+func flagParse(args []string) {
+	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if !strings.HasPrefix(arg, "-") {
-			break
+			continue
 		}
 
-		// Handle --flag=value
-		if strings.HasPrefix(arg, "--") {
-			parts := strings.SplitN(arg, "=", 2)
-			name := strings.TrimPrefix(parts[0], "--")
-			if s, ok := flagStrings[name]; ok {
-				if len(parts) == 2 {
-					*s = parts[1]
-				} else if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-					*s = args[i+1]
-					i++
-				}
-			} else if b, ok := flagBools[name]; ok {
-				*b = true
-			}
-		} else if strings.HasPrefix(arg, "-") {
-			// Handle -h shorthand (but not for help, since we don't register it)
-			name := strings.TrimPrefix(arg, "-")
-			if b, ok := flagBools[name]; ok {
-				*b = true
+		// Handle --name=value
+		name := arg
+		var explicitValue string
+		if idx := strings.Index(arg, "="); idx >= 0 {
+			name = arg[:idx]
+			explicitValue = arg[idx+1:]
+		}
+
+		// Strip leading dashes
+		name = strings.TrimLeft(name, "-")
+
+		// Handle boolean flags like --version or -v
+		if p, ok := flagBools[name]; ok {
+			*p = true
+			continue
+		}
+
+		// Handle short bool flags (single char)
+		if len(name) == 1 {
+			if p, ok := flagBools[name]; ok {
+				*p = true
+				continue
 			}
 		}
-		i++
+
+		// Handle string flags
+		if p, ok := flagStrings[name]; ok {
+			if explicitValue != "" {
+				*p = explicitValue
+			} else if i+1 < len(args) {
+				*p = args[i+1]
+				i++
+			}
+			continue
+		}
+
+		// Handle short string flags (single char)
+		if len(name) == 1 {
+			if p, ok := flagStrings[name]; ok {
+				if i+1 < len(args) {
+					*p = args[i+1]
+					i++
+				}
+				continue
+			}
+		}
 	}
 }
 
-func flagArgs() []string {
-	args := os.Args[1:]
-	var result []string
-	var i int
-	for i < len(args) {
+// flagArgs returns the positional (non-flag) arguments from the command line.
+func flagArgs(args []string) []string {
+	var positional []string
+	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if !strings.HasPrefix(arg, "-") {
-			result = append(result, arg)
-			i++
+			positional = append(positional, arg)
 			continue
 		}
 
-		// Preserve --help and -h for subcommand handling
-		if arg == "--help" || arg == "-h" {
-			result = append(result, arg)
-			i++
+		// Handle --name=value
+		name := arg
+		if idx := strings.Index(arg, "="); idx >= 0 {
+			name = arg[:idx]
+		}
+		name = strings.TrimLeft(name, "-")
+
+		// If this is a known flag, skip its value if it was passed as a separate arg.
+		if _, ok := flagBools[name]; ok {
+			continue
+		}
+		if _, ok := flagStrings[name]; ok {
+			if !strings.Contains(arg, "=") && i+1 < len(args) {
+				i++
+			}
 			continue
 		}
 
-		// Skip flags and their values
-		if strings.HasPrefix(arg, "--") {
-			parts := strings.SplitN(arg, "=", 2)
-			name := strings.TrimPrefix(parts[0], "--")
-			if _, ok := flagStrings[name]; ok {
-				if len(parts) == 2 {
-					i++
-					continue
-				} else if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-					i += 2
-					continue
-				}
-			} else if _, ok := flagBools[name]; ok {
-				i++
-				continue
-			}
-		} else if strings.HasPrefix(arg, "-") {
-			name := strings.TrimPrefix(arg, "-")
-			if _, ok := flagBools[name]; ok {
-				i++
-				continue
-			}
-		}
-		i++
+		// Unknown flag: preserve it for subcommand parsing.
+		positional = append(positional, arg)
 	}
-	return result
+	return positional
 }

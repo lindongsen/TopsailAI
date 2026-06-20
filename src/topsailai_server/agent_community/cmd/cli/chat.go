@@ -3,6 +3,8 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -12,12 +14,21 @@ import (
 	"github.com/topsailai/agent-community/internal/nats"
 )
 
+// natsManager abstracts the NATS subscription handling needed by ChatMode.
+// It is satisfied by *NATSManager and by test doubles.
+type natsManager interface {
+	SubscribeGroup(groupID string) error
+	Unsubscribe() error
+	SetOnEvent(handler func(*nats.PendingPublishMessage))
+	GetOnEvent() func(*nats.PendingPublishMessage)
+}
+
 // ChatMode manages the chat window state.
 type ChatMode struct {
 	groupID         string
 	userID          string
 	userName        string
-	natsManager     *NATSManager
+	natsManager     natsManager
 	apiClient       *APIClient
 	rl              *readline.Instance
 	active          bool
@@ -28,18 +39,56 @@ type ChatMode struct {
 	inputCh         chan string
 	doneCh          chan struct{}
 	oldHandler      func(*nats.PendingPublishMessage)
+	out             io.Writer
 }
 
 // NewChatMode creates a new chat mode manager.
-func NewChatMode(apiClient *APIClient, natsManager *NATSManager) *ChatMode {
+func NewChatMode(apiClient *APIClient, natsManager natsManager) *ChatMode {
 	return &ChatMode{
 		apiClient:       apiClient,
 		natsManager:     natsManager,
 		displayedMsgIDs: make(map[string]struct{}),
 		eventCh:         make(chan *nats.PendingPublishMessage, 100),
+		out:             os.Stdout,
 	}
 }
 
+// output helpers write to the configured writer so ChatMode is testable.
+// If no writer is configured they fall back to os.Stdout for safety.
+func (cm *ChatMode) output() io.Writer {
+	if cm.out != nil {
+		return cm.out
+	}
+	return os.Stdout
+}
+
+func (cm *ChatMode) println(a ...interface{}) {
+	fmt.Fprintln(cm.output(), a...)
+}
+
+func (cm *ChatMode) printf(format string, a ...interface{}) {
+	fmt.Fprintf(cm.output(), format, a...)
+}
+
+func (cm *ChatMode) printInfo(msg string) {
+	fmt.Fprintln(cm.output(), blue(msg))
+}
+
+func (cm *ChatMode) printSuccess(msg string) {
+	fmt.Fprintln(cm.output(), green(msg))
+}
+
+func (cm *ChatMode) printWarning(msg string) {
+	fmt.Fprintln(cm.output(), yellow(msg))
+}
+
+func (cm *ChatMode) printError(msg string) {
+	fmt.Fprintln(cm.output(), red(msg))
+}
+
+func (cm *ChatMode) printSeparator() {
+	fmt.Fprintln(cm.output(), white(strings.Repeat(boxHorizontal(), 42)))
+}
 // EnterChat enters the chat window for a group.
 func (cm *ChatMode) EnterChat(groupID, userID, userName string) error {
 	cm.groupID = groupID
@@ -53,17 +102,17 @@ func (cm *ChatMode) EnterChat(groupID, userID, userName string) error {
 	cm.doneCh = make(chan struct{})
 	// Fetch and cache member list for mention resolution.
 	if err := cm.refreshMembers(); err != nil {
-		printWarning(fmt.Sprintf("Failed to fetch members: %v", err))
+		cm.printWarning(fmt.Sprintf("Failed to fetch members: %v", err))
 	}
 
 	// Subscribe to group events.
 	if err := cm.natsManager.SubscribeGroup(groupID); err != nil {
-		printWarning(fmt.Sprintf("Failed to subscribe: %v", err))
+		cm.printWarning(fmt.Sprintf("Failed to subscribe: %v", err))
 	}
 
 	// Override event handler to route events to chat channel.
-	cm.oldHandler = cm.natsManager.onEvent
-	cm.natsManager.onEvent = func(event *nats.PendingPublishMessage) {
+	cm.oldHandler = cm.natsManager.GetOnEvent()
+	cm.natsManager.SetOnEvent(func(event *nats.PendingPublishMessage) {
 		select {
 		case cm.eventCh <- event:
 		default:
@@ -71,10 +120,10 @@ func (cm *ChatMode) EnterChat(groupID, userID, userName string) error {
 		if cm.oldHandler != nil {
 			cm.oldHandler(event)
 		}
-	}
+	})
 	// Create readline with chat PS1 and auto-completion.
 	rl, err := readline.NewEx(&readline.Config{
-		Prompt:       ps1Chat(userName, userID, "", groupID),
+		Prompt: ps1Chat(userName, userID, "", groupID),
 		AutoComplete: newChatMentionCompleter(func() []map[string]interface{} {
 			cm.mu.Lock()
 			defer cm.mu.Unlock()
@@ -88,9 +137,9 @@ func (cm *ChatMode) EnterChat(groupID, userID, userName string) error {
 	}
 	cm.rl = rl
 
-	printSuccess(fmt.Sprintf("Entered chat mode for group %s", groupID))
-	printInfo("Type your message and press Enter to send.")
-	printInfo("Commands: /members, /exit")
+	cm.printSuccess(fmt.Sprintf("Entered chat mode for group %s", groupID))
+	cm.printInfo("Type your message and press Enter to send.")
+	cm.printInfo("Commands: /members, /exit")
 
 	// Start input reader goroutine.
 	go cm.readInput()
@@ -155,11 +204,11 @@ func (cm *ChatMode) handleInput(line string) {
 		cm.showChatHelp()
 	default:
 		if strings.HasPrefix(line, "/") {
-			printError(fmt.Sprintf("Unknown command: %s", line))
+			cm.printError(fmt.Sprintf("Unknown command: %s", line))
 			return
 		}
 		if err := cm.SendChatMessage(line); err != nil {
-			printError(fmt.Sprintf("Failed to send: %v", err))
+			cm.printError(fmt.Sprintf("Failed to send: %v", err))
 		}
 	}
 }
@@ -182,7 +231,7 @@ func (cm *ChatMode) SendChatMessage(text string) error {
 	}
 
 	// Display locally using the authenticated account identity.
-	promptPrintln(formatMessage(map[string]interface{}{
+	cm.println(formatMessage(map[string]interface{}{
 		"sender_id":    cm.userID,
 		"sender_name":  cm.userName,
 		"sender_type":  "user",
@@ -217,13 +266,13 @@ func (cm *ChatMode) LeaveChat() {
 		cm.rl = nil
 	}
 
-	printInfo(fmt.Sprintf("Left chat mode for group %s", cm.groupID))
+	cm.printInfo(fmt.Sprintf("Left chat mode for group %s", cm.groupID))
 }
 
 // restoreHandler restores the original NATS event handler.
 func (cm *ChatMode) restoreHandler() {
 	if cm.natsManager != nil {
-		cm.natsManager.onEvent = cm.oldHandler
+		cm.natsManager.SetOnEvent(cm.oldHandler)
 	}
 }
 
@@ -276,35 +325,34 @@ func (cm *ChatMode) showMembers() {
 	cm.mu.Unlock()
 
 	if len(members) == 0 {
-		printInfo("No members in this group.")
+		cm.printInfo("No members in this group.")
 		return
 	}
 
-	printSeparator()
-	promptPrintln("Members:")
+	cm.printSeparator()
+	cm.println("Members:")
 	for _, m := range members {
 		id, _ := m["member_id"].(string)
 		name, _ := m["member_name"].(string)
 		mtype, _ := m["member_type"].(string)
 		status, _ := m["member_status"].(string)
-		promptPrintln(formatMemberLine(mtype, name, id, status))
+		cm.println(formatMemberLine(mtype, name, id, status))
 	}
-	printSeparator()
+	cm.printSeparator()
 }
 
 // showChatHelp displays available chat commands.
 func (cm *ChatMode) showChatHelp() {
-	printSeparator()
-	promptPrintln("Chat Commands:")
-	promptPrintln("  /members  - Show group members")
-	promptPrintln("  /help     - Show this help")
-	promptPrintln("  /exit     - Leave chat mode")
-	promptPrintln("  exit      - Alias for /exit")
-	promptPrintln("  quit      - Alias for /exit")
-	promptPrintln("  (any text) - Send a message to the group")
-	printSeparator()
+	cm.printSeparator()
+	cm.println("Chat Commands:")
+	cm.println("  /members  - Show group members")
+	cm.println("  /help     - Show this help")
+	cm.println("  /exit     - Leave chat mode")
+	cm.println("  exit      - Alias for /exit")
+	cm.println("  quit      - Alias for /exit")
+	cm.println("  (any text) - Send a message to the group")
+	cm.printSeparator()
 }
-
 // displayEvent displays a NATS event in chat mode.
 func (cm *ChatMode) displayEvent(event *nats.PendingPublishMessage) {
 	if event.GroupID != "" && event.GroupID != cm.groupID {
@@ -332,13 +380,13 @@ func (cm *ChatMode) displayEvent(event *nats.PendingPublishMessage) {
 			text, _ := data["message_text"].(string)
 			data["message_text"] = text + " [edited]"
 		}
-		promptPrintln(formatMessage(data))
+		cm.println(formatMessage(data))
 	case "group_member":
 		// Refresh members on member changes.
 		go cm.refreshMembers()
-		promptPrintln(formatMemberEvent(event.Action, event.GroupID))
+		cm.println(formatMemberEvent(event.Action, event.GroupID))
 	default:
-		promptPrintln(formatGenericEvent(event.Type, event.Action, event.GroupID))
+		cm.println(formatGenericEvent(event.Type, event.Action, event.GroupID))
 	}
 }
 

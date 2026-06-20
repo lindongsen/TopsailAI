@@ -114,6 +114,11 @@ func (h *AuditLogHandler) GetAuditLog(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	auditLogID := c.Param("audit_log_id")
 
+	if auditLogID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "audit_log_id is required", "trace_id": traceID})
+		return
+	}
+
 	log, err := h.auditSvc.GetAuditLog(c.Request.Context(), auditLogID)
 	if err != nil {
 		h.log.Error("api", traceID, "failed to get audit log", "error", err.Error())

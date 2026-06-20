@@ -74,7 +74,8 @@ func setupTriggerTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-// setupTriggerTestRouter creates a gin router with the message handler and mock publisher for testing.
+// setupTriggerTestRouter creates a gin router with the message handler, mock publisher,
+// real evaluator, and an admin auth context for testing.
 func setupTriggerTestRouter(t *testing.T, db *gorm.DB, pub *mockPublisher) (*gin.Engine, *MessageHandler) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -82,6 +83,8 @@ func setupTriggerTestRouter(t *testing.T, db *gorm.DB, pub *mockPublisher) (*gin
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
 	evaluator := trigger.NewEvaluator(10 * time.Minute)
 	handler := NewMessageHandler(db, pub, evaluator, log)
+
+	r.Use(authContextMiddleware(testAuthContext("acc-trigger-admin", models.AccountRoleAdmin)))
 
 	return r, handler
 }

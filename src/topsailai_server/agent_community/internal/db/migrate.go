@@ -2,18 +2,23 @@
 package db
 
 import (
+	"database/sql"
 	"embed"
 	"fmt"
 	"io/fs"
 
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
+	"github.com/golang-migrate/migrate/v4/database/sqlite3"
+	"github.com/golang-migrate/migrate/v4/source"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/topsailai/agent-community/internal/config"
 	"github.com/topsailai/agent-community/pkg/logger"
 )
 
 //go:embed migrations/*.sql
+//go:embed migrations/sqlite/*.sql
 var migrationsFS embed.FS
 
 // MigrateUp runs all pending up migrations.
@@ -22,6 +27,7 @@ func MigrateUp(cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	defer m.Close()
 
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		return fmt.Errorf("migration up failed: %w", err)
@@ -37,6 +43,7 @@ func MigrateDown(cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	defer m.Close()
 
 	if err := m.Down(); err != nil && err != migrate.ErrNoChange {
 		return fmt.Errorf("migration down failed: %w", err)
@@ -52,6 +59,7 @@ func MigrateVersion(cfg *config.Config) (uint, bool, error) {
 	if err != nil {
 		return 0, false, err
 	}
+	defer m.Close()
 
 	version, dirty, err := m.Version()
 	if err != nil && err != migrate.ErrNilVersion {
@@ -62,9 +70,50 @@ func MigrateVersion(cfg *config.Config) (uint, bool, error) {
 }
 
 // newMigrateInstance creates a new migrate instance with embedded migrations.
+// The caller is responsible for calling Close() on the returned migrate instance
+// to release the underlying database connection.
 func newMigrateInstance(cfg *config.Config) (*migrate.Migrate, error) {
-	// Open the embedded migrations sub-directory to satisfy iofs driver requirements.
-	migrationsSubFS, err := fs.Sub(migrationsFS, "migrations")
+	src, err := newMigrationSource(cfg.Database.Driver)
+	if err != nil {
+		return nil, err
+	}
+
+	// Open a raw sql.DB connection for the migrate driver. The connection is
+	// owned by the returned migrate instance and is closed via m.Close().
+	db, err := openRawDB(cfg.Database)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open raw database connection: %w", err)
+	}
+
+	driver, err := newMigrateDriver(cfg.Database, db)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	m, err := migrate.NewWithInstance("iofs", src, cfg.Database.Name, driver)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to create migrate instance: %w", err)
+	}
+
+	return m, nil
+}
+
+// newMigrationSource returns an iofs source driver containing the migrations
+// appropriate for the requested database driver.
+func newMigrationSource(driver string) (source.Driver, error) {
+	var migrationsSubFS fs.FS
+	var err error
+
+	switch driver {
+	case "sqlite":
+		migrationsSubFS, err = fs.Sub(migrationsFS, "migrations/sqlite")
+	case "postgres":
+		migrationsSubFS, err = fs.Sub(migrationsFS, "migrations")
+	default:
+		return nil, fmt.Errorf("unsupported database driver for migrations: %s", driver)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to open embedded migrations sub-directory: %w", err)
 	}
@@ -73,25 +122,22 @@ func newMigrateInstance(cfg *config.Config) (*migrate.Migrate, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create iofs migration source: %w", err)
 	}
+	return src, nil
+}
 
-	// Open a raw sql.DB connection for the migrate driver.
-	db, err := openRawDB(cfg.Database)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open raw database connection: %w", err)
+// newMigrateDriver creates the golang-migrate database driver for the given
+// database configuration.
+func newMigrateDriver(cfg config.DatabaseConfig, db *sql.DB) (database.Driver, error) {
+	switch cfg.Driver {
+	case "sqlite":
+		return sqlite3.WithInstance(db, &sqlite3.Config{
+			DatabaseName: cfg.Name,
+		})
+	case "postgres":
+		return postgres.WithInstance(db, &postgres.Config{
+			DatabaseName: cfg.Name,
+		})
+	default:
+		return nil, fmt.Errorf("unsupported database driver for migrations: %s", cfg.Driver)
 	}
-	defer db.Close()
-
-	driver, err := postgres.WithInstance(db, &postgres.Config{
-		DatabaseName: cfg.Database.Name,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create postgres migrate driver: %w", err)
-	}
-
-	m, err := migrate.NewWithInstance("iofs", src, cfg.Database.Name, driver)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create migrate instance: %w", err)
-	}
-
-	return m, nil
 }

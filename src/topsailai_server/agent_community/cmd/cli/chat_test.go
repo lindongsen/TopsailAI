@@ -2,7 +2,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -526,5 +531,362 @@ func TestMessageDeduplicationConcurrency(t *testing.T) {
 		if !cm.isMessageDisplayed(msgID) {
 			t.Errorf("msg %s should be displayed after concurrent marking", msgID)
 		}
+	}
+}
+
+// fakeNATSManager is a test double for the natsManager interface used by ChatMode.
+type fakeNATSManager struct {
+	mu           sync.Mutex
+	subscribed   bool
+	groupID      string
+	unsubscribed bool
+	onEvent      func(*nats.PendingPublishMessage)
+	subscribeErr error
+}
+
+func (f *fakeNATSManager) SubscribeGroup(groupID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.subscribeErr != nil {
+		return f.subscribeErr
+	}
+	f.subscribed = true
+	f.groupID = groupID
+	return nil
+}
+
+func (f *fakeNATSManager) Unsubscribe() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.unsubscribed = true
+	return nil
+}
+
+func (f *fakeNATSManager) SetOnEvent(handler func(*nats.PendingPublishMessage)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.onEvent = handler
+}
+
+func (f *fakeNATSManager) GetOnEvent() func(*nats.PendingPublishMessage) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.onEvent
+}
+
+func (f *fakeNATSManager) IsSubscribed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.subscribed
+}
+
+func (f *fakeNATSManager) IsUnsubscribed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.unsubscribed
+}
+
+func (f *fakeNATSManager) SubscribedGroup() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.groupID
+}
+
+// newChatModeWithServer creates a ChatMode wired to an httptest server and a fake NATS manager.
+func newChatModeWithServer(t *testing.T, handler http.HandlerFunc) (*ChatMode, *bytes.Buffer, *fakeNATSManager) {
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	client := NewAPIClient(server.URL)
+	buf := &bytes.Buffer{}
+	nm := &fakeNATSManager{}
+	cm := NewChatMode(client, nm)
+	cm.out = buf
+	return cm, buf, nm
+}
+
+// membersHandler returns a handler that serves the member list endpoint.
+func membersHandler(members []map[string]interface{}) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		resp := map[string]interface{}{
+			"data": map[string]interface{}{
+				"items": members,
+				"total": len(members),
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// sendMessageHandler returns a handler that accepts a message and echoes it back with an id.
+func sendMessageHandler(messageID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp := map[string]interface{}{
+			"data": map[string]interface{}{
+				"message_id":    messageID,
+				"group_id":      strings.TrimPrefix(r.URL.Path, "/api/v1/groups/"),
+				"message_text":  payload["message_text"],
+				"sender_id":     "u1",
+				"sender_type":   "user",
+				"create_at_ms":  1704067200000,
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func TestRefreshMembers_Success(t *testing.T) {
+	members := []map[string]interface{}{
+		{"member_id": "m1", "member_name": "Alice", "member_type": "user"},
+		{"member_id": "a1", "member_name": "Agent1", "member_type": "worker-agent"},
+	}
+	cm, _, _ := newChatModeWithServer(t, membersHandler(members))
+	cm.groupID = "group-123"
+
+	if err := cm.refreshMembers(); err != nil {
+		t.Fatalf("refreshMembers() error = %v", err)
+	}
+
+	cm.mu.Lock()
+	got := cm.members
+	cm.mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("members length = %d, want 2", len(got))
+	}
+	if got[0]["member_id"] != "m1" {
+		t.Errorf("first member id = %v, want m1", got[0]["member_id"])
+	}
+}
+
+func TestRefreshMembers_APIError(t *testing.T) {
+	cm, _, _ := newChatModeWithServer(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"group not found"}`, http.StatusNotFound)
+	})
+	cm.groupID = "group-missing"
+
+	if err := cm.refreshMembers(); err == nil {
+		t.Fatal("refreshMembers() expected error, got nil")
+	}
+}
+
+func TestShowMembers(t *testing.T) {
+	cm, buf, _ := newChatModeWithServer(t, membersHandler(nil))
+	cm.groupID = "group-123"
+	cm.members = []map[string]interface{}{
+		{"member_id": "m1", "member_name": "Alice", "member_type": "user"},
+		{"member_id": "a1", "member_name": "Agent1", "member_type": "worker-agent"},
+	}
+
+	cm.showMembers()
+
+	out := buf.String()
+	if !strings.Contains(out, "Alice") {
+		t.Errorf("showMembers output missing Alice: %s", out)
+	}
+	if !strings.Contains(out, "Agent1") {
+		t.Errorf("showMembers output missing Agent1: %s", out)
+	}
+}
+
+func TestShowChatHelp(t *testing.T) {
+	cm, buf, _ := newChatModeWithServer(t, membersHandler(nil))
+	cm.showChatHelp()
+
+	out := buf.String()
+	for _, want := range []string{"/members", "/help", "/exit"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("showChatHelp output missing %q: %s", want, out)
+		}
+	}
+}
+
+func TestSendChatMessage_Success(t *testing.T) {
+	cm, buf, _ := newChatModeWithServer(t, sendMessageHandler("msg-001"))
+	cm.groupID = "group-123"
+	cm.userID = "u1"
+	cm.userName = "Alice"
+
+	if err := cm.SendChatMessage("Hello team"); err != nil {
+		t.Fatalf("SendChatMessage() error = %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "Hello team") {
+		t.Errorf("output missing sent message text: %s", out)
+	}
+	if !strings.Contains(out, "Alice") {
+		t.Errorf("output missing sender name: %s", out)
+	}
+	if !cm.isMessageDisplayed("msg-001") {
+		t.Error("expected message id to be marked displayed")
+	}
+}
+
+func TestSendChatMessage_APIError(t *testing.T) {
+	cm, _, _ := newChatModeWithServer(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+	})
+	cm.groupID = "group-123"
+
+	if err := cm.SendChatMessage("Hello"); err == nil {
+		t.Fatal("SendChatMessage() expected error, got nil")
+	}
+}
+
+func TestHandleInput_Help(t *testing.T) {
+	cm, buf, _ := newChatModeWithServer(t, membersHandler(nil))
+	cm.groupID = "group-123"
+	cm.active = true
+
+	cm.handleInput("/help")
+
+	out := buf.String()
+	if !strings.Contains(out, "/members") {
+		t.Errorf("help output missing /members: %s", out)
+	}
+}
+
+func TestHandleInput_Members(t *testing.T) {
+	cm, buf, _ := newChatModeWithServer(t, membersHandler(nil))
+	cm.groupID = "group-123"
+	cm.active = true
+	cm.members = []map[string]interface{}{
+		{"member_id": "m1", "member_name": "Alice", "member_type": "user"},
+	}
+
+	cm.handleInput("/members")
+
+	out := buf.String()
+	if !strings.Contains(out, "Alice") {
+		t.Errorf("members output missing Alice: %s", out)
+	}
+}
+
+func TestHandleInput_Exit(t *testing.T) {
+	cm, _, nm := newChatModeWithServer(t, membersHandler(nil))
+	cm.groupID = "group-123"
+	cm.active = true
+	cm.natsManager = nm
+
+	cm.handleInput("/exit")
+
+	if cm.active {
+		t.Error("expected chat mode to be inactive after /exit")
+	}
+	if !nm.IsUnsubscribed() {
+		t.Error("expected Unsubscribe to be called on exit")
+	}
+}
+
+func TestHandleInput_SendMessage(t *testing.T) {
+	cm, buf, _ := newChatModeWithServer(t, sendMessageHandler("msg-002"))
+	cm.groupID = "group-123"
+	cm.userID = "u1"
+	cm.userName = "Alice"
+	cm.active = true
+
+	cm.handleInput("Hello everyone")
+
+	out := buf.String()
+	if !strings.Contains(out, "Hello everyone") {
+		t.Errorf("output missing sent message: %s", out)
+	}
+}
+
+func TestHandleInput_SendMessageError(t *testing.T) {
+	cm, buf, _ := newChatModeWithServer(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"send failed"}`, http.StatusInternalServerError)
+	})
+	cm.groupID = "group-123"
+	cm.active = true
+
+	cm.handleInput("Hello")
+
+	out := buf.String()
+	if !strings.Contains(out, "Failed to send") {
+		t.Errorf("output missing error message: %s", out)
+	}
+}
+
+func TestHandleInput_UnknownCommand(t *testing.T) {
+	cm, buf, _ := newChatModeWithServer(t, membersHandler(nil))
+	cm.groupID = "group-123"
+	cm.active = true
+
+	cm.handleInput("/unknown")
+
+	out := buf.String()
+	if !strings.Contains(out, "Unknown command") {
+		t.Errorf("output missing unknown command error: %s", out)
+	}
+}
+
+func TestHandleInput_EmptyLine(t *testing.T) {
+	cm, buf, _ := newChatModeWithServer(t, membersHandler(nil))
+	cm.groupID = "group-123"
+	cm.active = true
+
+	cm.handleInput("   ")
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no output for empty line, got %q", buf.String())
+	}
+}
+
+func TestLeaveChat_WhenInactive(t *testing.T) {
+	cm, _, nm := newChatModeWithServer(t, membersHandler(nil))
+	cm.active = false
+
+	cm.LeaveChat() // should be a no-op
+
+	if nm.IsUnsubscribed() {
+		t.Error("Unsubscribe should not be called when chat was inactive")
+	}
+}
+
+func TestLeaveChat_RestoresHandler(t *testing.T) {
+	members := []map[string]interface{}{
+		{"member_id": "u1", "member_name": "Alice", "member_type": "user"},
+	}
+	cm, _, nm := newChatModeWithServer(t, membersHandler(members))
+	cm.groupID = "group-123"
+	cm.userID = "u1"
+	cm.userName = "Alice"
+	cm.active = true
+
+	restoredCalled := false
+	cm.oldHandler = func(event *nats.PendingPublishMessage) {
+		restoredCalled = true
+	}
+
+	cm.LeaveChat()
+
+	if cm.active {
+		t.Error("expected chat to be inactive after LeaveChat")
+	}
+	if !nm.IsUnsubscribed() {
+		t.Error("expected Unsubscribe to be called")
+	}
+	handler := nm.GetOnEvent()
+	if handler == nil {
+		t.Fatal("expected restored handler to be non-nil")
+	}
+	handler(nil)
+	if !restoredCalled {
+		t.Error("expected original handler to be restored and invoked")
 	}
 }

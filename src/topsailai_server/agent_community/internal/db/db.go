@@ -139,11 +139,15 @@ func openSQLiteConnection(cfg config.DatabaseConfig) (*gorm.DB, error) {
 
 // openRawDB opens a raw *sql.DB connection for use with golang-migrate.
 func openRawDB(cfg config.DatabaseConfig) (*sql.DB, error) {
-	if cfg.Driver == "sqlite" {
+	switch cfg.Driver {
+	case "sqlite":
 		return sql.Open("sqlite3", cfg.Name)
+	case "postgres":
+		dsn := cfg.DSN()
+		return sql.Open("postgres", dsn)
+	default:
+		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Driver)
 	}
-	dsn := cfg.DSN()
-	return sql.Open("postgres", dsn)
 }
 
 // autoMigrate runs GORM AutoMigrate for all application models.
@@ -161,6 +165,9 @@ func autoMigrate(conn *gorm.DB) error {
 
 // Close gracefully closes the database connection.
 func (d *DB) Close() error {
+	if d == nil || d.Conn == nil {
+		return fmt.Errorf("database connection is nil")
+	}
 	sqlDB, err := d.Conn.DB()
 	if err != nil {
 		return err

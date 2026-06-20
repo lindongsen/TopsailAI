@@ -13,22 +13,39 @@ import (
 
 const (
 	defaultGroupMessageSubjectPrefix = "acs.group.message."
-	pollInterval                    = 2 * time.Second
+	pollInterval                     = 2 * time.Second
 )
+
+// natsConn is the minimal NATS connection surface used by NATSManager.
+// In production this is satisfied by *natspkg.Conn; tests may inject fakes.
+type natsConn interface {
+	Subscribe(subj string, cb natspkg.MsgHandler) (*natspkg.Subscription, error)
+	JetStream(opts ...natspkg.JSOpt) (natspkg.JetStreamContext, error)
+	Close()
+}
+
+// groupSubscriber is the minimal subscriber surface used by NATSManager.
+// In production this is satisfied by *nats.Subscriber; tests may inject fakes.
+type groupSubscriber interface {
+	SubscribeGroup(groupID string) error
+	Unsubscribe() error
+}
 
 // NATSManager manages NATS connection, subscription, and HTTP polling fallback.
 type NATSManager struct {
-	conn          *natspkg.Conn
-	js            natspkg.JetStreamContext
-	subscriber    *nats.Subscriber
-	apiClient     *APIClient
-	onEvent       func(*nats.PendingPublishMessage)
-	groupID       string
-	cancelPoll    context.CancelFunc
-	pollWg        sync.WaitGroup
-	mu            sync.Mutex
-	connected     bool
-	lastPollTime  int64
+	nc              natsConn
+	js              natspkg.JetStreamContext
+	subscriber      groupSubscriber
+	apiClient       *APIClient
+	onEvent         func(*nats.PendingPublishMessage)
+	groupID         string
+	cancelPoll      context.CancelFunc
+	pollWg          sync.WaitGroup
+	mu              sync.Mutex
+	connected       bool
+	lastPollTime    int64
+	connectFn       func() (natsConn, error)
+	newSubscriberFn func(js natspkg.JetStreamContext, handler nats.MessageHandler) groupSubscriber
 }
 
 // NewNATSManager creates a new NATS manager.
@@ -39,23 +56,43 @@ func NewNATSManager(apiClient *APIClient, onEvent func(*nats.PendingPublishMessa
 	}
 }
 
+// SetOnEvent sets the event handler callback.
+func (m *NATSManager) SetOnEvent(handler func(*nats.PendingPublishMessage)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onEvent = handler
+}
+
+// GetOnEvent returns the current event handler callback.
+func (m *NATSManager) GetOnEvent() func(*nats.PendingPublishMessage) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.onEvent
+}
+
 // Connect establishes a connection to NATS servers.
 func (m *NATSManager) Connect() error {
-	servers := getEnv("ACS_NATS_SERVERS", defaultNATSServers)
+	var nc natsConn
+	var err error
+	if m.connectFn != nil {
+		nc, err = m.connectFn()
+	} else {
+		servers := getEnv("ACS_NATS_SERVERS", defaultNATSServers)
 
-	nc, err := natspkg.Connect(servers,
-		natspkg.Name("acs-cli"),
-		natspkg.ReconnectWait(2*time.Second),
-		natspkg.MaxReconnects(10),
-		natspkg.DisconnectErrHandler(func(_ *natspkg.Conn, err error) {
-			printWarning(fmt.Sprintf("NATS disconnected: %v", err))
-			m.setConnected(false)
-		}),
-		natspkg.ReconnectHandler(func(_ *natspkg.Conn) {
-			printSuccess("NATS reconnected")
-			m.setConnected(true)
-		}),
-	)
+		nc, err = natspkg.Connect(servers,
+			natspkg.Name("acs-cli"),
+			natspkg.ReconnectWait(2*time.Second),
+			natspkg.MaxReconnects(10),
+			natspkg.DisconnectErrHandler(func(_ *natspkg.Conn, err error) {
+				printWarning(fmt.Sprintf("NATS disconnected: %v", err))
+				m.setConnected(false)
+			}),
+			natspkg.ReconnectHandler(func(_ *natspkg.Conn) {
+				printSuccess("NATS reconnected")
+				m.setConnected(true)
+			}),
+		)
+	}
 	if err != nil {
 		printWarning(fmt.Sprintf("Failed to connect to NATS: %v", err))
 		printInfo("Falling back to HTTP polling mode.")
@@ -69,14 +106,23 @@ func (m *NATSManager) Connect() error {
 		return fmt.Errorf("jetstream context failed: %w", err)
 	}
 
-	m.conn = nc
-	m.js = js
-	m.subscriber = nats.NewSubscriber(js, func(msg *nats.PendingPublishMessage) error {
+	handler := func(msg *nats.PendingPublishMessage) error {
 		if m.onEvent != nil {
 			m.onEvent(msg)
 		}
 		return nil
-	})
+	}
+
+	var sub groupSubscriber
+	if m.newSubscriberFn != nil {
+		sub = m.newSubscriberFn(js, handler)
+	} else {
+		sub = nats.NewSubscriber(js, handler)
+	}
+
+	m.nc = nc
+	m.js = js
+	m.subscriber = sub
 	m.setConnected(true)
 	printSuccess("Connected to NATS")
 	return nil
@@ -233,7 +279,8 @@ func (m *NATSManager) pollMessages(groupID string) {
 // Close closes the NATS connection.
 func (m *NATSManager) Close() {
 	_ = m.Unsubscribe()
-	if m.conn != nil {
-		m.conn.Close()
+	if m.nc != nil {
+		m.nc.Close()
 	}
+	m.setConnected(false)
 }

@@ -22,41 +22,76 @@ import (
 	"github.com/topsailai/agent-community/pkg/logger"
 )
 
+// autoTriggerLockManagerAdapter adapts *lock.DistributedLock to the
+// nats.AutoTriggerLockManager interface. The concrete *lock.Lock already
+// implements nats.AutoTriggerLock, but the method return type must match
+// exactly, so this thin wrapper is required.
+type autoTriggerLockManagerAdapter struct {
+	lm *lock.DistributedLock
+}
+
+func (a *autoTriggerLockManagerAdapter) Acquire(ctx context.Context, lockType, resourceID string) (nats.AutoTriggerLock, error) {
+	l, err := a.lm.Acquire(ctx, lockType, resourceID)
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "server failed: %v\n", err)
 		os.Exit(1)
 	}
 }
-
 func run() error {
-	// Parse command-line arguments
-	if len(os.Args) > 1 {
-		subcommand := os.Args[1]
-		switch subcommand {
-		case "start":
-			return handleStart()
-		case "-d", "--daemon-internal":
-			// Internal flag for daemon mode, remove it from args and continue
-			os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
-			return runServer(true)
-		case "stop":
-			return handleStop()
-		case "restart":
-			return handleRestart()
-		case "status":
-			return handleStatus()
-		default:
-			if subcommand == "-h" || subcommand == "--help" || subcommand == "help" {
-				printUsage()
-				return nil
-			}
-			return fmt.Errorf("unknown command: %s", subcommand)
-		}
+	cmd, _, err := parseArgs(os.Args[1:])
+	if err != nil {
+		return err
 	}
 
-	// Default: run server in foreground
-	return runServer(false)
+	switch cmd {
+	case "":
+		return runServer(false)
+	case "start":
+		return handleStart()
+	case "daemon-internal":
+		return runServer(true)
+	case "stop":
+		return handleStop()
+	case "restart":
+		return handleRestart()
+	case "status":
+		return handleStatus()
+	case "help":
+		printUsage()
+		return nil
+	default:
+		return fmt.Errorf("unknown command: %s", cmd)
+	}
+}
+
+// parseArgs parses the command-line arguments for the server binary.
+// It returns the resolved subcommand, whether the server should run in daemon
+// mode, and any parsing error. An empty command means run in foreground.
+func parseArgs(args []string) (string, bool, error) {
+	if len(args) == 0 {
+		return "", false, nil
+	}
+
+	subcommand := args[0]
+	switch subcommand {
+	case "start":
+		return "start", true, nil
+	case "-d", "--daemon-internal":
+		return "daemon-internal", true, nil
+	case "stop", "restart", "status":
+		return subcommand, false, nil
+	case "-h", "--help", "help":
+		return "help", false, nil
+	default:
+		return "", false, fmt.Errorf("unknown command: %s", subcommand)
+	}
 }
 
 func printUsage() {
@@ -172,7 +207,6 @@ func runServer(isDaemon bool) error {
 		return fmt.Errorf("failed to create distributed lock manager: %w", err)
 	}
 	_ = lockManager
-
 	// 5.5. Initialize account services and run bootstrap for default accounts.
 	auditSvc := services.NewAuditLogService(database.Conn)
 	accountSvc := services.NewAccountService(database.Conn, cfg, auditSvc)
@@ -215,7 +249,7 @@ func runServer(isDaemon bool) error {
 		js,
 		publisher,
 		evaluator,
-		lockManager,
+		&autoTriggerLockManagerAdapter{lm: lockManager},
 		cfg.Agent.AutoTriggerTimeout/10, // check interval = timeout/10, min 1m
 		cfg.Agent.AutoTriggerTimeout,
 	)

@@ -12,15 +12,25 @@ import (
 	"gorm.io/gorm"
 )
 
+// discoveryProvider abstracts the discovery client so handlers can be tested
+// without a live NATS server. The concrete *discovery.Discovery type satisfies
+// this interface.
+type discoveryProvider interface {
+	Discover() ([]discovery.ServiceInfo, error)
+	IsLeader() (bool, error)
+	LeaderInfo() (*discovery.ServiceInfo, error)
+	SelfInfo() discovery.ServiceInfo
+}
+
 // HealthHandler handles health and readiness check requests.
 type HealthHandler struct {
 	db        *gorm.DB
-	discovery *discovery.Discovery
+	discovery discoveryProvider
 	log       *logger.Logger
 }
 
 // NewHealthHandler creates a new HealthHandler.
-func NewHealthHandler(db *gorm.DB, disc *discovery.Discovery, log *logger.Logger) *HealthHandler {
+func NewHealthHandler(db *gorm.DB, disc discoveryProvider, log *logger.Logger) *HealthHandler {
 	return &HealthHandler{
 		db:        db,
 		discovery: disc,

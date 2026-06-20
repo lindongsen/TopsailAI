@@ -409,3 +409,74 @@ func TestPromptAccountCreate_PasswordDoesNotLeakIntoEmail(t *testing.T) {
 		t.Fatalf("expected email alice.email@example.com, got %v", req["email"])
 	}
 }
+
+func TestParseMemberInterface(t *testing.T) {
+	cases := []struct {
+		name    string
+		raw     string
+		want    map[string]interface{}
+		wantErr bool
+	}{
+		{
+			name: "empty string",
+			raw:  "",
+			want: nil,
+		},
+		{
+			name: "whitespace only",
+			raw:  "   ",
+			want: nil,
+		},
+		{
+			name: "json object",
+			raw:  `{"adaptor":"topsailai_agent"}`,
+			want: map[string]interface{}{"adaptor": "topsailai_agent"},
+		},
+		{
+			name: "json-encoded string",
+			raw:  `"{\"adaptor\":\"topsailai_agent\"}"`,
+			want: map[string]interface{}{"adaptor": "topsailai_agent"},
+		},
+		{
+			name:    "invalid json",
+			raw:     "not-json",
+			wantErr: true,
+		},
+		{
+			name:    "json string unwrap error",
+			raw:     `"unterminated`,
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseMemberInterface(tc.raw)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("parseMemberInterface(%q) expected error", tc.raw)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("parseMemberInterface(%q) unexpected error: %v", tc.raw, err)
+				return
+			}
+			if tc.want == nil {
+				if got != nil {
+					t.Errorf("parseMemberInterface(%q) = %v, want nil", tc.raw, got)
+				}
+				return
+			}
+			if len(got) != len(tc.want) {
+				t.Errorf("parseMemberInterface(%q) = %v, want %v", tc.raw, got, tc.want)
+				return
+			}
+			for k, v := range tc.want {
+				if got[k] != v {
+					t.Errorf("parseMemberInterface(%q)[%q] = %v, want %v", tc.raw, k, got[k], v)
+				}
+			}
+		})
+	}
+}

@@ -447,6 +447,29 @@ func (s *AccountService) LoginByPassword(ctx context.Context, loginName, passwor
 	return &account, sessionKey, expiry, nil
 }
 
+// ValidateLoginPassword validates login credentials without creating a session.
+// It is intended for stateless middleware authentication where a session should
+// not be generated automatically.
+func (s *AccountService) ValidateLoginPassword(ctx context.Context, loginName, password string) (*models.Account, error) {
+	var account models.Account
+	if err := s.db.WithContext(ctx).First(&account, "login_name = ?", loginName).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrAccountNotFound
+		}
+		return nil, fmt.Errorf("failed to find account: %w", err)
+	}
+	if !account.IsActive() {
+		return nil, fmt.Errorf("account is not active")
+	}
+	if account.LoginPassword == "" {
+		return nil, ErrPasswordNotSet
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(account.LoginPassword), []byte(password)); err != nil {
+		return nil, fmt.Errorf("invalid password")
+	}
+	return &account, nil
+}
+
 // hashPassword hashes a password using bcrypt with configured cost.
 func (s *AccountService) hashPassword(password string) (string, error) {
 	cost := s.cfg.Account.BcryptCost

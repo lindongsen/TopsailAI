@@ -81,6 +81,8 @@ func removePID(path string) error {
 }
 
 // isProcessRunning checks if a process with the given PID is running.
+// On Linux it also treats zombie processes as not running so that Stop()
+// does not wait indefinitely for an already-exited daemon child.
 func isProcessRunning(pid int) bool {
 	process, err := os.FindProcess(pid)
 	if err != nil {
@@ -88,7 +90,32 @@ func isProcessRunning(pid int) bool {
 	}
 	// On Unix systems, FindProcess always succeeds, so we need to send signal 0
 	err = process.Signal(syscall.Signal(0))
-	return err == nil
+	if err != nil {
+		return false
+	}
+	// Zombie processes respond to signal 0 but are not really running.
+	return !isZombie(pid)
+}
+
+// isZombie reports whether the process with the given PID is a zombie.
+// It returns false on non-Linux platforms or if /proc cannot be read.
+func isZombie(pid int) bool {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	// The process state is the third field. The command name (second field)
+	// may contain spaces and parentheses, so we locate the last ')' and read
+	// the character immediately after it.
+	fields := strings.SplitN(string(data), ")", 2)
+	if len(fields) < 2 {
+		return false
+	}
+	parts := strings.Fields(fields[1])
+	if len(parts) < 1 {
+		return false
+	}
+	return parts[0] == "Z"
 }
 
 // SetupDaemon prepares the daemon environment: redirects logs and writes PID file.
@@ -129,6 +156,17 @@ func CleanupDaemon() error {
 // Start starts the server in daemon mode.
 // It forks a new process that runs in the background.
 func Start() error {
+	// Get the executable path
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+	return StartWithExecutable(exe)
+}
+
+// StartWithExecutable starts the server in daemon mode using the provided executable path.
+// It is exported for unit tests that need to start a helper binary instead of the real server.
+func StartWithExecutable(exe string) error {
 	pidPath := getPIDPath()
 
 	// Check if already running
@@ -139,12 +177,6 @@ func Start() error {
 		}
 		// PID file exists but process is not running, remove stale PID file
 		_ = removePID(pidPath)
-	}
-
-	// Get the executable path
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
 	// Build command to run the server in daemon mode
@@ -209,6 +241,17 @@ func Stop() error {
 
 // Restart stops and then starts the server.
 func Restart() error {
+	// Get the executable path
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+	return RestartWithExecutable(exe)
+}
+
+// RestartWithExecutable stops and then starts the server using the provided executable path.
+// It is exported for unit tests that need to restart a helper binary instead of the real server.
+func RestartWithExecutable(exe string) error {
 	// Try to stop, but don't fail if not running
 	pidPath := getPIDPath()
 	if _, err := os.Stat(pidPath); err == nil {
@@ -225,7 +268,7 @@ func Restart() error {
 	// Small delay to ensure port is released
 	time.Sleep(500 * time.Millisecond)
 
-	return Start()
+	return StartWithExecutable(exe)
 }
 
 // redirectStdio redirects stdout and stderr to the given file.

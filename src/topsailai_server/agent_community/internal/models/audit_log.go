@@ -30,8 +30,12 @@ func (AuditLog) TableName() string {
 
 // BeforeCreate hook generates the audit_log_id and timestamp.
 func (al *AuditLog) BeforeCreate(tx *gorm.DB) error {
-	al.AuditLogID = generateAuditLogID()
-	al.CreateAtMs = time.Now().UnixMilli()
+	if al.AuditLogID == "" {
+		al.AuditLogID = generateAuditLogID()
+	}
+	if al.CreateAtMs == 0 {
+		al.CreateAtMs = time.Now().UnixMilli()
+	}
 	return nil
 }
 

@@ -46,12 +46,12 @@ type AgentExecutor interface {
 	CheckStatus(ctx context.Context, iface *agent.Interface, env map[string]string, traceID string) (*agent.ExecutionResult, error)
 	Chat(ctx context.Context, iface *agent.Interface, env map[string]string, traceID string) (*agent.ExecutionResult, error)
 }
+
 // AccountService provides account login session operations for the consumer.
 // A minimal interface is used here to avoid an import cycle with services.
 type AccountService interface {
 	EnsureLoginSession(ctx context.Context, accountID string) (string, int64, error)
 }
-
 
 // Consumer processes pending messages from NATS and dispatches them to agents.
 type Consumer struct {
@@ -279,7 +279,6 @@ func (c *Consumer) isAgentAlreadyRunning(groupID, messageID, agentID, traceID st
 	return true, nil
 }
 
-
 // checkAndCreateRunningRecord atomically checks if an agent is already running for the given message
 // and creates a running record if not. This prevents race conditions between multiple nodes.
 // Returns (true, nil) if the record was created successfully (agent was not running).
@@ -333,6 +332,7 @@ func (c *Consumer) checkAndCreateRunningRecord(groupID, messageID, agentID, trac
 
 	return created, nil
 }
+
 // processAgentTarget processes a single agent target.
 func (c *Consumer) processAgentTarget(
 	ctx context.Context,
@@ -413,13 +413,11 @@ func (c *Consumer) processAgentTarget(
 		statusSet = true
 		// Sync in-memory status so published events reflect the new DB state.
 		agentMember.MemberStatus = models.MemberStatusProcessing
-		if c.publisher != nil {
-			if err := c.publisher.PublishGroupMemberModify(agentMember); err != nil {
-				logger.WarnM(consumerModule, traceID, "failed to publish member status processing event",
-					"agent_id", agentMember.MemberID,
-					"error", err,
-				)
-			}
+		if err := c.publisher.PublishGroupMemberModify(agentMember); err != nil {
+			logger.WarnM(consumerModule, traceID, "failed to publish member status processing event",
+				"agent_id", agentMember.MemberID,
+				"error", err,
+			)
 		}
 	}
 
@@ -437,13 +435,11 @@ func (c *Consumer) processAgentTarget(
 		} else {
 			// Sync in-memory status so published events reflect the new DB state.
 			agentMember.MemberStatus = models.MemberStatusIdle
-			if c.publisher != nil {
-				if err := c.publisher.PublishGroupMemberModify(agentMember); err != nil {
-					logger.WarnM(consumerModule, traceID, "failed to publish member status idle event",
-						"agent_id", agentMember.MemberID,
-						"error", err,
-					)
-				}
+			if err := c.publisher.PublishGroupMemberModify(agentMember); err != nil {
+				logger.WarnM(consumerModule, traceID, "failed to publish member status idle event",
+					"agent_id", agentMember.MemberID,
+					"error", err,
+				)
 			}
 		}
 	}()

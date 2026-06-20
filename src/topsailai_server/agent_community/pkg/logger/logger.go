@@ -15,7 +15,9 @@ const iso8601UTCFormat = "2006-01-02T15:04:05Z"
 
 // Logger wraps slog.Logger to provide structured JSON logging.
 type Logger struct {
-	inner *slog.Logger
+	inner   *slog.Logger
+	module  string
+	traceID string
 }
 
 // Config holds logger initialization configuration.
@@ -30,6 +32,26 @@ type Config struct {
 
 // New creates a new Logger based on the provided configuration.
 func New(cfg Config) *Logger {
+	var output io.Writer
+	switch cfg.Output {
+	case "file":
+		output = &lumberjack.Logger{
+			Filename:   cfg.FilePath,
+			MaxSize:    cfg.MaxSize,
+			MaxAge:     cfg.MaxAge,
+			MaxBackups: cfg.MaxBackups,
+			Compress:   true,
+			LocalTime:  false,
+		}
+	default:
+		output = os.Stdout
+	}
+	return newWithWriter(cfg, output)
+}
+
+// newWithWriter creates a new Logger using the provided writer.
+// It is unexported to allow tests to inject a buffer without touching real files or stdout.
+func newWithWriter(cfg Config, output io.Writer) *Logger {
 	level := parseLevel(cfg.Level)
 
 	opts := &slog.HandlerOptions{
@@ -58,21 +80,6 @@ func New(cfg Config) *Logger {
 		},
 	}
 
-	var output io.Writer
-	switch cfg.Output {
-	case "file":
-		output = &lumberjack.Logger{
-			Filename:   cfg.FilePath,
-			MaxSize:    cfg.MaxSize,
-			MaxAge:     cfg.MaxAge,
-			MaxBackups: cfg.MaxBackups,
-			Compress:   true,
-			LocalTime:  false,
-		}
-	default:
-		output = os.Stdout
-	}
-
 	handler := slog.NewJSONHandler(output, opts)
 	inner := slog.New(handler)
 
@@ -97,6 +104,12 @@ func parseLevel(level string) slog.Level {
 
 // log is the internal helper that injects module and trace_id.
 func (l *Logger) log(level slog.Level, module, traceID, msg string, args ...any) {
+	if module == "" {
+		module = l.module
+	}
+	if traceID == "" {
+		traceID = l.traceID
+	}
 	attrs := []any{
 		slog.String("module", module),
 		slog.String("trace_id", traceID),
@@ -138,10 +151,9 @@ func (l *Logger) Error(module, traceID, msg string, args ...any) {
 // WithAttrs returns a new Logger with the given attributes pre-applied.
 func (l *Logger) WithAttrs(module, traceID string) *Logger {
 	return &Logger{
-		inner: l.inner.With(
-			slog.String("module", module),
-			slog.String("trace_id", traceID),
-		),
+		inner:   l.inner,
+		module:  module,
+		traceID: traceID,
 	}
 }
 

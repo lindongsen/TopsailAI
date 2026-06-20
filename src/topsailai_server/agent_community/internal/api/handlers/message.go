@@ -93,6 +93,11 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	groupID := c.Param("group_id")
 
+	authCtx, ok := getAuthContextOrAbort(c)
+	if !ok {
+		return
+	}
+
 	// Verify group exists
 	var group models.Group
 	if err := h.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
@@ -112,26 +117,21 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 		return
 	}
 
-	// Derive sender from authenticated account/session.
-	authCtx, ok := middleware.GetAuthContext(c)
-	if !ok || authCtx.Account == nil {
-		h.log.Warn("api", traceID, "unauthenticated create message request")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
-		return
-	}
 	senderID := authCtx.Account.AccountID
 	senderType := models.MemberTypeUser
 
-	// Verify sender is a member of the group
-	var senderMember models.GroupMember
-	if err := h.db.Where("group_id = ? AND member_id = ?", groupID, senderID).First(&senderMember).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusForbidden, gin.H{"error": "sender is not a member of the group"})
+	// Authorization: admin can send to any group; user must be a member.
+	if !isAdmin(authCtx) {
+		var senderMember models.GroupMember
+		if err := h.db.Where("group_id = ? AND member_id = ?", groupID, senderID).First(&senderMember).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				c.JSON(http.StatusForbidden, gin.H{"error": "sender is not a member of the group"})
+				return
+			}
+			h.log.Error("api", traceID, "failed to verify sender membership", "error", err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create message"})
 			return
 		}
-		h.log.Error("api", traceID, "failed to verify sender membership", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create message"})
-		return
 	}
 
 	// Get group members for mention extraction
@@ -169,10 +169,8 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	}
 
 	// Publish message create event
-	if h.publisher != nil {
-		if err := h.publisher.PublishMessageCreate(&message); err != nil {
-			h.log.Warn("api", traceID, "failed to publish message create event", "error", err.Error())
-		}
+	if err := h.publisher.PublishMessageCreate(&message); err != nil {
+		h.log.Warn("api", traceID, "failed to publish message create event", "error", err.Error())
 	}
 
 	// Evaluate trigger
@@ -184,10 +182,6 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 
 // evaluateAndTrigger evaluates if the message should trigger agents and publishes pending messages.
 func (h *MessageHandler) evaluateAndTrigger(c *gin.Context, traceID string, msg *models.GroupMessage, members []models.GroupMember) {
-	if h.evaluator == nil || h.publisher == nil {
-		return
-	}
-
 	// Get context messages for sliding window check
 	var contextMessages []models.GroupMessage
 	if err := h.db.Where("group_id = ?", msg.GroupID).
@@ -232,6 +226,11 @@ func (h *MessageHandler) ListMessages(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	groupID := c.Param("group_id")
 
+	authCtx, ok := getAuthContextOrAbort(c)
+	if !ok {
+		return
+	}
+
 	// Verify group exists
 	var group models.Group
 	if err := h.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
@@ -241,6 +240,18 @@ func (h *MessageHandler) ListMessages(c *gin.Context) {
 		}
 		h.log.Error("api", traceID, "failed to get group", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list messages"})
+		return
+	}
+
+	// Authorization: admin can list any group; user can list only member groups.
+	allowed, err := canListGroupMembers(h.db, authCtx, groupID)
+	if err != nil {
+		h.log.Error("api", traceID, "failed to check list messages permission", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list messages"})
+		return
+	}
+	if !allowed {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
@@ -322,11 +333,15 @@ func (h *MessageHandler) ListMessages(c *gin.Context) {
 }
 
 // UpdateMessage handles PUT /api/v1/groups/:group_id/messages/:message_id.
-// Soft delete: clears message content but keeps the record.
 func (h *MessageHandler) UpdateMessage(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	groupID := c.Param("group_id")
 	messageID := c.Param("message_id")
+
+	authCtx, ok := getAuthContextOrAbort(c)
+	if !ok {
+		return
+	}
 
 	var req UpdateMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -346,6 +361,12 @@ func (h *MessageHandler) UpdateMessage(c *gin.Context) {
 		return
 	}
 
+	// Authorization: admin can update any message; user can update only their own.
+	if !isAdmin(authCtx) && message.SenderID != authCtx.Account.AccountID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
 	// Update fields
 	updates := make(map[string]interface{})
 	if req.MessageText != "" {
@@ -361,15 +382,13 @@ func (h *MessageHandler) UpdateMessage(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update message"})
 		return
 	}
-
 	// Reload message
 	h.db.Where("group_id = ? AND message_id = ?", groupID, messageID).First(&message)
 
+
 	// Publish event
-	if h.publisher != nil {
-		if err := h.publisher.PublishMessageModify(&message); err != nil {
-			h.log.Warn("api", traceID, "failed to publish message modify event", "error", err.Error())
-		}
+	if err := h.publisher.PublishMessageModify(&message); err != nil {
+		h.log.Warn("api", traceID, "failed to publish message modify event", "error", err.Error())
 	}
 
 	h.log.Info("api", traceID, "message updated", "group_id", groupID, "message_id", messageID)
@@ -383,6 +402,11 @@ func (h *MessageHandler) DeleteMessage(c *gin.Context) {
 	groupID := c.Param("group_id")
 	messageID := c.Param("message_id")
 
+	authCtx, ok := getAuthContextOrAbort(c)
+	if !ok {
+		return
+	}
+
 	var message models.GroupMessage
 	if err := h.db.Where("group_id = ? AND message_id = ?", groupID, messageID).First(&message).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -391,6 +415,12 @@ func (h *MessageHandler) DeleteMessage(c *gin.Context) {
 		}
 		h.log.Error("api", traceID, "failed to get message for delete", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete message"})
+		return
+	}
+
+	// Authorization: admin can delete any message; user can delete only their own.
+	if !isAdmin(authCtx) && message.SenderID != authCtx.Account.AccountID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
@@ -411,12 +441,9 @@ func (h *MessageHandler) DeleteMessage(c *gin.Context) {
 
 	// Reload message
 	h.db.Where("group_id = ? AND message_id = ?", groupID, messageID).First(&message)
-
 	// Publish event
-	if h.publisher != nil {
-		if err := h.publisher.PublishMessageDelete(&message); err != nil {
-			h.log.Warn("api", traceID, "failed to publish message delete event", "error", err.Error())
-		}
+	if err := h.publisher.PublishMessageDelete(&message); err != nil {
+		h.log.Warn("api", traceID, "failed to publish message delete event", "error", err.Error())
 	}
 
 	h.log.Info("api", traceID, "message deleted", "group_id", groupID, "message_id", messageID)
@@ -447,13 +474,17 @@ func toMessageResponse(m *models.GroupMessage) MessageResponse {
 	}
 }
 
-
 // TriggerMessage handles POST /api/v1/groups/:group_id/messages/:message_id/trigger.
 // It manually triggers agent processing for a specific message, bypassing NO_TRIGGER_CASES.
 func (h *MessageHandler) TriggerMessage(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	groupID := c.Param("group_id")
 	messageID := c.Param("message_id")
+
+	authCtx, ok := getAuthContextOrAbort(c)
+	if !ok {
+		return
+	}
 
 	// Parse optional body: { "agent_id": "optional-specific-agent" }
 	var req struct {
@@ -470,6 +501,18 @@ func (h *MessageHandler) TriggerMessage(c *gin.Context) {
 		}
 		h.log.Error("api", traceID, "failed to get group for trigger", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to trigger message"})
+		return
+	}
+
+	// Authorization: admin can trigger any message; user can trigger only member groups.
+	allowed, err := canListGroupMembers(h.db, authCtx, groupID)
+	if err != nil {
+		h.log.Error("api", traceID, "failed to check trigger permission", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to trigger message"})
+		return
+	}
+	if !allowed {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 

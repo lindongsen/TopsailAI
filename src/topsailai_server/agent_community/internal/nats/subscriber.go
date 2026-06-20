@@ -12,19 +12,37 @@ import (
 // MessageHandler is a callback function for handling received messages.
 type MessageHandler func(msg *PendingPublishMessage) error
 
+// subscription is an internal abstraction over *nats.Subscription so that
+// Subscriber can be unit-tested without a real NATS server.
+type subscription interface {
+	Unsubscribe() error
+}
+
+// jsSubscribe wraps the JetStream Subscribe call. In production it delegates
+// directly to the NATS client; tests can replace it to inject fake subscriptions.
+var jsSubscribe = func(js nats.JetStreamContext, subj string, cb nats.MsgHandler, opts ...nats.SubOpt) (subscription, error) {
+	sub, err := js.Subscribe(subj, cb, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return sub, nil
+}
+
 // Subscriber subscribes to NATS subjects for real-time updates.
 type Subscriber struct {
-	js       nats.JetStreamContext
-	subs     []*nats.Subscription
-	handler  MessageHandler
+	js      nats.JetStreamContext
+	subs    []subscription
+	handler MessageHandler
+	acker   func(*nats.Msg) error
 }
 
 // NewSubscriber creates a new NATS subscriber.
 func NewSubscriber(js nats.JetStreamContext, handler MessageHandler) *Subscriber {
 	return &Subscriber{
 		js:      js,
-		subs:    make([]*nats.Subscription, 0),
+		subs:    make([]subscription, 0),
 		handler: handler,
+		acker:   func(msg *nats.Msg) error { return msg.Ack() },
 	}
 }
 
@@ -32,11 +50,13 @@ func NewSubscriber(js nats.JetStreamContext, handler MessageHandler) *Subscriber
 func (s *Subscriber) SubscribeGroup(groupID string) error {
 	subject := groupMessageSubjectPrefix + groupID
 
-	sub, err := s.js.Subscribe(subject, func(msg *nats.Msg) {
+	sub, err := jsSubscribe(s.js, subject, func(msg *nats.Msg) {
 		if err := s.handleMessage(msg); err != nil {
 			logger.Error("failed to handle group message", "subject", subject, "error", err)
 		}
-		msg.Ack()
+		if err := s.acker(msg); err != nil {
+			logger.Error("failed to ack group message", "subject", subject, "error", err)
+		}
 	}, nats.Durable("cli-"+groupID), nats.ManualAck())
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to group %s: %w", groupID, err)
@@ -61,11 +81,13 @@ func (s *Subscriber) SubscribeGroups(groupIDs []string) error {
 func (s *Subscriber) SubscribeAllGroups() error {
 	subject := groupMessageSubjectPrefix + ">"
 
-	sub, err := s.js.Subscribe(subject, func(msg *nats.Msg) {
+	sub, err := jsSubscribe(s.js, subject, func(msg *nats.Msg) {
 		if err := s.handleMessage(msg); err != nil {
 			logger.Error("failed to handle group message", "subject", subject, "error", err)
 		}
-		msg.Ack()
+		if err := s.acker(msg); err != nil {
+			logger.Error("failed to ack group message", "subject", subject, "error", err)
+		}
 	}, nats.Durable("cli-all-groups"), nats.ManualAck())
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to all groups: %w", err)
@@ -118,9 +140,11 @@ func (s *Subscriber) SubscriptionCount() int {
 func (s *Subscriber) SubscribePendingMessages(groupID string) error {
 	subject := pendingMessageSubjectPrefix + groupID
 
-	sub, err := s.js.Subscribe(subject, func(msg *nats.Msg) {
+	sub, err := jsSubscribe(s.js, subject, func(msg *nats.Msg) {
 		logger.Debug("received pending message", "subject", subject, "data", string(msg.Data))
-		msg.Ack()
+		if err := s.acker(msg); err != nil {
+			logger.Error("failed to ack pending message", "subject", subject, "error", err)
+		}
 	}, nats.Durable("pending-monitor-"+groupID), nats.ManualAck())
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to pending messages for group %s: %w", groupID, err)
@@ -135,11 +159,13 @@ func (s *Subscriber) SubscribePendingMessages(groupID string) error {
 func (s *Subscriber) SubscribeHeartbeats(handler func(nodeID string, timestamp int64)) error {
 	subject := "acs.heartbeat"
 
-	sub, err := s.js.Subscribe(subject, func(msg *nats.Msg) {
+	sub, err := jsSubscribe(s.js, subject, func(msg *nats.Msg) {
 		var heartbeat map[string]interface{}
 		if err := json.Unmarshal(msg.Data, &heartbeat); err != nil {
 			logger.Error("failed to unmarshal heartbeat", "error", err)
-			msg.Ack()
+			if err := s.acker(msg); err != nil {
+				logger.Error("failed to ack heartbeat", "error", err)
+			}
 			return
 		}
 
@@ -150,7 +176,9 @@ func (s *Subscriber) SubscribeHeartbeats(handler func(nodeID string, timestamp i
 		if handler != nil {
 			handler(nodeID, timestamp)
 		}
-		msg.Ack()
+		if err := s.acker(msg); err != nil {
+			logger.Error("failed to ack heartbeat", "error", err)
+		}
 	}, nats.Durable("heartbeat-monitor"), nats.ManualAck())
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to heartbeats: %w", err)

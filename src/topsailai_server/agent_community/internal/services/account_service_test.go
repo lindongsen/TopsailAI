@@ -673,3 +673,236 @@ func TestAccountService_Helpers_UniqueViolation(t *testing.T) {
 	assert.True(t, isUniqueViolation(fmt.Errorf("Duplicate entry")))
 	assert.False(t, isUniqueViolation(fmt.Errorf("some other error")))
 }
+
+// TestValidateLoginPassword_Success verifies valid credentials return the active account.
+func TestValidateLoginPassword_Success(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	acc, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName:   "Validate Success",
+		LoginName:     "validate-success",
+		LoginPassword: "correctpassword",
+		Role:          models.AccountRoleUser,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	validated, err := accountSvc.ValidateLoginPassword(ctx, "validate-success", "correctpassword")
+	require.NoError(t, err)
+	assert.Equal(t, acc.AccountID, validated.AccountID)
+	assert.Equal(t, "validate-success", validated.LoginName)
+	assert.True(t, validated.IsActive())
+}
+
+// TestValidateLoginPassword_InvalidPassword verifies an incorrect password returns an error.
+func TestValidateLoginPassword_InvalidPassword(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	_, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName:   "Validate Invalid",
+		LoginName:     "validate-invalid",
+		LoginPassword: "correctpassword",
+		Role:          models.AccountRoleUser,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	validated, err := accountSvc.ValidateLoginPassword(ctx, "validate-invalid", "wrongpassword")
+	assert.Error(t, err)
+	assert.Nil(t, validated)
+}
+
+// TestValidateLoginPassword_AccountNotActive verifies inactive/deleted accounts cannot authenticate.
+func TestValidateLoginPassword_AccountNotActive(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	acc, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName:   "Validate Inactive",
+		LoginName:     "validate-inactive",
+		LoginPassword: "correctpassword",
+		Role:          models.AccountRoleUser,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	inactiveStatus := models.AccountStatusInactive
+	_, err = accountSvc.UpdateAccount(ctx, &UpdateAccountRequest{
+		AccountID:  acc.AccountID,
+		Status:     &inactiveStatus,
+		CallerRole: models.AccountRoleAdmin,
+	})
+	require.NoError(t, err)
+
+	validated, err := accountSvc.ValidateLoginPassword(ctx, "validate-inactive", "correctpassword")
+	assert.Error(t, err)
+	assert.Nil(t, validated)
+	assert.Contains(t, err.Error(), "account is not active")
+}
+
+// TestValidateLoginPassword_LoginNameNotFound verifies a missing login name returns an error.
+func TestValidateLoginPassword_LoginNameNotFound(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	validated, err := accountSvc.ValidateLoginPassword(ctx, "nonexistent-user", "anypassword")
+	assert.ErrorIs(t, err, ErrAccountNotFound)
+	assert.Nil(t, validated)
+}
+
+// TestAccountService_DB verifies DB() returns the injected database handle.
+func TestAccountService_DB(t *testing.T) {
+	db := newTestDB(t)
+	cfg := newTestConfig()
+	auditSvc := NewAuditLogService(db)
+	svc := NewAccountService(db, cfg, auditSvc)
+
+	assert.Equal(t, db, svc.DB())
+}
+
+// TestAccountService_Audit verifies the audit helper creates an audit log record.
+func TestAccountService_Audit(t *testing.T) {
+	_, accountSvc, _, auditSvc := newTestServices(t)
+	ctx := context.Background()
+
+	accountSvc.audit(ctx, AuditLogRequest{
+		AccountID:    "acc-test",
+		APIKeyID:     "ak-test",
+		Action:       "test_action",
+		ResourceType: "account",
+		ResourceID:   "acc-target",
+		ResourceName: "Target Account",
+		Detail:       "test detail",
+		ClientIP:     "127.0.0.1",
+	})
+
+	logs, total, err := auditSvc.ListAuditLogs(ctx, nil, 0, 10)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "acc-test", logs[0].AccountID)
+	assert.Equal(t, "ak-test", logs[0].APIKeyID)
+	assert.Equal(t, "test_action", logs[0].Action)
+	assert.Equal(t, "account", logs[0].ResourceType)
+	assert.Equal(t, "acc-target", logs[0].ResourceID)
+	assert.Equal(t, "Target Account", logs[0].ResourceName)
+	assert.Equal(t, "test detail", logs[0].Detail)
+	assert.Equal(t, "127.0.0.1", logs[0].ClientIP)
+}
+
+// TestAccountService_Audit_NoPanicOnError verifies audit failures are logged but not propagated.
+func TestAccountService_Audit_NoPanicOnError(t *testing.T) {
+	db := newTestDB(t)
+	cfg := newTestConfig()
+	// Construct a service without an audit service to exercise the nil guard.
+	svc := NewAccountService(db, cfg, nil)
+
+	ctx := context.Background()
+	assert.NotPanics(t, func() {
+		svc.audit(ctx, AuditLogRequest{
+			AccountID:    "acc-test",
+			Action:       "test_action",
+			ResourceType: "account",
+			ResourceID:   "acc-target",
+		})
+	})
+}
+
+// TestCreateLoginSession_ManagerCanOnlyCreateForUser documents that the service layer
+// does not enforce caller role restrictions. The "manager can only create sessions for
+// user accounts" rule is enforced by the HTTP handler (see account_test.go).
+func TestCreateLoginSession_ManagerCanOnlyCreateForUser(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	manager, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName:   "Manager Target",
+		LoginName:     "manager-target",
+		LoginPassword: "password",
+		Role:          models.AccountRoleManager,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	// Service layer allows creating a session for a manager account.
+	// Role enforcement lives in the handler layer.
+	sessionKey, _, err := accountSvc.CreateLoginSession(ctx, manager.AccountID)
+	require.NoError(t, err)
+	assert.NotEmpty(t, sessionKey)
+}
+
+// TestCreateLoginSession_UserCanOnlyCreateOwnSession documents that the service layer
+// does not enforce caller identity restrictions. The "user can only create sessions for
+// themselves" rule is enforced by the HTTP handler (see account_test.go).
+func TestCreateLoginSession_UserCanOnlyCreateOwnSession(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	userA, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName:   "User A",
+		LoginName:     "user-a",
+		LoginPassword: "password",
+		Role:          models.AccountRoleUser,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	userB, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName:   "User B",
+		LoginName:     "user-b",
+		LoginPassword: "password",
+		Role:          models.AccountRoleUser,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	// Service layer allows creating a session for any active account.
+	// Caller identity enforcement lives in the handler layer.
+	sessionKey, _, err := accountSvc.CreateLoginSession(ctx, userB.AccountID)
+	require.NoError(t, err)
+	assert.NotEmpty(t, sessionKey)
+
+	validated, err := accountSvc.ValidateLoginSession(ctx, sessionKey)
+	require.NoError(t, err)
+	assert.Equal(t, userB.AccountID, validated.AccountID)
+	_ = userA
+}
+
+// TestChangePassword_ManagerCannotChangeOthers documents that the service layer does not
+// enforce caller identity restrictions. The "manager cannot change another user's password"
+// rule is enforced by the HTTP handler (see account_test.go).
+func TestChangePassword_ManagerCannotChangeOthers(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	manager, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName:   "Manager Password",
+		LoginName:     "manager-password",
+		LoginPassword: "managerpassword",
+		Role:          models.AccountRoleManager,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	user, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName:   "User Password",
+		LoginName:     "user-password",
+		LoginPassword: "userpassword",
+		Role:          models.AccountRoleUser,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	// Service layer allows changing any account's password.
+	// Caller identity enforcement lives in the handler layer.
+	err = accountSvc.ChangePassword(ctx, user.AccountID, "newuserpassword")
+	require.NoError(t, err)
+
+	_, _, _, err = accountSvc.LoginByPassword(ctx, "user-password", "newuserpassword")
+	require.NoError(t, err)
+
+	// Ensure manager account is referenced (avoid unused variable).
+	assert.Equal(t, models.AccountRoleManager, manager.Role)
+}

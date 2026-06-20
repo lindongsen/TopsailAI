@@ -310,7 +310,8 @@ func setupGroupTestDB(t *testing.T) *gorm.DB {
 // setupGroupTestHandler creates a GroupHandler with the given config for testing.
 func setupGroupTestHandler(t *testing.T, db *gorm.DB, cfg *config.Config) *GroupHandler {
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
-	return NewGroupHandler(db, nil, cfg, log)
+	pub := &mockGroupPublisher{}
+	return NewGroupHandler(db, pub, cfg, log)
 }
 
 // TestCreateGroupAutoJoinsManagerAgent verifies that creating a group automatically
@@ -489,6 +490,14 @@ func TestDeleteGroupNotFound(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: "acc-admin",
+			Role:      models.AccountRoleAdmin,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	})
 	c.Request = httptest.NewRequest(http.MethodDelete, "/api/v1/groups/non-existent-group-id", nil)
 	c.Params = gin.Params{{Key: "group_id", Value: "non-existent-group-id"}}
 
@@ -546,6 +555,14 @@ func TestDeleteGroupCascade(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: "acc-admin",
+			Role:      models.AccountRoleAdmin,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	})
 	c.Request = httptest.NewRequest(http.MethodDelete, "/api/v1/groups/"+group.GroupID, nil)
 	c.Params = gin.Params{{Key: "group_id", Value: group.GroupID}}
 
@@ -861,6 +878,14 @@ func TestGetGroup_Success(t *testing.T) {
 	handler := setupGroupTestHandler(t, db, &config.Config{})
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: "acc-admin",
+			Role:      models.AccountRoleAdmin,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	})
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+group.GroupID, nil)
 	c.Params = gin.Params{{Key: "group_id", Value: group.GroupID}}
 
@@ -882,6 +907,14 @@ func TestGetGroup_NotFound(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: "acc-admin",
+			Role:      models.AccountRoleAdmin,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	})
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/groups/non-existent", nil)
 	c.Params = gin.Params{{Key: "group_id", Value: "non-existent"}}
 
@@ -889,6 +922,7 @@ func TestGetGroup_NotFound(t *testing.T) {
 
 	require.Equal(t, http.StatusNotFound, w.Code)
 }
+
 
 // TestUpdateGroup_Success verifies updating group name and context.
 func TestUpdateGroup_Success(t *testing.T) {
@@ -907,6 +941,14 @@ func TestUpdateGroup_Success(t *testing.T) {
 	handler := setupGroupTestHandler(t, db, &config.Config{})
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: "acc-admin",
+			Role:      models.AccountRoleAdmin,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	})
 	body := UpdateGroupRequest{GroupName: "New Name", GroupContext: "New Context"}
 	jsonBody, _ := json.Marshal(body)
 	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/groups/"+group.GroupID, bytes.NewBuffer(jsonBody))
@@ -939,6 +981,14 @@ func TestUpdateGroup_UpdateKey(t *testing.T) {
 	handler := setupGroupTestHandler(t, db, &config.Config{})
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: "acc-admin",
+			Role:      models.AccountRoleAdmin,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	})
 	body := UpdateGroupRequest{GroupKey: "new-secret"}
 	jsonBody, _ := json.Marshal(body)
 	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/groups/"+group.GroupID, bytes.NewBuffer(jsonBody))
@@ -950,8 +1000,7 @@ func TestUpdateGroup_UpdateKey(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp GroupResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.NotEmpty(t, resp.GroupKey)
-	assert.NotEqual(t, "new-secret", resp.GroupKey)
+	assert.Empty(t, resp.GroupKey, "response must not expose group_key")
 
 	var stored models.Group
 	require.NoError(t, db.First(&stored, "group_id = ?", group.GroupID).Error)
@@ -967,6 +1016,14 @@ func TestUpdateGroup_NotFound(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: "acc-admin",
+			Role:      models.AccountRoleAdmin,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	})
 	body := UpdateGroupRequest{GroupName: "New Name"}
 	jsonBody, _ := json.Marshal(body)
 	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/groups/non-existent", bytes.NewBuffer(jsonBody))
@@ -1223,4 +1280,238 @@ func TestCreateGroup_ManagerAgentInvalidMemberName(t *testing.T) {
 	var count int64
 	require.NoError(t, db.Model(&models.Group{}).Count(&count).Error)
 	assert.Equal(t, int64(0), count)
+}
+
+// TestGroupHandler_GetGroup_UserMemberOnly verifies that a non-admin user can
+// only retrieve groups they are a member of.
+func TestGroupHandler_GetGroup_UserMemberOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	now := time.Now().UnixMilli()
+
+	memberGroup := models.Group{
+		GroupID:      "group-member-get",
+		GroupName:    "Member Group",
+		GroupContext: "context",
+		CreateAtMs:   now,
+		UpdateAtMs:   now,
+	}
+	require.NoError(t, db.Create(&memberGroup).Error)
+	require.NoError(t, db.Create(&models.GroupMember{
+		GroupID:      memberGroup.GroupID,
+		MemberID:     "acc-user-get",
+		MemberName:   "User",
+		MemberType:   models.MemberTypeUser,
+		MemberStatus: models.MemberStatusOnline,
+		CreateAtMs:   now,
+		UpdateAtMs:   now,
+	}).Error)
+
+	otherGroup := models.Group{
+		GroupID:      "group-other-get",
+		GroupName:    "Other Group",
+		GroupContext: "context",
+		CreateAtMs:   now,
+		UpdateAtMs:   now,
+	}
+	require.NoError(t, db.Create(&otherGroup).Error)
+
+	handler := setupGroupTestHandler(t, db, &config.Config{})
+
+	tests := []struct {
+		name           string
+		groupID        string
+		expectedStatus int
+	}{
+		{"member group", memberGroup.GroupID, http.StatusOK},
+		{"non-member group", otherGroup.GroupID, http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Set("auth_context", middleware.AuthContext{
+				Account: &models.Account{
+					AccountID: "acc-user-get",
+					Role:      models.AccountRoleUser,
+					Status:    models.AccountStatusActive,
+				},
+				IsAuthenticated: true,
+			})
+			c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+tt.groupID, nil)
+			c.Params = gin.Params{{Key: "group_id", Value: tt.groupID}}
+
+			handler.GetGroup(c)
+
+			require.Equal(t, tt.expectedStatus, w.Code, "body: %s", w.Body.String())
+		})
+	}
+}
+
+// TestGroupHandler_UpdateGroup_UserOwnOnly verifies that a non-admin user can
+// only update groups they own.
+func TestGroupHandler_UpdateGroup_UserOwnOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	now := time.Now().UnixMilli()
+
+	ownGroup := models.Group{
+		GroupID:      "group-own-update",
+		GroupName:    "Own Group",
+		GroupContext: "context",
+		CreatorID:    "acc-user-update",
+		OwnerID:      "acc-user-update",
+		CreateAtMs:   now,
+		UpdateAtMs:   now,
+	}
+	require.NoError(t, db.Create(&ownGroup).Error)
+
+	otherGroup := models.Group{
+		GroupID:      "group-other-update",
+		GroupName:    "Other Group",
+		GroupContext: "context",
+		CreatorID:    "acc-other",
+		OwnerID:      "acc-other",
+		CreateAtMs:   now,
+		UpdateAtMs:   now,
+	}
+	require.NoError(t, db.Create(&otherGroup).Error)
+
+	handler := setupGroupTestHandler(t, db, &config.Config{})
+
+	tests := []struct {
+		name           string
+		groupID        string
+		expectedStatus int
+	}{
+		{"own group", ownGroup.GroupID, http.StatusOK},
+		{"other group", otherGroup.GroupID, http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			body := UpdateGroupRequest{GroupName: "Updated Name"}
+			jsonBody, _ := json.Marshal(body)
+			c.Set("auth_context", middleware.AuthContext{
+				Account: &models.Account{
+					AccountID: "acc-user-update",
+					Role:      models.AccountRoleUser,
+					Status:    models.AccountStatusActive,
+				},
+				IsAuthenticated: true,
+			})
+			c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/groups/"+tt.groupID, bytes.NewBuffer(jsonBody))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Params = gin.Params{{Key: "group_id", Value: tt.groupID}}
+
+			handler.UpdateGroup(c)
+
+			require.Equal(t, tt.expectedStatus, w.Code, "body: %s", w.Body.String())
+		})
+	}
+}
+
+// TestGroupHandler_DeleteGroup_UserOwnOnly verifies that a non-admin user can
+// only delete groups they own.
+func TestGroupHandler_DeleteGroup_UserOwnOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	now := time.Now().UnixMilli()
+
+	ownGroup := models.Group{
+		GroupID:      "group-own-delete",
+		GroupName:    "Own Group",
+		GroupContext: "context",
+		CreatorID:    "acc-user-delete",
+		OwnerID:      "acc-user-delete",
+		CreateAtMs:   now,
+		UpdateAtMs:   now,
+	}
+	require.NoError(t, db.Create(&ownGroup).Error)
+
+	otherGroup := models.Group{
+		GroupID:      "group-other-delete",
+		GroupName:    "Other Group",
+		GroupContext: "context",
+		CreatorID:    "acc-other",
+		OwnerID:      "acc-other",
+		CreateAtMs:   now,
+		UpdateAtMs:   now,
+	}
+	require.NoError(t, db.Create(&otherGroup).Error)
+
+	handler := setupGroupTestHandler(t, db, &config.Config{})
+
+	tests := []struct {
+		name           string
+		groupID        string
+		expectedStatus int
+	}{
+		{"own group", ownGroup.GroupID, http.StatusNoContent},
+		{"other group", otherGroup.GroupID, http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Set("auth_context", middleware.AuthContext{
+				Account: &models.Account{
+					AccountID: "acc-user-delete",
+					Role:      models.AccountRoleUser,
+					Status:    models.AccountStatusActive,
+				},
+				IsAuthenticated: true,
+			})
+			c.Request = httptest.NewRequest(http.MethodDelete, "/api/v1/groups/"+tt.groupID, nil)
+			c.Params = gin.Params{{Key: "group_id", Value: tt.groupID}}
+
+			handler.DeleteGroup(c)
+
+			require.Equal(t, tt.expectedStatus, c.Writer.Status(), "body: %s", w.Body.String())
+		})
+	}
+}
+
+// TestGroupHandler_CreateGroup_GroupKeyHashed verifies that the plaintext
+// group_key is never returned in the API response.
+func TestGroupHandler_CreateGroup_GroupKeyHashed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupTestDB(t)
+	handler := setupGroupTestHandler(t, db, &config.Config{})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		Account: &models.Account{
+			AccountID:   "acc-key-create",
+			AccountName: "Key Creator",
+			Role:        models.AccountRoleUser,
+			Status:      models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	})
+	body := CreateGroupRequest{
+		GroupName:    "Secret Group",
+		GroupContext: "secret context",
+		GroupKey:     "super-secret-key",
+	}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.CreateGroup(c)
+
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+	var resp GroupResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Empty(t, resp.GroupKey, "response must not expose group_key")
+
+	var stored models.Group
+	require.NoError(t, db.First(&stored, "group_id = ?", resp.GroupID).Error)
+	assert.NotEmpty(t, stored.GroupKey, "stored group_key must be hashed")
+	assert.NotEqual(t, "super-secret-key", stored.GroupKey, "stored group_key must not be plaintext")
 }

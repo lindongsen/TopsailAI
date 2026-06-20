@@ -19,12 +19,17 @@ const (
 	AuthMethodAPIKey AuthMethod = "api_key"
 	// AuthMethodSession means the request was authenticated with a session key.
 	AuthMethodSession AuthMethod = "session"
+	// AuthMethodPassword means the request was authenticated with login name/password.
+	AuthMethodPassword AuthMethod = "password"
 	// AuthMethodNone means the request was not authenticated.
 	AuthMethodNone AuthMethod = "none"
 )
 
 // authContextKey is the Gin context key for AuthContext.
 const authContextKey = "auth_context"
+
+// clientIPContextKey is the Gin context key for the resolved client IP.
+const clientIPContextKey = "client_ip"
 
 // AuthContext carries authentication and authorization information for a request.
 type AuthContext struct {
@@ -35,12 +40,47 @@ type AuthContext struct {
 }
 
 // Authentication returns a Gin middleware that authenticates requests using
-// either an Authorization Bearer token (API key) or an X-Session-Key header.
+// login name/password, session key, or an Authorization Bearer token (API key),
+// in that priority order.
 func Authentication(apiKeySvc *services.APIKeyService, accountSvc *services.AccountService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
 
-		// Try API key first: Authorization: Bearer {api_key_id}.{secret}
+		// Resolve and store client IP early so downstream middleware can use it.
+		c.Set(clientIPContextKey, c.ClientIP())
+
+		// Priority 1: login name/password headers.
+		loginName := c.GetHeader("X-Login-Name")
+		loginPassword := c.GetHeader("X-Login-Password")
+		if loginName != "" && loginPassword != "" {
+			account, err := accountSvc.ValidateLoginPassword(ctx, loginName, loginPassword)
+			if err == nil {
+				c.Set(authContextKey, AuthContext{
+					Account:         account,
+					AuthMethod:      AuthMethodPassword,
+					IsAuthenticated: true,
+				})
+				c.Next()
+				return
+			}
+		}
+
+		// Priority 2: session key: X-Session-Key: {account_id}-{secret}
+		sessionKey := c.GetHeader("X-Session-Key")
+		if sessionKey != "" {
+			account, err := accountSvc.ValidateLoginSession(ctx, sessionKey)
+			if err == nil {
+				c.Set(authContextKey, AuthContext{
+					Account:         account,
+					AuthMethod:      AuthMethodSession,
+					IsAuthenticated: true,
+				})
+				c.Next()
+				return
+			}
+		}
+
+		// Priority 3: API key: Authorization: Bearer {api_key_id}.{secret}
 		authHeader := c.GetHeader("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			token := strings.TrimPrefix(authHeader, "Bearer ")
@@ -57,21 +97,6 @@ func Authentication(apiKeySvc *services.APIKeyService, accountSvc *services.Acco
 					c.Next()
 					return
 				}
-			}
-		}
-
-		// Fall back to session key: X-Session-Key: {account_id}-{secret}
-		sessionKey := c.GetHeader("X-Session-Key")
-		if sessionKey != "" {
-			account, err := accountSvc.ValidateLoginSession(ctx, sessionKey)
-			if err == nil {
-				c.Set(authContextKey, AuthContext{
-					Account:         account,
-					AuthMethod:      AuthMethodSession,
-					IsAuthenticated: true,
-				})
-				c.Next()
-				return
 			}
 		}
 
@@ -94,6 +119,18 @@ func GetAuthContext(c *gin.Context) (AuthContext, bool) {
 		return ac, true
 	}
 	return AuthContext{AuthMethod: AuthMethodNone, IsAuthenticated: false}, false
+}
+
+// GetClientIP extracts the resolved client IP from a Gin context.
+func GetClientIP(c *gin.Context) (string, bool) {
+	val, exists := c.Get(clientIPContextKey)
+	if !exists {
+		return "", false
+	}
+	if ip, ok := val.(string); ok {
+		return ip, true
+	}
+	return "", false
 }
 
 // RequireAuthenticated returns a middleware that rejects unauthenticated requests.

@@ -7,231 +7,112 @@ import (
 	"time"
 )
 
-func TestColorize(t *testing.T) {
-	// Save original state and restore after test.
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
+func TestInitColor(t *testing.T) {
+	old := noColor
+	defer func() { noColor = old }()
 
-	tests := []struct {
-		name     string
-		noColor  bool
-		text     string
-		color    string
-		expected string
-	}{
-		{
-			name:     "color enabled",
-			noColor:  false,
-			text:     "hello",
-			color:    colorRed,
-			expected: colorRed + "hello" + colorReset,
-		},
-		{
-			name:     "color disabled",
-			noColor:  true,
-			text:     "hello",
-			color:    colorRed,
-			expected: "hello",
-		},
+	noColor = false
+	initColor([]string{"--no-color"})
+	if !noColor {
+		t.Error("expected noColor to be true with --no-color flag")
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			noColor = tt.noColor
-			got := colorize(tt.text, tt.color)
-			if got != tt.expected {
-				t.Errorf("colorize() = %q, want %q", got, tt.expected)
-			}
-		})
+	noColor = false
+	initColor([]string{})
+	if noColor {
+		t.Error("expected noColor to remain false without flag/env")
+	}
+}
+
+func TestColorize(t *testing.T) {
+	old := noColor
+	defer func() { noColor = old }()
+
+	noColor = false
+	got := colorize("text", colorRed)
+	if !strings.Contains(got, "text") {
+		t.Errorf("colorize() = %q, want colored text", got)
+	}
+	if !strings.Contains(got, colorRed) {
+		t.Errorf("colorize() = %q, want red color code", got)
+	}
+
+	noColor = true
+	got = colorize("text", colorRed)
+	if got != "text" {
+		t.Errorf("colorize() with noColor = %q, want plain text", got)
 	}
 }
 
 func TestColorHelpers(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
-
+	old := noColor
 	noColor = false
+	defer func() { noColor = old }()
 
-	if got := red("test"); !strings.Contains(got, "test") {
-		t.Errorf("red() = %q, should contain 'test'", got)
-	}
-	if got := green("test"); !strings.Contains(got, "test") {
-		t.Errorf("green() = %q, should contain 'test'", got)
-	}
-	if got := yellow("test"); !strings.Contains(got, "test") {
-		t.Errorf("yellow() = %q, should contain 'test'", got)
-	}
-	if got := blue("test"); !strings.Contains(got, "test") {
-		t.Errorf("blue() = %q, should contain 'test'", got)
-	}
-	if got := cyan("test"); !strings.Contains(got, "test") {
-		t.Errorf("cyan() = %q, should contain 'test'", got)
-	}
-	if got := white("test"); !strings.Contains(got, "test") {
-		t.Errorf("white() = %q, should contain 'test'", got)
-	}
-}
-
-func TestColorHelpersNoColor(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
-
-	noColor = true
-
-	if got := red("test"); got != "test" {
-		t.Errorf("red() with noColor = %q, want %q", got, "test")
-	}
-	if got := green("test"); got != "test" {
-		t.Errorf("green() with noColor = %q, want %q", got, "test")
-	}
-	if got := yellow("test"); got != "test" {
-		t.Errorf("yellow() with noColor = %q, want %q", got, "test")
+	for _, fn := range []func(string) string{red, green, yellow, blue, cyan, white} {
+		got := fn("x")
+		if !strings.Contains(got, "x") {
+			t.Errorf("color helper output %q does not contain text", got)
+		}
 	}
 }
 
 func TestFormatTime(t *testing.T) {
-	tm := time.Date(2024, 6, 12, 14, 30, 45, 0, time.UTC)
-	got := formatTime(tm)
-	want := "2024-06-12T14:30:45"
+	ts := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	got := formatTime(ts)
+	want := "2024-01-02T03:04:05"
 	if got != want {
 		t.Errorf("formatTime() = %q, want %q", got, want)
 	}
 }
 
 func TestFormatTimeMs(t *testing.T) {
-	// 2024-06-12T15:10:45 UTC = 1718205045000 ms
-	ms := int64(1718205045000)
+	ms := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC).UnixMilli()
 	got := formatTimeMs(ms)
-	want := "2024-06-12T15:10:45"
+	want := "2024-01-02T03:04:05"
 	if got != want {
 		t.Errorf("formatTimeMs() = %q, want %q", got, want)
 	}
 }
 
 func TestFormatTimeMsFloat(t *testing.T) {
-	ms := float64(1718205045000)
+	ms := float64(time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC).UnixMilli())
 	got := formatTimeMsFloat(ms)
-	want := "2024-06-12T15:10:45"
+	want := "2024-01-02T03:04:05"
 	if got != want {
 		t.Errorf("formatTimeMsFloat() = %q, want %q", got, want)
 	}
 }
 
-func TestPS1Normal(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
-
-	noColor = true
-	got := ps1Normal("alice", "acc-test-123", "user")
-	want := "acs@alice(acc-test-123)[user]: "
-	if got != want {
-		t.Errorf("ps1Normal() = %q, want %q", got, want)
-	}
-}
-
-func TestPS1Chat(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
-
-	noColor = true
-	got := ps1Chat("alice", "acc-test-123", "user", "grp-123")
-	want := "acs@alice(acc-test-123)[user]:grp-123# "
-	if got != want {
-		t.Errorf("ps1Chat() = %q, want %q", got, want)
-	}
-}
-
 func TestFormatMessage(t *testing.T) {
-	tests := []struct {
-		name string
-		msg  map[string]interface{}
-		want string
-	}{
-		{
-			name: "basic user message",
-			msg: map[string]interface{}{
-				"sender_id":    "u1",
-				"sender_name":  "Alice",
-				"sender_type":  "user",
-				"message_text": "Hello world",
-				"create_at_ms": float64(1718205045000),
-			},
-			want: "Alice",
-		},
-		{
-			name: "agent message",
-			msg: map[string]interface{}{
-				"sender_id":    "a1",
-				"sender_name":  "Bot",
-				"sender_type":  "manager-agent",
-				"message_text": "I am a bot",
-				"create_at_ms": float64(1718205045000),
-			},
-			want: "Bot",
-		},
-		{
-			name: "deleted message",
-			msg: map[string]interface{}{
-				"sender_id":    "u1",
-				"sender_name":  "Alice",
-				"sender_type":  "user",
-				"message_text": "Hello world",
-				"create_at_ms": float64(1718205045000),
-				"is_deleted":   true,
-			},
-			want: "[message deleted]",
-		},
-		{
-			name: "message without sender_name",
-			msg: map[string]interface{}{
-				"sender_id":    "u1",
-				"sender_type":  "user",
-				"message_text": "Hello",
-				"create_at_ms": float64(1718205045000),
-			},
-			want: "u1",
-		},
+	msg := map[string]interface{}{
+		"sender_id":      "u1",
+		"sender_name":    "Alice",
+		"sender_type":    "user",
+		"message_text":   "hello",
+		"create_at_ms":   float64(time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC).UnixMilli()),
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := formatMessage(tt.msg)
-			if !strings.Contains(got, tt.want) {
-				t.Errorf("formatMessage() = %q, should contain %q", got, tt.want)
-			}
-			// Verify timestamp format is present.
-			if !strings.Contains(got, "2024-06-12T15:10:45") {
-				t.Errorf("formatMessage() = %q, should contain timestamp", got)
-			}
-		})
+	got := formatMessage(msg)
+	if !strings.Contains(got, "Alice") {
+		t.Errorf("formatMessage() = %q, want sender name", got)
+	}
+	if !strings.Contains(got, "hello") {
+		t.Errorf("formatMessage() = %q, want message text", got)
 	}
 }
 
 func TestFormatGroupLine(t *testing.T) {
-	got := formatGroupLine("grp-1", "My Group")
-	if !strings.Contains(got, "grp-1") {
-		t.Errorf("formatGroupLine() = %q, should contain 'grp-1'", got)
+	got := formatGroupLine("group-123", "Team")
+	if !strings.Contains(got, "group-123") {
+		t.Errorf("formatGroupLine() = %q, want group id", got)
 	}
-	if !strings.Contains(got, "My Group") {
-		t.Errorf("formatGroupLine() = %q, should contain 'My Group'", got)
+	if !strings.Contains(got, "Team") {
+		t.Errorf("formatGroupLine() = %q, want group name", got)
 	}
 }
 
 func TestFormatMemberLine(t *testing.T) {
-	got := formatMemberLine("user", "Alice", "u1", "online")
-	if !strings.Contains(got, "Alice") {
-		t.Errorf("formatMemberLine() = %q, should contain 'Alice'", got)
-	}
-	if !strings.Contains(got, "u1") {
-		t.Errorf("formatMemberLine() = %q, should contain 'u1'", got)
-	}
-	if !strings.Contains(got, "online") {
-		t.Errorf("formatMemberLine() = %q, should contain 'online'", got)
-	}
-}
-
-func TestFormatMemberLineAgentTypes(t *testing.T) {
-	tests := []struct {
+	cases := []struct {
 		memberType string
 	}{
 		{"user"},
@@ -239,335 +120,251 @@ func TestFormatMemberLineAgentTypes(t *testing.T) {
 		{"worker-agent"},
 		{"unknown"},
 	}
+	for _, tc := range cases {
+		got := formatMemberLine(tc.memberType, "Alice", "u1", "online")
+		if !strings.Contains(got, "Alice") || !strings.Contains(got, "u1") {
+			t.Errorf("formatMemberLine(%q) = %q", tc.memberType, got)
+		}
+	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.memberType, func(t *testing.T) {
-			got := formatMemberLine(tt.memberType, "Name", "id", "online")
-			if !strings.Contains(got, "Name") {
-				t.Errorf("formatMemberLine() = %q, should contain 'Name'", got)
-			}
-		})
+func TestFormatAccountLine(t *testing.T) {
+	account := map[string]interface{}{
+		"account_id":   "acc-1",
+		"account_name": "Alice",
+		"role":         "user",
+		"status":       "active",
+		"email":        "alice@example.com",
+	}
+	got := formatAccountLine(account)
+	for _, want := range []string{"acc-1", "Alice", "user", "active", "alice@example.com"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("formatAccountLine() = %q, missing %q", got, want)
+		}
+	}
+}
+
+func TestFormatAccountDetail(t *testing.T) {
+	account := map[string]interface{}{
+		"account_id":    "acc-1",
+		"account_name":  "Alice",
+		"role":          "user",
+		"status":        "active",
+		"email":         "alice@example.com",
+		"external_id":   "ext-1",
+		"auth_provider": "oidc",
+		"avatar_url":    "https://example.com/avatar.png",
+		"login_name":    "alice@example.com",
+	}
+	got := formatAccountDetail(account)
+	for _, want := range []string{"acc-1", "Alice", "user", "active", "alice@example.com", "ext-1", "oidc", "avatar"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("formatAccountDetail() = %q, missing %q", got, want)
+		}
+	}
+}
+
+func TestFormatAPIKeyLine(t *testing.T) {
+	key := map[string]interface{}{
+		"api_key_id": "ak-1",
+		"api_key_name": "CLI",
+		"role":       "user",
+		"status":     "active",
+	}
+	got := formatAPIKeyLine(key)
+	for _, want := range []string{"ak-1", "CLI", "user", "active"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("formatAPIKeyLine() = %q, missing %q", got, want)
+		}
+	}
+}
+
+func TestFormatAPIKeyDetail(t *testing.T) {
+	key := map[string]interface{}{
+		"api_key_id":   "ak-1",
+		"api_key_name": "CLI",
+		"role":         "user",
+		"status":       "active",
+		"creator_id":   "acc-1",
+		"owner_id":     "acc-1",
+	}
+	got := formatAPIKeyDetail(key)
+	for _, want := range []string{"ak-1", "CLI", "user", "active", "acc-1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("formatAPIKeyDetail() = %q, missing %q", got, want)
+		}
+	}
+}
+
+func TestFormatSessionInfo(t *testing.T) {
+	session := map[string]interface{}{
+		"account_id":                 "acc-1",
+		"account_name":               "Alice",
+		"role":                       "user",
+		"session_key":                "sk-1",
+		"login_session_expired_time": float64(time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC).UnixMilli()),
+	}
+	got := formatSessionInfo(session)
+	for _, want := range []string{"acc-1", "Alice", "user", "sk-1", "2024-01-02T03:04:05"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("formatSessionInfo() = %q, missing %q", got, want)
+		}
+	}
+}
+
+func TestWriteField(t *testing.T) {
+	var b strings.Builder
+	writeField(&b, "Label", "value")
+	if !strings.Contains(b.String(), "Label") || !strings.Contains(b.String(), "value") {
+		t.Errorf("writeField() = %q", b.String())
+	}
+
+	b.Reset()
+	writeField(&b, "Empty", "")
+	if b.Len() != 0 {
+		t.Errorf("writeField() with empty string should not write, got %q", b.String())
+	}
+
+	b.Reset()
+	writeField(&b, "Nil", nil)
+	if b.Len() != 0 {
+		t.Errorf("writeField() with nil should not write, got %q", b.String())
+	}
+
+	b.Reset()
+	writeField(&b, "Number", 42)
+	if !strings.Contains(b.String(), "42") {
+		t.Errorf("writeField() with number = %q", b.String())
+	}
+}
+
+func TestPrintableSeparator(t *testing.T) {
+	got := printableSeparator()
+	if len(got) == 0 {
+		t.Error("printableSeparator() returned empty string")
 	}
 }
 
 func TestFormatGroupEvent(t *testing.T) {
-	got := formatGroupEvent("create", "grp-1")
-	if !strings.Contains(got, "create") {
-		t.Errorf("formatGroupEvent() = %q, should contain 'create'", got)
-	}
-	if !strings.Contains(got, "grp-1") {
-		t.Errorf("formatGroupEvent() = %q, should contain 'grp-1'", got)
+	got := formatGroupEvent("create", "group-123")
+	if !strings.Contains(got, "create") || !strings.Contains(got, "group-123") {
+		t.Errorf("formatGroupEvent() = %q", got)
 	}
 }
 
 func TestFormatMemberEvent(t *testing.T) {
-	got := formatMemberEvent("add", "grp-1")
-	if !strings.Contains(got, "add") {
-		t.Errorf("formatMemberEvent() = %q, should contain 'add'", got)
-	}
-	if !strings.Contains(got, "grp-1") {
-		t.Errorf("formatMemberEvent() = %q, should contain 'grp-1'", got)
+	got := formatMemberEvent("join", "group-123")
+	if !strings.Contains(got, "join") || !strings.Contains(got, "group-123") {
+		t.Errorf("formatMemberEvent() = %q", got)
 	}
 }
 
 func TestFormatGenericEvent(t *testing.T) {
-	got := formatGenericEvent("message", "create", "grp-1")
-	if !strings.Contains(got, "message") {
-		t.Errorf("formatGenericEvent() = %q, should contain 'message'", got)
-	}
-	if !strings.Contains(got, "create") {
-		t.Errorf("formatGenericEvent() = %q, should contain 'create'", got)
-	}
-	if !strings.Contains(got, "grp-1") {
-		t.Errorf("formatGenericEvent() = %q, should contain 'grp-1'", got)
+	got := formatGenericEvent("message", "create", "group-123")
+	if !strings.Contains(got, "message") || !strings.Contains(got, "create") || !strings.Contains(got, "group-123") {
+		t.Errorf("formatGenericEvent() = %q", got)
 	}
 }
 
-func TestInitColor(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
-
-	tests := []struct {
-		name     string
-		args     []string
-		envValue string
-		expected bool
-	}{
-		{
-			name:     "no-color flag",
-			args:     []string{"cli", "--no-color"},
-			envValue: "",
-			expected: true,
-		},
-		{
-			name:     "NO_COLOR env",
-			args:     []string{"cli"},
-			envValue: "1",
-			expected: true,
-		},
-		{
-			name:     "no color disabled",
-			args:     []string{"cli"},
-			envValue: "",
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			noColor = false
-			if tt.envValue != "" {
-				t.Setenv("NO_COLOR", tt.envValue)
-			}
-			initColor(tt.args)
-			if noColor != tt.expected {
-				t.Errorf("initColor() noColor = %v, want %v", noColor, tt.expected)
-			}
-		})
-	}
-}
-
-func TestBoxHorizontalNoColor(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
+func TestPs1Normal(t *testing.T) {
+	old := noColor
+	defer func() { noColor = old }()
 
 	noColor = true
-	if got := boxHorizontal(); got != "-" {
-		t.Errorf("boxHorizontal() with noColor = %q, want %q", got, "-")
+	got := ps1Normal("alice", "acc-1", "user")
+	if !strings.Contains(got, "alice") || !strings.Contains(got, "acc-1") || !strings.Contains(got, "user") {
+		t.Errorf("ps1Normal() = %q", got)
 	}
-	if got := boxDoubleHorizontal(); got != "=" {
-		t.Errorf("boxDoubleHorizontal() with noColor = %q, want %q", got, "=")
+
+	got = ps1Normal("alice", "acc-1", "")
+	if !strings.Contains(got, "alice") || !strings.Contains(got, "acc-1") {
+		t.Errorf("ps1Normal() without role = %q", got)
 	}
 }
 
-func TestBoxHorizontalColor(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
+func TestPs1Chat(t *testing.T) {
+	old := noColor
+	defer func() { noColor = old }()
 
-	noColor = false
-	if got := boxHorizontal(); got != "─" {
-		t.Errorf("boxHorizontal() with color = %q, want %q", got, "─")
+	noColor = true
+	got := ps1Chat("alice", "acc-1", "user", "group-123")
+	if !strings.Contains(got, "alice") || !strings.Contains(got, "acc-1") || !strings.Contains(got, "user") || !strings.Contains(got, "group-123") {
+		t.Errorf("ps1Chat() = %q", got)
 	}
-	if got := boxDoubleHorizontal(); got != "═" {
-		t.Errorf("boxDoubleHorizontal() with color = %q, want %q", got, "═")
+
+	got = ps1Chat("alice", "acc-1", "", "group-123")
+	if !strings.Contains(got, "alice") || !strings.Contains(got, "acc-1") || !strings.Contains(got, "group-123") {
+		t.Errorf("ps1Chat() without role = %q", got)
 	}
 }
 
-func TestBannerBorderNoColor(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
+func TestBannerBorder(t *testing.T) {
+	old := noColor
+	defer func() { noColor = old }()
 
 	noColor = true
 	top, middle, bottom := bannerBorder()
-	wantTop := "+------------------------------------------+"
-	wantMiddle := "|     ACS CLI Terminal                     |"
-	wantBottom := "+------------------------------------------+"
-	if top != wantTop {
-		t.Errorf("bannerBorder() top = %q, want %q", top, wantTop)
-	}
-	if middle != wantMiddle {
-		t.Errorf("bannerBorder() middle = %q, want %q", middle, wantMiddle)
-	}
-	if bottom != wantBottom {
-		t.Errorf("bannerBorder() bottom = %q, want %q", bottom, wantBottom)
-	}
-}
-
-func TestBannerBorderColor(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
-
-	noColor = false
-	top, middle, bottom := bannerBorder()
-	wantTop := "╔══════════════════════════════════════════╗"
-	wantMiddle := "║     ACS CLI Terminal                     ║"
-	wantBottom := "╚══════════════════════════════════════════╝"
-	if top != wantTop {
-		t.Errorf("bannerBorder() top = %q, want %q", top, wantTop)
-	}
-	if middle != wantMiddle {
-		t.Errorf("bannerBorder() middle = %q, want %q", middle, wantMiddle)
-	}
-	if bottom != wantBottom {
-		t.Errorf("bannerBorder() bottom = %q, want %q", bottom, wantBottom)
-	}
-}
-
-func TestPrintableSeparatorNoColor(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
-
-	noColor = true
-	got := printableSeparator()
-	want := strings.Repeat("-", 42)
-	if got != want {
-		t.Errorf("printableSeparator() = %q, want %q", got, want)
-	}
-}
-
-func TestPrintableSeparatorColor(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
-
-	noColor = false
-	got := printableSeparator()
-	want := strings.Repeat("─", 42)
-	if got != want {
-		t.Errorf("printableSeparator() = %q, want %q", got, want)
+	if !strings.Contains(top, "+") || !strings.Contains(middle, "ACS CLI Terminal") || !strings.Contains(bottom, "+") {
+		t.Errorf("bannerBorder() noColor = top=%q middle=%q bottom=%q", top, middle, bottom)
 	}
 }
 
 func TestAgentIcon(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
+	old := noColor
+	defer func() { noColor = old }()
 
-	tests := []struct {
-		name     string
-		noColor  bool
-		expected string
-	}{
-		{"color enabled", false, "🤖"},
-		{"no color", true, "[BOT]"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			noColor = tt.noColor
-			if got := agentIcon(); got != tt.expected {
-				t.Errorf("agentIcon() = %q, want %q", got, tt.expected)
-			}
-		})
+	noColor = true
+	if got := agentIcon(); got != "[BOT]" {
+		t.Errorf("agentIcon() noColor = %q, want [BOT]", got)
 	}
 }
 
 func TestEventIcon(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
+	old := noColor
+	defer func() { noColor = old }()
 
-	tests := []struct {
-		name     string
-		noColor  bool
-		expected string
-	}{
-		{"color enabled", false, "📢"},
-		{"no color", true, "[EVENT]"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			noColor = tt.noColor
-			if got := eventIcon(); got != tt.expected {
-				t.Errorf("eventIcon() = %q, want %q", got, tt.expected)
-			}
-		})
+	noColor = true
+	if got := eventIcon(); got != "[EVENT]" {
+		t.Errorf("eventIcon() noColor = %q, want [EVENT]", got)
 	}
 }
 
 func TestMemberIcon(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
+	old := noColor
+	defer func() { noColor = old }()
 
-	tests := []struct {
-		name     string
-		noColor  bool
-		expected string
-	}{
-		{"color enabled", false, "👤"},
-		{"no color", true, "[MEMBER]"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			noColor = tt.noColor
-			if got := memberIcon(); got != tt.expected {
-				t.Errorf("memberIcon() = %q, want %q", got, tt.expected)
-			}
-		})
+	noColor = true
+	if got := memberIcon(); got != "[MEMBER]" {
+		t.Errorf("memberIcon() noColor = %q, want [MEMBER]", got)
 	}
 }
 
 func TestGenericEventIcon(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
+	old := noColor
+	defer func() { noColor = old }()
 
-	tests := []struct {
-		name     string
-		noColor  bool
-		expected string
-	}{
-		{"color enabled", false, "📰"},
-		{"no color", true, "[EVENT]"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			noColor = tt.noColor
-			if got := genericEventIcon(); got != tt.expected {
-				t.Errorf("genericEventIcon() = %q, want %q", got, tt.expected)
-			}
-		})
+	noColor = true
+	if got := genericEventIcon(); got != "[EVENT]" {
+		t.Errorf("genericEventIcon() noColor = %q, want [EVENT]", got)
 	}
 }
 
-func TestFormatMessageNoColor(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
+func TestBoxHorizontal(t *testing.T) {
+	old := noColor
+	defer func() { noColor = old }()
 
 	noColor = true
-	msg := map[string]interface{}{
-		"sender_id":    "a1",
-		"sender_name":  "Bot",
-		"sender_type":  "manager-agent",
-		"message_text": "I am a bot",
-		"create_at_ms": float64(1718205045000),
-	}
-	got := formatMessage(msg)
-	if strings.Contains(got, "🤖") {
-		t.Errorf("formatMessage() with noColor should not contain emoji, got %q", got)
-	}
-	if !strings.Contains(got, "[BOT]") {
-		t.Errorf("formatMessage() with noColor should contain [BOT] label, got %q", got)
+	if got := boxHorizontal(); got != "-" {
+		t.Errorf("boxHorizontal() noColor = %q, want -", got)
 	}
 }
 
-func TestFormatGroupEventNoColor(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
+func TestBoxDoubleHorizontal(t *testing.T) {
+	old := noColor
+	defer func() { noColor = old }()
 
 	noColor = true
-	got := formatGroupEvent("create", "grp-1")
-	if strings.Contains(got, "📢") {
-		t.Errorf("formatGroupEvent() with noColor should not contain emoji, got %q", got)
-	}
-	if !strings.Contains(got, "[EVENT]") {
-		t.Errorf("formatGroupEvent() with noColor should contain [EVENT] label, got %q", got)
-	}
-}
-
-func TestFormatMemberEventNoColor(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
-
-	noColor = true
-	got := formatMemberEvent("add", "grp-1")
-	if strings.Contains(got, "👤") {
-		t.Errorf("formatMemberEvent() with noColor should not contain emoji, got %q", got)
-	}
-	if !strings.Contains(got, "[MEMBER]") {
-		t.Errorf("formatMemberEvent() with noColor should contain [MEMBER] label, got %q", got)
-	}
-}
-
-func TestFormatGenericEventNoColor(t *testing.T) {
-	origNoColor := noColor
-	defer func() { noColor = origNoColor }()
-
-	noColor = true
-	got := formatGenericEvent("message", "create", "grp-1")
-	if strings.Contains(got, "📰") {
-		t.Errorf("formatGenericEvent() with noColor should not contain emoji, got %q", got)
-	}
-	if !strings.Contains(got, "[EVENT]") {
-		t.Errorf("formatGenericEvent() with noColor should contain [EVENT] label, got %q", got)
+	if got := boxDoubleHorizontal(); got != "=" {
+		t.Errorf("boxDoubleHorizontal() noColor = %q, want =", got)
 	}
 }

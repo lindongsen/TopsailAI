@@ -62,7 +62,9 @@ func (Account) TableName() string {
 // BeforeCreate hook generates the account_id and timestamps.
 func (a *Account) BeforeCreate(tx *gorm.DB) error {
 	now := time.Now().UnixMilli()
-	a.AccountID = generateAccountID()
+	if a.AccountID == "" {
+		a.AccountID = generateAccountID()
+	}
 	a.CreateAtMs = now
 	a.UpdateAtMs = now
 	return nil
@@ -77,6 +79,36 @@ func (a *Account) BeforeUpdate(tx *gorm.DB) error {
 // IsActive returns true when the account can authenticate.
 func (a *Account) IsActive() bool {
 	return a.Status == AccountStatusActive
+}
+
+// IsDeleted returns true when the account has been soft-deleted.
+func (a *Account) IsDeleted() bool {
+	return a.Status == AccountStatusDeleted || a.DeleteAtMs > 0
+}
+
+// ValidRole returns true if the account role is one of the supported values.
+func (a *Account) ValidRole() bool {
+	switch a.Role {
+	case AccountRoleAdmin, AccountRoleManager, AccountRoleUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// RoleRank returns the numeric rank of the account role for hierarchy comparisons.
+// Admin > Manager > User. Unknown roles return 0.
+func (a *Account) RoleRank() int {
+	switch a.Role {
+	case AccountRoleAdmin:
+		return 3
+	case AccountRoleManager:
+		return 2
+	case AccountRoleUser:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // generateAccountID returns a unique account identifier with format acc-{alphanumeric}.

@@ -238,10 +238,18 @@ def update_response_item(item:dict) -> dict:
     """ for item in response(list) """
     if item.get("step_name") == "action" and item.get("raw_text"):
         item_extra = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", item["raw_text"])
-        if item_extra and isinstance(item_extra, list) and len(item_extra) == 1:
+        if item_extra and isinstance(item_extra, list):
+            # get tool_call item
+            item_tool_call = None
+            for _item in item_extra:
+                if isinstance(_item, dict) and ('tool_call' in _item or _item.get("step_name") == "action"):
+                    item_tool_call = _item
+                    break
+            if not item_tool_call:
+                return item
             print_error(f"{LLM_KEYWORD_MISTAKE}: TOPSAILAI_HOOK_AFTER_LLM_CHAT, action content format is unexpected")
             # {'step_name': 'action', 'tool_call': ..., 'tool_args': ...}
-            item.update(item_extra[0])
+            item.update(item_tool_call)
     return item
 
 def format_response_finally(response, rsp_obj=None, messages=None):

@@ -34,6 +34,9 @@ func TestAPIKeyService_CreateAPIKey_Success(t *testing.T) {
 	assert.NotEmpty(t, key.APIKey.APIKeyID)
 	assert.Contains(t, key.Token, key.APIKey.APIKeyID)
 	assert.Equal(t, models.APIKeyRoleUser, key.APIKey.Role)
+	assert.Equal(t, models.APIKeyStatusActive, key.APIKey.Status)
+	assert.NotEmpty(t, key.APIKey.APIKeyHash)
+	assert.NotEqual(t, key.Token, key.APIKey.APIKeyHash)
 }
 
 func TestAPIKeyService_VerifyAPIKey_SuccessAndFailure(t *testing.T) {
@@ -440,6 +443,53 @@ func TestAPIKeyService_ListAPIKeysByOwner_PaginationAndErrors(t *testing.T) {
 	_, _, err = apiKeySvc.ListAPIKeysByOwner(ctx, owner.AccountID, 0, 10)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to count api keys")
+}
+
+func TestAPIKeyService_ListAPIKeysByOwner_Empty(t *testing.T) {
+	_, accountSvc, apiKeySvc, _ := newTestServices(t)
+	ctx := context.Background()
+
+	owner, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Empty Owner",
+		LoginName:   "empty-owner",
+		Role:        models.AccountRoleUser,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	keys, total, err := apiKeySvc.ListAPIKeysByOwner(ctx, owner.AccountID, 0, 100)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), total)
+	assert.Empty(t, keys)
+}
+
+func TestAPIKeyService_DeleteAPIKey_Success(t *testing.T) {
+	_, accountSvc, apiKeySvc, _ := newTestServices(t)
+	ctx := context.Background()
+
+	owner, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Delete Owner",
+		LoginName:   "delete-owner",
+		Role:        models.AccountRoleUser,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	key, err := apiKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
+		APIKeyName: "delete-key",
+		Role:       models.APIKeyRoleUser,
+		OwnerID:    owner.AccountID,
+		CreatorID:  owner.AccountID,
+	})
+	require.NoError(t, err)
+
+	err = apiKeySvc.DeleteAPIKey(ctx, key.APIKey.APIKeyID)
+	require.NoError(t, err)
+
+	keys, total, err := apiKeySvc.ListAPIKeysByOwner(ctx, owner.AccountID, 0, 100)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), total)
+	assert.Empty(t, keys)
 }
 
 func TestAPIKeyService_DeleteAPIKey_NotFound(t *testing.T) {

@@ -11,7 +11,6 @@ import (
 	"github.com/nats-io/nats.go"
 	"gorm.io/gorm"
 
-	"github.com/topsailai/agent-community/internal/lock"
 	"github.com/topsailai/agent-community/internal/models"
 	"github.com/topsailai/agent-community/internal/trigger"
 	"github.com/topsailai/agent-community/pkg/logger"
@@ -19,26 +18,46 @@ import (
 
 const autoTriggerModule = "auto_trigger"
 
+// AutoTriggerPublisher is the subset of Publisher used by AutoTrigger.
+type AutoTriggerPublisher interface {
+	PublishAutoTriggerPendingMessage(groupID string, msg *models.GroupMessage, trigger interface{}) error
+}
+
+// AutoTriggerEvaluator is the subset of trigger.Evaluator used by AutoTrigger.
+type AutoTriggerEvaluator interface {
+	EvaluateAutoTriggerTimeout(ctx context.Context, lastMessage *models.GroupMessage, members []models.GroupMember) (*trigger.TriggerResult, error)
+}
+
+// AutoTriggerLock is the subset of lock.Lock used by AutoTrigger.
+type AutoTriggerLock interface {
+	Release() error
+}
+
+// AutoTriggerLockManager is the subset of lock.DistributedLock used by AutoTrigger.
+type AutoTriggerLockManager interface {
+	Acquire(ctx context.Context, lockType, resourceID string) (AutoTriggerLock, error)
+}
+
 // AutoTrigger runs a periodic task to check for timeout-based auto-triggers.
 type AutoTrigger struct {
-	db             *gorm.DB
-	js             nats.JetStreamContext
-	publisher      *Publisher
-	evaluator      *trigger.Evaluator
-	lockManager    *lock.DistributedLock
-	interval       time.Duration
-	timeout        time.Duration
-	stopCh         chan struct{}
-	stopOnce       sync.Once
+	db          *gorm.DB
+	js          nats.JetStreamContext
+	publisher   AutoTriggerPublisher
+	evaluator   AutoTriggerEvaluator
+	lockManager AutoTriggerLockManager
+	interval    time.Duration
+	timeout     time.Duration
+	stopCh      chan struct{}
+	stopOnce    sync.Once
 }
 
 // NewAutoTrigger creates a new auto-trigger periodic task.
 func NewAutoTrigger(
 	db *gorm.DB,
 	js nats.JetStreamContext,
-	publisher *Publisher,
-	evaluator *trigger.Evaluator,
-	lockManager *lock.DistributedLock,
+	publisher AutoTriggerPublisher,
+	evaluator AutoTriggerEvaluator,
+	lockManager AutoTriggerLockManager,
 	interval time.Duration,
 	timeout time.Duration,
 ) *AutoTrigger {
@@ -188,9 +207,9 @@ func (at *AutoTrigger) checkGroup(ctx context.Context, group *models.Group, trac
 		return checkResultSkipped, fmt.Errorf("failed to fetch members: %w", err)
 	}
 
-	// Find the last message in the group
+	// Find the last original message in the group (skip auto-generated pending messages)
 	var lastMessage models.GroupMessage
-	if err := at.db.Where("group_id = ? AND deleted_at IS NULL AND is_deleted = ?", group.GroupID, false).
+	if err := at.db.Where("group_id = ? AND deleted_at IS NULL AND is_deleted = ? AND (processed_msg_id = ? OR processed_msg_id IS NULL)", group.GroupID, false, "").
 		Order("create_at_ms DESC").
 		First(&lastMessage).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -245,7 +264,7 @@ func (at *AutoTrigger) checkGroup(ctx context.Context, group *models.Group, trac
 	// Record processing status as pending
 	processingRecord := &models.AgentMessageProcessing{
 		GroupID:   group.GroupID,
-		MessageID: pendingID,
+		MessageID: lastMessage.MessageID,
 		AgentID:   result.Targets[0].AgentID,
 		Status:    models.ProcessingStatusPending,
 	}

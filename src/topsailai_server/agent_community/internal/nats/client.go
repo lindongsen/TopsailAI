@@ -23,17 +23,35 @@ const (
 	queueGroupName = "pending-message-workers"
 )
 
+// natsConn is the minimal subset of *nats.Conn used by Client. It allows unit
+// tests to inject a fake connection without starting a real NATS server.
+type natsConn interface {
+	JetStream(opts ...nats.JSOpt) (nats.JetStreamContext, error)
+	IsConnected() bool
+	Close()
+}
+
+// natsConnector creates a natsConn from the given servers and options.
+// It is unexported and overridable only by tests in the same package.
+type natsConnector func(servers string, opts ...nats.Option) (natsConn, error)
+
+// defaultConnector wraps nats.Connect so it satisfies natsConnector.
+func defaultConnector(servers string, opts ...nats.Option) (natsConn, error) {
+	return nats.Connect(servers, opts...)
+}
+
 // Client wraps NATS connection and JetStream management.
 type Client struct {
-	cfg  *config.NATSConfig
-	conn *nats.Conn
-	js   nats.JetStreamContext
-	kv   nats.KeyValue
+	cfg     *config.NATSConfig
+	connect natsConnector
+	conn    natsConn
+	js      nats.JetStreamContext
+	kv      nats.KeyValue
 }
 
 // NewClient creates a new NATS client.
 func NewClient(cfg *config.NATSConfig) *Client {
-	return &Client{cfg: cfg}
+	return &Client{cfg: cfg, connect: defaultConnector}
 }
 
 // Connect establishes connection to NATS and initializes JetStream.
@@ -43,7 +61,12 @@ func (c *Client) Connect() error {
 		servers = nats.DefaultURL
 	}
 
-	nc, err := nats.Connect(servers,
+	connector := c.connect
+	if connector == nil {
+		connector = defaultConnector
+	}
+
+	nc, err := connector(servers,
 		nats.Name("acs-server"),
 		nats.ReconnectWait(2*time.Second),
 		nats.MaxReconnects(10),
@@ -225,7 +248,7 @@ func (c *Client) KV() nats.KeyValue {
 }
 
 // Conn returns the NATS connection.
-func (c *Client) Conn() *nats.Conn {
+func (c *Client) Conn() natsConn {
 	return c.conn
 }
 

@@ -40,6 +40,12 @@ func setupMessageTestRouter(t *testing.T, db *gorm.DB, pub Publisher, eval Evalu
 	r := gin.New()
 
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
+	if pub == nil {
+		pub = &mockMessagePublisher{}
+	}
+	if eval == nil {
+		eval = trigger.NewEvaluator(10 * time.Minute)
+	}
 	handler := NewMessageHandler(db, pub, eval, log)
 
 	return r, handler
@@ -176,27 +182,356 @@ func newTestGinContext() *gin.Context {
 	return c
 }
 
-// TestListMessagesWithProcessedMsgIDFilter verifies filtering by processed_msg_id returns only matching messages.
-func TestListMessagesWithProcessedMsgIDFilter(t *testing.T) {
+func testAuthContext(accountID string, role models.AccountRole) middleware.AuthContext {
+	return middleware.AuthContext{
+		Account: &models.Account{
+			AccountID: accountID,
+			Role:      role,
+			Status:    models.AccountStatusActive,
+		},
+		IsAuthenticated: true,
+	}
+}
+
+// TestCreateMessage_AdminCanSendToAnyGroup verifies admin can send without membership.
+func TestCreateMessage_AdminCanSendToAnyGroup(t *testing.T) {
 	db := setupMessageTestDB(t)
+	adminID := "acc-admin-001"
+	groupID := "group-create-admin"
+	createTestGroup(t, db, groupID, "Admin Send Group")
+	// Admin is NOT a member
 
-	groupID := "group-1"
-	createTestGroup(t, db, groupID, "Test Group")
-	createTestGroupMember(t, db, groupID, "user-1", models.MemberTypeUser)
+	pub := &mockMessagePublisher{}
+	router, handler := setupMessageTestRouter(t, db, pub, nil)
+	router.Use(authContextMiddleware(testAuthContext(adminID, models.AccountRoleAdmin)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
 
-	// Create a user message that will be processed
-	originalMsg := createTestMessage(t, db, groupID, "msg-original", "user-1", models.MemberTypeUser, "")
+	body := map[string]interface{}{"message_text": "admin message"}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
 
-	// Create an agent response message with processed_msg_id pointing to the original message
-	agentMsg := createTestMessage(t, db, groupID, "msg-agent-1", "agent-1", models.MemberTypeWorkerAgent, originalMsg.MessageID)
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 
-	// Create another unrelated message
-	createTestMessage(t, db, groupID, "msg-unrelated", "user-1", models.MemberTypeUser, "")
+	var resp MessageResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, adminID, resp.SenderID)
+	assert.Equal(t, string(models.MemberTypeUser), resp.SenderType)
+	assert.Equal(t, "admin message", resp.MessageText)
+}
+
+// TestCreateMessage_UserCanSendOnlyToMemberGroup verifies user membership restriction.
+func TestCreateMessage_UserCanSendOnlyToMemberGroup(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-user-001"
+	memberGroupID := "group-member"
+	nonMemberGroupID := "group-non-member"
+	createTestGroup(t, db, memberGroupID, "Member Group")
+	createTestGroup(t, db, nonMemberGroupID, "Non Member Group")
+	createTestGroupMember(t, db, memberGroupID, userID, models.MemberTypeUser)
 
 	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{"message_text": "hello"}
+	bodyJSON, _ := json.Marshal(body)
+
+	// Member group: should succeed
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+memberGroupID+"/messages", bytes.NewReader(bodyJSON))
+	req1.Header.Set("Content-Type", "application/json")
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+	require.Equal(t, http.StatusCreated, w1.Code, "body: %s", w1.Body.String())
+
+	// Non-member group: should fail with 403
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+nonMemberGroupID+"/messages", bytes.NewReader(bodyJSON))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	require.Equal(t, http.StatusForbidden, w2.Code, "body: %s", w2.Body.String())
+}
+
+// TestCreateMessage_ExtractsMentions verifies @member_id mentions are parsed and stored.
+func TestCreateMessage_ExtractsMentions(t *testing.T) {
+	db := setupMessageTestDB(t)
+	accountID := "acc-create-mentions"
+	groupID := "group-create-mentions"
+	createTestGroup(t, db, groupID, "Mentions Group")
+	createTestGroupMember(t, db, groupID, accountID, models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, "agent-1", models.MemberTypeWorkerAgent)
+
+	pub := &mockMessagePublisher{}
+	router, handler := setupMessageTestRouter(t, db, pub, nil)
+	router.Use(authContextMiddleware(testAuthContext(accountID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{"message_text": "hello @agent-1 please help"}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	var resp MessageResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	mentions, ok := resp.Mentions.([]interface{})
+	require.True(t, ok, "mentions should be an array")
+	require.Len(t, mentions, 1)
+	mention := mentions[0].(map[string]interface{})
+	assert.Equal(t, "agent-1", mention["member_id"])
+	assert.Equal(t, string(models.MemberTypeWorkerAgent), mention["member_type"])
+}
+
+// TestCreateMessage_TriggersAgentWhenMentioned verifies evaluator trigger leads to pending publish.
+func TestCreateMessage_TriggersAgentWhenMentioned(t *testing.T) {
+	db := setupMessageTestDB(t)
+	accountID := "acc-create-trigger"
+	groupID := "group-create-trigger"
+	createTestGroup(t, db, groupID, "Trigger Group")
+	createTestGroupMember(t, db, groupID, accountID, models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, "agent-1", models.MemberTypeWorkerAgent)
+
+	pub := &mockMessagePublisher{}
+	eval := &mockMessageEvaluator{
+		result: &trigger.TriggerResult{
+			ShouldTrigger: true,
+			Trigger:       trigger.TriggerInfo{Type: trigger.TriggerTypeMention, AgentID: "agent-1"},
+			Targets:       []trigger.AgentTarget{{AgentID: "agent-1", Mode: "agent"}},
+		},
+	}
+	router, handler := setupMessageTestRouter(t, db, pub, eval)
+	router.Use(authContextMiddleware(testAuthContext(accountID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{"message_text": "hello @agent-1"}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+	require.Len(t, pub.pendingCalls, 1)
+	assert.Equal(t, "agent-1", pub.pendingCalls[0].AgentID)
+	assert.Equal(t, groupID, pub.pendingCalls[0].GroupID)
+	assert.NotNil(t, pub.pendingCalls[0].Msg)
+}
+
+// TestCreateMessage_NoTriggerForAgentSender verifies agent sender does not trigger.
+// Because the HTTP API always derives sender_type=user, we test evaluateAndTrigger directly.
+func TestCreateMessage_NoTriggerForAgentSender(t *testing.T) {
+	db := setupMessageTestDB(t)
+	agentID := "agent-no-trigger"
+	groupID := "group-no-trigger-agent"
+	createTestGroup(t, db, groupID, "No Trigger Agent Group")
+
+	pub := &mockMessagePublisher{}
+	eval := trigger.NewEvaluator(10 * time.Minute)
+	handler := NewMessageHandler(db, pub, eval, logger.New(logger.Config{Output: "stdout", Level: "error"}))
+
+	msg := &models.GroupMessage{
+		GroupID:     groupID,
+		MessageID:   "msg-agent-sender",
+		MessageText: "hello @agent-1",
+		SenderID:    agentID,
+		SenderType:  models.MemberTypeWorkerAgent,
+	}
+	err := db.Create(msg).Error
+	require.NoError(t, err)
+
+	c := newTestGinContext()
+	handler.evaluateAndTrigger(c, "trace-1", msg, nil)
+
+	assert.Empty(t, pub.pendingCalls)
+}
+
+// TestCreateMessage_NoTriggerForProcessedMsgID verifies processed_msg_id blocks trigger.
+func TestCreateMessage_NoTriggerForProcessedMsgID(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-user-processed"
+	groupID := "group-processed"
+	createTestGroup(t, db, groupID, "Processed Group")
+
+	pub := &mockMessagePublisher{}
+	eval := trigger.NewEvaluator(10 * time.Minute)
+	handler := NewMessageHandler(db, pub, eval, logger.New(logger.Config{Output: "stdout", Level: "error"}))
+
+	msg := &models.GroupMessage{
+		GroupID:        groupID,
+		MessageID:      "msg-processed",
+		MessageText:    "hello",
+		SenderID:       userID,
+		SenderType:     models.MemberTypeUser,
+		ProcessedMsgID: "msg-original",
+	}
+	err := db.Create(msg).Error
+	require.NoError(t, err)
+
+	c := newTestGinContext()
+	handler.evaluateAndTrigger(c, "trace-1", msg, nil)
+
+	assert.Empty(t, pub.pendingCalls)
+}
+
+// TestCreateMessage_NoTriggerForLongAgentChain verifies >10 consecutive agent messages block trigger.
+func TestCreateMessage_NoTriggerForLongAgentChain(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-user-chain"
+	groupID := "group-chain"
+	createTestGroup(t, db, groupID, "Chain Group")
+
+	pub := &mockMessagePublisher{}
+	eval := trigger.NewEvaluator(10 * time.Minute)
+	handler := NewMessageHandler(db, pub, eval, logger.New(logger.Config{Output: "stdout", Level: "error"}))
+
+	// Seed 11 consecutive agent messages
+	for i := 0; i < 11; i++ {
+		msg := &models.GroupMessage{
+			GroupID:     groupID,
+			MessageID:   "msg-agent-" + strconv.Itoa(i),
+			MessageText: "agent reply",
+			SenderID:    "agent-1",
+			SenderType:  models.MemberTypeWorkerAgent,
+		}
+		err := db.Create(msg).Error
+		require.NoError(t, err)
+	}
+
+	// User message after long agent chain
+	userMsg := &models.GroupMessage{
+		GroupID:     groupID,
+		MessageID:   "msg-user-chain",
+		MessageText: "user message after chain",
+		SenderID:    userID,
+		SenderType:  models.MemberTypeUser,
+	}
+	err := db.Create(userMsg).Error
+	require.NoError(t, err)
+
+	c := newTestGinContext()
+	handler.evaluateAndTrigger(c, "trace-1", userMsg, nil)
+
+	assert.Empty(t, pub.pendingCalls)
+}
+
+// TestCreateMessage_InvalidGroup verifies 404 when the group does not exist.
+func TestCreateMessage_InvalidGroup(t *testing.T) {
+	db := setupMessageTestDB(t)
+	accountID := "acc-create-notfound"
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(accountID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{"message_text": "hello"}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/non-existent-group/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestCreateMessage_EmptyText verifies empty message_text returns 400.
+func TestCreateMessage_EmptyText(t *testing.T) {
+	db := setupMessageTestDB(t)
+	accountID := "acc-create-empty"
+	groupID := "group-create-empty"
+	createTestGroup(t, db, groupID, "Empty Text Group")
+	createTestGroupMember(t, db, groupID, accountID, models.MemberTypeUser)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(accountID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{"message_text": ""}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestCreateMessage_Unauthenticated verifies 401 when auth context is missing.
+func TestCreateMessage_Unauthenticated(t *testing.T) {
+	db := setupMessageTestDB(t)
+	groupID := "group-create-unauth"
+	createTestGroup(t, db, groupID, "Unauthenticated Group")
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{"message_text": "hello"}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestListMessages_UserCanListMemberGroupOnly verifies list authorization.
+func TestListMessages_UserCanListMemberGroupOnly(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-list-user"
+	memberGroupID := "group-list-member"
+	nonMemberGroupID := "group-list-non-member"
+	createTestGroup(t, db, memberGroupID, "List Member Group")
+	createTestGroup(t, db, nonMemberGroupID, "List Non Member Group")
+	createTestGroupMember(t, db, memberGroupID, userID, models.MemberTypeUser)
+	createTestMessage(t, db, memberGroupID, "msg-list-1", userID, models.MemberTypeUser, "")
+	createTestMessage(t, db, nonMemberGroupID, "msg-list-2", "other-user", models.MemberTypeUser, "")
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
 	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
 
-	// Query with processed_msg_id filter
+	// Member group
+	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+memberGroupID+"/messages", nil)
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+	require.Equal(t, http.StatusOK, w1.Code, "body: %s", w1.Body.String())
+
+	var resp1 ListMessagesResponse
+	err := json.Unmarshal(w1.Body.Bytes(), &resp1)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), resp1.Total)
+
+	// Non-member group
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+nonMemberGroupID+"/messages", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	require.Equal(t, http.StatusForbidden, w2.Code, "body: %s", w2.Body.String())
+}
+
+// TestListMessages_ProcessedMsgIDFilter verifies filtering by processed_msg_id returns only matching messages.
+func TestListMessages_ProcessedMsgIDFilter(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "user-1"
+	groupID := "group-1"
+	createTestGroup(t, db, groupID, "Test Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+
+	originalMsg := createTestMessage(t, db, groupID, "msg-original", userID, models.MemberTypeUser, "")
+	agentMsg := createTestMessage(t, db, groupID, "msg-agent-1", "agent-1", models.MemberTypeWorkerAgent, originalMsg.MessageID)
+	createTestMessage(t, db, groupID, "msg-unrelated", userID, models.MemberTypeUser, "")
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
+
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages?processed_msg_id="+originalMsg.MessageID, nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -207,32 +542,308 @@ func TestListMessagesWithProcessedMsgIDFilter(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	// Should return exactly 1 message: the agent response
 	assert.Equal(t, int64(1), resp.Total)
 	assert.Len(t, resp.Items, 1)
 	assert.Equal(t, agentMsg.MessageID, resp.Items[0].MessageID)
 	assert.Equal(t, originalMsg.MessageID, resp.Items[0].ProcessedMsgID)
-	assert.Equal(t, "agent-1", resp.Items[0].SenderID)
-	assert.Equal(t, string(models.MemberTypeWorkerAgent), resp.Items[0].SenderType)
+}
+
+// TestListMessages_TimeRangeFilter verifies create_at_ms range filtering.
+func TestListMessages_TimeRangeFilter(t *testing.T) {
+	db := setupMessageTestDB(t)
+	groupID := "group-list-range"
+	userID := "user-range"
+	createTestGroup(t, db, groupID, "Range Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+
+	now := time.Now().UnixMilli()
+	createTestMessageAt(t, db, groupID, "msg-early", userID, models.MemberTypeUser, now-2000)
+	createTestMessageAt(t, db, groupID, "msg-mid", userID, models.MemberTypeUser, now)
+	createTestMessageAt(t, db, groupID, "msg-late", userID, models.MemberTypeUser, now+2000)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
+
+	start := strconv.FormatInt(now-1000, 10)
+	end := strconv.FormatInt(now+1000, 10)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages?create_at_ms="+start+"-"+end, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp ListMessagesResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), resp.Total)
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, "msg-mid", resp.Items[0].MessageID)
+}
+
+// TestListMessages_InvalidSortKey verifies 400 for an invalid sort_key.
+func TestListMessages_InvalidSortKey(t *testing.T) {
+	db := setupMessageTestDB(t)
+	groupID := "group-list-sort"
+	userID := "user-sort"
+	createTestGroup(t, db, groupID, "Sort Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages?sort_key=invalid", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestUpdateMessage_UserCanUpdateOwnOnly verifies user can only update own messages.
+func TestUpdateMessage_UserCanUpdateOwnOnly(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-update-user"
+	otherID := "acc-update-other"
+	groupID := "group-update-own"
+	createTestGroup(t, db, groupID, "Update Own Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, otherID, models.MemberTypeUser)
+	ownMsg := createTestMessage(t, db, groupID, "msg-own", userID, models.MemberTypeUser, "")
+	otherMsg := createTestMessage(t, db, groupID, "msg-other", otherID, models.MemberTypeUser, "")
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.PUT("/api/v1/groups/:group_id/messages/:message_id", handler.UpdateMessage)
+
+	body := map[string]interface{}{"message_text": "updated text"}
+	bodyJSON, _ := json.Marshal(body)
+
+	// Own message: should succeed
+	req1 := httptest.NewRequest(http.MethodPut, "/api/v1/groups/"+groupID+"/messages/"+ownMsg.MessageID, bytes.NewReader(bodyJSON))
+	req1.Header.Set("Content-Type", "application/json")
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+	require.Equal(t, http.StatusOK, w1.Code, "body: %s", w1.Body.String())
+
+	// Other user's message: should fail with 403
+	req2 := httptest.NewRequest(http.MethodPut, "/api/v1/groups/"+groupID+"/messages/"+otherMsg.MessageID, bytes.NewReader(bodyJSON))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	require.Equal(t, http.StatusForbidden, w2.Code, "body: %s", w2.Body.String())
+}
+
+// TestUpdateMessage_AdminCanUpdateAny verifies admin can update any message.
+func TestUpdateMessage_AdminCanUpdateAny(t *testing.T) {
+	db := setupMessageTestDB(t)
+	adminID := "acc-update-admin"
+	otherID := "acc-update-other"
+	groupID := "group-update-admin"
+	createTestGroup(t, db, groupID, "Update Admin Group")
+	otherMsg := createTestMessage(t, db, groupID, "msg-admin-update", otherID, models.MemberTypeUser, "")
+
+	pub := &mockMessagePublisher{}
+	router, handler := setupMessageTestRouter(t, db, pub, nil)
+	router.Use(authContextMiddleware(testAuthContext(adminID, models.AccountRoleAdmin)))
+	router.PUT("/api/v1/groups/:group_id/messages/:message_id", handler.UpdateMessage)
+
+	body := map[string]interface{}{"message_text": "admin updated"}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/groups/"+groupID+"/messages/"+otherMsg.MessageID, bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp MessageResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "admin updated", resp.MessageText)
+}
+
+// TestDeleteMessage_UserCanDeleteOwnOnly verifies user can only delete own messages.
+func TestDeleteMessage_UserCanDeleteOwnOnly(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-delete-user"
+	otherID := "acc-delete-other"
+	groupID := "group-delete-own"
+	createTestGroup(t, db, groupID, "Delete Own Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, otherID, models.MemberTypeUser)
+	ownMsg := createTestMessage(t, db, groupID, "msg-delete-own", userID, models.MemberTypeUser, "")
+	otherMsg := createTestMessage(t, db, groupID, "msg-delete-other", otherID, models.MemberTypeUser, "")
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.DELETE("/api/v1/groups/:group_id/messages/:message_id", handler.DeleteMessage)
+
+	// Own message: should succeed
+	req1 := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/"+groupID+"/messages/"+ownMsg.MessageID, nil)
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+	require.Equal(t, http.StatusNoContent, w1.Code, "body: %s", w1.Body.String())
+
+	// Other user's message: should fail with 403
+	req2 := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/"+groupID+"/messages/"+otherMsg.MessageID, nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	require.Equal(t, http.StatusForbidden, w2.Code, "body: %s", w2.Body.String())
+}
+
+// TestDeleteMessage_AdminCanDeleteAny verifies admin can delete any message.
+func TestDeleteMessage_AdminCanDeleteAny(t *testing.T) {
+	db := setupMessageTestDB(t)
+	adminID := "acc-delete-admin"
+	otherID := "acc-delete-other"
+	groupID := "group-delete-admin"
+	createTestGroup(t, db, groupID, "Delete Admin Group")
+	otherMsg := createTestMessage(t, db, groupID, "msg-admin-delete", otherID, models.MemberTypeUser, "")
+
+	pub := &mockMessagePublisher{}
+	router, handler := setupMessageTestRouter(t, db, pub, nil)
+	router.Use(authContextMiddleware(testAuthContext(adminID, models.AccountRoleAdmin)))
+	router.DELETE("/api/v1/groups/:group_id/messages/:message_id", handler.DeleteMessage)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/"+groupID+"/messages/"+otherMsg.MessageID, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNoContent, w.Code, "body: %s", w.Body.String())
+	assert.Len(t, pub.deleteCalls, 1)
+}
+
+// TestTriggerMessage_AdminCanTriggerAny verifies admin can trigger any message.
+func TestTriggerMessage_AdminCanTriggerAny(t *testing.T) {
+	db := setupMessageTestDB(t)
+	adminID := "acc-trigger-admin"
+	otherID := "acc-trigger-other"
+	groupID := "group-trigger-admin"
+	agentID := "agent-trigger"
+	createTestGroup(t, db, groupID, "Trigger Admin Group")
+	createTestGroupMember(t, db, groupID, agentID, models.MemberTypeWorkerAgent)
+	msg := createTestMessage(t, db, groupID, "msg-trigger-admin", otherID, models.MemberTypeUser, "")
+
+	pub := &mockMessagePublisher{}
+	eval := &mockMessageEvaluator{
+		result: &trigger.TriggerResult{
+			ShouldTrigger: true,
+			Trigger:       trigger.TriggerInfo{Type: trigger.TriggerTypeMention, AgentID: agentID},
+			Targets:       []trigger.AgentTarget{{AgentID: agentID, Mode: "agent"}},
+		},
+	}
+	router, handler := setupMessageTestRouter(t, db, pub, eval)
+	router.Use(authContextMiddleware(testAuthContext(adminID, models.AccountRoleAdmin)))
+	router.POST("/api/v1/groups/:group_id/messages/:message_id/trigger", handler.TriggerMessage)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages/"+msg.MessageID+"/trigger", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code, "body: %s", w.Body.String())
+	require.Len(t, pub.pendingCalls, 1)
+	assert.Equal(t, agentID, pub.pendingCalls[0].AgentID)
+}
+
+// TestTriggerMessage_UserCanTriggerMemberGroup verifies user can trigger member group messages.
+func TestTriggerMessage_UserCanTriggerMemberGroup(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-trigger-user"
+	groupID := "group-trigger-user"
+	agentID := "agent-trigger-user"
+	createTestGroup(t, db, groupID, "Trigger User Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, agentID, models.MemberTypeWorkerAgent)
+	msg := createTestMessage(t, db, groupID, "msg-trigger-user", userID, models.MemberTypeUser, "")
+
+	pub := &mockMessagePublisher{}
+	eval := &mockMessageEvaluator{
+		result: &trigger.TriggerResult{
+			ShouldTrigger: true,
+			Trigger:       trigger.TriggerInfo{Type: trigger.TriggerTypeMention, AgentID: agentID},
+			Targets:       []trigger.AgentTarget{{AgentID: agentID, Mode: "agent"}},
+		},
+	}
+	router, handler := setupMessageTestRouter(t, db, pub, eval)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages/:message_id/trigger", handler.TriggerMessage)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages/"+msg.MessageID+"/trigger", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code, "body: %s", w.Body.String())
+	require.Len(t, pub.pendingCalls, 1)
+}
+
+// TestTriggerMessage_NoAgentsToTrigger verifies response when no agents resolved.
+func TestTriggerMessage_NoAgentsToTrigger(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-trigger-none"
+	groupID := "group-trigger-none"
+	createTestGroup(t, db, groupID, "Trigger None Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	msg := createTestMessage(t, db, groupID, "msg-trigger-none", userID, models.MemberTypeUser, "")
+
+	pub := &mockMessagePublisher{}
+	eval := &mockMessageEvaluator{result: &trigger.TriggerResult{ShouldTrigger: false}}
+	router, handler := setupMessageTestRouter(t, db, pub, eval)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages/:message_id/trigger", handler.TriggerMessage)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages/"+msg.MessageID+"/trigger", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code, "body: %s", w.Body.String())
+
+	var resp map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "no_agents_to_trigger", resp["status"])
+}
+
+// TestTriggerMessage_InvalidAgentID verifies error for non-agent or non-member agent_id.
+func TestTriggerMessage_InvalidAgentID(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-trigger-invalid"
+	groupID := "group-trigger-invalid"
+	createTestGroup(t, db, groupID, "Trigger Invalid Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, "regular-user", models.MemberTypeUser)
+	msg := createTestMessage(t, db, groupID, "msg-trigger-invalid", userID, models.MemberTypeUser, "")
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages/:message_id/trigger", handler.TriggerMessage)
+
+	body := map[string]interface{}{"agent_id": "regular-user"}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages/"+msg.MessageID+"/trigger", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
 }
 
 // TestListMessagesWithoutProcessedMsgIDFilter verifies that omitting processed_msg_id returns all messages.
 func TestListMessagesWithoutProcessedMsgIDFilter(t *testing.T) {
 	db := setupMessageTestDB(t)
-
+	userID := "user-2"
 	groupID := "group-2"
 	createTestGroup(t, db, groupID, "Test Group 2")
-	createTestGroupMember(t, db, groupID, "user-2", models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
 
-	// Create messages with and without processed_msg_id
-	createTestMessage(t, db, groupID, "msg-1", "user-2", models.MemberTypeUser, "")
-	createTestMessage(t, db, groupID, "msg-2", "user-2", models.MemberTypeUser, "")
+	createTestMessage(t, db, groupID, "msg-1", userID, models.MemberTypeUser, "")
+	createTestMessage(t, db, groupID, "msg-2", userID, models.MemberTypeUser, "")
 	createTestMessage(t, db, groupID, "msg-3", "agent-2", models.MemberTypeWorkerAgent, "msg-1")
 
 	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
 	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
 
-	// Query without processed_msg_id filter
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -243,7 +854,6 @@ func TestListMessagesWithoutProcessedMsgIDFilter(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	// Should return all 3 messages
 	assert.Equal(t, int64(3), resp.Total)
 	assert.Len(t, resp.Items, 3)
 }
@@ -251,18 +861,18 @@ func TestListMessagesWithoutProcessedMsgIDFilter(t *testing.T) {
 // TestListMessagesWithEmptyProcessedMsgID verifies that empty processed_msg_id returns all messages.
 func TestListMessagesWithEmptyProcessedMsgID(t *testing.T) {
 	db := setupMessageTestDB(t)
-
+	userID := "user-3"
 	groupID := "group-3"
 	createTestGroup(t, db, groupID, "Test Group 3")
-	createTestGroupMember(t, db, groupID, "user-3", models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
 
-	createTestMessage(t, db, groupID, "msg-a", "user-3", models.MemberTypeUser, "")
+	createTestMessage(t, db, groupID, "msg-a", userID, models.MemberTypeUser, "")
 	createTestMessage(t, db, groupID, "msg-b", "agent-3", models.MemberTypeWorkerAgent, "msg-a")
 
 	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
 	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
 
-	// Query with empty processed_msg_id
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages?processed_msg_id=", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -273,7 +883,6 @@ func TestListMessagesWithEmptyProcessedMsgID(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	// Empty string should be treated as "not provided" and return all messages
 	assert.Equal(t, int64(2), resp.Total)
 	assert.Len(t, resp.Items, 2)
 }
@@ -281,18 +890,18 @@ func TestListMessagesWithEmptyProcessedMsgID(t *testing.T) {
 // TestListMessagesResponseIncludesProcessedMsgID verifies the response includes processed_msg_id field.
 func TestListMessagesResponseIncludesProcessedMsgID(t *testing.T) {
 	db := setupMessageTestDB(t)
-
+	userID := "user-4"
 	groupID := "group-4"
 	createTestGroup(t, db, groupID, "Test Group 4")
-	createTestGroupMember(t, db, groupID, "user-4", models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
 
-	originalMsg := createTestMessage(t, db, groupID, "msg-original-4", "user-4", models.MemberTypeUser, "")
+	originalMsg := createTestMessage(t, db, groupID, "msg-original-4", userID, models.MemberTypeUser, "")
 	agentMsg := createTestMessage(t, db, groupID, "msg-agent-4", "agent-4", models.MemberTypeWorkerAgent, originalMsg.MessageID)
 
 	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
 	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
 
-	// Query all messages
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -305,7 +914,6 @@ func TestListMessagesResponseIncludesProcessedMsgID(t *testing.T) {
 
 	require.Len(t, resp.Items, 2)
 
-	// Find the agent message in the response
 	var foundAgentMsg bool
 	for _, item := range resp.Items {
 		if item.MessageID == agentMsg.MessageID {
@@ -321,18 +929,18 @@ func TestListMessagesResponseIncludesProcessedMsgID(t *testing.T) {
 // TestListMessagesWithNonExistentProcessedMsgID verifies filtering by a non-existent processed_msg_id returns empty.
 func TestListMessagesWithNonExistentProcessedMsgID(t *testing.T) {
 	db := setupMessageTestDB(t)
-
+	userID := "user-5"
 	groupID := "group-5"
 	createTestGroup(t, db, groupID, "Test Group 5")
-	createTestGroupMember(t, db, groupID, "user-5", models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
 
-	createTestMessage(t, db, groupID, "msg-5", "user-5", models.MemberTypeUser, "")
+	createTestMessage(t, db, groupID, "msg-5", userID, models.MemberTypeUser, "")
 	createTestMessage(t, db, groupID, "msg-6", "agent-5", models.MemberTypeWorkerAgent, "msg-5")
 
 	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
 	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
 
-	// Query with a processed_msg_id that does not exist
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages?processed_msg_id=non-existent-id", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -358,18 +966,8 @@ func TestCreateMessage_DerivesSenderFromAuth(t *testing.T) {
 	createTestGroup(t, db, groupID, "Create Message Test Group")
 	createTestGroupMember(t, db, groupID, accountID, models.MemberTypeUser)
 
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(authContextMiddleware(middleware.AuthContext{
-		Account: &models.Account{
-			AccountID: accountID,
-			Role:      models.AccountRoleUser,
-			Status:    models.AccountStatusActive,
-		},
-		IsAuthenticated: true,
-	}))
-	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
-	handler := NewMessageHandler(db, nil, nil, log)
+	r, handler := setupMessageTestRouter(t, db, nil, nil)
+	r.Use(authContextMiddleware(testAuthContext(accountID, models.AccountRoleUser)))
 	r.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
 
 	body := map[string]interface{}{
@@ -403,8 +1001,7 @@ func TestCreateMessage_RejectNonMember(t *testing.T) {
 	createTestGroup(t, db, groupID, "Create Message Non Member Group")
 	createTestGroupMember(t, db, groupID, memberID, models.MemberTypeUser)
 
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
+	r, handler := setupMessageTestRouter(t, db, nil, nil)
 	r.Use(authContextMiddleware(middleware.AuthContext{
 		Account: &models.Account{
 			AccountID: nonMemberID,
@@ -413,8 +1010,6 @@ func TestCreateMessage_RejectNonMember(t *testing.T) {
 		},
 		IsAuthenticated: true,
 	}))
-	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
-	handler := NewMessageHandler(db, nil, nil, log)
 	r.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
 
 	body := map[string]interface{}{"message_text": "hello from non-member"}
@@ -427,93 +1022,6 @@ func TestCreateMessage_RejectNonMember(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
 }
 
-// TestCreateMessage_GroupNotFound verifies 404 when the group does not exist.
-func TestCreateMessage_GroupNotFound(t *testing.T) {
-	db := setupMessageTestDB(t)
-	accountID := "acc-create-notfound"
-
-	router, handler := setupMessageTestRouter(t, db, nil, nil)
-	router.Use(authContextMiddleware(middleware.AuthContext{
-		Account: &models.Account{
-			AccountID: accountID,
-			Role:      models.AccountRoleUser,
-			Status:    models.AccountStatusActive,
-		},
-		IsAuthenticated: true,
-	}))
-	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
-
-	body := map[string]interface{}{"message_text": "hello"}
-	bodyJSON, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/non-existent-group/messages", bytes.NewReader(bodyJSON))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusNotFound, w.Code)
-}
-
-// TestCreateMessage_Unauthenticated verifies 401 when auth context is missing.
-func TestCreateMessage_Unauthenticated(t *testing.T) {
-	db := setupMessageTestDB(t)
-	groupID := "group-create-unauth"
-	createTestGroup(t, db, groupID, "Unauthenticated Group")
-
-	router, handler := setupMessageTestRouter(t, db, nil, nil)
-	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
-
-	body := map[string]interface{}{"message_text": "hello"}
-	bodyJSON, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-// TestCreateMessage_MentionsExtracted verifies @member_id mentions are parsed and stored.
-func TestCreateMessage_MentionsExtracted(t *testing.T) {
-	db := setupMessageTestDB(t)
-	accountID := "acc-create-mentions"
-	groupID := "group-create-mentions"
-	createTestGroup(t, db, groupID, "Mentions Group")
-	createTestGroupMember(t, db, groupID, accountID, models.MemberTypeUser)
-	createTestGroupMember(t, db, groupID, "agent-1", models.MemberTypeWorkerAgent)
-
-	pub := &mockMessagePublisher{}
-	router, handler := setupMessageTestRouter(t, db, pub, nil)
-	router.Use(authContextMiddleware(middleware.AuthContext{
-		Account: &models.Account{
-			AccountID: accountID,
-			Role:      models.AccountRoleUser,
-			Status:    models.AccountStatusActive,
-		},
-		IsAuthenticated: true,
-	}))
-	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
-
-	body := map[string]interface{}{"message_text": "hello @agent-1 please help"}
-	bodyJSON, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
-
-	var resp MessageResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-
-	mentions, ok := resp.Mentions.([]interface{})
-	require.True(t, ok, "mentions should be an array")
-	require.Len(t, mentions, 1)
-	mention := mentions[0].(map[string]interface{})
-	assert.Equal(t, "agent-1", mention["member_id"])
-	assert.Equal(t, string(models.MemberTypeWorkerAgent), mention["member_type"])
-}
-
 // TestCreateMessage_AttachmentsDefaultEmpty verifies empty attachments default to [].
 func TestCreateMessage_AttachmentsDefaultEmpty(t *testing.T) {
 	db := setupMessageTestDB(t)
@@ -523,14 +1031,7 @@ func TestCreateMessage_AttachmentsDefaultEmpty(t *testing.T) {
 	createTestGroupMember(t, db, groupID, accountID, models.MemberTypeUser)
 
 	router, handler := setupMessageTestRouter(t, db, nil, nil)
-	router.Use(authContextMiddleware(middleware.AuthContext{
-		Account: &models.Account{
-			AccountID: accountID,
-			Role:      models.AccountRoleUser,
-			Status:    models.AccountStatusActive,
-		},
-		IsAuthenticated: true,
-	}))
+	router.Use(authContextMiddleware(testAuthContext(accountID, models.AccountRoleUser)))
 	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
 
 	body := map[string]interface{}{"message_text": "no attachments"}
@@ -548,48 +1049,6 @@ func TestCreateMessage_AttachmentsDefaultEmpty(t *testing.T) {
 	assert.Empty(t, resp.MessageAttachments)
 }
 
-// TestCreateMessage_TriggerPublishesPendingMessage verifies evaluator trigger leads to pending publish.
-func TestCreateMessage_TriggerPublishesPendingMessage(t *testing.T) {
-	db := setupMessageTestDB(t)
-	accountID := "acc-create-trigger"
-	groupID := "group-create-trigger"
-	createTestGroup(t, db, groupID, "Trigger Group")
-	createTestGroupMember(t, db, groupID, accountID, models.MemberTypeUser)
-	createTestGroupMember(t, db, groupID, "agent-1", models.MemberTypeWorkerAgent)
-
-	pub := &mockMessagePublisher{}
-	eval := &mockMessageEvaluator{
-		result: &trigger.TriggerResult{
-			ShouldTrigger: true,
-			Trigger:       trigger.TriggerInfo{Type: trigger.TriggerTypeMention, AgentID: "agent-1"},
-			Targets:       []trigger.AgentTarget{{AgentID: "agent-1", Mode: "agent"}},
-		},
-	}
-	router, handler := setupMessageTestRouter(t, db, pub, eval)
-	router.Use(authContextMiddleware(middleware.AuthContext{
-		Account: &models.Account{
-			AccountID: accountID,
-			Role:      models.AccountRoleUser,
-			Status:    models.AccountStatusActive,
-		},
-		IsAuthenticated: true,
-	}))
-	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
-
-	body := map[string]interface{}{"message_text": "hello @agent-1"}
-	bodyJSON, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
-	require.Len(t, pub.pendingCalls, 1)
-	assert.Equal(t, "agent-1", pub.pendingCalls[0].AgentID)
-	assert.Equal(t, groupID, pub.pendingCalls[0].GroupID)
-	assert.NotNil(t, pub.pendingCalls[0].Msg)
-}
-
 // TestCreateMessage_EvaluatorErrorStillReturns201 verifies evaluator errors do not fail the request.
 func TestCreateMessage_EvaluatorErrorStillReturns201(t *testing.T) {
 	db := setupMessageTestDB(t)
@@ -601,14 +1060,7 @@ func TestCreateMessage_EvaluatorErrorStillReturns201(t *testing.T) {
 	pub := &mockMessagePublisher{}
 	eval := &mockMessageEvaluator{err: errors.New("evaluator failure")}
 	router, handler := setupMessageTestRouter(t, db, pub, eval)
-	router.Use(authContextMiddleware(middleware.AuthContext{
-		Account: &models.Account{
-			AccountID: accountID,
-			Role:      models.AccountRoleUser,
-			Status:    models.AccountStatusActive,
-		},
-		IsAuthenticated: true,
-	}))
+	router.Use(authContextMiddleware(testAuthContext(accountID, models.AccountRoleUser)))
 	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
 
 	body := map[string]interface{}{"message_text": "hello"}
@@ -632,14 +1084,7 @@ func TestCreateMessage_PublisherCreateFailureStillReturns201(t *testing.T) {
 
 	pub := &mockMessagePublisher{createErr: errors.New("nats down")}
 	router, handler := setupMessageTestRouter(t, db, pub, nil)
-	router.Use(authContextMiddleware(middleware.AuthContext{
-		Account: &models.Account{
-			AccountID: accountID,
-			Role:      models.AccountRoleUser,
-			Status:    models.AccountStatusActive,
-		},
-		IsAuthenticated: true,
-	}))
+	router.Use(authContextMiddleware(testAuthContext(accountID, models.AccountRoleUser)))
 	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
 
 	body := map[string]interface{}{"message_text": "hello"}
@@ -653,73 +1098,28 @@ func TestCreateMessage_PublisherCreateFailureStillReturns201(t *testing.T) {
 	assert.Len(t, pub.createCalls, 1)
 }
 
-// TestListMessages_InvalidSortKey verifies 400 for an invalid sort_key.
-func TestListMessages_InvalidSortKey(t *testing.T) {
-	db := setupMessageTestDB(t)
-	groupID := "group-list-sort"
-	createTestGroup(t, db, groupID, "Sort Group")
-
-	router, handler := setupMessageTestRouter(t, db, nil, nil)
-	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages?sort_key=invalid", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestListMessages_TimeRangeFilter verifies create_at_ms range filtering.
-func TestListMessages_TimeRangeFilter(t *testing.T) {
-	db := setupMessageTestDB(t)
-	groupID := "group-list-range"
-	createTestGroup(t, db, groupID, "Range Group")
-	createTestGroupMember(t, db, groupID, "user-range", models.MemberTypeUser)
-
-	now := time.Now().UnixMilli()
-	createTestMessageAt(t, db, groupID, "msg-early", "user-range", models.MemberTypeUser, now-2000)
-	createTestMessageAt(t, db, groupID, "msg-mid", "user-range", models.MemberTypeUser, now)
-	createTestMessageAt(t, db, groupID, "msg-late", "user-range", models.MemberTypeUser, now+2000)
-
-	router, handler := setupMessageTestRouter(t, db, nil, nil)
-	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
-
-	start := strconv.FormatInt(now-1000, 10)
-	end := strconv.FormatInt(now+1000, 10)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages?create_at_ms="+start+"-"+end, nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-
-	var resp ListMessagesResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), resp.Total)
-	require.Len(t, resp.Items, 1)
-	assert.Equal(t, "msg-mid", resp.Items[0].MessageID)
-}
-
 // TestListMessages_PaginationClamping verifies offset/limit clamping behavior.
 func TestListMessages_PaginationClamping(t *testing.T) {
 	db := setupMessageTestDB(t)
 	groupID := "group-list-page"
+	userID := "user-page"
 	createTestGroup(t, db, groupID, "Pagination Group")
-	createTestGroupMember(t, db, groupID, "user-page", models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
 
 	for i := 1; i <= 5; i++ {
-		createTestMessage(t, db, groupID, "msg-page-"+strconv.Itoa(i), "user-page", models.MemberTypeUser, "")
+		createTestMessage(t, db, groupID, "msg-page-"+strconv.Itoa(i), userID, models.MemberTypeUser, "")
 	}
 
 	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
 	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
 
 	tests := []struct {
-		name         string
-		query        string
-		expectedLimit int
+		name           string
+		query          string
+		expectedLimit  int
 		expectedOffset int
-		expectedTotal int64
+		expectedTotal  int64
 	}{
 		{"negative offset", "offset=-1&limit=2", 2, 0, 5},
 		{"zero limit", "offset=0&limit=0", 1000, 0, 5},
@@ -747,13 +1147,15 @@ func TestListMessages_PaginationClamping(t *testing.T) {
 // TestUpdateMessage_Success verifies message update and publish modify event.
 func TestUpdateMessage_Success(t *testing.T) {
 	db := setupMessageTestDB(t)
+	userID := "user-update"
 	groupID := "group-update"
 	createTestGroup(t, db, groupID, "Update Group")
-	createTestGroupMember(t, db, groupID, "user-update", models.MemberTypeUser)
-	msg := createTestMessage(t, db, groupID, "msg-update", "user-update", models.MemberTypeUser, "")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	msg := createTestMessage(t, db, groupID, "msg-update", userID, models.MemberTypeUser, "")
 
 	pub := &mockMessagePublisher{}
 	router, handler := setupMessageTestRouter(t, db, pub, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
 	router.PUT("/api/v1/groups/:group_id/messages/:message_id", handler.UpdateMessage)
 
 	body := map[string]interface{}{"message_text": "updated text"}
@@ -776,10 +1178,13 @@ func TestUpdateMessage_Success(t *testing.T) {
 // TestUpdateMessage_NotFound verifies 404 for non-existent message.
 func TestUpdateMessage_NotFound(t *testing.T) {
 	db := setupMessageTestDB(t)
+	userID := "user-update-notfound"
 	groupID := "group-update-notfound"
 	createTestGroup(t, db, groupID, "Update Not Found Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
 
 	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
 	router.PUT("/api/v1/groups/:group_id/messages/:message_id", handler.UpdateMessage)
 
 	body := map[string]interface{}{"message_text": "updated text"}
@@ -795,13 +1200,15 @@ func TestUpdateMessage_NotFound(t *testing.T) {
 // TestUpdateMessage_PublisherFailureStillSucceeds verifies modify publish failure does not fail request.
 func TestUpdateMessage_PublisherFailureStillSucceeds(t *testing.T) {
 	db := setupMessageTestDB(t)
+	userID := "user-update-pub"
 	groupID := "group-update-pub-err"
 	createTestGroup(t, db, groupID, "Update Pub Err Group")
-	createTestGroupMember(t, db, groupID, "user-update-pub", models.MemberTypeUser)
-	msg := createTestMessage(t, db, groupID, "msg-update-pub", "user-update-pub", models.MemberTypeUser, "")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	msg := createTestMessage(t, db, groupID, "msg-update-pub", userID, models.MemberTypeUser, "")
 
 	pub := &mockMessagePublisher{modifyErr: errors.New("nats down")}
 	router, handler := setupMessageTestRouter(t, db, pub, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
 	router.PUT("/api/v1/groups/:group_id/messages/:message_id", handler.UpdateMessage)
 
 	body := map[string]interface{}{"message_text": "updated text"}
@@ -818,13 +1225,15 @@ func TestUpdateMessage_PublisherFailureStillSucceeds(t *testing.T) {
 // TestDeleteMessage_Success verifies soft delete returns 204 and publishes delete event.
 func TestDeleteMessage_Success(t *testing.T) {
 	db := setupMessageTestDB(t)
+	userID := "user-delete"
 	groupID := "group-delete"
 	createTestGroup(t, db, groupID, "Delete Group")
-	createTestGroupMember(t, db, groupID, "user-delete", models.MemberTypeUser)
-	msg := createTestMessage(t, db, groupID, "msg-delete", "user-delete", models.MemberTypeUser, "")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	msg := createTestMessage(t, db, groupID, "msg-delete", userID, models.MemberTypeUser, "")
 
 	pub := &mockMessagePublisher{}
 	router, handler := setupMessageTestRouter(t, db, pub, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
 	router.DELETE("/api/v1/groups/:group_id/messages/:message_id", handler.DeleteMessage)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/"+groupID+"/messages/"+msg.MessageID, nil)
@@ -839,10 +1248,13 @@ func TestDeleteMessage_Success(t *testing.T) {
 // TestDeleteMessage_NotFound verifies 404 for non-existent message.
 func TestDeleteMessage_NotFound(t *testing.T) {
 	db := setupMessageTestDB(t)
+	userID := "user-delete-notfound"
 	groupID := "group-delete-notfound"
 	createTestGroup(t, db, groupID, "Delete Not Found Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
 
 	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
 	router.DELETE("/api/v1/groups/:group_id/messages/:message_id", handler.DeleteMessage)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/"+groupID+"/messages/non-existent", nil)
@@ -855,12 +1267,14 @@ func TestDeleteMessage_NotFound(t *testing.T) {
 // TestDeleteMessage_SoftDeleteFields verifies the record is marked deleted and content cleared.
 func TestDeleteMessage_SoftDeleteFields(t *testing.T) {
 	db := setupMessageTestDB(t)
+	userID := "user-delete-soft"
 	groupID := "group-delete-soft"
 	createTestGroup(t, db, groupID, "Soft Delete Group")
-	createTestGroupMember(t, db, groupID, "user-delete-soft", models.MemberTypeUser)
-	msg := createTestMessage(t, db, groupID, "msg-delete-soft", "user-delete-soft", models.MemberTypeUser, "")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	msg := createTestMessage(t, db, groupID, "msg-delete-soft", userID, models.MemberTypeUser, "")
 
 	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
 	router.DELETE("/api/v1/groups/:group_id/messages/:message_id", handler.DeleteMessage)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/"+groupID+"/messages/"+msg.MessageID, nil)

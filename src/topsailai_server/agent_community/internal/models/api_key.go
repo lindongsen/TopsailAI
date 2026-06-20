@@ -52,7 +52,9 @@ func (APIKey) TableName() string {
 // BeforeCreate hook generates the api_key_id and timestamps.
 func (k *APIKey) BeforeCreate(tx *gorm.DB) error {
 	now := time.Now().UnixMilli()
-	k.APIKeyID = generateAPIKeyID()
+	if k.APIKeyID == "" {
+		k.APIKeyID = generateAPIKeyID()
+	}
 	k.CreateAtMs = now
 	k.UpdateAtMs = now
 	return nil
@@ -67,6 +69,42 @@ func (k *APIKey) BeforeUpdate(tx *gorm.DB) error {
 // IsActive returns true when the API key can authenticate requests.
 func (k *APIKey) IsActive() bool {
 	return k.Status == APIKeyStatusActive
+}
+
+// RoleAllowedForOwner returns true when the API key role does not exceed the owner account role.
+// Role hierarchy: admin > manager > user.
+func (k *APIKey) RoleAllowedForOwner(ownerRole AccountRole) bool {
+	ownerRank := roleRank(ownerRole)
+	keyRank := apiKeyRoleRank(k.Role)
+	return keyRank > 0 && ownerRank > 0 && keyRank <= ownerRank
+}
+
+// roleRank returns the numeric rank of an account role.
+func roleRank(role AccountRole) int {
+	switch role {
+	case AccountRoleAdmin:
+		return 3
+	case AccountRoleManager:
+		return 2
+	case AccountRoleUser:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// apiKeyRoleRank returns the numeric rank of an API key role.
+func apiKeyRoleRank(role APIKeyRole) int {
+	switch role {
+	case APIKeyRoleAdmin:
+		return 3
+	case APIKeyRoleManager:
+		return 2
+	case APIKeyRoleUser:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // generateAPIKeyID returns a unique API key identifier with format ak-{alphanumeric}.

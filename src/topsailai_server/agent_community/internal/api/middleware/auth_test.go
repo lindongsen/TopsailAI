@@ -233,7 +233,7 @@ func TestRequireAPIKeyRole_RequiresAPIKeyAuth(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestAuthentication_Priority_APIKeyOverSession(t *testing.T) {
+func TestAuthentication_Priority_SessionOverAPIKey(t *testing.T) {
 	svc := newTestServices(t)
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -282,8 +282,55 @@ func TestAuthentication_Priority_APIKeyOverSession(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), apiAccount.AccountID)
-	assert.Contains(t, w.Body.String(), "api_key")
+	assert.Contains(t, w.Body.String(), sessionAccount.AccountID)
+	assert.Contains(t, w.Body.String(), "session")
+}
+
+func TestAuthentication_Priority_LoginOverSession(t *testing.T) {
+	svc := newTestServices(t)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	log := logger.New(logger.Config{Level: "error", Output: "stdout"})
+	r.Use(Logger(log))
+	r.Use(Authentication(svc.apiKeySvc, svc.accountSvc))
+	r.GET("/whoami", func(c *gin.Context) {
+		ac, _ := GetAuthContext(c)
+		require.NotNil(t, ac.Account)
+		c.JSON(http.StatusOK, gin.H{"account_id": ac.Account.AccountID, "auth_method": string(ac.AuthMethod)})
+	})
+	ctx := context.Background()
+
+	loginAccount, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+		AccountName:   "Login Priority",
+		LoginName:     "loginpriority",
+		LoginPassword: "secret",
+		Role:          models.AccountRoleAdmin,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	sessionAccount, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+		AccountName:   "Session Priority",
+		LoginName:     "sessionpriority2",
+		LoginPassword: "secret",
+		Role:          models.AccountRoleUser,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	sessionKey, _, err := svc.accountSvc.CreateLoginSession(ctx, sessionAccount.AccountID)
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/whoami", nil)
+	req.Header.Set("X-Login-Name", loginAccount.LoginName)
+	req.Header.Set("X-Login-Password", "secret")
+	req.Header.Set("X-Session-Key", sessionKey)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), loginAccount.AccountID)
+	assert.Contains(t, w.Body.String(), "password")
 }
 
 func TestRequireAuthenticated_InactiveAccount(t *testing.T) {
@@ -594,4 +641,192 @@ func ptrStatus(s models.AccountStatus) *models.AccountStatus {
 
 func ptrString(s string) *string {
 	return &s
+}
+
+func TestAuthentication_LoginPassword_Success(t *testing.T) {
+	svc := newTestServices(t)
+	r := setupTestRouter(svc)
+	ctx := context.Background()
+
+	acc, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+		AccountName:   "Login User",
+		LoginName:     "loginuser",
+		LoginPassword: "secret",
+		Role:          models.AccountRoleUser,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/protected", nil)
+	req.Header.Set("X-Login-Name", acc.LoginName)
+	req.Header.Set("X-Login-Password", "secret")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestAuthentication_LoginPassword_Invalid(t *testing.T) {
+	svc := newTestServices(t)
+	r := setupTestRouter(svc)
+	ctx := context.Background()
+
+	acc, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+		AccountName:   "Login User",
+		LoginName:     "loginuser",
+		LoginPassword: "secret",
+		Role:          models.AccountRoleUser,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/protected", nil)
+	req.Header.Set("X-Login-Name", acc.LoginName)
+	req.Header.Set("X-Login-Password", "wrong-password")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestAuthentication_SessionKey_Expired(t *testing.T) {
+	svc := newTestServices(t)
+	r := setupTestRouter(svc)
+	ctx := context.Background()
+
+	acc, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+		AccountName:   "Session User",
+		LoginName:     "sessionuser",
+		LoginPassword: "secret",
+		Role:          models.AccountRoleUser,
+		CreatorID:     "system",
+	})
+	require.NoError(t, err)
+
+	// Create a session and then manually expire it in the database.
+	sessionKey, _, err := svc.accountSvc.CreateLoginSession(ctx, acc.AccountID)
+	require.NoError(t, err)
+
+	err = svc.db.WithContext(ctx).
+		Model(&models.Account{}).
+		Where("account_id = ?", acc.AccountID).
+		Update("login_session_expired_time", 1).Error
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/protected", nil)
+	req.Header.Set("X-Session-Key", sessionKey)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestAuthentication_ClientIP(t *testing.T) {
+	svc := newTestServices(t)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	log := logger.New(logger.Config{Level: "error", Output: "stdout"})
+	r.Use(Logger(log))
+	r.Use(Authentication(svc.apiKeySvc, svc.accountSvc))
+	r.GET("/ip", func(c *gin.Context) {
+		ip, ok := GetClientIP(c)
+		require.True(t, ok)
+		c.JSON(http.StatusOK, gin.H{"client_ip": ip})
+	})
+	ctx := context.Background()
+
+	acc, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+		AccountName: "API User",
+		LoginName:   "apiuser",
+		Role:        models.AccountRoleUser,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	key, err := svc.apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
+		APIKeyName: "test-key",
+		Role:       models.APIKeyRoleUser,
+		OwnerID:    acc.AccountID,
+		CreatorID:  acc.AccountID,
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/ip", nil)
+	req.Header.Set("Authorization", "Bearer "+key.Token)
+	req.RemoteAddr = "203.0.113.42:12345"
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "203.0.113.42")
+}
+
+func TestRequireRole_ManagerDeniedAdmin(t *testing.T) {
+	svc := newTestServices(t)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	log := logger.New(logger.Config{Level: "error", Output: "stdout"})
+	r.Use(Logger(log))
+	r.Use(Authentication(svc.apiKeySvc, svc.accountSvc))
+	r.GET("/admin", RequireRole(models.AccountRoleAdmin), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+	ctx := context.Background()
+
+	manager, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+		AccountName: "Manager",
+		LoginName:   "manageruser",
+		Role:        models.AccountRoleManager,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	managerKey, err := svc.apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
+		APIKeyName: "manager-key",
+		Role:       models.APIKeyRoleManager,
+		OwnerID:    manager.AccountID,
+		CreatorID:  manager.AccountID,
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/admin", nil)
+	req.Header.Set("Authorization", "Bearer "+managerKey.Token)
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestRequireRole_UserDeniedManager(t *testing.T) {
+	svc := newTestServices(t)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	log := logger.New(logger.Config{Level: "error", Output: "stdout"})
+	r.Use(Logger(log))
+	r.Use(Authentication(svc.apiKeySvc, svc.accountSvc))
+	r.GET("/manager", RequireRole(models.AccountRoleManager), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+	ctx := context.Background()
+
+	user, err := svc.accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+		AccountName: "User",
+		LoginName:   "normaluser",
+		Role:        models.AccountRoleUser,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	userKey, err := svc.apiKeySvc.CreateAPIKey(ctx, &services.CreateAPIKeyRequest{
+		APIKeyName: "user-key",
+		Role:       models.APIKeyRoleUser,
+		OwnerID:    user.AccountID,
+		CreatorID:  user.AccountID,
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/manager", nil)
+	req.Header.Set("Authorization", "Bearer "+userKey.Token)
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }

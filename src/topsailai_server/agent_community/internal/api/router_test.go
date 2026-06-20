@@ -13,12 +13,32 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/topsailai/agent-community/internal/config"
+	"github.com/topsailai/agent-community/internal/discovery"
 	"github.com/topsailai/agent-community/internal/models"
 	"github.com/topsailai/agent-community/internal/services"
 	"github.com/topsailai/agent-community/pkg/logger"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+// fakeDiscovery is a test double for the discovery provider.
+type fakeDiscovery struct{}
+
+func (f *fakeDiscovery) Discover() ([]discovery.ServiceInfo, error) {
+	return []discovery.ServiceInfo{}, nil
+}
+
+func (f *fakeDiscovery) IsLeader() (bool, error) {
+	return true, nil
+}
+
+func (f *fakeDiscovery) LeaderInfo() (*discovery.ServiceInfo, error) {
+	return &discovery.ServiceInfo{ID: "leader-1", Name: "acs"}, nil
+}
+
+func (f *fakeDiscovery) SelfInfo() discovery.ServiceInfo {
+	return discovery.ServiceInfo{ID: "self-1", Name: "acs"}
+}
 
 // setupRouterTestDB creates an in-memory SQLite database and auto-migrates all models.
 func setupRouterTestDB(t *testing.T) *gorm.DB {
@@ -73,7 +93,6 @@ func setupRouterTestConfig() *config.Config {
 }
 
 // setupRouterTestDependencies creates services, handlers, and a router for testing.
-// nil publisher/discovery is acceptable because the tested routes do not exercise publish/discovery logic.
 func setupRouterTestDependencies(t *testing.T, db *gorm.DB) (*Router, *services.AccountService, *services.APIKeyService) {
 	cfg := setupRouterTestConfig()
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
@@ -83,7 +102,8 @@ func setupRouterTestDependencies(t *testing.T, db *gorm.DB) (*Router, *services.
 	apiKeySvc := services.NewAPIKeyService(db, cfg, auditSvc)
 	accountSvc.SetAPIKeyService(apiKeySvc)
 
-	router := NewRouter(cfg, db, nil, nil, nil, log)
+	disc := &fakeDiscovery{}
+	router := NewRouter(cfg, db, nil, nil, disc, log)
 	require.NotNil(t, router, "router should not be nil")
 
 	return router, accountSvc, apiKeySvc
@@ -121,18 +141,295 @@ func createTestAccountAndAPIKey(t *testing.T, accountSvc *services.AccountServic
 	return account, result.Token
 }
 
-// TestNewRouter_PublicHealthz verifies that GET /healthz is accessible without authentication.
-func TestNewRouter_PublicHealthz(t *testing.T) {
+// TestNewRouter_PublicEndpoints verifies that all public endpoints are accessible without authentication.
+func TestNewRouter_PublicEndpoints(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupRouterTestDB(t)
+	router, accountSvc, _ := setupRouterTestDependencies(t, db)
+
+	// Seed an account for the login endpoint.
+	ctx := t.Context()
+	_, err := accountSvc.CreateAccount(ctx, &services.CreateAccountRequest{
+		AccountName:   "Login User",
+		Role:          models.AccountRoleUser,
+		LoginName:     "login-user@example.com",
+		LoginPassword: "secure-password",
+		CreatorID:     "system",
+	})
+	require.NoError(t, err, "failed to create account")
+
+	publicGETs := []string{
+		"/healthz",
+		"/readyz",
+		"/health",
+		"/health/leader",
+		"/discovery/services",
+	}
+
+	for _, path := range publicGETs {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			w := httptest.NewRecorder()
+			router.Engine().ServeHTTP(w, req)
+			assert.NotEqual(t, http.StatusUnauthorized, w.Code, "public endpoint %s returned 401", path)
+		})
+	}
+
+	t.Run("POST /api/v1/accounts/login", func(t *testing.T) {
+		body := map[string]string{
+			"login_name": "login-user@example.com",
+			"password":   "secure-password",
+		}
+		jsonBody, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts/login", bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.Engine().ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	})
+}
+
+// TestNewRouter_ProtectedEndpointsRequireAuth verifies that protected routes reject unauthenticated requests.
+func TestNewRouter_ProtectedEndpointsRequireAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupRouterTestDB(t)
 	router, _, _ := setupRouterTestDependencies(t, db)
 
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	w := httptest.NewRecorder()
-	router.Engine().ServeHTTP(w, req)
+	protected := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/v1/accounts", ""},
+		{http.MethodGet, "/api/v1/accounts/me", ""},
+		{http.MethodPost, "/api/v1/accounts", `{"account_name":"x","role":"user","login_name":"x@x.com"}`},
+		{http.MethodGet, "/api/v1/accounts/acc-1", ""},
+		{http.MethodPut, "/api/v1/accounts/acc-1", `{"account_name":"x"}`},
+		{http.MethodDelete, "/api/v1/accounts/acc-1", ""},
+		{http.MethodPost, "/api/v1/accounts/acc-1/password", `{"new_password":"x"}`},
+		{http.MethodPost, "/api/v1/accounts/acc-1/session", ""},
+		{http.MethodGet, "/api/v1/accounts/acc-1/api-keys", ""},
+		{http.MethodPost, "/api/v1/accounts/acc-1/api-keys", `{"api_key_name":"x","role":"user"}`},
+		{http.MethodDelete, "/api/v1/accounts/acc-1/api-keys/ak-1", ""},
+		{http.MethodGet, "/api/v1/audit-logs", ""},
+		{http.MethodGet, "/api/v1/audit-logs/al-1", ""},
+		{http.MethodGet, "/api/v1/groups", ""},
+		{http.MethodPost, "/api/v1/groups", `{"group_name":"x"}`},
+		{http.MethodGet, "/api/v1/groups/group-1", ""},
+		{http.MethodPut, "/api/v1/groups/group-1", `{"group_name":"x"}`},
+		{http.MethodDelete, "/api/v1/groups/group-1", ""},
+		{http.MethodGet, "/api/v1/groups/group-1/members", ""},
+		{http.MethodPost, "/api/v1/groups/group-1/members", `{"member_id":"m1","member_name":"x","member_type":"user"}`},
+		{http.MethodPut, "/api/v1/groups/group-1/members/m1", `{"member_name":"x"}`},
+		{http.MethodDelete, "/api/v1/groups/group-1/members/m1", ""},
+		{http.MethodGet, "/api/v1/groups/group-1/messages", ""},
+		{http.MethodPost, "/api/v1/groups/group-1/messages", `{"message_text":"x"}`},
+		{http.MethodPut, "/api/v1/groups/group-1/messages/msg-1", `{"message_text":"x"}`},
+		{http.MethodDelete, "/api/v1/groups/group-1/messages/msg-1", ""},
+		{http.MethodPost, "/api/v1/groups/group-1/messages/msg-1/trigger", ""},
+	}
 
-	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	assert.Contains(t, w.Body.String(), "alive")
+	for _, tc := range protected {
+		t.Run(fmt.Sprintf("%s %s", tc.method, tc.path), func(t *testing.T) {
+			var body *bytes.Buffer
+			if tc.body != "" {
+				body = bytes.NewBufferString(tc.body)
+			} else {
+				body = bytes.NewBuffer(nil)
+			}
+			req := httptest.NewRequest(tc.method, tc.path, body)
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			w := httptest.NewRecorder()
+			router.Engine().ServeHTTP(w, req)
+			assert.Equal(t, http.StatusUnauthorized, w.Code, "body: %s", w.Body.String())
+		})
+	}
+}
+
+// TestNewRouter_AccountRoleMiddleware verifies that POST /api/v1/accounts requires manager or admin role.
+func TestNewRouter_AccountRoleMiddleware(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupRouterTestDB(t)
+	router, accountSvc, apiKeySvc := setupRouterTestDependencies(t, db)
+
+	_, userToken := createTestAccountAndAPIKey(t, accountSvc, apiKeySvc, models.AccountRoleUser)
+	_, managerToken := createTestAccountAndAPIKey(t, accountSvc, apiKeySvc, models.AccountRoleManager)
+
+	body := map[string]string{
+		"account_name": "New User",
+		"role":         "user",
+		"login_name":   "new-user@example.com",
+	}
+	jsonBody, _ := json.Marshal(body)
+
+	t.Run("user forbidden", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+userToken)
+		w := httptest.NewRecorder()
+		router.Engine().ServeHTTP(w, req)
+		assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	})
+
+	t.Run("manager allowed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+managerToken)
+		w := httptest.NewRecorder()
+		router.Engine().ServeHTTP(w, req)
+		assert.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+	})
+}
+
+// TestNewRouter_APIKeyRoleMiddleware verifies that API key routes require authentication and ownership.
+func TestNewRouter_APIKeyRoleMiddleware(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupRouterTestDB(t)
+	router, accountSvc, apiKeySvc := setupRouterTestDependencies(t, db)
+
+	user, userToken := createTestAccountAndAPIKey(t, accountSvc, apiKeySvc, models.AccountRoleUser)
+
+	t.Run("unauthenticated rejected", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/accounts/%s/api-keys", user.AccountID), nil)
+		w := httptest.NewRecorder()
+		router.Engine().ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("owner can list api keys", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/accounts/%s/api-keys", user.AccountID), nil)
+		req.Header.Set("Authorization", "Bearer "+userToken)
+		w := httptest.NewRecorder()
+		router.Engine().ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	})
+}
+
+// TestNewRouter_GroupRoutesRequireAuth verifies that group routes require authentication.
+func TestNewRouter_GroupRoutesRequireAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupRouterTestDB(t)
+	router, _, _ := setupRouterTestDependencies(t, db)
+
+	groupRoutes := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/v1/groups", ""},
+		{http.MethodPost, "/api/v1/groups", `{"group_name":"x"}`},
+		{http.MethodGet, "/api/v1/groups/group-1", ""},
+		{http.MethodPut, "/api/v1/groups/group-1", `{"group_name":"x"}`},
+		{http.MethodDelete, "/api/v1/groups/group-1", ""},
+		{http.MethodGet, "/api/v1/groups/group-1/members", ""},
+		{http.MethodPost, "/api/v1/groups/group-1/members", `{"member_id":"m1","member_name":"x","member_type":"user"}`},
+		{http.MethodGet, "/api/v1/groups/group-1/messages", ""},
+		{http.MethodPost, "/api/v1/groups/group-1/messages", `{"message_text":"x"}`},
+	}
+
+	for _, tc := range groupRoutes {
+		t.Run(fmt.Sprintf("%s %s", tc.method, tc.path), func(t *testing.T) {
+			var body *bytes.Buffer
+			if tc.body != "" {
+				body = bytes.NewBufferString(tc.body)
+			} else {
+				body = bytes.NewBuffer(nil)
+			}
+			req := httptest.NewRequest(tc.method, tc.path, body)
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			w := httptest.NewRecorder()
+			router.Engine().ServeHTTP(w, req)
+			assert.Equal(t, http.StatusUnauthorized, w.Code, "body: %s", w.Body.String())
+		})
+	}
+}
+
+// TestNewRouter_AuditMiddlewareApplied verifies that protected endpoints invoke audit middleware without panic.
+func TestNewRouter_AuditMiddlewareApplied(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupRouterTestDB(t)
+	router, accountSvc, apiKeySvc := setupRouterTestDependencies(t, db)
+
+	_, adminToken := createTestAccountAndAPIKey(t, accountSvc, apiKeySvc, models.AccountRoleAdmin)
+
+	body := map[string]string{
+		"account_name": "Audited User",
+		"role":         "user",
+		"login_name":   "audited@example.com",
+	}
+	jsonBody, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	w := httptest.NewRecorder()
+
+	assert.NotPanics(t, func() {
+		router.Engine().ServeHTTP(w, req)
+	})
+
+	assert.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	// Allow async audit log write to complete.
+	time.Sleep(100 * time.Millisecond)
+
+	var count int64
+	err := db.Model(&models.AuditLog{}).Count(&count).Error
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, count, int64(1), "expected at least one audit log record")
+}
+
+// TestNewRouter_GinModeRelease verifies that Gin runs in release mode for info/warn/error log levels.
+func TestNewRouter_GinModeRelease(t *testing.T) {
+	originalMode := gin.Mode()
+	defer gin.SetMode(originalMode)
+
+	for _, level := range []string{"info", "warn", "error"} {
+		t.Run(level, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			cfg := setupRouterTestConfig()
+			cfg.Log.Level = level
+			log := logger.New(logger.Config{Output: "stdout", Level: level})
+			db := setupRouterTestDB(t)
+
+			router := NewRouter(cfg, db, nil, nil, &fakeDiscovery{}, log)
+			require.NotNil(t, router)
+
+			assert.Equal(t, gin.ReleaseMode, gin.Mode())
+		})
+	}
+}
+
+// TestNewRouter_GinModeDebug verifies that Gin does not run in release mode for debug log level.
+func TestNewRouter_GinModeDebug(t *testing.T) {
+	originalMode := gin.Mode()
+	defer gin.SetMode(originalMode)
+
+	gin.SetMode(gin.ReleaseMode)
+	cfg := setupRouterTestConfig()
+	cfg.Log.Level = "debug"
+	log := logger.New(logger.Config{Output: "stdout", Level: "debug"})
+	db := setupRouterTestDB(t)
+
+	router := NewRouter(cfg, db, nil, nil, &fakeDiscovery{}, log)
+	require.NotNil(t, router)
+
+	assert.NotEqual(t, gin.ReleaseMode, gin.Mode())
+}
+
+// TestNewRouter_EngineReturnsRouter verifies that Engine() returns a non-nil engine with routes registered.
+func TestNewRouter_EngineReturnsRouter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupRouterTestDB(t)
+	router, _, _ := setupRouterTestDependencies(t, db)
+
+	engine := router.Engine()
+	require.NotNil(t, engine)
+	assert.Greater(t, len(engine.Routes()), 0, "expected routes to be registered")
 }
 
 // TestNewRouter_LoginWithoutAuth verifies that POST /api/v1/accounts/login does not require auth.
@@ -165,19 +462,6 @@ func TestNewRouter_LoginWithoutAuth(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	assert.Contains(t, w.Body.String(), account.AccountID)
 	assert.Contains(t, w.Body.String(), "session_key")
-}
-
-// TestNewRouter_ProtectedRequiresAuth verifies that GET /api/v1/accounts/me returns 401 without auth.
-func TestNewRouter_ProtectedRequiresAuth(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := setupRouterTestDB(t)
-	router, _, _ := setupRouterTestDependencies(t, db)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/accounts/me", nil)
-	w := httptest.NewRecorder()
-	router.Engine().ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusUnauthorized, w.Code, "body: %s", w.Body.String())
 }
 
 // TestNewRouter_AdminRouteDeniedToUser verifies that a user API key cannot delete accounts.
@@ -229,15 +513,6 @@ func TestNewRouter_ManagerCanCreateAccount(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 	assert.Contains(t, w.Body.String(), "new-user@example.com")
-}
-
-// TestNewRouter_EngineNotNil verifies that Engine() returns a non-nil gin engine.
-func TestNewRouter_EngineNotNil(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := setupRouterTestDB(t)
-	router, _, _ := setupRouterTestDependencies(t, db)
-
-	assert.NotNil(t, router.Engine())
 }
 
 // TestNewRouter_RouteTable verifies that the expected routes are registered.

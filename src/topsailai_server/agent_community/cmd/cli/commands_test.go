@@ -2,7 +2,13 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -530,4 +536,1015 @@ func TestCommandHandlerTypeAuth(t *testing.T) {
 	var _ CommandHandler = handleAPIKeyCreate
 	var _ CommandHandler = handleAPIKeyList
 	var _ CommandHandler = handleAPIKeyDelete
+}
+
+// --- Command handler tests with mock HTTP server ---
+
+func newMockCLIState(t *testing.T) (*CLIState, *httptest.Server, func() string, func()) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"items": []map[string]interface{}{
+						{"group_id": "group-123", "group_name": "Team", "group_context": "ctx"},
+					},
+					"total": 1,
+				}),
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/groups":
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"group_id": "group-new", "group_name": "New Team", "group_context": "New context",
+				}),
+			})
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/v1/groups/"):
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"group_id": "group-123", "group_name": "Updated", "group_context": "Updated context",
+				}),
+			})
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/groups/"):
+			w.WriteHeader(http.StatusNoContent)
+			json.NewEncoder(w).Encode(APIResponse{})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/groups/") && strings.HasSuffix(r.URL.Path, "/members"):
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"items": []map[string]interface{}{
+						{"member_id": "u1", "member_name": "Alice", "member_type": "user"},
+					},
+					"total": 1,
+				}),
+			})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/groups/") && strings.HasSuffix(r.URL.Path, "/members"):
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"group_id": "group-123", "member_id": "u2", "member_name": "Bob", "member_type": "user",
+				}),
+			})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/groups/") && strings.HasSuffix(r.URL.Path, "/messages"):
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"items": []map[string]interface{}{
+						{"message_id": "msg-1", "message_text": "hello", "sender_id": "u1", "sender_type": "user"},
+					},
+					"total": 1,
+				}),
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(APIResponse{Error: "not found"})
+		}
+	}))
+
+	client := NewAPIClient(server.URL)
+	client.SetAPIKey("ak-test.secret")
+
+	state := &CLIState{
+		running:     true,
+		apiClient:   client,
+		userID:      "u1",
+		userName:    "Alice",
+		accountRole: "user",
+		lastGroupID: "group-123",
+	}
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	oldPromptState := promptState
+	promptState = state
+
+	cleanup := func() {
+		if w != nil {
+			w.Close()
+			os.Stdout = oldStdout
+			w = nil
+		}
+		io.Copy(io.Discard, r)
+		r.Close()
+		promptState = oldPromptState
+		server.Close()
+	}
+
+	captureOutput := func() string {
+		if w != nil {
+			w.Close()
+			os.Stdout = oldStdout
+			w = nil
+		}
+		var buf bytes.Buffer
+		io.Copy(&buf, r)
+		return buf.String()
+	}
+
+	return state, server, captureOutput, cleanup
+}
+
+func mustJSON(v interface{}) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
+}
+
+func TestHandleGroupList(t *testing.T) {
+	state, _, captureOutput, cleanup := newMockCLIState(t)
+	defer cleanup()
+
+	err := handleGroupList([]string{}, state)
+	if err != nil {
+		t.Fatalf("handleGroupList error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "group-123") {
+		t.Errorf("expected output to contain group id, got: %s", out)
+	}
+}
+
+func TestHandleGroupCreate(t *testing.T) {
+	state, _, captureOutput, cleanup := newMockCLIState(t)
+	defer cleanup()
+
+	err := handleGroupCreate([]string{"--name", "New Team", "--context", "New context"}, state)
+	if err != nil {
+		t.Fatalf("handleGroupCreate error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "group-new") {
+		t.Errorf("expected output to contain created group id, got: %s", out)
+	}
+}
+
+func TestHandleGroupUpdate(t *testing.T) {
+	state, _, captureOutput, cleanup := newMockCLIState(t)
+	defer cleanup()
+
+	err := handleGroupUpdate([]string{"--group-id", "group-123", "--name", "Updated"}, state)
+	if err != nil {
+		t.Fatalf("handleGroupUpdate error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "updated") {
+		t.Errorf("expected output to contain updated confirmation, got: %s", out)
+	}
+}
+
+func TestHandleGroupDelete(t *testing.T) {
+	state, _, captureOutput, cleanup := newMockCLIState(t)
+	defer cleanup()
+
+	err := handleGroupDelete([]string{"--group-id", "group-123", "--yes"}, state)
+	if err != nil {
+		t.Fatalf("handleGroupDelete error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "deleted") {
+		t.Errorf("expected output to contain deleted confirmation, got: %s", out)
+	}
+}
+
+func TestHandleMemberList(t *testing.T) {
+	state, _, captureOutput, cleanup := newMockCLIState(t)
+	defer cleanup()
+
+	err := handleMemberList([]string{"--group-id", "group-123"}, state)
+	if err != nil {
+		t.Fatalf("handleMemberList error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "Alice") {
+		t.Errorf("expected output to contain member name, got: %s", out)
+	}
+}
+
+func TestHandleMemberAdd(t *testing.T) {
+	state, _, captureOutput, cleanup := newMockCLIState(t)
+	defer cleanup()
+
+	err := handleMemberAdd([]string{
+		"--group-id", "group-123",
+		"--member-id", "u2",
+		"--member-name", "Bob",
+		"--member-type", "user",
+	}, state)
+	if err != nil {
+		t.Fatalf("handleMemberAdd error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "u2") {
+		t.Errorf("expected output to contain added member id, got: %s", out)
+	}
+}
+
+func TestHandleMessageList(t *testing.T) {
+	state, _, captureOutput, cleanup := newMockCLIState(t)
+	defer cleanup()
+
+	err := handleMessageList([]string{"--group-id", "group-123"}, state)
+	if err != nil {
+		t.Fatalf("handleMessageList error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "hello") {
+		t.Errorf("expected output to contain message text, got: %s", out)
+	}
+}
+
+func TestSanitizeMemberName(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"alphanumeric", "Agent123", "Agent123"},
+		{"with hyphen", "my-agent", "my-agent"},
+		{"with underscore", "my_agent", "my_agent"},
+		{"with spaces", "my agent", "my_agent"},
+		{"with special chars", "agent@foo!bar", "agent_foo_bar"},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeMemberName(tt.in)
+			if got != tt.want {
+				t.Errorf("sanitizeMemberName(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// --- Additional helper for tests with custom handlers ---
+
+// newTestCLIState creates a CLIState wired to a custom httptest handler and
+// captures stdout for assertion. It also manages the global promptState.
+func newTestCLIState(t *testing.T, handler http.HandlerFunc, role string) (*CLIState, func() string, func()) {
+	t.Helper()
+
+	server := httptest.NewServer(handler)
+	client := NewAPIClient(server.URL)
+	client.SetAPIKey("ak-test.secret")
+
+	state := &CLIState{
+		running:     true,
+		apiClient:   client,
+		userID:      "u1",
+		userName:    "Alice",
+		accountRole: role,
+		lastGroupID: "group-123",
+	}
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	oldPromptState := promptState
+	promptState = state
+
+	cleanup := func() {
+		if w != nil {
+			w.Close()
+			os.Stdout = oldStdout
+			w = nil
+		}
+		io.Copy(io.Discard, r)
+		r.Close()
+		promptState = oldPromptState
+		server.Close()
+	}
+
+	captureOutput := func() string {
+		if w != nil {
+			w.Close()
+			os.Stdout = oldStdout
+			w = nil
+		}
+		var buf bytes.Buffer
+		io.Copy(&buf, r)
+		return buf.String()
+	}
+
+	return state, captureOutput, cleanup
+}
+
+// --- Login / Logout ---
+
+func TestHandleLogin_APIKey(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/me" {
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"account_id":   "acc-1",
+					"account_name": "Alice",
+					"role":         "user",
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+
+	err := handleLogin([]string{"--api-key", "ak-test.secret"}, state)
+	if err != nil {
+		t.Fatalf("handleLogin error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "Logged in") {
+		t.Errorf("expected login success message, got: %s", out)
+	}
+	if state.userID != "acc-1" {
+		t.Errorf("userID = %q, want acc-1", state.userID)
+	}
+	if state.accountRole != RoleUser {
+		t.Errorf("accountRole = %q, want user", state.accountRole)
+	}
+}
+
+func TestHandleLogin_SessionKey(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/me" {
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"account_id":   "acc-1",
+					"account_name": "Alice",
+					"role":         "admin",
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, "")
+	defer cleanup()
+
+	err := handleLogin([]string{"--session-key", "acc-1-session"}, state)
+	if err != nil {
+		t.Fatalf("handleLogin error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "Logged in") {
+		t.Errorf("expected login success message, got: %s", out)
+	}
+	if state.accountRole != RoleAdmin {
+		t.Errorf("accountRole = %q, want admin", state.accountRole)
+	}
+}
+
+func TestHandleLogin_LoginNamePassword(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/accounts/login":
+			var body map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&body)
+			if body["login_name"] != "alice@example.com" || body["password"] != "secret" {
+				t.Errorf("unexpected login body: %v", body)
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"account_id":    "acc-1",
+					"session_key":   "acc-1-session",
+					"expires_at_ms": int64(1704153600000),
+				}),
+			})
+		case r.URL.Path == "/api/v1/accounts/me":
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"account_id":   "acc-1",
+					"account_name": "Alice",
+					"role":         "user",
+				}),
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, "")
+	defer cleanup()
+
+	err := handleLogin([]string{"--login-name", "alice@example.com", "--login-password", "secret"}, state)
+	if err != nil {
+		t.Fatalf("handleLogin error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "Logged in") {
+		t.Errorf("expected login success message, got: %s", out)
+	}
+	if state.sessionKey != "acc-1-session" {
+		t.Errorf("sessionKey = %q, want acc-1-session", state.sessionKey)
+	}
+}
+
+func TestHandleLogin_MissingCredentials(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}, "")
+	defer cleanup()
+
+	// No inline args and no readline -> method stays empty, no API call, prints warning.
+	err := handleLogin([]string{}, state)
+	if err != nil {
+		t.Fatalf("handleLogin error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "Cancelled") {
+		t.Errorf("expected cancellation message, got: %s", out)
+	}
+}
+
+func TestHandleLogout(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {}, RoleUser)
+	defer cleanup()
+
+	err := handleLogout([]string{}, state)
+	if err != nil {
+		t.Fatalf("handleLogout error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "Logged out") {
+		t.Errorf("expected logout message, got: %s", out)
+	}
+	if state.apiClient.IsAuthenticated() {
+		t.Error("expected client to be unauthenticated after logout")
+	}
+}
+
+// --- Account command handler tests ---
+
+func TestHandleAccountMe(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/me" {
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"account_id":   "acc-1",
+					"account_name": "Alice",
+					"role":         "user",
+					"email":        "alice@example.com",
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+
+	err := handleAccountMe([]string{}, state)
+	if err != nil {
+		t.Fatalf("handleAccountMe error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "Alice") {
+		t.Errorf("expected account name in output, got: %s", out)
+	}
+	if state.userID != "acc-1" {
+		t.Errorf("userID = %q, want acc-1", state.userID)
+	}
+}
+
+func TestHandleAccountCreate_Admin(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts" {
+			var body map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&body)
+			if body["account_name"] != "Bob" {
+				t.Errorf("account_name = %v, want Bob", body["account_name"])
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"account_id": "acc-2",
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleAdmin)
+	defer cleanup()
+
+	err := handleAccountCreate([]string{"--name", "Bob", "--role", "user", "--login-name", "bob@example.com"}, state)
+	if err != nil {
+		t.Fatalf("handleAccountCreate error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "acc-2") {
+		t.Errorf("expected created account id, got: %s", out)
+	}
+}
+
+func TestHandleAccountCreate_ManagerForcesUserRole(t *testing.T) {
+	var receivedRole string
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts" {
+			var body map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&body)
+			receivedRole, _ = body["role"].(string)
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"account_id": "acc-2",
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleManager)
+	defer cleanup()
+
+	err := handleAccountCreate([]string{"--name", "Bob", "--role", "admin"}, state)
+	if err != nil {
+		t.Fatalf("handleAccountCreate error = %v", err)
+	}
+
+	if receivedRole != RoleUser {
+		t.Errorf("role sent to server = %q, want user", receivedRole)
+	}
+	_ = captureOutput()
+}
+
+func TestHandleAccountList(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts" {
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"items": []map[string]interface{}{
+						{"account_id": "acc-1", "account_name": "Alice", "role": "user", "status": "active"},
+					},
+					"total": 1,
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleManager)
+	defer cleanup()
+
+	err := handleAccountList([]string{}, state)
+	if err != nil {
+		t.Fatalf("handleAccountList error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "Alice") {
+		t.Errorf("expected account name in output, got: %s", out)
+	}
+}
+
+func TestHandleAccountGet(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/acc-1" {
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"account_id":   "acc-1",
+					"account_name": "Alice",
+					"role":         "user",
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+	state.userID = "acc-1"
+
+	err := handleAccountGet([]string{"--id", "acc-1"}, state)
+	if err != nil {
+		t.Fatalf("handleAccountGet error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "Alice") {
+		t.Errorf("expected account name in output, got: %s", out)
+	}
+}
+
+func TestHandleAccountGet_SelfOnlyForUser(t *testing.T) {
+	state, _, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {}, RoleUser)
+	defer cleanup()
+	state.userID = "acc-1"
+
+	err := handleAccountGet([]string{"--id", "acc-2"}, state)
+	if err == nil {
+		t.Fatal("expected error for non-self account access by user")
+	}
+	if !strings.Contains(err.Error(), "access denied") {
+		t.Errorf("error = %q, want access denied", err.Error())
+	}
+}
+
+func TestHandleAccountUpdate(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/acc-1" && r.Method == http.MethodPut {
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"account_id": "acc-1",
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+	state.userID = "acc-1"
+
+	err := handleAccountUpdate([]string{"--id", "acc-1", "--name", "Alice Updated"}, state)
+	if err != nil {
+		t.Fatalf("handleAccountUpdate error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "updated") {
+		t.Errorf("expected update confirmation, got: %s", out)
+	}
+}
+
+func TestHandleAccountDelete(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/acc-2" && r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			json.NewEncoder(w).Encode(APIResponse{})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleAdmin)
+	defer cleanup()
+
+	err := handleAccountDelete([]string{"--account-id", "acc-2", "--yes"}, state)
+	if err != nil {
+		t.Fatalf("handleAccountDelete error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "deleted") {
+		t.Errorf("expected delete confirmation, got: %s", out)
+	}
+}
+
+func TestHandleAccountPassword(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/acc-1/password" && r.Method == http.MethodPost {
+			var body map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&body)
+			if body["new_password"] != "new-secret" {
+				t.Errorf("new_password = %v, want new-secret", body["new_password"])
+			}
+			json.NewEncoder(w).Encode(APIResponse{Data: mustJSON(map[string]interface{}{})})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+	state.userID = "acc-1"
+
+	err := handleAccountPassword([]string{"--id", "acc-1", "--new-password", "new-secret"}, state)
+	if err != nil {
+		t.Fatalf("handleAccountPassword error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "Password updated") {
+		t.Errorf("expected password update confirmation, got: %s", out)
+	}
+}
+
+func TestHandleAccountSession(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/acc-2/session" && r.Method == http.MethodPost {
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"account_id":   "acc-2",
+					"session_key":  "acc-2-session",
+					"expires_at_ms": int64(1704153600000),
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleManager)
+	defer cleanup()
+
+	err := handleAccountSession([]string{"--id", "acc-2"}, state)
+	if err != nil {
+		t.Fatalf("handleAccountSession error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "acc-2-session") {
+		t.Errorf("expected session key in output, got: %s", out)
+	}
+}
+
+// --- API key command handler tests ---
+
+func TestHandleAPIKeyCreate(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/acc-1/api-keys" && r.Method == http.MethodPost {
+			var body map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&body)
+			if body["api_key_name"] != "CLI Key" {
+				t.Errorf("api_key_name = %v, want CLI Key", body["api_key_name"])
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"api_key_id": "ak-1",
+					"token":      "ak-1.secret",
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+	state.userID = "acc-1"
+
+	err := handleAPIKeyCreate([]string{"--account-id", "acc-1", "--name", "CLI Key", "--role", "user"}, state)
+	if err != nil {
+		t.Fatalf("handleAPIKeyCreate error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "ak-1") {
+		t.Errorf("expected api key id in output, got: %s", out)
+	}
+}
+
+func TestHandleAPIKeyCreate_UserCannotCreateAdminKey(t *testing.T) {
+	state, _, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {}, RoleUser)
+	defer cleanup()
+	state.userID = "acc-1"
+
+	err := handleAPIKeyCreate([]string{"--account-id", "acc-1", "--name", "Bad Key", "--role", "admin"}, state)
+	if err == nil {
+		t.Fatal("expected error for user creating admin key")
+	}
+	if !strings.Contains(err.Error(), "access denied") {
+		t.Errorf("error = %q, want access denied", err.Error())
+	}
+}
+
+func TestHandleAPIKeyList(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/acc-1/api-keys" {
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"items": []map[string]interface{}{
+						{"api_key_id": "ak-1", "api_key_name": "CLI", "role": "user", "status": "active"},
+					},
+					"total": 1,
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+	state.userID = "acc-1"
+
+	err := handleAPIKeyList([]string{"--account-id", "acc-1"}, state)
+	if err != nil {
+		t.Fatalf("handleAPIKeyList error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "ak-1") {
+		t.Errorf("expected api key id in output, got: %s", out)
+	}
+}
+
+func TestHandleAPIKeyDelete(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/acc-1/api-keys/ak-1" && r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			json.NewEncoder(w).Encode(APIResponse{})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+	state.userID = "acc-1"
+
+	err := handleAPIKeyDelete([]string{"--account-id", "acc-1", "--key-id", "ak-1"}, state)
+	if err != nil {
+		t.Fatalf("handleAPIKeyDelete error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "deleted") {
+		t.Errorf("expected delete confirmation, got: %s", out)
+	}
+}
+
+// --- Group join and remaining member/message handlers ---
+
+func TestHandleGroupJoin(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups/group-123":
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"group_id":   "group-123",
+					"group_name": "Team",
+					"group_key":  "",
+				}),
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/groups/group-123/members":
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"group_id":    "group-123",
+					"member_id":   "u1",
+					"member_name": "Alice",
+					"member_type": "user",
+				}),
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, RoleUser)
+	defer cleanup()
+	state.userID = "u1"
+	state.userName = "Alice"
+
+	err := handleGroupJoin([]string{"--group-id", "group-123"}, state)
+	if err != nil {
+		t.Fatalf("handleGroupJoin error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "Joined group") {
+		t.Errorf("expected join confirmation, got: %s", out)
+	}
+	if state.lastGroupID != "group-123" {
+		t.Errorf("lastGroupID = %q, want group-123", state.lastGroupID)
+	}
+}
+
+func TestHandleGroupJoin_WithKey(t *testing.T) {
+	addMemberCalled := false
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups/group-123":
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"group_id":   "group-123",
+					"group_name": "Team",
+					"group_key":  "hashed-key",
+				}),
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/groups/group-123/members":
+			addMemberCalled = true
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"group_id":    "group-123",
+					"member_id":   "u1",
+					"member_name": "Alice",
+					"member_type": "user",
+				}),
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, RoleUser)
+	defer cleanup()
+	state.userID = "u1"
+	state.userName = "Alice"
+
+	err := handleGroupJoin([]string{"--group-id", "group-123", "--group-key", "secret"}, state)
+	if err != nil {
+		t.Fatalf("handleGroupJoin error = %v", err)
+	}
+
+	if !addMemberCalled {
+		t.Error("expected AddMember to be called")
+	}
+	_ = captureOutput()
+}
+
+func TestHandleMemberRemove(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path == "/api/v1/groups/group-123/members/u2" {
+			w.WriteHeader(http.StatusNoContent)
+			json.NewEncoder(w).Encode(APIResponse{})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+
+	err := handleMemberRemove([]string{"--group-id", "group-123", "--member-id", "u2"}, state)
+	if err != nil {
+		t.Fatalf("handleMemberRemove error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "removed") {
+		t.Errorf("expected remove confirmation, got: %s", out)
+	}
+}
+
+func TestHandleMemberUpdate(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == "/api/v1/groups/group-123/members/u2" {
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"member_id":   "u2",
+					"member_name": "Bob Updated",
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+
+	err := handleMemberUpdate([]string{"--group-id", "group-123", "--member-id", "u2", "--member-name", "Bob Updated"}, state)
+	if err != nil {
+		t.Fatalf("handleMemberUpdate error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "updated") {
+		t.Errorf("expected update confirmation, got: %s", out)
+	}
+}
+
+func TestHandleMessageEdit(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == "/api/v1/groups/group-123/messages/msg-1" {
+			var body map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&body)
+			if body["message_text"] != "Updated text" {
+				t.Errorf("message_text = %v, want Updated text", body["message_text"])
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"message_id": "msg-1",
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+
+	err := handleMessageEdit([]string{"--group-id", "group-123", "--message-id", "msg-1", "--text", "Updated text"}, state)
+	if err != nil {
+		t.Fatalf("handleMessageEdit error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "Message updated") {
+		t.Errorf("expected edit confirmation, got: %s", out)
+	}
+}
+
+func TestHandleMessageDelete(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path == "/api/v1/groups/group-123/messages/msg-1" {
+			w.WriteHeader(http.StatusNoContent)
+			json.NewEncoder(w).Encode(APIResponse{})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+
+	err := handleMessageDelete([]string{"--group-id", "group-123", "--message-id", "msg-1"}, state)
+	if err != nil {
+		t.Fatalf("handleMessageDelete error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "Message deleted") {
+		t.Errorf("expected delete confirmation, got: %s", out)
+	}
+}
+
+// --- Help ---
+
+func TestHandleHelp_Output(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {}, RoleUser)
+	defer cleanup()
+
+	err := handleHelp([]string{}, state)
+	if err != nil {
+		t.Fatalf("handleHelp error = %v", err)
+	}
+
+	out := captureOutput()
+	for _, cmd := range []string{"/group:list", "/member:add", "/message:edit", "/api-key:create", "/account:delete"} {
+		if !strings.Contains(out, cmd) {
+			t.Errorf("help output missing %q", cmd)
+		}
+	}
 }

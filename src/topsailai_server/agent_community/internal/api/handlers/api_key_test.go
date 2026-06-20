@@ -563,3 +563,46 @@ func TestToAPIKeyResponse(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(respJSON), "api_key_hash")
 }
+
+func TestAPIKeyHandler_CreateAPIKey_UserCannotExceedOwnRole(t *testing.T) {
+	db := setupAPIKeyTestDB(t)
+	accountSvc, _ := setupAPIKeyTestServices(t, db)
+	handler := setupAPIKeyTestHandler(t, db)
+	user := createTestAPIKeyAccount(t, accountSvc, "User", "user", models.AccountRoleUser)
+
+	for _, role := range []string{"manager", "admin"} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Set("auth_context", middleware.AuthContext{Account: user, IsAuthenticated: true})
+		c.Params = gin.Params{{Key: "account_id", Value: user.AccountID}}
+		body := CreateAPIKeyRequest{APIKeyName: "Elevated Key", Role: role}
+		c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/accounts/"+user.AccountID+"/api-keys", bytes.NewBuffer(toJSON(t, body)))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		handler.CreateAPIKey(c)
+		require.Equal(t, http.StatusForbidden, w.Code, "role %s should be rejected; body: %s", role, w.Body.String())
+	}
+}
+
+func TestAPIKeyHandler_CreateAPIKey_AdminCreatesUserForAnother(t *testing.T) {
+	db := setupAPIKeyTestDB(t)
+	accountSvc, _ := setupAPIKeyTestServices(t, db)
+	handler := setupAPIKeyTestHandler(t, db)
+	admin := createTestAPIKeyAccount(t, accountSvc, "Admin", "admin", models.AccountRoleAdmin)
+	user := createTestAPIKeyAccount(t, accountSvc, "User", "user", models.AccountRoleUser)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{Account: admin, IsAuthenticated: true})
+	c.Params = gin.Params{{Key: "account_id", Value: user.AccountID}}
+	body := CreateAPIKeyRequest{APIKeyName: "User Key For User", Role: "user"}
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/accounts/"+user.AccountID+"/api-keys", bytes.NewBuffer(toJSON(t, body)))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.CreateAPIKey(c)
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+	var resp APIKeyWithTokenResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "user", resp.Role)
+	assert.Equal(t, user.AccountID, resp.OwnerID)
+}

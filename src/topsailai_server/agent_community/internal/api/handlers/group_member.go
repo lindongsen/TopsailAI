@@ -150,10 +150,99 @@ type ListGroupMembersResponse struct {
 	OrderBy string                `json:"order_by"`
 }
 
+// getAuthContextOrAbort extracts the authenticated account from the Gin context.
+// It aborts the request with 401 if the caller is not authenticated or active.
+func getAuthContextOrAbort(c *gin.Context) (middleware.AuthContext, bool) {
+	ac, ok := middleware.GetAuthContext(c)
+	if !ok || !ac.IsAuthenticated || ac.Account == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return ac, false
+	}
+	if !ac.Account.IsActive() {
+		c.JSON(http.StatusForbidden, gin.H{"error": "account is not active"})
+		return ac, false
+	}
+	return ac, true
+}
+
+// isAdmin returns true if the authenticated account has the admin role.
+func isAdmin(ac middleware.AuthContext) bool {
+	return ac.Account.Role == models.AccountRoleAdmin
+}
+
+// isGroupOwner returns true if the account owns the group.
+func isGroupOwner(db *gorm.DB, groupID, accountID string) (bool, error) {
+	var count int64
+	if err := db.Model(&models.Group{}).
+		Where("group_id = ? AND owner_id = ?", groupID, accountID).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// isGroupMember returns true if the account is a member of the group.
+func isGroupMember(db *gorm.DB, groupID, accountID string) (bool, error) {
+	var count int64
+	if err := db.Model(&models.GroupMember{}).
+		Where("group_id = ? AND member_id = ?", groupID, accountID).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// canJoinGroup checks whether the caller may add members to the group.
+// Admin can add members to any group; user can add members only to groups they own.
+func canJoinGroup(db *gorm.DB, ac middleware.AuthContext, groupID string) (bool, error) {
+	if isAdmin(ac) {
+		return true, nil
+	}
+	return isGroupOwner(db, groupID, ac.Account.AccountID)
+}
+
+// canListGroupMembers checks whether the caller may list members of the group.
+// Admin can list any group; user can list only groups where they are a member.
+func canListGroupMembers(db *gorm.DB, ac middleware.AuthContext, groupID string) (bool, error) {
+	if isAdmin(ac) {
+		return true, nil
+	}
+	return isGroupMember(db, groupID, ac.Account.AccountID)
+}
+
+// canUpdateMember checks whether the caller may update the member record.
+// Admin can update any member; user can update only their own member record.
+func canUpdateMember(db *gorm.DB, ac middleware.AuthContext, groupID, memberID string) (bool, error) {
+	if isAdmin(ac) {
+		return true, nil
+	}
+	if memberID != ac.Account.AccountID {
+		return false, nil
+	}
+	return isGroupMember(db, groupID, ac.Account.AccountID)
+}
+
+// canLeaveGroup checks whether the caller may remove the member record.
+// Admin can remove any member; user can remove only their own member record.
+func canLeaveGroup(db *gorm.DB, ac middleware.AuthContext, groupID, memberID string) (bool, error) {
+	if isAdmin(ac) {
+		return true, nil
+	}
+	if memberID != ac.Account.AccountID {
+		return false, nil
+	}
+	return isGroupMember(db, groupID, ac.Account.AccountID)
+}
+
 // JoinGroup handles POST /api/v1/groups/:group_id/members.
 func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	groupID := c.Param("group_id")
+
+	authCtx, ok := getAuthContextOrAbort(c)
+	if !ok {
+		return
+	}
 
 	// Verify group exists
 	var group models.Group
@@ -164,6 +253,18 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 		}
 		h.log.Error("api", traceID, "failed to get group", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to join group"})
+		return
+	}
+
+	// Authorization: admin any group, user own group only.
+	allowed, err := canJoinGroup(h.db, authCtx, groupID)
+	if err != nil {
+		h.log.Error("api", traceID, "failed to check join permission", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to join group"})
+		return
+	}
+	if !allowed {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
@@ -194,6 +295,14 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid member_type"})
 		return
 	}
+
+	// Agent members require a member_interface.
+	if (memberType == models.MemberTypeWorkerAgent || memberType == models.MemberTypeManagerAgent) &&
+		req.MemberInterface.String() == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "member_interface is required for agent members"})
+		return
+	}
+
 	member := models.GroupMember{
 		GroupID:           groupID,
 		MemberID:          req.MemberID,
@@ -215,12 +324,9 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to join group"})
 		return
 	}
-
 	// Publish event
-	if h.publisher != nil {
-		if err := h.publisher.PublishGroupMemberCreate(&member); err != nil {
-			h.log.Warn("api", traceID, "failed to publish member join event", "error", err.Error())
-		}
+	if err := h.publisher.PublishGroupMemberCreate(&member); err != nil {
+		h.log.Warn("api", traceID, "failed to publish member join event", "error", err.Error())
 	}
 
 	h.log.Info("api", traceID, "member joined group", "group_id", groupID, "member_id", req.MemberID)
@@ -232,6 +338,11 @@ func (h *GroupMemberHandler) ListGroupMembers(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	groupID := c.Param("group_id")
 
+	authCtx, ok := getAuthContextOrAbort(c)
+	if !ok {
+		return
+	}
+
 	// Verify group exists
 	var group models.Group
 	if err := h.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
@@ -241,6 +352,18 @@ func (h *GroupMemberHandler) ListGroupMembers(c *gin.Context) {
 		}
 		h.log.Error("api", traceID, "failed to get group", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list members"})
+		return
+	}
+
+	// Authorization: admin any group, user member group only.
+	allowed, err := canListGroupMembers(h.db, authCtx, groupID)
+	if err != nil {
+		h.log.Error("api", traceID, "failed to check list members permission", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list members"})
+		return
+	}
+	if !allowed {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
@@ -322,6 +445,11 @@ func (h *GroupMemberHandler) UpdateMember(c *gin.Context) {
 	groupID := c.Param("group_id")
 	memberID := c.Param("member_id")
 
+	authCtx, ok := getAuthContextOrAbort(c)
+	if !ok {
+		return
+	}
+
 	var req UpdateMemberRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.log.Warn("api", traceID, "invalid update member request", "error", err.Error())
@@ -340,10 +468,34 @@ func (h *GroupMemberHandler) UpdateMember(c *gin.Context) {
 		return
 	}
 
+	// Authorization: admin any member, user own member only.
+	allowed, err := canUpdateMember(h.db, authCtx, groupID, memberID)
+	if err != nil {
+		h.log.Error("api", traceID, "failed to check update member permission", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update member"})
+		return
+	}
+	if !allowed {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
 	// Validate member_name if provided
 	if req.MemberName != "" && !memberNameRegex.MatchString(req.MemberName) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid member_name: must contain only alphanumeric characters, hyphens, and underscores"})
 		return
+	}
+
+	// Validate member_status if provided.
+	if req.MemberStatus != "" {
+		status := models.MemberStatus(req.MemberStatus)
+		if status != models.MemberStatusOnline &&
+			status != models.MemberStatusOffline &&
+			status != models.MemberStatusIdle &&
+			status != models.MemberStatusProcessing {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid member_status"})
+			return
+		}
 	}
 
 	// Update fields
@@ -375,7 +527,7 @@ func (h *GroupMemberHandler) UpdateMember(c *gin.Context) {
 	h.db.Where("group_id = ? AND member_id = ?", groupID, memberID).First(&member)
 
 	// Publish modify event when member_status changes so subscribers can observe transitions
-	if h.publisher != nil && req.MemberStatus != "" {
+	if req.MemberStatus != "" {
 		if err := h.publisher.PublishGroupMemberModify(&member); err != nil {
 			h.log.Warn("api", traceID, "failed to publish member modify event", "error", err.Error())
 		}
@@ -391,6 +543,11 @@ func (h *GroupMemberHandler) LeaveGroup(c *gin.Context) {
 	groupID := c.Param("group_id")
 	memberID := c.Param("member_id")
 
+	authCtx, ok := getAuthContextOrAbort(c)
+	if !ok {
+		return
+	}
+
 	var member models.GroupMember
 	if err := h.db.Where("group_id = ? AND member_id = ?", groupID, memberID).First(&member).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -402,6 +559,18 @@ func (h *GroupMemberHandler) LeaveGroup(c *gin.Context) {
 		return
 	}
 
+	// Authorization: admin any member, user own member only.
+	allowed, err := canLeaveGroup(h.db, authCtx, groupID, memberID)
+	if err != nil {
+		h.log.Error("api", traceID, "failed to check leave permission", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to leave group"})
+		return
+	}
+	if !allowed {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
 	if err := h.db.Delete(&member).Error; err != nil {
 		h.log.Error("api", traceID, "failed to leave group", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to leave group"})
@@ -409,15 +578,14 @@ func (h *GroupMemberHandler) LeaveGroup(c *gin.Context) {
 	}
 
 	// Publish event
-	if h.publisher != nil {
-		if err := h.publisher.PublishGroupMemberDelete(groupID, memberID); err != nil {
-			h.log.Warn("api", traceID, "failed to publish member leave event", "error", err.Error())
-		}
+	if err := h.publisher.PublishGroupMemberDelete(groupID, memberID); err != nil {
+		h.log.Warn("api", traceID, "failed to publish member leave event", "error", err.Error())
 	}
 
 	h.log.Info("api", traceID, "member left group", "group_id", groupID, "member_id", memberID)
 	c.String(http.StatusNoContent, "")
 }
+
 func toGroupMemberResponse(m *models.GroupMember) GroupMemberResponse {
 	return GroupMemberResponse{
 		GroupID:           m.GroupID,

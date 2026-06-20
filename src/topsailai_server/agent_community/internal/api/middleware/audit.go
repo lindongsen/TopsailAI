@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 
@@ -63,18 +64,25 @@ func AuditLogger(auditSvc AuditLogService) gin.HandlerFunc {
 		resourceName := extractResourceName(resourceType, bodyBytes)
 
 		// Write audit log asynchronously to avoid delaying the response.
-		go func() {
-			_, _ = auditSvc.Log(c.Request.Context(), &services.AuditLogRequest{
-				AccountID:    accountID,
-				APIKeyID:     apiKeyID,
-				Action:       action,
-				ResourceType: resourceType,
-				ResourceID:   resourceID,
-				ResourceName: resourceName,
-				Detail:       detail,
-				ClientIP:     c.ClientIP(),
-			})
-		}()
+		// Capture the values needed by the goroutine to avoid races with
+		// request context reuse.
+		clientIP := c.ClientIP()
+		reqCtx := c.Request.Context()
+		var once sync.Once
+		once.Do(func() {
+			go func() {
+				_, _ = auditSvc.Log(reqCtx, &services.AuditLogRequest{
+					AccountID:    accountID,
+					APIKeyID:     apiKeyID,
+					Action:       action,
+					ResourceType: resourceType,
+					ResourceID:   resourceID,
+					ResourceName: resourceName,
+					Detail:       detail,
+					ClientIP:     clientIP,
+				})
+			}()
+		})
 	}
 }
 

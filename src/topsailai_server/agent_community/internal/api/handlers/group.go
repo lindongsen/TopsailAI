@@ -163,19 +163,17 @@ func (h *GroupHandler) CreateGroup(c *gin.Context) {
 	}
 
 	// Publish events after the transaction commits.
-	if h.publisher != nil {
-		if err := h.publisher.PublishGroupCreate(&group); err != nil {
-			h.log.Warn("api", traceID, "failed to publish group create event", "error", err.Error())
-		}
+	if err := h.publisher.PublishGroupCreate(&group); err != nil {
+		h.log.Warn("api", traceID, "failed to publish group create event", "error", err.Error())
+	}
 
-		if err := h.publisher.PublishGroupMemberCreate(creatorMember); err != nil {
-			h.log.Warn("api", traceID, "failed to publish creator member create event", "error", err.Error())
-		}
+	if err := h.publisher.PublishGroupMemberCreate(creatorMember); err != nil {
+		h.log.Warn("api", traceID, "failed to publish creator member create event", "error", err.Error())
+	}
 
-		if managerMember != nil {
-			if err := h.publisher.PublishGroupMemberCreate(managerMember); err != nil {
-				h.log.Warn("api", traceID, "failed to publish manager-agent member create event", "error", err.Error())
-			}
+	if managerMember != nil {
+		if err := h.publisher.PublishGroupMemberCreate(managerMember); err != nil {
+			h.log.Warn("api", traceID, "failed to publish manager-agent member create event", "error", err.Error())
 		}
 	}
 
@@ -284,9 +282,16 @@ func buildManagerAgentMemberInterface(mc *config.ManagerAgentConfig) (string, er
 }
 
 // GetGroup handles GET /api/v1/groups/:group_id.
+// Admin callers can access any group; non-admin callers must be a member.
 func (h *GroupHandler) GetGroup(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	groupID := c.Param("group_id")
+
+	authCtx, ok := middleware.GetAuthContext(c)
+	if !ok || !authCtx.IsAuthenticated || authCtx.Account == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 
 	var group models.Group
 	if err := h.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
@@ -297,6 +302,22 @@ func (h *GroupHandler) GetGroup(c *gin.Context) {
 		h.log.Error("api", traceID, "failed to get group", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get group"})
 		return
+	}
+
+	// Non-admin callers must be a member of the group.
+	if authCtx.Account.Role != models.AccountRoleAdmin {
+		var count int64
+		if err := h.db.Model(&models.GroupMember{}).
+			Where("group_id = ? AND member_id = ?", groupID, authCtx.Account.AccountID).
+			Count(&count).Error; err != nil {
+			h.log.Error("api", traceID, "failed to check group membership", "error", err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get group"})
+			return
+		}
+		if count == 0 {
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, toGroupResponse(&group))
@@ -393,9 +414,16 @@ func (h *GroupHandler) ListGroups(c *gin.Context) {
 }
 
 // UpdateGroup handles PUT /api/v1/groups/:group_id.
+// Admin callers can update any group; non-admin callers can update only groups they own.
 func (h *GroupHandler) UpdateGroup(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	groupID := c.Param("group_id")
+
+	authCtx, ok := middleware.GetAuthContext(c)
+	if !ok || !authCtx.IsAuthenticated || authCtx.Account == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 
 	var req UpdateGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -412,6 +440,12 @@ func (h *GroupHandler) UpdateGroup(c *gin.Context) {
 		}
 		h.log.Error("api", traceID, "failed to get group for update", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update group"})
+		return
+	}
+
+	// Non-admin callers must own the group.
+	if authCtx.Account.Role != models.AccountRoleAdmin && group.OwnerID != authCtx.Account.AccountID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
@@ -444,10 +478,8 @@ func (h *GroupHandler) UpdateGroup(c *gin.Context) {
 	h.db.Where("group_id = ?", groupID).First(&group)
 
 	// Publish event
-	if h.publisher != nil {
-		if err := h.publisher.PublishGroupModify(&group); err != nil {
-			h.log.Warn("api", traceID, "failed to publish group modify event", "error", err.Error())
-		}
+	if err := h.publisher.PublishGroupModify(&group); err != nil {
+		h.log.Warn("api", traceID, "failed to publish group modify event", "error", err.Error())
 	}
 
 	h.log.Info("api", traceID, "group updated", "group_id", groupID)
@@ -455,14 +487,26 @@ func (h *GroupHandler) UpdateGroup(c *gin.Context) {
 }
 
 // DeleteGroup handles DELETE /api/v1/groups/:group_id.
+// Admin callers can delete any group; non-admin callers can delete only groups they own.
 func (h *GroupHandler) DeleteGroup(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	groupID := c.Param("group_id")
+
+	authCtx, ok := middleware.GetAuthContext(c)
+	if !ok || !authCtx.IsAuthenticated || authCtx.Account == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 
 	if err := h.db.Transaction(func(tx *gorm.DB) error {
 		var group models.Group
 		if err := tx.Where("group_id = ?", groupID).First(&group).Error; err != nil {
 			return err
+		}
+
+		// Non-admin callers must own the group.
+		if authCtx.Account.Role != models.AccountRoleAdmin && group.OwnerID != authCtx.Account.AccountID {
+			return fmt.Errorf("forbidden")
 		}
 
 		if err := tx.Where("group_id = ?", groupID).Delete(&models.GroupMessage{}).Error; err != nil {
@@ -480,16 +524,18 @@ func (h *GroupHandler) DeleteGroup(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
 			return
 		}
+		if err.Error() == "forbidden" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			return
+		}
 		h.log.Error("api", traceID, "failed to delete group", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete group"})
 		return
 	}
 
 	// Publish event
-	if h.publisher != nil {
-		if err := h.publisher.PublishGroupDelete(groupID); err != nil {
-			h.log.Warn("api", traceID, "failed to publish group delete event", "error", err.Error())
-		}
+	if err := h.publisher.PublishGroupDelete(groupID); err != nil {
+		h.log.Warn("api", traceID, "failed to publish group delete event", "error", err.Error())
 	}
 
 	h.log.Info("api", traceID, "group deleted", "group_id", groupID)
@@ -497,12 +543,13 @@ func (h *GroupHandler) DeleteGroup(c *gin.Context) {
 }
 
 // toGroupResponse converts a Group model to API response.
+// The group_key is never exposed in API responses.
 func toGroupResponse(g *models.Group) GroupResponse {
 	return GroupResponse{
 		GroupID:      g.GroupID,
 		GroupName:    g.GroupName,
 		GroupContext: g.GroupContext,
-		GroupKey:     g.GroupKey,
+		GroupKey:     "",
 		CreateAtMs:   g.CreateAtMs,
 		UpdateAtMs:   g.UpdateAtMs,
 	}
