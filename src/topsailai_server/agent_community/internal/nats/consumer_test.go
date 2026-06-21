@@ -3,7 +3,10 @@ package nats
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,8 +22,33 @@ import (
 
 // setupConsumerTestDB creates an in-memory SQLite database and auto-migrates models.
 func setupConsumerTestDB(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+
+	err = db.AutoMigrate(
+		&models.Group{},
+		&models.GroupMember{},
+		&models.GroupMessage{},
+		&models.AgentMessageProcessing{},
+	)
+	require.NoError(t, err)
+
+	return db
+}
+
+// setupConsumerTestDBFile creates a file-backed SQLite database with WAL mode
+// and a busy timeout enabled. This is required for tests that exercise
+// concurrent goroutines because the default in-memory SQLite driver serializes
+// writes and quickly returns "database table is locked" errors.
+func setupConsumerTestDBFile(t *testing.T) *gorm.DB {
+	tmpFile := filepath.Join(t.TempDir(), "acs-consumer-test.db")
+	db, err := gorm.Open(sqlite.Open(tmpFile+"?_journal_mode=WAL&_busy_timeout=5000"), &gorm.Config{})
+	require.NoError(t, err)
+
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(10)
+	sqlDB.SetMaxIdleConns(5)
 
 	err = db.AutoMigrate(
 		&models.Group{},
@@ -36,10 +64,10 @@ func setupConsumerTestDB(t *testing.T) *gorm.DB {
 // createTestGroup creates a test group in the database.
 func createTestGroup(t *testing.T, db *gorm.DB, groupID, groupName string) *models.Group {
 	group := &models.Group{
-		GroupID:      groupID,
-		GroupName:    groupName,
-		CreateAtMs:   time.Now().UnixMilli(),
-		UpdateAtMs:   time.Now().UnixMilli(),
+		GroupID:    groupID,
+		GroupName:  groupName,
+		CreateAtMs: time.Now().UnixMilli(),
+		UpdateAtMs: time.Now().UnixMilli(),
 	}
 	err := db.Create(group).Error
 	require.NoError(t, err)
@@ -394,10 +422,10 @@ func TestProcessAgentTarget_DuplicateRunningRecord_StatusUnchanged(t *testing.T)
 
 	// Pre-create a running record to simulate duplicate execution.
 	running := &models.AgentMessageProcessing{
-		GroupID:   group.GroupID,
-		MessageID: msg.MessageID,
-		AgentID:   agent.MemberID,
-		Status:    models.ProcessingStatusRunning,
+		GroupID:    group.GroupID,
+		MessageID:  msg.MessageID,
+		AgentID:    agent.MemberID,
+		Status:     models.ProcessingStatusRunning,
 		CreateAtMs: time.Now().UnixMilli(),
 		UpdateAtMs: time.Now().UnixMilli(),
 	}
@@ -489,4 +517,95 @@ func TestProcessAgentTarget_PublishModifyErrorDoesNotFailExecution(t *testing.T)
 	err = db.First(&updated, "group_id = ? AND member_id = ?", group.GroupID, agent.MemberID).Error
 	require.NoError(t, err)
 	assert.Equal(t, models.MemberStatusIdle, updated.MemberStatus)
+}
+
+// TestDispatchTargets_ExecutesConcurrently proves that dispatchTargets runs
+// each agent target in its own goroutine. A stub process function sleeps for a
+// fixed duration; if targets ran sequentially the elapsed time would be at
+// least 2*sleepDuration, while concurrent execution completes in roughly one
+// sleepDuration. This test intentionally avoids any database I/O so it is
+// stable under the Go race detector.
+func TestDispatchTargets_ExecutesConcurrently(t *testing.T) {
+	sleepDuration := 200 * time.Millisecond
+
+	var calledMu sync.Mutex
+	called := make(map[string]bool)
+
+	stubProcess := func(
+		ctx context.Context,
+		group *models.Group,
+		members []models.GroupMember,
+		pendingMsg *models.GroupMessage,
+		triggerInfo trigger.TriggerInfo,
+		target trigger.AgentTarget,
+		traceID string,
+	) error {
+		calledMu.Lock()
+		called[target.AgentID] = true
+		calledMu.Unlock()
+		select {
+		case <-time.After(sleepDuration):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return nil
+	}
+
+	consumer := NewConsumer(nil, nil, nil, nil, nil, testConsumerConfig())
+
+	group := &models.Group{GroupID: "group-concurrent", GroupName: "Concurrent Test Group"}
+	pendingMsg := &models.GroupMessage{MessageID: "msg-concurrent", GroupID: group.GroupID, SenderID: "user-1"}
+	triggerInfo := trigger.TriggerInfo{Type: trigger.TriggerTypeMention}
+	targets := []trigger.AgentTarget{
+		{AgentID: "agent-1", Mode: "agent"},
+		{AgentID: "agent-2", Mode: "agent"},
+	}
+
+	start := time.Now()
+	err := consumer.dispatchTargets(context.Background(), group, nil, pendingMsg, triggerInfo, targets, "trace-concurrent", stubProcess)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+
+	calledMu.Lock()
+	assert.True(t, called["agent-1"], "agent-1 should have been processed")
+	assert.True(t, called["agent-2"], "agent-2 should have been processed")
+	calledMu.Unlock()
+
+	// Sequential execution would take at least 2*sleepDuration. Concurrent
+	// execution should complete in roughly sleepDuration plus scheduling overhead.
+	assert.Less(t, elapsed, 2*sleepDuration,
+		"targets should execute concurrently, expected elapsed < %v but got %v", 2*sleepDuration, elapsed)
+}
+
+// TestDispatchTargets_PropagatesError verifies that dispatchTargets returns an
+// error when at least one target fails, while still waiting for all targets.
+func TestDispatchTargets_PropagatesError(t *testing.T) {
+	stubProcess := func(
+		ctx context.Context,
+		group *models.Group,
+		members []models.GroupMember,
+		pendingMsg *models.GroupMessage,
+		triggerInfo trigger.TriggerInfo,
+		target trigger.AgentTarget,
+		traceID string,
+	) error {
+		if target.AgentID == "agent-bad" {
+			return errors.New("intentional failure")
+		}
+		return nil
+	}
+
+	consumer := NewConsumer(nil, nil, nil, nil, nil, testConsumerConfig())
+	group := &models.Group{GroupID: "group-err", GroupName: "Error Test Group"}
+	pendingMsg := &models.GroupMessage{MessageID: "msg-err", GroupID: group.GroupID, SenderID: "user-1"}
+	triggerInfo := trigger.TriggerInfo{Type: trigger.TriggerTypeMention}
+	targets := []trigger.AgentTarget{
+		{AgentID: "agent-good", Mode: "agent"},
+		{AgentID: "agent-bad", Mode: "agent"},
+	}
+
+	err := consumer.dispatchTargets(context.Background(), group, nil, pendingMsg, triggerInfo, targets, "trace-err", stubProcess)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "intentional failure")
 }

@@ -24,6 +24,8 @@ import (
 // fakeDiscovery is a test double for the discovery provider.
 type fakeDiscovery struct{}
 
+func (f *fakeDiscovery) Enabled() bool { return true }
+
 func (f *fakeDiscovery) Discover() ([]discovery.ServiceInfo, error) {
 	return []discovery.ServiceInfo{}, nil
 }
@@ -177,8 +179,8 @@ func TestNewRouter_PublicEndpoints(t *testing.T) {
 
 	t.Run("POST /api/v1/accounts/login", func(t *testing.T) {
 		body := map[string]string{
-			"login_name": "login-user@example.com",
-			"password":   "secure-password",
+			"login_name":     "login-user@example.com",
+			"login_password": "secure-password",
 		}
 		jsonBody, _ := json.Marshal(body)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts/login", bytes.NewBuffer(jsonBody))
@@ -449,8 +451,8 @@ func TestNewRouter_LoginWithoutAuth(t *testing.T) {
 	require.NoError(t, err, "failed to create account")
 
 	body := map[string]string{
-		"login_name": "login-user@example.com",
-		"password":   "secure-password",
+		"login_name":     "login-user@example.com",
+		"login_password": "secure-password",
 	}
 	jsonBody, _ := json.Marshal(body)
 

@@ -1,6 +1,8 @@
 package nats
 
 import (
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -321,15 +323,16 @@ func TestCheckAndCreateRunningRecord_CompletedRecord(t *testing.T) {
 	}
 	assert.NoError(t, db.Create(completedRecord).Error)
 
-	// Should create a new running record since the existing one is completed
+	// Should return false since the message-agent pair was already processed.
 	created, err := c.checkAndCreateRunningRecord("g1", "m1", "a1", "trace-1")
 	assert.NoError(t, err)
-	assert.True(t, created)
+	assert.False(t, created)
 
-	// Verify two records exist (completed + running)
+	// Verify only the completed record exists.
 	var records []models.AgentMessageProcessing
 	assert.NoError(t, db.Where("group_id = ? AND message_id = ? AND agent_id = ?", "g1", "m1", "a1").Find(&records).Error)
-	assert.Len(t, records, 2)
+	assert.Len(t, records, 1)
+	assert.Equal(t, models.ProcessingStatusCompleted, records[0].Status)
 }
 
 func TestCheckAndCreateRunningRecord_DifferentAgentRunning(t *testing.T) {
@@ -357,18 +360,20 @@ func TestCheckAndCreateRunningRecord_DifferentAgentRunning(t *testing.T) {
 }
 
 func TestCheckAndCreateRunningRecord_Concurrent(t *testing.T) {
-	// Use shared-cache in-memory SQLite for concurrent test.
-	// We limit to a single connection since SQLite in-memory with shared cache
-	// still requires connection sharing for concurrent access to work correctly.
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	// Use a unique file-backed SQLite database per test run so that state from
+	// one execution (e.g. under -count=N) cannot leak into the next. WAL mode
+	// and a busy timeout keep concurrent goroutines stable, while limiting the
+	// pool to a single connection serializes access so the transaction's
+	// atomicity guarantees that exactly one goroutine creates the record.
+	tmpFile := filepath.Join(t.TempDir(), "acs-duplicate-concurrent-test.db")
+	db, err := gorm.Open(sqlite.Open(tmpFile+"?_journal_mode=WAL&_busy_timeout=5000"), &gorm.Config{})
 	if err != nil {
-		t.Fatalf("failed to open shared in-memory db: %v", err)
+		t.Fatalf("failed to open file-backed db: %v", err)
 	}
 	if err := db.AutoMigrate(&models.AgentMessageProcessing{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
 
-	// Force single connection to ensure all goroutines use the same SQLite connection
 	sqlDB, err := db.DB()
 	if err != nil {
 		t.Fatalf("failed to get sql.DB: %v", err)
@@ -380,10 +385,17 @@ func TestCheckAndCreateRunningRecord_Concurrent(t *testing.T) {
 
 	const numGoroutines = 10
 	results := make(chan bool, numGoroutines)
+	var startWg sync.WaitGroup
+	startWg.Add(numGoroutines)
+	var doneWg sync.WaitGroup
+	doneWg.Add(numGoroutines)
 
 	// Launch multiple goroutines trying to create the same running record
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
+			defer doneWg.Done()
+			startWg.Done()
+			startWg.Wait()
 			created, err := c.checkAndCreateRunningRecord("g1", "m1", "a1", "trace-1")
 			if err != nil {
 				results <- false
@@ -392,11 +404,13 @@ func TestCheckAndCreateRunningRecord_Concurrent(t *testing.T) {
 			results <- created
 		}()
 	}
+	doneWg.Wait()
+	close(results)
 
 	// Collect results
 	var successCount int
-	for i := 0; i < numGoroutines; i++ {
-		if <-results {
+	for created := range results {
+		if created {
 			successCount++
 		}
 	}

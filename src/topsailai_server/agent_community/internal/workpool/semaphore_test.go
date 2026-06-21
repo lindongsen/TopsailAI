@@ -463,8 +463,8 @@ func TestPool_AcquireWithTimeout_SuccessAndTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("expected DeadlineExceeded, got %v", err)
+	if !errors.Is(err, ErrPoolLimitReached) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected ErrPoolLimitReached wrapping DeadlineExceeded, got %v", err)
 	}
 
 	pool.Release("user1", "group1", "")
@@ -499,8 +499,8 @@ func TestPool_ZeroCapacities(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error with zero capacity")
 	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("expected DeadlineExceeded, got %v", err)
+	if !errors.Is(err, ErrPoolLimitReached) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected ErrPoolLimitReached wrapping DeadlineExceeded, got %v", err)
 	}
 }
 
@@ -538,4 +538,67 @@ func TestPool_GetStats_NoDataRace(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+// TestPool_TryAcquire_SuccessAndFailure verifies the non-blocking TryAcquire path.
+func TestPool_TryAcquire_SuccessAndFailure(t *testing.T) {
+	pool := NewPool(1, 1, 1)
+
+	// First acquire should succeed.
+	if err := pool.TryAcquire("user1", "group1", "trace-1"); err != nil {
+		t.Fatalf("expected successful try acquire, got %v", err)
+	}
+
+	stats := pool.GetStats()
+	if stats.GlobalAvailable != 0 {
+		t.Errorf("global available = %d, want 0", stats.GlobalAvailable)
+	}
+
+	// Second acquire should fail without blocking.
+	err := pool.TryAcquire("user2", "group2", "trace-2")
+	if err == nil {
+		t.Fatal("expected ErrPoolLimitReached")
+	}
+	if !errors.Is(err, ErrPoolLimitReached) {
+		t.Errorf("expected ErrPoolLimitReached, got %v", err)
+	}
+
+	pool.Release("user1", "group1", "trace-1")
+
+	// After release, acquire should succeed again.
+	if err := pool.TryAcquire("user2", "group2", "trace-3"); err != nil {
+		t.Fatalf("expected successful try acquire after release, got %v", err)
+	}
+	pool.Release("user2", "group2", "trace-3")
+}
+
+// TestPool_TryAcquire_PartialFailureRollback verifies that a partial TryAcquire
+// failure releases any slots that were already acquired.
+func TestPool_TryAcquire_PartialFailureRollback(t *testing.T) {
+	pool := NewPool(2, 2, 1)
+
+	// Exhaust the per-group semaphore for "group1".
+	groupSem := pool.getOrCreateGroupSemaphore("group1")
+	if err := groupSem.Acquire(context.Background()); err != nil {
+		t.Fatalf("failed to acquire group semaphore: %v", err)
+	}
+	defer groupSem.Release()
+
+	// TryAcquire should acquire global and user slots, then fail on group and
+	// roll back the previously acquired slots.
+	err := pool.TryAcquire("user1", "group1", "trace-1")
+	if err == nil {
+		t.Fatal("expected ErrPoolLimitReached due to exhausted group semaphore")
+	}
+	if !errors.Is(err, ErrPoolLimitReached) {
+		t.Errorf("expected ErrPoolLimitReached, got %v", err)
+	}
+
+	stats := pool.GetStats()
+	if stats.GlobalAvailable != 2 {
+		t.Errorf("global available = %d, want 2 (rollback failed)", stats.GlobalAvailable)
+	}
+	if stats.PerUserAvailable["user1"] != 2 {
+		t.Errorf("user1 available = %d, want 2 (rollback failed)", stats.PerUserAvailable["user1"])
+	}
 }

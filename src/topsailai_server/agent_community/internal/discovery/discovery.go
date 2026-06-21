@@ -136,13 +136,24 @@ func (d *Discovery) Deregister() error {
 
 // SelfInfo returns the local service's registration info.
 func (d *Discovery) SelfInfo() ServiceInfo {
+	if d == nil {
+		return ServiceInfo{}
+	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.self
 }
 
+// Enabled reports whether service discovery is active.
+func (d *Discovery) Enabled() bool {
+	return d != nil
+}
+
 // Discover fetches all currently registered services from NATS KV.
 func (d *Discovery) Discover() ([]ServiceInfo, error) {
+	if d == nil {
+		return nil, fmt.Errorf("discovery not initialized")
+	}
 	if d.kv == nil {
 		return nil, fmt.Errorf("kv store not initialized")
 	}
@@ -176,6 +187,9 @@ func (d *Discovery) Discover() ([]ServiceInfo, error) {
 
 // IsLeader returns true if the local service has the smallest ID among all registered services.
 func (d *Discovery) IsLeader() (bool, error) {
+	if d == nil {
+		return false, fmt.Errorf("discovery not initialized")
+	}
 	services, err := d.Discover()
 	if err != nil {
 		return false, err
@@ -199,6 +213,9 @@ func (d *Discovery) IsLeader() (bool, error) {
 
 // LeaderInfo returns the ServiceInfo of the current leader, or nil if no services are registered.
 func (d *Discovery) LeaderInfo() (*ServiceInfo, error) {
+	if d == nil {
+		return nil, fmt.Errorf("discovery not initialized")
+	}
 	services, err := d.Discover()
 	if err != nil {
 		return nil, err

@@ -52,6 +52,7 @@ type NATSConfig struct {
 	PendingMessageNoAck              bool   `mapstructure:"pending_message_no_ack"`
 	AckWaitSeconds                   int    `mapstructure:"ack_wait_seconds"`
 	MaxAckPending                    int    `mapstructure:"max_ack_pending"`
+	MaxDeliver                       int    `mapstructure:"max_deliver"`
 }
 
 // AgentConfig holds manager-agent and trigger settings.
@@ -83,9 +84,9 @@ type AgentWorkPoolConfig struct {
 	PerNode          int           `mapstructure:"per_node"`
 	PerUser          int           `mapstructure:"per_user"`
 	PerGroup         int           `mapstructure:"per_group"`
+	AcquireTimeout   time.Duration `mapstructure:"acquire_timeout"`
 	StatsLogInterval time.Duration `mapstructure:"stats_log_interval"`
 }
-
 // LogConfig holds logging settings.
 type LogConfig struct {
 	Output     string `mapstructure:"output"`
@@ -146,6 +147,13 @@ func Load() (*Config, error) {
 	_ = v.BindEnv("database.name", "ACS_DATABASE_NAME")
 	_ = v.BindEnv("database.sslmode", "ACS_DATABASE_SSLMODE")
 	_ = v.BindEnv("nats.servers", "ACS_NATS_SERVERS")
+	_ = v.BindEnv("nats.stream_group", "ACS_NATS_STREAM_GROUP")
+	_ = v.BindEnv("nats.subject_group_pending_message_prefix", "ACS_NATS_SUBJECT_GROUP_PENDING_MESSAGE_PREFIX")
+	_ = v.BindEnv("nats.subject_group_message_prefix", "ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX")
+	_ = v.BindEnv("nats.pending_message_no_ack", "ACS_NATS_PENDING_MESSAGE_NO_ACK")
+	_ = v.BindEnv("nats.ack_wait_seconds", "ACS_NATS_ACK_WAIT_SECONDS")
+	_ = v.BindEnv("nats.max_ack_pending", "ACS_NATS_MAX_ACK_PENDING")
+	_ = v.BindEnv("nats.max_deliver", "ACS_NATS_MAX_DELIVER")
 	// Check if database.name was explicitly set before applying defaults.
 	nameExplicitlySet := v.IsSet("database.name")
 
@@ -171,6 +179,7 @@ func Load() (*Config, error) {
 	v.SetDefault("nats.pending_message_no_ack", false)
 	v.SetDefault("nats.ack_wait_seconds", 3600)
 	v.SetDefault("nats.max_ack_pending", 10)
+	v.SetDefault("nats.max_deliver", 0)
 	// Agent defaults
 	v.SetDefault("agent.auto_trigger_timeout", "10m")
 	v.SetDefault("agent.agent_prompt", "")
@@ -190,8 +199,6 @@ func Load() (*Config, error) {
 	v.SetDefault("agent.manager_agent.timeout_chat", "600s")
 	v.SetDefault("agent.manager_agent.timeout_check_health", "5s")
 	v.SetDefault("agent.manager_agent.timeout_check_status", "5s")
-
-	// Bind manager-agent settings to the documented ACS_GROUP_MANAGER_AGENT_* env vars.
 	_ = v.BindEnv("agent.manager_agent.member_id", "ACS_GROUP_MANAGER_AGENT_MEMBER_ID")
 	_ = v.BindEnv("agent.manager_agent.member_name", "ACS_GROUP_MANAGER_AGENT_MEMBER_NAME")
 	_ = v.BindEnv("agent.manager_agent.member_description", "ACS_GROUP_MANAGER_AGENT_MEMBER_DESCRIPTION")
@@ -210,8 +217,12 @@ func Load() (*Config, error) {
 	v.SetDefault("agent_work_pool.per_node", 10)
 	v.SetDefault("agent_work_pool.per_user", 5)
 	v.SetDefault("agent_work_pool.per_group", 5)
+	v.SetDefault("agent_work_pool.acquire_timeout", "30s")
 	v.SetDefault("agent_work_pool.stats_log_interval", "30s")
-
+	_ = v.BindEnv("agent_work_pool.per_node", "ACS_AGENT_WORK_POOL_PER_NODE")
+	_ = v.BindEnv("agent_work_pool.per_user", "ACS_AGENT_WORK_POOL_PER_USER")
+	_ = v.BindEnv("agent_work_pool.per_group", "ACS_AGENT_WORK_POOL_PER_GROUP")
+	_ = v.BindEnv("agent_work_pool.acquire_timeout", "ACS_AGENT_WORK_POOL_ACQUIRE_TIMEOUT")
 	// Log defaults
 	v.SetDefault("log.output", "stdout")
 	v.SetDefault("log.level", "info")

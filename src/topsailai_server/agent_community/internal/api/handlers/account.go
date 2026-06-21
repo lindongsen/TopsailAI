@@ -60,10 +60,9 @@ type ChangePasswordRequest struct {
 
 // LoginRequest represents the request body for password login.
 type LoginRequest struct {
-	LoginName string `json:"login_name" binding:"required"`
-	Password  string `json:"password" binding:"required"`
+	LoginName     string `json:"login_name" binding:"required"`
+	LoginPassword string `json:"login_password" binding:"required"`
 }
-
 // AccountResponse represents an account in API responses.
 type AccountResponse struct {
 	AccountID          string `json:"account_id"`
@@ -101,7 +100,11 @@ type ListAccountsResponse struct {
 // Admin can create accounts with any role. Manager can only create user accounts.
 func (h *AccountHandler) CreateAccount(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
-	ac, _ := middleware.GetAuthContext(c)
+	ac, ok := middleware.GetAuthContext(c)
+	if !ok || ac.Account == nil || !ac.Account.IsActive() {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required", "trace_id": traceID})
+		return
+	}
 
 	var req CreateAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -132,11 +135,20 @@ func (h *AccountHandler) CreateAccount(c *gin.Context) {
 		AuthProvider:       req.AuthProvider,
 		AvatarURL:          req.AvatarURL,
 		CreatorID:          ac.Account.AccountID,
+		CallerRole:         ac.Account.Role,
 	})
 	if err != nil {
 		h.log.Error("api", traceID, "failed to create account", "error", err.Error())
 		if err == services.ErrDuplicateLoginName {
 			c.JSON(http.StatusConflict, gin.H{"error": "login name already exists", "trace_id": traceID})
+			return
+		}
+		if err == services.ErrRoleNotAllowed {
+			c.JSON(http.StatusForbidden, gin.H{"error": "manager can only create user accounts", "trace_id": traceID})
+			return
+		}
+		if err == services.ErrInvalidRole {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid account role", "trace_id": traceID})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create account", "trace_id": traceID})
@@ -149,6 +161,8 @@ func (h *AccountHandler) CreateAccount(c *gin.Context) {
 
 // ListAccounts handles GET /api/v1/accounts.
 // Admin sees all accounts. Manager sees user accounts only. User sees self.
+// Query parameters role, status, and external_id are honored when the caller
+// is permitted to use them.
 func (h *AccountHandler) ListAccounts(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	ac, _ := middleware.GetAuthContext(c)
@@ -162,7 +176,22 @@ func (h *AccountHandler) ListAccounts(c *gin.Context) {
 		limit = 1000
 	}
 
-	accounts, total, err := h.accountSvc.ListAccounts(c.Request.Context(), offset, limit)
+	filter := &services.ListAccountsFilter{
+		CallerRole: ac.Account.Role,
+		CallerID:   ac.Account.AccountID,
+	}
+
+	if role := c.Query("role"); role != "" {
+		filter.Role = parseAccountRole(role)
+	}
+	if status := c.Query("status"); status != "" {
+		filter.Status = models.AccountStatus(strings.ToLower(status))
+	}
+	if externalID := c.Query("external_id"); externalID != "" {
+		filter.ExternalID = externalID
+	}
+
+	accounts, total, err := h.accountSvc.ListAccounts(c.Request.Context(), offset, limit, filter)
 	if err != nil {
 		h.log.Error("api", traceID, "failed to list accounts", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list accounts", "trace_id": traceID})
@@ -177,12 +206,7 @@ func (h *AccountHandler) ListAccounts(c *gin.Context) {
 		items = append(items, toAccountResponse(&accounts[i]))
 	}
 
-	c.JSON(http.StatusOK, ListAccountsResponse{
-		Items:  items,
-		Total:  total,
-		Offset: offset,
-		Limit:  limit,
-	})
+	writeListResponse(c, http.StatusOK, items, total, offset, limit, traceID)
 }
 
 // GetAccount handles GET /api/v1/accounts/:account_id.
@@ -342,7 +366,7 @@ func (h *AccountHandler) Login(c *gin.Context) {
 		return
 	}
 
-	account, sessionKey, expiry, err := h.accountSvc.LoginByPassword(c.Request.Context(), req.LoginName, req.Password)
+	account, sessionKey, expiry, err := h.accountSvc.LoginByPassword(c.Request.Context(), req.LoginName, req.LoginPassword)
 	if err != nil {
 		h.log.Warn("api", traceID, "login failed", "error", err.Error())
 		if err == services.ErrAccountNotFound || err == services.ErrPasswordNotSet {
@@ -354,13 +378,12 @@ func (h *AccountHandler) Login(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "login succeeded", "account_id", account.AccountID)
-	c.JSON(http.StatusOK, LoginResponse{
+	writeDataResponse(c, http.StatusOK, LoginResponse{
 		AccountID:   account.AccountID,
 		SessionKey:  sessionKey,
 		ExpiresAtMs: expiry,
-	})
+	}, traceID)
 }
-
 // CreateSession handles POST /api/v1/accounts/:account_id/session.
 // Manager can only create sessions for user accounts.
 func (h *AccountHandler) CreateSession(c *gin.Context) {
@@ -401,11 +424,11 @@ func (h *AccountHandler) CreateSession(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "session created", "account_id", accountID)
-	c.JSON(http.StatusOK, LoginResponse{
+	writeDataResponse(c, http.StatusOK, LoginResponse{
 		AccountID:   accountID,
 		SessionKey:  sessionKey,
 		ExpiresAtMs: expiry,
-	})
+	}, traceID)
 }
 
 // GetMe handles GET /api/v1/accounts/me.
@@ -419,7 +442,6 @@ func (h *AccountHandler) GetMe(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get account", "trace_id": traceID})
 		return
 	}
-
 	c.JSON(http.StatusOK, toAccountResponse(account))
 }
 
@@ -427,6 +449,10 @@ func (h *AccountHandler) GetMe(c *gin.Context) {
 func (h *AccountHandler) canViewAccount(ac middleware.AuthContext, account *models.Account) bool {
 	if ac.Account.Role == models.AccountRoleAdmin {
 		return true
+	}
+	// Non-admin callers must never see soft-deleted accounts.
+	if account.Status == models.AccountStatusDeleted {
+		return false
 	}
 	if ac.Account.AccountID == account.AccountID {
 		return true

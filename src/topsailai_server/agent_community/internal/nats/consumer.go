@@ -4,7 +4,10 @@ package nats
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,6 +55,19 @@ type AgentExecutor interface {
 type AccountService interface {
 	EnsureLoginSession(ctx context.Context, accountID string) (string, int64, error)
 }
+
+// processAgentTargetFunc processes a single agent target for a pending message.
+// The signature is extracted so the concurrent dispatch logic can be unit-tested
+// with a stub implementation without invoking real agent/DB operations.
+type processAgentTargetFunc func(
+	ctx context.Context,
+	group *models.Group,
+	members []models.GroupMember,
+	pendingMsg *models.GroupMessage,
+	triggerInfo trigger.TriggerInfo,
+	target trigger.AgentTarget,
+	traceID string,
+) error
 
 // Consumer processes pending messages from NATS and dispatches them to agents.
 type Consumer struct {
@@ -170,7 +186,9 @@ func (c *Consumer) Handler() nats.MsgHandler {
 
 		if err := c.processMessage(msg, traceID); err != nil {
 			logger.ErrorM(consumerModule, traceID, "failed to process pending message", "error", err)
-			// Negative ack to trigger redelivery
+			// Negative ack to trigger redelivery. For pool-limit backpressure,
+			// this lets JetStream redeliver after AckWait rather than treating
+			// saturation as a processing failure.
 			msg.Nak()
 			return
 		}
@@ -179,6 +197,10 @@ func (c *Consumer) Handler() nats.MsgHandler {
 }
 
 // processMessage processes a single pending message from NATS.
+// It parses the payload, validates the group, resolves agent targets, and
+// dispatches each target concurrently. The function waits for all targets to
+// complete before returning so that NATS acknowledgements (in reliable mode)
+// accurately reflect end-to-end processing.
 func (c *Consumer) processMessage(msg *nats.Msg, traceID string) error {
 	ctx := context.Background()
 	start := time.Now()
@@ -196,13 +218,6 @@ func (c *Consumer) processMessage(msg *nats.Msg, traceID string) error {
 		"group_id", groupID,
 		"message_id", messageID,
 	)
-
-	// Acquire semaphore for concurrency control
-	userID := payload.SenderID
-	if err := c.pool.AcquireWithTimeout(30*time.Second, userID, groupID, traceID); err != nil {
-		return fmt.Errorf("failed to acquire work pool slot: %w", err)
-	}
-	defer c.pool.Release(userID, groupID, traceID)
 
 	// Fetch group
 	var group models.Group
@@ -241,16 +256,32 @@ func (c *Consumer) processMessage(msg *nats.Msg, traceID string) error {
 		return nil
 	}
 
-	// Process each target agent
-	for _, target := range targets {
-		if err := c.processAgentTarget(ctx, &group, members, &payload.GroupMessage, triggerInfo, target, traceID); err != nil {
-			logger.ErrorM(consumerModule, traceID, "failed to process agent target",
-				"agent_id", target.AgentID,
-				"message_id", messageID,
-				"error", err,
-			)
-			// Try to send system error message
-			c.sendSystemError(ctx, &group, members, &payload.GroupMessage, target.AgentID, err.Error(), traceID)
+	// Dispatch each target agent concurrently. Multiple worker-agent mentions
+	// without a manager-agent must be invoked in parallel per the ACS spec.
+	//
+	// AgentWorkPool limit semantics: each goroutine calls processAgentTarget,
+	// which acquires one slot from the per-node, per-user, and per-group
+	// semaphores for that specific agent invocation. Therefore a single pending
+	// message with N targets may consume up to N per-user slots and N per-group
+	// slots while the targets are running. This keeps the documented concurrency
+	// limits enforced per active agent call.
+	//
+	// Shared dependency safety:
+	//   - c.contextBuilder: stateless, only reads inputs; safe for concurrent use.
+	//   - c.publisher: interface implementations must be goroutine-safe; the
+	//     production NATS publisher uses local message copies and is safe.
+	//   - c.executor: interface implementations must be goroutine-safe; the
+	//     production executor runs external commands and is safe to call from
+	//     multiple goroutines.
+	//   - c.db: *gorm.DB is documented as safe for concurrent use by multiple
+	//     goroutines (connection pooling); each call is independent.
+	//   - group, pendingMsg, triggerInfo, and the members slice header are only
+	//     read by goroutines. Each goroutine owns a local copy of its target
+	//     agent member, so no two goroutines write to the same memory.
+	if err := c.dispatchTargets(ctx, &group, members, &payload.GroupMessage, triggerInfo, targets, traceID, c.processAgentTarget); err != nil {
+		logger.ErrorM(consumerModule, traceID, "failed to dispatch agent targets", "error", err)
+		if errors.Is(err, workpool.ErrPoolLimitReached) {
+			return err
 		}
 	}
 
@@ -261,6 +292,58 @@ func (c *Consumer) processMessage(msg *nats.Msg, traceID string) error {
 		"total_duration_ms", totalMs,
 	)
 
+	return nil
+}
+
+// dispatchTargets runs each agent target in its own goroutine and waits for all
+// to complete. The processFunc parameter allows tests to substitute a stub and
+// prove that targets are dispatched concurrently without relying on real agent
+// or database operations.
+func (c *Consumer) dispatchTargets(
+	ctx context.Context,
+	group *models.Group,
+	members []models.GroupMember,
+	pendingMsg *models.GroupMessage,
+	triggerInfo trigger.TriggerInfo,
+	targets []trigger.AgentTarget,
+	traceID string,
+	processFunc processAgentTargetFunc,
+) error {
+	if len(targets) == 0 {
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	var errMu sync.Mutex
+	var errs []error
+	for _, target := range targets {
+		wg.Add(1)
+		go func(t trigger.AgentTarget) {
+			defer wg.Done()
+			if err := processFunc(ctx, group, members, pendingMsg, triggerInfo, t, traceID); err != nil {
+				logger.ErrorM(consumerModule, traceID, "failed to process agent target",
+					"agent_id", t.AgentID,
+					"message_id", pendingMsg.MessageID,
+					"error", err,
+				)
+				errMu.Lock()
+				errs = append(errs, err)
+				errMu.Unlock()
+				// Pool-limit errors are transient backpressure signals; rely on
+				// NATS JetStream redelivery instead of recording a system error.
+				if errors.Is(err, workpool.ErrPoolLimitReached) {
+					return
+				}
+				// Try to send system error message for genuine processing failures.
+				c.sendSystemError(ctx, group, members, pendingMsg, t.AgentID, err.Error(), traceID)
+			}
+		}(target)
+	}
+	wg.Wait()
+
+	if len(errs) > 0 {
+		return fmt.Errorf("%d agent target(s) failed: %v", len(errs), errs[0])
+	}
 	return nil
 }
 
@@ -279,61 +362,65 @@ func (c *Consumer) isAgentAlreadyRunning(groupID, messageID, agentID, traceID st
 	return true, nil
 }
 
-// checkAndCreateRunningRecord atomically checks if an agent is already running for the given message
-// and creates a running record if not. This prevents race conditions between multiple nodes.
+// isDuplicateKeyError returns true if err indicates a duplicate-key/unique
+// constraint violation. It checks GORM's generic error first, then falls back
+// to driver-specific error text for SQLite and PostgreSQL.
+func isDuplicateKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique constraint failed") || // SQLite
+		strings.Contains(msg, "duplicate key value") || // PostgreSQL
+		strings.Contains(msg, "duplicate entry") // MySQL
+}
+
+// checkAndCreateRunningRecord atomically creates a running record for the
+// given message-agent pair. The unique index on
+// (group_id, message_id, agent_id) guarantees that only one record can exist,
+// so a plain INSERT is sufficient to detect duplicates across concurrent
+// consumers.
+//
 // Returns (true, nil) if the record was created successfully (agent was not running).
-// Returns (false, nil) if the agent is already running (duplicate detected).
+// Returns (false, nil) if the agent is already processing this message (duplicate detected).
 // Returns (false, err) on database error.
 func (c *Consumer) checkAndCreateRunningRecord(groupID, messageID, agentID, traceID string) (bool, error) {
-	var created bool
-
-	err := c.db.Transaction(func(tx *gorm.DB) error {
-		// Check if a running record already exists for this agent and message
-		var existing models.AgentMessageProcessing
-		if err := tx.Where("group_id = ? AND message_id = ? AND agent_id = ? AND status = ?",
-			groupID, messageID, agentID, models.ProcessingStatusRunning).
-			First(&existing).Error; err != nil {
-			if err != gorm.ErrRecordNotFound {
-				return fmt.Errorf("failed to check running status: %w", err)
-			}
-			// Record not found, proceed to create
-		} else {
-			// Record already exists, agent is already running
-			created = false
-			return nil
-		}
-
-		// Create running record
-		record := &models.AgentMessageProcessing{
-			GroupID:   groupID,
-			MessageID: messageID,
-			AgentID:   agentID,
-			Status:    models.ProcessingStatusRunning,
-		}
-		if err := tx.Create(record).Error; err != nil {
-			return fmt.Errorf("failed to create running record: %w", err)
-		}
-
-		created = true
-		return nil
-	})
-
-	if err != nil {
-		return false, err
+	record := &models.AgentMessageProcessing{
+		GroupID:   groupID,
+		MessageID: messageID,
+		AgentID:   agentID,
+		Status:    models.ProcessingStatusRunning,
 	}
 
-	if created {
-		logger.InfoM(consumerModule, traceID, "running record created",
-			"group_id", groupID,
-			"message_id", messageID,
-			"agent_id", agentID,
-		)
+	if err := c.db.Create(record).Error; err != nil {
+		if isDuplicateKeyError(err) {
+			logger.DebugM(consumerModule, traceID, "running record already exists, skipping duplicate",
+				"group_id", groupID,
+				"message_id", messageID,
+				"agent_id", agentID,
+			)
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to create running record: %w", err)
 	}
 
-	return created, nil
+	logger.InfoM(consumerModule, traceID, "running record created",
+		"group_id", groupID,
+		"message_id", messageID,
+		"agent_id", agentID,
+	)
+	return true, nil
 }
 
 // processAgentTarget processes a single agent target.
+// It acquires one slot from each AgentWorkPool limit (per-node, per-user,
+// per-group) for this specific agent invocation, executes the agent, and
+// releases the slots when finished. This keeps the documented concurrency
+// limits enforced per active agent call even when multiple targets run in
+// parallel for the same pending message.
 func (c *Consumer) processAgentTarget(
 	ctx context.Context,
 	group *models.Group,
@@ -343,16 +430,34 @@ func (c *Consumer) processAgentTarget(
 	target trigger.AgentTarget,
 	traceID string,
 ) error {
-	// Find target agent member
-	var agentMember *models.GroupMember
-	for i := range members {
-		if members[i].MemberID == target.AgentID {
-			agentMember = &members[i]
+	if c.pool != nil {
+		// Use a non-blocking try-acquire so that when the pool is saturated the
+		// message is negatively acknowledged immediately and JetStream can redeliver
+		// it once a slot is free. A blocking acquire with a fixed timeout races
+		// against long-running agent chat commands and produces spurious timeouts.
+		if err := c.pool.TryAcquire(pendingMsg.SenderID, group.GroupID, traceID); err != nil {
+			if errors.Is(err, workpool.ErrPoolLimitReached) {
+				return err
+			}
+			return fmt.Errorf("failed to acquire work pool slot: %w", err)
+		}
+		defer c.pool.Release(pendingMsg.SenderID, group.GroupID, traceID)
+	}
+
+	// Find target agent member. Make a local value copy so each goroutine owns
+	// its own member struct; this avoids data races on the shared members slice
+	// backing array when multiple targets run concurrently.
+	var agentMember models.GroupMember
+	found := false
+	for _, m := range members {
+		if m.MemberID == target.AgentID {
+			agentMember = m
+			found = true
 			break
 		}
 	}
 
-	if agentMember == nil {
+	if !found {
 		return fmt.Errorf("agent member not found: %s", target.AgentID)
 	}
 
@@ -413,7 +518,7 @@ func (c *Consumer) processAgentTarget(
 		statusSet = true
 		// Sync in-memory status so published events reflect the new DB state.
 		agentMember.MemberStatus = models.MemberStatusProcessing
-		if err := c.publisher.PublishGroupMemberModify(agentMember); err != nil {
+		if err := c.publisher.PublishGroupMemberModify(&agentMember); err != nil {
 			logger.WarnM(consumerModule, traceID, "failed to publish member status processing event",
 				"agent_id", agentMember.MemberID,
 				"error", err,
@@ -435,7 +540,7 @@ func (c *Consumer) processAgentTarget(
 		} else {
 			// Sync in-memory status so published events reflect the new DB state.
 			agentMember.MemberStatus = models.MemberStatusIdle
-			if err := c.publisher.PublishGroupMemberModify(agentMember); err != nil {
+			if err := c.publisher.PublishGroupMemberModify(&agentMember); err != nil {
 				logger.WarnM(consumerModule, traceID, "failed to publish member status idle event",
 					"agent_id", agentMember.MemberID,
 					"error", err,
@@ -460,7 +565,7 @@ func (c *Consumer) processAgentTarget(
 
 	// Build context messages
 	contextText, err := c.contextBuilder.BuildContext(
-		group, members, agentMember, allMessages,
+		group, members, &agentMember, allMessages,
 		agentMember.LastReadMessageID, pendingMsg,
 	)
 	if err != nil {
@@ -529,7 +634,7 @@ func (c *Consumer) processAgentTarget(
 	responseID := uuid.New().String()
 	responseMsg := c.contextBuilder.BuildAgentResponseMessage(
 		group.GroupID,
-		agentMember,
+		&agentMember,
 		chatResult.Stdout,
 		pendingMsg.MessageID,
 		responseID,
@@ -543,7 +648,7 @@ func (c *Consumer) processAgentTarget(
 	// Update agent's last_read_message_id
 	agentMember.LastReadMessageID = pendingMsg.MessageID
 	agentMember.UpdateAtMs = time.Now().UnixMilli()
-	if err := c.db.Save(agentMember).Error; err != nil {
+	if err := c.db.Save(&agentMember).Error; err != nil {
 		logger.ErrorM(consumerModule, traceID, "failed to update last_read_message_id",
 			"agent_id", agentMember.MemberID,
 			"error", err,
@@ -617,18 +722,19 @@ func (c *Consumer) sendSystemError(
 			responseID,
 		)
 	}
-
 	// Save error message to database
-	if err := c.db.Create(errorMsg).Error; err != nil {
-		logger.ErrorM(consumerModule, traceID, "failed to save system error message", "error", err)
-		return
+	if c.db != nil {
+		if err := c.db.Create(errorMsg).Error; err != nil {
+			logger.ErrorM(consumerModule, traceID, "failed to save system error message", "error", err)
+			return
+		}
 	}
-
 	// Publish error message to NATS
-	if err := c.publisher.PublishSystemError(errorMsg); err != nil {
-		logger.ErrorM(consumerModule, traceID, "failed to publish system error message", "error", err)
+	if c.publisher != nil {
+		if err := c.publisher.PublishSystemError(errorMsg); err != nil {
+			logger.ErrorM(consumerModule, traceID, "failed to publish system error message", "error", err)
+		}
 	}
-
 	// Record processing status as failed
 	c.recordProcessingStatus(group.GroupID, pendingMsg.MessageID, failedAgentID, false, errorText, traceID)
 
@@ -688,10 +794,16 @@ func (c *Consumer) createRunningRecord(groupID, messageID, agentID, traceID stri
 
 // recordProcessingStatus records the agent message processing status.
 func (c *Consumer) recordProcessingStatus(groupID, messageID, agentID string, success bool, errorMsg string, traceID string) {
+	if c.db == nil {
+		return
+	}
+
 	status := models.ProcessingStatusCompleted
 	if !success {
 		status = models.ProcessingStatusFailed
 	}
+
+	now := time.Now().UnixMilli()
 
 	// Try to update existing running record first
 	result := c.db.Model(&models.AgentMessageProcessing{}).
@@ -700,38 +812,37 @@ func (c *Consumer) recordProcessingStatus(groupID, messageID, agentID string, su
 		Updates(map[string]interface{}{
 			"status":          status,
 			"error_message":   errorMsg,
-			"processed_at_ms": time.Now().UnixMilli(),
-			"update_at_ms":    time.Now().UnixMilli(),
+			"processed_at_ms": now,
+			"update_at_ms":    now,
 		})
 
 	if result.Error != nil {
 		logger.ErrorM(consumerModule, traceID, "failed to update running record to final status", "error", result.Error)
-		// Fallback: create a new record
-		record := &models.AgentMessageProcessing{
-			GroupID:       groupID,
-			MessageID:     messageID,
-			AgentID:       agentID,
-			Status:        status,
-			ErrorMessage:  errorMsg,
-			ProcessedAtMs: time.Now().UnixMilli(),
-		}
-		if err := c.db.Create(record).Error; err != nil {
-			logger.ErrorM(consumerModule, traceID, "failed to record processing status", "error", err)
-		}
 		return
 	}
 
 	if result.RowsAffected == 0 {
-		// No running record found, create a new one
+		// No running record found, create a new one. This can happen when a
+		// previous consumer crashed before recording the final status. The
+		// unique index prevents duplicate records if another goroutine already
+		// created a terminal record for this message-agent pair.
 		record := &models.AgentMessageProcessing{
 			GroupID:       groupID,
 			MessageID:     messageID,
 			AgentID:       agentID,
 			Status:        status,
 			ErrorMessage:  errorMsg,
-			ProcessedAtMs: time.Now().UnixMilli(),
+			ProcessedAtMs: now,
 		}
 		if err := c.db.Create(record).Error; err != nil {
+			if isDuplicateKeyError(err) {
+				logger.DebugM(consumerModule, traceID, "terminal processing record already exists",
+					"group_id", groupID,
+					"message_id", messageID,
+					"agent_id", agentID,
+				)
+				return
+			}
 			logger.ErrorM(consumerModule, traceID, "failed to record processing status", "error", err)
 		}
 	}

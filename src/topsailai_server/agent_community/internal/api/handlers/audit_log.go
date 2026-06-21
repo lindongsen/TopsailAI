@@ -101,12 +101,7 @@ func (h *AuditLogHandler) ListAuditLogs(c *gin.Context) {
 		items = append(items, toAuditLogResponse(&logs[i]))
 	}
 
-	c.JSON(http.StatusOK, ListAuditLogsResponse{
-		Items:  items,
-		Total:  total,
-		Offset: offset,
-		Limit:  limit,
-	})
+	writeListResponse(c, http.StatusOK, items, total, offset, limit, traceID)
 }
 
 // GetAuditLog handles GET /api/v1/audit-logs/:audit_log_id.

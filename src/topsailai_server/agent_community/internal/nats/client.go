@@ -210,7 +210,7 @@ func (c *Client) CreatePendingMessageConsumer(handler nats.MsgHandler) (*nats.Su
 
 	subOpts = append(subOpts,
 		nats.Durable(consumerName),
-		nats.MaxDeliver(3),
+		nats.MaxDeliver(c.cfg.MaxDeliver),
 	)
 
 	if c.cfg.PendingMessageNoAck {

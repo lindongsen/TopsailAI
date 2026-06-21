@@ -20,6 +20,17 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+// listGroupMembersResponseWrapper mirrors the envelope produced by writeListResponse.
+type listGroupMembersResponseWrapper struct {
+	Data struct {
+		Items  []GroupMemberResponse `json:"items"`
+		Total  int64        `json:"total"`
+		Offset int          `json:"offset"`
+		Limit  int          `json:"limit"`
+	} `json:"data"`
+	TraceID string `json:"trace_id"`
+}
+
 
 const testAdminAccountID = "acc-admin"
 const testUserAccountID = "acc-user"
@@ -534,11 +545,11 @@ func TestListGroupMembers_Success(t *testing.T) {
 	handler.ListGroupMembers(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	var resp ListGroupMembersResponse
+	var resp listGroupMembersResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, int64(1), resp.Total)
-	require.Len(t, resp.Items, 1)
-	assert.Equal(t, "user-003", resp.Items[0].MemberID)
+	assert.Equal(t, int64(1), resp.Data.Total)
+	require.Len(t, resp.Data.Items, 1)
+	assert.Equal(t, "user-003", resp.Data.Items[0].MemberID)
 }
 
 // TestListGroupMembers_InvalidSortKey verifies that an unknown sort_key returns 400.
@@ -602,11 +613,11 @@ func TestListGroupMembers_TimeRangeFilter(t *testing.T) {
 	handler.ListGroupMembers(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	var resp ListGroupMembersResponse
+	var resp listGroupMembersResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, int64(1), resp.Total)
-	require.Len(t, resp.Items, 1)
-	assert.Equal(t, "user-old", resp.Items[0].MemberID)
+	assert.Equal(t, int64(1), resp.Data.Total)
+	require.Len(t, resp.Data.Items, 1)
+	assert.Equal(t, "user-old", resp.Data.Items[0].MemberID)
 }
 
 func timeRange(start, end int64) string {
@@ -914,9 +925,9 @@ func TestGroupMemberHandler_List_AdminAnyGroup(t *testing.T) {
 	handler.ListGroupMembers(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	var resp ListGroupMembersResponse
+	var resp listGroupMembersResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, int64(1), resp.Total)
+	assert.Equal(t, int64(1), resp.Data.Total)
 }
 
 func TestGroupMemberHandler_List_UserMemberGroupOnly(t *testing.T) {

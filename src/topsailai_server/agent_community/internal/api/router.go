@@ -16,10 +16,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// discoveryProvider abstracts the discovery client so the router can be tested
+// DiscoveryProvider abstracts the discovery client so the router can be tested
 // without a live NATS server. The concrete *discovery.Discovery type satisfies
 // this interface.
-type discoveryProvider interface {
+type DiscoveryProvider interface {
+	Enabled() bool
 	Discover() ([]discovery.ServiceInfo, error)
 	IsLeader() (bool, error)
 	LeaderInfo() (*discovery.ServiceInfo, error)
@@ -32,7 +33,7 @@ type Router struct {
 }
 
 // NewRouter creates a new Gin router with all routes configured.
-func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evaluator *trigger.Evaluator, disc discoveryProvider, log *logger.Logger) *Router {
+func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evaluator *trigger.Evaluator, disc DiscoveryProvider, log *logger.Logger) *Router {
 	// Set Gin to release mode in production; use debug mode when log level is debug.
 	if cfg.Log.Level == "info" || cfg.Log.Level == "warn" || cfg.Log.Level == "error" {
 		gin.SetMode(gin.ReleaseMode)

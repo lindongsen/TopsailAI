@@ -408,10 +408,6 @@ func handleAccountCreate(args []string, state *CLIState) error {
 		}
 	}
 
-	// Managers can only create user accounts.
-	if state.accountRole == RoleManager {
-		req["role"] = RoleUser
-	}
 
 	resp, err := state.apiClient.CreateAccount(req)
 	if err != nil {
@@ -624,10 +620,14 @@ func handleAccountPassword(args []string, state *CLIState) error {
 	}
 
 	params := parseInlineArgs(args)
-	accountID := params["id"]
+	// Prefer the canonical "account-id" argument; fall back to legacy "id".
+	accountID := params["account-id"]
+	if accountID == "" {
+		accountID = params["id"]
+	}
 	if accountID == "" {
 		// Default to the current account for self-service password changes.
-		// Admins can target another account via --id.
+		// Admins can target another account via --account-id.
 		accountID = state.userID
 	}
 
@@ -707,6 +707,11 @@ func handleAPIKeyCreate(args []string, state *CLIState) error {
 	accountID := params["account-id"]
 	name := params["name"]
 	role := params["role"]
+
+	// Support direct inline argument: /api-key:create <account_id>
+	if accountID == "" && len(args) > 0 {
+		accountID = strings.TrimSpace(args[0])
+	}
 
 	if accountID == "" || name == "" {
 		prompt := NewInteractivePrompt(state.rl)
@@ -1561,7 +1566,7 @@ func handleHelp(args []string, state *CLIState) error {
 	promptPrintln("  /account:get     Get account details")
 	promptPrintln("  /account:update  Update an account")
 	promptPrintln("  /account:delete  Delete an account (admin)")
-	promptPrintln("  /account:password Change account password")
+	promptPrintln("  /account:password Change account password (use --account-id for admin targeting)")
 	promptPrintln("  /account:session Create a login session (admin/manager)")
 	promptPrintln()
 	promptPrintln("API key commands:")

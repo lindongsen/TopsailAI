@@ -22,6 +22,17 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+// listMessagesResponseWrapper mirrors the envelope produced by writeListResponse.
+type listMessagesResponseWrapper struct {
+	Data struct {
+		Items  []MessageResponse `json:"items"`
+		Total  int64        `json:"total"`
+		Offset int          `json:"offset"`
+		Limit  int          `json:"limit"`
+	} `json:"data"`
+	TraceID string `json:"trace_id"`
+}
+
 
 // setupMessageTestDB creates an in-memory SQLite database and auto-migrates models.
 func setupMessageTestDB(t *testing.T) *gorm.DB {
@@ -353,6 +364,42 @@ func TestCreateMessage_NoTriggerForAgentSender(t *testing.T) {
 	assert.Empty(t, pub.pendingCalls)
 }
 
+// TestEvaluateAndTrigger_ProcessedMsgIDBlocksTrigger verifies the handler-level
+// defense-in-depth guard: even if an evaluator returns ShouldTrigger=true, a
+// message with non-empty processed_msg_id must not publish pending messages.
+func TestEvaluateAndTrigger_ProcessedMsgIDBlocksTrigger(t *testing.T) {
+	db := setupMessageTestDB(t)
+	groupID := "group-eval-processed"
+	createTestGroup(t, db, groupID, "Eval Processed Group")
+
+	pub := &mockMessagePublisher{}
+	// Evaluator claims the message should trigger; the handler guard must override it.
+	eval := &mockMessageEvaluator{
+		result: &trigger.TriggerResult{
+			ShouldTrigger: true,
+			Trigger:       trigger.TriggerInfo{Type: trigger.TriggerTypeMention, AgentID: "agent-1"},
+			Targets:       []trigger.AgentTarget{{AgentID: "agent-1", Mode: "agent"}},
+		},
+	}
+	handler := NewMessageHandler(db, pub, eval, logger.New(logger.Config{Output: "stdout", Level: "error"}))
+
+	msg := &models.GroupMessage{
+		GroupID:        groupID,
+		MessageID:      "msg-eval-processed",
+		MessageText:    "hello @agent-1",
+		SenderID:       "user-1",
+		SenderType:     models.MemberTypeUser,
+		ProcessedMsgID: "msg-original",
+	}
+	err := db.Create(msg).Error
+	require.NoError(t, err)
+
+	c := newTestGinContext()
+	handler.evaluateAndTrigger(c, "trace-1", msg, nil)
+
+	assert.Empty(t, pub.pendingCalls)
+}
+
 // TestCreateMessage_NoTriggerForProcessedMsgID verifies processed_msg_id blocks trigger.
 func TestCreateMessage_NoTriggerForProcessedMsgID(t *testing.T) {
 	db := setupMessageTestDB(t)
@@ -504,10 +551,10 @@ func TestListMessages_UserCanListMemberGroupOnly(t *testing.T) {
 	router.ServeHTTP(w1, req1)
 	require.Equal(t, http.StatusOK, w1.Code, "body: %s", w1.Body.String())
 
-	var resp1 ListMessagesResponse
+	var resp1 listMessagesResponseWrapper
 	err := json.Unmarshal(w1.Body.Bytes(), &resp1)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), resp1.Total)
+	assert.Equal(t, int64(1), resp1.Data.Total)
 
 	// Non-member group
 	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+nonMemberGroupID+"/messages", nil)
@@ -538,14 +585,14 @@ func TestListMessages_ProcessedMsgIDFilter(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp ListMessagesResponse
+	var resp listMessagesResponseWrapper
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(1), resp.Total)
-	assert.Len(t, resp.Items, 1)
-	assert.Equal(t, agentMsg.MessageID, resp.Items[0].MessageID)
-	assert.Equal(t, originalMsg.MessageID, resp.Items[0].ProcessedMsgID)
+	assert.Equal(t, int64(1), resp.Data.Total)
+	assert.Len(t, resp.Data.Items, 1)
+	assert.Equal(t, agentMsg.MessageID, resp.Data.Items[0].MessageID)
+	assert.Equal(t, originalMsg.MessageID, resp.Data.Items[0].ProcessedMsgID)
 }
 
 // TestListMessages_TimeRangeFilter verifies create_at_ms range filtering.
@@ -573,12 +620,12 @@ func TestListMessages_TimeRangeFilter(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp ListMessagesResponse
+	var resp listMessagesResponseWrapper
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), resp.Total)
-	require.Len(t, resp.Items, 1)
-	assert.Equal(t, "msg-mid", resp.Items[0].MessageID)
+	assert.Equal(t, int64(1), resp.Data.Total)
+	require.Len(t, resp.Data.Items, 1)
+	assert.Equal(t, "msg-mid", resp.Data.Items[0].MessageID)
 }
 
 // TestListMessages_InvalidSortKey verifies 400 for an invalid sort_key.
@@ -850,12 +897,12 @@ func TestListMessagesWithoutProcessedMsgIDFilter(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp ListMessagesResponse
+	var resp listMessagesResponseWrapper
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(3), resp.Total)
-	assert.Len(t, resp.Items, 3)
+	assert.Equal(t, int64(3), resp.Data.Total)
+	assert.Len(t, resp.Data.Items, 3)
 }
 
 // TestListMessagesWithEmptyProcessedMsgID verifies that empty processed_msg_id returns all messages.
@@ -879,12 +926,12 @@ func TestListMessagesWithEmptyProcessedMsgID(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp ListMessagesResponse
+	var resp listMessagesResponseWrapper
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(2), resp.Total)
-	assert.Len(t, resp.Items, 2)
+	assert.Equal(t, int64(2), resp.Data.Total)
+	assert.Len(t, resp.Data.Items, 2)
 }
 
 // TestListMessagesResponseIncludesProcessedMsgID verifies the response includes processed_msg_id field.
@@ -908,14 +955,14 @@ func TestListMessagesResponseIncludesProcessedMsgID(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp ListMessagesResponse
+	var resp listMessagesResponseWrapper
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	require.Len(t, resp.Items, 2)
+	require.Len(t, resp.Data.Items, 2)
 
 	var foundAgentMsg bool
-	for _, item := range resp.Items {
+	for _, item := range resp.Data.Items {
 		if item.MessageID == agentMsg.MessageID {
 			foundAgentMsg = true
 			assert.Equal(t, originalMsg.MessageID, item.ProcessedMsgID)
@@ -947,12 +994,12 @@ func TestListMessagesWithNonExistentProcessedMsgID(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp ListMessagesResponse
+	var resp listMessagesResponseWrapper
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(0), resp.Total)
-	assert.Len(t, resp.Items, 0)
+	assert.Equal(t, int64(0), resp.Data.Total)
+	assert.Len(t, resp.Data.Items, 0)
 }
 
 // TestCreateMessage_DerivesSenderFromAuth verifies that the handler derives
@@ -1134,12 +1181,12 @@ func TestListMessages_PaginationClamping(t *testing.T) {
 
 			require.Equal(t, http.StatusOK, w.Code)
 
-			var resp ListMessagesResponse
+			var resp listMessagesResponseWrapper
 			err := json.Unmarshal(w.Body.Bytes(), &resp)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expectedTotal, resp.Total)
-			assert.Equal(t, tt.expectedLimit, resp.Limit)
-			assert.Equal(t, tt.expectedOffset, resp.Offset)
+			assert.Equal(t, tt.expectedTotal, resp.Data.Total)
+			assert.Equal(t, tt.expectedLimit, resp.Data.Limit)
+			assert.Equal(t, tt.expectedOffset, resp.Data.Offset)
 		})
 	}
 }

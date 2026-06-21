@@ -47,6 +47,7 @@ func getTestConfig(t *testing.T, srv *server.Server) *config.NATSConfig {
 		SubjectGroupMessagePrefix:        "acs.group.message",
 		PendingMessageNoAck:              false,
 		AckWaitSeconds:                   3600,
+		MaxDeliver:                       0,
 	}
 }
 

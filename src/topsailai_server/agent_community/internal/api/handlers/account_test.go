@@ -80,6 +80,17 @@ func newAccountAuthContext(account *models.Account) middleware.AuthContext {
 	}
 }
 
+// listAccountsResponseWrapper mirrors the envelope produced by writeListResponse.
+type listAccountsResponseWrapper struct {
+	Data struct {
+		Items  []AccountResponse `json:"items"`
+		Total  int64             `json:"total"`
+		Offset int               `json:"offset"`
+		Limit  int               `json:"limit"`
+	} `json:"data"`
+	TraceID string `json:"trace_id"`
+}
+
 // TestAccountHandler_CreateAccount_AdminAnyRole verifies an admin can create
 // accounts with any role.
 func TestAccountHandler_CreateAccount_AdminAnyRole(t *testing.T) {
@@ -171,6 +182,30 @@ func TestAccountHandler_CreateAccount_ManagerUserOnly(t *testing.T) {
 		})
 	}
 }
+// TestAccountHandler_CreateAccount_Unauthenticated verifies unauthenticated
+// requests cannot create accounts.
+func TestAccountHandler_CreateAccount_Unauthenticated(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupAccountTestDB(t)
+	handler := setupAccountTestHandler(t, db)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := CreateAccountRequest{
+		AccountName:   "Unauthenticated",
+		LoginName:     "unauthenticated",
+		Role:          string(models.AccountRoleUser),
+		LoginPassword: "password",
+	}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/accounts", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.CreateAccount(c)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code, "body: %s", w.Body.String())
+}
+
 
 // TestAccountHandler_CreateAccount_InvalidJSON verifies malformed JSON returns 400.
 func TestAccountHandler_CreateAccount_InvalidJSON(t *testing.T) {
@@ -215,13 +250,41 @@ func TestAccountHandler_CreateAccount_EmptyRoleDefaultsToUser(t *testing.T) {
 	jsonBody, _ := json.Marshal(body)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/accounts", bytes.NewBuffer(jsonBody))
 	c.Request.Header.Set("Content-Type", "application/json")
-
 	handler.CreateAccount(c)
 
 	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 	var resp AccountResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, string(models.AccountRoleUser), resp.Role)
+}
+
+// TestAccountHandler_CreateAccount_ServiceError verifies an invalid role that
+// reaches the service returns 400 Bad Request.
+func TestAccountHandler_CreateAccount_ServiceError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupAccountTestDB(t)
+	handler := setupAccountTestHandler(t, db)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", newAccountAuthContext(&models.Account{
+		AccountID: "acc-admin",
+		Role:      models.AccountRoleAdmin,
+		Status:    models.AccountStatusActive,
+	}))
+	body := CreateAccountRequest{
+		AccountName:   "Invalid Role",
+		LoginName:     "invalid-role",
+		Role:          "superuser",
+		LoginPassword: "password",
+	}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/accounts", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.CreateAccount(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
 }
 
 // TestAccountHandler_CreateAccount_DuplicateLoginName verifies duplicate login
@@ -267,35 +330,6 @@ func TestAccountHandler_CreateAccount_DuplicateLoginName(t *testing.T) {
 	require.Equal(t, http.StatusConflict, w.Code, "body: %s", w.Body.String())
 }
 
-// TestAccountHandler_CreateAccount_ServiceError verifies an invalid role that
-// reaches the service returns 500.
-func TestAccountHandler_CreateAccount_ServiceError(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := setupAccountTestDB(t)
-	handler := setupAccountTestHandler(t, db)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Set("auth_context", newAccountAuthContext(&models.Account{
-		AccountID: "acc-admin",
-		Role:      models.AccountRoleAdmin,
-		Status:    models.AccountStatusActive,
-	}))
-	body := CreateAccountRequest{
-		AccountName:   "Invalid Role",
-		LoginName:     "invalid-role",
-		Role:          "superuser",
-		LoginPassword: "password",
-	}
-	jsonBody, _ := json.Marshal(body)
-	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/accounts", bytes.NewBuffer(jsonBody))
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	handler.CreateAccount(c)
-
-	require.Equal(t, http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
-}
-
 // TestAccountHandler_ListAccounts_RoleFiltering verifies admin sees all,
 // manager sees users and self, and user sees self.
 func TestAccountHandler_ListAccounts_RoleFiltering(t *testing.T) {
@@ -324,16 +358,15 @@ func TestAccountHandler_ListAccounts_RoleFiltering(t *testing.T) {
 			name:          "manager sees users and self",
 			caller:        manager,
 			expectedIDs:   []string{manager.AccountID, user.AccountID},
-			expectedTotal: 3,
+			expectedTotal: 2,
 		},
 		{
 			name:          "user sees self",
 			caller:        user,
 			expectedIDs:   []string{user.AccountID},
-			expectedTotal: 3,
+			expectedTotal: 1,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
@@ -344,13 +377,13 @@ func TestAccountHandler_ListAccounts_RoleFiltering(t *testing.T) {
 			handler.ListAccounts(c)
 
 			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-			var resp ListAccountsResponse
+			var resp listAccountsResponseWrapper
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-			assert.Equal(t, tt.expectedTotal, resp.Total)
-			assert.Len(t, resp.Items, len(tt.expectedIDs))
+			assert.Equal(t, tt.expectedTotal, resp.Data.Total)
+			assert.Len(t, resp.Data.Items, len(tt.expectedIDs))
 
 			ids := make(map[string]bool)
-			for _, item := range resp.Items {
+			for _, item := range resp.Data.Items {
 				ids[item.AccountID] = true
 			}
 			for _, expectedID := range tt.expectedIDs {
@@ -359,9 +392,6 @@ func TestAccountHandler_ListAccounts_RoleFiltering(t *testing.T) {
 		})
 	}
 }
-
-// TestAccountHandler_ListAccounts_PaginationClamping verifies negative offset
-// and out-of-range limit are clamped.
 func TestAccountHandler_ListAccounts_PaginationClamping(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupAccountTestDB(t)
@@ -384,11 +414,11 @@ func TestAccountHandler_ListAccounts_PaginationClamping(t *testing.T) {
 	handler.ListAccounts(c)
 
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	var resp ListAccountsResponse
+	var resp listAccountsResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, 0, resp.Offset)
-	assert.Equal(t, 1000, resp.Limit)
-	assert.Equal(t, int64(3), resp.Total)
+	assert.Equal(t, 0, resp.Data.Offset)
+	assert.Equal(t, 1000, resp.Data.Limit)
+	assert.Equal(t, int64(3), resp.Data.Total)
 }
 
 // TestAccountHandler_GetAccount_AccessControl verifies role-based access for
@@ -434,6 +464,48 @@ func TestAccountHandler_GetAccount_AccessControl(t *testing.T) {
 			require.Equal(t, tt.expectedStatus, w.Code, "body: %s", w.Body.String())
 		})
 	}
+}
+
+// TestAccountHandler_GetAccount_DoesNotModifyUpdateAtMs verifies that GET
+// /api/v1/accounts/:account_id is a pure read and does not mutate
+// update_at_ms.
+func TestAccountHandler_GetAccount_DoesNotModifyUpdateAtMs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupAccountTestDB(t)
+	handler := setupAccountTestHandler(t, db)
+	accountSvc := handler.accountSvc
+
+	admin := createTestAccount(t, accountSvc, "Admin", "admin-get-ts", models.AccountRoleAdmin)
+	user := createTestAccount(t, accountSvc, "User", "user-get-ts", models.AccountRoleUser)
+
+	// Capture the user's update_at_ms after creation.
+	var before models.Account
+	require.NoError(t, db.First(&before, "account_id = ?", user.AccountID).Error)
+	initialUpdateAtMs := before.UpdateAtMs
+
+	// Call GetAccount multiple times as different callers.
+	callers := []*models.Account{admin, user}
+	for i := 0; i < 3; i++ {
+		for _, caller := range callers {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Set("auth_context", newAccountAuthContext(caller))
+			c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/accounts/"+user.AccountID, nil)
+			c.Params = gin.Params{{Key: "account_id", Value: user.AccountID}}
+
+			handler.GetAccount(c)
+
+			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+			var resp AccountResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, initialUpdateAtMs, resp.UpdateAtMs, "response update_at_ms must not change on GET")
+		}
+	}
+
+	// Verify the database record is unchanged.
+	var after models.Account
+	require.NoError(t, db.First(&after, "account_id = ?", user.AccountID).Error)
+	assert.Equal(t, initialUpdateAtMs, after.UpdateAtMs, "database update_at_ms must not change on GET")
 }
 
 // TestAccountHandler_UpdateAccount_AdminCanUpdateAny verifies an admin can
@@ -719,31 +791,35 @@ func TestAccountHandler_Login(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		body           LoginRequest
+		body           interface{}
 		expectedStatus int
 	}{
 		{
 			name:           "valid credentials",
-			body:           LoginRequest{LoginName: "login-user", Password: "password"},
+			body:           LoginRequest{LoginName: "login-user", LoginPassword: "password"},
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "wrong password",
-			body:           LoginRequest{LoginName: "login-user", Password: "wrong"},
+			body:           LoginRequest{LoginName: "login-user", LoginPassword: "wrong"},
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
 			name:           "unknown login name",
-			body:           LoginRequest{LoginName: "unknown", Password: "password"},
+			body:           LoginRequest{LoginName: "unknown", LoginPassword: "password"},
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
 			name:           "password not set",
-			body:           LoginRequest{LoginName: "no-password", Password: "any"},
+			body:           LoginRequest{LoginName: "no-password", LoginPassword: "any"},
 			expectedStatus: http.StatusUnauthorized,
 		},
+		{
+			name:           "legacy password field ignored",
+			body:           map[string]string{"login_name": "login-user", "password": "password"},
+			expectedStatus: http.StatusBadRequest,
+		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()

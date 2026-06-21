@@ -35,6 +35,40 @@ func TestPromptStringWithDefault_InputOverridesDefault(t *testing.T) {
 	}
 }
 
+func TestPromptStringWithDefault_PromptShowsDefault(t *testing.T) {
+	mr := &mockLineReader{lines: []string{""}}
+	p := newInteractivePromptWithReader(mr)
+
+	_, err := p.PromptStringWithDefault("Account ID", "acc-123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mr.prompts) == 0 {
+		t.Fatal("expected prompt to be set")
+	}
+	got := mr.prompts[len(mr.prompts)-1]
+	want := "Account ID [acc-123]: "
+	if got != want {
+		t.Fatalf("expected prompt %q, got %q", want, got)
+	}
+}
+
+func TestPromptStringWithDefault_InputDoesNotAppendToDefault(t *testing.T) {
+	// Simulates a user typing a value into an empty buffer. With the old
+	// implementation the buffer was pre-filled with the default, so the result
+	// would have been the default concatenated with the input.
+	mr := &mockLineReader{lines: []string{"acc-999"}}
+	p := newInteractivePromptWithReader(mr)
+
+	got, err := p.PromptStringWithDefault("Account ID", "acc-123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "acc-999" {
+		t.Fatalf("expected input 'acc-999', got %q", got)
+	}
+}
+
 func TestPromptStringWithDefault_TrimsWhitespace(t *testing.T) {
 	mr := &mockLineReader{lines: []string{"  admin  "}}
 	p := newInteractivePromptWithReader(mr)
@@ -184,11 +218,11 @@ func TestPromptChoice_EmptyThenValid(t *testing.T) {
 }
 
 func TestPromptAccountCreate_MapsFieldsCorrectly(t *testing.T) {
-	// Simulate: name, desc, role choice (admin=3), login name, password, email, external id, auth provider, avatar url
+	// Simulate: name, desc, role (admin), login name, password, email, external id, auth provider, avatar url
 	mr := &mockLineReader{lines: []string{
 		"Alice",
 		"Tester",
-		"3",
+		"admin",
 		"alice@example.com",
 		"secret",
 		"alice@example.com",
@@ -232,9 +266,10 @@ func TestPromptAccountCreate_MapsFieldsCorrectly(t *testing.T) {
 	}
 }
 
-func TestPromptAccountCreate_ManagerForcesUserRole(t *testing.T) {
+func TestPromptAccountCreate_ManagerDefaultsToUserRole(t *testing.T) {
 	mr := &mockLineReader{lines: []string{
 		"Bob",
+		"",
 		"",
 		"bob@example.com",
 		"",
@@ -250,7 +285,30 @@ func TestPromptAccountCreate_ManagerForcesUserRole(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if req["role"] != RoleUser {
-		t.Fatalf("expected role user for manager caller, got %v", req["role"])
+		t.Fatalf("expected role user for empty manager input, got %v", req["role"])
+	}
+}
+
+func TestPromptAccountCreate_ManagerCanChooseAdminRole(t *testing.T) {
+	mr := &mockLineReader{lines: []string{
+		"Bob",
+		"",
+		"admin",
+		"bob@example.com",
+		"",
+		"",
+		"",
+		"",
+		"",
+	}}
+	p := newInteractivePromptWithReader(mr)
+
+	req, err := PromptAccountCreate(p, RoleManager)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if req["role"] != RoleAdmin {
+		t.Fatalf("expected role admin for manager caller, got %v", req["role"])
 	}
 }
 

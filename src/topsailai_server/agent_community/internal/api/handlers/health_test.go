@@ -19,6 +19,7 @@ import (
 
 // mockDiscovery is a test double for the discoveryProvider interface.
 type mockDiscovery struct {
+	enabled       bool
 	services      []discovery.ServiceInfo
 	discoverErr   error
 	isLeader      bool
@@ -27,6 +28,8 @@ type mockDiscovery struct {
 	leaderInfoErr error
 	self          discovery.ServiceInfo
 }
+
+func (m *mockDiscovery) Enabled() bool { return m.enabled }
 
 func (m *mockDiscovery) Discover() ([]discovery.ServiceInfo, error) {
 	return m.services, m.discoverErr
@@ -46,7 +49,6 @@ func (m *mockDiscovery) LeaderInfo() (*discovery.ServiceInfo, error) {
 func (m *mockDiscovery) SelfInfo() discovery.ServiceInfo {
 	return m.self
 }
-
 // newTestLogger creates a logger that writes to a temporary file for test assertions.
 func newTestLogger(t *testing.T) *logger.Logger {
 	t.Helper()
@@ -187,6 +189,7 @@ func TestHealthHandler_Health_NilDB(t *testing.T) {
 func TestHealthHandler_DiscoveryServices_Success(t *testing.T) {
 	c, w := newGinContext(t)
 	mock := &mockDiscovery{
+		enabled: true,
 		services: []discovery.ServiceInfo{
 			{ID: "svc-1", Name: "acs", Address: "http://10.0.0.1:7370"},
 			{ID: "svc-2", Name: "acs", Address: "http://10.0.0.2:7370"},
@@ -206,7 +209,7 @@ func TestHealthHandler_DiscoveryServices_Success(t *testing.T) {
 
 func TestHealthHandler_DiscoveryServices_Error(t *testing.T) {
 	c, w := newGinContext(t)
-	mock := &mockDiscovery{discoverErr: errors.New("nats unavailable")}
+	mock := &mockDiscovery{enabled: true, discoverErr: errors.New("nats unavailable")}
 	h := NewHealthHandler(nil, mock, newTestLogger(t))
 
 	h.DiscoveryServices(c)
@@ -215,6 +218,18 @@ func TestHealthHandler_DiscoveryServices_Error(t *testing.T) {
 	var body map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Contains(t, body["error"], "failed to discover services")
+}
+
+func TestHealthHandler_DiscoveryServices_Disabled(t *testing.T) {
+	c, w := newGinContext(t)
+	h := NewHealthHandler(nil, NewDisabledDiscovery(), newTestLogger(t))
+
+	h.DiscoveryServices(c)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "service discovery not available", body["error"])
 }
 
 func TestHealthHandler_DiscoveryServices_Nil(t *testing.T) {
@@ -232,6 +247,7 @@ func TestHealthHandler_DiscoveryServices_Nil(t *testing.T) {
 func TestHealthHandler_LeaderStatus_Success(t *testing.T) {
 	c, w := newGinContext(t)
 	mock := &mockDiscovery{
+		enabled:  true,
 		isLeader: false,
 		leaderInfo: &discovery.ServiceInfo{
 			ID: "leader-1", Name: "acs", Address: "http://10.0.0.3:7370",
@@ -255,7 +271,7 @@ func TestHealthHandler_LeaderStatus_Success(t *testing.T) {
 
 func TestHealthHandler_LeaderStatus_IsLeaderError(t *testing.T) {
 	c, w := newGinContext(t)
-	mock := &mockDiscovery{isLeaderErr: errors.New("leader check failed")}
+	mock := &mockDiscovery{enabled: true, isLeaderErr: errors.New("leader check failed")}
 	h := NewHealthHandler(nil, mock, newTestLogger(t))
 
 	h.LeaderStatus(c)
@@ -269,6 +285,7 @@ func TestHealthHandler_LeaderStatus_IsLeaderError(t *testing.T) {
 func TestHealthHandler_LeaderStatus_LeaderInfoError(t *testing.T) {
 	c, w := newGinContext(t)
 	mock := &mockDiscovery{
+		enabled:       true,
 		isLeader:      true,
 		leaderInfoErr: errors.New("leader info missing"),
 		self:          discovery.ServiceInfo{ID: "self-1", Name: "acs"},
@@ -285,6 +302,18 @@ func TestHealthHandler_LeaderStatus_LeaderInfoError(t *testing.T) {
 	assert.Nil(t, resp.Leader)
 }
 
+func TestHealthHandler_LeaderStatus_Disabled(t *testing.T) {
+	c, w := newGinContext(t)
+	h := NewHealthHandler(nil, NewDisabledDiscovery(), newTestLogger(t))
+
+	h.LeaderStatus(c)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "service discovery not available", body["error"])
+}
+
 func TestHealthHandler_LeaderStatus_NilDiscovery(t *testing.T) {
 	c, w := newGinContext(t)
 	h := NewHealthHandler(nil, nil, newTestLogger(t))
@@ -295,4 +324,23 @@ func TestHealthHandler_LeaderStatus_NilDiscovery(t *testing.T) {
 	var body map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, "service discovery not available", body["error"])
+}
+
+func TestDisabledDiscovery_ReportsDisabled(t *testing.T) {
+	d := NewDisabledDiscovery()
+	assert.False(t, d.Enabled())
+
+	_, err := d.Discover()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "disabled")
+
+	_, err = d.IsLeader()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "disabled")
+
+	_, err = d.LeaderInfo()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "disabled")
+
+	assert.Equal(t, discovery.ServiceInfo{}, d.SelfInfo())
 }

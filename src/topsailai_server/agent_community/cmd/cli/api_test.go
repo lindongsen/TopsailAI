@@ -743,8 +743,8 @@ func TestAPIClientLogin(t *testing.T) {
 		if payload["login_name"] != "alice@example.com" {
 			t.Errorf("login_name = %v, want 'alice@example.com'", payload["login_name"])
 		}
-		if payload["password"] != "secret" {
-			t.Errorf("password = %v, want 'secret'", payload["password"])
+		if payload["login_password"] != "secret" {
+			t.Errorf("login_password = %v, want 'secret'", payload["login_password"])
 		}
 
 		resp := APIResponse{

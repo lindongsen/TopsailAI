@@ -17,6 +17,17 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
+// listAuditLogsResponseWrapper mirrors the envelope produced by writeListResponse.
+type listAuditLogsResponseWrapper struct {
+	Data struct {
+		Items  []AuditLogResponse `json:"items"`
+		Total  int64        `json:"total"`
+		Offset int          `json:"offset"`
+		Limit  int          `json:"limit"`
+	} `json:"data"`
+	TraceID string `json:"trace_id"`
+}
+
 
 // newAuditLogTestDB creates an isolated in-memory SQLite database with audit_logs migrated.
 func newAuditLogTestDB(t *testing.T) *gorm.DB {
@@ -66,12 +77,12 @@ func TestAuditLogHandler_List_Success(t *testing.T) {
 	h.ListAuditLogs(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp ListAuditLogsResponse
+	var resp listAuditLogsResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Len(t, resp.Items, 3)
-	assert.Equal(t, int64(3), resp.Total)
-	assert.Equal(t, 0, resp.Offset)
-	assert.Equal(t, 1000, resp.Limit)
+	assert.Len(t, resp.Data.Items, 3)
+	assert.Equal(t, int64(3), resp.Data.Total)
+	assert.Equal(t, 0, resp.Data.Offset)
+	assert.Equal(t, 1000, resp.Data.Limit)
 }
 
 func TestAuditLogHandler_List_FilterByAccountID(t *testing.T) {
@@ -88,11 +99,11 @@ func TestAuditLogHandler_List_FilterByAccountID(t *testing.T) {
 	h.ListAuditLogs(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp ListAuditLogsResponse
+	var resp listAuditLogsResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Len(t, resp.Items, 1)
-	assert.Equal(t, int64(1), resp.Total)
-	assert.Equal(t, "acc-a", resp.Items[0].AccountID)
+	assert.Len(t, resp.Data.Items, 1)
+	assert.Equal(t, int64(1), resp.Data.Total)
+	assert.Equal(t, "acc-a", resp.Data.Items[0].AccountID)
 }
 
 func TestAuditLogHandler_List_FilterByAction(t *testing.T) {
@@ -109,10 +120,10 @@ func TestAuditLogHandler_List_FilterByAction(t *testing.T) {
 	h.ListAuditLogs(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp ListAuditLogsResponse
+	var resp listAuditLogsResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Len(t, resp.Items, 1)
-	assert.Equal(t, "create_account", resp.Items[0].Action)
+	assert.Len(t, resp.Data.Items, 1)
+	assert.Equal(t, "create_account", resp.Data.Items[0].Action)
 }
 
 func TestAuditLogHandler_List_TimeRange(t *testing.T) {
@@ -130,10 +141,10 @@ func TestAuditLogHandler_List_TimeRange(t *testing.T) {
 	h.ListAuditLogs(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp ListAuditLogsResponse
+	var resp listAuditLogsResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Len(t, resp.Items, 1)
-	assert.Equal(t, "group-002", resp.Items[0].ResourceID)
+	assert.Len(t, resp.Data.Items, 1)
+	assert.Equal(t, "group-002", resp.Data.Items[0].ResourceID)
 }
 
 func TestAuditLogHandler_List_Pagination(t *testing.T) {
@@ -159,12 +170,12 @@ func TestAuditLogHandler_List_Pagination(t *testing.T) {
 	h.ListAuditLogs(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp ListAuditLogsResponse
+	var resp listAuditLogsResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Len(t, resp.Items, 2)
-	assert.Equal(t, int64(5), resp.Total)
-	assert.Equal(t, 1, resp.Offset)
-	assert.Equal(t, 2, resp.Limit)
+	assert.Len(t, resp.Data.Items, 2)
+	assert.Equal(t, int64(5), resp.Data.Total)
+	assert.Equal(t, 1, resp.Data.Offset)
+	assert.Equal(t, 2, resp.Data.Limit)
 }
 
 func TestAuditLogHandler_List_Empty(t *testing.T) {
@@ -176,10 +187,10 @@ func TestAuditLogHandler_List_Empty(t *testing.T) {
 	h.ListAuditLogs(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp ListAuditLogsResponse
+	var resp listAuditLogsResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Empty(t, resp.Items)
-	assert.Equal(t, int64(0), resp.Total)
+	assert.Empty(t, resp.Data.Items)
+	assert.Equal(t, int64(0), resp.Data.Total)
 }
 
 func TestAuditLogHandler_Get_Success(t *testing.T) {

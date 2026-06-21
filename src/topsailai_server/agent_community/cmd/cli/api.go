@@ -227,14 +227,13 @@ func (r *APIResponse) GetData(target interface{}) error {
 	}
 	return json.Unmarshal(r.Data, target)
 }
-
 // --- Convenience methods for ACS API ---
 
 // Login authenticates with login_name and login_password.
 func (c *APIClient) Login(loginName, loginPassword string) (*APIResponse, error) {
 	payload := map[string]interface{}{
 		"login_name":     loginName,
-		"password": loginPassword,
+		"login_password": loginPassword,
 	}
 	return c.Post("/api/v1/accounts/login", payload)
 }
@@ -276,7 +275,6 @@ func (c *APIClient) ListAccounts(q ListQuery, role, status, externalID string) (
 	}
 	return c.Get(path)
 }
-
 // GetAccount returns a single account by ID.
 func (c *APIClient) GetAccount(accountID string) (*APIResponse, error) {
 	return c.Get(fmt.Sprintf("/api/v1/accounts/%s", accountID))

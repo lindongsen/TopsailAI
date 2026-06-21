@@ -125,11 +125,13 @@ func (p *InteractivePrompt) PromptString(label string, required bool) (string, e
 }
 
 // PromptStringWithDefault prompts for a string with a default value.
-// Pressing Enter without input accepts the default.
+// The default is shown in the prompt label, but the input line is left empty
+// so that typing does not append to a pre-filled buffer. Pressing Enter
+// without input accepts the default.
 func (p *InteractivePrompt) PromptStringWithDefault(label, defaultValue string) (string, error) {
 	p.reader.Clean()
 	p.reader.SetPrompt(fmt.Sprintf("%s [%s]: ", label, defaultValue))
-	line, err := p.reader.ReadlineWithDefault(defaultValue)
+	line, err := p.reader.Readline()
 	if err != nil {
 		return "", ErrCancelled
 	}
@@ -303,16 +305,14 @@ func PromptAccountCreate(p *InteractivePrompt, callerRole string) (req map[strin
 	if desc != "" {
 		req["account_description"] = desc
 	}
-	// Only admins can choose a role; managers are forced to user.
-	if callerRole == RoleAdmin {
-		_, role, err := p.PromptChoice("Role", []string{RoleUser, RoleManager, RoleAdmin})
-		if err != nil {
-			return nil, err
-		}
-		req["role"] = role
-	} else {
-		req["role"] = RoleUser
+	role, err := p.PromptStringWithDefault("Role", RoleUser)
+	if err != nil {
+		return nil, err
 	}
+	if role == "" {
+		role = RoleUser
+	}
+	req["role"] = role
 
 	loginName, err := p.PromptString("Login name (email)", false)
 	if err != nil {

@@ -59,6 +59,17 @@ func setupAPIKeyTestHandler(t *testing.T, db *gorm.DB) *APIKeyHandler {
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
 	return NewAPIKeyHandler(apiKeySvc, accountSvc, log)
 }
+// listAPIKeysResponseWrapper mirrors the envelope produced by writeListResponse.
+type listAPIKeysResponseWrapper struct {
+	Data struct {
+		Items  []APIKeyResponse `json:"items"`
+		Total  int64            `json:"total"`
+		Offset int              `json:"offset"`
+		Limit  int              `json:"limit"`
+	} `json:"data"`
+	TraceID string `json:"trace_id"`
+}
+
 
 // createTestAPIKeyAccount creates an account directly via the service for use in tests.
 func createTestAPIKeyAccount(t *testing.T, accountSvc *services.AccountService, name, loginName string, role models.AccountRole) *models.Account {
@@ -345,11 +356,11 @@ func TestAPIKeyHandler_ListAPIKeys_AdminListsAny(t *testing.T) {
 
 	handler.ListAPIKeys(c)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	var resp ListAPIKeysResponse
+	var resp listAPIKeysResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, int64(1), resp.Total)
-	assert.Len(t, resp.Items, 1)
-	assert.Equal(t, "User Key", resp.Items[0].APIKeyName)
+	assert.Equal(t, int64(1), resp.Data.Total)
+	assert.Len(t, resp.Data.Items, 1)
+	assert.Equal(t, "User Key", resp.Data.Items[0].APIKeyName)
 }
 
 func TestAPIKeyHandler_ListAPIKeys_UserListsSelf(t *testing.T) {
@@ -367,9 +378,9 @@ func TestAPIKeyHandler_ListAPIKeys_UserListsSelf(t *testing.T) {
 
 	handler.ListAPIKeys(c)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	var resp ListAPIKeysResponse
+	var resp listAPIKeysResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, int64(1), resp.Total)
+	assert.Equal(t, int64(1), resp.Data.Total)
 }
 
 func TestAPIKeyHandler_ListAPIKeys_UserCannotListOther(t *testing.T) {
@@ -403,10 +414,10 @@ func TestAPIKeyHandler_ListAPIKeys_PaginationClamping(t *testing.T) {
 
 	handler.ListAPIKeys(c)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	var resp ListAPIKeysResponse
+	var resp listAPIKeysResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, 0, resp.Offset)
-	assert.Equal(t, 1000, resp.Limit)
+	assert.Equal(t, 0, resp.Data.Offset)
+	assert.Equal(t, 1000, resp.Data.Limit)
 }
 
 // TestAPIKeyHandler_ListAPIKeys_ServiceErrorPath_Documented documents the 500

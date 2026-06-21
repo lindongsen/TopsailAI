@@ -10,6 +10,7 @@ import (
 
 	"github.com/topsailai/agent-community/internal/agent"
 	"github.com/topsailai/agent-community/internal/api"
+	"github.com/topsailai/agent-community/internal/api/handlers"
 	"github.com/topsailai/agent-community/internal/config"
 	"github.com/topsailai/agent-community/internal/daemon"
 	"github.com/topsailai/agent-community/internal/db"
@@ -262,9 +263,9 @@ func runServer(isDaemon bool) error {
 	defer cleanupTask.Stop()
 
 	// 12.6. Create and register service discovery (if enabled).
-	var disc *discovery.Discovery
+	var disc api.DiscoveryProvider
 	if cfg.Discovery.Enabled {
-		disc, err = discovery.New(js, discovery.Config{
+		d, err := discovery.New(js, discovery.Config{
 			ServiceName: cfg.Discovery.ServiceName,
 			Address:     cfg.Server.GetListenAddress(),
 			Port:        cfg.Server.Port,
@@ -276,15 +277,18 @@ func runServer(isDaemon bool) error {
 		if err != nil {
 			return fmt.Errorf("failed to create service discovery: %w", err)
 		}
-		if err := disc.Register(); err != nil {
+		if err := d.Register(); err != nil {
 			return fmt.Errorf("failed to register service: %w", err)
 		}
 		defer func() {
 			log.Info("server", "", "deregistering service from discovery")
-			if err := disc.Deregister(); err != nil {
+			if err := d.Deregister(); err != nil {
 				log.Error("server", "", "failed to deregister service", "error", err.Error())
 			}
 		}()
+		disc = d
+	} else {
+		disc = handlers.NewDisabledDiscovery()
 	}
 
 	// 13. Create HTTP API router and server.

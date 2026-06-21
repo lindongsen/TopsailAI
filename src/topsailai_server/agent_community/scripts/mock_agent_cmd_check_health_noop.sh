@@ -1,6 +1,4 @@
 #!/bin/bash
-# No-op health check for offline mock agent testing
-# Always returns healthy
-
-echo '{"status":"healthy"}'
+# Always report healthy for mock agent tests
+echo "healthy"
 exit 0

@@ -58,6 +58,38 @@ func newTestServices(t *testing.T) (*gorm.DB, *AccountService, *APIKeyService, *
 	accountSvc.SetAPIKeyService(apiKeySvc)
 	return db, accountSvc, apiKeySvc, auditSvc
 }
+func TestAccountService_CreateAccount_ManagerUserOnly(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name        string
+		role        models.AccountRole
+		expectedErr error
+	}{
+		{"user", models.AccountRoleUser, nil},
+		{"manager", models.AccountRoleManager, ErrRoleNotAllowed},
+		{"admin", models.AccountRoleAdmin, ErrRoleNotAllowed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+				AccountName:   "Manager Creates " + strings.Title(tt.name),
+				LoginName:     "manager-creates-" + tt.name,
+				LoginPassword: "password",
+				Role:          tt.role,
+				CreatorID:     "acc-manager",
+				CallerRole:    models.AccountRoleManager,
+			})
+			if tt.expectedErr != nil {
+				require.ErrorIs(t, err, tt.expectedErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
 
 func TestAccountService_CreateAccount_Success(t *testing.T) {
 	_, accountSvc, _, _ := newTestServices(t)
@@ -347,23 +379,105 @@ func TestAccountService_ListAccounts_PaginationAndErrors(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Default pagination.
-	items, total, err := accountSvc.ListAccounts(ctx, 0, 0)
+	// Default pagination with nil filter (internal/service use).
+	items, total, err := accountSvc.ListAccounts(ctx, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), total)
 	assert.Len(t, items, 5)
 
 	// Limit and offset.
-	items, total, err = accountSvc.ListAccounts(ctx, 1, 2)
+	items, total, err = accountSvc.ListAccounts(ctx, 1, 2, nil)
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), total)
 	assert.Len(t, items, 2)
 
 	// Offset beyond total.
-	items, total, err = accountSvc.ListAccounts(ctx, 10, 10)
+	items, total, err = accountSvc.ListAccounts(ctx, 10, 10, nil)
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), total)
 	assert.Empty(t, items)
+}
+
+func TestAccountService_ListAccounts_FiltersAndVisibility(t *testing.T) {
+	_, accountSvc, _, _ := newTestServices(t)
+	ctx := context.Background()
+
+	admin, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Admin",
+		LoginName:   "filter-admin",
+		Role:        models.AccountRoleAdmin,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	manager, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Manager",
+		LoginName:   "filter-manager",
+		Role:        models.AccountRoleManager,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	user, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "User",
+		LoginName:   "filter-user",
+		Role:        models.AccountRoleUser,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	// Soft-delete the user.
+	require.NoError(t, accountSvc.SoftDeleteAccount(ctx, user.AccountID))
+
+	// Admin filter by role excludes deleted accounts by default.
+	items, total, err := accountSvc.ListAccounts(ctx, 0, 100, &ListAccountsFilter{
+		Role:       models.AccountRoleUser,
+		CallerRole: models.AccountRoleAdmin,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), total)
+	assert.Empty(t, items)
+
+	// Admin can explicitly request deleted accounts.
+	items, total, err = accountSvc.ListAccounts(ctx, 0, 100, &ListAccountsFilter{
+		Role:       models.AccountRoleUser,
+		Status:     models.AccountStatusDeleted,
+		CallerRole: models.AccountRoleAdmin,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	assert.Len(t, items, 1)
+	assert.Equal(t, user.AccountID, items[0].AccountID)
+
+	// Manager sees only non-deleted user accounts and themselves.
+	items, total, err = accountSvc.ListAccounts(ctx, 0, 100, &ListAccountsFilter{
+		CallerRole: models.AccountRoleManager,
+		CallerID:   manager.AccountID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	assert.Len(t, items, 1)
+	assert.Equal(t, manager.AccountID, items[0].AccountID)
+
+	// Manager filtering by admin role returns nothing.
+	items, total, err = accountSvc.ListAccounts(ctx, 0, 100, &ListAccountsFilter{
+		Role:       models.AccountRoleAdmin,
+		CallerRole: models.AccountRoleManager,
+		CallerID:   manager.AccountID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), total)
+	assert.Empty(t, items)
+
+	// User sees only themselves.
+	items, total, err = accountSvc.ListAccounts(ctx, 0, 100, &ListAccountsFilter{
+		CallerRole: models.AccountRoleUser,
+		CallerID:   admin.AccountID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	assert.Len(t, items, 1)
+	assert.Equal(t, admin.AccountID, items[0].AccountID)
 }
 
 func TestAccountService_UpdateAccount_CallerWeightZero(t *testing.T) {

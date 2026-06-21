@@ -211,11 +211,23 @@ func canListGroupMembers(db *gorm.DB, ac middleware.AuthContext, groupID string)
 }
 
 // canUpdateMember checks whether the caller may update the member record.
-// Admin can update any member; user can update only their own member record.
+// Admin can update any member; group owner can update any member in their own
+// group; regular user can update only their own member record.
 func canUpdateMember(db *gorm.DB, ac middleware.AuthContext, groupID, memberID string) (bool, error) {
 	if isAdmin(ac) {
 		return true, nil
 	}
+
+	// Group owner may update any member in their group.
+	isOwner, err := isGroupOwner(db, groupID, ac.Account.AccountID)
+	if err != nil {
+		return false, err
+	}
+	if isOwner {
+		return true, nil
+	}
+
+	// Regular user may update only their own member record.
 	if memberID != ac.Account.AccountID {
 		return false, nil
 	}
@@ -429,14 +441,7 @@ func (h *GroupMemberHandler) ListGroupMembers(c *gin.Context) {
 		items = append(items, toGroupMemberResponse(&members[i]))
 	}
 
-	c.JSON(http.StatusOK, ListGroupMembersResponse{
-		Items:   items,
-		Total:   total,
-		Offset:  offset,
-		Limit:   limit,
-		SortKey: sortKey,
-		OrderBy: orderBy,
-	})
+	writeListResponse(c, http.StatusOK, items, total, offset, limit, traceID)
 }
 
 // UpdateMember handles PUT /api/v1/groups/:group_id/members/:member_id.
@@ -456,7 +461,6 @@ func (h *GroupMemberHandler) UpdateMember(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	var member models.GroupMember
 	if err := h.db.Where("group_id = ? AND member_id = ?", groupID, memberID).First(&member).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -468,7 +472,8 @@ func (h *GroupMemberHandler) UpdateMember(c *gin.Context) {
 		return
 	}
 
-	// Authorization: admin any member, user own member only.
+	// Authorization: admin any member, group owner any member in their group,
+	// user own member only.
 	allowed, err := canUpdateMember(h.db, authCtx, groupID, memberID)
 	if err != nil {
 		h.log.Error("api", traceID, "failed to check update member permission", "error", err.Error())

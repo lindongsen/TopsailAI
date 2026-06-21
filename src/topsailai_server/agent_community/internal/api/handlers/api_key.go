@@ -153,12 +153,7 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 		items = append(items, toAPIKeyResponse(&keys[i]))
 	}
 
-	c.JSON(http.StatusOK, ListAPIKeysResponse{
-		Items:  items,
-		Total:  total,
-		Offset: offset,
-		Limit:  limit,
-	})
+	writeListResponse(c, http.StatusOK, items, total, offset, limit, traceID)
 }
 
 // DeleteAPIKey handles DELETE /api/v1/accounts/:account_id/api-keys/:api_key_id.

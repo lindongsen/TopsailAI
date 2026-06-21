@@ -52,6 +52,7 @@ When `ACS_DATABASE_DRIVER=sqlite` and `ACS_DATABASE_NAME` is not explicitly set,
 | `ACS_NATS_PENDING_MESSAGE_NO_ACK` | `false` | When `true`, pending messages use fire-and-forget mode (no ack/nak, no InProgress heartbeat). **Warning: messages may be lost if consumer crashes.** |
 | `ACS_NATS_ACK_WAIT_SECONDS` | `3600` | NATS consumer AckWait timeout in seconds. Must be greater than the longest expected agent execution time. Only effective when `ACS_NATS_PENDING_MESSAGE_NO_ACK=false`. |
 | `ACS_NATS_MAX_ACK_PENDING` | `10` | Maximum number of unacknowledged messages allowed for a consumer in reliable mode. When exceeded, new messages are not delivered until existing ones are acknowledged. |
+| `ACS_NATS_MAX_DELIVER` | `0` | Maximum number of delivery attempts for a pending message. `0` means unlimited redeliveries. Only effective when `ACS_NATS_PENDING_MESSAGE_NO_ACK=false`. |
 
 ### NATS Consumer Modes
 
@@ -60,6 +61,7 @@ When `ACS_DATABASE_DRIVER=sqlite` and `ACS_DATABASE_NAME` is not explicitly set,
 - If processing fails, consumer sends negative acknowledgment (`Nak`) to trigger redelivery
 - `InProgress()` heartbeat is sent every 20 seconds during long-running processing to prevent premature redelivery
 - `AckWait` determines how long NATS waits for acknowledgment before redelivering
+- `MaxDeliver` controls the maximum number of delivery attempts; `0` means unlimited
 - Guarantees **at-least-once** message delivery
 
 #### Fire-and-Forget Mode (`ACS_NATS_PENDING_MESSAGE_NO_ACK=true`)
@@ -73,6 +75,10 @@ When `ACS_DATABASE_DRIVER=sqlite` and `ACS_DATABASE_NAME` is not explicitly set,
 ### MaxAckPending
 
 In reliable mode (`ACS_NATS_PENDING_MESSAGE_NO_ACK=false`), `MaxAckPending` controls how many messages can be delivered to a consumer without being acknowledged. When this limit is reached, NATS stops delivering new messages to that consumer until some messages are acknowledged. This prevents overwhelming slow consumers.
+
+### MaxDeliver
+
+In reliable mode, `MaxDeliver` controls how many times NATS will attempt to deliver a pending message. The default is `0` (unlimited), which is appropriate for agent work queues where saturation is a transient backpressure signal rather than a permanent failure. If you set a finite value, ensure it is large enough to outlast the longest expected queue saturation period; otherwise messages may be silently dropped when the work pool is temporarily full.
 
 ---
 
@@ -157,11 +163,20 @@ The following variables are passed to agent adaptors via `member_interface.envir
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ACS_AGENT_WORK_POOL_PER_NODE` | `10` | Maximum concurrent agent tasks per service node |
-| `ACS_AGENT_WORK_POOL_PER_USER` | `5` | Maximum concurrent agent tasks per user across all groups |
-| `ACS_AGENT_WORK_POOL_PER_GROUP` | `5` | Maximum concurrent agent tasks per group |
+| `ACS_AGENT_WORK_POOL_PER_USER` | `5` | Maximum concurrent agent invocations per original message sender across all groups |
+| `ACS_AGENT_WORK_POOL_PER_GROUP` | `5` | Maximum concurrent agent invocations per group |
+| `ACS_AGENT_WORK_POOL_ACQUIRE_TIMEOUT` | `30s` | Maximum time to wait for a work-pool slot before giving up |
 | `ACS_AGENT_WORK_POOL_STATS_LOG_INTERVAL` | `30s` | Interval for logging work pool statistics |
 
----
+### Behavior
+
+- The limits are enforced per **active agent invocation**, not per pending message.
+- A single pending message that mentions multiple agents may therefore consume multiple slots for the same sender and/or group.
+  - Example: a message mentioning 3 worker-agents in the same group consumes 3 of the `ACS_AGENT_WORK_POOL_PER_GROUP` slots while those agents are running.
+- Each agent invocation acquires its own slot before calling the agent and releases it when the call completes.
+- When a limit is reached, additional invocations wait (with a timeout) for a slot to become available.
+
+----
 
 ## Log Configuration
 
@@ -284,6 +299,7 @@ ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX=acs.group.message
 ACS_NATS_PENDING_MESSAGE_NO_ACK=false
 ACS_NATS_ACK_WAIT_SECONDS=3600
 ACS_NATS_MAX_ACK_PENDING=10
+ACS_NATS_MAX_DELIVER=0
 
 # Agent
 ACS_GROUP_MANAGER_AGENT_API_BASE=http://127.0.0.1:7373
@@ -296,6 +312,7 @@ ACS_AGENT_PROMPT="You are a helpful AI assistant."
 ACS_AGENT_WORK_POOL_PER_NODE=10
 ACS_AGENT_WORK_POOL_PER_USER=5
 ACS_AGENT_WORK_POOL_PER_GROUP=5
+ACS_AGENT_WORK_POOL_ACQUIRE_TIMEOUT=30s
 ACS_AGENT_WORK_POOL_STATS_LOG_INTERVAL=30s
 
 # Log

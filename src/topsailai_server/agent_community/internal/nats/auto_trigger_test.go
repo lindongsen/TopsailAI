@@ -63,7 +63,7 @@ func (f *fakeAutoTriggerLockManager) Acquire(ctx context.Context, lockType, reso
 
 func setupAutoTriggerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	err = db.AutoMigrate(
 		&models.Group{},
@@ -92,7 +92,11 @@ func newAutoTriggerWithFakes(t *testing.T, db *gorm.DB, pub *fakeAutoTriggerPubl
 	if lm == nil {
 		lm = &fakeAutoTriggerLockManager{lock: &fakeAutoTriggerLock{}}
 	}
-	return NewAutoTrigger(db, nil, pub, eval, lm, interval, timeout)
+	at := NewAutoTrigger(db, nil, pub, eval, lm, interval, timeout)
+	t.Cleanup(func() {
+		at.Stop()
+	})
+	return at
 }
 
 func createGroup(t *testing.T, db *gorm.DB, groupID string) *models.Group {
@@ -161,6 +165,8 @@ func TestNewAutoTrigger_Defaults(t *testing.T) {
 	at := NewAutoTrigger(nil, nil, nil, nil, nil, 0, 0)
 	assert.Equal(t, 1*time.Minute, at.interval)
 	assert.Equal(t, 10*time.Minute, at.timeout)
+	// Stop should be safe even if Start was never called.
+	at.Stop()
 }
 
 func TestNewAutoTrigger_CustomValues(t *testing.T) {
@@ -176,6 +182,7 @@ func TestAutoTrigger_StartStop(t *testing.T) {
 	at := newAutoTriggerWithFakes(t, db, nil, nil, nil, 10*time.Millisecond, 10*time.Minute)
 
 	at.Start()
+	// Give the background goroutine time to run at least one checkAllGroups.
 	time.Sleep(25 * time.Millisecond)
 	at.Stop()
 
@@ -236,6 +243,35 @@ func TestCheckGroup_LockError(t *testing.T) {
 	g := createGroup(t, db, "group-1")
 	res, err := at.checkGroup(context.Background(), g, "trace-1")
 	assert.Error(t, err)
+	assert.Equal(t, checkResultSkipped, res)
+}
+
+func TestCheckGroup_NilEvaluator(t *testing.T) {
+	db := setupAutoTriggerTestDB(t)
+	at := newAutoTriggerWithFakes(t, db, nil, nil, nil, time.Minute, time.Minute)
+
+	g := createGroup(t, db, "group-1")
+	createMember(t, db, g.GroupID, "user-1", models.MemberTypeUser)
+	createMember(t, db, g.GroupID, "manager-1", models.MemberTypeManagerAgent)
+	createMessage(t, db, g.GroupID, "user-1", models.MemberTypeUser, time.Now().Add(-2*time.Minute).UnixMilli())
+
+	res, err := at.checkGroup(context.Background(), g, "trace-1")
+	assert.NoError(t, err)
+	assert.Equal(t, checkResultSkipped, res)
+}
+
+func TestCheckGroup_NilResult(t *testing.T) {
+	db := setupAutoTriggerTestDB(t)
+	eval := &fakeAutoTriggerEvaluator{result: nil}
+	at := newAutoTriggerWithFakes(t, db, nil, eval, nil, time.Minute, time.Minute)
+
+	g := createGroup(t, db, "group-1")
+	createMember(t, db, g.GroupID, "user-1", models.MemberTypeUser)
+	createMember(t, db, g.GroupID, "manager-1", models.MemberTypeManagerAgent)
+	createMessage(t, db, g.GroupID, "user-1", models.MemberTypeUser, time.Now().Add(-2*time.Minute).UnixMilli())
+
+	res, err := at.checkGroup(context.Background(), g, "trace-1")
+	assert.NoError(t, err)
 	assert.Equal(t, checkResultSkipped, res)
 }
 

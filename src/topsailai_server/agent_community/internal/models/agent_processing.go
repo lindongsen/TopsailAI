@@ -8,11 +8,16 @@ import (
 )
 
 // AgentMessageProcessing tracks agent message processing to prevent duplicates and loops.
+//
+// A unique index on (group_id, message_id, agent_id) guarantees that only one
+// record can exist for a given message-agent pair. This makes the
+// check-and-create operation atomic across concurrent consumers and prevents
+// duplicate agent responses when NATS redelivers a pending message.
 type AgentMessageProcessing struct {
 	ID            uint64    `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
-	GroupID       string    `gorm:"column:group_id;type:varchar(64);not null;index:idx_amp_group_msg" json:"group_id"`
-	MessageID     string    `gorm:"column:message_id;type:varchar(64);not null;index:idx_amp_group_msg" json:"message_id"`
-	AgentID       string    `gorm:"column:agent_id;type:varchar(64);not null" json:"agent_id"`
+	GroupID       string    `gorm:"column:group_id;type:varchar(64);not null;index:idx_amp_group_msg;uniqueIndex:idx_amp_unique" json:"group_id"`
+	MessageID     string    `gorm:"column:message_id;type:varchar(64);not null;index:idx_amp_group_msg;uniqueIndex:idx_amp_unique" json:"message_id"`
+	AgentID       string    `gorm:"column:agent_id;type:varchar(64);not null;uniqueIndex:idx_amp_unique" json:"agent_id"`
 	Status        string    `gorm:"column:status;type:varchar(32);not null;default:'pending'" json:"status"`
 	ErrorMessage  string    `gorm:"column:error_message;type:text" json:"error_message"`
 	ProcessedAtMs int64     `gorm:"column:processed_at_ms;type:bigint;default:0" json:"processed_at_ms"`
@@ -46,8 +51,8 @@ const (
 	ProcessingStatusCompleted = "completed"
 	ProcessingStatusFailed    = "failed"
 )
+
 // IsTerminalStatus returns true if the status is a terminal state (completed or failed).
 func (amp *AgentMessageProcessing) IsTerminalStatus() bool {
 	return amp.Status == ProcessingStatusCompleted || amp.Status == ProcessingStatusFailed
 }
-

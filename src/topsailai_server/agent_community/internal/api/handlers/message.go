@@ -182,6 +182,14 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 
 // evaluateAndTrigger evaluates if the message should trigger agents and publishes pending messages.
 func (h *MessageHandler) evaluateAndTrigger(c *gin.Context, traceID string, msg *models.GroupMessage, members []models.GroupMember) {
+	// Defense-in-depth: never trigger messages that already have a processed_msg_id.
+	// The evaluator also checks this, but guarding here ensures a buggy evaluator or
+	// future caller cannot accidentally publish a pending message for a processed message.
+	if msg.ProcessedMsgID != "" {
+		h.log.Debug("api", traceID, "skipping trigger for processed message", "message_id", msg.MessageID, "processed_msg_id", msg.ProcessedMsgID)
+		return
+	}
+
 	// Get context messages for sliding window check
 	var contextMessages []models.GroupMessage
 	if err := h.db.Where("group_id = ?", msg.GroupID).
@@ -322,14 +330,7 @@ func (h *MessageHandler) ListMessages(c *gin.Context) {
 		items = append(items, toMessageResponse(&messages[i]))
 	}
 
-	c.JSON(http.StatusOK, ListMessagesResponse{
-		Items:   items,
-		Total:   total,
-		Offset:  offset,
-		Limit:   limit,
-		SortKey: sortKey,
-		OrderBy: orderBy,
-	})
+	writeListResponse(c, http.StatusOK, items, total, offset, limit, traceID)
 }
 
 // UpdateMessage handles PUT /api/v1/groups/:group_id/messages/:message_id.

@@ -19,9 +19,9 @@ import (
 	"github.com/topsailai/agent-community/internal/models"
 	"github.com/topsailai/agent-community/pkg/logger"
 )
+
 // ErrBootstrapLockHeld indicates another node is already running bootstrap.
 var ErrBootstrapLockHeld = errors.New("bootstrap lock held by another node")
-
 
 // BootstrapService handles default admin/manager account creation on startup.
 type BootstrapService struct {
@@ -75,11 +75,19 @@ func (s *BootstrapService) Run(ctx context.Context) error {
 	}
 	defer release()
 
-	if err := s.ensureAdminAccount(ctx); err != nil {
+	if err := s.ensureDefaultAccount(ctx, defaultAccountSpec{
+		role:          models.AccountRoleAdmin,
+		configKey:     s.cfg.Account.AdminAPIKey,
+		filename:      "ACS_ACCOUNT_ADMIN_API_KEY.acs",
+	}); err != nil {
 		return err
 	}
 
-	if err := s.ensureManagerAccount(ctx); err != nil {
+	if err := s.ensureDefaultAccount(ctx, defaultAccountSpec{
+		role:          models.AccountRoleManager,
+		configKey:     s.cfg.Account.ManagerAPIKey,
+		filename:      "ACS_ACCOUNT_MANAGER_API_KEY.acs",
+	}); err != nil {
 		return err
 	}
 
@@ -87,80 +95,62 @@ func (s *BootstrapService) Run(ctx context.Context) error {
 	return nil
 }
 
-// ensureAdminAccount validates or creates the default admin account.
-func (s *BootstrapService) ensureAdminAccount(ctx context.Context) error {
-	adminKey := s.cfg.Account.AdminAPIKey
-
-	if adminKey != "" {
-		// Validate the configured token.
-		if err := s.validateConfiguredToken(ctx, adminKey, models.AccountRoleAdmin); err != nil {
-			s.log.Error("bootstrap", "", "configured admin api key is invalid", "error", err.Error())
-			return fmt.Errorf("configured admin api key mismatch: %w", err)
-		}
-		s.log.Info("bootstrap", "", "configured admin api key validated")
-		return nil
-	}
-
-	// No configured key: create a default admin account if none exists.
-	exists, err := s.hasAccountWithRole(ctx, models.AccountRoleAdmin)
-	if err != nil {
-		return err
-	}
-	if exists {
-		s.log.Info("bootstrap", "", "admin account already exists, skipping default creation")
-		return nil
-	}
-
-	account, token, err := s.createDefaultAccount(ctx, models.AccountRoleAdmin)
-	if err != nil {
-		return err
-	}
-
-	if err := s.writeTokenFile("ACS_ACCOUNT_ADMIN_API_KEY.acs", token); err != nil {
-		return fmt.Errorf("failed to write admin api key file: %w", err)
-	}
-
-	s.log.Info("bootstrap", "", "created default admin account",
-		"account_id", account.AccountID,
-		"file", "ACS_ACCOUNT_ADMIN_API_KEY.acs",
-	)
-	return nil
+// defaultAccountSpec describes a default account to validate or create.
+type defaultAccountSpec struct {
+	role      models.AccountRole
+	configKey string
+	filename  string
 }
 
-// ensureManagerAccount validates or creates the default manager account.
-func (s *BootstrapService) ensureManagerAccount(ctx context.Context) error {
-	managerKey := s.cfg.Account.ManagerAPIKey
+// ensureDefaultAccount validates a configured token or creates a default
+// account and writes its plaintext API key to a file in the working directory.
+// When the default account already exists but its .acs file is missing or
+// invalid, a new default API key is created and the file is regenerated.
+func (s *BootstrapService) ensureDefaultAccount(ctx context.Context, spec defaultAccountSpec) error {
+	roleName := string(spec.role)
 
-	if managerKey != "" {
-		if err := s.validateConfiguredToken(ctx, managerKey, models.AccountRoleManager); err != nil {
-			s.log.Error("bootstrap", "", "configured manager api key is invalid", "error", err.Error())
-			return fmt.Errorf("configured manager api key mismatch: %w", err)
+	if spec.configKey != "" {
+		if err := s.validateConfiguredToken(ctx, spec.configKey, spec.role); err != nil {
+			s.log.Error("bootstrap", "", fmt.Sprintf("configured %s api key is invalid", roleName), "error", err.Error())
+			return fmt.Errorf("configured %s api key mismatch: %w", roleName, err)
 		}
-		s.log.Info("bootstrap", "", "configured manager api key validated")
+		s.log.Info("bootstrap", "", fmt.Sprintf("configured %s api key validated", roleName))
 		return nil
 	}
 
-	exists, err := s.hasAccountWithRole(ctx, models.AccountRoleManager)
+	exists, err := s.hasAccountWithRole(ctx, spec.role)
 	if err != nil {
 		return err
 	}
 	if exists {
-		s.log.Info("bootstrap", "", "manager account already exists, skipping default creation")
+		account, err := s.findDefaultAccount(ctx, spec.role)
+		if err != nil {
+			return fmt.Errorf("failed to locate default %s account: %w", roleName, err)
+		}
+		if err := s.ensureTokenFile(ctx, account, spec.filename); err != nil {
+			return fmt.Errorf("failed to ensure %s api key file: %w", roleName, err)
+		}
+		s.log.Info("bootstrap", "", fmt.Sprintf("default %s account verified", roleName),
+			"account_id", account.AccountID,
+			"file", spec.filename,
+		)
 		return nil
 	}
 
-	account, token, err := s.createDefaultAccount(ctx, models.AccountRoleManager)
+	account, token, err := s.createDefaultAccount(ctx, spec.role)
 	if err != nil {
 		return err
 	}
 
-	if err := s.writeTokenFile("ACS_ACCOUNT_MANAGER_API_KEY.acs", token); err != nil {
-		return fmt.Errorf("failed to write manager api key file: %w", err)
+	path, err := s.writeTokenFile(spec.filename, token)
+	if err != nil {
+		return fmt.Errorf("failed to write %s api key file: %w", roleName, err)
 	}
 
-	s.log.Info("bootstrap", "", "created default manager account",
+	s.log.Info("bootstrap", "", fmt.Sprintf("created default %s account", roleName),
 		"account_id", account.AccountID,
-		"file", "ACS_ACCOUNT_MANAGER_API_KEY.acs",
+		"file", spec.filename,
+		"path", path,
 	)
 	return nil
 }
@@ -201,6 +191,102 @@ func (s *BootstrapService) hasAccountWithRole(ctx context.Context, role models.A
 	return count > 0, nil
 }
 
+// findDefaultAccount returns the system-created default account for the given role.
+// If no system-created account exists, it falls back to any active account with the role.
+func (s *BootstrapService) findDefaultAccount(ctx context.Context, role models.AccountRole) (*models.Account, error) {
+	var account models.Account
+	if err := s.db.WithContext(ctx).
+		Where("role = ? AND status = ? AND creator_id = ?", role, models.AccountStatusActive, "system").
+		Order("create_at_ms asc").
+		First(&account).Error; err == nil {
+		return &account, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to query default %s account: %w", role, err)
+	}
+
+	if err := s.db.WithContext(ctx).
+		Where("role = ? AND status = ?", role, models.AccountStatusActive).
+		Order("create_at_ms asc").
+		First(&account).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("no active %s account found", role)
+		}
+		return nil, fmt.Errorf("failed to query %s account: %w", role, err)
+	}
+	return &account, nil
+}
+
+// ensureTokenFile verifies that the plaintext token file exists and is valid.
+// If the file is missing or its token cannot be verified, any existing
+// system-created API keys for the account are removed and a new default key is
+// created and written to the file.
+func (s *BootstrapService) ensureTokenFile(ctx context.Context, account *models.Account, filename string) error {
+	pwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+	path := filepath.Join(pwd, filename)
+
+	if data, err := os.ReadFile(path); err == nil {
+		token := strings.TrimSpace(string(data))
+		if token != "" {
+			_, _, verifyErr := s.apiKeySvc.VerifyAPIKey(ctx, token)
+			if verifyErr == nil {
+				s.log.Info("bootstrap", "", "existing token file is valid", "file", filename)
+				return nil
+			}
+			s.log.Warn("bootstrap", "", "existing token file is invalid, regenerating", "file", filename, "error", verifyErr.Error())
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read token file %s: %w", path, err)
+	} else {
+		s.log.Warn("bootstrap", "", "token file is missing, regenerating", "file", filename)
+	}
+
+	if err := s.deleteSystemAPIKeysForAccount(ctx, account.AccountID); err != nil {
+		return fmt.Errorf("failed to clean up old default api keys: %w", err)
+	}
+
+	keyRole := models.APIKeyRoleUser
+	switch account.Role {
+	case models.AccountRoleAdmin:
+		keyRole = models.APIKeyRoleAdmin
+	case models.AccountRoleManager:
+		keyRole = models.APIKeyRoleManager
+	}
+
+	result, err := s.apiKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
+		APIKeyName: fmt.Sprintf("Default %s Key", strings.Title(string(account.Role))),
+		Role:       keyRole,
+		OwnerID:    account.AccountID,
+		CreatorID:  "system",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create replacement api key: %w", err)
+	}
+
+	if _, err := s.writeTokenFile(filename, result.Token); err != nil {
+		return fmt.Errorf("failed to write regenerated token file: %w", err)
+	}
+
+	s.log.Info("bootstrap", "", "regenerated default api key file",
+		"account_id", account.AccountID,
+		"file", filename,
+		"path", path,
+	)
+	return nil
+}
+
+// deleteSystemAPIKeysForAccount removes API keys created by system for the given account.
+func (s *BootstrapService) deleteSystemAPIKeysForAccount(ctx context.Context, accountID string) error {
+	if err := s.db.WithContext(ctx).
+		Where("owner_id = ? AND creator_id = ?", accountID, "system").
+		Delete(&models.APIKey{}).Error; err != nil {
+		return fmt.Errorf("failed to delete system api keys: %w", err)
+	}
+	return nil
+}
+
 // createDefaultAccount creates a system account with the given role and an API key.
 func (s *BootstrapService) createDefaultAccount(ctx context.Context, role models.AccountRole) (*models.Account, string, error) {
 	loginName := fmt.Sprintf("system-%s", role)
@@ -237,19 +323,30 @@ func (s *BootstrapService) createDefaultAccount(ctx context.Context, role models
 	return account, result.Token, nil
 }
 
-// writeTokenFile writes the plaintext token to a file in the working directory.
-func (s *BootstrapService) writeTokenFile(filename, token string) error {
+// writeTokenFile writes the plaintext token to a file in the working directory
+// and returns the absolute path. It verifies the file exists and is readable.
+func (s *BootstrapService) writeTokenFile(filename, token string) (string, error) {
 	pwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
+		return "", fmt.Errorf("failed to get working directory: %w", err)
 	}
 	path := filepath.Join(pwd, filename)
 
 	// Restrict permissions to owner read/write only.
 	if err := os.WriteFile(path, []byte(token), 0600); err != nil {
-		return fmt.Errorf("failed to write token file: %w", err)
+		return "", fmt.Errorf("failed to write token file %s: %w", path, err)
 	}
-	return nil
+
+	// Verify the file was written and is readable.
+	written, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to read back token file %s: %w", path, err)
+	}
+	if string(written) != token {
+		return "", fmt.Errorf("token file %s content mismatch", path)
+	}
+
+	return path, nil
 }
 
 // logAccountStats logs counts of admin, manager, total, and status breakdown.
@@ -259,7 +356,6 @@ func (s *BootstrapService) logAccountStats(ctx context.Context) {
 		s.log.Error("bootstrap", "", "failed to count total accounts", "error", err.Error())
 		return
 	}
-
 	var adminCount, managerCount int64
 	if err := s.db.WithContext(ctx).Model(&models.Account{}).
 		Where("role = ? AND status = ?", models.AccountRoleAdmin, models.AccountStatusActive).

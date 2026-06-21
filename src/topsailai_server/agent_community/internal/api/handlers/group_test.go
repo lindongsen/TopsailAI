@@ -20,6 +20,17 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+// listGroupsResponseWrapper mirrors the envelope produced by writeListResponse.
+type listGroupsResponseWrapper struct {
+	Data struct {
+		Items  []GroupResponse `json:"items"`
+		Total  int64        `json:"total"`
+		Offset int          `json:"offset"`
+		Limit  int          `json:"limit"`
+	} `json:"data"`
+	TraceID string `json:"trace_id"`
+}
+
 
 // TestParseTimeRangeValid verifies a valid time range string is parsed correctly.
 func TestParseTimeRangeValid(t *testing.T) {
@@ -118,6 +129,8 @@ func TestGroupResponseStructure(t *testing.T) {
 		GroupName:    "Test Group",
 		GroupContext: "Test context",
 		GroupKey:     "hashed_key",
+		CreatorID:    "acc-creator",
+		OwnerID:      "acc-owner",
 		CreateAtMs:   now,
 		UpdateAtMs:   now,
 	}
@@ -134,6 +147,12 @@ func TestGroupResponseStructure(t *testing.T) {
 	if resp.GroupKey != "hashed_key" {
 		t.Errorf("group_key = %v", resp.GroupKey)
 	}
+	if resp.CreatorID != "acc-creator" {
+		t.Errorf("creator_id = %v", resp.CreatorID)
+	}
+	if resp.OwnerID != "acc-owner" {
+		t.Errorf("owner_id = %v", resp.OwnerID)
+	}
 	if resp.CreateAtMs != now {
 		t.Errorf("create_at_ms = %d", resp.CreateAtMs)
 	}
@@ -144,25 +163,24 @@ func TestGroupResponseStructure(t *testing.T) {
 
 // TestGroupListResponseStructure verifies group list response structure.
 func TestGroupListResponseStructure(t *testing.T) {
-	resp := ListGroupsResponse{
-		Total: 2,
-		Items: []GroupResponse{
-			{GroupID: "g1", GroupName: "Group 1"},
-			{GroupID: "g2", GroupName: "Group 2"},
-		},
+	resp := listGroupsResponseWrapper{}
+	resp.Data.Total = 2
+	resp.Data.Items = []GroupResponse{
+		{GroupID: "g1", GroupName: "Group 1"},
+		{GroupID: "g2", GroupName: "Group 2"},
 	}
 
-	if resp.Total != 2 {
-		t.Errorf("total = %d, want 2", resp.Total)
+	if resp.Data.Total != 2 {
+		t.Errorf("total = %d, want 2", resp.Data.Total)
 	}
-	if len(resp.Items) != 2 {
-		t.Errorf("items length = %d, want 2", len(resp.Items))
+	if len(resp.Data.Items) != 2 {
+		t.Errorf("items length = %d, want 2", len(resp.Data.Items))
 	}
-	if resp.Items[0].GroupID != "g1" {
-		t.Errorf("first item group_id = %v", resp.Items[0].GroupID)
+	if resp.Data.Items[0].GroupID != "g1" {
+		t.Errorf("first item group_id = %v", resp.Data.Items[0].GroupID)
 	}
-	if resp.Items[1].GroupID != "g2" {
-		t.Errorf("second item group_id = %v", resp.Items[1].GroupID)
+	if resp.Data.Items[1].GroupID != "g2" {
+		t.Errorf("second item group_id = %v", resp.Data.Items[1].GroupID)
 	}
 }
 
@@ -373,6 +391,12 @@ func TestCreateGroupAutoJoinsManagerAgent(t *testing.T) {
 	if groupID == "" {
 		t.Fatal("expected group_id in response")
 	}
+	if response.CreatorID != creator.AccountID {
+		t.Errorf("expected creator_id %s, got %s", creator.AccountID, response.CreatorID)
+	}
+	if response.OwnerID != creator.AccountID {
+		t.Errorf("expected owner_id %s, got %s", creator.AccountID, response.OwnerID)
+	}
 
 	var members []models.GroupMember
 	if err := db.Where("group_id = ?", groupID).Find(&members).Error; err != nil {
@@ -415,6 +439,12 @@ func TestCreateGroupAutoJoinsManagerAgent(t *testing.T) {
 	if managerMember.MemberInterface == "" {
 		t.Error("expected non-empty manager-agent member_interface")
 	}
+
+	// Verify CreatorID and OwnerID are set to the authenticated account.
+	var stored models.Group
+	require.NoError(t, db.First(&stored, "group_id = ?", groupID).Error)
+	assert.Equal(t, creator.AccountID, stored.CreatorID)
+	assert.Equal(t, creator.AccountID, stored.OwnerID)
 }
 
 // TestCreateGroupDoesNotAutoJoinManagerAgentWhenDisabled verifies that no manager-agent
@@ -649,11 +679,11 @@ func TestListGroups_UserOnlyJoined(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
-	var resp ListGroupsResponse
+	var resp listGroupsResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, int64(1), resp.Total)
-	require.Len(t, resp.Items, 1)
-	assert.Equal(t, joinedGroupID, resp.Items[0].GroupID)
+	assert.Equal(t, int64(1), resp.Data.Total)
+	require.Len(t, resp.Data.Items, 1)
+	assert.Equal(t, joinedGroupID, resp.Data.Items[0].GroupID)
 }
 
 // TestListGroups_AdminSeesAll verifies that an admin caller sees every group
@@ -700,10 +730,10 @@ func TestListGroups_AdminSeesAll(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
-	var resp ListGroupsResponse
+	var resp listGroupsResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, int64(2), resp.Total)
-	require.Len(t, resp.Items, 2)
+	assert.Equal(t, int64(2), resp.Data.Total)
+	require.Len(t, resp.Data.Items, 2)
 }
 
 // mockGroupPublisher is a test double for the GroupPublisher interface.
@@ -1097,11 +1127,11 @@ func TestListGroups_TimeRangeFilter(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	var resp ListGroupsResponse
+	var resp listGroupsResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, int64(1), resp.Total)
-	require.Len(t, resp.Items, 1)
-	assert.Equal(t, "group-time-old", resp.Items[0].GroupID)
+	assert.Equal(t, int64(1), resp.Data.Total)
+	require.Len(t, resp.Data.Items, 1)
+	assert.Equal(t, "group-time-old", resp.Data.Items[0].GroupID)
 }
 
 // TestListGroups_PaginationClamping verifies negative offset and zero limit
@@ -1137,11 +1167,11 @@ func TestListGroups_PaginationClamping(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	var resp ListGroupsResponse
+	var resp listGroupsResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, 0, resp.Offset)
-	assert.Equal(t, 1000, resp.Limit)
-	assert.Equal(t, int64(5), resp.Total)
+	assert.Equal(t, 0, resp.Data.Offset)
+	assert.Equal(t, 1000, resp.Data.Limit)
+	assert.Equal(t, int64(5), resp.Data.Total)
 }
 
 // TestHashGroupKey verifies empty and non-empty key hashing behavior.

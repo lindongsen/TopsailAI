@@ -907,7 +907,7 @@ func TestHandleLogin_LoginNamePassword(t *testing.T) {
 		case r.URL.Path == "/api/v1/accounts/login":
 			var body map[string]interface{}
 			json.NewDecoder(r.Body).Decode(&body)
-			if body["login_name"] != "alice@example.com" || body["password"] != "secret" {
+			if body["login_name"] != "alice@example.com" || body["login_password"] != "secret" {
 				t.Errorf("unexpected login body: %v", body)
 			}
 			json.NewEncoder(w).Encode(APIResponse{
@@ -982,6 +982,7 @@ func TestHandleLogout(t *testing.T) {
 }
 
 // --- Account command handler tests ---
+// --- Account command handler tests ---
 
 func TestHandleAccountMe(t *testing.T) {
 	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1044,7 +1045,7 @@ func TestHandleAccountCreate_Admin(t *testing.T) {
 	}
 }
 
-func TestHandleAccountCreate_ManagerForcesUserRole(t *testing.T) {
+func TestHandleAccountCreate_ManagerPassesRoleThrough(t *testing.T) {
 	var receivedRole string
 	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/accounts" {
@@ -1062,15 +1063,41 @@ func TestHandleAccountCreate_ManagerForcesUserRole(t *testing.T) {
 	}, RoleManager)
 	defer cleanup()
 
-	err := handleAccountCreate([]string{"--name", "Bob", "--role", "admin"}, state)
+	err := handleAccountCreate([]string{"--name", "Bob", "--role", "admin", "--login-name", "bob@example.com"}, state)
 	if err != nil {
 		t.Fatalf("handleAccountCreate error = %v", err)
 	}
 
-	if receivedRole != RoleUser {
-		t.Errorf("role sent to server = %q, want user", receivedRole)
+	if receivedRole != RoleAdmin {
+		t.Errorf("role sent to server = %q, want admin", receivedRole)
 	}
-	_ = captureOutput()
+	out := captureOutput()
+	if !strings.Contains(out, "acc-2") {
+		t.Errorf("expected created account id, got: %s", out)
+	}
+}
+
+func TestHandleAccountCreate_ManagerReceives403(t *testing.T) {
+	state, _, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts" {
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(APIResponse{
+				Error: "manager can only create user accounts",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleManager)
+	defer cleanup()
+
+	err := handleAccountCreate([]string{"--name", "Bob", "--role", "admin", "--login-name", "bob@example.com"}, state)
+	if err == nil {
+		t.Fatal("expected error for 403 response, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "manager can only create user accounts") {
+		t.Errorf("expected 403 error message in returned error, got: %s", err.Error())
+	}
 }
 
 func TestHandleAccountList(t *testing.T) {
@@ -1191,7 +1218,7 @@ func TestHandleAccountDelete(t *testing.T) {
 	}
 }
 
-func TestHandleAccountPassword(t *testing.T) {
+func TestHandleAccountPasswordSelf(t *testing.T) {
 	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/accounts/acc-1/password" && r.Method == http.MethodPost {
 			var body map[string]interface{}
@@ -1207,7 +1234,34 @@ func TestHandleAccountPassword(t *testing.T) {
 	defer cleanup()
 	state.userID = "acc-1"
 
-	err := handleAccountPassword([]string{"--id", "acc-1", "--new-password", "new-secret"}, state)
+	err := handleAccountPassword([]string{"--account-id", "acc-1", "--new-password", "new-secret"}, state)
+	if err != nil {
+		t.Fatalf("handleAccountPassword error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "Password updated") {
+		t.Errorf("expected password update confirmation, got: %s", out)
+	}
+}
+
+func TestHandleAccountPasswordAdminTargetsOtherAccount(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/acc-2/password" && r.Method == http.MethodPost {
+			var body map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&body)
+			if body["new_password"] != "admin-set-secret" {
+				t.Errorf("new_password = %v, want admin-set-secret", body["new_password"])
+			}
+			json.NewEncoder(w).Encode(APIResponse{Data: mustJSON(map[string]interface{}{})})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleAdmin)
+	defer cleanup()
+	state.userID = "acc-1"
+
+	err := handleAccountPassword([]string{"--account-id", "acc-2", "--new-password", "admin-set-secret"}, state)
 	if err != nil {
 		t.Fatalf("handleAccountPassword error = %v", err)
 	}
@@ -1279,6 +1333,63 @@ func TestHandleAPIKeyCreate(t *testing.T) {
 	}
 }
 
+func TestHandleAPIKeyCreate_PositionalAccountID(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/acc-2/api-keys" && r.Method == http.MethodPost {
+			var body map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&body)
+			if body["api_key_name"] != "Positional Key" {
+				t.Errorf("api_key_name = %v, want Positional Key", body["api_key_name"])
+			}
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"api_key_id": "ak-2",
+					"token":      "ak-2.secret",
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleAdmin)
+	defer cleanup()
+
+	err := handleAPIKeyCreate([]string{"acc-2", "--name", "Positional Key", "--role", "user"}, state)
+	if err != nil {
+		t.Fatalf("handleAPIKeyCreate error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "ak-2") {
+		t.Errorf("expected api key id in output, got: %s", out)
+	}
+}
+
+func TestHandleAPIKeyCreate_AccountIDEquals(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/acc-3/api-keys" && r.Method == http.MethodPost {
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"api_key_id": "ak-3",
+					"token":      "ak-3.secret",
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleAdmin)
+	defer cleanup()
+
+	err := handleAPIKeyCreate([]string{"account-id=acc-3", "--name", "Equals Key", "--role", "user"}, state)
+	if err != nil {
+		t.Fatalf("handleAPIKeyCreate error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "ak-3") {
+		t.Errorf("expected api key id in output, got: %s", out)
+	}
+}
+
 func TestHandleAPIKeyCreate_UserCannotCreateAdminKey(t *testing.T) {
 	state, _, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {}, RoleUser)
 	defer cleanup()
@@ -1321,7 +1432,6 @@ func TestHandleAPIKeyList(t *testing.T) {
 		t.Errorf("expected api key id in output, got: %s", out)
 	}
 }
-
 func TestHandleAPIKeyDelete(t *testing.T) {
 	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/accounts/acc-1/api-keys/ak-1" && r.Method == http.MethodDelete {

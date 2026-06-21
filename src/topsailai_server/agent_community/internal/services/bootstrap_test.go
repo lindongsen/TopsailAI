@@ -277,7 +277,7 @@ func TestBootstrapService_Run_ValidatesConfiguredAdminKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// No new admin account should be created; only the configured one exists.
-	accounts, _, err := accountSvc.ListAccounts(ctx, 0, 1000)
+	accounts, _, err := accountSvc.ListAccounts(ctx, 0, 1000, nil)
 	require.NoError(t, err)
 	adminCount := 0
 	for _, acc := range accounts {
@@ -316,7 +316,7 @@ func TestBootstrapService_Run_AdminExistsSkipsCreation(t *testing.T) {
 	err = svc.Run(ctx)
 	require.NoError(t, err)
 
-	accounts, _, err := accountSvc.ListAccounts(ctx, 0, 1000)
+	accounts, _, err := accountSvc.ListAccounts(ctx, 0, 1000, nil)
 	require.NoError(t, err)
 	adminCount := 0
 	for _, acc := range accounts {
@@ -341,17 +341,21 @@ func TestBootstrapService_Run_LockHeldSkipsBootstrap(t *testing.T) {
 	require.NoError(t, err)
 
 	// No accounts should have been created because the lock was held.
-	accounts, _, err := svc.accountSvc.ListAccounts(ctx, 0, 1000)
+	accounts, _, err := svc.accountSvc.ListAccounts(ctx, 0, 1000, nil)
 	require.NoError(t, err)
 	assert.Empty(t, accounts)
 }
 
-func TestBootstrapService_ensureAdminAccount_NoKeyCreatesFile(t *testing.T) {
+func TestBootstrapService_ensureDefaultAccount_NoKeyCreatesFile(t *testing.T) {
 	t.Chdir(t.TempDir())
 	svc := newTestBootstrapService(t, nil)
 	ctx := context.Background()
 
-	err := svc.ensureAdminAccount(ctx)
+	err := svc.ensureDefaultAccount(ctx, defaultAccountSpec{
+		role:     models.AccountRoleAdmin,
+		configKey: "",
+		filename: "ACS_ACCOUNT_ADMIN_API_KEY.acs",
+	})
 	require.NoError(t, err)
 
 	pwd, _ := os.Getwd()
@@ -361,12 +365,16 @@ func TestBootstrapService_ensureAdminAccount_NoKeyCreatesFile(t *testing.T) {
 	assert.True(t, strings.HasPrefix(string(data), "ak-"))
 }
 
-func TestBootstrapService_ensureManagerAccount_NoKeyCreatesFile(t *testing.T) {
+func TestBootstrapService_ensureDefaultAccount_ManagerNoKeyCreatesFile(t *testing.T) {
 	t.Chdir(t.TempDir())
 	svc := newTestBootstrapService(t, nil)
 	ctx := context.Background()
 
-	err := svc.ensureManagerAccount(ctx)
+	err := svc.ensureDefaultAccount(ctx, defaultAccountSpec{
+		role:     models.AccountRoleManager,
+		configKey: "",
+		filename: "ACS_ACCOUNT_MANAGER_API_KEY.acs",
+	})
 	require.NoError(t, err)
 
 	pwd, _ := os.Getwd()
@@ -375,7 +383,6 @@ func TestBootstrapService_ensureManagerAccount_NoKeyCreatesFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(string(data), "ak-"))
 }
-
 func TestBootstrapService_validateConfiguredToken_FormatErrors(t *testing.T) {
 	svc := newTestBootstrapService(t, nil)
 	ctx := context.Background()
@@ -462,7 +469,7 @@ func TestBootstrapService_writeTokenFile_Permissions(t *testing.T) {
 	svc := newTestBootstrapService(t, nil)
 
 	token := "ak-test.secretvalue"
-	err := svc.writeTokenFile("test-token.acs", token)
+	_, err := svc.writeTokenFile("test-token.acs", token)
 	require.NoError(t, err)
 
 	path := filepath.Join(tmpDir, "test-token.acs")
@@ -587,7 +594,7 @@ func TestBootstrapService_writeTokenFile_Failure(t *testing.T) {
 	svc := newTestBootstrapService(t, nil)
 
 	// Use a path that cannot be created to force a write error.
-	err := svc.writeTokenFile("/nonexistent-dir/test-token.acs", "ak-test.secretvalue")
+	_, err := svc.writeTokenFile("/nonexistent-dir/test-token.acs", "ak-test.secretvalue")
 	require.Error(t, err)
 }
 

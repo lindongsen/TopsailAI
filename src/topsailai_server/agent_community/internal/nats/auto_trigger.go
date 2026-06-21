@@ -49,6 +49,9 @@ type AutoTrigger struct {
 	timeout     time.Duration
 	stopCh      chan struct{}
 	stopOnce    sync.Once
+	doneCh      chan struct{}
+	started     bool
+	mu          sync.Mutex
 }
 
 // NewAutoTrigger creates a new auto-trigger periodic task.
@@ -77,11 +80,15 @@ func NewAutoTrigger(
 		interval:    interval,
 		timeout:     timeout,
 		stopCh:      make(chan struct{}),
+		doneCh:      make(chan struct{}),
 	}
 }
 
 // Start starts the auto-trigger periodic task.
 func (at *AutoTrigger) Start() {
+	at.mu.Lock()
+	at.started = true
+	at.mu.Unlock()
 	logger.InfoM(autoTriggerModule, "", "auto-trigger task started",
 		"interval", at.interval.String(),
 		"timeout", at.timeout.String(),
@@ -89,16 +96,26 @@ func (at *AutoTrigger) Start() {
 	go at.run()
 }
 
-// Stop stops the auto-trigger periodic task.
+// Stop stops the auto-trigger periodic task and waits for the background
+// goroutine to finish. This prevents leaked goroutines from accessing closed
+// test databases in subsequent tests.
 func (at *AutoTrigger) Stop() {
 	at.stopOnce.Do(func() {
 		close(at.stopCh)
 		logger.InfoM(autoTriggerModule, "", "auto-trigger task stopped")
 	})
+	at.mu.Lock()
+	started := at.started
+	at.mu.Unlock()
+	if started {
+		<-at.doneCh
+	}
 }
 
 // run is the main loop of the auto-trigger task.
 func (at *AutoTrigger) run() {
+	defer close(at.doneCh)
+
 	ticker := time.NewTicker(at.interval)
 	defer ticker.Stop()
 
@@ -219,13 +236,16 @@ func (at *AutoTrigger) checkGroup(ctx context.Context, group *models.Group, trac
 		return checkResultSkipped, fmt.Errorf("failed to fetch last message: %w", err)
 	}
 
-	// Evaluate timeout-based auto-trigger
+	// Evaluate timeout-based auto-trigger. Guard against a nil evaluator or a
+	// nil result to avoid panics in tests and misconfigured production setups.
+	if at.evaluator == nil {
+		return checkResultSkipped, nil
+	}
 	result, err := at.evaluator.EvaluateAutoTriggerTimeout(ctx, &lastMessage, members)
 	if err != nil {
 		return checkResultSkipped, fmt.Errorf("failed to evaluate auto-trigger: %w", err)
 	}
-
-	if !result.ShouldTrigger {
+	if result == nil || !result.ShouldTrigger {
 		return checkResultSkipped, nil
 	}
 

@@ -22,6 +22,7 @@ var (
 	ErrAccountNotFound      = errors.New("account not found")
 	ErrDuplicateLoginName   = errors.New("login name already exists")
 	ErrInvalidRole          = errors.New("invalid account role")
+	ErrRoleNotAllowed       = errors.New("caller role cannot create accounts with this role")
 	ErrInvalidStatus        = errors.New("invalid account status")
 	ErrPasswordNotSet       = errors.New("password login is disabled for this account")
 	ErrInvalidSession       = errors.New("invalid or expired session")
@@ -36,6 +37,15 @@ var AccountRoleWeight = map[models.AccountRole]int{
 	models.AccountRoleAdmin:   3,
 }
 
+// ListAccountsFilter holds optional filters for listing accounts.
+type ListAccountsFilter struct {
+	Role       models.AccountRole
+	Status     models.AccountStatus
+	ExternalID string
+	CallerRole models.AccountRole
+	CallerID   string
+}
+
 // CreateAccountRequest holds parameters for creating an account.
 type CreateAccountRequest struct {
 	AccountName        string
@@ -48,6 +58,7 @@ type CreateAccountRequest struct {
 	AuthProvider       string
 	AvatarURL          string
 	CreatorID          string
+	CallerRole         models.AccountRole
 }
 
 // UpdateAccountRequest holds parameters for updating an account.
@@ -103,6 +114,11 @@ func (s *AccountService) CreateAccount(ctx context.Context, req *CreateAccountRe
 	}
 	if req.LoginName == "" {
 		return nil, fmt.Errorf("login_name is required")
+	}
+
+	// Enforce role hierarchy: manager can only create user accounts.
+	if req.CallerRole == models.AccountRoleManager && req.Role != models.AccountRoleUser {
+		return nil, ErrRoleNotAllowed
 	}
 
 	account := &models.Account{
@@ -170,17 +186,63 @@ func (s *AccountService) GetAccountByExternalID(ctx context.Context, externalID 
 }
 
 // ListAccounts returns a paginated list of accounts and the total count.
-func (s *AccountService) ListAccounts(ctx context.Context, offset, limit int) ([]models.Account, int64, error) {
+// Filters are applied in the database query. Visibility restrictions based on
+// CallerRole are also applied here so that pagination and total counts are
+// consistent with what the caller is allowed to see.
+func (s *AccountService) ListAccounts(ctx context.Context, offset, limit int, filter *ListAccountsFilter) ([]models.Account, int64, error) {
 	if limit <= 0 {
 		limit = 1000
 	}
+
+	query := s.db.WithContext(ctx).Model(&models.Account{})
+
+	// Apply caller-provided query filters first.
+	if filter != nil {
+		if filter.Role != "" {
+			query = query.Where("role = ?", filter.Role)
+		}
+		if filter.Status != "" {
+			query = query.Where("status = ?", filter.Status)
+		}
+		if filter.ExternalID != "" {
+			query = query.Where("external_id = ?", filter.ExternalID)
+		}
+	}
+
+	// Apply visibility restrictions unless this is an internal/admin call.
+	if filter != nil && filter.CallerRole != "" {
+		switch filter.CallerRole {
+		case models.AccountRoleAdmin:
+			// Admin can see everything, including deleted accounts, but only when
+			// no status filter is supplied. If a status filter is supplied, it was
+			// already applied above.
+			if filter.Status == "" {
+				query = query.Where("status != ?", models.AccountStatusDeleted)
+			}
+		case models.AccountRoleManager:
+			// Manager sees non-deleted user accounts and their own account.
+			query = query.Where("status != ? AND (role = ? OR account_id = ?)", models.AccountStatusDeleted, models.AccountRoleUser, filter.CallerID)
+		case models.AccountRoleUser:
+			// User sees only their own non-deleted account.
+			query = query.Where("status != ? AND account_id = ?", models.AccountStatusDeleted, filter.CallerID)
+		default:
+			query = query.Where("status != ?", models.AccountStatusDeleted)
+		}
+	} else {
+		// Internal/service callers without a caller role should not see deleted accounts
+		// unless explicitly requested via the status filter.
+		if filter == nil || filter.Status == "" {
+			query = query.Where("status != ?", models.AccountStatusDeleted)
+		}
+	}
+
 	var total int64
-	if err := s.db.WithContext(ctx).Model(&models.Account{}).Count(&total).Error; err != nil {
+	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to count accounts: %w", err)
 	}
 
 	var accounts []models.Account
-	if err := s.db.WithContext(ctx).Order("create_at_ms desc").Offset(offset).Limit(limit).Find(&accounts).Error; err != nil {
+	if err := query.Order("create_at_ms desc").Offset(offset).Limit(limit).Find(&accounts).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to list accounts: %w", err)
 	}
 	return accounts, total, nil

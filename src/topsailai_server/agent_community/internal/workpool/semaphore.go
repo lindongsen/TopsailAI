@@ -3,6 +3,7 @@ package workpool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -10,6 +11,12 @@ import (
 	"github.com/topsailai/agent-community/pkg/logger"
 )
 
+// ErrPoolLimitReached indicates that a work-pool semaphore could not be
+// acquired because the concurrency limit for the node, user, or group has been
+// reached. Callers that consume NATS messages should negatively acknowledge the
+// message so JetStream can redeliver it later rather than treating it as a
+// processing failure.
+var ErrPoolLimitReached = errors.New("work pool limit reached")
 // Semaphore provides a counting semaphore using channels.
 type Semaphore struct {
 	ch chan struct{}
@@ -37,6 +44,17 @@ func (s *Semaphore) AcquireWithTimeout(timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	return s.Acquire(ctx)
+}
+
+// TryAcquire attempts to acquire a semaphore slot without blocking.
+// It returns true if a slot was acquired, false if the semaphore is at capacity.
+func (s *Semaphore) TryAcquire() bool {
+	select {
+	case s.ch <- struct{}{}:
+		return true
+	default:
+		return false
+	}
 }
 
 // Release releases a semaphore slot.
@@ -108,7 +126,9 @@ func (p *Pool) Acquire(ctx context.Context, userID, groupID string) error {
 	return nil
 }
 
-// AcquireWithTimeout acquires slots with a timeout.
+// AcquireWithTimeout acquires slots with a timeout. When the timeout expires
+// because the pool is at capacity, the returned error wraps ErrPoolLimitReached
+// so callers can distinguish saturation from other failures.
 func (p *Pool) AcquireWithTimeout(timeout time.Duration, userID, groupID, traceID string) error {
 	logger.DebugM("workpool", traceID, "pool acquiring",
 		"user_id", userID,
@@ -132,6 +152,9 @@ func (p *Pool) AcquireWithTimeout(timeout time.Duration, userID, groupID, traceI
 			"wait_ms", waitMs,
 		)
 		p.LogStats(traceID)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("%w: %w", ErrPoolLimitReached, err)
+		}
 		return err
 	}
 
@@ -139,6 +162,59 @@ func (p *Pool) AcquireWithTimeout(timeout time.Duration, userID, groupID, traceI
 		"user_id", userID,
 		"group_id", groupID,
 		"wait_ms", waitMs,
+		"global_available", p.global.Available(),
+	)
+	return nil
+}
+
+// TryAcquire attempts to acquire slots from global, per-user, and per-group
+// semaphores without blocking. If any semaphore is at capacity, all already-
+// acquired slots are released and ErrPoolLimitReached is returned. This avoids
+// holding a goroutine waiting while the pool is saturated and lets NATS
+// JetStream redeliver the message later.
+func (p *Pool) TryAcquire(userID, groupID, traceID string) error {
+	logger.DebugM("workpool", traceID, "pool try acquiring",
+		"user_id", userID,
+		"group_id", groupID,
+		"global_available", p.global.Available(),
+		"global_capacity", p.global.Capacity(),
+	)
+
+	if !p.global.TryAcquire() {
+		logger.WarnM("workpool", traceID, "pool global limit reached",
+			"user_id", userID,
+			"group_id", groupID,
+		)
+		p.LogStats(traceID)
+		return ErrPoolLimitReached
+	}
+
+	userSem := p.getOrCreateUserSemaphore(userID)
+	if !userSem.TryAcquire() {
+		p.global.Release()
+		logger.WarnM("workpool", traceID, "pool per-user limit reached",
+			"user_id", userID,
+			"group_id", groupID,
+		)
+		p.LogStats(traceID)
+		return ErrPoolLimitReached
+	}
+
+	groupSem := p.getOrCreateGroupSemaphore(groupID)
+	if !groupSem.TryAcquire() {
+		userSem.Release()
+		p.global.Release()
+		logger.WarnM("workpool", traceID, "pool per-group limit reached",
+			"user_id", userID,
+			"group_id", groupID,
+		)
+		p.LogStats(traceID)
+		return ErrPoolLimitReached
+	}
+
+	logger.DebugM("workpool", traceID, "pool try acquired",
+		"user_id", userID,
+		"group_id", groupID,
 		"global_available", p.global.Available(),
 	)
 	return nil

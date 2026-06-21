@@ -19,5 +19,11 @@ WorkFlow: Make Test-Plans(CAN BE Multiple Files) according to docs (NO NEED READ
 
 ## Manual-Test
 
+References:
+- TestCase_manual_cli_permissions.md
+- TestCase_manual_cli_cluster.md
+- TestCase_manual_cli_agent_trigger.md
+- TestCase_manual_xxx.md
+
 TASK: Use cli-terminal to do test, ! cli-terminal MUST run in tmux !
 GOAL: Finish Manual-Test for all of functionals/features.

@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -16,10 +17,32 @@ import (
 // without a live NATS server. The concrete *discovery.Discovery type satisfies
 // this interface.
 type discoveryProvider interface {
+	Enabled() bool
 	Discover() ([]discovery.ServiceInfo, error)
 	IsLeader() (bool, error)
 	LeaderInfo() (*discovery.ServiceInfo, error)
 	SelfInfo() discovery.ServiceInfo
+}
+
+// disabledDiscovery is a no-op discovery provider used when service discovery
+// is disabled. It reports Enabled() == false so handlers return HTTP 503.
+type disabledDiscovery struct{}
+
+func (disabledDiscovery) Enabled() bool { return false }
+func (disabledDiscovery) Discover() ([]discovery.ServiceInfo, error) {
+	return nil, errors.New("service discovery is disabled")
+}
+func (disabledDiscovery) IsLeader() (bool, error) { return false, errors.New("service discovery is disabled") }
+func (disabledDiscovery) LeaderInfo() (*discovery.ServiceInfo, error) {
+	return nil, errors.New("service discovery is disabled")
+}
+func (disabledDiscovery) SelfInfo() discovery.ServiceInfo { return discovery.ServiceInfo{} }
+
+// NewDisabledDiscovery returns a discoveryProvider that reports itself as
+// disabled. It is used by the server entry point when ACS_DISCOVERY_ENABLED
+// is false.
+func NewDisabledDiscovery() discoveryProvider {
+	return disabledDiscovery{}
 }
 
 // HealthHandler handles health and readiness check requests.
@@ -169,7 +192,7 @@ func (h *HealthHandler) Health(c *gin.Context) {
 func (h *HealthHandler) DiscoveryServices(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 
-	if h.discovery == nil {
+	if h.discovery == nil || !h.discovery.Enabled() {
 		h.log.Warn("api", traceID, "discovery not initialized")
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "service discovery not available",
@@ -198,7 +221,7 @@ func (h *HealthHandler) DiscoveryServices(c *gin.Context) {
 func (h *HealthHandler) LeaderStatus(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 
-	if h.discovery == nil {
+	if h.discovery == nil || !h.discovery.Enabled() {
 		h.log.Warn("api", traceID, "discovery not initialized")
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "service discovery not available",

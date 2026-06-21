@@ -65,6 +65,8 @@ type GroupResponse struct {
 	GroupName    string `json:"group_name"`
 	GroupContext string `json:"group_context"`
 	GroupKey     string `json:"group_key"`
+	CreatorID    string `json:"creator_id"`
+	OwnerID      string `json:"owner_id"`
 	CreateAtMs   int64  `json:"create_at_ms"`
 	UpdateAtMs   int64  `json:"update_at_ms"`
 }
@@ -127,6 +129,8 @@ func (h *GroupHandler) CreateGroup(c *gin.Context) {
 		GroupName:    req.GroupName,
 		GroupContext: req.GroupContext,
 		GroupKey:     hashedKey,
+		CreatorID:    authCtx.Account.AccountID,
+		OwnerID:      authCtx.Account.AccountID,
 		CreateAtMs:   now,
 		UpdateAtMs:   now,
 	}
@@ -403,14 +407,7 @@ func (h *GroupHandler) ListGroups(c *gin.Context) {
 		items = append(items, toGroupResponse(&groups[i]))
 	}
 
-	c.JSON(http.StatusOK, ListGroupsResponse{
-		Items:   items,
-		Total:   total,
-		Offset:  offset,
-		Limit:   limit,
-		SortKey: sortKey,
-		OrderBy: orderBy,
-	})
+	writeListResponse(c, http.StatusOK, items, total, offset, limit, traceID)
 }
 
 // UpdateGroup handles PUT /api/v1/groups/:group_id.
@@ -550,6 +547,8 @@ func toGroupResponse(g *models.Group) GroupResponse {
 		GroupName:    g.GroupName,
 		GroupContext: g.GroupContext,
 		GroupKey:     "",
+		CreatorID:    g.CreatorID,
+		OwnerID:      g.OwnerID,
 		CreateAtMs:   g.CreateAtMs,
 		UpdateAtMs:   g.UpdateAtMs,
 	}

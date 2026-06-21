@@ -186,6 +186,30 @@ func TestLoad_NATSDefaults(t *testing.T) {
 	assert.False(t, cfg.NATS.PendingMessageNoAck)
 	assert.Equal(t, 3600, cfg.NATS.AckWaitSeconds)
 	assert.Equal(t, 10, cfg.NATS.MaxAckPending)
+	assert.Equal(t, 0, cfg.NATS.MaxDeliver)
+}
+
+// TestLoad_NATSEnvOverrides verifies NATS env var overrides.
+func TestLoad_NATSEnvOverrides(t *testing.T) {
+	t.Setenv("ACS_NATS_SERVERS", "nats://n1.example.com:4222,nats://n2.example.com:4222")
+	t.Setenv("ACS_NATS_STREAM_GROUP", "custom_group")
+	t.Setenv("ACS_NATS_SUBJECT_GROUP_PENDING_MESSAGE_PREFIX", "custom.pending")
+	t.Setenv("ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX", "custom.message")
+	t.Setenv("ACS_NATS_PENDING_MESSAGE_NO_ACK", "true")
+	t.Setenv("ACS_NATS_ACK_WAIT_SECONDS", "7200")
+	t.Setenv("ACS_NATS_MAX_ACK_PENDING", "20")
+	t.Setenv("ACS_NATS_MAX_DELIVER", "5")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "nats://n1.example.com:4222,nats://n2.example.com:4222", cfg.NATS.Servers)
+	assert.Equal(t, "custom_group", cfg.NATS.StreamGroup)
+	assert.Equal(t, "custom.pending", cfg.NATS.SubjectGroupPendingMessagePrefix)
+	assert.Equal(t, "custom.message", cfg.NATS.SubjectGroupMessagePrefix)
+	assert.True(t, cfg.NATS.PendingMessageNoAck)
+	assert.Equal(t, 7200, cfg.NATS.AckWaitSeconds)
+	assert.Equal(t, 20, cfg.NATS.MaxAckPending)
+	assert.Equal(t, 5, cfg.NATS.MaxDeliver)
 }
 
 // TestLoad_AgentWorkPoolDefaults verifies default AgentWorkPool configuration values.
@@ -196,6 +220,21 @@ func TestLoad_AgentWorkPoolDefaults(t *testing.T) {
 	assert.Equal(t, 5, cfg.AgentWorkPool.PerUser)
 	assert.Equal(t, 5, cfg.AgentWorkPool.PerGroup)
 	assert.Equal(t, 30*time.Second, cfg.AgentWorkPool.StatsLogInterval)
+}
+
+// TestLoad_AgentWorkPoolEnvOverrides verifies AgentWorkPool env var overrides.
+func TestLoad_AgentWorkPoolEnvOverrides(t *testing.T) {
+	t.Setenv("ACS_AGENT_WORK_POOL_PER_NODE", "20")
+	t.Setenv("ACS_AGENT_WORK_POOL_PER_USER", "3")
+	t.Setenv("ACS_AGENT_WORK_POOL_PER_GROUP", "1")
+	t.Setenv("ACS_AGENT_WORK_POOL_ACQUIRE_TIMEOUT", "45s")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 20, cfg.AgentWorkPool.PerNode)
+	assert.Equal(t, 3, cfg.AgentWorkPool.PerUser)
+	assert.Equal(t, 1, cfg.AgentWorkPool.PerGroup)
+	assert.Equal(t, 45*time.Second, cfg.AgentWorkPool.AcquireTimeout)
 }
 
 // TestLoad_LogDefaults verifies default log configuration values.

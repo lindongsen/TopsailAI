@@ -66,6 +66,45 @@ func TestEvaluateAntiTriggerProcessedMsgID(t *testing.T) {
 	}
 }
 
+// TestEvaluateAntiTriggerProcessedMsgIDWithMention verifies that a processed
+// message containing an agent mention must NOT trigger (NO_TRIGGER_CASES #2).
+func TestEvaluateAntiTriggerProcessedMsgIDWithMention(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
+	}
+	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "Hello @agent1", "processed-id", time.Now().UnixMilli())
+
+	result, err := e.Evaluate(context.Background(), msg, members, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ShouldTrigger {
+		t.Error("expected no trigger for processed message even when it mentions an agent")
+	}
+}
+
+// TestEvaluateAntiTriggerProcessedMsgIDSingleUserAutoTrigger verifies that a
+// processed message in a single-user group must NOT auto-trigger the manager
+// agent (NO_TRIGGER_CASES #2 takes precedence over auto-trigger).
+func TestEvaluateAntiTriggerProcessedMsgIDSingleUserAutoTrigger(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
+	}
+	msg := makeMessage("msg1", "user1", models.MemberTypeUser, "Hello", "processed-id", time.Now().UnixMilli())
+
+	result, err := e.Evaluate(context.Background(), msg, members, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ShouldTrigger {
+		t.Error("expected no auto-trigger for processed message in single-user group")
+	}
+}
+
 // TestEvaluateSlidingWindow verifies >10 consecutive agent messages block trigger.
 func TestEvaluateSlidingWindow(t *testing.T) {
 	e := NewEvaluator(10 * time.Minute)

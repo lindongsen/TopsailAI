@@ -1,7 +1,5 @@
-# Issue: ACS_HTTP_PORT and ACS_DATABASE_NAME ignored by server
-
 ## Status
-open
+fixed
 
 ## Description
 When starting the ACS server with environment variables `ACS_HTTP_PORT` and `ACS_DATABASE_NAME` set, the server ignores both values and falls back to defaults (port 7370 and `/topsailai/agent_community.db` for SQLite).
