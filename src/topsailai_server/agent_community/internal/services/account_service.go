@@ -349,7 +349,8 @@ func (s *AccountService) SoftDeleteAccount(ctx context.Context, accountID string
 	return nil
 }
 
-// ChangePassword updates the login password for an account.
+// ChangePassword updates the login password for an account and invalidates
+// any existing login session so that active sessions cannot outlive a password change.
 func (s *AccountService) ChangePassword(ctx context.Context, accountID, newPassword string) error {
 	if newPassword == "" {
 		return fmt.Errorf("password cannot be empty")
@@ -365,6 +366,8 @@ func (s *AccountService) ChangePassword(ctx context.Context, accountID, newPassw
 	}
 
 	account.LoginPassword = hash
+	account.LoginSessionKey = ""
+	account.LoginSessionExpiredTime = 0
 	if err := s.db.WithContext(ctx).Save(account).Error; err != nil {
 		return fmt.Errorf("failed to change password: %w", err)
 	}
@@ -375,7 +378,7 @@ func (s *AccountService) ChangePassword(ctx context.Context, accountID, newPassw
 		ResourceType: "account",
 		ResourceID:   account.AccountID,
 		ResourceName: account.AccountName,
-		Detail:       "changed login password",
+		Detail:       "changed login password and invalidated active sessions",
 	})
 
 	return nil
@@ -483,12 +486,36 @@ func (s *AccountService) LoginByPassword(ctx context.Context, loginName, passwor
 		return nil, "", 0, fmt.Errorf("failed to find account: %w", err)
 	}
 	if !account.IsActive() {
+		s.audit(ctx, AuditLogRequest{
+			AccountID:    account.AccountID,
+			Action:       "account.login.password",
+			ResourceType: "account",
+			ResourceID:   account.AccountID,
+			ResourceName: account.AccountName,
+			Detail:       "failed login: account is not active",
+		})
 		return nil, "", 0, fmt.Errorf("account is not active")
 	}
 	if account.LoginPassword == "" {
+		s.audit(ctx, AuditLogRequest{
+			AccountID:    account.AccountID,
+			Action:       "account.login.password",
+			ResourceType: "account",
+			ResourceID:   account.AccountID,
+			ResourceName: account.AccountName,
+			Detail:       "failed login: password not set",
+		})
 		return nil, "", 0, ErrPasswordNotSet
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(account.LoginPassword), []byte(password)); err != nil {
+		s.audit(ctx, AuditLogRequest{
+			AccountID:    account.AccountID,
+			Action:       "account.login.password",
+			ResourceType: "account",
+			ResourceID:   account.AccountID,
+			ResourceName: account.AccountName,
+			Detail:       "failed login: invalid password",
+		})
 		return nil, "", 0, fmt.Errorf("invalid password")
 	}
 
@@ -546,9 +573,16 @@ func (s *AccountService) hashPassword(password string) (string, error) {
 }
 
 // audit writes an audit record if the audit service is available.
+// It backfills the client IP from the request context when the caller did not
+// provide one explicitly.
 func (s *AccountService) audit(ctx context.Context, req AuditLogRequest) {
 	if s.auditSvc == nil {
 		return
+	}
+	if req.ClientIP == "" {
+		if ip, ok := ClientIPFromContext(ctx); ok {
+			req.ClientIP = ip
+		}
 	}
 	if _, err := s.auditSvc.Log(ctx, &req); err != nil {
 		// Audit failures are logged but do not break the main flow.

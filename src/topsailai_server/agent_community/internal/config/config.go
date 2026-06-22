@@ -158,10 +158,11 @@ func Load() (*Config, error) {
 	nameExplicitlySet := v.IsSet("database.name")
 
 	// Server defaults
-	v.SetDefault("server.host", "")
+	v.SetDefault("server.host", "127.0.0.1")
 	v.SetDefault("server.port", 7370)
 	v.SetDefault("server.read_timeout", "30s")
 	v.SetDefault("server.write_timeout", "30s")
+
 	// Database defaults
 	v.SetDefault("database.driver", "postgres")
 	v.SetDefault("database.host", "localhost")
@@ -244,6 +245,11 @@ func Load() (*Config, error) {
 	v.SetDefault("discovery.bucket_name", "acs_service_discovery")
 	v.SetDefault("discovery.heartbeat", "30s")
 	v.SetDefault("discovery.ttl", "120s")
+	_ = v.BindEnv("discovery.enabled", "ACS_DISCOVERY_ENABLED")
+	_ = v.BindEnv("discovery.service_name", "ACS_DISCOVERY_SERVICE_NAME")
+	_ = v.BindEnv("discovery.bucket_name", "ACS_DISCOVERY_BUCKET_NAME")
+	_ = v.BindEnv("discovery.heartbeat", "ACS_DISCOVERY_HEARTBEAT")
+	_ = v.BindEnv("discovery.ttl", "ACS_DISCOVERY_TTL")
 
 	// Account defaults
 	v.SetDefault("account.api_key_max_per_account", 10)
@@ -300,9 +306,24 @@ func (d *DatabaseConfig) DSN() string {
 }
 
 // GetListenAddress returns the listen address for the server.
+// When no host is configured the server binds to the loopback interface so
+// that multiple instances can share the same port on different loopback IPs
+// (e.g. 127.1.0.1:7370 and 127.1.0.2:7370).
 func (s *ServerConfig) GetListenAddress() string {
 	if s.Host == "" {
-		return "0.0.0.0"
+		return "127.0.0.1"
 	}
 	return s.Host
+}
+
+// GetDiscoveryAddress returns the address that should be advertised to other
+// services for service discovery. Unspecific bind addresses such as the empty
+// string or "0.0.0.0" are normalized to "127.0.0.1" so that peers can resolve
+// the registration.
+func (s *ServerConfig) GetDiscoveryAddress() string {
+	host := s.Host
+	if host == "" || host == "0.0.0.0" {
+		return "127.0.0.1"
+	}
+	return host
 }

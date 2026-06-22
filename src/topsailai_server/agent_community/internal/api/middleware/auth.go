@@ -46,8 +46,12 @@ func Authentication(apiKeySvc *services.APIKeyService, accountSvc *services.Acco
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
 
-		// Resolve and store client IP early so downstream middleware can use it.
-		c.Set(clientIPContextKey, c.ClientIP())
+		// Resolve and store client IP early so downstream middleware and services
+		// can include it in audit logs. Store it in both the Gin context and the
+		// request context so business services receive it without depending on Gin.
+		clientIP := c.ClientIP()
+		c.Set(clientIPContextKey, clientIP)
+		c.Request = c.Request.WithContext(services.ContextWithClientIP(ctx, clientIP))
 
 		// Priority 1: login name/password headers.
 		loginName := c.GetHeader("X-Login-Name")
@@ -100,11 +104,6 @@ func Authentication(apiKeySvc *services.APIKeyService, accountSvc *services.Acco
 			}
 		}
 
-		// No valid credentials found; set anonymous context and continue.
-		c.Set(authContextKey, AuthContext{
-			AuthMethod:      AuthMethodNone,
-			IsAuthenticated: false,
-		})
 		c.Next()
 	}
 }
@@ -174,9 +173,9 @@ func RequireRole(minRole models.AccountRole) gin.HandlerFunc {
 			})
 			return
 		}
-		if !accountRoleGE(ac.Account.Role, minRole) {
+		if !ac.Account.HasRole(minRole) {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error":    "insufficient account role",
+				"error":    "insufficient role",
 				"trace_id": GetTraceID(c),
 			})
 			return
@@ -185,15 +184,14 @@ func RequireRole(minRole models.AccountRole) gin.HandlerFunc {
 	}
 }
 
-// RequireAPIKeyRole returns a middleware that requires authentication via an API
-// key with at least the specified role. Session-based authentication is not
-// accepted by this middleware.
-func RequireAPIKeyRole(minRole models.APIKeyRole) gin.HandlerFunc {
+// RequireAPIKeyOrSession returns a middleware that requires authentication via
+// API key or session key (not login name/password).
+func RequireAPIKeyOrSession() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ac, _ := GetAuthContext(c)
-		if !ac.IsAuthenticated || ac.APIKey == nil {
+		if !ac.IsAuthenticated || ac.Account == nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error":    "api key authentication required",
+				"error":    "authentication required",
 				"trace_id": GetTraceID(c),
 			})
 			return
@@ -205,9 +203,9 @@ func RequireAPIKeyRole(minRole models.APIKeyRole) gin.HandlerFunc {
 			})
 			return
 		}
-		if !apiKeyRoleGE(ac.APIKey.Role, minRole) {
+		if ac.AuthMethod == AuthMethodPassword {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error":    "insufficient api key role",
+				"error":    "login name/password authentication is not allowed for this endpoint",
 				"trace_id": GetTraceID(c),
 			})
 			return

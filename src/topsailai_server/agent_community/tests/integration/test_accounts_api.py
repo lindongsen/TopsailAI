@@ -9,6 +9,11 @@ import pytest
 import requests
 
 
+def _resp_data(response: requests.Response) -> dict:
+    """Unwrap the API response envelope and return the data payload."""
+    return response.json()["data"]
+
+
 class TestAccountAuthentication:
     """Test authentication requirements for account endpoints."""
     def test_unauthenticated_request_rejected(self, unauthenticated_client: requests.Session, server_url: str):
@@ -22,7 +27,7 @@ class TestAccountAuthentication:
         """An admin API key should be able to list accounts."""
         response = admin_client.get(f"{server_url}/api/v1/accounts")
         assert response.status_code == 200
-        data = response.json()
+        data = _resp_data(response)
         assert "items" in data
         assert "total" in data
 
@@ -151,25 +156,25 @@ class TestAccountLoginAndSession:
     """Test password login and session key authentication."""
 
     def test_login_by_password(self, admin_client: requests.Session, unauthenticated_client: requests.Session, server_url: str, test_account: dict):
-        """A user should be able to log in with login_name and password."""
+        """A user should be able to log in with login_name and login_password."""
         login_data = {
             "login_name": test_account["login_name"],
-            "password": "TestPass123!",
+            "login_password": "TestPass123!",
         }
 
         response = unauthenticated_client.post(f"{server_url}/api/v1/accounts/login", json=login_data)
         assert response.status_code == 200
-        data = response.json()
+        data = _resp_data(response)
         assert "session_key" in data
         assert "account_id" in data
         assert "expires_at_ms" in data
         assert data["account_id"] == test_account["account_id"]
 
     def test_login_with_wrong_password_fails(self, unauthenticated_client: requests.Session, server_url: str, test_account: dict):
-        """Login with an incorrect password should fail."""
+        """Login with an incorrect login_password should fail."""
         login_data = {
             "login_name": test_account["login_name"],
-            "password": "WrongPassword!",
+            "login_password": "WrongPassword!",
         }
 
         response = unauthenticated_client.post(f"{server_url}/api/v1/accounts/login", json=login_data)
@@ -180,7 +185,7 @@ class TestAccountLoginAndSession:
         # Create a session via the admin API.
         response = admin_client.post(f"{server_url}/api/v1/accounts/{test_account['account_id']}/session")
         assert response.status_code == 200
-        session = response.json()
+        session = _resp_data(response)
 
         # Use a fresh session so that no Authorization header from admin_client
         # takes precedence over the X-Session-Key header.
@@ -203,13 +208,13 @@ class TestAccountLoginAndSession:
         # Login with the new password should succeed.
         login_data = {
             "login_name": test_account["login_name"],
-            "password": new_password,
+            "login_password": new_password,
         }
         response = unauthenticated_client.post(f"{server_url}/api/v1/accounts/login", json=login_data)
         assert response.status_code == 200
 
         # Login with the old password should fail.
-        login_data["password"] = "TestPass123!"
+        login_data["login_password"] = "TestPass123!"
         response = unauthenticated_client.post(f"{server_url}/api/v1/accounts/login", json=login_data)
         assert response.status_code == 401
 
@@ -298,7 +303,7 @@ class TestAccountAuditLogs:
             },
         )
         assert response.status_code == 200
-        data = response.json()
+        data = _resp_data(response)
         assert data["total"] >= 1
         assert any(
             log["resource_id"] == account["account_id"] and log["action"] == "account.create"

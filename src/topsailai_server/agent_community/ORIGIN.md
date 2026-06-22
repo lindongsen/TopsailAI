@@ -200,6 +200,7 @@ Policy:
 
 - api_key.role=user 可以访问 自己加入的groups、自己创建的groups;
 - 触发 manager-agent 的时候，要得到消息中 sender_id 的 `accounts.login_session_key`(如果没有或过期，就创建1个)，作为环境变量`ACS_LOGIN_SESSION_KEY`传递;
+- api_key.role=user 可以查询accounts，这样才有办法知道account信息，从而将 account 加入group；
 
 ---
 

@@ -10,6 +10,21 @@ import (
 	"github.com/topsailai/agent-community/internal/models"
 )
 
+// clientIPKey is the context key used to carry the HTTP client IP through
+// request context so that business services can include it in audit logs.
+type clientIPKey struct{}
+
+// ContextWithClientIP returns a new context with the client IP attached.
+func ContextWithClientIP(ctx context.Context, ip string) context.Context {
+	return context.WithValue(ctx, clientIPKey{}, ip)
+}
+
+// ClientIPFromContext returns the client IP stored in the context, if any.
+func ClientIPFromContext(ctx context.Context) (string, bool) {
+	ip, ok := ctx.Value(clientIPKey{}).(string)
+	return ip, ok
+}
+
 // AuditLogRequest holds parameters for writing an audit log record.
 type AuditLogRequest struct {
 	AccountID    string
@@ -31,6 +46,8 @@ type AuditLogFilter struct {
 	ResourceID   string
 	StartTimeMs  int64
 	EndTimeMs    int64
+	SortKey      string
+	OrderBy      string
 }
 
 // AuditLogService writes and queries audit log records.
@@ -113,8 +130,17 @@ func (s *AuditLogService) ListAuditLogs(ctx context.Context, filter *AuditLogFil
 		return nil, 0, fmt.Errorf("failed to count audit logs: %w", err)
 	}
 
+	orderClause := "create_at_ms desc"
+	if filter != nil && filter.SortKey != "" {
+		order := "desc"
+		if filter.OrderBy == "asc" {
+			order = "asc"
+		}
+		orderClause = fmt.Sprintf("%s %s", filter.SortKey, order)
+	}
+
 	var logs []models.AuditLog
-	if err := query.Order("create_at_ms desc").Offset(offset).Limit(limit).Find(&logs).Error; err != nil {
+	if err := query.Order(orderClause).Offset(offset).Limit(limit).Find(&logs).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to list audit logs: %w", err)
 	}
 	return logs, total, nil

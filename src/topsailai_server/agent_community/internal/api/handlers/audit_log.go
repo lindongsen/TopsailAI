@@ -1,9 +1,9 @@
-// Package handlers provides HTTP handlers for the ACS API.
 package handlers
 
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -87,6 +87,24 @@ func (h *AuditLogHandler) ListAuditLogs(c *gin.Context) {
 		if v, err := strconv.ParseInt(end, 10, 64); err == nil {
 			filter.EndTimeMs = v
 		}
+	}
+	// Support create_at_ms={start}-{end} range filter as documented in API.md.
+	if createAtRange := c.Query("create_at_ms"); createAtRange != "" {
+		parts := strings.Split(createAtRange, "-")
+		if len(parts) == 2 {
+			if start, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+				filter.StartTimeMs = start
+			}
+			if end, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+				filter.EndTimeMs = end
+			}
+		}
+	}
+	filter.SortKey = c.DefaultQuery("sort_key", "create_at_ms")
+	if orderBy := c.Query("order_by"); orderBy == "asc" || orderBy == "desc" {
+		filter.OrderBy = orderBy
+	} else {
+		filter.OrderBy = "desc"
 	}
 
 	logs, total, err := h.auditSvc.ListAuditLogs(c.Request.Context(), filter, offset, limit)

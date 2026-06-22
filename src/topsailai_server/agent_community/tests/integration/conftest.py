@@ -288,21 +288,26 @@ def manager_token() -> str | None:
 
 
 @pytest.fixture(scope="function")
-def admin_client(api_client: requests.Session, admin_token: str) -> requests.Session:
+def admin_client(admin_token: str) -> Generator[requests.Session, None, None]:
     """Return a requests session authenticated with the admin API key."""
-    api_client.headers.update({"Authorization": f"Bearer {admin_token}"})
-    yield api_client
+    session = requests.Session()
+    session.headers.update({"Content-Type": "application/json"})
+    session.headers.update({"Authorization": f"Bearer {admin_token}"})
+    yield session
+    session.close()
 
 
 @pytest.fixture(scope="function")
-def manager_client(api_client: requests.Session, manager_token: str | None) -> requests.Session | None:
+def manager_client(manager_token: str | None) -> Generator[requests.Session | None, None, None]:
     """Return a requests session authenticated with the manager API key."""
     if not manager_token:
         yield None
         return
-    api_client.headers.update({"Authorization": f"Bearer {manager_token}"})
-    yield api_client
-
+    session = requests.Session()
+    session.headers.update({"Content-Type": "application/json"})
+    session.headers.update({"Authorization": f"Bearer {manager_token}"})
+    yield session
+    session.close()
 @pytest.fixture(scope="function")
 def test_account(admin_client: requests.Session, server_url: str, unique_id: str) -> dict:
     """Create a temporary user account and clean it up after the test."""

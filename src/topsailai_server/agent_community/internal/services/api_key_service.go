@@ -307,9 +307,16 @@ func isValidAPIKeyRole(role models.APIKeyRole) bool {
 }
 
 // audit writes an audit record if the audit service is available.
+// It backfills the client IP from the request context when the caller did not
+// provide one explicitly.
 func (s *APIKeyService) audit(ctx context.Context, req AuditLogRequest) {
 	if s.auditSvc == nil {
 		return
+	}
+	if req.ClientIP == "" {
+		if ip, ok := ClientIPFromContext(ctx); ok {
+			req.ClientIP = ip
+		}
 	}
 	if _, err := s.auditSvc.Log(ctx, &req); err != nil {
 		fmt.Printf("failed to write audit log: %v\n", err)

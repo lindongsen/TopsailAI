@@ -13,7 +13,7 @@ All environment variables used by ACS are prefixed with `ACS_`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ACS_HTTP_HOST` | `` (empty, all interfaces) | HTTP server listen host/IP. Set to `127.1.0.1` to bind a specific loopback address so multiple instances can run on the same machine. |
+| `ACS_HTTP_HOST` | `127.0.0.1` | HTTP server listen host/IP. Defaults to the loopback interface so multiple instances can run on different loopback IPs (e.g. `127.1.0.1`) on the same machine. Set to `0.0.0.0` or leave empty to bind all interfaces. |
 | `ACS_HTTP_PORT` | `7370` | HTTP server listen port |
 | `ACS_SERVER_READ_TIMEOUT` | `30s` | HTTP server read timeout |
 | `ACS_SERVER_WRITE_TIMEOUT` | `30s` | HTTP server write timeout |
@@ -277,7 +277,7 @@ Controls NATS-based service discovery and Service-Leader election.
 
 ```bash
 # Server
-ACS_HTTP_HOST=
+ACS_HTTP_HOST=127.0.0.1
 ACS_HTTP_PORT=7370
 ACS_SERVER_READ_TIMEOUT=30s
 ACS_SERVER_WRITE_TIMEOUT=30s

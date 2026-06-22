@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Integration test service manager for ACS.
-# Starts the ACS server with PostgreSQL and the agent-command directory in PATH,
-# runs pytest, then stops the server.
+# Builds the ACS server, starts it with PostgreSQL and the agent-command directory
+# in PATH, runs pytest, then stops the server.
 set -euo pipefail
 
 PROJECT_ROOT="/TopsailAI/src/topsailai_server/agent_community"
@@ -11,6 +11,7 @@ TEST_HOST="127.0.0.1"
 TEST_PORT="7370"
 READY_URL="http://${TEST_HOST}:${TEST_PORT}/readyz"
 SERVER_PID=""
+SERVER_LOG="${PROJECT_ROOT}/tests/integration/.tmp/acs-server.log"
 
 log() {
     echo "[manage_test_server] $*"
@@ -43,6 +44,12 @@ stop_existing_server() {
     fi
 }
 
+build_server() {
+    log "Building ACS server..."
+    cd "${PROJECT_ROOT}"
+    make build-server
+}
+
 start_server() {
     log "Starting ACS server for integration tests..."
     export PATH="${AGENT_CMD_DIR}:${PATH}"
@@ -60,10 +67,11 @@ start_server() {
     export ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX="acs.group.message"
     export ACS_LOG_LEVEL="info"
 
+    mkdir -p "$(dirname "${SERVER_LOG}")"
     cd "${PROJECT_ROOT}"
-    "${SERVER_BIN}" --daemon-internal &
+    "${SERVER_BIN}" --daemon-internal >"${SERVER_LOG}" 2>&1 &
     SERVER_PID=$!
-    log "ACS server started with PID ${SERVER_PID}"
+    log "ACS server started with PID ${SERVER_PID}, logs: ${SERVER_LOG}"
 }
 
 wait_for_ready() {
@@ -75,18 +83,19 @@ wait_for_ready() {
             return 0
         fi
         if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
-            log "ACS server exited unexpectedly."
+            log "ACS server exited unexpectedly. See ${SERVER_LOG}"
             return 1
         fi
         sleep 1
         waited=$((waited + 1))
     done
-    log "ACS server did not become ready within timeout."
+    log "ACS server did not become ready within timeout. See ${SERVER_LOG}"
     return 1
 }
 
 main() {
     stop_existing_server
+    build_server
     start_server
     wait_for_ready
     log "Running integration tests..."

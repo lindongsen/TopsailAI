@@ -264,10 +264,11 @@ func runServer(isDaemon bool) error {
 
 	// 12.6. Create and register service discovery (if enabled).
 	var disc api.DiscoveryProvider
+	var deregisterDiscovery func()
 	if cfg.Discovery.Enabled {
 		d, err := discovery.New(js, discovery.Config{
 			ServiceName: cfg.Discovery.ServiceName,
-			Address:     cfg.Server.GetListenAddress(),
+			Address:     cfg.Server.GetDiscoveryAddress(),
 			Port:        cfg.Server.Port,
 			Version:     "1.0.0",
 			BucketName:  cfg.Discovery.BucketName,
@@ -280,12 +281,12 @@ func runServer(isDaemon bool) error {
 		if err := d.Register(); err != nil {
 			return fmt.Errorf("failed to register service: %w", err)
 		}
-		defer func() {
+		deregisterDiscovery = func() {
 			log.Info("server", "", "deregistering service from discovery")
 			if err := d.Deregister(); err != nil {
 				log.Error("server", "", "failed to deregister service", "error", err.Error())
 			}
-		}()
+		}
 		disc = d
 	} else {
 		disc = handlers.NewDisabledDiscovery()
@@ -311,7 +312,6 @@ func runServer(isDaemon bool) error {
 		"port", cfg.Server.Port,
 		"nats_servers", cfg.NATS.Servers,
 	)
-
 	select {
 	case err := <-errCh:
 		log.Error("server", "", "server error", "error", err.Error())
@@ -324,7 +324,7 @@ func runServer(isDaemon bool) error {
 	// 1. HTTP server
 	// 2. NATS consumer subscription
 	// 3. Auto-trigger task
-	// 4. Service discovery deregistration (handled by defer)
+	// 4. Service discovery deregistration
 	// 5. NATS connection
 	// 6. Database (handled by defer)
 
@@ -341,6 +341,11 @@ func runServer(isDaemon bool) error {
 	log.Info("server", "", "stopping auto-trigger task")
 	autoTrigger.Stop()
 
+	if deregisterDiscovery != nil {
+		log.Info("server", "", "deregistering service from discovery")
+		deregisterDiscovery()
+	}
+
 	log.Info("server", "", "closing NATS connection")
 	natsClient.Close()
 
@@ -351,4 +356,5 @@ func runServer(isDaemon bool) error {
 
 	log.Info("server", "", "ACS server stopped gracefully")
 	return nil
+
 }

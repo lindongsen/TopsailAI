@@ -26,7 +26,7 @@ class TestMemberStatusActiveUpdate:
         response = api_client.get(f"{server_url}/api/v1/groups/{group_id}/members")
         assert response.status_code == 200, f"Failed to list members: {response.text}"
 
-        data = response.json()
+        data = response.json()["data"]
         for member in data.get("items", []):
             if member.get("member_id") == member_id:
                 return member.get("member_status", "")
@@ -120,8 +120,6 @@ class TestMemberStatusActiveUpdate:
             # 5. Send a message that mentions the agent to trigger it
             message_data = {
                 "message_text": f"Hello @{agent_id}, can you help me?",
-                "sender_id": user_id,
-                "sender_type": "user",
             }
             response = api_client.post(
                 f"{server_url}/api/v1/groups/{group_id}/messages",
@@ -271,8 +269,6 @@ class TestMemberStatusActiveUpdate:
             # 5. Send a message that mentions the failing agent
             message_data = {
                 "message_text": f"Hello @fail-agent-{unique_id}, can you help me?",
-                "sender_id": f"user-fail-{unique_id}",
-                "sender_type": "user",
             }
             response = api_client.post(
                 f"{server_url}/api/v1/groups/{test_group['group_id']}/messages",
@@ -370,8 +366,6 @@ class TestMemberStatusActiveUpdate:
             # 4. Send a message that mentions the dead agent
             message_data = {
                 "message_text": f"Hello @dead-agent-{unique_id}, can you help me?",
-                "sender_id": f"user-dead-{unique_id}",
-                "sender_type": "user",
             }
             response = api_client.post(
                 f"{server_url}/api/v1/groups/{test_group['group_id']}/messages",
@@ -477,3 +471,96 @@ class TestMemberStatusActiveUpdate:
                 )
             except Exception:
                 pass
+    @pytest.mark.asyncio
+    async def test_member_status_agent_invocation_path_diagnostic(
+        self,
+        api_client: requests.Session,
+        server_url: str,
+        test_group: dict,
+        unique_id: str,
+    ):
+        """
+        Diagnostic test: verify that mentioning an agent creates a response message
+        and that we can observe the member_status transition.
+        """
+        agent_id = f"diag-agent-{unique_id}"
+        user_id = f"diag-user-{unique_id}"
+        group_id = test_group["group_id"]
+
+        mock_agent = MockAgentServer(
+            host="127.0.0.1",
+            port=18084,
+            agent_id=agent_id,
+            agent_name=f"Diag_Agent_{unique_id}",
+            auth_token="test-key",
+            delay=0.5,
+            error_rate=0.0,
+        )
+        mock_agent.start()
+        await asyncio.sleep(0.3)
+
+        try:
+            agent_interface = {
+                "adaptor": "topsailai_agent",
+                "environments": {
+                    "ACS_AGENT_API_BASE": "http://127.0.0.1:18084",
+                    "ACS_AGENT_API_KEY": "test-key",
+                    "ACS_AGENT_API_AUTH": "bearer",
+                },
+                "timeout_chat": 30,
+            }
+            response = api_client.post(
+                f"{server_url}/api/v1/groups/{group_id}/members",
+                json={
+                    "member_id": agent_id,
+                    "member_name": f"Diag_Agent_{unique_id}",
+                    "member_type": "worker-agent",
+                    "member_interface": json.dumps(agent_interface),
+                },
+            )
+            assert response.status_code == 201, f"Failed to add agent: {response.text}"
+
+            response = api_client.post(
+                f"{server_url}/api/v1/groups/{group_id}/members",
+                json={
+                    "member_id": user_id,
+                    "member_name": f"Diag_User_{unique_id}",
+                    "member_type": "user",
+                },
+            )
+            assert response.status_code == 201, f"Failed to add user: {response.text}"
+
+            response = api_client.post(
+                f"{server_url}/api/v1/groups/{group_id}/messages",
+                json={"message_text": f"Hello @{agent_id}, can you help me?"},
+            )
+            assert response.status_code == 201, f"Failed to send message: {response.text}"
+            message_id = response.json()["message_id"]
+
+            # Wait for agent response
+            deadline = time.time() + 15.0
+            found_response = False
+            while time.time() < deadline:
+                response = api_client.get(f"{server_url}/api/v1/groups/{group_id}/messages")
+                assert response.status_code == 200
+                data = response.json()["data"]
+                for msg in data.get("items", []):
+                    if msg.get("processed_msg_id") == message_id:
+                        found_response = True
+                        break
+                if found_response:
+                    break
+                await asyncio.sleep(0.5)
+
+            assert found_response, "No agent response message with processed_msg_id was created"
+        finally:
+            mock_agent.stop()
+            try:
+                api_client.delete(f"{server_url}/api/v1/groups/{group_id}/members/{agent_id}")
+            except Exception:
+                pass
+            try:
+                api_client.delete(f"{server_url}/api/v1/groups/{group_id}/members/{user_id}")
+            except Exception:
+                pass
+

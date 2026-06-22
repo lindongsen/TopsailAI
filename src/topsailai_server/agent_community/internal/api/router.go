@@ -54,7 +54,7 @@ func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evalu
 	accountSvc.SetAPIKeyService(apiKeySvc)
 
 	// Initialize handlers
-	groupHandler := handlers.NewGroupHandler(db, publisher, cfg, log)
+	groupHandler := handlers.NewGroupHandler(db, publisher, cfg, log, auditSvc)
 	memberHandler := handlers.NewGroupMemberHandler(db, publisher, log)
 	messageHandler := handlers.NewMessageHandler(db, publisher, evaluator, log)
 	healthHandler := handlers.NewHealthHandler(db, disc, log)
@@ -92,7 +92,7 @@ func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evalu
 		v1.PUT("/accounts/:account_id", middleware.RequireAuthenticated(), accountHandler.UpdateAccount)
 		v1.DELETE("/accounts/:account_id", middleware.RequireRole(models.AccountRoleAdmin), accountHandler.DeleteAccount)
 		v1.POST("/accounts/:account_id/password", middleware.RequireAuthenticated(), accountHandler.ChangePassword)
-		v1.POST("/accounts/:account_id/session", middleware.RequireRole(models.AccountRoleManager), accountHandler.CreateSession)
+		v1.POST("/accounts/:account_id/session", middleware.RequireAuthenticated(), accountHandler.CreateSession)
 
 		// API key routes nested under accounts
 		v1.POST("/accounts/:account_id/api-keys", middleware.RequireAuthenticated(), apiKeyHandler.CreateAPIKey)

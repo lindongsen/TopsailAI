@@ -46,7 +46,7 @@ class TestAPIKeyCRUD:
             f"{server_url}/api/v1/accounts/{test_account['account_id']}/api-keys"
         )
         assert response.status_code == 200
-        data = response.json()
+        data = response.json()["data"]
         assert data["total"] >= 1
         assert any(key["api_key_name"] == key_data["api_key_name"] for key in data["items"])
 
@@ -121,8 +121,7 @@ class TestAPIKeyConstraints:
         # Create a session for the test account.
         response = admin_client.post(f"{server_url}/api/v1/accounts/{test_account['account_id']}/session")
         assert response.status_code == 200
-        session_key = response.json()["session_key"]
-
+        session_key = response.json()["data"]["session_key"]
         # Use a fresh session so the X-Session-Key header is the only credential.
         session_client = requests.Session()
         session_client.headers.update({"Content-Type": "application/json"})
@@ -159,10 +158,10 @@ class TestAPIKeyConstraints:
 
         # Create a session for the first test account.
         response = admin_client.post(f"{server_url}/api/v1/accounts/{test_account['account_id']}/session")
+        # Create a session for the first test account.
+        response = admin_client.post(f"{server_url}/api/v1/accounts/{test_account['account_id']}/session")
         assert response.status_code == 200
-        session_key = response.json()["session_key"]
-
-        # Attempt to create a key for the other account using a fresh session
+        session_key = response.json()["data"]["session_key"]
         # so the X-Session-Key header is the only credential.
         session_client = requests.Session()
         session_client.headers.update({"Content-Type": "application/json"})
@@ -192,7 +191,7 @@ class TestAPIKeyConstraints:
             f"{server_url}/api/v1/accounts/{test_account['account_id']}/api-keys"
         )
         assert limit_response.status_code == 200
-        existing_count = limit_response.json()["total"]
+        existing_count = limit_response.json()["data"]["total"]
 
         created_keys = []
         try:
@@ -243,7 +242,7 @@ class TestAPIKeyAuditLogs:
             },
         )
         assert response.status_code == 200
-        data = response.json()
+        data = response.json()["data"]
         assert data["total"] >= 1
         assert any(
             log["resource_id"] == api_key["api_key_id"] and log["action"] == "api_key.create"

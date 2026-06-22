@@ -63,6 +63,7 @@ type LoginRequest struct {
 	LoginName     string `json:"login_name" binding:"required"`
 	LoginPassword string `json:"login_password" binding:"required"`
 }
+
 // AccountResponse represents an account in API responses.
 type AccountResponse struct {
 	AccountID          string `json:"account_id"`
@@ -160,12 +161,18 @@ func (h *AccountHandler) CreateAccount(c *gin.Context) {
 }
 
 // ListAccounts handles GET /api/v1/accounts.
-// Admin sees all accounts. Manager sees user accounts only. User sees self.
+// Admin sees all accounts. Manager sees user accounts only. Users are not
+// permitted to list accounts through this endpoint.
 // Query parameters role, status, and external_id are honored when the caller
 // is permitted to use them.
 func (h *AccountHandler) ListAccounts(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	ac, _ := middleware.GetAuthContext(c)
+
+	if ac.Account.Role == models.AccountRoleUser {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied", "trace_id": traceID})
+		return
+	}
 
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	if offset < 0 {
@@ -252,6 +259,12 @@ func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 		return
 	}
 
+	// Non-admin users cannot change their own role or status.
+	if ac.Account.Role != models.AccountRoleAdmin && (req.Role != "" || req.Status != "") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cannot change role or status", "trace_id": traceID})
+		return
+	}
+
 	updateReq := &services.UpdateAccountRequest{
 		AccountID:  accountID,
 		CallerRole: ac.Account.Role,
@@ -299,12 +312,13 @@ func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 }
 
 // DeleteAccount handles DELETE /api/v1/accounts/:account_id.
+// Only admin can delete accounts.
 func (h *AccountHandler) DeleteAccount(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	ac, _ := middleware.GetAuthContext(c)
 	accountID := c.Param("account_id")
 
-	if ac.Account.Role != models.AccountRoleAdmin && ac.Account.AccountID != accountID {
+	if ac.Account.Role != models.AccountRoleAdmin {
 		c.JSON(http.StatusForbidden, gin.H{"error": "access denied", "trace_id": traceID})
 		return
 	}
@@ -366,7 +380,11 @@ func (h *AccountHandler) Login(c *gin.Context) {
 		return
 	}
 
-	account, sessionKey, expiry, err := h.accountSvc.LoginByPassword(c.Request.Context(), req.LoginName, req.LoginPassword)
+	// The login endpoint is public and does not run the auth middleware, so
+	// inject the client IP into the context here so audit logs can capture it.
+	ctx := services.ContextWithClientIP(c.Request.Context(), c.ClientIP())
+
+	account, sessionKey, expiry, err := h.accountSvc.LoginByPassword(ctx, req.LoginName, req.LoginPassword)
 	if err != nil {
 		h.log.Warn("api", traceID, "login failed", "error", err.Error())
 		if err == services.ErrAccountNotFound || err == services.ErrPasswordNotSet {
@@ -384,8 +402,10 @@ func (h *AccountHandler) Login(c *gin.Context) {
 		ExpiresAtMs: expiry,
 	}, traceID)
 }
+
 // CreateSession handles POST /api/v1/accounts/:account_id/session.
-// Manager can only create sessions for user accounts.
+// Admin can create sessions for any account. Manager can only create sessions
+// for user accounts. User can only create sessions for their own account.
 func (h *AccountHandler) CreateSession(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	ac, _ := middleware.GetAuthContext(c)
@@ -402,15 +422,18 @@ func (h *AccountHandler) CreateSession(c *gin.Context) {
 		return
 	}
 
-	if ac.Account.Role == models.AccountRoleManager && account.Role != models.AccountRoleUser {
-		c.JSON(http.StatusForbidden, gin.H{"error": "manager can only create sessions for user accounts", "trace_id": traceID})
-		return
-	}
-	if ac.Account.Role != models.AccountRoleAdmin && ac.Account.AccountID != accountID {
-		// Managers creating sessions for user accounts are allowed above.
-		if ac.Account.Role == models.AccountRoleManager && account.Role == models.AccountRoleUser {
-			// allowed
-		} else {
+	// Admin can create sessions for any account.
+	if ac.Account.Role == models.AccountRoleAdmin {
+		// allowed
+	} else if ac.Account.Role == models.AccountRoleManager {
+		// Manager can only create sessions for user accounts.
+		if account.Role != models.AccountRoleUser {
+			c.JSON(http.StatusForbidden, gin.H{"error": "manager can only create sessions for user accounts", "trace_id": traceID})
+			return
+		}
+	} else {
+		// User can only create sessions for their own account.
+		if ac.Account.AccountID != accountID {
 			c.JSON(http.StatusForbidden, gin.H{"error": "access denied", "trace_id": traceID})
 			return
 		}

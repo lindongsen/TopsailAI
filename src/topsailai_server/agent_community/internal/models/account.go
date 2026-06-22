@@ -99,16 +99,12 @@ func (a *Account) ValidRole() bool {
 // RoleRank returns the numeric rank of the account role for hierarchy comparisons.
 // Admin > Manager > User. Unknown roles return 0.
 func (a *Account) RoleRank() int {
-	switch a.Role {
-	case AccountRoleAdmin:
-		return 3
-	case AccountRoleManager:
-		return 2
-	case AccountRoleUser:
-		return 1
-	default:
-		return 0
-	}
+	return roleRank(a.Role)
+}
+
+// HasRole reports whether the account has at least the specified role.
+func (a *Account) HasRole(role AccountRole) bool {
+	return a.RoleRank() >= roleRank(role)
 }
 
 // generateAccountID returns a unique account identifier with format acc-{alphanumeric}.
