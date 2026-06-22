@@ -225,6 +225,25 @@ class TestAPIKeyRBAC:
             admin_client.delete(f"{server_url}/api/v1/accounts/{user_a['account_id']}")
             admin_client.delete(f"{server_url}/api/v1/accounts/{user_b['account_id']}")
 
+    def test_user_can_list_all_accounts(self, admin_client: requests.Session, server_url: str, unique_id: str):
+        """User can list all non-deleted accounts for discovery."""
+        user_account = _create_user_account(admin_client, server_url, unique_id, "list_user")
+        user_client, _ = _api_key_client(admin_client, server_url, user_account["account_id"])
+
+        try:
+            response = user_client.get(f"{server_url}/api/v1/accounts")
+            assert response.status_code == 200
+            data = get_response_data(response)
+            assert "items" in data
+            assert "total" in data
+            assert data["total"] >= 1
+            for account in data["items"]:
+                assert "login_password" not in account
+                assert "login_session_key" not in account
+                assert account["status"] != "deleted"
+        finally:
+            admin_client.delete(f"{server_url}/api/v1/accounts/{user_account['account_id']}")
+
     def test_manager_cannot_create_api_key(self, manager_client: requests.Session | None, server_url: str):
         """Manager cannot create API keys, even for their own account."""
         if manager_client is None:
@@ -321,14 +340,22 @@ class TestAccountAccessRBAC:
             assert "login_password" not in account
             assert "login_session_key" not in account
 
-    def test_user_cannot_list_all_accounts(self, admin_client: requests.Session, server_url: str, unique_id: str):
-        """User cannot list all accounts."""
+    def test_user_can_list_all_accounts(self, admin_client: requests.Session, server_url: str, unique_id: str):
+        """User can list all non-deleted accounts for discovery."""
         user_account = _create_user_account(admin_client, server_url, unique_id, "list_attempt")
         user_client, _ = _api_key_client(admin_client, server_url, user_account["account_id"])
 
         try:
             response = user_client.get(f"{server_url}/api/v1/accounts")
-            assert response.status_code == 403
+            assert response.status_code == 200
+            data = get_response_data(response)
+            assert "items" in data
+            assert "total" in data
+            assert data["total"] >= 1
+            for account in data["items"]:
+                assert "login_password" not in account
+                assert "login_session_key" not in account
+                assert account["status"] != "deleted"
         finally:
             admin_client.delete(f"{server_url}/api/v1/accounts/{user_account['account_id']}")
 
@@ -387,8 +414,8 @@ class TestAccountAccessRBAC:
         finally:
             admin_client.delete(f"{server_url}/api/v1/accounts/{user_account['account_id']}")
 
-    def test_user_can_only_access_own_account(self, admin_client: requests.Session, server_url: str, unique_id: str):
-        """User can only access their own account."""
+    def test_user_can_access_any_non_deleted_account(self, admin_client: requests.Session, server_url: str, unique_id: str):
+        """User can access any non-deleted account by ID for discovery."""
         user_a = _create_user_account(admin_client, server_url, unique_id, "own_a")
         user_b = _create_user_account(admin_client, server_url, unique_id, "own_b")
         user_client_a, _ = _api_key_client(admin_client, server_url, user_a["account_id"])
@@ -398,7 +425,11 @@ class TestAccountAccessRBAC:
             assert response.status_code == 200
 
             response = user_client_a.get(f"{server_url}/api/v1/accounts/{user_b['account_id']}")
-            assert response.status_code == 403
+            assert response.status_code == 200
+            account = get_response_data(response)
+            assert account["account_id"] == user_b["account_id"]
+            assert "login_password" not in account
+            assert "login_session_key" not in account
         finally:
             admin_client.delete(f"{server_url}/api/v1/accounts/{user_a['account_id']}")
             admin_client.delete(f"{server_url}/api/v1/accounts/{user_b['account_id']}")

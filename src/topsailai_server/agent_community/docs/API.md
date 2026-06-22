@@ -199,7 +199,7 @@ ACS uses a role hierarchy: `admin > manager > user`.
 
 - `admin`: Can manage all resources including accounts, API keys, groups, and audit logs.
 - `manager`: Can create user accounts, query accounts by id/external_id, and create login sessions for user accounts. Cannot create API keys.
-- `user`: Can manage their own resources (account, API keys, groups they are members of).
+- `user`: Can manage their own resources (account, API keys, groups they are members of) and query all non-deleted accounts for discovery.
 
 Requests that do not meet the required role are rejected with `403 Forbidden`.
 
@@ -271,9 +271,10 @@ Create a new account.
 
 List accounts with pagination and filtering.
 
-**Authentication:** Required (`admin` or `manager`).
+**Authentication:** Required.
 - `admin` can list all accounts.
 - `manager` can list accounts with limited fields (sensitive fields such as `login_password`, `login_session_key`, and API keys are omitted).
+- `user` can list all non-deleted accounts with the same limited fields.
 
 **Query Parameters:**
 - offset, limit, sort_key, order_by, create_at_ms, update_at_ms
@@ -345,11 +346,10 @@ Return the account associated with the current authentication credentials.
 **GET /api/v1/accounts/:account_id**
 
 Get a single account by ID.
-
 **Authentication:** Required.
 - `admin` can access any account.
 - `manager` can query accounts by id or external_id with limited fields.
-- `user` can only access their own account.
+- `user` can access any non-deleted account with the same limited fields.
 
 **Path Parameters:**
 - account_id: account identifier (e.g., `acc-abc123`)

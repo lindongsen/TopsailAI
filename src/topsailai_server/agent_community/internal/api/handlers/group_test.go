@@ -16,6 +16,7 @@ import (
 	"github.com/topsailai/agent-community/internal/api/middleware"
 	"github.com/topsailai/agent-community/internal/config"
 	"github.com/topsailai/agent-community/internal/models"
+	"github.com/topsailai/agent-community/internal/services"
 	"github.com/topsailai/agent-community/pkg/logger"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -329,7 +330,8 @@ func setupGroupTestDB(t *testing.T) *gorm.DB {
 func setupGroupTestHandler(t *testing.T, db *gorm.DB, cfg *config.Config) *GroupHandler {
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
 	pub := &mockGroupPublisher{}
-	return NewGroupHandler(db, pub, cfg, log)
+	auditSvc := services.NewAuditLogService(db)
+	return NewGroupHandler(db, pub, cfg, log, auditSvc)
 }
 
 // TestCreateGroupAutoJoinsManagerAgent verifies that creating a group automatically
@@ -670,7 +672,8 @@ func TestListGroups_UserOnlyJoined(t *testing.T) {
 		IsAuthenticated: true,
 	}))
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
-	handler := NewGroupHandler(db, nil, &config.Config{}, log)
+	auditSvc := services.NewAuditLogService(db)
+	handler := NewGroupHandler(db, nil, &config.Config{}, log, auditSvc)
 	r.GET("/api/v1/groups", handler.ListGroups)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups", nil)
@@ -721,7 +724,8 @@ func TestListGroups_AdminSeesAll(t *testing.T) {
 		IsAuthenticated: true,
 	}))
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
-	handler := NewGroupHandler(db, nil, &config.Config{}, log)
+	auditSvc := services.NewAuditLogService(db)
+	handler := NewGroupHandler(db, nil, &config.Config{}, log, auditSvc)
 	r.GET("/api/v1/groups", handler.ListGroups)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups", nil)
@@ -866,8 +870,8 @@ func TestCreateGroup_PublisherFailureStillSucceeds(t *testing.T) {
 		memberCreateErr: errors.New("nats member create failure"),
 	}
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
-	handler := NewGroupHandler(db, pub, cfg, log)
-
+	auditSvc := services.NewAuditLogService(db)
+	handler := NewGroupHandler(db, pub, cfg, log, auditSvc)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Set("auth_context", middleware.AuthContext{
@@ -1079,7 +1083,8 @@ func TestListGroups_InvalidSortKey(t *testing.T) {
 		IsAuthenticated: true,
 	}))
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
-	handler := NewGroupHandler(db, nil, &config.Config{}, log)
+	auditSvc := services.NewAuditLogService(db)
+	handler := NewGroupHandler(db, nil, &config.Config{}, log, auditSvc)
 	r.GET("/api/v1/groups", handler.ListGroups)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups?sort_key=invalid", nil)
@@ -1119,7 +1124,8 @@ func TestListGroups_TimeRangeFilter(t *testing.T) {
 		IsAuthenticated: true,
 	}))
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
-	handler := NewGroupHandler(db, nil, &config.Config{}, log)
+	auditSvc := services.NewAuditLogService(db)
+	handler := NewGroupHandler(db, nil, &config.Config{}, log, auditSvc)
 	r.GET("/api/v1/groups", handler.ListGroups)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/groups?create_at_ms=%d-%d", now-2000, now-500), nil)
@@ -1159,7 +1165,8 @@ func TestListGroups_PaginationClamping(t *testing.T) {
 		IsAuthenticated: true,
 	}))
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
-	handler := NewGroupHandler(db, nil, &config.Config{}, log)
+	auditSvc := services.NewAuditLogService(db)
+	handler := NewGroupHandler(db, nil, &config.Config{}, log, auditSvc)
 	r.GET("/api/v1/groups", handler.ListGroups)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups?offset=-1&limit=0", nil)

@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -61,7 +62,7 @@ func setupAccountTestHandler(t *testing.T, db *gorm.DB) *AccountHandler {
 // createTestAccount creates an account through the service for test setup.
 func createTestAccount(t *testing.T, svc *services.AccountService, name, loginName string, role models.AccountRole) *models.Account {
 	t.Helper()
-	acc, err := svc.CreateAccount(nil, &services.CreateAccountRequest{
+	acc, err := svc.CreateAccount(services.ContextWithClientIP(context.Background(), "127.0.0.1"), &services.CreateAccountRequest{
 		AccountName:   name,
 		LoginName:     loginName,
 		Role:          role,
@@ -331,7 +332,7 @@ func TestAccountHandler_CreateAccount_DuplicateLoginName(t *testing.T) {
 }
 
 // TestAccountHandler_ListAccounts_RoleFiltering verifies admin sees all,
-// manager sees users and self, and user sees self.
+// manager sees users and self, and user sees all non-deleted accounts.
 func TestAccountHandler_ListAccounts_RoleFiltering(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupAccountTestDB(t)
@@ -361,10 +362,10 @@ func TestAccountHandler_ListAccounts_RoleFiltering(t *testing.T) {
 			expectedTotal: 2,
 		},
 		{
-			name:          "user sees self",
+			name:          "user sees all non-deleted accounts",
 			caller:        user,
-			expectedIDs:   []string{user.AccountID},
-			expectedTotal: 1,
+			expectedIDs:   []string{admin.AccountID, manager.AccountID, user.AccountID},
+			expectedTotal: 3,
 		},
 	}
 	for _, tt := range tests {
@@ -422,7 +423,7 @@ func TestAccountHandler_ListAccounts_PaginationClamping(t *testing.T) {
 }
 
 // TestAccountHandler_GetAccount_AccessControl verifies role-based access for
-// retrieving accounts.
+// retrieving accounts. Users can read any non-deleted account.
 func TestAccountHandler_GetAccount_AccessControl(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupAccountTestDB(t)
@@ -447,7 +448,7 @@ func TestAccountHandler_GetAccount_AccessControl(t *testing.T) {
 		{"manager gets self", manager, manager.AccountID, http.StatusOK},
 		{"manager gets other manager", manager, otherManager.AccountID, http.StatusForbidden},
 		{"user gets self", user, user.AccountID, http.StatusOK},
-		{"user gets other user", user, createTestAccount(t, accountSvc, "Other", "other-get", models.AccountRoleUser).AccountID, http.StatusForbidden},
+		{"user gets other user", user, createTestAccount(t, accountSvc, "Other", "other-get", models.AccountRoleUser).AccountID, http.StatusOK},
 		{"not found", admin, "acc-nonexistent", http.StatusNotFound},
 	}
 
@@ -594,7 +595,7 @@ func TestAccountHandler_UpdateAccount_UserSelfCannotPromote(t *testing.T) {
 
 	handler.UpdateAccount(c)
 
-	require.Equal(t, http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
 }
 
 // TestAccountHandler_UpdateAccount_UserOtherForbidden verifies a user cannot
@@ -686,7 +687,7 @@ func TestAccountHandler_DeleteAccount_AccessControl(t *testing.T) {
 		expectedStatus int
 	}{
 		{"admin deletes user", admin, user.AccountID, http.StatusOK},
-		{"user deletes self", other, other.AccountID, http.StatusOK},
+		{"user deletes self", other, other.AccountID, http.StatusForbidden},
 		{"user deletes other", user, other.AccountID, http.StatusForbidden},
 		{"not found", admin, "acc-nonexistent", http.StatusNotFound},
 	}
@@ -781,7 +782,7 @@ func TestAccountHandler_Login(t *testing.T) {
 	createTestAccount(t, accountSvc, "User", "login-user", models.AccountRoleUser)
 
 	// Account without password.
-	_, err := accountSvc.CreateAccount(nil, &services.CreateAccountRequest{
+	_, err := accountSvc.CreateAccount(services.ContextWithClientIP(context.Background(), "127.0.0.1"), &services.CreateAccountRequest{
 		AccountName: "No Password",
 		LoginName:   "no-password",
 		Role:        models.AccountRoleUser,
@@ -906,7 +907,7 @@ func TestAccountHandler_CreateSession_InactiveAccount(t *testing.T) {
 	admin := createTestAccount(t, accountSvc, "Admin", "admin-session-inactive", models.AccountRoleAdmin)
 	inactive := createTestAccount(t, accountSvc, "Inactive", "inactive-session", models.AccountRoleUser)
 	inactiveStatus := models.AccountStatusInactive
-	_, err := accountSvc.UpdateAccount(nil, &services.UpdateAccountRequest{
+	_, err := accountSvc.UpdateAccount(services.ContextWithClientIP(context.Background(), "127.0.0.1"), &services.UpdateAccountRequest{
 		AccountID:  inactive.AccountID,
 		Status:     &inactiveStatus,
 		CallerRole: models.AccountRoleAdmin,
@@ -967,8 +968,9 @@ func TestCanViewAccount(t *testing.T) {
 		{"manager views manager (self)", manager, manager, true},
 		{"manager views other manager", manager, &models.Account{AccountID: "acc-manager-2", Role: models.AccountRoleManager}, false},
 		{"user views self", user, user, true},
-		{"user views other user", user, &models.Account{AccountID: "acc-other", Role: models.AccountRoleUser}, false},
-		{"user views admin", user, admin, false},
+		{"user views other user", user, &models.Account{AccountID: "acc-other", Role: models.AccountRoleUser}, true},
+		{"user views admin", user, admin, true},
+		{"user views deleted account", user, &models.Account{AccountID: "acc-deleted", Role: models.AccountRoleUser, Status: models.AccountStatusDeleted}, false},
 	}
 
 	for _, tt := range tests {

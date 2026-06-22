@@ -223,8 +223,8 @@ func (s *AccountService) ListAccounts(ctx context.Context, offset, limit int, fi
 			// Manager sees non-deleted user accounts and their own account.
 			query = query.Where("status != ? AND (role = ? OR account_id = ?)", models.AccountStatusDeleted, models.AccountRoleUser, filter.CallerID)
 		case models.AccountRoleUser:
-			// User sees only their own non-deleted account.
-			query = query.Where("status != ? AND account_id = ?", models.AccountStatusDeleted, filter.CallerID)
+			// User can list all non-deleted accounts for discovery.
+			query = query.Where("status != ?", models.AccountStatusDeleted)
 		default:
 			query = query.Where("status != ?", models.AccountStatusDeleted)
 		}

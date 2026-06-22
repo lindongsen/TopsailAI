@@ -161,18 +161,13 @@ func (h *AccountHandler) CreateAccount(c *gin.Context) {
 }
 
 // ListAccounts handles GET /api/v1/accounts.
-// Admin sees all accounts. Manager sees user accounts only. Users are not
-// permitted to list accounts through this endpoint.
+// Admin sees all accounts. Manager sees user accounts only. Users can list
+// all non-deleted accounts for discovery (e.g., to add accounts to groups).
 // Query parameters role, status, and external_id are honored when the caller
 // is permitted to use them.
 func (h *AccountHandler) ListAccounts(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	ac, _ := middleware.GetAuthContext(c)
-
-	if ac.Account.Role == models.AccountRoleUser {
-		c.JSON(http.StatusForbidden, gin.H{"error": "access denied", "trace_id": traceID})
-		return
-	}
 
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	if offset < 0 {
@@ -481,6 +476,10 @@ func (h *AccountHandler) canViewAccount(ac middleware.AuthContext, account *mode
 		return true
 	}
 	if ac.Account.Role == models.AccountRoleManager && account.Role == models.AccountRoleUser {
+		return true
+	}
+	// User can view any non-deleted account for discovery.
+	if ac.Account.Role == models.AccountRoleUser {
 		return true
 	}
 	return false

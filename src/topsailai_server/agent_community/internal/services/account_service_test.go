@@ -469,15 +469,20 @@ func TestAccountService_ListAccounts_FiltersAndVisibility(t *testing.T) {
 	assert.Equal(t, int64(0), total)
 	assert.Empty(t, items)
 
-	// User sees only themselves.
+	// User sees all non-deleted accounts for discovery.
 	items, total, err = accountSvc.ListAccounts(ctx, 0, 100, &ListAccountsFilter{
 		CallerRole: models.AccountRoleUser,
 		CallerID:   admin.AccountID,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), total)
-	assert.Len(t, items, 1)
-	assert.Equal(t, admin.AccountID, items[0].AccountID)
+	assert.Equal(t, int64(2), total)
+	assert.Len(t, items, 2)
+	ids := make([]string, len(items))
+	for i, item := range items {
+		ids[i] = item.AccountID
+	}
+	assert.Contains(t, ids, admin.AccountID)
+	assert.Contains(t, ids, manager.AccountID)
 }
 
 func TestAccountService_UpdateAccount_CallerWeightZero(t *testing.T) {
@@ -498,7 +503,7 @@ func TestAccountService_UpdateAccount_CallerWeightZero(t *testing.T) {
 		AccountName: &newName,
 		CallerRole:  "",
 	})
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid caller role")
 }
 
