@@ -30,6 +30,12 @@ type listGroupMembersResponseWrapper struct {
 	} `json:"data"`
 	TraceID string `json:"trace_id"`
 }
+// groupMemberResponseWrapper mirrors the standard envelope produced by writeJSON.
+type groupMemberResponseWrapper struct {
+	Data    GroupMemberResponse `json:"data"`
+	Error   string            `json:"error"`
+	TraceID string            `json:"trace_id"`
+}
 
 
 const testAdminAccountID = "acc-admin"
@@ -238,10 +244,10 @@ func TestJoinGroupAcceptsMemberInterfaceAsObject(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, w.Code)
 
-	var resp GroupMemberResponse
+	var resp groupMemberResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	require.NotEmpty(t, resp.MemberInterface)
-	require.True(t, json.Valid([]byte(resp.MemberInterface)))
+	require.NotEmpty(t, resp.Data.MemberInterface)
+	require.True(t, json.Valid([]byte(resp.Data.MemberInterface)))
 }
 
 func TestJoinGroupAcceptsMemberInterfaceAsString(t *testing.T) {
@@ -267,10 +273,10 @@ func TestJoinGroupAcceptsMemberInterfaceAsString(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, w.Code)
 
-	var resp GroupMemberResponse
+	var resp groupMemberResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	expected := `{"adaptor":"mock_agent","timeout_chat":30}`
-	assert.Equal(t, expected, resp.MemberInterface)
+	assert.Equal(t, expected, resp.Data.MemberInterface)
 }
 
 func TestJoinGroupRejectsInvalidMemberInterfaceString(t *testing.T) {
@@ -349,10 +355,10 @@ func TestUpdateMemberAcceptsMemberInterfaceAsObject(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp GroupMemberResponse
+	var resp groupMemberResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	expected := `{"adaptor":"updated_agent"}`
-	assert.Equal(t, expected, resp.MemberInterface)
+	assert.Equal(t, expected, resp.Data.MemberInterface)
 }
 
 func TestUpdateMemberAcceptsMemberInterfaceAsString(t *testing.T) {
@@ -383,10 +389,10 @@ func TestUpdateMemberAcceptsMemberInterfaceAsString(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp GroupMemberResponse
+	var resp groupMemberResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	expected := `{"adaptor":"updated_agent"}`
-	assert.Equal(t, expected, resp.MemberInterface)
+	assert.Equal(t, expected, resp.Data.MemberInterface)
 }
 
 // TestJoinGroup_GroupNotFound verifies that joining a non-existent group returns 404.
@@ -657,11 +663,11 @@ func TestUpdateMember_Success(t *testing.T) {
 	handler.UpdateMember(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	var resp GroupMemberResponse
+	var resp groupMemberResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "David", resp.MemberName)
-	assert.Equal(t, "Updated description", resp.MemberDescription)
-	assert.Equal(t, string(models.MemberStatusIdle), resp.MemberStatus)
+	assert.Equal(t, "David", resp.Data.MemberName)
+	assert.Equal(t, "Updated description", resp.Data.MemberDescription)
+	assert.Equal(t, string(models.MemberStatusIdle), resp.Data.MemberStatus)
 	assert.True(t, pub.modifyCalled)
 }
 
@@ -975,9 +981,9 @@ func TestGroupMemberHandler_Update_AdminAny(t *testing.T) {
 	handler.UpdateMember(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	var resp GroupMemberResponse
+	var resp groupMemberResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "UpdatedByAdmin", resp.MemberName)
+	assert.Equal(t, "UpdatedByAdmin", resp.Data.MemberName)
 }
 
 func TestGroupMemberHandler_Update_UserOwnOnly(t *testing.T) {

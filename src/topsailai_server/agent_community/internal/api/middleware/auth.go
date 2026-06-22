@@ -243,6 +243,45 @@ func RequireOwnerOrAdmin(resourceOwnerID string) gin.HandlerFunc {
 		})
 	}
 }
+// RequireAPIKeyRole returns a middleware that requires the request to be
+// authenticated with an API key whose role is at least the specified role.
+// Session or password authentication is not accepted for routes protected by
+// this middleware.
+func RequireAPIKeyRole(minRole models.APIKeyRole) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ac, _ := GetAuthContext(c)
+		if !ac.IsAuthenticated || ac.Account == nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error":    "authentication required",
+				"trace_id": GetTraceID(c),
+			})
+			return
+		}
+		if !ac.Account.IsActive() {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error":    "account is not active",
+				"trace_id": GetTraceID(c),
+			})
+			return
+		}
+		if ac.AuthMethod != AuthMethodAPIKey || ac.APIKey == nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error":    "api key authentication required",
+				"trace_id": GetTraceID(c),
+			})
+			return
+		}
+		if !apiKeyRoleGE(ac.APIKey.Role, minRole) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error":    "insufficient api key role",
+				"trace_id": GetTraceID(c),
+			})
+			return
+		}
+		c.Next()
+	}
+}
+
 
 // accountRoleGE returns true if role a is greater than or equal to role b.
 func accountRoleGE(a, b models.AccountRole) bool {

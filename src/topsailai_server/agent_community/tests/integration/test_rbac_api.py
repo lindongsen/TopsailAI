@@ -171,7 +171,7 @@ class TestAPIKeyRBAC:
                 json=key_data,
             )
             assert response.status_code == 201, f"Failed to create user key: {response.text}"
-            user_key_id = response.json()["api_key_id"]
+            user_key_id = get_response_data(response)["api_key_id"]
 
             # Admin can create admin/manager keys only for an admin account.
             for role in ["manager", "admin"]:
@@ -181,7 +181,7 @@ class TestAPIKeyRBAC:
                     json=key_data,
                 )
                 assert response.status_code == 201, f"Failed to create {role} key: {response.text}"
-                api_key_id = response.json()["api_key_id"]
+                api_key_id = get_response_data(response)["api_key_id"]
                 admin_client.delete(
                     f"{server_url}/api/v1/accounts/{admin_account['account_id']}/api-keys/{api_key_id}"
                 )
@@ -285,7 +285,7 @@ class TestAPIKeyRBAC:
                 json=key_data,
             )
             assert response.status_code == 201
-            api_key_id = response.json()["api_key_id"]
+            api_key_id = get_response_data(response)["api_key_id"]
 
             response = admin_client.delete(
                 f"{server_url}/api/v1/accounts/{user_account['account_id']}/api-keys/{api_key_id}"
@@ -306,7 +306,7 @@ class TestAPIKeyRBAC:
                 json=key_data,
             )
             assert response.status_code == 201
-            api_key_id = response.json()["api_key_id"]
+            api_key_id = get_response_data(response)["api_key_id"]
 
             response = user_client.delete(
                 f"{server_url}/api/v1/accounts/{user_account['account_id']}/api-keys/{api_key_id}"
@@ -970,8 +970,9 @@ class TestMessageRBAC:
             response = user_client.delete(
                 f"{server_url}/api/v1/groups/{group['group_id']}/messages/{message['message_id']}"
             )
-            assert response.status_code == 204
-
+            assert response.status_code == 200
+            data = get_response_data(response)
+            assert data["message"] == "message deleted"
             admin_client.delete(f"{server_url}/api/v1/groups/{group['group_id']}")
         finally:
             admin_client.delete(f"{server_url}/api/v1/accounts/{user_account['account_id']}")

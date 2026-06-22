@@ -26,13 +26,18 @@ import (
 type listMessagesResponseWrapper struct {
 	Data struct {
 		Items  []MessageResponse `json:"items"`
-		Total  int64        `json:"total"`
-		Offset int          `json:"offset"`
-		Limit  int          `json:"limit"`
+		Total  int64             `json:"total"`
+		Offset int               `json:"offset"`
+		Limit  int               `json:"limit"`
 	} `json:"data"`
 	TraceID string `json:"trace_id"`
 }
 
+// messageResponseWrapper mirrors the envelope produced by writeDataResponse.
+type messageResponseWrapper struct {
+	Data    MessageResponse `json:"data"`
+	TraceID string          `json:"trace_id"`
+}
 
 // setupMessageTestDB creates an in-memory SQLite database and auto-migrates models.
 func setupMessageTestDB(t *testing.T) *gorm.DB {
@@ -226,12 +231,12 @@ func TestCreateMessage_AdminCanSendToAnyGroup(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 
-	var resp MessageResponse
+	var resp messageResponseWrapper
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Equal(t, adminID, resp.SenderID)
-	assert.Equal(t, string(models.MemberTypeUser), resp.SenderType)
-	assert.Equal(t, "admin message", resp.MessageText)
+	assert.Equal(t, adminID, resp.Data.SenderID)
+	assert.Equal(t, string(models.MemberTypeUser), resp.Data.SenderType)
+	assert.Equal(t, "admin message", resp.Data.MessageText)
 }
 
 // TestCreateMessage_UserCanSendOnlyToMemberGroup verifies user membership restriction.
@@ -289,11 +294,11 @@ func TestCreateMessage_ExtractsMentions(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 
-	var resp MessageResponse
+	var resp messageResponseWrapper
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	mentions, ok := resp.Mentions.([]interface{})
+	mentions, ok := resp.Data.Mentions.([]interface{})
 	require.True(t, ok, "mentions should be an array")
 	require.Len(t, mentions, 1)
 	mention := mentions[0].(map[string]interface{})
@@ -704,10 +709,10 @@ func TestUpdateMessage_AdminCanUpdateAny(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
-	var resp MessageResponse
+	var resp messageResponseWrapper
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Equal(t, "admin updated", resp.MessageText)
+	assert.Equal(t, "admin updated", resp.Data.MessageText)
 }
 
 // TestDeleteMessage_UserCanDeleteOwnOnly verifies user can only delete own messages.
@@ -730,7 +735,12 @@ func TestDeleteMessage_UserCanDeleteOwnOnly(t *testing.T) {
 	req1 := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/"+groupID+"/messages/"+ownMsg.MessageID, nil)
 	w1 := httptest.NewRecorder()
 	router.ServeHTTP(w1, req1)
-	require.Equal(t, http.StatusNoContent, w1.Code, "body: %s", w1.Body.String())
+	require.Equal(t, http.StatusOK, w1.Code, "body: %s", w1.Body.String())
+	var deleteResp1 map[string]interface{}
+	err := json.Unmarshal(w1.Body.Bytes(), &deleteResp1)
+	require.NoError(t, err)
+	require.NotNil(t, deleteResp1["data"])
+	assert.Equal(t, "message deleted", deleteResp1["data"].(map[string]interface{})["message"])
 
 	// Other user's message: should fail with 403
 	req2 := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/"+groupID+"/messages/"+otherMsg.MessageID, nil)
@@ -757,7 +767,12 @@ func TestDeleteMessage_AdminCanDeleteAny(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusNoContent, w.Code, "body: %s", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var deleteResp map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &deleteResp)
+	require.NoError(t, err)
+	require.NotNil(t, deleteResp["data"])
+	assert.Equal(t, "message deleted", deleteResp["data"].(map[string]interface{})["message"])
 	assert.Len(t, pub.deleteCalls, 1)
 }
 
@@ -848,7 +863,9 @@ func TestTriggerMessage_NoAgentsToTrigger(t *testing.T) {
 	var resp map[string]interface{}
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Equal(t, "no_agents_to_trigger", resp["status"])
+	data, ok := resp["data"].(map[string]interface{})
+	require.True(t, ok, "response should contain data object")
+	assert.Equal(t, "no_agents_to_trigger", data["status"])
 }
 
 // TestTriggerMessage_InvalidAgentID verifies error for non-agent or non-member agent_id.
@@ -1029,12 +1046,12 @@ func TestCreateMessage_DerivesSenderFromAuth(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 
-	var resp MessageResponse
+	var resp messageResponseWrapper
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Equal(t, accountID, resp.SenderID)
-	assert.Equal(t, string(models.MemberTypeUser), resp.SenderType)
-	assert.Equal(t, "hello from auth", resp.MessageText)
+	assert.Equal(t, accountID, resp.Data.SenderID)
+	assert.Equal(t, string(models.MemberTypeUser), resp.Data.SenderType)
+	assert.Equal(t, "hello from auth", resp.Data.MessageText)
 }
 
 // TestCreateMessage_RejectNonMember verifies that an authenticated user who is
@@ -1090,10 +1107,10 @@ func TestCreateMessage_AttachmentsDefaultEmpty(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 
-	var resp MessageResponse
+	var resp messageResponseWrapper
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Empty(t, resp.MessageAttachments)
+	assert.Empty(t, resp.Data.MessageAttachments)
 }
 
 // TestCreateMessage_EvaluatorErrorStillReturns201 verifies evaluator errors do not fail the request.
@@ -1214,10 +1231,12 @@ func TestUpdateMessage_Success(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
-	var resp MessageResponse
+	var resp dataResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Equal(t, "updated text", resp.MessageText)
+	data, ok := resp.Data.(map[string]interface{})
+	require.True(t, ok, "response data should be object")
+	assert.Equal(t, "updated text", data["message_text"])
 	assert.Len(t, pub.modifyCalls, 1)
 	assert.Equal(t, msg.MessageID, pub.modifyCalls[0].MessageID)
 }
@@ -1269,7 +1288,7 @@ func TestUpdateMessage_PublisherFailureStillSucceeds(t *testing.T) {
 	assert.Len(t, pub.modifyCalls, 1)
 }
 
-// TestDeleteMessage_Success verifies soft delete returns 204 and publishes delete event.
+// TestDeleteMessage_Success verifies soft delete returns 200 with envelope and publishes delete event.
 func TestDeleteMessage_Success(t *testing.T) {
 	db := setupMessageTestDB(t)
 	userID := "user-delete"
@@ -1287,7 +1306,13 @@ func TestDeleteMessage_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusNoContent, w.Code)
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp dataResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	data, ok := resp.Data.(map[string]interface{})
+	require.True(t, ok, "response data should be object")
+	assert.Equal(t, "message deleted", data["message"])
 	assert.Len(t, pub.deleteCalls, 1)
 	assert.Equal(t, msg.MessageID, pub.deleteCalls[0].MessageID)
 }
@@ -1328,7 +1353,7 @@ func TestDeleteMessage_SoftDeleteFields(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusNoContent, w.Code)
+	require.Equal(t, http.StatusOK, w.Code)
 
 	var updated models.GroupMessage
 	err := db.Where("group_id = ? AND message_id = ?", groupID, msg.MessageID).First(&updated).Error

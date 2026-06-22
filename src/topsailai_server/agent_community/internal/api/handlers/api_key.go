@@ -115,10 +115,10 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "api key created", "api_key_id", result.APIKey.APIKeyID, "owner_id", ownerID)
-	c.JSON(http.StatusCreated, APIKeyWithTokenResponse{
+	writeDataResponse(c, http.StatusCreated, APIKeyWithTokenResponse{
 		APIKeyResponse: toAPIKeyResponse(result.APIKey),
 		Token:          result.Token,
-	})
+	}, traceID)
 }
 
 // ListAPIKeys handles GET /api/v1/accounts/:account_id/api-keys.
@@ -179,7 +179,7 @@ func (h *APIKeyHandler) DeleteAPIKey(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "api key deleted", "api_key_id", apiKeyID)
-	c.JSON(http.StatusOK, gin.H{"message": "api key deleted", "trace_id": traceID})
+	writeDataResponse(c, http.StatusOK, gin.H{"message": "api key deleted"}, traceID)
 }
 
 // toAPIKeyResponse converts an APIKey model to API response.

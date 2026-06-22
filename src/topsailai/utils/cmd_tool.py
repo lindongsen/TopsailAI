@@ -41,7 +41,7 @@ def build_env(d:dict=None, keys:list=None):
     for k in [
         "HOME",
         "PYTHONPATH", "PATH", "HOSTNAME", "SHELL",
-        "GOCACHE", "GOPATH",
+        "GOCACHE", "GOPATH", "GOMODCACHE",
     ] + (
             keys or []
     ) + (

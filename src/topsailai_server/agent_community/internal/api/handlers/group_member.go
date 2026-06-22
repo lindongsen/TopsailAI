@@ -342,7 +342,7 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "member joined group", "group_id", groupID, "member_id", req.MemberID)
-	c.JSON(http.StatusCreated, toGroupMemberResponse(&member))
+	writeDataResponse(c, http.StatusCreated, toGroupMemberResponse(&member), traceID)
 }
 
 // ListGroupMembers handles GET /api/v1/groups/:group_id/members.
@@ -539,7 +539,7 @@ func (h *GroupMemberHandler) UpdateMember(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "member updated", "group_id", groupID, "member_id", memberID)
-	c.JSON(http.StatusOK, toGroupMemberResponse(&member))
+	writeDataResponse(c, http.StatusOK, toGroupMemberResponse(&member), traceID)
 }
 
 // LeaveGroup handles DELETE /api/v1/groups/:group_id/members/:member_id.

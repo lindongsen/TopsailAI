@@ -158,7 +158,7 @@ func Load() (*Config, error) {
 	nameExplicitlySet := v.IsSet("database.name")
 
 	// Server defaults
-	v.SetDefault("server.host", "127.0.0.1")
+	v.SetDefault("server.host", "")
 	v.SetDefault("server.port", 7370)
 	v.SetDefault("server.read_timeout", "30s")
 	v.SetDefault("server.write_timeout", "30s")
@@ -306,12 +306,11 @@ func (d *DatabaseConfig) DSN() string {
 }
 
 // GetListenAddress returns the listen address for the server.
-// When no host is configured the server binds to the loopback interface so
-// that multiple instances can share the same port on different loopback IPs
-// (e.g. 127.1.0.1:7370 and 127.1.0.2:7370).
+// When no host is configured the server binds to all interfaces so that
+// the service is reachable from remote clients by default.
 func (s *ServerConfig) GetListenAddress() string {
 	if s.Host == "" {
-		return "127.0.0.1"
+		return "0.0.0.0"
 	}
 	return s.Host
 }

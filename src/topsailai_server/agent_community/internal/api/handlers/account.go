@@ -157,7 +157,7 @@ func (h *AccountHandler) CreateAccount(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "account created", "account_id", account.AccountID)
-	c.JSON(http.StatusCreated, toAccountResponse(account))
+	writeDataResponse(c, http.StatusCreated, toAccountResponse(account), traceID)
 }
 
 // ListAccounts handles GET /api/v1/accounts.
@@ -233,7 +233,7 @@ func (h *AccountHandler) GetAccount(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, toAccountResponse(account))
+	writeDataResponse(c, http.StatusOK, toAccountResponse(account), traceID)
 }
 
 // UpdateAccount handles PUT /api/v1/accounts/:account_id.
@@ -303,7 +303,7 @@ func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "account updated", "account_id", accountID)
-	c.JSON(http.StatusOK, toAccountResponse(account))
+	writeDataResponse(c, http.StatusOK, toAccountResponse(account), traceID)
 }
 
 // DeleteAccount handles DELETE /api/v1/accounts/:account_id.
@@ -329,7 +329,7 @@ func (h *AccountHandler) DeleteAccount(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "account deleted", "account_id", accountID)
-	c.JSON(http.StatusOK, gin.H{"message": "account deleted", "trace_id": traceID})
+	writeDataResponse(c, http.StatusOK, gin.H{"message": "account deleted"}, traceID)
 }
 
 // ChangePassword handles POST /api/v1/accounts/:account_id/password.
@@ -361,7 +361,7 @@ func (h *AccountHandler) ChangePassword(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "password changed", "account_id", accountID)
-	c.JSON(http.StatusOK, gin.H{"message": "password changed", "trace_id": traceID})
+	writeDataResponse(c, http.StatusOK, gin.H{"message": "password changed"}, traceID)
 }
 
 // Login handles POST /api/v1/accounts/login.
@@ -460,7 +460,7 @@ func (h *AccountHandler) GetMe(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get account", "trace_id": traceID})
 		return
 	}
-	c.JSON(http.StatusOK, toAccountResponse(account))
+	writeDataResponse(c, http.StatusOK, toAccountResponse(account), traceID)
 }
 
 // canViewAccount checks whether the caller can view the target account.

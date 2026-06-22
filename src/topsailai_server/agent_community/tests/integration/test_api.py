@@ -14,8 +14,8 @@ import requests
 
 
 def _resp_data(response: requests.Response) -> dict:
-    """Unwrap the standard API response envelope {"data": ..., "trace_id": ...}."""
-    return response.json()["data"]
+    """Return the JSON payload (conftest monkey-patches response.json() to unwrap the envelope)."""
+    return response.json()
 
 
 class TestHealthEndpoints:
@@ -488,7 +488,9 @@ class TestMessage:
         response = api_client.delete(
             f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}"
         )
-        assert response.status_code == 204
+        assert response.status_code == 200
+        data = response.json()
+        assert data["message"] == "message deleted"
 
     def test_create_message_invalid_sender_ignored(self, api_client: requests.Session, server_url: str, test_group: dict):
         """Test that sender fields in the request body are ignored; sender is derived from auth."""
@@ -587,7 +589,9 @@ class TestEndToEndFlow:
         response = api_client.delete(
             f"{server_url}/api/v1/groups/{group_id}/messages/{message_id}"
         )
-        assert response.status_code == 204
+        assert response.status_code == 200
+        data = response.json()
+        assert data["message"] == "message deleted"
 
         # 8. Cleanup: delete group
         response = api_client.delete(f"{server_url}/api/v1/groups/{group_id}")

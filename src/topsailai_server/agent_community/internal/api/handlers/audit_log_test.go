@@ -208,7 +208,7 @@ func TestAuditLogHandler_Get_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp AuditLogResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	unmarshalDataResponse(t, w.Body.Bytes(), &resp)
 	assert.Equal(t, "al-001", resp.AuditLogID)
 	assert.Equal(t, "acc-a", resp.AccountID)
 	assert.Equal(t, "Alice", resp.ResourceName)

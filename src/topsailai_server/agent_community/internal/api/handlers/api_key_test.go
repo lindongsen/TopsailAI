@@ -123,7 +123,7 @@ func TestAPIKeyHandler_CreateAPIKey_AdminCreatesAdminForAnother(t *testing.T) {
 	handler.CreateAPIKey(c)
 	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 	var resp APIKeyWithTokenResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	unmarshalDataResponse(t, w.Body.Bytes(), &resp)
 	assert.Equal(t, "Admin Key", resp.APIKeyName)
 	assert.Equal(t, "admin", resp.Role)
 	assert.NotEmpty(t, resp.Token)
@@ -148,7 +148,7 @@ func TestAPIKeyHandler_CreateAPIKey_AdminCreatesManagerForManager(t *testing.T) 
 	handler.CreateAPIKey(c)
 	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 	var resp APIKeyWithTokenResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	unmarshalDataResponse(t, w.Body.Bytes(), &resp)
 	assert.Equal(t, "manager", resp.Role)
 	assert.Equal(t, manager.AccountID, resp.OwnerID)
 }
@@ -170,7 +170,7 @@ func TestAPIKeyHandler_CreateAPIKey_UserCreatesForSelf(t *testing.T) {
 	handler.CreateAPIKey(c)
 	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 	var resp APIKeyWithTokenResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	unmarshalDataResponse(t, w.Body.Bytes(), &resp)
 	assert.Equal(t, "User Key", resp.APIKeyName)
 	assert.Equal(t, "user", resp.Role)
 	assert.Equal(t, user.AccountID, resp.OwnerID)
@@ -247,7 +247,7 @@ func TestAPIKeyHandler_CreateAPIKey_EmptyRoleDefaultsToUser(t *testing.T) {
 	handler.CreateAPIKey(c)
 	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 	var resp APIKeyWithTokenResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	unmarshalDataResponse(t, w.Body.Bytes(), &resp)
 	assert.Equal(t, "user", resp.Role)
 }
 
@@ -613,7 +613,7 @@ func TestAPIKeyHandler_CreateAPIKey_AdminCreatesUserForAnother(t *testing.T) {
 	handler.CreateAPIKey(c)
 	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 	var resp APIKeyWithTokenResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	unmarshalDataResponse(t, w.Body.Bytes(), &resp)
 	assert.Equal(t, "user", resp.Role)
 	assert.Equal(t, user.AccountID, resp.OwnerID)
 }

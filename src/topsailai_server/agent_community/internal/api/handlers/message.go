@@ -177,7 +177,7 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	h.evaluateAndTrigger(c, traceID, &message, members)
 
 	h.log.Info("api", traceID, "message created", "group_id", groupID, "message_id", message.MessageID)
-	c.JSON(http.StatusCreated, toMessageResponse(&message))
+	writeDataResponse(c, http.StatusCreated, toMessageResponse(&message), traceID)
 }
 
 // evaluateAndTrigger evaluates if the message should trigger agents and publishes pending messages.
@@ -393,7 +393,7 @@ func (h *MessageHandler) UpdateMessage(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "message updated", "group_id", groupID, "message_id", messageID)
-	c.JSON(http.StatusOK, toMessageResponse(&message))
+	writeDataResponse(c, http.StatusOK, toMessageResponse(&message), traceID)
 }
 
 // DeleteMessage handles DELETE /api/v1/groups/:group_id/messages/:message_id.
@@ -448,7 +448,7 @@ func (h *MessageHandler) DeleteMessage(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "message deleted", "group_id", groupID, "message_id", messageID)
-	c.Status(http.StatusNoContent)
+	writeDataResponse(c, http.StatusOK, gin.H{"message": "message deleted"}, traceID)
 }
 
 // toMessageResponse converts a GroupMessage model to API response.
@@ -566,12 +566,12 @@ func (h *MessageHandler) TriggerMessage(c *gin.Context) {
 		}
 
 		if !result.ShouldTrigger || len(result.Targets) == 0 {
-			c.JSON(http.StatusAccepted, gin.H{
+			writeDataResponse(c, http.StatusAccepted, gin.H{
 				"message_id": messageID,
 				"group_id":   groupID,
 				"trigger":    trigger.TriggerInfo{Type: trigger.TriggerTypeManual},
 				"status":     "no_agents_to_trigger",
-			})
+			}, traceID)
 			return
 		}
 
@@ -588,12 +588,12 @@ func (h *MessageHandler) TriggerMessage(c *gin.Context) {
 			}
 		}
 
-		c.JSON(http.StatusAccepted, gin.H{
+		writeDataResponse(c, http.StatusAccepted, gin.H{
 			"message_id": messageID,
 			"group_id":   groupID,
 			"trigger":    trigger.TriggerInfo{Type: trigger.TriggerTypeManual, AgentID: result.Trigger.AgentID},
 			"status":     "pending",
-		})
+		}, traceID)
 		return
 	}
 
@@ -604,14 +604,14 @@ func (h *MessageHandler) TriggerMessage(c *gin.Context) {
 		msg.GroupID, &msg, triggerData, targetAgentID,
 	); err != nil {
 		h.log.Error("api", traceID, "failed to publish trigger", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to publish trigger: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to publish trigger: " + err.Error(), "trace_id": traceID})
 		return
 	}
 
-	c.JSON(http.StatusAccepted, gin.H{
+	writeDataResponse(c, http.StatusAccepted, gin.H{
 		"message_id": messageID,
 		"group_id":   groupID,
 		"trigger":    triggerInfo,
 		"status":     "pending",
-	})
+	}, traceID)
 }

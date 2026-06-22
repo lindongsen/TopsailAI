@@ -57,6 +57,9 @@ Overview Content
 COMMON_SCRIPT_FOLDER_NAME_LIST = [
     "scripts",
     "script",
+    "bin",
+    "sbin",
+    "tools",
 ]
 
 def is_matched_skill(skill_folder:str, keys:list[str]) -> bool:

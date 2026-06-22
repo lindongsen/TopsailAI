@@ -10,8 +10,8 @@ import requests
 
 
 def _resp_data(response: requests.Response) -> dict:
-    """Unwrap the API response envelope and return the data payload."""
-    return response.json()["data"]
+    """Return the JSON payload (conftest monkey-patches response.json() to unwrap the envelope)."""
+    return response.json()
 
 
 class TestAccountAuthentication:

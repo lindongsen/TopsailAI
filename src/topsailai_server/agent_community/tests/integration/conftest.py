@@ -22,12 +22,35 @@ TEST_SERVER_PORT = 7370
 TEST_NATS_URL = os.environ.get("ACS_NATS_SERVERS", "nats://127.0.0.1:4222")
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+def get_response_data(response: requests.Response) -> dict | list | None:
+    """Extract the `data` field from the standard ACS response envelope.
+
+    Falls back to returning the raw JSON payload for backwards compatibility
+    with endpoints that do not yet wrap their responses.
+    """
+    payload = response.json()
+    if isinstance(payload, dict) and "data" in payload:
+        return payload["data"]
+    return payload
+
+
+# Monkey-patch requests.Response.json() so that legacy tests using
+# ``response.json()`` automatically receive the unwrapped ``data`` payload
+# for successful responses, while error responses still return the full
+# envelope (including ``error`` and ``trace_id``).
+_original_response_json = requests.Response.json
+
+
+def _patched_response_json(self: requests.Response, *args, **kwargs):
+    payload = _original_response_json(self, *args, **kwargs)
+    if self.status_code >= 400:
+        return payload
+    if isinstance(payload, dict) and "data" in payload and "trace_id" in payload:
+        return payload["data"]
+    return payload
+
+
+requests.Response.json = _patched_response_json
 
 
 @pytest.fixture(scope="session")
@@ -74,7 +97,7 @@ def test_group(api_client: requests.Session, server_url: str, unique_id: str) ->
     response = api_client.post(f"{server_url}/api/v1/groups", json=group_data)
     assert response.status_code == 201, f"Failed to create group: {response.text}"
 
-    data = response.json()
+    data = get_response_data(response)
     yield data
 
     # Cleanup: delete the group
@@ -89,11 +112,10 @@ def test_group_with_key(api_client: requests.Session, server_url: str, unique_id
         "group_context": "Private group",
         "group_key": "my-secret-key"
     }
-
     response = api_client.post(f"{server_url}/api/v1/groups", json=group_data)
     assert response.status_code == 201, f"Failed to create group: {response.text}"
 
-    data = response.json()
+    data = get_response_data(response)
     yield data
 
     # Cleanup
@@ -116,7 +138,7 @@ def test_member(api_client: requests.Session, server_url: str, test_group: dict,
     )
     assert response.status_code == 201, f"Failed to add member: {response.text}"
 
-    data = response.json()
+    data = get_response_data(response)
     yield data
 
     # Cleanup: remove member
@@ -152,7 +174,7 @@ def test_agent_member(api_client: requests.Session, server_url: str, test_group:
     )
     assert response.status_code == 201, f"Failed to add agent: {response.text}"
 
-    data = response.json()
+    data = get_response_data(response)
     yield data
 
     # Cleanup
@@ -188,7 +210,7 @@ def test_manager_agent(api_client: requests.Session, server_url: str, test_group
     )
     assert response.status_code == 201, f"Failed to add manager agent: {response.text}"
 
-    data = response.json()
+    data = get_response_data(response)
     yield data
 
     # Cleanup
@@ -212,7 +234,7 @@ def test_message(api_client: requests.Session, server_url: str, test_group: dict
     )
     assert response.status_code == 201, f"Failed to create message: {response.text}"
 
-    data = response.json()
+    data = get_response_data(response)
     yield data
 
     # Cleanup: delete message
@@ -308,6 +330,8 @@ def manager_client(manager_token: str | None) -> Generator[requests.Session | No
     session.headers.update({"Authorization": f"Bearer {manager_token}"})
     yield session
     session.close()
+
+
 @pytest.fixture(scope="function")
 def test_account(admin_client: requests.Session, server_url: str, unique_id: str) -> dict:
     """Create a temporary user account and clean it up after the test."""
@@ -321,7 +345,7 @@ def test_account(admin_client: requests.Session, server_url: str, unique_id: str
 
     response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
     assert response.status_code == 201, f"Failed to create test account: {response.text}"
-    account = response.json()
+    account = get_response_data(response)
 
     yield account
 
@@ -338,7 +362,7 @@ def test_account_with_api_key(admin_client: requests.Session, server_url: str, t
         json=key_data,
     )
     assert response.status_code == 201, f"Failed to create API key: {response.text}"
-    result = response.json()
+    result = get_response_data(response)
     return test_account, result["token"]
 
 

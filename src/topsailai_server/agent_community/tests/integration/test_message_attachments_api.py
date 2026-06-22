@@ -22,8 +22,8 @@ import requests
 
 
 def _resp_data(response: requests.Response) -> dict:
-    """Unwrap the standard API response envelope {"data": ..., "trace_id": ...}."""
-    return response.json()["data"]
+    """Return the JSON payload (conftest monkey-patches response.json() to unwrap the envelope)."""
+    return response.json()
 
 
 def _make_attachment(data: str, size: int, fmt: str) -> dict:

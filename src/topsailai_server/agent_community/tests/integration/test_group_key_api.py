@@ -181,7 +181,7 @@ class TestGroupKeyPrivacy:
         """TC-INT-GK-004: Listing groups must not expose plaintext keys."""
         response = user_client.get(f"{server_url}/api/v1/groups")
         assert response.status_code == 200, f"Failed to list groups: {response.text}"
-        data = response.json()["data"]
+        data = response.json()
 
         assert "items" in data
         for group in data["items"]:
@@ -292,7 +292,7 @@ class TestGroupKeyAccessControl:
             f"{server_url}/api/v1/groups/{private_group['group_id']}/messages"
         )
         assert response.status_code == 200, f"Owner failed to list messages: {response.text}"
-        data = response.json()["data"]
+        data = response.json()
         assert data["total"] >= 1
 
     def test_owner_can_update_group_key(

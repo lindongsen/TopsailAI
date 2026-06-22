@@ -139,7 +139,7 @@ func (h *AuditLogHandler) GetAuditLog(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, toAuditLogResponse(log))
+	writeDataResponse(c, http.StatusOK, toAuditLogResponse(log), traceID)
 }
 
 // toAuditLogResponse converts an AuditLog model to API response.

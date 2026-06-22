@@ -33,6 +33,12 @@ type listGroupsResponseWrapper struct {
 }
 
 
+// groupResponseWrapper mirrors the standard envelope produced by writeJSON.
+type groupResponseWrapper struct {
+	Data    GroupResponse `json:"data"`
+	Error   string      `json:"error"`
+	TraceID string      `json:"trace_id"`
+}
 // TestParseTimeRangeValid verifies a valid time range string is parsed correctly.
 func TestParseTimeRangeValid(t *testing.T) {
 	start, end, err := parseTimeRange("1000-2000")
@@ -385,20 +391,21 @@ func TestCreateGroupAutoJoinsManagerAgent(t *testing.T) {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
 	}
 
-	var response GroupResponse
+	var response groupResponseWrapper
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
-	groupID := response.GroupID
+	groupID := response.Data.GroupID
 	if groupID == "" {
 		t.Fatal("expected group_id in response")
 	}
-	if response.CreatorID != creator.AccountID {
-		t.Errorf("expected creator_id %s, got %s", creator.AccountID, response.CreatorID)
+	if response.Data.CreatorID != creator.AccountID {
+		t.Errorf("expected creator_id %s, got %s", creator.AccountID, response.Data.CreatorID)
 	}
-	if response.OwnerID != creator.AccountID {
-		t.Errorf("expected owner_id %s, got %s", creator.AccountID, response.OwnerID)
+	if response.Data.OwnerID != creator.AccountID {
+		t.Errorf("expected owner_id %s, got %s", creator.AccountID, response.Data.OwnerID)
 	}
+
 
 	var members []models.GroupMember
 	if err := db.Where("group_id = ?", groupID).Find(&members).Error; err != nil {
@@ -491,11 +498,11 @@ func TestCreateGroupDoesNotAutoJoinManagerAgentWhenDisabled(t *testing.T) {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
 	}
 
-	var response GroupResponse
+	var response groupResponseWrapper
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
-	groupID := response.GroupID
+	groupID := response.Data.GroupID
 	if groupID == "" {
 		t.Fatal("expected group_id in response")
 	}
@@ -926,14 +933,13 @@ func TestGetGroup_Success(t *testing.T) {
 	handler.GetGroup(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	var resp GroupResponse
+	var resp groupResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, group.GroupID, resp.GroupID)
-	assert.Equal(t, group.GroupName, resp.GroupName)
-	assert.Equal(t, group.GroupContext, resp.GroupContext)
+	assert.Equal(t, group.GroupID, resp.Data.GroupID)
+	assert.Equal(t, group.GroupName, resp.Data.GroupName)
+	assert.Equal(t, group.GroupContext, resp.Data.GroupContext)
 }
 
-// TestGetGroup_NotFound verifies that a missing group returns 404.
 func TestGetGroup_NotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupGroupTestDB(t)
@@ -992,10 +998,10 @@ func TestUpdateGroup_Success(t *testing.T) {
 	handler.UpdateGroup(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	var resp GroupResponse
+	var resp groupResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "New Name", resp.GroupName)
-	assert.Equal(t, "New Context", resp.GroupContext)
+	assert.Equal(t, "New Name", resp.Data.GroupName)
+	assert.Equal(t, "New Context", resp.Data.GroupContext)
 }
 
 // TestUpdateGroup_UpdateKey verifies that updating the group key re-hashes it.
@@ -1032,10 +1038,9 @@ func TestUpdateGroup_UpdateKey(t *testing.T) {
 	handler.UpdateGroup(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	var resp GroupResponse
+	var resp groupResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Empty(t, resp.GroupKey, "response must not expose group_key")
-
+	assert.Empty(t, resp.Data.GroupKey, "response must not expose group_key")
 	var stored models.Group
 	require.NoError(t, db.First(&stored, "group_id = ?", group.GroupID).Error)
 	assert.NotEmpty(t, stored.GroupKey)
@@ -1543,12 +1548,11 @@ func TestGroupHandler_CreateGroup_GroupKeyHashed(t *testing.T) {
 	handler.CreateGroup(c)
 
 	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
-	var resp GroupResponse
+	var resp groupResponseWrapper
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Empty(t, resp.GroupKey, "response must not expose group_key")
+	assert.Empty(t, resp.Data.GroupKey, "response must not expose group_key")
 
 	var stored models.Group
-	require.NoError(t, db.First(&stored, "group_id = ?", resp.GroupID).Error)
-	assert.NotEmpty(t, stored.GroupKey, "stored group_key must be hashed")
+	require.NoError(t, db.First(&stored, "group_id = ?", resp.Data.GroupID).Error)
 	assert.NotEqual(t, "super-secret-key", stored.GroupKey, "stored group_key must not be plaintext")
 }

@@ -216,7 +216,7 @@ func (h *GroupHandler) CreateGroup(c *gin.Context) {
 
 	h.log.Info("api", traceID, "group created", "group_id", group.GroupID, "creator_id", creatorMember.MemberID)
 	h.audit(c, "group.create", "group", group.GroupID, group.GroupName, "group created")
-	c.JSON(http.StatusCreated, toGroupResponse(&group))
+	writeDataResponse(c, http.StatusCreated, toGroupResponse(&group), traceID)
 }
 
 // buildCreatorMember constructs a user member record for the group creator.
@@ -358,7 +358,7 @@ func (h *GroupHandler) GetGroup(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, toGroupResponse(&group))
+	writeDataResponse(c, http.StatusOK, toGroupResponse(&group), traceID)
 }
 
 // ListGroups handles GET /api/v1/groups.
@@ -515,7 +515,7 @@ func (h *GroupHandler) UpdateGroup(c *gin.Context) {
 
 	h.log.Info("api", traceID, "group updated", "group_id", groupID)
 	h.audit(c, "group.update", "group", group.GroupID, group.GroupName, "group updated")
-	c.JSON(http.StatusOK, toGroupResponse(&group))
+	writeDataResponse(c, http.StatusOK, toGroupResponse(&group), traceID)
 }
 
 // DeleteGroup handles DELETE /api/v1/groups/:group_id.

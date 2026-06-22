@@ -26,7 +26,7 @@ class TestMemberStatusActiveUpdate:
         response = api_client.get(f"{server_url}/api/v1/groups/{group_id}/members")
         assert response.status_code == 200, f"Failed to list members: {response.text}"
 
-        data = response.json()["data"]
+        data = response.json()
         for member in data.get("items", []):
             if member.get("member_id") == member_id:
                 return member.get("member_status", "")
@@ -543,7 +543,7 @@ class TestMemberStatusActiveUpdate:
             while time.time() < deadline:
                 response = api_client.get(f"{server_url}/api/v1/groups/{group_id}/messages")
                 assert response.status_code == 200
-                data = response.json()["data"]
+                data = response.json()
                 for msg in data.get("items", []):
                     if msg.get("processed_msg_id") == message_id:
                         found_response = True

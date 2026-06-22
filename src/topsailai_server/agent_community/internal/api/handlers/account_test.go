@@ -133,7 +133,7 @@ func TestAccountHandler_CreateAccount_AdminAnyRole(t *testing.T) {
 
 			require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 			var resp AccountResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			unmarshalDataResponse(t, w.Body.Bytes(), &resp)
 			assert.Equal(t, tt.role, resp.Role)
 		})
 	}
@@ -255,7 +255,7 @@ func TestAccountHandler_CreateAccount_EmptyRoleDefaultsToUser(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 	var resp AccountResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	unmarshalDataResponse(t, w.Body.Bytes(), &resp)
 	assert.Equal(t, string(models.AccountRoleUser), resp.Role)
 }
 
@@ -498,7 +498,7 @@ func TestAccountHandler_GetAccount_DoesNotModifyUpdateAtMs(t *testing.T) {
 
 			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 			var resp AccountResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			unmarshalDataResponse(t, w.Body.Bytes(), &resp)
 			assert.Equal(t, initialUpdateAtMs, resp.UpdateAtMs, "response update_at_ms must not change on GET")
 		}
 	}
@@ -539,7 +539,7 @@ func TestAccountHandler_UpdateAccount_AdminCanUpdateAny(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var resp AccountResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	unmarshalDataResponse(t, w.Body.Bytes(), &resp)
 	assert.Equal(t, "Updated Name", resp.AccountName)
 	assert.Equal(t, newRole, resp.Role)
 	assert.Equal(t, newStatus, resp.Status)
@@ -568,7 +568,7 @@ func TestAccountHandler_UpdateAccount_UserSelfCanUpdateName(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var resp AccountResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	unmarshalDataResponse(t, w.Body.Bytes(), &resp)
 	assert.Equal(t, "Updated Name", resp.AccountName)
 	assert.Equal(t, string(models.AccountRoleUser), resp.Role)
 	assert.Equal(t, string(models.AccountStatusActive), resp.Status)
@@ -942,7 +942,7 @@ func TestAccountHandler_GetMe(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var resp AccountResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	unmarshalDataResponse(t, w.Body.Bytes(), &resp)
 	assert.Equal(t, user.AccountID, resp.AccountID)
 	assert.Equal(t, user.AccountName, resp.AccountName)
 }

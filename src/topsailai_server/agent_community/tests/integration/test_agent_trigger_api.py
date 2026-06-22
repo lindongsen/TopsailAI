@@ -13,12 +13,6 @@ TestCase_integration_agent_trigger.md:
 A secondary ACS server is started with manager-agent environment variables
 pointing to tests/integration/mock_agent_cmd.py so that agent invocations
 are deterministic and fast.
-
-NOTE: The current ACS API returns raw objects for creation endpoints
-(POST /groups, POST /messages, POST /members) instead of the documented
-{data, error, trace_id} envelope. Helpers in this file access creation
-responses directly and use response.json()["data"] only for list/get endpoints.
-See: issues/issue-api-response-envelope-inconsistency.md
 """
 
 import json
@@ -351,7 +345,7 @@ def _list_messages(
         f"{server_url}/api/v1/groups/{group_id}/messages?limit=1000"
     )
     assert response.status_code == 200
-    return response.json()["data"]["items"]
+    return response.json()["items"]
 
 
 def _list_members(
@@ -364,7 +358,7 @@ def _list_members(
         f"{server_url}/api/v1/groups/{group_id}/members?limit=1000"
     )
     assert response.status_code == 200
-    return response.json()["data"]["items"]
+    return response.json()["items"]
 
 
 def _get_member(
@@ -876,7 +870,12 @@ class TestManualTrigger:
     def test_manual_trigger_with_specific_agent_id(
         self, agent_trigger_server: dict, admin_session: requests.Session, unique_id: str
     ):
-        """Manual trigger with agent_id invokes the specified agent."""
+        """Manual trigger with agent_id invokes the specified agent.
+
+        A second user member is added so the group does not satisfy the
+        single-user auto-trigger rule; this keeps the test deterministic and
+        ensures only the explicitly requested worker-agent responds.
+        """
         server_url = agent_trigger_server["url"]
         record_path = agent_trigger_server["record_path"]
         _clear_invocations(record_path)
@@ -886,6 +885,24 @@ class TestManualTrigger:
             admin_session, server_url, group["group_id"], record_path
         )
         try:
+            # Add two user members so the single-user auto-trigger does not fire.
+            _add_member(
+                admin_session,
+                server_url,
+                group["group_id"],
+                f"user-a-{unique_id}",
+                f"UserA_{unique_id}",
+                "user",
+            )
+            _add_member(
+                admin_session,
+                server_url,
+                group["group_id"],
+                f"user-b-{unique_id}",
+                f"UserB_{unique_id}",
+                "user",
+            )
+
             agent_id = f"worker-{unique_id}"
             _add_member(
                 admin_session,
@@ -903,15 +920,11 @@ class TestManualTrigger:
                 group["group_id"],
                 "Please help me.",
             )
-
             response = admin_session.post(
                 f"{server_url}/api/v1/groups/{group['group_id']}/messages/{message['message_id']}/trigger",
                 json={"agent_id": agent_id},
             )
             assert response.status_code == 202
-            # NOTE: The trigger endpoint returns a raw object, not the documented
-            # {data, error, trace_id} envelope. See
-            # issues/issue-api-response-envelope-inconsistency.md.
             data = response.json()
             assert data["status"] == "pending"
             assert data["trigger"]["type"] == "manual"
@@ -921,14 +934,12 @@ class TestManualTrigger:
                 admin_session, server_url, group["group_id"], message["message_id"]
             )
             assert agent_response is not None
-            # NOTE: The server currently ignores the provided agent_id and routes
-            # the manual trigger to the manager-agent. See
-            # issues/issue-manual-trigger-agent-id-ignored.md. We verify that a
-            # response is generated and that the manager-agent was invoked.
             assert agent_response["processed_msg_id"] == message["message_id"]
+            assert agent_response["sender_id"] == agent_id
+            assert agent_response["sender_type"] == "worker-agent"
 
             invocations = _read_invocations(record_path)
-            assert any(inv["agent_id"] == "manager-agent" for inv in invocations)
+            assert any(inv["agent_id"] == agent_id for inv in invocations)
         finally:
             _delete_group(admin_session, server_url, group["group_id"])
 
@@ -985,12 +996,14 @@ class TestManualTrigger:
             )
             assert second_response is not None, "Manual trigger did not bypass NO_TRIGGER_CASES"
             assert second_response["processed_msg_id"] == agent_response["message_id"]
+            assert second_response["sender_id"] == agent_id
+            assert second_response["sender_type"] == "worker-agent"
 
             invocations = _read_invocations(record_path)
             assert len(invocations) >= 1
+            assert any(inv["agent_id"] == agent_id for inv in invocations)
         finally:
             _delete_group(admin_session, server_url, group["group_id"])
-
 
 class TestAgentResponseLifecycle:
     """Tests for agent response message creation and state updates."""

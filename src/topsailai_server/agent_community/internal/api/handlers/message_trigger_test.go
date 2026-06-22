@@ -117,9 +117,11 @@ func TestTriggerMessage_WithAgentID(t *testing.T) {
 	var resp map[string]interface{}
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Equal(t, msg.MessageID, resp["message_id"])
-	assert.Equal(t, groupID, resp["group_id"])
-	assert.Equal(t, "pending", resp["status"])
+	data, ok := resp["data"].(map[string]interface{})
+	require.True(t, ok, "response should contain data object")
+	assert.Equal(t, msg.MessageID, data["message_id"])
+	assert.Equal(t, groupID, data["group_id"])
+	assert.Equal(t, "pending", data["status"])
 }
 
 // TestTriggerMessage_WithoutAgentID verifies manual trigger without agent_id resolves agents automatically.
@@ -146,7 +148,9 @@ func TestTriggerMessage_WithoutAgentID(t *testing.T) {
 	var resp map[string]interface{}
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Equal(t, "pending", resp["status"])
+	data, ok := resp["data"].(map[string]interface{})
+	require.True(t, ok, "response should contain data object")
+	assert.Equal(t, "pending", data["status"])
 }
 
 // TestTriggerMessage_NonExistentGroup returns 404.
@@ -255,7 +259,9 @@ func TestTriggerMessage_AgentSentMessageBypassesNO_TRIGGER_CASES(t *testing.T) {
 	var resp map[string]interface{}
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Equal(t, "pending", resp["status"])
+	data, ok := resp["data"].(map[string]interface{})
+	require.True(t, ok, "response should contain data object")
+	assert.Equal(t, "pending", data["status"])
 }
 
 // TestTriggerMessage_ProcessedMsgIDBypassesNO_TRIGGER_CASES returns 202 for message with processed_msg_id.
@@ -326,5 +332,7 @@ func TestTriggerMessage_NoAgentsInGroup(t *testing.T) {
 	var resp map[string]interface{}
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Equal(t, "no_agents_to_trigger", resp["status"])
+	data, ok := resp["data"].(map[string]interface{})
+	require.True(t, ok, "response should contain data object")
+	assert.Equal(t, "no_agents_to_trigger", data["status"])
 }
