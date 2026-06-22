@@ -110,7 +110,7 @@ func (h *AuditLogHandler) ListAuditLogs(c *gin.Context) {
 	logs, total, err := h.auditSvc.ListAuditLogs(c.Request.Context(), filter, offset, limit)
 	if err != nil {
 		h.log.Error("api", traceID, "failed to list audit logs", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list audit logs", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to list audit logs", traceID)
 		return
 	}
 
@@ -128,14 +128,14 @@ func (h *AuditLogHandler) GetAuditLog(c *gin.Context) {
 	auditLogID := c.Param("audit_log_id")
 
 	if auditLogID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "audit_log_id is required", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusBadRequest, "audit_log_id is required", traceID)
 		return
 	}
 
 	log, err := h.auditSvc.GetAuditLog(c.Request.Context(), auditLogID)
 	if err != nil {
 		h.log.Error("api", traceID, "failed to get audit log", "error", err.Error())
-		c.JSON(http.StatusNotFound, gin.H{"error": "audit log not found", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusNotFound, "audit log not found", traceID)
 		return
 	}
 

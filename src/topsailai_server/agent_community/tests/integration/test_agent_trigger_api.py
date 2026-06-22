@@ -789,11 +789,9 @@ class TestAutoTrigger:
                 admin_session, server_url, group["group_id"], message["message_id"]
             )
             assert response is not None
-            # NOTE: The auto-trigger currently uses the original sender's account id
-            # as sender_id instead of the manager-agent member id. This is tracked
-            # in issues/issue-auto-trigger-sender-id.md. We verify that *some*
-            # response was generated for the original message.
             assert response["processed_msg_id"] == message["message_id"]
+            assert response["sender_id"] == "manager-agent"
+            assert response["sender_type"] == "manager-agent"
 
             # Invocation records are written by whichever ACS server instance
             # processes the pending message. Poll briefly, but do not fail the
@@ -846,9 +844,9 @@ class TestAutoTrigger:
                 timeout=25.0,
             )
             assert response is not None, "Idle timeout did not trigger manager-agent"
-            # NOTE: Same sender_id issue as single-user auto-trigger. See
-            # issues/issue-auto-trigger-sender-id.md.
             assert response["processed_msg_id"] == message["message_id"]
+            assert response["sender_id"] == "manager-agent"
+            assert response["sender_type"] == "manager-agent"
 
             # Invocation records are written by whichever ACS server instance
             # processes the pending message. Poll briefly, but do not fail the

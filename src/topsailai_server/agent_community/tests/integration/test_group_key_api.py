@@ -385,7 +385,39 @@ class TestGroupKeyAccessControl:
 
 
 class TestGroupKeyJoinBehavior:
-    """Verify actual behavior of joining private groups."""
+    """Verify self-join behavior for public and private groups."""
+
+    def test_join_public_group_without_key_succeeds(
+        self,
+        user_client: requests.Session,
+        another_user_client: requests.Session,
+        server_url: str,
+        unique_id: str,
+    ):
+        """TC-INT-GK-013: A non-member can self-join a public group."""
+        group_data = {
+            "group_name": f"Public Self-Join Group {unique_id}",
+            "group_context": "Public discussion",
+        }
+        response = user_client.post(f"{server_url}/api/v1/groups", json=group_data)
+        assert response.status_code == 201, f"Failed to create public group: {response.text}"
+        group = response.json()
+
+        try:
+            response = another_user_client.post(
+                f"{server_url}/api/v1/groups/{group['group_id']}/members",
+                json={},
+            )
+            assert response.status_code == 201, (
+                f"Expected 201 for public self-join, got {response.status_code}: {response.text}"
+            )
+            data = response.json()
+            # Self-join overrides member_id to the caller's account_id.
+            me = another_user_client.get(f"{server_url}/api/v1/accounts/me").json()
+            assert data["member_id"] == me["account_id"]
+            assert data["member_type"] == "user"
+        finally:
+            user_client.delete(f"{server_url}/api/v1/groups/{group['group_id']}")
 
     def test_join_private_group_without_key_is_rejected(
         self,
@@ -395,21 +427,16 @@ class TestGroupKeyJoinBehavior:
         private_group: dict,
         unique_id: str,
     ):
-        """TC-INT-GK-006: A non-member cannot self-join a private group."""
-        member_data = {
-            "member_id": f"intruder-{unique_id}",
-            "member_name": f"Intruder_{unique_id}",
-            "member_type": "user",
-        }
+        """TC-INT-GK-006: A non-member cannot self-join a private group without the key."""
         response = another_user_client.post(
             f"{server_url}/api/v1/groups/{private_group['group_id']}/members",
-            json=member_data,
+            json={},
         )
         assert response.status_code in (403, 404), (
             f"Expected 403 or 404 for unauthorized join, got {response.status_code}: {response.text}"
         )
 
-    def test_join_private_group_with_key_in_body_is_not_supported(
+    def test_join_private_group_with_key_in_body_succeeds(
         self,
         user_client: requests.Session,
         another_user_client: requests.Session,
@@ -417,26 +444,42 @@ class TestGroupKeyJoinBehavior:
         private_group: dict,
         unique_id: str,
     ):
-        """TC-INT-GK-012: Document actual behavior when group_key is supplied in join body.
-
-        The current API does not expose a self-join endpoint that accepts a
-        group_key. Only group owners or admins can add members. The request
-        body field is ignored or rejected.
-        """
-        member_data = {
-            "member_id": f"key-joiner-{unique_id}",
-            "member_name": f"Key_Joiner_{unique_id}",
-            "member_type": "user",
-            "group_key": PLAINTEXT_KEY,
-        }
+        """TC-INT-GK-012: A non-member can self-join a private group with the correct key."""
         response = another_user_client.post(
             f"{server_url}/api/v1/groups/{private_group['group_id']}/members",
-            json=member_data,
+            json={"group_key": PLAINTEXT_KEY},
         )
-        # The API should not allow a non-owner/non-admin to add a member,
-        # regardless of whether a group_key is provided.
+        assert response.status_code == 201, (
+            f"Expected 201 for key-based self-join, got {response.status_code}: {response.text}"
+        )
+        data = response.json()
+        me = another_user_client.get(f"{server_url}/api/v1/accounts/me").json()
+        assert data["member_id"] == me["account_id"]
+        assert data["member_type"] == "user"
+
+        # The self-joined member can now list messages.
+        response = another_user_client.get(
+            f"{server_url}/api/v1/groups/{private_group['group_id']}/messages"
+        )
+        assert response.status_code == 200, (
+            f"Self-joined member failed to list messages: {response.status_code}: {response.text}"
+        )
+
+    def test_join_private_group_with_wrong_key_is_rejected(
+        self,
+        user_client: requests.Session,
+        another_user_client: requests.Session,
+        server_url: str,
+        private_group: dict,
+        unique_id: str,
+    ):
+        """TC-INT-GK-014: Self-join with an incorrect group_key is rejected."""
+        response = another_user_client.post(
+            f"{server_url}/api/v1/groups/{private_group['group_id']}/members",
+            json={"group_key": "wrong-key"},
+        )
         assert response.status_code in (403, 404), (
-            f"Expected 403 or 404 for key-based self-join, got {response.status_code}: {response.text}"
+            f"Expected 403 or 404 for wrong key, got {response.status_code}: {response.text}"
         )
 
     def test_owner_can_add_member_to_private_group(

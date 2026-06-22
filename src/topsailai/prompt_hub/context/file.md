@@ -2,7 +2,10 @@
 
 [ACTION] First, explore and understand the project's file structure. Do not read any file contents until you have a good understanding of the directory layout.
 
-> When the output content is too long, it will be forcibly truncated, and the flag information is `force to truncate`.
+When the output content is too long, it will be forcibly truncated, and the flag information is `force to truncate`.
+
+IF full file content is present in the context: Analyze directly without invoking any file-reading tools.
+ELSE IF essential information is missing: Read specific segments only when necessary.
 
 ## File Content Inspection
 

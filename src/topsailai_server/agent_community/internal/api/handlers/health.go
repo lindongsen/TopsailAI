@@ -194,18 +194,14 @@ func (h *HealthHandler) DiscoveryServices(c *gin.Context) {
 
 	if h.discovery == nil || !h.discovery.Enabled() {
 		h.log.Warn("api", traceID, "discovery not initialized")
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "service discovery not available",
-		})
+		writeErrorResponse(c, http.StatusServiceUnavailable, "service discovery not available", traceID)
 		return
 	}
 
 	services, err := h.discovery.Discover()
 	if err != nil {
 		h.log.Error("api", traceID, "failed to discover services", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed to discover services",
-		})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to discover services", traceID)
 		return
 	}
 
@@ -223,18 +219,14 @@ func (h *HealthHandler) LeaderStatus(c *gin.Context) {
 
 	if h.discovery == nil || !h.discovery.Enabled() {
 		h.log.Warn("api", traceID, "discovery not initialized")
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "service discovery not available",
-		})
+		writeErrorResponse(c, http.StatusServiceUnavailable, "service discovery not available", traceID)
 		return
 	}
 
 	isLeader, err := h.discovery.IsLeader()
 	if err != nil {
 		h.log.Error("api", traceID, "failed to check leader status", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed to check leader status",
-		})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to check leader status", traceID)
 		return
 	}
 

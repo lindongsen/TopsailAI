@@ -941,16 +941,22 @@ Delete a group and all associated data (members, messages).
 
 **POST /api/v1/groups/:group_id/members**
 
-Add a member (user or agent) to a group.
+Add a member (user or agent) to a group, or self-join a group using its access key.
 
 **Authentication:** Required.
 - `admin` can add members to any group.
-- `user` can add members only to groups they own.
+- Group `owner` can add members to groups they own.
+- Any authenticated account can **self-join** a public group (a group whose `group_key` is null/empty).
+- Any authenticated account can **self-join** a private group by providing the correct `group_key` in the request body.
+
+When self-joining, the server ignores any `member_id` and `member_type` supplied by the client and overrides them as follows:
+- `member_id` is set to the caller's `account_id`.
+- `member_type` is set to `user`.
 
 **Path Parameters:**
 - group_id: group identifier in `group-{id}` format
 
-**Request Body:**
+**Request Body (owner/admin adding a member):**
 ```json
 {
   "member_id": "user-001",
@@ -979,6 +985,18 @@ For agent members:
 }
 ```
 
+**Request Body (self-joining a private group):**
+```json
+{
+  "member_name": "Alice",
+  "member_description": "Project manager",
+  "group_key": "optional-secret-key"
+}
+```
+
+- `group_key` is required when self-joining a private group. It is ignored when an `admin` or group owner adds a member.
+- `member_name` and `member_description` may be provided for self-joins; `member_id` and `member_type` are overridden by the server.
+
 **Response:**
 ```json
 {
@@ -997,6 +1015,16 @@ For agent members:
   "trace_id": "..."
 }
 ```
+
+**Response 201 Created:**
+- Returned on successful join.
+
+**Response 403 Forbidden:**
+- Caller lacks permission to add a member to the group.
+- Self-join attempt on a private group without a `group_key`, or with an incorrect `group_key`.
+
+**Response 404 Not Found:**
+- Group does not exist.
 
 ### List Group Members
 

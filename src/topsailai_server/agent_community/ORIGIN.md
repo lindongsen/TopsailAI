@@ -78,7 +78,7 @@ Columns:
 - group_id
 - message_id, primary key
 - message_text
-- message_attachments, such as pictures or files, JSON, list_dict, [{data, size, format}], data can be base64-string/s3-url/etc.
+- message_attachments, such as pictures or files, JSON, list_dict, [{data, size, format}], data can be base64-string/s3-url/local-file-path/http-url/etc..
 - sender_id, {member_id}
 - sender_type, {member_type}
 - processed_msg_id, related to history message_id
@@ -199,7 +199,7 @@ Policy:
 ## Account/api_key & Group
 
 - api_key.role=user 可以访问 自己加入的groups、自己创建的groups;
-- 触发 manager-agent 的时候，要得到消息中 sender_id 的 `accounts.login_session_key`(如果没有或过期，就创建1个)，作为环境变量`ACS_LOGIN_SESSION_KEY`传递;
+- 触发 manager-agent 的时候，要得到消息中 sender_id 的 `accounts.login_session_key`(如果 `没有` 或 `过期` 或 `过期时间仅剩1小时`，就创建1个新的，默认过期时间是7天)，作为环境变量`ACS_LOGIN_SESSION_KEY`传递;
 - api_key.role=user 可以查询accounts，这样才有办法知道account信息，从而将 account 加入group；
 
 ---

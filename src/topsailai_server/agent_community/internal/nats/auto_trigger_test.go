@@ -358,7 +358,12 @@ func TestCheckGroup_TriggerSuccess(t *testing.T) {
 
 	require.Len(t, pub.published, 1)
 	assert.Equal(t, g.GroupID, pub.published[0].groupID)
-	assert.Equal(t, msg.MessageID, pub.published[0].msg.ProcessedMsgID)
+	// The published message must be the original user message, not a synthetic
+	// pending message, so that the agent response's processed_msg_id points to
+	// the real message.
+	assert.Equal(t, msg.MessageID, pub.published[0].msg.MessageID)
+	assert.Equal(t, "user-1", pub.published[0].msg.SenderID)
+	assert.Equal(t, models.MemberTypeUser, pub.published[0].msg.SenderType)
 
 	var records []models.AgentMessageProcessing
 	require.NoError(t, db.Where("group_id = ?", g.GroupID).Find(&records).Error)
@@ -366,6 +371,11 @@ func TestCheckGroup_TriggerSuccess(t *testing.T) {
 	assert.Equal(t, models.ProcessingStatusPending, records[0].Status)
 	assert.Equal(t, "manager-1", records[0].AgentID)
 	assert.Equal(t, msg.MessageID, records[0].MessageID)
+
+	// No synthetic GroupMessage row should be created.
+	var messageCount int64
+	require.NoError(t, db.Model(&models.GroupMessage{}).Where("group_id = ?", g.GroupID).Count(&messageCount).Error)
+	assert.Equal(t, int64(1), messageCount, "auto-trigger should not create a synthetic GroupMessage")
 }
 
 func TestCheckGroup_DuplicatePrevention(t *testing.T) {
@@ -396,7 +406,7 @@ func TestCheckGroup_DuplicatePrevention(t *testing.T) {
 	assert.Equal(t, msg.MessageID, records[0].MessageID)
 }
 
-func TestCheckGroup_PendingMessageCreateError(t *testing.T) {
+func TestCheckGroup_DoesNotCreateGroupMessage(t *testing.T) {
 	db := setupAutoTriggerTestDB(t)
 	pub := &fakeAutoTriggerPublisher{}
 	eval := &fakeAutoTriggerEvaluator{result: triggerResult("manager-1")}
@@ -405,15 +415,17 @@ func TestCheckGroup_PendingMessageCreateError(t *testing.T) {
 	g := createGroup(t, db, "group-1")
 	createMember(t, db, g.GroupID, "user-1", models.MemberTypeUser)
 	createMember(t, db, g.GroupID, "manager-1", models.MemberTypeManagerAgent)
-	createMessage(t, db, g.GroupID, "user-1", models.MemberTypeUser, time.Now().Add(-2*time.Minute).UnixMilli())
-
-	// Drop group_messages table to force create error.
-	require.NoError(t, db.Migrator().DropTable(&models.GroupMessage{}))
+	msg := createMessage(t, db, g.GroupID, "user-1", models.MemberTypeUser, time.Now().Add(-2*time.Minute).UnixMilli())
 
 	res, err := at.checkGroup(context.Background(), g, "trace-1")
-	assert.Error(t, err)
-	assert.Equal(t, checkResultSkipped, res)
-	assert.Empty(t, pub.published)
+	assert.NoError(t, err)
+	assert.Equal(t, checkResultTriggered, res)
+
+	// The original message count must remain exactly one; no synthetic pending
+	// message row is inserted by the auto-trigger path.
+	var messageCount int64
+	require.NoError(t, db.Model(&models.GroupMessage{}).Where("group_id = ? AND message_id = ?", g.GroupID, msg.MessageID).Count(&messageCount).Error)
+	assert.Equal(t, int64(1), messageCount)
 }
 
 func TestCheckGroup_ProcessingRecordCreateError(t *testing.T) {

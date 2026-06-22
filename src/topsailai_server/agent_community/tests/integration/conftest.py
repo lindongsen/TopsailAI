@@ -25,38 +25,22 @@ TEST_NATS_URL = os.environ.get("ACS_NATS_SERVERS", "nats://127.0.0.1:4222")
 def get_response_data(response: requests.Response) -> dict | list | None:
     """Extract the `data` field from the standard ACS response envelope.
 
-    Falls back to returning the raw JSON payload for backwards compatibility
-    with endpoints that do not yet wrap their responses.
+    Raises a KeyError if the response does not follow the standard envelope
+    shape ({"data": ..., "trace_id": ..., "error": ...}).
     """
     payload = response.json()
-    if isinstance(payload, dict) and "data" in payload:
-        return payload["data"]
-    return payload
-
-
-# Monkey-patch requests.Response.json() so that legacy tests using
-# ``response.json()`` automatically receive the unwrapped ``data`` payload
-# for successful responses, while error responses still return the full
-# envelope (including ``error`` and ``trace_id``).
-_original_response_json = requests.Response.json
-
-
-def _patched_response_json(self: requests.Response, *args, **kwargs):
-    payload = _original_response_json(self, *args, **kwargs)
-    if self.status_code >= 400:
-        return payload
-    if isinstance(payload, dict) and "data" in payload and "trace_id" in payload:
-        return payload["data"]
-    return payload
-
-
-requests.Response.json = _patched_response_json
+    if not isinstance(payload, dict):
+        raise ValueError(f"expected JSON object, got {type(payload).__name__}")
+    if "data" not in payload:
+        raise KeyError(f"response missing 'data' field: {payload}")
+    return payload["data"]
 
 
 @pytest.fixture(scope="session")
 def base_url() -> str:
     """Return the base URL for the ACS server."""
     return f"http://{TEST_SERVER_HOST}:{TEST_SERVER_PORT}"
+
 
 @pytest.fixture(scope="function")
 def api_client(admin_token: str) -> Generator[requests.Session, None, None]:
@@ -75,10 +59,14 @@ def unauthenticated_client() -> Generator[requests.Session, None, None]:
     session.headers.update({"Content-Type": "application/json"})
     yield session
     session.close()
+
+
 @pytest.fixture(scope="function")
 def unique_id() -> str:
     """Generate a unique identifier for test isolation."""
     return str(uuid.uuid4())[:8]
+
+
 @pytest.fixture(scope="function")
 def server_url(base_url: str) -> str:
     """Return the server URL."""
@@ -106,12 +94,13 @@ def test_group(api_client: requests.Session, server_url: str, unique_id: str) ->
 
 @pytest.fixture(scope="function")
 def test_group_with_key(api_client: requests.Session, server_url: str, unique_id: str) -> dict:
-    """Create a test group with a secret key."""
+    """Create a test group with a group_key and return its data."""
     group_data = {
-        "group_name": f"Secret Group {unique_id}",
-        "group_context": "Private group",
-        "group_key": "my-secret-key"
+        "group_name": f"Test Group With Key {unique_id}",
+        "group_context": f"Test context with key for {unique_id}",
+        "group_key": f"secret-key-{unique_id}"
     }
+
     response = api_client.post(f"{server_url}/api/v1/groups", json=group_data)
     assert response.status_code == 201, f"Failed to create group: {response.text}"
 

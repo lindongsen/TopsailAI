@@ -15,8 +15,8 @@ import (
 	"github.com/topsailai/agent-community/internal/config"
 	"github.com/topsailai/agent-community/internal/models"
 	"github.com/topsailai/agent-community/internal/services"
+	"github.com/topsailai/agent-community/internal/utils"
 	"github.com/topsailai/agent-community/pkg/logger"
-	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -106,28 +106,19 @@ type GroupResponse struct {
 
 // ListGroupsResponse represents the response for listing groups.
 type ListGroupsResponse struct {
-	Items   []GroupResponse `json:"items"`
-	Total   int64           `json:"total"`
-	Offset  int             `json:"offset"`
-	Limit   int             `json:"limit"`
-	SortKey string          `json:"sort_key"`
-	OrderBy string          `json:"order_by"`
+	Items  []GroupResponse `json:"items"`
+	Total  int64           `json:"total"`
+	Offset int             `json:"offset"`
+	Limit  int             `json:"limit"`
 }
 
 // bcryptCost is the cost factor used by hashGroupKey. It is a variable so
 // tests can inject an invalid cost to exercise the error path.
-var bcryptCost = bcrypt.DefaultCost
+var bcryptCost = utils.BcryptDefaultCost
 
 // hashGroupKey hashes a group key using bcrypt.
 func hashGroupKey(key string) (string, error) {
-	if key == "" {
-		return "", nil
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(key), bcryptCost)
-	if err != nil {
-		return "", err
-	}
-	return string(hash), nil
+	return utils.HashGroupKeyWithCost(key, bcryptCost)
 }
 
 // CreateGroup handles POST /api/v1/groups.

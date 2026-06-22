@@ -190,54 +190,57 @@ const (
 	checkResultLockHeld
 )
 
-// checkGroup checks a single group for timeout-based auto-trigger.
+// checkGroup evaluates a single group for timeout-based auto-trigger and
+// publishes the original last message to NATS when appropriate.
+//
+// Important: the original user message is published directly as the pending
+// message payload. No synthetic GroupMessage row is created. This keeps the
+// agent response's processed_msg_id pointing to the real user message and
+// avoids duplicate entries in the message history.
 func (at *AutoTrigger) checkGroup(ctx context.Context, group *models.Group, traceID string) (checkResult, error) {
-	// Acquire distributed lock for this group
-	lockKey, err := at.lockManager.Acquire(ctx, "auto_trigger", group.GroupID)
-	if err != nil {
-		return checkResultSkipped, fmt.Errorf("failed to acquire lock: %w", err)
+	if at.lockManager == nil {
+		return checkResultSkipped, nil
 	}
-	if lockKey == nil {
-		// Lock is held by another node, skip
-		logger.DebugM(autoTriggerModule, traceID, "auto-trigger lock held by another node, skipping",
-			"group_id", group.GroupID,
-		)
+
+	lock, err := at.lockManager.Acquire(ctx, "auto-trigger", group.GroupID)
+	if err != nil {
+		return checkResultSkipped, fmt.Errorf("failed to acquire auto-trigger lock: %w", err)
+	}
+	if lock == nil {
 		return checkResultLockHeld, nil
 	}
-
-	logger.DebugM(autoTriggerModule, traceID, "auto-trigger lock acquired",
-		"group_id", group.GroupID,
-	)
-
 	defer func() {
-		if err := lockKey.Release(); err != nil {
-			logger.ErrorM(autoTriggerModule, traceID, "failed to release auto-trigger lock",
+		if err := lock.Release(); err != nil {
+			logger.WarnM(autoTriggerModule, traceID, "failed to release auto-trigger lock",
 				"group_id", group.GroupID,
 				"error", err,
 			)
 		}
 	}()
 
-	// Fetch group members
-	var members []models.GroupMember
-	if err := at.db.Where("group_id = ? AND deleted_at IS NULL", group.GroupID).Find(&members).Error; err != nil {
-		return checkResultSkipped, fmt.Errorf("failed to fetch members: %w", err)
-	}
-
-	// Find the last original message in the group (skip auto-generated pending messages)
+	// Fetch the most recent non-deleted message in the group.
 	var lastMessage models.GroupMessage
-	if err := at.db.Where("group_id = ? AND deleted_at IS NULL AND is_deleted = ? AND (processed_msg_id = ? OR processed_msg_id IS NULL)", group.GroupID, false, "").
+	if err := at.db.Where("group_id = ? AND is_deleted = ?", group.GroupID, false).
 		Order("create_at_ms DESC").
 		First(&lastMessage).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			// No messages in group, nothing to trigger
 			return checkResultSkipped, nil
 		}
 		return checkResultSkipped, fmt.Errorf("failed to fetch last message: %w", err)
 	}
 
-	// Evaluate timeout-based auto-trigger. Guard against a nil evaluator or a
-	// nil result to avoid panics in tests and misconfigured production setups.
+	// Only user messages can trigger auto-triggers.
+	if lastMessage.IsFromAgent() {
+		return checkResultSkipped, nil
+	}
+
+	// Fetch group members.
+	var members []models.GroupMember
+	if err := at.db.Where("group_id = ?", group.GroupID).Find(&members).Error; err != nil {
+		return checkResultSkipped, fmt.Errorf("failed to fetch group members: %w", err)
+	}
+
+	// Evaluate timeout-based auto-trigger.
 	if at.evaluator == nil {
 		return checkResultSkipped, nil
 	}
@@ -245,43 +248,46 @@ func (at *AutoTrigger) checkGroup(ctx context.Context, group *models.Group, trac
 	if err != nil {
 		return checkResultSkipped, fmt.Errorf("failed to evaluate auto-trigger: %w", err)
 	}
-	if result == nil || !result.ShouldTrigger {
+	if result == nil || !result.ShouldTrigger || len(result.Targets) == 0 {
 		return checkResultSkipped, nil
 	}
 
-	// Check if there's already a pending auto-trigger for this message
+	// Check if this message-agent pair has already been processed (any status)
+	// to avoid duplicate auto-triggers. If the check itself fails, log the error
+	// and continue; the unique constraint on (group_id, message_id, agent_id)
+	// prevents duplicate inserts when the processing record is created below.
 	var existingCount int64
 	if err := at.db.Model(&models.AgentMessageProcessing{}).
-		Where("group_id = ? AND message_id = ? AND status = ?", group.GroupID, lastMessage.MessageID, models.ProcessingStatusPending).
+		Where("group_id = ? AND message_id = ? AND agent_id = ?",
+			group.GroupID, lastMessage.MessageID, result.Targets[0].AgentID).
 		Count(&existingCount).Error; err != nil {
-		logger.ErrorM(autoTriggerModule, traceID, "failed to check existing processing", "error", err)
-	}
-	if existingCount > 0 {
-		logger.InfoM(autoTriggerModule, traceID, "auto-trigger already pending for message",
+		logger.ErrorM(autoTriggerModule, traceID, "failed to check existing processing record; continuing",
 			"group_id", group.GroupID,
 			"message_id", lastMessage.MessageID,
+			"agent_id", result.Targets[0].AgentID,
+			"error", err,
+		)
+	} else if existingCount > 0 {
+		logger.DebugM(autoTriggerModule, traceID, "auto-trigger already processed or in-flight for message",
+			"group_id", group.GroupID,
+			"message_id", lastMessage.MessageID,
+			"agent_id", result.Targets[0].AgentID,
 		)
 		return checkResultSkipped, nil
 	}
 
-	// Create pending message record
-	pendingID := uuid.New().String()
-	pendingMsg := &models.GroupMessage{
-		GroupID:        group.GroupID,
-		MessageID:      pendingID,
-		MessageText:    lastMessage.MessageText,
-		SenderID:       lastMessage.SenderID,
-		SenderType:     lastMessage.SenderType,
-		ProcessedMsgID: lastMessage.MessageID,
-		IsDeleted:      false,
+	// Build trigger info for NATS.
+	triggerData := trigger.FormatTriggerForNATS(result.Trigger, result.Targets)
+
+	// Publish the original message to NATS as a pending message. Using the
+	// original message ID ensures the agent response's processed_msg_id points
+	// back to the user's message instead of a synthetic pending message.
+	if err := at.publisher.PublishAutoTriggerPendingMessage(group.GroupID, &lastMessage, triggerData); err != nil {
+		return checkResultSkipped, fmt.Errorf("failed to publish auto-trigger pending message: %w", err)
 	}
 
-	// Save pending message to database
-	if err := at.db.Create(pendingMsg).Error; err != nil {
-		return checkResultSkipped, fmt.Errorf("failed to create pending message: %w", err)
-	}
-
-	// Record processing status as pending
+	// Record processing status as pending so subsequent scans do not re-trigger
+	// the same message-agent pair while the consumer is working.
 	processingRecord := &models.AgentMessageProcessing{
 		GroupID:   group.GroupID,
 		MessageID: lastMessage.MessageID,
@@ -292,18 +298,9 @@ func (at *AutoTrigger) checkGroup(ctx context.Context, group *models.Group, trac
 		logger.ErrorM(autoTriggerModule, traceID, "failed to create processing record", "error", err)
 	}
 
-	// Build trigger info for NATS
-	triggerData := trigger.FormatTriggerForNATS(result.Trigger, result.Targets)
-
-	// Publish pending message to NATS
-	if err := at.publisher.PublishAutoTriggerPendingMessage(group.GroupID, pendingMsg, triggerData); err != nil {
-		return checkResultSkipped, fmt.Errorf("failed to publish auto-trigger pending message: %w", err)
-	}
-
 	logger.InfoM(autoTriggerModule, traceID, "auto-trigger published pending message",
 		"group_id", group.GroupID,
 		"message_id", lastMessage.MessageID,
-		"pending_id", pendingID,
 		"agent_id", result.Targets[0].AgentID,
 	)
 

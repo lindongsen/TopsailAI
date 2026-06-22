@@ -4,6 +4,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -52,14 +53,14 @@ func NewMessageHandler(db *gorm.DB, publisher Publisher, evaluator Evaluator, lo
 
 // CreateMessageRequest represents the request body for creating a message.
 type CreateMessageRequest struct {
-	MessageText        string `json:"message_text" binding:"required"`
-	MessageAttachments string `json:"message_attachments"`
+	MessageText        string          `json:"message_text" binding:"required"`
+	MessageAttachments json.RawMessage `json:"message_attachments"`
 }
 
 // UpdateMessageRequest represents the request body for updating a message.
 type UpdateMessageRequest struct {
-	MessageText        string `json:"message_text"`
-	MessageAttachments string `json:"message_attachments"`
+	MessageText        string          `json:"message_text"`
+	MessageAttachments json.RawMessage `json:"message_attachments"`
 }
 
 // MessageResponse represents a message in API responses.
@@ -84,8 +85,50 @@ type ListMessagesResponse struct {
 	Total   int64             `json:"total"`
 	Offset  int               `json:"offset"`
 	Limit   int               `json:"limit"`
-	SortKey string            `json:"sort_key"`
-	OrderBy string            `json:"order_by"`
+}
+
+// normalizeMessageAttachments accepts either a JSON array or a JSON string
+// containing an array, validates it, and returns a compact JSON string for
+// storage. It returns "[]" for nil/empty input and an error for invalid JSON
+// or non-array values.
+func normalizeMessageAttachments(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "[]", nil
+	}
+
+	// Trim outer whitespace to simplify type detection.
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return "[]", nil
+	}
+
+	// If the value is a JSON string, unwrap it and validate the inner content.
+	if len(trimmed) >= 2 && trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"' {
+		var inner string
+		if err := json.Unmarshal([]byte(trimmed), &inner); err != nil {
+			return "", errors.New("message_attachments is not valid JSON")
+		}
+		trimmed = strings.TrimSpace(inner)
+	}
+
+	if trimmed == "" || trimmed == "null" {
+		return "[]", nil
+	}
+
+	if trimmed[0] != '[' {
+		return "", errors.New("message_attachments must be a JSON array")
+	}
+
+	var arr []interface{}
+	if err := json.Unmarshal([]byte(trimmed), &arr); err != nil {
+		return "", errors.New("message_attachments is not valid JSON")
+	}
+
+	compact, err := json.Marshal(arr)
+	if err != nil {
+		return "", errors.New("message_attachments is not valid JSON")
+	}
+	return string(compact), nil
 }
 
 // CreateMessage handles POST /api/v1/groups/:group_id/messages.
@@ -102,18 +145,18 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	var group models.Group
 	if err := h.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+			writeErrorResponse(c, http.StatusNotFound, "group not found", traceID)
 			return
 		}
 		h.log.Error("api", traceID, "failed to get group", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create message"})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to create message", traceID)
 		return
 	}
 
 	var req CreateMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.log.Warn("api", traceID, "invalid create message request", "error", err.Error())
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeErrorResponse(c, http.StatusBadRequest, err.Error(), traceID)
 		return
 	}
 
@@ -125,11 +168,11 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 		var senderMember models.GroupMember
 		if err := h.db.Where("group_id = ? AND member_id = ?", groupID, senderID).First(&senderMember).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
-				c.JSON(http.StatusForbidden, gin.H{"error": "sender is not a member of the group"})
+				writeErrorResponse(c, http.StatusForbidden, "sender is not a member of the group", traceID)
 				return
 			}
 			h.log.Error("api", traceID, "failed to verify sender membership", "error", err.Error())
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create message"})
+			writeErrorResponse(c, http.StatusInternalServerError, "failed to create message", traceID)
 			return
 		}
 	}
@@ -138,7 +181,7 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	var members []models.GroupMember
 	if err := h.db.Where("group_id = ?", groupID).Find(&members).Error; err != nil {
 		h.log.Error("api", traceID, "failed to get members", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create message"})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to create message", traceID)
 		return
 	}
 
@@ -146,10 +189,12 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 	mentions := trigger.ExtractMentionsFromText(req.MessageText, members)
 	mentionsJSON, _ := json.Marshal(mentions)
 
-	// Parse attachments
-	attachments := "[]"
-	if req.MessageAttachments != "" {
-		attachments = req.MessageAttachments
+	// Normalize attachments
+	attachments, err := normalizeMessageAttachments(req.MessageAttachments)
+	if err != nil {
+		h.log.Warn("api", traceID, "invalid message attachments", "error", err.Error())
+		writeErrorResponse(c, http.StatusBadRequest, err.Error(), traceID)
+		return
 	}
 
 	message := models.GroupMessage{
@@ -164,7 +209,7 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 
 	if err := h.db.Create(&message).Error; err != nil {
 		h.log.Error("api", traceID, "failed to create message", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create message"})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to create message", traceID)
 		return
 	}
 
@@ -243,11 +288,11 @@ func (h *MessageHandler) ListMessages(c *gin.Context) {
 	var group models.Group
 	if err := h.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+			writeErrorResponse(c, http.StatusNotFound, "group not found", traceID)
 			return
 		}
 		h.log.Error("api", traceID, "failed to get group", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list messages"})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to list messages", traceID)
 		return
 	}
 
@@ -255,11 +300,11 @@ func (h *MessageHandler) ListMessages(c *gin.Context) {
 	allowed, err := canListGroupMembers(h.db, authCtx, groupID)
 	if err != nil {
 		h.log.Error("api", traceID, "failed to check list messages permission", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list messages"})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to list messages", traceID)
 		return
 	}
 	if !allowed {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeErrorResponse(c, http.StatusForbidden, "forbidden", traceID)
 		return
 	}
 
@@ -282,7 +327,7 @@ func (h *MessageHandler) ListMessages(c *gin.Context) {
 	// Validate sort_key
 	allowedSortKeys := map[string]bool{"create_at_ms": true, "update_at_ms": true, "message_id": true, "sender_id": true, "group_id": true}
 	if !allowedSortKeys[sortKey] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sort_key"})
+		writeErrorResponse(c, http.StatusBadRequest, "invalid sort_key", traceID)
 		return
 	}
 
@@ -312,7 +357,7 @@ func (h *MessageHandler) ListMessages(c *gin.Context) {
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		h.log.Error("api", traceID, "failed to count messages", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list messages"})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to list messages", traceID)
 		return
 	}
 
@@ -321,7 +366,7 @@ func (h *MessageHandler) ListMessages(c *gin.Context) {
 	orderClause := sortKey + " " + orderBy
 	if err := query.Order(orderClause).Offset(offset).Limit(limit).Find(&messages).Error; err != nil {
 		h.log.Error("api", traceID, "failed to list messages", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list messages"})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to list messages", traceID)
 		return
 	}
 
@@ -347,24 +392,24 @@ func (h *MessageHandler) UpdateMessage(c *gin.Context) {
 	var req UpdateMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.log.Warn("api", traceID, "invalid update message request", "error", err.Error())
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeErrorResponse(c, http.StatusBadRequest, err.Error(), traceID)
 		return
 	}
 
 	var message models.GroupMessage
 	if err := h.db.Where("group_id = ? AND message_id = ?", groupID, messageID).First(&message).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "message not found"})
+			writeErrorResponse(c, http.StatusNotFound, "message not found", traceID)
 			return
 		}
 		h.log.Error("api", traceID, "failed to get message", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update message"})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to update message", traceID)
 		return
 	}
 
 	// Authorization: admin can update any message; user can update only their own.
 	if !isAdmin(authCtx) && message.SenderID != authCtx.Account.AccountID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeErrorResponse(c, http.StatusForbidden, "forbidden", traceID)
 		return
 	}
 
@@ -373,19 +418,24 @@ func (h *MessageHandler) UpdateMessage(c *gin.Context) {
 	if req.MessageText != "" {
 		updates["message_text"] = req.MessageText
 	}
-	if req.MessageAttachments != "" {
-		updates["message_attachments"] = req.MessageAttachments
+	if len(req.MessageAttachments) > 0 {
+		attachments, err := normalizeMessageAttachments(req.MessageAttachments)
+		if err != nil {
+			h.log.Warn("api", traceID, "invalid message attachments", "error", err.Error())
+			writeErrorResponse(c, http.StatusBadRequest, err.Error(), traceID)
+			return
+		}
+		updates["message_attachments"] = attachments
 	}
 	updates["update_at_ms"] = time.Now().UnixMilli()
 
 	if err := h.db.Model(&message).Updates(updates).Error; err != nil {
 		h.log.Error("api", traceID, "failed to update message", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update message"})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to update message", traceID)
 		return
 	}
 	// Reload message
 	h.db.Where("group_id = ? AND message_id = ?", groupID, messageID).First(&message)
-
 
 	// Publish event
 	if err := h.publisher.PublishMessageModify(&message); err != nil {
@@ -411,17 +461,17 @@ func (h *MessageHandler) DeleteMessage(c *gin.Context) {
 	var message models.GroupMessage
 	if err := h.db.Where("group_id = ? AND message_id = ?", groupID, messageID).First(&message).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "message not found"})
+			writeErrorResponse(c, http.StatusNotFound, "message not found", traceID)
 			return
 		}
 		h.log.Error("api", traceID, "failed to get message for delete", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete message"})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to delete message", traceID)
 		return
 	}
 
 	// Authorization: admin can delete any message; user can delete only their own.
 	if !isAdmin(authCtx) && message.SenderID != authCtx.Account.AccountID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeErrorResponse(c, http.StatusForbidden, "forbidden", traceID)
 		return
 	}
 
@@ -436,7 +486,7 @@ func (h *MessageHandler) DeleteMessage(c *gin.Context) {
 
 	if err := h.db.Model(&message).Updates(updates).Error; err != nil {
 		h.log.Error("api", traceID, "failed to delete message", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete message"})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to delete message", traceID)
 		return
 	}
 
@@ -497,11 +547,11 @@ func (h *MessageHandler) TriggerMessage(c *gin.Context) {
 	var group models.Group
 	if err := h.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+			writeErrorResponse(c, http.StatusNotFound, "group not found", traceID)
 			return
 		}
 		h.log.Error("api", traceID, "failed to get group for trigger", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to trigger message"})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to trigger message", traceID)
 		return
 	}
 
@@ -509,11 +559,11 @@ func (h *MessageHandler) TriggerMessage(c *gin.Context) {
 	allowed, err := canListGroupMembers(h.db, authCtx, groupID)
 	if err != nil {
 		h.log.Error("api", traceID, "failed to check trigger permission", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to trigger message"})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to trigger message", traceID)
 		return
 	}
 	if !allowed {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeErrorResponse(c, http.StatusForbidden, "forbidden", traceID)
 		return
 	}
 
@@ -521,11 +571,11 @@ func (h *MessageHandler) TriggerMessage(c *gin.Context) {
 	var msg models.GroupMessage
 	if err := h.db.Where("group_id = ? AND message_id = ?", groupID, messageID).First(&msg).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "message not found"})
+			writeErrorResponse(c, http.StatusNotFound, "message not found", traceID)
 			return
 		}
 		h.log.Error("api", traceID, "failed to get message for trigger", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to trigger message"})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to trigger message", traceID)
 		return
 	}
 
@@ -535,15 +585,15 @@ func (h *MessageHandler) TriggerMessage(c *gin.Context) {
 		var member models.GroupMember
 		if err := h.db.Where("group_id = ? AND member_id = ?", groupID, req.AgentID).First(&member).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
-				c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+				writeErrorResponse(c, http.StatusNotFound, "agent not found", traceID)
 				return
 			}
 			h.log.Error("api", traceID, "failed to get member for trigger", "error", err.Error())
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to trigger message"})
+			writeErrorResponse(c, http.StatusInternalServerError, "failed to trigger message", traceID)
 			return
 		}
 		if !strings.HasSuffix(string(member.MemberType), "-agent") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "specified member is not an agent"})
+			writeErrorResponse(c, http.StatusBadRequest, "specified member is not an agent", traceID)
 			return
 		}
 		targetAgentID = req.AgentID
@@ -554,14 +604,14 @@ func (h *MessageHandler) TriggerMessage(c *gin.Context) {
 		var members []models.GroupMember
 		if err := h.db.Where("group_id = ?", groupID).Find(&members).Error; err != nil {
 			h.log.Error("api", traceID, "failed to get members for trigger", "error", err.Error())
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to trigger message"})
+			writeErrorResponse(c, http.StatusInternalServerError, "failed to trigger message", traceID)
 			return
 		}
 
 		result, err := h.evaluator.ResolveAgents(c.Request.Context(), &msg, members)
 		if err != nil {
 			h.log.Warn("api", traceID, "trigger evaluation failed", "error", err.Error())
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to evaluate trigger"})
+			writeErrorResponse(c, http.StatusInternalServerError, "failed to evaluate trigger", traceID)
 			return
 		}
 
@@ -604,7 +654,7 @@ func (h *MessageHandler) TriggerMessage(c *gin.Context) {
 		msg.GroupID, &msg, triggerData, targetAgentID,
 	); err != nil {
 		h.log.Error("api", traceID, "failed to publish trigger", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to publish trigger: " + err.Error(), "trace_id": traceID})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to publish trigger: "+err.Error(), traceID)
 		return
 	}
 

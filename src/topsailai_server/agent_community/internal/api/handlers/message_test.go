@@ -1113,6 +1113,234 @@ func TestCreateMessage_AttachmentsDefaultEmpty(t *testing.T) {
 	assert.Empty(t, resp.Data.MessageAttachments)
 }
 
+// TestCreateMessage_AttachmentsArrayInput verifies array input is stored and returned as array.
+func TestCreateMessage_AttachmentsArrayInput(t *testing.T) {
+	db := setupMessageTestDB(t)
+	accountID := "acc-create-attach-array"
+	groupID := "group-create-attach-array"
+	createTestGroup(t, db, groupID, "Attachments Array Group")
+	createTestGroupMember(t, db, groupID, accountID, models.MemberTypeUser)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(accountID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text": "with attachments",
+		"message_attachments": []map[string]interface{}{
+			{"data": "base64", "size": 1024, "format": "image/png"},
+		},
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	var resp messageResponseWrapper
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	attachments, ok := resp.Data.MessageAttachments.([]interface{})
+	require.True(t, ok, "attachments should be returned as array")
+	require.Len(t, attachments, 1)
+	att := attachments[0].(map[string]interface{})
+	assert.Equal(t, "base64", att["data"])
+	assert.Equal(t, float64(1024), att["size"])
+	assert.Equal(t, "image/png", att["format"])
+}
+
+// TestCreateMessage_AttachmentsStringifiedArrayInput verifies backward-compatible stringified array input.
+func TestCreateMessage_AttachmentsStringifiedArrayInput(t *testing.T) {
+	db := setupMessageTestDB(t)
+	accountID := "acc-create-attach-string"
+	groupID := "group-create-attach-string"
+	createTestGroup(t, db, groupID, "Attachments String Group")
+	createTestGroupMember(t, db, groupID, accountID, models.MemberTypeUser)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(accountID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text": "with stringified attachments",
+		"message_attachments": "[{\"data\":\"base64\",\"size\":2048,\"format\":\"image/jpeg\"}]",
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	var resp messageResponseWrapper
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	attachments, ok := resp.Data.MessageAttachments.([]interface{})
+	require.True(t, ok, "attachments should be returned as array")
+	require.Len(t, attachments, 1)
+	att := attachments[0].(map[string]interface{})
+	assert.Equal(t, "base64", att["data"])
+	assert.Equal(t, float64(2048), att["size"])
+	assert.Equal(t, "image/jpeg", att["format"])
+}
+
+// TestCreateMessage_AttachmentsInvalidJSON verifies invalid JSON is rejected.
+func TestCreateMessage_AttachmentsInvalidJSON(t *testing.T) {
+	db := setupMessageTestDB(t)
+	accountID := "acc-create-attach-invalid"
+	groupID := "group-create-attach-invalid"
+	createTestGroup(t, db, groupID, "Attachments Invalid Group")
+	createTestGroupMember(t, db, groupID, accountID, models.MemberTypeUser)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(accountID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text": "bad attachments",
+		"message_attachments": "not-json",
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+}
+
+// TestCreateMessage_AttachmentsNonArrayJSON verifies non-array JSON is rejected.
+func TestCreateMessage_AttachmentsNonArrayJSON(t *testing.T) {
+	db := setupMessageTestDB(t)
+	accountID := "acc-create-attach-obj"
+	groupID := "group-create-attach-obj"
+	createTestGroup(t, db, groupID, "Attachments Object Group")
+	createTestGroupMember(t, db, groupID, accountID, models.MemberTypeUser)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(accountID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text": "object attachment",
+		"message_attachments": map[string]interface{}{"data": "base64"},
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+}
+
+// TestUpdateMessage_AttachmentsArrayInput verifies update accepts array input and returns array.
+func TestUpdateMessage_AttachmentsArrayInput(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "user-update-attach"
+	groupID := "group-update-attach"
+	createTestGroup(t, db, groupID, "Update Attach Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	msg := createTestMessage(t, db, groupID, "msg-update-attach", userID, models.MemberTypeUser, "")
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.PUT("/api/v1/groups/:group_id/messages/:message_id", handler.UpdateMessage)
+
+	body := map[string]interface{}{
+		"message_attachments": []map[string]interface{}{
+			{"data": "updated-base64", "size": 512, "format": "image/gif"},
+		},
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/groups/"+groupID+"/messages/"+msg.MessageID, bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp dataResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	data, ok := resp.Data.(map[string]interface{})
+	require.True(t, ok, "response data should be object")
+
+	attachments, ok := data["message_attachments"].([]interface{})
+	require.True(t, ok, "attachments should be returned as array")
+	require.Len(t, attachments, 1)
+	att := attachments[0].(map[string]interface{})
+	assert.Equal(t, "updated-base64", att["data"])
+	assert.Equal(t, float64(512), att["size"])
+	assert.Equal(t, "image/gif", att["format"])
+}
+
+// TestUpdateMessage_AttachmentsEmptyArrayRemoves verifies empty array removes attachments.
+func TestUpdateMessage_AttachmentsEmptyArrayRemoves(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "user-update-attach-empty"
+	groupID := "group-update-attach-empty"
+	createTestGroup(t, db, groupID, "Update Attach Empty Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	msg := createTestMessage(t, db, groupID, "msg-update-attach-empty", userID, models.MemberTypeUser, "")
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.PUT("/api/v1/groups/:group_id/messages/:message_id", handler.UpdateMessage)
+
+	body := map[string]interface{}{"message_attachments": []interface{}{}}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/groups/"+groupID+"/messages/"+msg.MessageID, bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp dataResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	data, ok := resp.Data.(map[string]interface{})
+	require.True(t, ok, "response data should be object")
+	assert.Empty(t, data["message_attachments"])
+}
+
+// TestNormalizeMessageAttachments verifies helper behavior for edge cases.
+func TestNormalizeMessageAttachments(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{"empty", "", "[]", false},
+		{"null", "null", "[]", false},
+		{"empty array", "[]", "[]", false},
+		{"array", `[{"data":"x","size":1}]`, `[{"data":"x","size":1}]`, false},
+		{"stringified array", `"[{\"data\":\"x\",\"size\":1}]"`, `[{"data":"x","size":1}]`, false},
+		{"invalid json", "not-json", "", true},
+		{"object", `{"data":"x"}`, "", true},
+		{"string not array", `"hello"`, "", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := normalizeMessageAttachments(json.RawMessage(tc.input))
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 // TestCreateMessage_EvaluatorErrorStillReturns201 verifies evaluator errors do not fail the request.
 func TestCreateMessage_EvaluatorErrorStillReturns201(t *testing.T) {
 	db := setupMessageTestDB(t)

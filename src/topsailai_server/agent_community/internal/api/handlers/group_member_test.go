@@ -16,25 +16,28 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/topsailai/agent-community/internal/api/middleware"
 	"github.com/topsailai/agent-community/internal/models"
+	"github.com/topsailai/agent-community/internal/utils"
 	"github.com/topsailai/agent-community/pkg/logger"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
 // listGroupMembersResponseWrapper mirrors the envelope produced by writeListResponse.
 type listGroupMembersResponseWrapper struct {
 	Data struct {
 		Items  []GroupMemberResponse `json:"items"`
-		Total  int64        `json:"total"`
-		Offset int          `json:"offset"`
-		Limit  int          `json:"limit"`
+		Total  int64                 `json:"total"`
+		Offset int                   `json:"offset"`
+		Limit  int                   `json:"limit"`
 	} `json:"data"`
 	TraceID string `json:"trace_id"`
 }
+
 // groupMemberResponseWrapper mirrors the standard envelope produced by writeJSON.
 type groupMemberResponseWrapper struct {
 	Data    GroupMemberResponse `json:"data"`
-	Error   string            `json:"error"`
-	TraceID string            `json:"trace_id"`
+	Error   string              `json:"error"`
+	TraceID string              `json:"trace_id"`
 }
 
 
@@ -80,6 +83,23 @@ func createTestGroupForMembersWithOwner(t *testing.T, db *gorm.DB, groupID, owne
 	}
 	require.NoError(t, db.Create(&group).Error)
 }
+// createTestGroupForMembersWithKey creates a group with a specific owner and a bcrypt-hashed group_key.
+func createTestGroupForMembersWithKey(t *testing.T, db *gorm.DB, groupID, key string) {
+	now := time.Now().UnixMilli()
+	hash, err := utils.HashGroupKey(key)
+	require.NoError(t, err)
+	group := models.Group{
+		GroupID:    groupID,
+		GroupName:  "Test Group",
+		CreatorID:  testAdminAccountID,
+		OwnerID:    testAdminAccountID,
+		GroupKey:   hash,
+		CreateAtMs: now,
+		UpdateAtMs: now,
+	}
+	require.NoError(t, db.Create(&group).Error)
+}
+
 
 // createTestGroupMember creates a group member record.
 func createTestGroupMemberForMemberHandler(t *testing.T, db *gorm.DB, groupID, memberID string, memberType models.MemberType) {
@@ -101,9 +121,10 @@ func setAdminAuth(c *gin.Context, accountID string) {
 	c.Set("auth_context", middleware.AuthContext{
 		IsAuthenticated: true,
 		Account: &models.Account{
-			AccountID: accountID,
-			Role:      models.AccountRoleAdmin,
-			Status:    models.AccountStatusActive,
+			AccountID:   accountID,
+			AccountName: accountID,
+			Role:        models.AccountRoleAdmin,
+			Status:      models.AccountStatusActive,
 		},
 	})
 }
@@ -113,9 +134,10 @@ func setUserAuth(c *gin.Context, accountID string) {
 	c.Set("auth_context", middleware.AuthContext{
 		IsAuthenticated: true,
 		Account: &models.Account{
-			AccountID: accountID,
-			Role:      models.AccountRoleUser,
-			Status:    models.AccountStatusActive,
+			AccountID:   accountID,
+			AccountName: accountID,
+			Role:        models.AccountRoleUser,
+			Status:      models.AccountStatusActive,
 		},
 	})
 }
@@ -763,7 +785,8 @@ func TestUpdateMember_PublisherOnlyOnStatusChange(t *testing.T) {
 	assert.False(t, pub.modifyCalled)
 }
 
-// TestLeaveGroup_Success verifies deleting a member returns 204.
+// TestLeaveGroup_Success verifies deleting a member returns 204 with no body
+// and without a text/plain content-type.
 func TestLeaveGroup_Success(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupGroupMemberTestDB(t)
@@ -789,6 +812,8 @@ func TestLeaveGroup_Success(t *testing.T) {
 	handler.LeaveGroup(c)
 
 	require.Equal(t, http.StatusNoContent, w.Code)
+	assert.Empty(t, w.Body.String())
+	assert.NotContains(t, w.Header().Get("Content-Type"), "text/plain")
 	assert.True(t, pub.deleteCalled)
 	assert.Equal(t, "group-001", pub.lastDeleteGroupID)
 	assert.Equal(t, "user-007", pub.lastDeleteMemberID)
@@ -886,10 +911,11 @@ func TestGroupMemberHandler_Join_UserOwnGroupOnly(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupGroupMemberTestDB(t)
 	createTestGroupForMembersWithOwner(t, db, "group-user-own", testUserAccountID)
-	createTestGroupForMembers(t, db, "group-user-other")
+	createTestGroupForMembers(t, db, "group-user-other-public")
+	createTestGroupForMembersWithKey(t, db, "group-user-other-private", "secret-key")
 	handler := setupGroupMemberTestHandler(t, db, nil)
 
-	// User can join member to own group.
+	// User can add member to own group.
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	setUserAuth(c, testUserAccountID)
@@ -905,13 +931,27 @@ func TestGroupMemberHandler_Join_UserOwnGroupOnly(t *testing.T) {
 	handler.JoinGroup(c)
 	require.Equal(t, http.StatusCreated, w.Code)
 
-	// User cannot join member to a group they do not own.
+	// User can self-join a public group they do not own.
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
 	setUserAuth(c, testUserAccountID)
-	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-user-other/members", bytes.NewBuffer(jsonBody))
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-user-other-public/members", bytes.NewBuffer(jsonBody))
 	c.Request.Header.Set("Content-Type", "application/json")
-	c.Params = gin.Params{{Key: "group_id", Value: "group-user-other"}}
+	c.Params = gin.Params{{Key: "group_id", Value: "group-user-other-public"}}
+	handler.JoinGroup(c)
+	require.Equal(t, http.StatusCreated, w.Code)
+	var joinResp groupMemberResponseWrapper
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &joinResp))
+	require.Equal(t, testUserAccountID, joinResp.Data.MemberID)
+	require.Equal(t, string(models.MemberTypeUser), joinResp.Data.MemberType)
+
+	// User cannot join (self-join) a private group they do not own without the key.
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-user-other-private/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-user-other-private"}}
 	handler.JoinGroup(c)
 	require.Equal(t, http.StatusForbidden, w.Code)
 }
@@ -1059,4 +1099,142 @@ func TestGroupMemberHandler_Leave_UserOwnOnly(t *testing.T) {
 	c.Params = gin.Params{{Key: "group_id", Value: "group-user-leave"}, {Key: "member_id", Value: testOtherUserAccountID}}
 	handler.LeaveGroup(c)
 	require.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// createTestGroupWithKey creates a group with a hashed group_key.
+func createTestGroupWithKey(t *testing.T, db *gorm.DB, groupID, ownerID, plainKey string) {
+	now := time.Now().UnixMilli()
+	var keyHash string
+	if plainKey != "" {
+		var err error
+		keyHash, err = utils.HashGroupKey(plainKey)
+		require.NoError(t, err)
+	}
+	group := models.Group{
+		GroupID:    groupID,
+		GroupName:  "Test Group",
+		GroupKey:   keyHash,
+		CreatorID:  ownerID,
+		OwnerID:    ownerID,
+		CreateAtMs: now,
+		UpdateAtMs: now,
+	}
+	require.NoError(t, db.Create(&group).Error)
+}
+
+func TestJoinGroup_SelfJoinPublicGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupForMembersWithOwner(t, db, "group-public", testAdminAccountID)
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	body := JoinGroupRequest{}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-public/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-public"}}
+
+	handler.JoinGroup(c)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	var resp groupMemberResponseWrapper
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, testUserAccountID, resp.Data.MemberID)
+	assert.Equal(t, string(models.MemberTypeUser), resp.Data.MemberType)
+}
+
+func TestJoinGroup_SelfJoinPrivateGroupWithCorrectKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupWithKey(t, db, "group-private", testAdminAccountID, "secret-key")
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	body := JoinGroupRequest{GroupKey: "secret-key"}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-private/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-private"}}
+
+	handler.JoinGroup(c)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	var resp groupMemberResponseWrapper
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, testUserAccountID, resp.Data.MemberID)
+}
+
+func TestJoinGroup_SelfJoinPrivateGroupWithWrongKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupWithKey(t, db, "group-private", testAdminAccountID, "secret-key")
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	body := JoinGroupRequest{GroupKey: "wrong-key"}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-private/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-private"}}
+
+	handler.JoinGroup(c)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestJoinGroup_SelfJoinAlreadyMember(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupForMembersWithOwner(t, db, "group-public", testAdminAccountID)
+	createTestGroupMemberForMemberHandler(t, db, "group-public", testUserAccountID, models.MemberTypeUser)
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	body := JoinGroupRequest{}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-public/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-public"}}
+
+	handler.JoinGroup(c)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestJoinGroup_OwnerCanStillAddMember(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupForMembersWithOwner(t, db, "group-owned", testUserAccountID)
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	body := JoinGroupRequest{
+		MemberID:   "agent-001",
+		MemberName: "AgentOne",
+		MemberType: string(models.MemberTypeWorkerAgent),
+		MemberInterface: MemberInterfaceField{value: `{"adaptor":"mock"}`},
+	}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-owned/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-owned"}}
+
+	handler.JoinGroup(c)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	var resp groupMemberResponseWrapper
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "agent-001", resp.Data.MemberID)
+	assert.Equal(t, string(models.MemberTypeWorkerAgent), resp.Data.MemberType)
 }

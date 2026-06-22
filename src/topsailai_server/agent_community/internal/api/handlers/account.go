@@ -103,14 +103,14 @@ func (h *AccountHandler) CreateAccount(c *gin.Context) {
 	traceID := middleware.GetTraceID(c)
 	ac, ok := middleware.GetAuthContext(c)
 	if !ok || ac.Account == nil || !ac.Account.IsActive() {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusUnauthorized, "authentication required", traceID)
 		return
 	}
 
 	var req CreateAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.log.Warn("api", traceID, "invalid create account request", "error", err.Error())
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "trace_id": traceID})
+		writeErrorResponse(c, http.StatusBadRequest, err.Error(), traceID)
 		return
 	}
 
@@ -121,7 +121,7 @@ func (h *AccountHandler) CreateAccount(c *gin.Context) {
 
 	// Manager can only create user accounts.
 	if ac.Account.Role == models.AccountRoleManager && role != models.AccountRoleUser {
-		c.JSON(http.StatusForbidden, gin.H{"error": "manager can only create user accounts", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusForbidden, "manager can only create user accounts", traceID)
 		return
 	}
 
@@ -141,18 +141,18 @@ func (h *AccountHandler) CreateAccount(c *gin.Context) {
 	if err != nil {
 		h.log.Error("api", traceID, "failed to create account", "error", err.Error())
 		if err == services.ErrDuplicateLoginName {
-			c.JSON(http.StatusConflict, gin.H{"error": "login name already exists", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusConflict, "login name already exists", traceID)
 			return
 		}
 		if err == services.ErrRoleNotAllowed {
-			c.JSON(http.StatusForbidden, gin.H{"error": "manager can only create user accounts", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusForbidden, "manager can only create user accounts", traceID)
 			return
 		}
 		if err == services.ErrInvalidRole {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid account role", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusBadRequest, "invalid account role", traceID)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create account", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to create account", traceID)
 		return
 	}
 
@@ -196,7 +196,7 @@ func (h *AccountHandler) ListAccounts(c *gin.Context) {
 	accounts, total, err := h.accountSvc.ListAccounts(c.Request.Context(), offset, limit, filter)
 	if err != nil {
 		h.log.Error("api", traceID, "failed to list accounts", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list accounts", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to list accounts", traceID)
 		return
 	}
 
@@ -220,16 +220,16 @@ func (h *AccountHandler) GetAccount(c *gin.Context) {
 	account, err := h.accountSvc.GetAccountByID(c.Request.Context(), accountID)
 	if err != nil {
 		if err == services.ErrAccountNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "account not found", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusNotFound, "account not found", traceID)
 			return
 		}
 		h.log.Error("api", traceID, "failed to get account", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get account", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to get account", traceID)
 		return
 	}
 
 	if !h.canViewAccount(ac, account) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "access denied", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusForbidden, "access denied", traceID)
 		return
 	}
 
@@ -243,20 +243,20 @@ func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 	accountID := c.Param("account_id")
 
 	if ac.Account.Role != models.AccountRoleAdmin && ac.Account.AccountID != accountID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "access denied", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusForbidden, "access denied", traceID)
 		return
 	}
 
 	var req UpdateAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.log.Warn("api", traceID, "invalid update account request", "error", err.Error())
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "trace_id": traceID})
+		writeErrorResponse(c, http.StatusBadRequest, err.Error(), traceID)
 		return
 	}
 
 	// Non-admin users cannot change their own role or status.
 	if ac.Account.Role != models.AccountRoleAdmin && (req.Role != "" || req.Status != "") {
-		c.JSON(http.StatusForbidden, gin.H{"error": "cannot change role or status", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusForbidden, "cannot change role or status", traceID)
 		return
 	}
 
@@ -295,10 +295,10 @@ func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 	if err != nil {
 		h.log.Error("api", traceID, "failed to update account", "error", err.Error())
 		if err == services.ErrAccountNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "account not found", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusNotFound, "account not found", traceID)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update account", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to update account", traceID)
 		return
 	}
 
@@ -314,17 +314,17 @@ func (h *AccountHandler) DeleteAccount(c *gin.Context) {
 	accountID := c.Param("account_id")
 
 	if ac.Account.Role != models.AccountRoleAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "access denied", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusForbidden, "access denied", traceID)
 		return
 	}
 
 	if err := h.accountSvc.SoftDeleteAccount(c.Request.Context(), accountID); err != nil {
 		h.log.Error("api", traceID, "failed to delete account", "error", err.Error())
 		if err == services.ErrAccountNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "account not found", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusNotFound, "account not found", traceID)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete account", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to delete account", traceID)
 		return
 	}
 
@@ -339,24 +339,24 @@ func (h *AccountHandler) ChangePassword(c *gin.Context) {
 	accountID := c.Param("account_id")
 
 	if ac.Account.Role != models.AccountRoleAdmin && ac.Account.AccountID != accountID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "access denied", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusForbidden, "access denied", traceID)
 		return
 	}
 
 	var req ChangePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.log.Warn("api", traceID, "invalid change password request", "error", err.Error())
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "trace_id": traceID})
+		writeErrorResponse(c, http.StatusBadRequest, err.Error(), traceID)
 		return
 	}
 
 	if err := h.accountSvc.ChangePassword(c.Request.Context(), accountID, req.NewPassword); err != nil {
 		h.log.Error("api", traceID, "failed to change password", "error", err.Error())
 		if err == services.ErrAccountNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "account not found", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusNotFound, "account not found", traceID)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to change password", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to change password", traceID)
 		return
 	}
 
@@ -371,7 +371,7 @@ func (h *AccountHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.log.Warn("api", traceID, "invalid login request", "error", err.Error())
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "trace_id": traceID})
+		writeErrorResponse(c, http.StatusBadRequest, err.Error(), traceID)
 		return
 	}
 
@@ -383,10 +383,10 @@ func (h *AccountHandler) Login(c *gin.Context) {
 	if err != nil {
 		h.log.Warn("api", traceID, "login failed", "error", err.Error())
 		if err == services.ErrAccountNotFound || err == services.ErrPasswordNotSet {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusUnauthorized, "invalid credentials", traceID)
 			return
 		}
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusUnauthorized, "invalid credentials", traceID)
 		return
 	}
 
@@ -409,11 +409,11 @@ func (h *AccountHandler) CreateSession(c *gin.Context) {
 	account, err := h.accountSvc.GetAccountByID(c.Request.Context(), accountID)
 	if err != nil {
 		if err == services.ErrAccountNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "account not found", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusNotFound, "account not found", traceID)
 			return
 		}
 		h.log.Error("api", traceID, "failed to get account for session", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to create session", traceID)
 		return
 	}
 
@@ -423,13 +423,13 @@ func (h *AccountHandler) CreateSession(c *gin.Context) {
 	} else if ac.Account.Role == models.AccountRoleManager {
 		// Manager can only create sessions for user accounts.
 		if account.Role != models.AccountRoleUser {
-			c.JSON(http.StatusForbidden, gin.H{"error": "manager can only create sessions for user accounts", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusForbidden, "manager can only create sessions for user accounts", traceID)
 			return
 		}
 	} else {
 		// User can only create sessions for their own account.
 		if ac.Account.AccountID != accountID {
-			c.JSON(http.StatusForbidden, gin.H{"error": "access denied", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusForbidden, "access denied", traceID)
 			return
 		}
 	}
@@ -437,7 +437,7 @@ func (h *AccountHandler) CreateSession(c *gin.Context) {
 	sessionKey, expiry, err := h.accountSvc.CreateLoginSession(c.Request.Context(), accountID)
 	if err != nil {
 		h.log.Error("api", traceID, "failed to create session", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to create session", traceID)
 		return
 	}
 
@@ -457,7 +457,7 @@ func (h *AccountHandler) GetMe(c *gin.Context) {
 	account, err := h.accountSvc.GetAccountByID(c.Request.Context(), ac.Account.AccountID)
 	if err != nil {
 		h.log.Error("api", traceID, "failed to get current account", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get account", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to get account", traceID)
 		return
 	}
 	writeDataResponse(c, http.StatusOK, toAccountResponse(account), traceID)

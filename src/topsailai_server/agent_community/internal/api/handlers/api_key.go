@@ -69,20 +69,20 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 
 	// Manager accounts cannot create API keys.
 	if ac.Account.Role == models.AccountRoleManager {
-		c.JSON(http.StatusForbidden, gin.H{"error": "manager cannot create api keys", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusForbidden, "manager cannot create api keys", traceID)
 		return
 	}
 
 	// Non-admin users can only create keys for themselves.
 	if ac.Account.Role != models.AccountRoleAdmin && ac.Account.AccountID != ownerID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "access denied", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusForbidden, "access denied", traceID)
 		return
 	}
 
 	var req CreateAPIKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.log.Warn("api", traceID, "invalid create api key request", "error", err.Error())
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "trace_id": traceID})
+		writeErrorResponse(c, http.StatusBadRequest, err.Error(), traceID)
 		return
 	}
 
@@ -101,15 +101,15 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		h.log.Error("api", traceID, "failed to create api key", "error", err.Error())
 		switch err {
 		case services.ErrAccountNotFound:
-			c.JSON(http.StatusNotFound, gin.H{"error": "owner account not found", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusNotFound, "owner account not found", traceID)
 		case services.ErrManagerCannotCreate:
-			c.JSON(http.StatusForbidden, gin.H{"error": "manager cannot create api keys", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusForbidden, "manager cannot create api keys", traceID)
 		case services.ErrAPIKeyRoleTooHigh:
-			c.JSON(http.StatusForbidden, gin.H{"error": "api key role cannot exceed owner role", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusForbidden, "api key role cannot exceed owner role", traceID)
 		case services.ErrAPIKeyLimitReached:
-			c.JSON(http.StatusConflict, gin.H{"error": "api key limit reached", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusConflict, "api key limit reached", traceID)
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create api key", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusInternalServerError, "failed to create api key", traceID)
 		}
 		return
 	}
@@ -128,7 +128,7 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 	ownerID := c.Param("account_id")
 
 	if ac.Account.Role != models.AccountRoleAdmin && ac.Account.AccountID != ownerID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "access denied", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusForbidden, "access denied", traceID)
 		return
 	}
 
@@ -144,7 +144,7 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 	keys, total, err := h.apiKeySvc.ListAPIKeysByOwner(c.Request.Context(), ownerID, offset, limit)
 	if err != nil {
 		h.log.Error("api", traceID, "failed to list api keys", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list api keys", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to list api keys", traceID)
 		return
 	}
 
@@ -164,17 +164,17 @@ func (h *APIKeyHandler) DeleteAPIKey(c *gin.Context) {
 	apiKeyID := c.Param("api_key_id")
 
 	if ac.Account.Role != models.AccountRoleAdmin && ac.Account.AccountID != ownerID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "access denied", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusForbidden, "access denied", traceID)
 		return
 	}
 
 	if err := h.apiKeySvc.DeleteAPIKey(c.Request.Context(), apiKeyID); err != nil {
 		h.log.Error("api", traceID, "failed to delete api key", "error", err.Error())
 		if err == services.ErrAPIKeyNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "api key not found", "trace_id": traceID})
+			writeErrorResponse(c, http.StatusNotFound, "api key not found", traceID)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete api key", "trace_id": traceID})
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to delete api key", traceID)
 		return
 	}
 

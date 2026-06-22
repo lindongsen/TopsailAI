@@ -4,12 +4,10 @@ Integration tests for ACS message attachments API.
 These tests verify creation, retrieval, update, and deletion of messages
 that include file/image attachments.
 
-NOTE: The current ACS server expects message_attachments to be a JSON-encoded
-string in the request body, but returns it as a parsed JSON array in responses.
-This is inconsistent with docs/API.md (which shows an array in both directions)
-and the database schema. Tests are written to match the actual server behavior
-and will be updated once the server-side type handling is unified.
-See: issues/issue-message-attachments-type-mismatch.md
+The server accepts message_attachments as either a JSON array (canonical) or a
+JSON-encoded string containing an array (backward compatibility), and always
+returns it as a parsed JSON array in responses. See docs/API.md and
+issues/issue-message-attachments-type-mismatch.md.
 """
 
 import base64
@@ -32,16 +30,8 @@ def _make_attachment(data: str, size: int, fmt: str) -> dict:
 
 
 def _attachment_string(attachments: list[dict]) -> str:
-    """Encode attachments as a JSON string to match current server request behavior."""
+    """Encode attachments as a JSON string for backward-compatibility tests."""
     return json.dumps(attachments)
-
-
-def _get_attachments(message: dict) -> list[dict]:
-    """Return attachments from a message response, handling string or list forms."""
-    value = message.get("message_attachments", [])
-    if isinstance(value, str):
-        return json.loads(value)
-    return value
 
 
 def _png_pixel() -> str:
@@ -58,11 +48,11 @@ class TestCreateMessageAttachments:
     def test_create_message_with_single_attachment(
         self, api_client: requests.Session, server_url: str, test_group: dict
     ):
-        """TC-INT-ATT-001: A message can be created with one attachment."""
+        """TC-INT-ATT-001: A message can be created with one attachment using a JSON array."""
         attachment = _make_attachment(_png_pixel(), 67, "image/png")
         message_data = {
             "message_text": "See this image",
-            "message_attachments": _attachment_string([attachment]),
+            "message_attachments": [attachment],
         }
 
         response = api_client.post(
@@ -74,7 +64,8 @@ class TestCreateMessageAttachments:
         data = response.json()
         assert data["message_text"] == message_data["message_text"]
         assert "message_attachments" in data
-        stored = _get_attachments(data)
+        stored = data["message_attachments"]
+        assert isinstance(stored, list)
         assert len(stored) == 1
         assert stored[0]["data"] == attachment["data"]
         assert stored[0]["size"] == attachment["size"]
@@ -87,14 +78,14 @@ class TestCreateMessageAttachments:
     def test_create_message_with_multiple_attachments(
         self, api_client: requests.Session, server_url: str, test_group: dict
     ):
-        """TC-INT-ATT-002: A message can include multiple attachments."""
+        """TC-INT-ATT-002: A message can include multiple attachments as a JSON array."""
         attachments = [
             _make_attachment(_png_pixel(), 1024, "image/png"),
             _make_attachment("JVBERi0xLjQKJcOkw7zDtsO8CjIgMCBvYmoKPDwKL0xlbmd0aCAzIDAgUgovRmlsdGVyIC9GbGF0ZURlY29kZQo+PgpzdHJlYW0KeJzLSMxLLUmNzNFLzs8rzi9KycxLt4IDAIvJBw4KZW5kc3RyZWFtCmVuZG9iago=", 2048, "application/pdf"),
         ]
         message_data = {
             "message_text": "Here are two files",
-            "message_attachments": _attachment_string(attachments),
+            "message_attachments": attachments,
         }
 
         response = api_client.post(
@@ -104,7 +95,8 @@ class TestCreateMessageAttachments:
         assert response.status_code == 201, f"Failed to create message: {response.text}"
 
         data = response.json()
-        stored = _get_attachments(data)
+        stored = data["message_attachments"]
+        assert isinstance(stored, list)
         assert len(stored) == 2
         for idx, att in enumerate(attachments):
             assert stored[idx]["data"] == att["data"]
@@ -122,7 +114,7 @@ class TestCreateMessageAttachments:
         attachment = _make_attachment("s3://bucket/path/object.png", 1024, "image/png")
         message_data = {
             "message_text": "See this S3 file",
-            "message_attachments": _attachment_string([attachment]),
+            "message_attachments": [attachment],
         }
 
         response = api_client.post(
@@ -132,7 +124,7 @@ class TestCreateMessageAttachments:
         assert response.status_code == 201, f"Failed to create message: {response.text}"
 
         data = response.json()
-        stored = _get_attachments(data)
+        stored = data["message_attachments"]
         assert stored[0]["data"] == "s3://bucket/path/object.png"
 
         api_client.delete(
@@ -145,7 +137,7 @@ class TestCreateMessageAttachments:
         """TC-INT-ATT-011: Empty attachments array is accepted."""
         message_data = {
             "message_text": "No attachments",
-            "message_attachments": _attachment_string([]),
+            "message_attachments": [],
         }
 
         response = api_client.post(
@@ -155,7 +147,7 @@ class TestCreateMessageAttachments:
         assert response.status_code == 201, f"Failed to create message: {response.text}"
 
         data = response.json()
-        assert _get_attachments(data) == []
+        assert data["message_attachments"] == []
 
         api_client.delete(
             f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{data['message_id']}"
@@ -164,27 +156,20 @@ class TestCreateMessageAttachments:
     def test_create_message_with_invalid_attachment_format(
         self, api_client: requests.Session, server_url: str, test_group: dict
     ):
-        """TC-INT-ATT-010: Invalid attachment structure is rejected.
-
-        The server currently accepts any string for message_attachments, so this
-        test documents the actual behavior rather than enforcing strict validation.
-        """
+        """TC-INT-ATT-010: Invalid attachment structure is stored as-is (no schema validation)."""
         message_data = {
             "message_text": "Bad attachment",
-            "message_attachments": json.dumps(
-                [{"data": "missing-size-and-format"}]
-            ),
+            "message_attachments": [{"data": "missing-size-and-format"}],
         }
 
         response = api_client.post(
             f"{server_url}/api/v1/groups/{test_group['group_id']}/messages",
             json=message_data,
         )
-        # Server stores the string as-is without schema validation.
         assert response.status_code == 201, f"Unexpected response: {response.text}"
 
         data = response.json()
-        stored = _get_attachments(data)
+        stored = data["message_attachments"]
         assert stored == [{"data": "missing-size-and-format"}]
 
         api_client.delete(
@@ -202,7 +187,7 @@ class TestCreateMessageAttachments:
 
         message_data = {
             "message_text": "Large attachment",
-            "message_attachments": _attachment_string([attachment]),
+            "message_attachments": [attachment],
         }
 
         response = api_client.post(
@@ -212,13 +197,56 @@ class TestCreateMessageAttachments:
         assert response.status_code == 201, f"Failed to create large message: {response.text}"
 
         data = response.json()
-        stored = _get_attachments(data)
+        stored = data["message_attachments"]
         assert len(stored) == 1
         assert stored[0]["size"] == attachment["size"]
 
         api_client.delete(
             f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{data['message_id']}"
         )
+
+    def test_create_message_with_stringified_array_backward_compatible(
+        self, api_client: requests.Session, server_url: str, test_group: dict
+    ):
+        """TC-INT-ATT-013: Stringified JSON array input remains accepted for backward compatibility."""
+        attachment = _make_attachment(_png_pixel(), 67, "image/png")
+        message_data = {
+            "message_text": "Backward compatible attachment",
+            "message_attachments": _attachment_string([attachment]),
+        }
+
+        response = api_client.post(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages",
+            json=message_data,
+        )
+        assert response.status_code == 201, f"Failed to create message: {response.text}"
+
+        data = response.json()
+        stored = data["message_attachments"]
+        assert isinstance(stored, list)
+        assert len(stored) == 1
+        assert stored[0]["data"] == attachment["data"]
+
+        api_client.delete(
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{data['message_id']}"
+        )
+
+    def test_create_message_with_invalid_attachments_rejected(
+        self, api_client: requests.Session, server_url: str, test_group: dict
+    ):
+        """TC-INT-ATT-014: Non-array or invalid JSON attachments are rejected."""
+        for bad_value in ("not-json", {"data": "object-not-allowed"}):
+            message_data = {
+                "message_text": "Bad attachment",
+                "message_attachments": bad_value,
+            }
+            response = api_client.post(
+                f"{server_url}/api/v1/groups/{test_group['group_id']}/messages",
+                json=message_data,
+            )
+            assert response.status_code == 400, (
+                f"Expected 400 for {bad_value!r}, got {response.status_code}: {response.text}"
+            )
 
 
 class TestRetrieveMessageAttachments:
@@ -227,11 +255,11 @@ class TestRetrieveMessageAttachments:
     def test_list_messages_includes_attachments(
         self, api_client: requests.Session, server_url: str, test_group: dict
     ):
-        """TC-INT-ATT-003: Listing messages returns attachments."""
+        """TC-INT-ATT-003: Listing messages returns attachments as arrays."""
         attachment = _make_attachment(_png_pixel(), 67, "image/png")
         message_data = {
             "message_text": "See this image",
-            "message_attachments": _attachment_string([attachment]),
+            "message_attachments": [attachment],
         }
 
         response = api_client.post(
@@ -249,7 +277,8 @@ class TestRetrieveMessageAttachments:
         data = _resp_data(response)
         found = [m for m in data["items"] if m["message_id"] == message_id]
         assert len(found) == 1
-        stored = _get_attachments(found[0])
+        stored = found[0]["message_attachments"]
+        assert isinstance(stored, list)
         assert len(stored) == 1
         assert stored[0]["data"] == attachment["data"]
 
@@ -260,7 +289,7 @@ class TestRetrieveMessageAttachments:
     def test_get_message_includes_attachments(
         self, api_client: requests.Session, server_url: str, test_group: dict
     ):
-        """TC-INT-ATT-004: Getting a single message returns attachments.
+        """TC-INT-ATT-004: Getting a single message returns attachments as arrays.
 
         Note: ACS does not expose a dedicated GET /messages/{message_id} endpoint,
         so we verify via the list endpoint.
@@ -268,7 +297,7 @@ class TestRetrieveMessageAttachments:
         attachment = _make_attachment(_png_pixel(), 67, "image/png")
         message_data = {
             "message_text": "See this image",
-            "message_attachments": _attachment_string([attachment]),
+            "message_attachments": [attachment],
         }
 
         response = api_client.post(
@@ -284,7 +313,8 @@ class TestRetrieveMessageAttachments:
         data = _resp_data(response)
         found = [m for m in data["items"] if m["message_id"] == message_id]
         assert len(found) == 1
-        stored = _get_attachments(found[0])
+        stored = found[0]["message_attachments"]
+        assert isinstance(stored, list)
         assert stored[0]["data"] == attachment["data"]
 
         api_client.delete(
@@ -302,7 +332,7 @@ class TestUpdateMessageAttachments:
         attachment = _make_attachment(_png_pixel(), 67, "image/png")
         message_data = {
             "message_text": "Original text",
-            "message_attachments": _attachment_string([attachment]),
+            "message_attachments": [attachment],
         }
 
         response = api_client.post(
@@ -321,7 +351,8 @@ class TestUpdateMessageAttachments:
 
         data = response.json()
         assert data["message_text"] == "Updated text"
-        stored = _get_attachments(data)
+        stored = data["message_attachments"]
+        assert isinstance(stored, list)
         assert len(stored) == 1
         assert stored[0]["data"] == attachment["data"]
 
@@ -336,7 +367,7 @@ class TestUpdateMessageAttachments:
         old_attachment = _make_attachment(_png_pixel(), 67, "image/png")
         message_data = {
             "message_text": "Original",
-            "message_attachments": _attachment_string([old_attachment]),
+            "message_attachments": [old_attachment],
         }
 
         response = api_client.post(
@@ -347,7 +378,7 @@ class TestUpdateMessageAttachments:
         message_id = response.json()["message_id"]
 
         new_attachment = _make_attachment("new-base64-data", 512, "image/jpeg")
-        update_data = {"message_attachments": _attachment_string([new_attachment])}
+        update_data = {"message_attachments": [new_attachment]}
         response = api_client.put(
             f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}",
             json=update_data,
@@ -355,7 +386,8 @@ class TestUpdateMessageAttachments:
         assert response.status_code == 200
 
         data = response.json()
-        stored = _get_attachments(data)
+        stored = data["message_attachments"]
+        assert isinstance(stored, list)
         assert len(stored) == 1
         assert stored[0]["data"] == new_attachment["data"]
         assert stored[0]["size"] == new_attachment["size"]
@@ -371,7 +403,7 @@ class TestUpdateMessageAttachments:
         """Updating message_attachments to an empty list removes attachments."""
         message_data = {
             "message_text": "With attachment",
-            "message_attachments": _attachment_string([_make_attachment(_png_pixel(), 67, "image/png")]),
+            "message_attachments": [_make_attachment(_png_pixel(), 67, "image/png")],
         }
 
         response = api_client.post(
@@ -383,12 +415,12 @@ class TestUpdateMessageAttachments:
 
         response = api_client.put(
             f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}",
-            json={"message_attachments": _attachment_string([])},
+            json={"message_attachments": []},
         )
         assert response.status_code == 200
 
         data = response.json()
-        assert _get_attachments(data) == []
+        assert data["message_attachments"] == []
 
         api_client.delete(
             f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}"
@@ -404,7 +436,7 @@ class TestDeleteMessageAttachments:
         """TC-INT-ATT-007: Soft-deleting a message clears content and attachments."""
         message_data = {
             "message_text": "Will be deleted",
-            "message_attachments": _attachment_string([_make_attachment(_png_pixel(), 67, "image/png")]),
+            "message_attachments": [_make_attachment(_png_pixel(), 67, "image/png")],
         }
 
         response = api_client.post(
@@ -429,7 +461,7 @@ class TestDeleteMessageAttachments:
         assert len(found) == 1
         assert found[0]["is_deleted"] is True
         assert found[0]["message_text"] == ""
-        assert _get_attachments(found[0]) == []
+        assert found[0]["message_attachments"] == []
 
 
 class TestAttachmentOwnership:
@@ -464,7 +496,7 @@ class TestAttachmentOwnership:
 
         message_data = {
             "message_text": "User message",
-            "message_attachments": _attachment_string([_make_attachment(_png_pixel(), 67, "image/png")]),
+            "message_attachments": [_make_attachment(_png_pixel(), 67, "image/png")],
         }
         response = user_session.post(
             f"{server_url}/api/v1/groups/{test_group['group_id']}/messages",
@@ -549,7 +581,7 @@ class TestMentionsWithAttachments:
         message_text = f"@{test_agent_member['member_id']} please analyze this image"
         message_data = {
             "message_text": message_text,
-            "message_attachments": _attachment_string([attachment]),
+            "message_attachments": [attachment],
         }
 
         response = api_client.post(
@@ -564,7 +596,8 @@ class TestMentionsWithAttachments:
         mentions = data["mentions"]
         assert len(mentions) >= 1
         assert any(m["member_id"] == test_agent_member["member_id"] for m in mentions)
-        stored = _get_attachments(data)
+        stored = data["message_attachments"]
+        assert isinstance(stored, list)
         assert len(stored) == 1
         assert stored[0]["data"] == attachment["data"]
 
