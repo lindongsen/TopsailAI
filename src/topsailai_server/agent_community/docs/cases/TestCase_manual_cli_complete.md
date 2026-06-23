@@ -804,8 +804,8 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | Agent sleeps 5s with timeout_chat=30 |
 | **Steps** | Use `mock_agent_cmd_chat_sleep.sh` with `MOCK_AGENT_SLEEP_MS=5000`, `timeout_chat=30` |
 | **Expected Result** | Response after ~5s |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | Worker-agent responded after ~5s with MOCK_AGENT_RESPONSE; processed_msg_id points to pending message. |
+| **Status** | PASS |
 
 ### CLI-AGENT-006: Reply Delay Exceeds Timeout
 
@@ -813,10 +813,10 @@ Verify each CLI banner shows the expected user/role.
 |-------|-------|
 | **Test ID** | CLI-AGENT-006 |
 | **Description** | Agent sleeps 120s with timeout_chat=10 |
-| **Steps** | Use `mock_agent_cmd_chat_sleep_30s.sh` or `mock_agent_cmd_chat_sleep.sh` with `MOCK_AGENT_SLEEP_MS=120000`, `timeout_chat=10` |
+| **Steps** | Use `mock_agent_cmd_chat_sleep_120s.sh` with `MOCK_AGENT_SLEEP_MS=120000`, `timeout_chat=10` |
 | **Expected Result** | Manager-agent error message appears; no infinite retry |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | System error message from manager-agent appeared after ~10s: "Agent worker-timeout failed: agent chat failed: command timed out after 10s: signal: killed". No infinite retry observed. |
+| **Status** | PASS |
 
 ### CLI-AGENT-007: Agent Failure Produces Error Message
 
@@ -824,10 +824,10 @@ Verify each CLI banner shows the expected user/role.
 |-------|-------|
 | **Test ID** | CLI-AGENT-007 |
 | **Description** | Failing agent script results in manager-agent error message |
-| **Steps** | Use `mock_agent_cmd_chat_fail.sh` as `cmd_chat` for worker-1; send `@worker-1 fail me` |
+| **Steps** | Use `mock_agent_cmd_chat_fail.sh` as `cmd_chat` for worker-timeout; send `@worker-timeout fail me` |
 | **Expected Result** | Error message from manager-agent |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | System error message from manager-agent appeared: "Agent worker-timeout failed: agent chat failed: command failed with exit code 1: exit status 1". No retry loop observed. |
+| **Status** | PASS |
 
 ### CLI-AGENT-008: Auto-Trigger — Single User in Group
 
@@ -848,8 +848,9 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | After idle timeout, manager-agent triggers |
 | **Steps** | 1. User creates group (creator is auto-joined as the only user).<br>2. User adds one manager-agent member.<br>3. Restart server with `ACS_AGENT_AUTO_TRIGGER_TIMEOUT=30s` and `ACS_AUTO_TRIGGER_INTERVAL_SECONDS=10`.<br>4. Send one message; wait 30-40s. |
 | **Expected Result** | Manager-agent auto-responds |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | Auto-trigger scan acquires lock but never triggers. Consumer receives pending message and logs "agent already processing this message, skipping duplicate" because the auto-trigger creates a `pending` record that conflicts with the consumer's `running` record INSERT. |
+| **Status** | BLOCKED |
+| **Issue** | issues/issue-auto-trigger-pending-record-blocks-consumer.md |
 
 ### CLI-AGENT-010: Anti-Trigger — Agent Message Does Not Re-trigger
 
@@ -892,8 +893,8 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | `ACS_AGENT_WORK_POOL_PER_USER=1` serializes agents across groups for same sender |
 | **Steps** | Restart server with per-user=1; create two groups with agents; trigger both |
 | **Expected Result** | Agents respond sequentially across groups |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | Created GroupA (group-005ed27c44684d75831db8a996a18287) and GroupB (group-28f5e07ff81c4130a7be026f5cda87f0) each with worker-a and worker-b (30s sleep). Sent concurrent trigger messages from UserA to both groups. worker-b in GroupB responded at 1782208879181; worker-a in GroupA responded at 1782208909203 (~30s delta). Sequential execution across groups confirmed. |
+| **Status** | PASS |
 
 ### CLI-AGENT-014: Work-Pool Per-Node Limit
 
@@ -1140,7 +1141,7 @@ tmux kill-session -t acs-complete
 | 3: Group & Member Management | 13 | 13 | 0 | 0 | 0 |
 | 4: Interactive Chat Mode | 10 | 10 | 0 | 0 | 0 |
 | 5: Message Lifecycle | 4 | 4 | 0 | 0 | 0 |
-| 6: Agent Trigger | 15 | 4 | 0 | 0 | 11 |
+| 6: Agent Trigger | 15 | 7 | 0 | 0 | 8 |
 | 7: Cluster & Multi-Node | 10 | 0 | 0 | 0 | 10 |
 | 8: Environment-Variable Behavior | 5 | 0 | 0 | 0 | 5 |
 | **Total** | **76** | **50** | **0** | **0** | **26** |
