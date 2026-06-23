@@ -119,6 +119,7 @@ func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evalu
 		// Message routes (protected)
 		v1.POST("/groups/:group_id/messages", middleware.RequireAuthenticated(), messageHandler.CreateMessage)
 		v1.GET("/groups/:group_id/messages", middleware.RequireAuthenticated(), messageHandler.ListMessages)
+		v1.GET("/groups/:group_id/messages/:message_id", middleware.RequireAuthenticated(), messageHandler.GetMessage)
 		v1.PUT("/groups/:group_id/messages/:message_id", middleware.RequireAuthenticated(), messageHandler.UpdateMessage)
 		v1.DELETE("/groups/:group_id/messages/:message_id", middleware.RequireAuthenticated(), messageHandler.DeleteMessage)
 		v1.POST("/groups/:group_id/messages/:message_id/trigger", middleware.RequireAuthenticated(), messageHandler.TriggerMessage)

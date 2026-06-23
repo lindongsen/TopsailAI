@@ -332,7 +332,9 @@ func (h *MessageHandler) ListMessages(c *gin.Context) {
 	}
 
 	// Build query
-	query := h.db.Model(&models.GroupMessage{}).Where("group_id = ?", groupID)
+	// Build query. Explicitly exclude soft-deleted messages (is_deleted) while
+	// still relying on GORM's deleted_at scope as defense-in-depth.
+	query := h.db.Model(&models.GroupMessage{}).Where("group_id = ? AND is_deleted = ?", groupID, false)
 
 	// Time range filtering
 	if createRange := c.Query("create_at_ms"); createRange != "" {
@@ -377,6 +379,57 @@ func (h *MessageHandler) ListMessages(c *gin.Context) {
 
 	writeListResponse(c, http.StatusOK, items, total, offset, limit, traceID)
 }
+// GetMessage handles GET /api/v1/groups/:group_id/messages/:message_id.
+func (h *MessageHandler) GetMessage(c *gin.Context) {
+	traceID := middleware.GetTraceID(c)
+	groupID := c.Param("group_id")
+	messageID := c.Param("message_id")
+
+	authCtx, ok := getAuthContextOrAbort(c)
+	if !ok {
+		return
+	}
+
+	// Verify group exists
+	var group models.Group
+	if err := h.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			writeErrorResponse(c, http.StatusNotFound, "group not found", traceID)
+			return
+		}
+		h.log.Error("api", traceID, "failed to get group", "error", err.Error())
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to get message", traceID)
+		return
+	}
+
+	// Authorization: admin can get any group message; user can get only member groups.
+	allowed, err := canListGroupMembers(h.db, authCtx, groupID)
+	if err != nil {
+		h.log.Error("api", traceID, "failed to check get message permission", "error", err.Error())
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to get message", traceID)
+		return
+	}
+	if !allowed {
+		writeErrorResponse(c, http.StatusForbidden, "forbidden", traceID)
+		return
+	}
+
+	// Fetch message, excluding soft-deleted records.
+	var message models.GroupMessage
+	if err := h.db.Where("group_id = ? AND message_id = ? AND is_deleted = ?", groupID, messageID, false).First(&message).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			writeErrorResponse(c, http.StatusNotFound, "message not found", traceID)
+			return
+		}
+		h.log.Error("api", traceID, "failed to get message", "error", err.Error())
+		writeErrorResponse(c, http.StatusInternalServerError, "failed to get message", traceID)
+		return
+	}
+
+	h.log.Info("api", traceID, "message retrieved", "group_id", groupID, "message_id", messageID)
+	writeDataResponse(c, http.StatusOK, toMessageResponse(&message), traceID)
+}
+
 
 // UpdateMessage handles PUT /api/v1/groups/:group_id/messages/:message_id.
 func (h *MessageHandler) UpdateMessage(c *gin.Context) {
@@ -417,6 +470,17 @@ func (h *MessageHandler) UpdateMessage(c *gin.Context) {
 	updates := make(map[string]interface{})
 	if req.MessageText != "" {
 		updates["message_text"] = req.MessageText
+
+		// Re-extract mentions from the updated text using current group members.
+		var members []models.GroupMember
+		if err := h.db.Where("group_id = ?", groupID).Find(&members).Error; err != nil {
+			h.log.Error("api", traceID, "failed to get members for mention extraction", "error", err.Error())
+			writeErrorResponse(c, http.StatusInternalServerError, "failed to update message", traceID)
+			return
+		}
+		mentions := trigger.ExtractMentionsFromText(req.MessageText, members)
+		mentionsJSON, _ := json.Marshal(mentions)
+		updates["mentions"] = string(mentionsJSON)
 	}
 	if len(req.MessageAttachments) > 0 {
 		attachments, err := normalizeMessageAttachments(req.MessageAttachments)

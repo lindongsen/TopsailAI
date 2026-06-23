@@ -140,8 +140,14 @@ func TestDiscovery_Discover(t *testing.T) {
 	require.NoError(t, err)
 	defer d2.Deregister()
 
-	// Allow heartbeat to run
-	time.Sleep(200 * time.Millisecond)
+	// Wait until both registrations are visible.
+	require.Eventually(t, func() bool {
+		services, err := d1.Discover()
+		if err != nil {
+			return false
+		}
+		return len(services) == 2
+	}, 2*time.Second, 50*time.Millisecond)
 
 	// Discover from d1
 	services, err := d1.Discover()
@@ -258,8 +264,14 @@ func TestDiscovery_LeaderInfo(t *testing.T) {
 	require.NoError(t, err)
 	defer d2.Deregister()
 
-	// Allow heartbeat to run
-	time.Sleep(200 * time.Millisecond)
+	// Wait until both registrations are visible.
+	require.Eventually(t, func() bool {
+		services, err := d1.Discover()
+		if err != nil {
+			return false
+		}
+		return len(services) == 2
+	}, 2*time.Second, 50*time.Millisecond)
 
 	// LeaderInfo should return the instance with smallest ID
 	leader, err = d1.LeaderInfo()

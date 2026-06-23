@@ -228,8 +228,8 @@ func runServer(isDaemon bool) error {
 	// 8. Create work pool for concurrency control.
 	pool := workpool.NewPool(cfg.AgentWorkPool.PerNode, cfg.AgentWorkPool.PerUser, cfg.AgentWorkPool.PerGroup)
 
-	// 9. Create agent executor.
-	executor := agent.NewExecutor()
+	// 9. Create agent executor with configured scripts search path.
+	executor := agent.NewExecutorWithScriptsPath(cfg.Agent.AgentScriptsPath)
 
 	// 10. Create NATS consumer (AgentWorkPool processor).
 	consumer := nats.NewConsumer(database.Conn, publisher, executor, accountSvc, pool, cfg)

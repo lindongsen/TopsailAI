@@ -231,6 +231,20 @@ func (p *InteractivePrompt) PromptPassword(label string) (string, error) {
 
 // --- Predefined interactive flows ---
 
+// stringDefault extracts a string value from a defaults map. It returns the
+// empty string when the key is missing or not a string.
+func stringDefault(defaults map[string]interface{}, key string) string {
+	if defaults == nil {
+		return ""
+	}
+	v, ok := defaults[key]
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
+}
+
 // PromptLogin prompts for login credentials.
 func PromptLogin(p *InteractivePrompt) (loginName, loginPassword string, err error) {
 	printInfo("Login. Press Ctrl+C or Enter without input to cancel.")
@@ -287,8 +301,11 @@ func PromptAuthMethod(p *InteractivePrompt) (method, credential string, err erro
 	}
 	return "", "", ErrCancelled
 }
-// PromptAccountCreate prompts for account creation parameters.
-func PromptAccountCreate(p *InteractivePrompt, callerRole string) (req map[string]interface{}, err error) {
+// PromptAccountCreate prompts for account creation parameters. Values supplied
+// in the defaults map are pre-filled as prompt defaults and merged into the
+// returned request so that inline arguments are not silently discarded when
+// the command falls back to interactive mode.
+func PromptAccountCreate(p *InteractivePrompt, callerRole string, defaults map[string]interface{}) (req map[string]interface{}, err error) {
 	printInfo("Creating a new account. Press Ctrl+C or Enter without input to cancel.")
 	req = map[string]interface{}{}
 
@@ -298,14 +315,25 @@ func PromptAccountCreate(p *InteractivePrompt, callerRole string) (req map[strin
 	}
 	req["account_name"] = name
 
-	desc, err := p.PromptString("Account description", false)
+	descDefault := stringDefault(defaults, "account_description")
+	var desc string
+	if descDefault != "" {
+		desc, err = p.PromptStringWithDefault("Account description", descDefault)
+	} else {
+		desc, err = p.PromptString("Account description", false)
+	}
 	if err != nil {
 		return nil, err
 	}
 	if desc != "" {
 		req["account_description"] = desc
 	}
-	role, err := p.PromptStringWithDefault("Role", RoleUser)
+
+	roleDefault := stringDefault(defaults, "role")
+	if roleDefault == "" {
+		roleDefault = RoleUser
+	}
+	role, err := p.PromptStringWithDefault("Role", roleDefault)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +342,13 @@ func PromptAccountCreate(p *InteractivePrompt, callerRole string) (req map[strin
 	}
 	req["role"] = role
 
-	loginName, err := p.PromptString("Login name (email)", false)
+	loginNameDefault := stringDefault(defaults, "login_name")
+	var loginName string
+	if loginNameDefault != "" {
+		loginName, err = p.PromptStringWithDefault("Login name (email)", loginNameDefault)
+	} else {
+		loginName, err = p.PromptString("Login name (email)", false)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -322,6 +356,9 @@ func PromptAccountCreate(p *InteractivePrompt, callerRole string) (req map[strin
 		req["login_name"] = loginName
 	}
 
+	// Password is collected with PromptPassword which does not support a
+	// visible default. If a default was supplied and the user submits an empty
+	// password, merge it back at the end.
 	loginPassword, err := p.PromptPassword("Login password")
 	if err != nil {
 		return nil, err
@@ -330,7 +367,13 @@ func PromptAccountCreate(p *InteractivePrompt, callerRole string) (req map[strin
 		req["login_password"] = loginPassword
 	}
 
-	email, err := p.PromptString("Email", false)
+	emailDefault := stringDefault(defaults, "email")
+	var email string
+	if emailDefault != "" {
+		email, err = p.PromptStringWithDefault("Email", emailDefault)
+	} else {
+		email, err = p.PromptString("Email", false)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -338,7 +381,13 @@ func PromptAccountCreate(p *InteractivePrompt, callerRole string) (req map[strin
 		req["email"] = email
 	}
 
-	externalID, err := p.PromptString("External ID", false)
+	externalIDDefault := stringDefault(defaults, "external_id")
+	var externalID string
+	if externalIDDefault != "" {
+		externalID, err = p.PromptStringWithDefault("External ID", externalIDDefault)
+	} else {
+		externalID, err = p.PromptString("External ID", false)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +395,13 @@ func PromptAccountCreate(p *InteractivePrompt, callerRole string) (req map[strin
 		req["external_id"] = externalID
 	}
 
-	authProvider, err := p.PromptString("Auth provider", false)
+	authProviderDefault := stringDefault(defaults, "auth_provider")
+	var authProvider string
+	if authProviderDefault != "" {
+		authProvider, err = p.PromptStringWithDefault("Auth provider", authProviderDefault)
+	} else {
+		authProvider, err = p.PromptString("Auth provider", false)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -354,12 +409,27 @@ func PromptAccountCreate(p *InteractivePrompt, callerRole string) (req map[strin
 		req["auth_provider"] = authProvider
 	}
 
-	avatarURL, err := p.PromptString("Avatar URL", false)
+	avatarURLDefault := stringDefault(defaults, "avatar_url")
+	var avatarURL string
+	if avatarURLDefault != "" {
+		avatarURL, err = p.PromptStringWithDefault("Avatar URL", avatarURLDefault)
+	} else {
+		avatarURL, err = p.PromptString("Avatar URL", false)
+	}
 	if err != nil {
 		return nil, err
 	}
 	if avatarURL != "" {
 		req["avatar_url"] = avatarURL
+	}
+
+	// Merge any defaults that were not explicitly set by the interactive
+	// prompts. This preserves inline arguments such as login_password that
+	// cannot be pre-filled in the prompt itself.
+	for k, v := range defaults {
+		if _, ok := req[k]; !ok {
+			req[k] = v
+		}
 	}
 
 	return req, nil
@@ -580,21 +650,31 @@ func parseMemberInterface(raw string) (map[string]interface{}, error) {
 }
 
 // PromptMemberUpdate prompts for member update parameters.
-func PromptMemberUpdate(p *InteractivePrompt) (memberName, memberDesc, memberStatus string, err error) {
+func PromptMemberUpdate(p *InteractivePrompt) (memberName, memberDesc, memberStatus string, memberInterface map[string]interface{}, err error) {
 	printInfo("Updating member. Press Ctrl+C or Enter without input to cancel.")
 	memberName, err = p.PromptString("New member name (leave empty to keep current)", false)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", nil, err
 	}
 	memberDesc, err = p.PromptString("New member description (leave empty to keep current)", false)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", nil, err
 	}
 	_, memberStatus, err = p.PromptChoice("New member status", []string{"online", "offline", "idle", "processing"})
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", nil, err
 	}
-	return memberName, memberDesc, memberStatus, nil
+	ifaceRaw, err := p.PromptString("Member interface JSON (optional)", false)
+	if err != nil {
+		return "", "", "", nil, err
+	}
+	if ifaceRaw != "" {
+		memberInterface, err = parseMemberInterface(ifaceRaw)
+		if err != nil {
+			return "", "", "", nil, err
+		}
+	}
+	return memberName, memberDesc, memberStatus, memberInterface, nil
 }
 
 // PromptMessageEdit prompts for message edit parameters.

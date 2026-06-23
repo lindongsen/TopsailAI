@@ -6,19 +6,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 )
+
+// debugLog writes a debug message when ACS_CLI_DEBUG is set to a truthy value.
+func debugLog(format string, args ...interface{}) {
+	if os.Getenv("ACS_CLI_DEBUG") == "" {
+		return
+	}
+	log.Printf("[acs-cli-debug] "+format, args...)
+}
 
 // AuthMethod represents the authentication method used by the API client.
 type AuthMethod string
 
 const (
-	// AuthMethodAPIKey uses Authorization: Bearer <api_key>.
+	// AuthMethodAPIKey authenticates using an API key token.
 	AuthMethodAPIKey AuthMethod = "api_key"
-	// AuthMethodSession uses X-Session-Key: <session_key>.
+	// AuthMethodSession authenticates using a login session key.
 	AuthMethodSession AuthMethod = "session"
 )
 
@@ -50,20 +61,25 @@ func NewAPIClient(baseURL string) *APIClient {
 
 // SetAPIKey switches the client to API key authentication.
 func (c *APIClient) SetAPIKey(apiKey string) {
+	apiKey = strings.TrimSpace(apiKey)
 	c.apiKey = apiKey
 	c.sessionKey = ""
 	c.authMethod = AuthMethodAPIKey
+	debugLog("SetAPIKey: method=%s, hasCredential=%t", c.authMethod, apiKey != "")
 }
 
 // SetSessionKey switches the client to session-key authentication.
 func (c *APIClient) SetSessionKey(sessionKey string) {
+	sessionKey = strings.TrimSpace(sessionKey)
 	c.sessionKey = sessionKey
 	c.apiKey = ""
 	c.authMethod = AuthMethodSession
+	debugLog("SetSessionKey: method=%s, hasCredential=%t", c.authMethod, sessionKey != "")
 }
 
 // SetAuthMethod explicitly sets the authentication method and credential.
 func (c *APIClient) SetAuthMethod(method AuthMethod, credential string) {
+	credential = strings.TrimSpace(credential)
 	switch method {
 	case AuthMethodAPIKey:
 		c.SetAPIKey(credential)
@@ -73,6 +89,7 @@ func (c *APIClient) SetAuthMethod(method AuthMethod, credential string) {
 		c.apiKey = ""
 		c.sessionKey = ""
 		c.authMethod = ""
+		debugLog("SetAuthMethod: cleared auth")
 	}
 }
 
@@ -147,11 +164,19 @@ func (c *APIClient) doRequest(method, path string, body []byte) (*APIResponse, e
 	case AuthMethodAPIKey:
 		if c.apiKey != "" {
 			req.Header.Set("Authorization", "Bearer "+c.apiKey)
+			debugLog("doRequest %s %s: Authorization header set (method=%s)", method, path, c.authMethod)
+		} else {
+			debugLog("doRequest %s %s: API key auth selected but credential empty", method, path)
 		}
 	case AuthMethodSession:
 		if c.sessionKey != "" {
 			req.Header.Set("X-Session-Key", c.sessionKey)
+			debugLog("doRequest %s %s: X-Session-Key header set (method=%s)", method, path, c.authMethod)
+		} else {
+			debugLog("doRequest %s %s: session auth selected but credential empty", method, path)
 		}
+	default:
+		debugLog("doRequest %s %s: no auth method selected", method, path)
 	}
 
 	resp, err := c.client.Do(req)
@@ -416,6 +441,23 @@ func (c *APIClient) AddMember(groupID, memberID, memberName, memberDesc, memberT
 	}
 	return c.Post(fmt.Sprintf("/api/v1/groups/%s/members", groupID), payload)
 }
+// JoinGroup self-joins the authenticated account to a group.
+// groupKey is optional and only required for private groups.
+func (c *APIClient) JoinGroup(groupID, memberID, memberName, memberDesc, groupKey string) (*APIResponse, error) {
+	payload := map[string]interface{}{
+		"member_id":   memberID,
+		"member_name": memberName,
+		"member_type": "user",
+	}
+	if memberDesc != "" {
+		payload["member_description"] = memberDesc
+	}
+	if groupKey != "" {
+		payload["group_key"] = groupKey
+	}
+	return c.Post(fmt.Sprintf("/api/v1/groups/%s/members", groupID), payload)
+}
+
 
 // GetMember gets a single member.
 func (c *APIClient) GetMember(groupID, memberID string) (*APIResponse, error) {

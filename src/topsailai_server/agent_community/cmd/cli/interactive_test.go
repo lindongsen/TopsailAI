@@ -232,7 +232,7 @@ func TestPromptAccountCreate_MapsFieldsCorrectly(t *testing.T) {
 	}}
 	p := newInteractivePromptWithReader(mr)
 
-	req, err := PromptAccountCreate(p, RoleAdmin)
+	req, err := PromptAccountCreate(p, RoleAdmin, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestPromptAccountCreate_ManagerDefaultsToUserRole(t *testing.T) {
 	}}
 	p := newInteractivePromptWithReader(mr)
 
-	req, err := PromptAccountCreate(p, RoleManager)
+	req, err := PromptAccountCreate(p, RoleManager, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -303,12 +303,87 @@ func TestPromptAccountCreate_ManagerCanChooseAdminRole(t *testing.T) {
 	}}
 	p := newInteractivePromptWithReader(mr)
 
-	req, err := PromptAccountCreate(p, RoleManager)
+	req, err := PromptAccountCreate(p, RoleManager, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if req["role"] != RoleAdmin {
 		t.Fatalf("expected role admin for manager caller, got %v", req["role"])
+	}
+}
+
+func TestPromptAccountCreate_UsesInlineDefaults(t *testing.T) {
+	// Simulate user pressing Enter to accept all defaults.
+	// account_name is required and uses PromptString (no default), so we
+	// provide it explicitly; all other fields use PromptStringWithDefault and
+	// accept the defaults by pressing Enter.
+	mr := &mockLineReader{lines: []string{
+		"Bob", // account_name (required, no default support)
+		"",    // account_description default ""
+		"",    // role default "admin"
+		"",    // login_name default "bob@example.com"
+		"",    // login_password default "secret"
+		"",    // email default "bob@example.com"
+		"",    // external_id default "ext-123"
+		"",    // auth_provider default "oidc"
+		"",    // avatar_url default "https://example.com/avatar.png"
+	}}
+	p := newInteractivePromptWithReader(mr)
+
+	defaults := map[string]interface{}{
+		"account_name":        "Bob",
+		"role":                RoleAdmin,
+		"login_name":          "bob@example.com",
+		"login_password":      "secret",
+		"email":               "bob@example.com",
+		"external_id":         "ext-123",
+		"auth_provider":       "oidc",
+		"avatar_url":          "https://example.com/avatar.png",
+	}
+
+	req, err := PromptAccountCreate(p, RoleManager, defaults)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if req["account_name"] != "Bob" {
+		t.Fatalf("expected account_name Bob from defaults, got %v", req["account_name"])
+	}
+	if req["role"] != RoleAdmin {
+		t.Fatalf("expected role admin from defaults, got %v", req["role"])
+	}
+	if req["login_name"] != "bob@example.com" {
+		t.Fatalf("expected login_name from defaults, got %v", req["login_name"])
+	}
+}
+
+func TestPromptAccountCreate_DefaultsDoNotOverrideUserInput(t *testing.T) {
+	// Simulate user overriding the default role.
+	mr := &mockLineReader{lines: []string{
+		"Bob",  // account_name (required, no default support)
+		"",     // account_description default ""
+		"user", // override role default "admin"
+		"",     // login_name default "bob@example.com"
+		"",     // login_password default "secret"
+		"",     // email default "bob@example.com"
+		"",     // external_id default "ext-123"
+		"",     // auth_provider default "oidc"
+		"",     // avatar_url default "https://example.com/avatar.png"
+	}}
+	p := newInteractivePromptWithReader(mr)
+
+	defaults := map[string]interface{}{
+		"account_name":   "Bob",
+		"role":           RoleAdmin,
+		"login_name":     "bob@example.com",
+		"login_password": "secret",
+	}
+
+	req, err := PromptAccountCreate(p, RoleManager, defaults)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if req["role"] != RoleUser {
+		t.Fatalf("expected role user after override, got %v", req["role"])
 	}
 }
 
@@ -456,7 +531,7 @@ func TestPromptAccountCreate_PasswordDoesNotLeakIntoEmail(t *testing.T) {
 	}}
 	p := newInteractivePromptWithReader(mr)
 
-	req, err := PromptAccountCreate(p, RoleAdmin)
+	req, err := PromptAccountCreate(p, RoleAdmin, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

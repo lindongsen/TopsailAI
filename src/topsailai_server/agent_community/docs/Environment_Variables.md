@@ -91,6 +91,7 @@ In reliable mode, `MaxDeliver` controls how many times NATS will attempt to deli
 | `ACS_GROUP_MANAGER_AGENT_API_AUTH` | `bearer` | Default authentication method for manager-agents |
 | `ACS_AGENT_AUTO_TRIGGER_TIMEOUT` | `10m` | Time after which a user message automatically triggers the manager-agent |
 | `ACS_AGENT_PROMPT` | - | Service-wide prompt injected into agent chat environment variables |
+| `ACS_AGENT_SCRIPTS_PATH` | - | Colon-separated list of directories to search when resolving bare adaptor commands (e.g., `mock_agent_cmd_check_health`). If a command is an absolute path or contains a slash, it is used unchanged. |
 
 ### Default Manager-Agent Auto-Join Configuration
 

@@ -255,7 +255,7 @@ The daemon supports:
 | `last_read_message_id` | VARCHAR | Last processed message ID |
 | `create_at_ms` | BIGINT | Creation timestamp |
 | `update_at_ms` | BIGINT | Last update timestamp |
-| `deleted_at` | TIMESTAMPTZ | Soft-deletion timestamp |
+| `deleted_at` | TIMESTAMPTZ | Soft-deletion timestamp (currently unused; member removal is a hard delete to allow clean re-join) |
 
 ### Table: `group_messages`
 

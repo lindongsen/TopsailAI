@@ -60,6 +60,7 @@ func run() error {
 	if credential != "" {
 		apiClient.SetAuthMethod(authMethod, credential)
 	}
+	debugLog("initial auth: method=%s, clientAuthMethod=%s, isAuthenticated=%t", authMethod, apiClient.AuthMethod(), apiClient.IsAuthenticated())
 
 	// Initial userID is empty until authenticated.
 	userID := ""
@@ -83,6 +84,8 @@ func run() error {
 					accountRole = role
 				}
 			}
+		} else {
+			debugLog("initial GetMe failed: %v", err)
 		}
 	}
 

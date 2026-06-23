@@ -1299,6 +1299,62 @@ func TestHandleAccountSession(t *testing.T) {
 	}
 }
 
+func TestHandleAccountSessionAsAdmin(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/acc-2/session" && r.Method == http.MethodPost {
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"account_id":    "acc-2",
+					"session_key":   "acc-2-admin-session",
+					"expires_at_ms": int64(1704153600000),
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleAdmin)
+	defer cleanup()
+	state.userID = "acc-1"
+
+	err := handleAccountSession([]string{"--account-id", "acc-2"}, state)
+	if err != nil {
+		t.Fatalf("handleAccountSession error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "acc-2-admin-session") {
+		t.Errorf("expected session key in output, got: %s", out)
+	}
+}
+
+func TestHandleAccountSessionAsUserOwnAccount(t *testing.T) {
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/accounts/acc-1/session" && r.Method == http.MethodPost {
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"account_id":    "acc-1",
+					"session_key":   "acc-1-user-session",
+					"expires_at_ms": int64(1704153600000),
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+	state.userID = "acc-1"
+
+	err := handleAccountSession([]string{"--account-id", "acc-1"}, state)
+	if err != nil {
+		t.Fatalf("handleAccountSession error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "acc-1-user-session") {
+		t.Errorf("expected session key in output, got: %s", out)
+	}
+}
+
 // --- API key command handler tests ---
 
 func TestHandleAPIKeyCreate(t *testing.T) {
@@ -1455,20 +1511,17 @@ func TestHandleAPIKeyDelete(t *testing.T) {
 	}
 }
 
-// --- Group join and remaining member/message handlers ---
-
 func TestHandleGroupJoin(t *testing.T) {
 	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups/group-123":
-			json.NewEncoder(w).Encode(APIResponse{
-				Data: mustJSON(map[string]interface{}{
-					"group_id":   "group-123",
-					"group_name": "Team",
-					"group_key":  "",
-				}),
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/groups/group-123/members":
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/groups/group-123/members" {
+			var body map[string]interface{}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["member_id"] != "u1" || body["member_name"] != "Alice" || body["member_type"] != "user" {
+				t.Errorf("unexpected join body: %v", body)
+			}
+			if _, ok := body["group_key"]; ok {
+				t.Errorf("public group join should not include group_key, got %v", body)
+			}
 			json.NewEncoder(w).Encode(APIResponse{
 				Data: mustJSON(map[string]interface{}{
 					"group_id":    "group-123",
@@ -1477,9 +1530,9 @@ func TestHandleGroupJoin(t *testing.T) {
 					"member_type": "user",
 				}),
 			})
-		default:
-			w.WriteHeader(http.StatusNotFound)
+			return
 		}
+		w.WriteHeader(http.StatusNotFound)
 	}, RoleUser)
 	defer cleanup()
 	state.userID = "u1"
@@ -1500,19 +1553,15 @@ func TestHandleGroupJoin(t *testing.T) {
 }
 
 func TestHandleGroupJoin_WithKey(t *testing.T) {
-	addMemberCalled := false
+	joinCalled := false
 	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups/group-123":
-			json.NewEncoder(w).Encode(APIResponse{
-				Data: mustJSON(map[string]interface{}{
-					"group_id":   "group-123",
-					"group_name": "Team",
-					"group_key":  "hashed-key",
-				}),
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/groups/group-123/members":
-			addMemberCalled = true
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/groups/group-123/members" {
+			joinCalled = true
+			var body map[string]interface{}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["group_key"] != "secret" {
+				t.Errorf("expected group_key=secret, got %v", body["group_key"])
+			}
 			json.NewEncoder(w).Encode(APIResponse{
 				Data: mustJSON(map[string]interface{}{
 					"group_id":    "group-123",
@@ -1521,9 +1570,9 @@ func TestHandleGroupJoin_WithKey(t *testing.T) {
 					"member_type": "user",
 				}),
 			})
-		default:
-			w.WriteHeader(http.StatusNotFound)
+			return
 		}
+		w.WriteHeader(http.StatusNotFound)
 	}, RoleUser)
 	defer cleanup()
 	state.userID = "u1"
@@ -1534,10 +1583,32 @@ func TestHandleGroupJoin_WithKey(t *testing.T) {
 		t.Fatalf("handleGroupJoin error = %v", err)
 	}
 
-	if !addMemberCalled {
-		t.Error("expected AddMember to be called")
+	if !joinCalled {
+		t.Error("expected join endpoint to be called")
 	}
 	_ = captureOutput()
+}
+
+func TestHandleGroupJoin_Failure(t *testing.T) {
+	state, _, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/groups/group-123/members" {
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(APIResponse{Error: "invalid group key"})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+	state.userID = "u1"
+	state.userName = "Alice"
+
+	err := handleGroupJoin([]string{"--group-id", "group-123"}, state)
+	if err == nil {
+		t.Fatal("expected error for failed join")
+	}
+	if !strings.Contains(err.Error(), "invalid group key") {
+		t.Errorf("error = %q, want invalid group key", err.Error())
+	}
 }
 
 func TestHandleMemberRemove(t *testing.T) {
@@ -1585,6 +1656,50 @@ func TestHandleMemberUpdate(t *testing.T) {
 	out := captureOutput()
 	if !strings.Contains(out, "updated") {
 		t.Errorf("expected update confirmation, got: %s", out)
+	}
+}
+
+func TestHandleMemberUpdateWithInterface(t *testing.T) {
+	var capturedBody map[string]interface{}
+	state, captureOutput, cleanup := newTestCLIState(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == "/api/v1/groups/group-123/members/u2" {
+			json.NewDecoder(r.Body).Decode(&capturedBody)
+			json.NewEncoder(w).Encode(APIResponse{
+				Data: mustJSON(map[string]interface{}{
+					"member_id":   "u2",
+					"member_name": "Bob Updated",
+				}),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, RoleUser)
+	defer cleanup()
+
+	err := handleMemberUpdate([]string{
+		"--group-id", "group-123",
+		"--member-id", "u2",
+		"--member-name", "Bob Updated",
+		"--member-interface", `{"adaptor":"mock_agent","cmd_check_health":"mock_agent_cmd_check_health"}`,
+	}, state)
+	if err != nil {
+		t.Fatalf("handleMemberUpdate error = %v", err)
+	}
+
+	out := captureOutput()
+	if !strings.Contains(out, "updated") {
+		t.Errorf("expected update confirmation, got: %s", out)
+	}
+
+	iface, ok := capturedBody["member_interface"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("member_interface not sent or wrong type: %v", capturedBody)
+	}
+	if iface["adaptor"] != "mock_agent" {
+		t.Errorf("adaptor = %v, want mock_agent", iface["adaptor"])
+	}
+	if iface["cmd_check_health"] != "mock_agent_cmd_check_health" {
+		t.Errorf("cmd_check_health = %v, want mock_agent_cmd_check_health", iface["cmd_check_health"])
 	}
 }
 

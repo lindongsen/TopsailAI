@@ -1681,3 +1681,228 @@ func createTestMessageAt(t *testing.T, db *gorm.DB, groupID, messageID, senderID
 	msg.UpdateAtMs = createAtMs
 	return msg
 }
+
+// TestUpdateMessage_ReextractMentions verifies that updating message_text
+// re-extracts mentions from the new text and persists them.
+func TestUpdateMessage_ReextractMentions(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "user-update-mentions"
+	groupID := "group-update-mentions"
+	createTestGroup(t, db, groupID, "Update Mentions Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, "agent-1", models.MemberTypeWorkerAgent)
+	createTestGroupMember(t, db, groupID, "agent-2", models.MemberTypeWorkerAgent)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.PUT("/api/v1/groups/:group_id/messages/:message_id", handler.UpdateMessage)
+
+	// Case 1: add a mention on edit
+	msg := createTestMessage(t, db, groupID, "msg-update-mentions", userID, models.MemberTypeUser, "")
+	body := map[string]interface{}{"message_text": "hello @agent-1"}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/groups/"+groupID+"/messages/"+msg.MessageID, bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var resp1 dataResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp1)
+	require.NoError(t, err)
+	data1, ok := resp1.Data.(map[string]interface{})
+	require.True(t, ok, "response data should be object")
+	mentions1, ok := data1["mentions"].([]interface{})
+	require.True(t, ok, "mentions should be an array")
+	require.Len(t, mentions1, 1)
+	assert.Equal(t, "agent-1", mentions1[0].(map[string]interface{})["member_id"])
+
+	// Case 2: remove the mention on edit
+	body = map[string]interface{}{"message_text": "just a plain message"}
+	bodyJSON, _ = json.Marshal(body)
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/groups/"+groupID+"/messages/"+msg.MessageID, bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var resp2 dataResponse
+	err = json.Unmarshal(w.Body.Bytes(), &resp2)
+	require.NoError(t, err)
+	data2, ok := resp2.Data.(map[string]interface{})
+	require.True(t, ok, "response data should be object")
+	assert.Empty(t, data2["mentions"])
+
+	// Case 3: edit only attachments should preserve existing mentions
+	msgWithMention := createTestMessage(t, db, groupID, "msg-update-attachments", userID, models.MemberTypeUser, "")
+	// Manually set mentions to simulate a message that already mentions agent-2
+	err = db.Model(&models.GroupMessage{}).Where("message_id = ?", msgWithMention.MessageID).UpdateColumn("mentions", `[{"member_id":"agent-2","member_name":"Agent 2","member_type":"worker-agent"}]`).Error
+	require.NoError(t, err)
+
+	body = map[string]interface{}{"message_attachments": []map[string]interface{}{{"data": "base64", "size": 1, "format": "image/png"}}}
+	bodyJSON, _ = json.Marshal(body)
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/groups/"+groupID+"/messages/"+msgWithMention.MessageID, bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var resp3 dataResponse
+	err = json.Unmarshal(w.Body.Bytes(), &resp3)
+	require.NoError(t, err)
+	data3, ok := resp3.Data.(map[string]interface{})
+	require.True(t, ok, "response data should be object")
+	mentions3, ok := data3["mentions"].([]interface{})
+	require.True(t, ok, "mentions should be preserved as array")
+	require.Len(t, mentions3, 1)
+	assert.Equal(t, "agent-2", mentions3[0].(map[string]interface{})["member_id"])
+}
+
+// TestGetMessage_AgentMessageVisible verifies that agent-generated response
+// messages can be retrieved by GET /groups/:group_id/messages/:message_id.
+func TestGetMessage_AgentMessageVisible(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-get-agent-user"
+	agentID := "agent-get-response"
+	groupID := "group-get-agent"
+	createTestGroup(t, db, groupID, "Get Agent Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, agentID, models.MemberTypeWorkerAgent)
+
+	// Simulate an agent response message as produced by the NATS consumer.
+	agentMsg := &models.GroupMessage{
+		GroupID:            groupID,
+		MessageID:          "d0763fa3-74b1-48b6-bb37-fe4d844bf8e4",
+		MessageText:        "Agent response text",
+		SenderID:           agentID,
+		SenderType:         models.MemberTypeWorkerAgent,
+		ProcessedMsgID:     "msg-user-prompt",
+		MessageAttachments: "",
+		Mentions:           "",
+		IsDeleted:          false,
+	}
+	err := db.Create(agentMsg).Error
+	require.NoError(t, err)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.GET("/api/v1/groups/:group_id/messages/:message_id", handler.GetMessage)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages/"+agentMsg.MessageID, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var resp messageResponseWrapper
+	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, agentMsg.MessageID, resp.Data.MessageID)
+	assert.Equal(t, agentID, resp.Data.SenderID)
+	assert.Equal(t, string(models.MemberTypeWorkerAgent), resp.Data.SenderType)
+	assert.Equal(t, "Agent response text", resp.Data.MessageText)
+}
+
+// TestGetMessage_SoftDeletedNotFound verifies that soft-deleted messages are
+// not returned by GET /groups/:group_id/messages/:message_id.
+func TestGetMessage_SoftDeletedNotFound(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-get-deleted-user"
+	groupID := "group-get-deleted"
+	createTestGroup(t, db, groupID, "Get Deleted Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+
+	msg := createTestMessage(t, db, groupID, "msg-deleted", userID, models.MemberTypeUser, "")
+	// Soft-delete using the same fields as DeleteMessage handler.
+	err := db.Model(&models.GroupMessage{}).Where("message_id = ?", msg.MessageID).Updates(map[string]interface{}{
+		"is_deleted":   true,
+		"delete_at_ms": time.Now().UnixMilli(),
+		"update_at_ms": time.Now().UnixMilli(),
+	}).Error
+	require.NoError(t, err)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.GET("/api/v1/groups/:group_id/messages/:message_id", handler.GetMessage)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages/"+msg.MessageID, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code, "body: %s", w.Body.String())
+}
+
+// TestListMessages_IncludesAgentMessages verifies that list endpoints return
+// messages sent by worker-agents and manager-agents alongside user messages.
+func TestListMessages_IncludesAgentMessages(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-list-agent-user"
+	workerID := "worker-list"
+	managerID := "manager-list"
+	groupID := "group-list-agent"
+	createTestGroup(t, db, groupID, "List Agent Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, workerID, models.MemberTypeWorkerAgent)
+	createTestGroupMember(t, db, groupID, managerID, models.MemberTypeManagerAgent)
+
+	userMsg := createTestMessage(t, db, groupID, "msg-user-list", userID, models.MemberTypeUser, "")
+	workerMsg := createTestMessage(t, db, groupID, "msg-worker-list", workerID, models.MemberTypeWorkerAgent, userMsg.MessageID)
+	managerMsg := createTestMessage(t, db, groupID, "msg-manager-list", managerID, models.MemberTypeManagerAgent, userMsg.MessageID)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var resp listMessagesResponseWrapper
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), resp.Data.Total)
+	require.Len(t, resp.Data.Items, 3)
+
+	ids := make(map[string]bool)
+	for _, item := range resp.Data.Items {
+		ids[item.MessageID] = true
+	}
+	assert.True(t, ids[userMsg.MessageID], "user message should be listed")
+	assert.True(t, ids[workerMsg.MessageID], "worker-agent message should be listed")
+	assert.True(t, ids[managerMsg.MessageID], "manager-agent message should be listed")
+}
+
+// TestListMessages_SoftDeletedExcluded verifies that soft-deleted messages are
+// omitted from list results.
+func TestListMessages_SoftDeletedExcluded(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-list-deleted-user"
+	groupID := "group-list-deleted"
+	createTestGroup(t, db, groupID, "List Deleted Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+
+	visibleMsg := createTestMessage(t, db, groupID, "msg-visible", userID, models.MemberTypeUser, "")
+	deletedMsg := createTestMessage(t, db, groupID, "msg-deleted-list", userID, models.MemberTypeUser, "")
+	err := db.Model(&models.GroupMessage{}).Where("message_id = ?", deletedMsg.MessageID).Updates(map[string]interface{}{
+		"is_deleted":   true,
+		"delete_at_ms": time.Now().UnixMilli(),
+		"update_at_ms": time.Now().UnixMilli(),
+	}).Error
+	require.NoError(t, err)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var resp listMessagesResponseWrapper
+	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), resp.Data.Total)
+	require.Len(t, resp.Data.Items, 1)
+	assert.Equal(t, visibleMsg.MessageID, resp.Data.Items[0].MessageID)
+}

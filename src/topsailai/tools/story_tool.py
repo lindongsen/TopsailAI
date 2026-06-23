@@ -103,6 +103,8 @@ class StoryFile(StoryBase):
             story_id (str): story id.
             story_content (str): story content.
         """
+        # max length of file name
+        story_id = story_id[:230]
         with lock_tool.FileLock(self.name):
             folder_path = os.path.join(workspace, KEY_STORY, time_tool.get_current_day())
             file_path = os.path.join(folder_path, story_id)

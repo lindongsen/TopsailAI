@@ -43,6 +43,8 @@ Human can use group_key to join into the group, chatting together with humans & 
 
 ### Table: groups
 
+> NO NEED SOFT-DELETE
+
 Columns:
 - group_id, primary key, Format `group-{id}`
 - group_name
@@ -52,6 +54,8 @@ Columns:
 - owner_id, group owner
 
 ### Table: group_member
+
+> NO NEED SOFT-DELETE
 
 Columns:
 - group_id

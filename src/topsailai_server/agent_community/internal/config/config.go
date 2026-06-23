@@ -24,6 +24,7 @@ type Config struct {
 	Discovery     DiscoveryConfig     `mapstructure:"discovery"`
 	Account       AccountConfig       `mapstructure:"account"`
 }
+
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
 	Host         string        `mapstructure:"host"`
@@ -59,6 +60,7 @@ type NATSConfig struct {
 type AgentConfig struct {
 	AutoTriggerTimeout time.Duration      `mapstructure:"auto_trigger_timeout"`
 	AgentPrompt        string             `mapstructure:"agent_prompt"`
+	AgentScriptsPath   string             `mapstructure:"agent_scripts_path"`
 	ManagerAgent       ManagerAgentConfig `mapstructure:"manager_agent"`
 }
 
@@ -87,6 +89,7 @@ type AgentWorkPoolConfig struct {
 	AcquireTimeout   time.Duration `mapstructure:"acquire_timeout"`
 	StatsLogInterval time.Duration `mapstructure:"stats_log_interval"`
 }
+
 // LogConfig holds logging settings.
 type LogConfig struct {
 	Output     string `mapstructure:"output"`
@@ -154,6 +157,7 @@ func Load() (*Config, error) {
 	_ = v.BindEnv("nats.ack_wait_seconds", "ACS_NATS_ACK_WAIT_SECONDS")
 	_ = v.BindEnv("nats.max_ack_pending", "ACS_NATS_MAX_ACK_PENDING")
 	_ = v.BindEnv("nats.max_deliver", "ACS_NATS_MAX_DELIVER")
+
 	// Check if database.name was explicitly set before applying defaults.
 	nameExplicitlySet := v.IsSet("database.name")
 
@@ -181,9 +185,12 @@ func Load() (*Config, error) {
 	v.SetDefault("nats.ack_wait_seconds", 3600)
 	v.SetDefault("nats.max_ack_pending", 10)
 	v.SetDefault("nats.max_deliver", 0)
+
 	// Agent defaults
 	v.SetDefault("agent.auto_trigger_timeout", "10m")
 	v.SetDefault("agent.agent_prompt", "")
+	v.SetDefault("agent.agent_scripts_path", "")
+
 	// Manager-agent auto-join defaults.
 	// These settings are used to automatically create a manager-agent member
 	// when a group is created and ACS_GROUP_MANAGER_AGENT_CMD_CHAT is set.
@@ -200,6 +207,7 @@ func Load() (*Config, error) {
 	v.SetDefault("agent.manager_agent.timeout_chat", "600s")
 	v.SetDefault("agent.manager_agent.timeout_check_health", "5s")
 	v.SetDefault("agent.manager_agent.timeout_check_status", "5s")
+	_ = v.BindEnv("agent.agent_scripts_path", "ACS_AGENT_SCRIPTS_PATH")
 	_ = v.BindEnv("agent.manager_agent.member_id", "ACS_GROUP_MANAGER_AGENT_MEMBER_ID")
 	_ = v.BindEnv("agent.manager_agent.member_name", "ACS_GROUP_MANAGER_AGENT_MEMBER_NAME")
 	_ = v.BindEnv("agent.manager_agent.member_description", "ACS_GROUP_MANAGER_AGENT_MEMBER_DESCRIPTION")
@@ -224,6 +232,7 @@ func Load() (*Config, error) {
 	_ = v.BindEnv("agent_work_pool.per_user", "ACS_AGENT_WORK_POOL_PER_USER")
 	_ = v.BindEnv("agent_work_pool.per_group", "ACS_AGENT_WORK_POOL_PER_GROUP")
 	_ = v.BindEnv("agent_work_pool.acquire_timeout", "ACS_AGENT_WORK_POOL_ACQUIRE_TIMEOUT")
+
 	// Log defaults
 	v.SetDefault("log.output", "stdout")
 	v.SetDefault("log.level", "info")
@@ -262,6 +271,7 @@ func Load() (*Config, error) {
 	_ = v.BindEnv("account.api_key_max_per_account", "ACS_API_KEY_MAX_PER_ACCOUNT")
 	_ = v.BindEnv("account.login_session_expiry_seconds", "ACS_LOGIN_SESSION_EXPIRY_SECONDS")
 	_ = v.BindEnv("account.bcrypt_cost", "ACS_BCRYPT_COST")
+
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)

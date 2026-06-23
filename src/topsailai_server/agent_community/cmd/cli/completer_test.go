@@ -96,21 +96,36 @@ func TestChatCompleterDoDoesNotPanic(t *testing.T) {
 
 // --- Mention completer tests ---
 
+// applyCompletion simulates chzyer/readline's actual behavior: the candidate is
+// inserted at the cursor position without deleting any existing text. The
+// offset return value is ignored because readline only uses it for candidate
+// list alignment.
+func applyCompletion(line []rune, pos int, cand []rune) string {
+	newLine := append(line[:pos], cand...)
+	newLine = append(newLine, line[pos:]...)
+	return string(newLine)
+}
+
 func TestChatMentionCompleterEmptyMembers(t *testing.T) {
 	c := newChatMentionCompleter(func() []map[string]interface{} {
 		return nil
 	})
 
-	// Typing "@" should only suggest @all.
-	candidates, offset := c.Do([]rune("Hello @"), 7)
-	if offset != 6 {
-		t.Errorf("offset = %d, want 6", offset)
+	line := []rune("Hello @")
+	pos := 7
+	candidates, length := c.Do(line, pos)
+	if length != 1 {
+		t.Errorf("length = %d, want 1 (len of '@')", length)
 	}
 	if len(candidates) != 1 {
 		t.Fatalf("expected 1 candidate, got %d", len(candidates))
 	}
-	if string(candidates[0]) != "@all " {
-		t.Errorf("candidate = %q, want \"@all \"", string(candidates[0]))
+	if string(candidates[0]) != "all " {
+		t.Errorf("candidate = %q, want \"all \"", string(candidates[0]))
+	}
+	got := applyCompletion(line, pos, candidates[0])
+	if got != "Hello @all " {
+		t.Errorf("completed line = %q, want \"Hello @all \"", got)
 	}
 }
 
@@ -124,17 +139,15 @@ func TestChatMentionCompleterWithMembers(t *testing.T) {
 		return members
 	})
 
-	// Typing "@" should suggest all members + @all.
-	candidates, offset := c.Do([]rune("@"), 1)
-	if offset != 0 {
-		t.Errorf("offset = %d, want 0", offset)
+	candidates, length := c.Do([]rune("@"), 1)
+	if length != 1 {
+		t.Errorf("length = %d, want 1", length)
 	}
 	if len(candidates) != 4 {
 		t.Fatalf("expected 4 candidates, got %d", len(candidates))
 	}
 
-	// Check that all expected replacements are present (IDs are inserted).
-	expected := map[string]bool{"@alice-001 ": false, "@bob-002 ": false, "@charlie-003 ": false, "@all ": false}
+	expected := map[string]bool{"alice-001 ": false, "bob-002 ": false, "charlie-003 ": false, "all ": false}
 	for _, cand := range candidates {
 		expected[string(cand)] = true
 	}
@@ -155,33 +168,30 @@ func TestChatMentionCompleterPrefixFilter(t *testing.T) {
 		return members
 	})
 
-	// Typing "@A" should suggest Alice, Anna, and @all (matched by name).
-	candidates, offset := c.Do([]rune("@A"), 2)
-	if offset != 0 {
-		t.Errorf("offset = %d, want 0", offset)
+	// Typing "@a" should suggest alice-001, anna-003 and all.
+	candidates, length := c.Do([]rune("@a"), 2)
+	if length != 2 {
+		t.Errorf("length = %d, want 2", length)
 	}
 	if len(candidates) != 3 {
 		t.Fatalf("expected 3 candidates, got %d", len(candidates))
 	}
 
-	// Typing "@ali" should suggest Alice (matched by ID) but not @all.
-	candidates, offset = c.Do([]rune("@ali"), 4)
-	if offset != 0 {
-		t.Errorf("offset = %d, want 0", offset)
+	// Typing "@ali" should suggest the suffix "ce-001 " (matched by ID).
+	line := []rune("@ali")
+	candidates, length = c.Do(line, 4)
+	if length != 4 {
+		t.Errorf("length = %d, want 4", length)
 	}
 	if len(candidates) != 1 {
-		t.Fatalf("expected 1 candidate (Alice), got %d", len(candidates))
+		t.Fatalf("expected 1 candidate (alice-001), got %d", len(candidates))
 	}
-	// Verify Alice replacement is among the candidates.
-	foundAlice := false
-	for _, cand := range candidates {
-		if string(cand) == "@alice-001 " {
-			foundAlice = true
-			break
-		}
+	if string(candidates[0]) != "ce-001 " {
+		t.Errorf("candidate = %q, want \"ce-001 \"", string(candidates[0]))
 	}
-	if !foundAlice {
-		t.Error("expected \"@alice-001 \" among candidates for @ali")
+	got := applyCompletion(line, 4, candidates[0])
+	if got != "@alice-001 " {
+		t.Errorf("completed line = %q, want \"@alice-001 \"", got)
 	}
 }
 
@@ -193,23 +203,23 @@ func TestChatMentionCompleterCaseInsensitive(t *testing.T) {
 		return members
 	})
 
-	// Typing "@a" should match "Alice" (name) and "all".
-	candidates, offset := c.Do([]rune("@a"), 2)
-	if offset != 0 {
-		t.Errorf("offset = %d, want 0", offset)
+	// Typing "@a" should match "alice-001" (id) and "all".
+	candidates, length := c.Do([]rune("@a"), 2)
+	if length != 2 {
+		t.Errorf("length = %d, want 2", length)
 	}
 	if len(candidates) != 2 {
 		t.Fatalf("expected 2 candidates, got %d", len(candidates))
 	}
 	foundAlice := false
 	for _, cand := range candidates {
-		if string(cand) == "@alice-001 " {
+		if string(cand) == "lice-001 " {
 			foundAlice = true
 			break
 		}
 	}
 	if !foundAlice {
-		t.Error("expected \"@alice-001 \" among candidates for @a")
+		t.Error("expected \"lice-001 \" among candidates for @a")
 	}
 }
 
@@ -240,7 +250,7 @@ func TestChatMentionCompleterSkipsEmptyID(t *testing.T) {
 
 	candidates, _ := c.Do([]rune("@"), 1)
 	if len(candidates) != 2 {
-		t.Fatalf("expected 2 candidates (Alice + all), got %d", len(candidates))
+		t.Fatalf("expected 2 candidates (alice-001 + all), got %d", len(candidates))
 	}
 }
 
@@ -265,22 +275,28 @@ func TestChatMentionCompleterMidLine(t *testing.T) {
 	})
 
 	// Typing in the middle of a line.
-	candidates, offset := c.Do([]rune("Hello @A"), 8)
-	if offset != 6 {
-		t.Errorf("offset = %d, want 6", offset)
+	line := []rune("Hello @a")
+	pos := 8
+	candidates, length := c.Do(line, pos)
+	if length != 2 {
+		t.Errorf("length = %d, want 2 (len of '@a')", length)
 	}
 	if len(candidates) != 2 {
-		t.Fatalf("expected 2 candidates (Alice + all), got %d", len(candidates))
+		t.Fatalf("expected 2 candidates (alice-001 + all), got %d", len(candidates))
 	}
 	foundAlice := false
 	for _, cand := range candidates {
-		if string(cand) == "@alice-001 " {
+		if string(cand) == "lice-001 " {
 			foundAlice = true
 			break
 		}
 	}
 	if !foundAlice {
-		t.Error("expected \"@alice-001 \" among candidates for Hello @A")
+		t.Error("expected \"lice-001 \" among candidates for Hello @a")
+	}
+	got := applyCompletion(line, pos, []rune("lice-001 "))
+	if got != "Hello @alice-001 " {
+		t.Errorf("completed line = %q, want \"Hello @alice-001 \"", got)
 	}
 }
 
@@ -299,26 +315,6 @@ func TestChatMentionCompleterNoAtSymbol(t *testing.T) {
 	}
 }
 
-func TestChatMentionCompleterUnicodeName(t *testing.T) {
-	members := []map[string]interface{}{
-		{"member_id": "xiaoming-001", "member_name": "小明"},
-	}
-	c := newChatMentionCompleter(func() []map[string]interface{} {
-		return members
-	})
-
-	candidates, offset := c.Do([]rune("@小"), 2)
-	if offset != 0 {
-		t.Errorf("offset = %d, want 0", offset)
-	}
-	if len(candidates) != 1 {
-		t.Fatalf("expected 1 candidate, got %d", len(candidates))
-	}
-	if string(candidates[0]) != "@xiaoming-001 " {
-		t.Errorf("candidate = %q, want \"@xiaoming-001 \"", string(candidates[0]))
-	}
-}
-
 func TestChatMentionCompleterAllPrefix(t *testing.T) {
 	members := []map[string]interface{}{
 		{"member_id": "alice-001", "member_name": "Alice"},
@@ -327,7 +323,7 @@ func TestChatMentionCompleterAllPrefix(t *testing.T) {
 		return members
 	})
 
-	// Typing "@al" should match both "Alice" (name) and "@all".
+	// Typing "@al" should match "alice-001" (id) and "all".
 	candidates, _ := c.Do([]rune("@al"), 3)
 	if len(candidates) != 2 {
 		t.Fatalf("expected 2 candidates, got %d", len(candidates))
@@ -351,7 +347,7 @@ func TestChatMentionCompleterTrailingSpace(t *testing.T) {
 	}
 }
 
-// Regression test: @d + Tab should become @dawson (not @d@dawson).
+// Regression test: @d + Tab should become @dawson-001 (not @d@dawson-001).
 func TestChatMentionCompleterNoPrefixDuplication(t *testing.T) {
 	members := []map[string]interface{}{
 		{"member_id": "dawson-001", "member_name": "dawson"},
@@ -360,35 +356,94 @@ func TestChatMentionCompleterNoPrefixDuplication(t *testing.T) {
 		return members
 	})
 
-	// Simulate typing "@d" with cursor at position 2.
-	candidates, offset := c.Do([]rune("@d"), 2)
-	if offset != 0 {
-		t.Errorf("offset = %d, want 0", offset)
+	line := []rune("@d")
+	pos := 2
+	candidates, length := c.Do(line, pos)
+	if length != 2 {
+		t.Errorf("length = %d, want 2", length)
 	}
 	if len(candidates) != 1 {
 		t.Fatalf("expected 1 candidate, got %d", len(candidates))
 	}
 
-	// The candidate should be the full replacement string.
-	if string(candidates[0]) != "@dawson-001 " {
-		t.Errorf("candidate = %q, want \"@dawson-001 \"", string(candidates[0]))
+	if string(candidates[0]) != "awson-001 " {
+		t.Errorf("candidate = %q, want \"awson-001 \"", string(candidates[0]))
+	}
+
+	got := applyCompletion(line, pos, candidates[0])
+	if got != "@dawson-001 " {
+		t.Errorf("completed line = %q, want \"@dawson-001 \"", got)
 	}
 }
 
-// Test that the completer prefers member_id over member_name for insertion.
-func TestChatMentionCompleterInsertsMemberID(t *testing.T) {
+// Regression test: @worker + Tab should replace the partial word with @worker-1 .
+func TestChatMentionCompleterReplacesPartialWord(t *testing.T) {
 	members := []map[string]interface{}{
-		{"member_id": "agent-001", "member_name": "Research Agent"},
+		{"member_id": "worker-1", "member_name": "Worker One"},
+		{"member_id": "worker-2", "member_name": "Worker Two"},
 	}
 	c := newChatMentionCompleter(func() []map[string]interface{} {
 		return members
 	})
 
-	candidates, _ := c.Do([]rune("@Research"), 9)
-	if len(candidates) != 1 {
-		t.Fatalf("expected 1 candidate, got %d", len(candidates))
+	line := []rune("@worker")
+	pos := 7
+	candidates, length := c.Do(line, pos)
+	if length != 7 {
+		t.Errorf("length = %d, want 7", length)
 	}
-	if string(candidates[0]) != "@agent-001 " {
-		t.Errorf("candidate = %q, want \"@agent-001 \"", string(candidates[0]))
+	if len(candidates) != 2 {
+		t.Fatalf("expected 2 candidates, got %d", len(candidates))
+	}
+
+	// Pick the first candidate and simulate readline insert-at-cursor.
+	got := applyCompletion(line, pos, candidates[0])
+	if got != "@worker-1 " && got != "@worker-2 " {
+		t.Errorf("completed line = %q, want \"@worker-1 \" or \"@worker-2 \"", got)
+	}
+}
+
+// Regression test: bare @ + Tab should not produce a double @.
+func TestChatMentionCompleterBareAtNoDoubleAt(t *testing.T) {
+	members := []map[string]interface{}{
+		{"member_id": "worker-1", "member_name": "Worker One"},
+	}
+	c := newChatMentionCompleter(func() []map[string]interface{} {
+		return members
+	})
+
+	line := []rune("@")
+	pos := 1
+	candidates, length := c.Do(line, pos)
+	if length != 1 {
+		t.Errorf("length = %d, want 1", length)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("expected 2 candidates (worker-1 + all), got %d", len(candidates))
+	}
+
+	got := applyCompletion(line, pos, []rune("all "))
+	if got != "@all " {
+		t.Errorf("completed line for all = %q, want \"@all \"", got)
+	}
+
+	got = applyCompletion(line, pos, []rune("worker-1 "))
+	if got != "@worker-1 " {
+		t.Errorf("completed line for worker-1 = %q, want \"@worker-1 \"", got)
+	}
+}
+
+// Regression test: non-mention prefix returns no candidates.
+func TestChatMentionCompleterNonMentionNoCandidates(t *testing.T) {
+	members := []map[string]interface{}{
+		{"member_id": "alice-001", "member_name": "Alice"},
+	}
+	c := newChatMentionCompleter(func() []map[string]interface{} {
+		return members
+	})
+
+	candidates, _ := c.Do([]rune("hello "), 6)
+	if len(candidates) != 0 {
+		t.Errorf("expected 0 candidates for non-mention prefix, got %d", len(candidates))
 	}
 }

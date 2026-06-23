@@ -249,8 +249,8 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         # persistent memory with story
         if story_memory_tool.WORKSPACE:
             story_file = story_memory_tool.write_memory(
-                memory_title=answer.split('\n', 1)[0],
-                memory_content=answer,
+                title=answer.split('\n', 1)[0],
+                content=answer,
             )
             logger.info("new memory with story: [%s]", story_file)
 

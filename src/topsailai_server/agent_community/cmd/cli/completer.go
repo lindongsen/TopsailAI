@@ -78,9 +78,7 @@ func filterCommands(prefix string, commands []string) []string {
 }
 
 // chatMentionCompleter provides auto-completion for chat mode,
-// including slash commands and @member_id/@member_name mentions.
-// It matches against both member_id and member_name, but always inserts the
-// unambiguous member_id so duplicate display names do not collide.
+// including slash commands and @member_id mentions.
 type chatMentionCompleter struct {
 	cmdCompleter  readline.PrefixCompleterInterface
 	membersGetter func() []map[string]interface{}
@@ -96,11 +94,13 @@ func newChatMentionCompleter(membersGetter func() []map[string]interface{}) read
 
 // Do implements readline.AutoCompleter.
 // It completes slash commands when the line starts with '/',
-// and completes @member_id/@member_name when the current word starts with '@'.
+// and completes @member_id mentions when the current word starts with '@'.
 //
-// For @mentions, the entire current word (including '@') is replaced with the
-// selected member ID to avoid ambiguity when multiple members share the same
-// display name.
+// Per the chzyer/readline AutoCompleter contract, the returned candidates are
+// suffixes that are inserted at the cursor position; readline does not delete
+// the existing text before inserting. The length return value is the number of
+// runes before the cursor that form the matched prefix (used for display
+// alignment in the candidate list).
 func (c *chatMentionCompleter) Do(line []rune, pos int) ([][]rune, int) {
 	if len(line) == 0 || pos == 0 {
 		return nil, 0
@@ -132,31 +132,28 @@ func (c *chatMentionCompleter) Do(line []rune, pos int) ([][]rune, int) {
 	seen := make(map[string]bool)
 
 	for _, m := range members {
-		name, _ := m["member_name"].(string)
 		id, _ := m["member_id"].(string)
 		if id == "" || seen[id] {
 			continue
 		}
 		seen[id] = true
 
-		nameLower := strings.ToLower(name)
 		idLower := strings.ToLower(id)
-
-		// Match by member_id prefix or member_name prefix.
-		if strings.HasPrefix(idLower, mentionPrefix) || strings.HasPrefix(nameLower, mentionPrefix) {
-			candidates = append(candidates, []rune("@"+id+" "))
+		if strings.HasPrefix(idLower, mentionPrefix) {
+			candidates = append(candidates, []rune(id[len(mentionPrefix):]+" "))
 		}
 	}
 
 	// Also suggest @all.
 	if mentionPrefix == "" || strings.HasPrefix("all", mentionPrefix) {
-		candidates = append(candidates, []rune("@all "))
+		candidates = append(candidates, []rune("all"[len(mentionPrefix):]+" "))
 	}
 
 	if len(candidates) == 0 {
 		return nil, 0
 	}
 
-	// Replace the entire current word (including '@') with the candidate.
-	return candidates, wordStart
+	// length is the number of runes before the cursor that form the matched
+	// prefix, per the chzyer/readline.AutoCompleter contract.
+	return candidates, len(wordRunes)
 }

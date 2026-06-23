@@ -5,7 +5,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,11 +26,26 @@ type ExecutionResult struct {
 }
 
 // Executor executes agent commands.
-type Executor struct{}
+type Executor struct {
+	scriptsPath []string
+}
 
 // NewExecutor creates a new agent executor.
 func NewExecutor() *Executor {
-	return &Executor{}
+	return NewExecutorWithScriptsPath(os.Getenv("ACS_AGENT_SCRIPTS_PATH"))
+}
+
+// NewExecutorWithScriptsPath creates a new agent executor with the given
+// colon-separated scripts search path. Empty entries are ignored.
+func NewExecutorWithScriptsPath(scriptsPath string) *Executor {
+	var paths []string
+	for _, p := range strings.Split(scriptsPath, string(os.PathListSeparator)) {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return &Executor{scriptsPath: paths}
 }
 
 // CheckHealth checks if the agent is healthy by executing the health check command.
@@ -45,6 +63,28 @@ func (e *Executor) Chat(ctx context.Context, iface *Interface, env map[string]st
 	return e.execute(ctx, iface.CmdChat, env, iface.TimeoutChat, traceID)
 }
 
+// resolveCommand searches the configured scripts path for a bare command name.
+// If the command already contains a path separator or is absolute, it is
+// returned unchanged. If a matching executable is found in one of the scripts
+// directories, the absolute path is returned. Otherwise, the original command
+// is returned so the shell can resolve it via PATH.
+func (e *Executor) resolveCommand(cmd string) string {
+	if cmd == "" {
+		return cmd
+	}
+	if filepath.IsAbs(cmd) || strings.ContainsRune(cmd, filepath.Separator) {
+		return cmd
+	}
+	for _, dir := range e.scriptsPath {
+		candidate := filepath.Join(dir, cmd)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			// Accept regular files; the shell will handle execute permission.
+			return candidate
+		}
+	}
+	return cmd
+}
+
 // execute runs a command with the given environment variables and timeout.
 func (e *Executor) execute(
 	ctx context.Context,
@@ -57,6 +97,8 @@ func (e *Executor) execute(
 		return nil, fmt.Errorf("command is empty")
 	}
 
+	resolvedCmd := e.resolveCommand(cmd)
+
 	start := time.Now()
 
 	// Create context with timeout
@@ -64,7 +106,7 @@ func (e *Executor) execute(
 	defer cancel()
 
 	// Build command
-	command := exec.CommandContext(execCtx, "sh", "-c", cmd)
+	command := exec.CommandContext(execCtx, "sh", "-c", resolvedCmd)
 	// Start the command in its own process group so that we can terminate
 	// all child processes (e.g. "sleep 5" spawned by "sh -c") on timeout or
 	// context cancellation.
@@ -80,6 +122,7 @@ func (e *Executor) execute(
 
 	logger.InfoM(executorModule, traceID, "executing agent command",
 		"cmd", cmd,
+		"resolved_cmd", resolvedCmd,
 		"timeout", timeout.String(),
 	)
 
@@ -95,6 +138,7 @@ func (e *Executor) execute(
 		}
 		logger.ErrorM(executorModule, traceID, "agent command failed to start",
 			"cmd", cmd,
+			"resolved_cmd", resolvedCmd,
 			"error", err.Error(),
 		)
 		return result, fmt.Errorf("command failed to start: %w", err)
@@ -141,6 +185,7 @@ func (e *Executor) execute(
 			result.ExitCode = -1
 			logger.ErrorM(executorModule, traceID, "agent command timed out",
 				"cmd", cmd,
+				"resolved_cmd", resolvedCmd,
 				"timeout", timeout.String(),
 			)
 			return result, fmt.Errorf("command timed out after %v: %w", timeout, err)
@@ -153,6 +198,7 @@ func (e *Executor) execute(
 		}
 		logger.ErrorM(executorModule, traceID, "agent command failed",
 			"cmd", cmd,
+			"resolved_cmd", resolvedCmd,
 			"exit_code", result.ExitCode,
 			"stderr", result.Stderr,
 		)
@@ -162,6 +208,7 @@ func (e *Executor) execute(
 	result.ExitCode = 0
 	logger.InfoM(executorModule, traceID, "agent command completed",
 		"cmd", cmd,
+		"resolved_cmd", resolvedCmd,
 		"duration_ms", duration,
 		"stdout_len", len(result.Stdout),
 		"stderr_len", len(result.Stderr),

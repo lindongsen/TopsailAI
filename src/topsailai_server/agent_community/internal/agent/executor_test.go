@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -237,5 +239,80 @@ func TestExecutionResult_GetStatus(t *testing.T) {
 				t.Errorf("GetStatus() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestResolveCommand_AbsolutePathUnchanged(t *testing.T) {
+	exec := NewExecutorWithScriptsPath("/tmp")
+	cmd := "/usr/bin/mock_agent_cmd_check_health"
+	if got := exec.resolveCommand(cmd); got != cmd {
+		t.Errorf("resolveCommand(%q) = %q, want unchanged", cmd, got)
+	}
+}
+
+func TestResolveCommand_RelativeWithSeparatorUnchanged(t *testing.T) {
+	exec := NewExecutorWithScriptsPath("/tmp")
+	cmd := "./mock_agent_cmd_check_health"
+	if got := exec.resolveCommand(cmd); got != cmd {
+		t.Errorf("resolveCommand(%q) = %q, want unchanged", cmd, got)
+	}
+}
+
+func TestResolveCommand_BareNameFoundInScriptsPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "mock_agent_cmd_check_health")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho ok\n"), 0755); err != nil {
+		t.Fatalf("failed to create test script: %v", err)
+	}
+
+	exec := NewExecutorWithScriptsPath(tmpDir)
+	got := exec.resolveCommand("mock_agent_cmd_check_health")
+	if got != scriptPath {
+		t.Errorf("resolveCommand = %q, want %q", got, scriptPath)
+	}
+}
+
+func TestResolveCommand_BareNameNotFoundFallsBack(t *testing.T) {
+	exec := NewExecutorWithScriptsPath("/nonexistent/path")
+	cmd := "mock_agent_cmd_check_health"
+	if got := exec.resolveCommand(cmd); got != cmd {
+		t.Errorf("resolveCommand(%q) = %q, want original command", cmd, got)
+	}
+}
+
+func TestResolveCommand_FirstMatchWins(t *testing.T) {
+	tmpDir1 := t.TempDir()
+	tmpDir2 := t.TempDir()
+
+	script1 := filepath.Join(tmpDir1, "mock_agent_cmd_check_health")
+	script2 := filepath.Join(tmpDir2, "mock_agent_cmd_check_health")
+	if err := os.WriteFile(script1, []byte("#!/bin/sh\necho first\n"), 0755); err != nil {
+		t.Fatalf("failed to create test script: %v", err)
+	}
+	if err := os.WriteFile(script2, []byte("#!/bin/sh\necho second\n"), 0755); err != nil {
+		t.Fatalf("failed to create test script: %v", err)
+	}
+
+	exec := NewExecutorWithScriptsPath(tmpDir1 + string(os.PathListSeparator) + tmpDir2)
+	got := exec.resolveCommand("mock_agent_cmd_check_health")
+	if got != script1 {
+		t.Errorf("resolveCommand = %q, want %q", got, script1)
+	}
+}
+
+func TestExecutor_Execute_ResolvedCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "mock_agent_cmd_chat")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho 'agent reply'\n"), 0755); err != nil {
+		t.Fatalf("failed to create test script: %v", err)
+	}
+
+	exec := NewExecutorWithScriptsPath(tmpDir)
+	result, err := exec.execute(context.Background(), "mock_agent_cmd_chat", nil, time.Second, "trace-resolved")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.TrimSpace(result.Stdout) != "agent reply" {
+		t.Errorf("stdout = %q, want 'agent reply'", result.Stdout)
 	}
 }

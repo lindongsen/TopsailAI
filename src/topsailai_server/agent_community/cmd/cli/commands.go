@@ -398,7 +398,10 @@ func handleAccountCreate(args []string, state *CLIState) error {
 	if req["account_name"] == nil {
 		prompt := NewInteractivePrompt(state.rl)
 		var err error
-		req, err = PromptAccountCreate(prompt, state.accountRole)
+		// Pass the already-parsed inline arguments as defaults so that values
+		// such as role=admin are preserved when falling back to interactive
+		// prompts.
+		req, err = PromptAccountCreate(prompt, state.accountRole, req)
 		if err != nil {
 			if err == ErrCancelled {
 				printInfo("Cancelled.")
@@ -512,7 +515,11 @@ func handleAccountUpdate(args []string, state *CLIState) error {
 	}
 
 	params := parseInlineArgs(args)
-	accountID := params["id"]
+	// Support both legacy "id" and canonical "account-id" argument names.
+	accountID := params["account-id"]
+	if accountID == "" {
+		accountID = params["id"]
+	}
 	if accountID == "" {
 		prompt := NewInteractivePrompt(state.rl)
 		var err error
@@ -663,12 +670,16 @@ func handleAccountPassword(args []string, state *CLIState) error {
 
 func handleAccountSession(args []string, state *CLIState) error {
 	defer restorePrompt(state)
-	if err := requireRole(state, RoleManager); err != nil {
+	if err := requireAuth(state); err != nil {
 		return err
 	}
 
 	params := parseInlineArgs(args)
-	accountID := params["id"]
+	// Support both legacy "id" and canonical "account-id" argument names.
+	accountID := params["account-id"]
+	if accountID == "" {
+		accountID = params["id"]
+	}
 	if accountID == "" {
 		prompt := NewInteractivePrompt(state.rl)
 		var err error
@@ -681,12 +692,10 @@ func handleAccountSession(args []string, state *CLIState) error {
 			return err
 		}
 	}
-
 	resp, err := state.apiClient.CreateSession(accountID)
 	if err != nil {
 		return formatAPIError(err)
 	}
-
 	var result map[string]interface{}
 	if err := resp.GetData(&result); err != nil {
 		return err
@@ -1036,37 +1045,14 @@ func handleGroupJoin(args []string, state *CLIState) error {
 		}
 	}
 
-	// Verify group exists and check whether a key is required.
-	resp, err := state.apiClient.GetGroup(groupID)
-	if err != nil {
-		return formatAPIError(err)
-	}
-
-	var group map[string]interface{}
-	if err := resp.GetData(&group); err != nil {
-		return err
-	}
-
-	// If the group has a non-empty group_key hash, prompt for the plaintext key.
-	if keyHash, _ := group["group_key"].(string); keyHash != "" && groupKey == "" {
-		prompt := NewInteractivePrompt(state.rl)
-		var err error
-		groupKey, err = prompt.PromptString("Group key (required)", true)
-		if err != nil {
-			if err == ErrCancelled {
-				printInfo("Cancelled.")
-				return nil
-			}
-			return err
-		}
-	}
-
-	// Join the group as a user member.
+	// Join the group as a user member. The server validates group existence,
+	// membership rules, and group_key requirements on the POST endpoint itself,
+	// so we do not pre-fetch the group (which would fail with 403 for non-members).
 	memberName := sanitizeMemberName(state.userName)
 	if memberName == "" {
 		memberName = state.userID
 	}
-	_, err = state.apiClient.AddMember(groupID, state.userID, memberName, "", "user", nil)
+	_, err := state.apiClient.JoinGroup(groupID, state.userID, memberName, "", groupKey)
 	if err != nil {
 		return formatAPIError(err)
 	}
@@ -1364,11 +1350,13 @@ func handleMemberUpdate(args []string, state *CLIState) error {
 	memberName := params["member-name"]
 	memberDesc := params["member-description"]
 	memberStatus := params["member-status"]
+	memberInterfaceRaw := params["member-interface"]
 
-	if memberName == "" && memberDesc == "" && memberStatus == "" {
+	var memberInterface map[string]interface{}
+	if memberName == "" && memberDesc == "" && memberStatus == "" && memberInterfaceRaw == "" {
 		prompt := NewInteractivePrompt(state.rl)
 		var err error
-		memberName, memberDesc, memberStatus, err = PromptMemberUpdate(prompt)
+		memberName, memberDesc, memberStatus, memberInterface, err = PromptMemberUpdate(prompt)
 		if err != nil {
 			if err == ErrCancelled {
 				printInfo("Cancelled.")
@@ -1376,9 +1364,15 @@ func handleMemberUpdate(args []string, state *CLIState) error {
 			}
 			return err
 		}
+	} else if memberInterfaceRaw != "" {
+		var err error
+		memberInterface, err = parseMemberInterface(memberInterfaceRaw)
+		if err != nil {
+			return err
+		}
 	}
 
-	_, err := state.apiClient.UpdateMember(groupID, memberID, memberName, memberDesc, memberStatus, nil)
+	_, err := state.apiClient.UpdateMember(groupID, memberID, memberName, memberDesc, memberStatus, memberInterface)
 	if err != nil {
 		return formatAPIError(err)
 	}
