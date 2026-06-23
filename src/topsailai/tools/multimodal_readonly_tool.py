@@ -218,7 +218,7 @@ TOOLS = dict(
 
 # Tool prompt for agent context
 PROMPT = """
-# About multimodal_tool
+# About multimodal_readonly_tool
 This tool provides multimodal recognition capabilities via multimodal LLM.
 Use recognize_image to get a description of an image.
 Use recognize_voice to transcribe and analyze audio content.
@@ -236,4 +236,4 @@ Not all LLM models support multimodal inputs (image, audio, video). When using t
 """ + _get_extra_prompt()
 
 # Enable this tool by default
-FLAG_TOOL_ENABLED = True
+FLAG_TOOL_ENABLED = False

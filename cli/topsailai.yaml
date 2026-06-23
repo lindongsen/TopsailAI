@@ -245,11 +245,29 @@ instructions:
   - cmd: "/agent"
     scopes:
       - workspace
-    desc: "AI-Agent Mode"
+    desc: "AI-Agent Work Mode"
     example: ""
     shell: |
       bash -c "TOPSAILAI_SESSION_ID=$(date +%s) topsailai_agent_chats"
     environ:
+      TOPSAILAI_PLUGIN_SKILLS: "/work/skills"
+      DEBUG: "0"
+      TOPSAILAI_INTERACTIVE_MODE: "1"
+      TOPSAILAI_USE_TOOL_CALLS: "1"
+      TOPSAILAI_ENABLE_SESSION_TEE_OUT: "1"
+      TOPSAILAI_CLI_NEED_TIPS: "0"
+      TOPSAILAI_HOME: "~/.topsailai"
+    use_os_system: 1
+
+  - cmd: "/agent_plan"
+    scopes:
+      - workspace
+    desc: "AI-Agent Plan Mode"
+    example: ""
+    shell: |
+      bash -c "TOPSAILAI_SESSION_ID=$(date +%s) topsailai_agent_chats"
+    environ:
+      TOPSAILAI_ENABLED_TOOLS: "skill_tool,file_readonly_tool,memory_tool,time_tool,multimodal_readonly_tool"
       TOPSAILAI_PLUGIN_SKILLS: "/work/skills"
       DEBUG: "0"
       TOPSAILAI_INTERACTIVE_MODE: "1"

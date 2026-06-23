@@ -1,5 +1,5 @@
 """
-Unit tests for tools/multimodal_tool.py module.
+Unit tests for tools/multimodal_readonly_tool.py module.
 
 Tests cover recognize_image, recognize_voice, recognize_video functions,
 TOOLS dict, PROMPT, and FLAG_TOOL_ENABLED.
@@ -10,8 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from topsailai.tools import multimodal_tool
-from topsailai.tools.multimodal_tool import (
+from topsailai.tools import multimodal_readonly_tool
+from topsailai.tools.multimodal_readonly_tool import (
     recognize_image,
     recognize_voice,
     recognize_video,
@@ -30,7 +30,7 @@ class TestRecognizeImage:
         mock_chat = MagicMock()
         mock_chat.chat_with_image.return_value = "The image shows a cat."
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_image(
                     image_source="https://example.com/image.png",
@@ -49,7 +49,7 @@ class TestRecognizeImage:
         mock_chat = MagicMock()
         mock_chat.chat_with_image.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_image(
                     image_source="https://example.com/image.png",
@@ -68,7 +68,7 @@ class TestRecognizeImage:
         mock_chat = MagicMock()
         mock_chat.chat_with_image.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.abspath", return_value="/abs/path/to/image.png"):
                 with patch("os.path.exists", return_value=True):
                     result = recognize_image(
@@ -103,7 +103,7 @@ class TestRecognizeImage:
         mock_chat = MagicMock()
         mock_chat.chat_with_image.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 recognize_image(
                     image_source="  https://example.com/image.png  ",
@@ -118,7 +118,7 @@ class TestRecognizeImage:
         mock_chat = MagicMock()
         mock_chat.chat_with_image.return_value = None
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_image(
                     image_source="https://example.com/image.png",
@@ -132,7 +132,7 @@ class TestRecognizeImage:
         mock_chat = MagicMock()
         mock_chat.chat_with_image.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat") as mock_get_chat:
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat") as mock_get_chat:
             mock_get_chat.return_value = mock_chat
             with patch("os.path.exists", return_value=False):
                 recognize_image(
@@ -153,7 +153,7 @@ class TestRecognizeImage:
         mock_chat = MagicMock()
         mock_chat.chat_with_image.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=True):
                 result = recognize_image(
                     image_source="/path/to/local/image.png",
@@ -169,7 +169,7 @@ class TestRecognizeImage:
         mock_chat = MagicMock()
         mock_chat.chat_with_image.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_image(
                     image_source="http://example.com/image.png",
@@ -185,7 +185,7 @@ class TestRecognizeImage:
         mock_chat = MagicMock()
         mock_chat.chat_with_image.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_image(
                     image_source="https://example.com/image.png",
@@ -202,7 +202,7 @@ class TestRecognizeImage:
         mock_chat.llm_model.model_name = "default-model"
         mock_chat.chat_with_image.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_image(
                     image_source="https://example.com/image.png",
@@ -222,7 +222,7 @@ class TestRecognizeVoice:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "The audio contains a conversation."
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_voice(
                     audio_source="https://example.com/audio.mp3",
@@ -239,7 +239,7 @@ class TestRecognizeVoice:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "Transcription"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_voice(
                     audio_source="https://example.com/audio.mp3",
@@ -255,7 +255,7 @@ class TestRecognizeVoice:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "Transcription"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.abspath", return_value="/abs/path/to/audio.mp3"):
                 with patch("os.path.exists", return_value=True):
                     result = recognize_voice(
@@ -287,7 +287,7 @@ class TestRecognizeVoice:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "Transcription"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 recognize_voice(
                     audio_source="  https://example.com/audio.mp3  ",
@@ -302,7 +302,7 @@ class TestRecognizeVoice:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = None
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_voice(
                     audio_source="https://example.com/audio.mp3",
@@ -316,7 +316,7 @@ class TestRecognizeVoice:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "Transcription"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat") as mock_get_chat:
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat") as mock_get_chat:
             mock_get_chat.return_value = mock_chat
             with patch("os.path.exists", return_value=False):
                 recognize_voice(
@@ -337,7 +337,7 @@ class TestRecognizeVoice:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "Transcription"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=True):
                 result = recognize_voice(
                     audio_source="/path/to/local/audio.mp3",
@@ -353,7 +353,7 @@ class TestRecognizeVoice:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "Transcription"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_voice(
                     audio_source="http://example.com/audio.mp3",
@@ -369,7 +369,7 @@ class TestRecognizeVoice:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "Transcription"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_voice(
                     audio_source="https://example.com/audio.mp3",
@@ -389,7 +389,7 @@ class TestRecognizeVideo:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "The video shows a person walking."
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_video(
                     video_source="https://example.com/video.mp4",
@@ -406,7 +406,7 @@ class TestRecognizeVideo:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_video(
                     video_source="https://example.com/video.mp4",
@@ -422,7 +422,7 @@ class TestRecognizeVideo:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.abspath", return_value="/abs/path/to/video.mp4"):
                 with patch("os.path.exists", return_value=True):
                     result = recognize_video(
@@ -454,7 +454,7 @@ class TestRecognizeVideo:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 recognize_video(
                     video_source="  https://example.com/video.mp4  ",
@@ -469,7 +469,7 @@ class TestRecognizeVideo:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = None
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_video(
                     video_source="https://example.com/video.mp4",
@@ -483,7 +483,7 @@ class TestRecognizeVideo:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat") as mock_get_chat:
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat") as mock_get_chat:
             mock_get_chat.return_value = mock_chat
             with patch("os.path.exists", return_value=False):
                 recognize_video(
@@ -504,7 +504,7 @@ class TestRecognizeVideo:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=True):
                 result = recognize_video(
                     video_source="/path/to/local/video.mp4",
@@ -520,7 +520,7 @@ class TestRecognizeVideo:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_video(
                     video_source="http://example.com/video.mp4",
@@ -536,7 +536,7 @@ class TestRecognizeVideo:
         mock_chat = MagicMock()
         mock_chat.chat_with_content.return_value = "Description"
 
-        with patch("topsailai.tools.multimodal_tool.get_multimodal_llm_chat", return_value=mock_chat):
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat", return_value=mock_chat):
             with patch("os.path.exists", return_value=False):
                 result = recognize_video(
                     video_source="https://example.com/video.mp4",
@@ -578,7 +578,7 @@ class TestPrompt:
 
     def test_prompt_contains_tool_name(self):
         """Test PROMPT mentions the tool name."""
-        assert "multimodal_tool" in PROMPT
+        assert "multimodal_readonly_tool" in PROMPT
 
     def test_prompt_contains_recognize_image(self):
         """Test PROMPT mentions recognize_image."""
@@ -613,9 +613,9 @@ class TestPrompt:
 class TestFlagToolEnabled:
     """Test FLAG_TOOL_ENABLED."""
 
-    def test_flag_tool_enabled_is_true(self):
-        """Test FLAG_TOOL_ENABLED is True."""
-        assert FLAG_TOOL_ENABLED is True
+    def test_flag_tool_enabled_is_false(self):
+        """Test FLAG_TOOL_ENABLED is false."""
+        assert FLAG_TOOL_ENABLED is False
 
 
 class TestEdgeCases:
@@ -633,7 +633,7 @@ class TestGetExtraPrompt:
     def test_get_extra_prompt_returns_empty_when_not_set(self):
         """Test _get_extra_prompt returns empty string when env var not set."""
         with patch.object(
-            multimodal_tool.env_tool.EnvReaderInstance,
+            multimodal_readonly_tool.env_tool.EnvReaderInstance,
             "read_file_or_content",
             return_value="",
         ):
@@ -643,7 +643,7 @@ class TestGetExtraPrompt:
     def test_get_extra_prompt_returns_text(self):
         """Test _get_extra_prompt returns text from env var."""
         with patch.object(
-            multimodal_tool.env_tool.EnvReaderInstance,
+            multimodal_readonly_tool.env_tool.EnvReaderInstance,
             "read_file_or_content",
             return_value="Extra guidance text",
         ):
