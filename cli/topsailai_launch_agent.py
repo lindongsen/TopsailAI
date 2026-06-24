@@ -204,7 +204,7 @@ def _scan_workspace_files(workspace):
 
     entries.append(".")
     walk(workspace)
-    return "\n".join(entries)
+    return "> " + workspace + "\n" + "\n".join(entries)
 
 def main():
     parser = argparse.ArgumentParser(
