@@ -186,6 +186,20 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
 
         return deleted_list
 
+    def _get_current_tokens(self) -> int | None:
+        """
+        Get the current token count from the LLM model safely.
+
+        Returns:
+            int | None: The current token count, or None if not available.
+        """
+        try:
+            if self.ai_agent and self.ai_agent.llm_model and self.ai_agent.llm_model.tokenStat:
+                return int(self.ai_agent.llm_model.tokenStat.current_tokens)
+        except Exception:
+            pass
+        return None
+
     def summarize_messages_for_processed(
             self,
             messages: list = None,
@@ -228,6 +242,10 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
 
         # print info
         print_step(f"!!! Summarizing context messages for processed: msg_len=[{len(messages)}]", need_format=False, need_log=True)
+
+        # Log message count and token usage before summarization
+        _token_count_before = self._get_current_tokens()
+        logger.info("[summarize_processed] before: messages=%s, tokens=%s", len(messages), _token_count_before)
 
         llm_chat, answer = self._summarize_messages(messages, extra_prompt=story_tool.PROMPT_SUMMARY_MEMORY)
         if not answer:
@@ -295,6 +313,10 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                 new_messages.append(last_user_msg)
 
             self.set_messages(new_messages)
+
+        # Log message count and token usage after summarization
+        _token_count_after = self._get_current_tokens()
+        logger.info("[summarize_processed] after: messages=%s, tokens=%s", len(self.messages), _token_count_after)
 
         return answer
 

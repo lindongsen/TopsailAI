@@ -77,6 +77,20 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         return deleted_list
 
+    def _get_current_tokens(self) -> int | None:
+        """
+        Get the current token count from the LLM model safely.
+
+        Returns:
+            int | None: The current token count, or None if not available.
+        """
+        try:
+            if self.ai_agent and self.ai_agent.llm_model and self.ai_agent.llm_model.tokenStat:
+                return int(self.ai_agent.llm_model.tokenStat.current_tokens)
+        except Exception:
+            pass
+        return None
+
     def summarize_messages_for_processing(
             self,
             messages: list | str = None,
@@ -132,6 +146,10 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         # print info
         print_step(f"!!! Summarizing context messages for processing: msg_len=[{len(messages)}]", need_format=False, need_log=True)
 
+        # Log message count and token usage before summarization
+        _token_count_before = self._get_current_tokens()
+        logger.info("[summarize_processing] before: messages=%s, tokens=%s", len(messages), _token_count_before)
+
         llm_chat, answer = self._summarize_messages(messages)
         if not answer:
             return None
@@ -160,11 +178,14 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         # add answer(summary) to messages
         new_messages.append(llm_chat.prompt_ctl.messages[-1])
 
-        # add last of user message
         if last_user_msg:
             if last_user_msg not in new_messages:
                 new_messages.append(last_user_msg)
         self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
+
+        # Log message count and token usage after summarization
+        _token_count_after = self._get_current_tokens()
+        logger.info("[summarize_processing] after: messages=%s, tokens=%s", len(self.ai_agent.messages), _token_count_after)
 
         print_step(f"!!! New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]", need_format=False, need_log=True)
         logger.info("new context messages: %s", self.ai_agent.messages)
