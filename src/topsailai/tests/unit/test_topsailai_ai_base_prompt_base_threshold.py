@@ -12,7 +12,7 @@ Author: mm-m25
 import os
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 
 class TestThresholdContextHistory(unittest.TestCase):
@@ -22,12 +22,14 @@ class TestThresholdContextHistory(unittest.TestCase):
         """Set environment variables to known default values for deterministic tests."""
         # Store original values for restoration
         self.original_env = {}
-        for var in ["CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS", "CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH"]:
+        for var in ["CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS", "CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH",
+                    "CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS"]:
             self.original_env[var] = os.environ.get(var)
         
         # EXPLICITLY SET to defaults to override .env pollution
-        os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS"] = "1280000"
+        os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS"] = "128000"
         os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH"] = "43"
+        os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS"] = "27000"
 
     def tearDown(self):
         """Restore original environment variables after each test."""
@@ -49,6 +51,7 @@ class TestThresholdContextHistory(unittest.TestCase):
         # Temporarily delete env vars to test defaults
         original_tokens = os.environ.pop("CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS", None)
         original_len = os.environ.pop("CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH", None)
+        original_uncached = os.environ.pop("CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS", None)
         try:
             # Clear module cache to force re-import
             modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
@@ -59,14 +62,28 @@ class TestThresholdContextHistory(unittest.TestCase):
             from topsailai.ai_base.prompt_base import ThresholdContextHistory
             threshold = ThresholdContextHistory()
             
-            assert threshold.token_max == 1280000
+            assert threshold.token_max == 128000
             assert threshold.slim_len == 43
+            assert threshold.uncached_token_max == 27000
         finally:
             # Restore env vars
             if original_tokens is not None:
                 os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS"] = original_tokens
             if original_len is not None:
                 os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH"] = original_len
+            if original_uncached is not None:
+                os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS"] = original_uncached
+
+    def test_init_env_override_uncached_token_max(self):
+        """Test that CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS env var overrides uncached_token_max."""
+        os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS"] = "50000"
+        if "topsailai.ai_base.prompt_base" in sys.modules:
+            del sys.modules["topsailai.ai_base.prompt_base"]
+
+        from topsailai.ai_base.prompt_base import ThresholdContextHistory
+        instance = ThresholdContextHistory()
+
+        self.assertEqual(instance.uncached_token_max, 50000)
 
     def test_init_env_override_token_max(self):
         """Test that CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS env var overrides token_max."""
@@ -91,12 +108,12 @@ class TestThresholdContextHistory(unittest.TestCase):
         self.assertEqual(instance.slim_len, 50)
 
     def test_exceed_ratio_true(self):
-        """Test exceed_ratio returns True when token count is at or above 0.8 ratio."""
+        """Test exceed_ratio returns True when token count exceeds ratio threshold."""
         from topsailai.ai_base.prompt_base import ThresholdContextHistory
         instance = ThresholdContextHistory()
 
-        # 1024000 / 1280000 = 0.8 exactly
-        result = instance.exceed_ratio(1024000)
+        # 102400 / 128000 = 0.8 exactly
+        result = instance.exceed_ratio(102400)
         self.assertTrue(result)
 
     def test_exceed_ratio_false(self):
@@ -104,7 +121,7 @@ class TestThresholdContextHistory(unittest.TestCase):
         from topsailai.ai_base.prompt_base import ThresholdContextHistory
         instance = ThresholdContextHistory()
 
-        # 100000 / 1280000 = 0.078 < 0.8
+        # 100000 / 128000 = 0.781 < 0.8
         result = instance.exceed_ratio(100000)
         self.assertFalse(result)
 
@@ -113,8 +130,39 @@ class TestThresholdContextHistory(unittest.TestCase):
         from topsailai.ai_base.prompt_base import ThresholdContextHistory
         instance = ThresholdContextHistory()
 
-        # Exactly 0.8 * 1280000 = 1024000
-        result = instance.exceed_ratio(1024000)
+        # Exactly 0.8 * 128000 = 102400
+        result = instance.exceed_ratio(102400)
+        self.assertTrue(result)
+
+    def test_exceed_ratio_with_max_count_true(self):
+        """Test exceed_ratio returns True when ratio against max_count is exceeded."""
+        from topsailai.ai_base.prompt_base import ThresholdContextHistory
+        instance = ThresholdContextHistory()
+
+        # 5000 / 4000 = 1.25 >= 0.8
+        result = instance.exceed_ratio(5000, max_count=4000)
+        self.assertTrue(result)
+
+    def test_exceed_ratio_with_max_count_false(self):
+        """Test exceed_ratio returns False when ratio against max_count is not exceeded."""
+        from topsailai.ai_base.prompt_base import ThresholdContextHistory
+        instance = ThresholdContextHistory()
+
+        # 3000 / 4000 = 0.75 < 0.8
+        result = instance.exceed_ratio(3000, max_count=4000)
+        self.assertFalse(result)
+
+    def test_exceed_ratio_with_max_count_and_ratio(self):
+        """Test exceed_ratio with both max_ratio and max_count as denominator."""
+        from topsailai.ai_base.prompt_base import ThresholdContextHistory
+        instance = ThresholdContextHistory()
+
+        # 102400 / 200000 = 0.512 < 0.8 -> False
+        result = instance.exceed_ratio(102400, max_ratio=0.8, max_count=200000)
+        self.assertFalse(result)
+
+        # 102400 / 100000 = 1.024 >= 0.8 -> True
+        result = instance.exceed_ratio(102400, max_ratio=0.8, max_count=100000)
         self.assertTrue(result)
 
     def test_exceed_msg_len_true(self):
@@ -183,11 +231,45 @@ class TestThresholdContextHistory(unittest.TestCase):
         instance = ThresholdContextHistory()
 
         messages = [{"role": "user", "content": "test"}]
-        # Mock count_tokens to return high value (>= 0.8 * 1280000)
-        mock_count_tokens.return_value = 1100000
+        # Mock count_tokens to return high value (>= 0.8 * 128000)
+        mock_count_tokens.return_value = 110000
 
         result = instance.is_exceeded(messages)
         self.assertTrue(result)
+
+    @patch("topsailai.ai_base.prompt_base.thread_local_tool")
+    def test_is_exceeded_by_uncached_token_max(self, mock_thread_local_tool):
+        """Test is_exceeded returns True when uncached tokens exceed uncached_token_max."""
+        from topsailai.ai_base.prompt_base import ThresholdContextHistory
+        instance = ThresholdContextHistory()
+
+        # Message length below slim_len threshold
+        messages = [{"role": "user", "content": "test"} for _ in range(10)]
+
+        mock_agent = MagicMock()
+        mock_agent.llm_model.tokenStat.current_tokens = 50000
+        mock_agent.llm_model.tokenStat.uncached_tokens = 30000  # exceeds default 27000
+        mock_thread_local_tool.get_agent_object.return_value = mock_agent
+
+        result = instance.is_exceeded(messages)
+        self.assertTrue(result)
+
+    @patch("topsailai.ai_base.prompt_base.thread_local_tool")
+    def test_is_exceeded_not_exceeded_by_uncached_token_max(self, mock_thread_local_tool):
+        """Test is_exceeded returns False when uncached tokens are below uncached_token_max."""
+        from topsailai.ai_base.prompt_base import ThresholdContextHistory
+        instance = ThresholdContextHistory()
+
+        # Message length below slim_len threshold
+        messages = [{"role": "user", "content": "test"} for _ in range(10)]
+
+        mock_agent = MagicMock()
+        mock_agent.llm_model.tokenStat.current_tokens = 50000
+        mock_agent.llm_model.tokenStat.uncached_tokens = 10000  # below default 27000
+        mock_thread_local_tool.get_agent_object.return_value = mock_agent
+
+        result = instance.is_exceeded(messages)
+        self.assertFalse(result)
 
 
 class TestGetPromptByCmd(unittest.TestCase):

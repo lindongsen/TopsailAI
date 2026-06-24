@@ -82,7 +82,6 @@ def get_prompt_by_script(env_key:str) -> str:
         return ""
     return get_prompt_by_cmd(script_file)
 
-
 class ThresholdContextHistory(object):
     """
     Manages context history thresholds for token count and message length
@@ -104,27 +103,46 @@ class ThresholdContextHistory(object):
         """
         Initialize threshold context history with environment variable overrides
 
-        Reads CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS and CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH from environment
-        to override default values if present.
+        Reads CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS, CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH,
+        and CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS from environment to override
+        default values if present.
         """
         self.token_max = int(os.getenv("CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS", self.token_max))
         self.slim_len = int(os.getenv("CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH", self.slim_len))
+        self.uncached_token_max = int(os.getenv("CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS", self.uncached_token_max))
 
     def __str__(self):
-        return f"ThresholdContextHistory=(token_max: {self.token_max}, token_ratio: {self.token_ratio}, slim_len: {self.slim_len})"
+        return f"ThresholdContextHistory=(token_max: {self.token_max}, token_ratio: {self.token_ratio}, slim_len: {self.slim_len}, uncached_token_max: {self.uncached_token_max})"
 
-    def exceed_ratio(self, token_count):
+    def exceed_ratio(self, token_count, max_ratio=None, max_count=None):
         """
-        Check if token count exceeds the configured ratio threshold
+        Check if token count exceeds the configured ratio.
+
+        The ratio is computed as ``token_count / max_count``. If the ratio is
+        greater than or equal to ``max_ratio``, the threshold is considered
+        exceeded.
 
         Args:
-            token_count (int): Current token count to check
+            token_count (int): Current token count to check.
+            max_ratio (float, optional): Ratio threshold to use. Must be
+                less than 1. Values below 0.5 are clamped to 0.5. Defaults to
+                ``self.token_ratio``.
+            max_count (int, optional): Token budget used as the denominator for
+                the ratio check. Values below 3000 are clamped to 3000. Defaults
+                to ``self.token_max``.
 
         Returns:
-            bool: True if token count exceeds the ratio threshold, False otherwise
+            bool: True if token count exceeds the threshold, False otherwise.
         """
-        curr_ratio = float(token_count) / self.token_max
-        if curr_ratio >= self.token_ratio:
+        max_ratio = max_ratio if max_ratio is not None else self.token_ratio
+        if max_count is None:
+            max_count = self.token_max
+        assert isinstance(max_ratio, float) and max_ratio < 1
+        max_count = max(3000, max_count)
+        max_ratio = max(0.5, max_ratio)
+
+        curr_ratio = float(token_count) / max_count
+        if curr_ratio >= max_ratio:
             return True
         return False
 
@@ -168,7 +186,7 @@ class ThresholdContextHistory(object):
                 uncached_tokens = agent.llm_model.tokenStat.uncached_tokens
 
                 if current_tokens and uncached_tokens:
-                    _v_exceed_uncached_tokens = self.exceed_ratio(uncached_tokens)
+                    _v_exceed_uncached_tokens = self.exceed_ratio(uncached_tokens, max_count=self.uncached_token_max)
                     if _v_exceed_uncached_tokens:
                         return True
 
