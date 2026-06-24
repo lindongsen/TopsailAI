@@ -55,6 +55,9 @@ func NewMessageHandler(db *gorm.DB, publisher Publisher, evaluator Evaluator, lo
 type CreateMessageRequest struct {
 	MessageText        string          `json:"message_text" binding:"required"`
 	MessageAttachments json.RawMessage `json:"message_attachments"`
+	SenderID           string          `json:"sender_id"`
+	SenderType         string          `json:"sender_type"`
+	ProcessedMsgID     string          `json:"processed_msg_id"`
 }
 
 // UpdateMessageRequest represents the request body for updating a message.
@@ -160,11 +163,26 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 		return
 	}
 
-	senderID := authCtx.Account.AccountID
-	senderType := models.MemberTypeUser
+	// Validate processed_msg_id if provided.
+	if req.ProcessedMsgID != "" {
+		if err := h.validateProcessedMsgID(groupID, req.ProcessedMsgID, ""); err != nil {
+			h.log.Warn("api", traceID, "invalid processed_msg_id", "error", err.Error())
+			writeErrorResponse(c, http.StatusBadRequest, err.Error(), traceID)
+			return
+		}
+	}
 
-	// Authorization: admin can send to any group; user must be a member.
-	if !isAdmin(authCtx) {
+	// Resolve sender identity.
+	senderID, senderType, status, err := h.resolveSenderIdentity(authCtx, groupID, req.SenderID, req.SenderType)
+	if err != nil {
+		h.log.Warn("api", traceID, "failed to resolve sender identity", "error", err.Error())
+		writeErrorResponse(c, status, err.Error(), traceID)
+		return
+	}
+
+	// Authorization: when sender is not overridden, admin can send to any group;
+	// otherwise the caller must be a member (enforced by resolveSenderIdentity).
+	if req.SenderID == "" && req.SenderType == "" && !isAdmin(authCtx) {
 		var senderMember models.GroupMember
 		if err := h.db.Where("group_id = ? AND member_id = ?", groupID, senderID).First(&senderMember).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
@@ -204,6 +222,7 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 		MessageAttachments: attachments,
 		SenderID:           senderID,
 		SenderType:         senderType,
+		ProcessedMsgID:     req.ProcessedMsgID,
 		Mentions:           string(mentionsJSON),
 	}
 
@@ -223,6 +242,79 @@ func (h *MessageHandler) CreateMessage(c *gin.Context) {
 
 	h.log.Info("api", traceID, "message created", "group_id", groupID, "message_id", message.MessageID)
 	writeDataResponse(c, http.StatusCreated, toMessageResponse(&message), traceID)
+}
+
+// validateProcessedMsgID validates that the referenced message exists in the same group
+// and is not deleted. newMessageID is the ID of the message being created; pass empty
+// when the new ID is not yet known.
+func (h *MessageHandler) validateProcessedMsgID(groupID, processedMsgID, newMessageID string) error {
+	if processedMsgID == "" {
+		return nil
+	}
+	if newMessageID != "" && processedMsgID == newMessageID {
+		return errors.New("processed_msg_id cannot reference the message itself")
+	}
+	var refMsg models.GroupMessage
+	if err := h.db.Where("group_id = ? AND message_id = ?", groupID, processedMsgID).First(&refMsg).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return errors.New("processed_msg_id references a non-existent message")
+		}
+		return errors.New("failed to validate processed_msg_id")
+	}
+	if refMsg.IsDeleted || refMsg.DeleteAtMs > 0 {
+		return errors.New("processed_msg_id references a deleted message")
+	}
+	return nil
+}
+
+// resolveSenderIdentity determines the sender_id and sender_type for a new message.
+// If reqSenderID and reqSenderType are empty, it falls back to the authenticated account.
+// If provided, the caller must be a member of the group and the requested sender must
+// either match the caller's own member record or be a manager-agent member.
+func (h *MessageHandler) resolveSenderIdentity(authCtx middleware.AuthContext, groupID, reqSenderID, reqSenderType string) (string, models.MemberType, int, error) {
+	// Default: derive from authenticated account.
+	if reqSenderID == "" && reqSenderType == "" {
+		return authCtx.Account.AccountID, models.MemberTypeUser, 0, nil
+	}
+
+	// If one is provided, both must be provided.
+	if reqSenderID == "" || reqSenderType == "" {
+		return "", "", http.StatusBadRequest, errors.New("sender_id and sender_type must be provided together")
+	}
+
+	// Caller must be a member of the group to use sender override.
+	var callerMember models.GroupMember
+	if err := h.db.Where("group_id = ? AND member_id = ?", groupID, authCtx.Account.AccountID).First(&callerMember).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return "", "", http.StatusForbidden, errors.New("caller is not a member of the group")
+		}
+		return "", "", http.StatusInternalServerError, errors.New("failed to resolve sender identity")
+	}
+
+	// Look up the requested sender member.
+	var senderMember models.GroupMember
+	if err := h.db.Where("group_id = ? AND member_id = ?", groupID, reqSenderID).First(&senderMember).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return "", "", http.StatusBadRequest, errors.New("sender_id does not match a group member")
+		}
+		return "", "", http.StatusInternalServerError, errors.New("failed to resolve sender identity")
+	}
+
+	// sender_type must match the member's actual type.
+	if string(senderMember.MemberType) != reqSenderType {
+		return "", "", http.StatusBadRequest, errors.New("sender_type does not match the group member")
+	}
+
+	// Allowed if the requested sender matches the caller's own member record,
+	// or if the requested sender is a manager-agent member.
+	if senderMember.MemberID == callerMember.MemberID && senderMember.MemberType == callerMember.MemberType {
+		return senderMember.MemberID, senderMember.MemberType, 0, nil
+	}
+	if senderMember.IsManagerAgent() {
+		return senderMember.MemberID, senderMember.MemberType, 0, nil
+	}
+
+	return "", "", http.StatusForbidden, errors.New("caller is not authorized to send as the specified sender")
 }
 
 // evaluateAndTrigger evaluates if the message should trigger agents and publishes pending messages.

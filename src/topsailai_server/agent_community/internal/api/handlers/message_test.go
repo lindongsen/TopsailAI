@@ -1906,3 +1906,335 @@ func TestListMessages_SoftDeletedExcluded(t *testing.T) {
 	require.Len(t, resp.Data.Items, 1)
 	assert.Equal(t, visibleMsg.MessageID, resp.Data.Items[0].MessageID)
 }
+
+// TestCreateMessage_SenderOverrideAsOwnMember verifies a group member can send
+// a message using their own member_id and member_type, and set processed_msg_id.
+func TestCreateMessage_SenderOverrideAsOwnMember(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-user-override"
+	groupID := "group-sender-override"
+	createTestGroup(t, db, groupID, "Sender Override Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	parentMsg := createTestMessage(t, db, groupID, "msg-parent", userID, models.MemberTypeUser, "")
+
+	pub := &mockMessagePublisher{}
+	router, handler := setupMessageTestRouter(t, db, pub, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text":     "reply with override",
+		"sender_id":        userID,
+		"sender_type":      string(models.MemberTypeUser),
+		"processed_msg_id": parentMsg.MessageID,
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	var resp messageResponseWrapper
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, userID, resp.Data.SenderID)
+	assert.Equal(t, string(models.MemberTypeUser), resp.Data.SenderType)
+	assert.Equal(t, parentMsg.MessageID, resp.Data.ProcessedMsgID)
+	assert.Equal(t, "reply with override", resp.Data.MessageText)
+}
+
+// TestCreateMessage_SenderOverrideAsManagerAgent verifies any group member can
+// send a message on behalf of a manager-agent member.
+func TestCreateMessage_SenderOverrideAsManagerAgent(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-user-manager"
+	managerID := "manager-agent"
+	groupID := "group-manager-override"
+	createTestGroup(t, db, groupID, "Manager Override Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, managerID, models.MemberTypeManagerAgent)
+
+	pub := &mockMessagePublisher{}
+	router, handler := setupMessageTestRouter(t, db, pub, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text": "manager agent reply",
+		"sender_id":    managerID,
+		"sender_type":  string(models.MemberTypeManagerAgent),
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	var resp messageResponseWrapper
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, managerID, resp.Data.SenderID)
+	assert.Equal(t, string(models.MemberTypeManagerAgent), resp.Data.SenderType)
+}
+
+// TestCreateMessage_SenderOverrideAsOtherUserForbidden verifies a member cannot
+// impersonate another user member.
+func TestCreateMessage_SenderOverrideAsOtherUserForbidden(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-user-self"
+	otherUserID := "acc-user-other"
+	groupID := "group-other-user"
+	createTestGroup(t, db, groupID, "Other User Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, otherUserID, models.MemberTypeUser)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text": "impersonating other user",
+		"sender_id":    otherUserID,
+		"sender_type":  string(models.MemberTypeUser),
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+}
+
+// TestCreateMessage_SenderOverrideAsOtherWorkerAgentForbidden verifies a member
+// cannot send as a worker-agent member they do not represent.
+func TestCreateMessage_SenderOverrideAsOtherWorkerAgentForbidden(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-user-worker"
+	workerID := "worker-agent-1"
+	groupID := "group-other-worker"
+	createTestGroup(t, db, groupID, "Other Worker Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, workerID, models.MemberTypeWorkerAgent)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text": "impersonating worker agent",
+		"sender_id":    workerID,
+		"sender_type":  string(models.MemberTypeWorkerAgent),
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+}
+
+// TestCreateMessage_ProcessedMsgIDNonExistent verifies 400 when processed_msg_id
+// references a message that does not exist.
+func TestCreateMessage_ProcessedMsgIDNonExistent(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-user-processed-missing"
+	groupID := "group-processed-missing"
+	createTestGroup(t, db, groupID, "Processed Missing Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text":     "reply to missing",
+		"processed_msg_id": "msg-does-not-exist",
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+}
+
+// TestCreateMessage_ProcessedMsgIDDeletedMessage verifies 400 when processed_msg_id
+// references a soft-deleted message.
+func TestCreateMessage_ProcessedMsgIDDeletedMessage(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-user-processed-deleted"
+	groupID := "group-processed-deleted"
+	createTestGroup(t, db, groupID, "Processed Deleted Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	deletedMsg := createTestMessage(t, db, groupID, "msg-deleted", userID, models.MemberTypeUser, "")
+	err := db.Model(&models.GroupMessage{}).Where("message_id = ?", deletedMsg.MessageID).Updates(map[string]interface{}{
+		"is_deleted":   true,
+		"delete_at_ms": time.Now().UnixMilli(),
+		"update_at_ms": time.Now().UnixMilli(),
+	}).Error
+	require.NoError(t, err)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text":     "reply to deleted",
+		"processed_msg_id": deletedMsg.MessageID,
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+}
+
+// TestCreateMessage_ProcessedMsgIDOtherGroup verifies 400 when processed_msg_id
+// references a message from a different group.
+func TestCreateMessage_ProcessedMsgIDOtherGroup(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-user-processed-other"
+	groupID := "group-processed-other"
+	otherGroupID := "group-other"
+	createTestGroup(t, db, groupID, "Processed Other Group")
+	createTestGroup(t, db, otherGroupID, "Other Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	otherMsg := createTestMessage(t, db, otherGroupID, "msg-other-group", userID, models.MemberTypeUser, "")
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text":     "reply to other group",
+		"processed_msg_id": otherMsg.MessageID,
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+}
+
+// TestCreateMessage_SenderOverridePartialFields verifies 400 when only one of
+// sender_id/sender_type is provided.
+func TestCreateMessage_SenderOverridePartialFields(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-user-partial"
+	groupID := "group-partial"
+	createTestGroup(t, db, groupID, "Partial Sender Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text": "partial sender",
+		"sender_id":    userID,
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+}
+
+// TestCreateMessage_SenderOverrideCallerNotMember verifies 403 when a caller
+// tries to use sender override but is not a member of the group.
+func TestCreateMessage_SenderOverrideCallerNotMember(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-user-not-member"
+	managerID := "manager-agent"
+	groupID := "group-not-member"
+	createTestGroup(t, db, groupID, "Not Member Group")
+	createTestGroupMember(t, db, groupID, managerID, models.MemberTypeManagerAgent)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text": "not a member",
+		"sender_id":    managerID,
+		"sender_type":  string(models.MemberTypeManagerAgent),
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+}
+
+// TestCreateMessage_SenderTypeMismatch verifies 400 when sender_type does not
+// match the actual member type of sender_id.
+func TestCreateMessage_SenderTypeMismatch(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-user-mismatch"
+	groupID := "group-mismatch"
+	createTestGroup(t, db, groupID, "Mismatch Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text": "type mismatch",
+		"sender_id":    userID,
+		"sender_type":  string(models.MemberTypeManagerAgent),
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+}
+
+// TestCreateMessage_ProcessedMsgIDBlocksAutoTrigger verifies that a message
+// created with processed_msg_id is not auto-triggered, even when it mentions an agent.
+func TestCreateMessage_ProcessedMsgIDBlocksAutoTrigger(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-user-processed-notrigger"
+	groupID := "group-processed-notrigger"
+	createTestGroup(t, db, groupID, "Processed No Trigger Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	createTestGroupMember(t, db, groupID, "agent-1", models.MemberTypeWorkerAgent)
+	parentMsg := createTestMessage(t, db, groupID, "msg-parent-notrigger", userID, models.MemberTypeUser, "")
+
+	pub := &mockMessagePublisher{}
+	eval := trigger.NewEvaluator(10 * time.Minute)
+	router, handler := setupMessageTestRouter(t, db, pub, eval)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.POST("/api/v1/groups/:group_id/messages", handler.CreateMessage)
+
+	body := map[string]interface{}{
+		"message_text":     "hello @agent-1",
+		"processed_msg_id": parentMsg.MessageID,
+	}
+	bodyJSON, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+	assert.Empty(t, pub.pendingCalls, "processed messages should not be auto-triggered")
+}
