@@ -16,6 +16,7 @@ import (
 	"github.com/topsailai/agent-community/internal/config"
 	"github.com/topsailai/agent-community/internal/models"
 	"github.com/topsailai/agent-community/internal/trigger"
+	"github.com/topsailai/agent-community/internal/workpool"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -608,4 +609,75 @@ func TestDispatchTargets_PropagatesError(t *testing.T) {
 	err := consumer.dispatchTargets(context.Background(), group, nil, pendingMsg, triggerInfo, targets, "trace-err", stubProcess)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "intentional failure")
+}
+
+// TestProcessAgentTarget_AcquireTimeoutWaits verifies that when
+// ACS_AGENT_WORK_POOL_ACQUIRE_TIMEOUT is positive and the pool is saturated,
+// processAgentTarget waits for approximately the configured timeout before
+// returning ErrPoolLimitReached.
+func TestProcessAgentTarget_AcquireTimeoutWaits(t *testing.T) {
+	db := setupConsumerTestDB(t)
+	pool := workpool.NewPool(1, 1, 1)
+	cfg := &config.Config{
+		AgentWorkPool: config.AgentWorkPoolConfig{
+			AcquireTimeout: 150 * time.Millisecond,
+		},
+	}
+	consumer := NewConsumer(db, nil, nil, nil, pool, cfg)
+
+	group := createTestGroup(t, db, "g-timeout", "Test Group")
+	agent := createTestAgentMember(t, db, group.GroupID, "agent-timeout", `{"adaptor":"topsailai_agent","environments":{"ACS_AGENT_API_BASE":"http://localhost:1"}}`)
+	user := createTestUserMember(t, db, group.GroupID, "user-timeout")
+	msg := createTestPendingMessage(t, db, group.GroupID, "msg-timeout", user.MemberID)
+
+	// Exhaust the only global slot so the target cannot acquire.
+	err := pool.Acquire(context.Background(), user.MemberID, group.GroupID)
+	require.NoError(t, err)
+	defer pool.Release(user.MemberID, group.GroupID, "hold")
+
+	target := trigger.AgentTarget{AgentID: agent.MemberID, Mode: "agent"}
+	triggerInfo := trigger.TriggerInfo{Type: trigger.TriggerTypeMention, AgentID: agent.MemberID}
+
+	start := time.Now()
+	err = consumer.processAgentTarget(context.Background(), group, []models.GroupMember{*agent, *user}, msg, triggerInfo, target, "trace-timeout")
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, workpool.ErrPoolLimitReached), "expected ErrPoolLimitReached, got %v", err)
+	assert.GreaterOrEqual(t, elapsed, 100*time.Millisecond, "should wait at least the configured timeout")
+}
+
+// TestProcessAgentTarget_ZeroAcquireTimeoutFailsFast verifies that when
+// ACS_AGENT_WORK_POOL_ACQUIRE_TIMEOUT is zero and the pool is saturated,
+// processAgentTarget returns ErrPoolLimitReached immediately without blocking.
+func TestProcessAgentTarget_ZeroAcquireTimeoutFailsFast(t *testing.T) {
+	db := setupConsumerTestDB(t)
+	pool := workpool.NewPool(1, 1, 1)
+	cfg := &config.Config{
+		AgentWorkPool: config.AgentWorkPoolConfig{
+			AcquireTimeout: 0,
+		},
+	}
+	consumer := NewConsumer(db, nil, nil, nil, pool, cfg)
+
+	group := createTestGroup(t, db, "g-no-timeout", "Test Group")
+	agent := createTestAgentMember(t, db, group.GroupID, "agent-no-timeout", `{"adaptor":"topsailai_agent","environments":{"ACS_AGENT_API_BASE":"http://localhost:1"}}`)
+	user := createTestUserMember(t, db, group.GroupID, "user-no-timeout")
+	msg := createTestPendingMessage(t, db, group.GroupID, "msg-no-timeout", user.MemberID)
+
+	// Exhaust the only global slot.
+	err := pool.Acquire(context.Background(), user.MemberID, group.GroupID)
+	require.NoError(t, err)
+	defer pool.Release(user.MemberID, group.GroupID, "hold")
+
+	target := trigger.AgentTarget{AgentID: agent.MemberID, Mode: "agent"}
+	triggerInfo := trigger.TriggerInfo{Type: trigger.TriggerTypeMention, AgentID: agent.MemberID}
+
+	start := time.Now()
+	err = consumer.processAgentTarget(context.Background(), group, []models.GroupMember{*agent, *user}, msg, triggerInfo, target, "trace-no-timeout")
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, workpool.ErrPoolLimitReached), "expected ErrPoolLimitReached, got %v", err)
+	assert.Less(t, elapsed, 50*time.Millisecond, "should fail immediately with zero timeout")
 }

@@ -687,3 +687,64 @@ func TestHeartbeatLoop_StopWhileWaiting(t *testing.T) {
 		t.Fatal("heartbeatLoop did not stop in time")
 	}
 }
+
+// TestDiscovery_RestartRejoin verifies that a restarted node on the same
+// address rejoins the discovery bucket using a deterministic service ID,
+// replacing any stale registration left by the previous process.
+func TestDiscovery_RestartRejoin(t *testing.T) {
+	_, js := startEmbeddedNATSServer(t)
+
+	bucketName := "test_restart_rejoin_bucket"
+	cfg := Config{
+		ServiceName: "acs",
+		Address:     "127.0.0.1",
+		Port:        7370,
+		Version:     "1.0.0",
+		BucketName:  bucketName,
+		Heartbeat:   100 * time.Millisecond,
+		TTL:         30 * time.Second,
+	}
+
+	// First process starts and registers.
+	d1, err := New(js, cfg)
+	require.NoError(t, err)
+	err = d1.Register()
+	require.NoError(t, err)
+
+	firstID := d1.self.ID
+	firstStartedAt := d1.self.StartedAtMs
+
+	// Simulate graceful shutdown.
+	err = d1.Deregister()
+	require.NoError(t, err)
+
+	// Verify the registration was removed.
+	_, err = d1.kv.Get(firstID)
+	require.Error(t, err)
+
+	// Second process starts on the same address (restart).
+	d2, err := New(js, cfg)
+	require.NoError(t, err)
+	err = d2.Register()
+	require.NoError(t, err)
+	defer d2.Deregister()
+
+	// Deterministic ID must be identical, but started_at_ms should be newer.
+	assert.Equal(t, firstID, d2.self.ID)
+	assert.Greater(t, d2.self.StartedAtMs, firstStartedAt)
+
+	// Only one registration should exist in the bucket, and it must be the new one.
+	require.Eventually(t, func() bool {
+		services, err := d2.Discover()
+		if err != nil {
+			return false
+		}
+		return len(services) == 1 && services[0].ID == d2.self.ID && services[0].StartedAtMs == d2.self.StartedAtMs
+	}, 2*time.Second, 50*time.Millisecond)
+
+	services, err := d2.Discover()
+	require.NoError(t, err)
+	require.Len(t, services, 1)
+	assert.Equal(t, d2.self.ID, services[0].ID)
+	assert.Equal(t, d2.self.StartedAtMs, services[0].StartedAtMs)
+}

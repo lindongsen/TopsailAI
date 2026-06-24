@@ -5,11 +5,13 @@ group_lifecycle.py - CLI tool for managing ACS group lifecycle.
 Subcommands:
     create-group, list-groups, get-group, update-group, delete-group
     join-member, list-members, update-member, leave-member
-    send-message, list-messages, trigger-message
+    send-message, list-messages, get-message, update-message, delete-message, trigger-message
 
 Environment Variables:
-    ACS_SERVER_API_BASE - API base URL (optional, defaults to "http://localhost:7370")
-    ACS_LOG_LEVEL       - logging level (optional, defaults to "INFO")
+    ACS_SERVER_API_BASE   - API base URL (optional, defaults to "http://localhost:7370")
+    ACS_LOG_LEVEL         - logging level (optional, defaults to "INFO")
+    ACS_API_KEY           - API key token "ak-{id}.{secret}" (optional)
+    ACS_LOGIN_SESSION_KEY - Session key for X-Session-Key auth (optional, priority over API key)
 """
 
 from __future__ import annotations
@@ -37,6 +39,16 @@ def create_parser() -> argparse.ArgumentParser:
         default=os.environ.get("ACS_SERVER_API_BASE", "http://localhost:7370"),
         help="ACS API base URL (default: http://localhost:7370 or ACS_SERVER_API_BASE env var)",
     )
+    parser.add_argument(
+        "--api-key",
+        default=os.environ.get("ACS_API_KEY"),
+        help="API key token (default: ACS_API_KEY env var)",
+    )
+    parser.add_argument(
+        "--session-key",
+        default=os.environ.get("ACS_LOGIN_SESSION_KEY"),
+        help="Session key for X-Session-Key auth (default: ACS_LOGIN_SESSION_KEY env var; priority over --api-key)",
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -48,7 +60,8 @@ def create_parser() -> argparse.ArgumentParser:
     create_group.add_argument("--context", default="", help="Group context/description")
     create_group.add_argument("--key", default="", help="Group secret key (empty for public)")
 
-    subparsers.add_parser("list-groups", help="List all groups")
+    list_groups = subparsers.add_parser("list-groups", help="List all groups")
+    _add_list_filters(list_groups)
 
     get_group = subparsers.add_parser("get-group", help="Get a group by ID")
     get_group.add_argument("group_id", help="Group ID")
@@ -65,22 +78,24 @@ def create_parser() -> argparse.ArgumentParser:
     # ------------------------------------------------------------------
     # Member commands
     # ------------------------------------------------------------------
-    join_member = subparsers.add_parser("join-member", help="Add a member to a group")
+    join_member = subparsers.add_parser("join-member", help="Add a member to a group or self-join")
     join_member.add_argument("group_id", help="Group ID")
-    join_member.add_argument("--id", required=True, dest="member_id", help="Member ID")
-    join_member.add_argument("--name", required=True, dest="member_name", help="Member name")
+    join_member.add_argument("--id", dest="member_id", help="Member ID (omit for self-join)")
+    join_member.add_argument("--name", dest="member_name", help="Member name")
     join_member.add_argument(
         "--type",
-        required=True,
         dest="member_type",
         choices=["user", "worker-agent", "manager-agent"],
-        help="Member type",
+        help="Member type (omit for self-join)",
     )
     join_member.add_argument("--description", default="", help="Member description")
     join_member.add_argument("--interface", help="Member interface as JSON string")
+    join_member.add_argument("--self-join", action="store_true", help="Self-join the group")
+    join_member.add_argument("--group-key", help="Secret key for self-joining a private group")
 
     list_members = subparsers.add_parser("list-members", help="List members of a group")
     list_members.add_argument("group_id", help="Group ID")
+    _add_list_filters(list_members)
 
     update_member = subparsers.add_parser("update-member", help="Update a group member")
     update_member.add_argument("group_id", help="Group ID")
@@ -100,18 +115,35 @@ def create_parser() -> argparse.ArgumentParser:
     send_message = subparsers.add_parser("send-message", help="Send a message to a group")
     send_message.add_argument("group_id", help="Group ID")
     send_message.add_argument("--text", required=True, help="Message text")
-    send_message.add_argument("--sender-id", required=True, help="Sender member ID")
+    send_message.add_argument(
+        "--sender-id",
+        help="Sender member ID (derived from authentication when omitted)",
+    )
     send_message.add_argument(
         "--sender-type",
-        required=True,
         choices=["user", "worker-agent", "manager-agent"],
-        help="Sender type",
+        help="Sender type (derived from authentication when omitted)",
     )
+    send_message.add_argument("--attachments", help="Message attachments as JSON string")
     send_message.add_argument("--processed-msg-id", help="Processed message ID")
 
     list_messages = subparsers.add_parser("list-messages", help="List messages in a group")
     list_messages.add_argument("group_id", help="Group ID")
     list_messages.add_argument("--processed-msg-id", help="Filter by processed message ID")
+    _add_list_filters(list_messages)
+
+    get_message = subparsers.add_parser("get-message", help="Get a single message")
+    get_message.add_argument("group_id", help="Group ID")
+    get_message.add_argument("message_id", help="Message ID")
+
+    update_message = subparsers.add_parser("update-message", help="Update a message")
+    update_message.add_argument("group_id", help="Group ID")
+    update_message.add_argument("message_id", help="Message ID")
+    update_message.add_argument("--text", required=True, help="New message text")
+
+    delete_message = subparsers.add_parser("delete-message", help="Soft-delete a message")
+    delete_message.add_argument("group_id", help="Group ID")
+    delete_message.add_argument("message_id", help="Message ID")
 
     trigger_message = subparsers.add_parser("trigger-message", help="Manually trigger agent for a message")
     trigger_message.add_argument("group_id", help="Group ID")
@@ -119,6 +151,16 @@ def create_parser() -> argparse.ArgumentParser:
     trigger_message.add_argument("--agent-id", help="Specific agent ID to trigger")
 
     return parser
+
+
+def _add_list_filters(subparser: argparse.ArgumentParser) -> None:
+    """Add common list filter arguments to a subparser."""
+    subparser.add_argument("--offset", type=int, default=0, help="Records to skip")
+    subparser.add_argument("--limit", type=int, default=1000, help="Max records to return")
+    subparser.add_argument("--sort-key", default="create_at_ms", help="Field to sort by")
+    subparser.add_argument("--order-by", default="desc", choices=["asc", "desc"], help="Sort direction")
+    subparser.add_argument("--create-at-ms", help='Time range filter "start-end" (epoch ms)')
+    subparser.add_argument("--update-at-ms", help='Time range filter "start-end" (epoch ms)')
 
 
 def print_json(data: Any) -> None:
@@ -132,6 +174,15 @@ def handle_error(exc: ACSAPIError) -> int:
     if exc.trace_id:
         logger.error("Trace ID: %s", exc.trace_id)
     return 1
+
+
+def _build_client(args: argparse.Namespace) -> ACSClient:
+    """Build an ACSClient from parsed CLI arguments."""
+    return ACSClient(
+        base_url=args.api_base,
+        api_key=args.api_key,
+        session_key=args.session_key,
+    )
 
 
 def cmd_create_group(client: ACSClient, args: argparse.Namespace) -> int:
@@ -148,20 +199,17 @@ def cmd_create_group(client: ACSClient, args: argparse.Namespace) -> int:
         return handle_error(exc)
 
 
-def cmd_list_groups(client: ACSClient, _args: argparse.Namespace) -> int:
+def cmd_list_groups(client: ACSClient, args: argparse.Namespace) -> int:
     """Handle list-groups command."""
     try:
-        result = client.list_groups()
-        print_json(result)
-        return 0
-    except ACSAPIError as exc:
-        return handle_error(exc)
-
-
-def cmd_get_group(client: ACSClient, args: argparse.Namespace) -> int:
-    """Handle get-group command."""
-    try:
-        result = client.get_group(args.group_id)
+        result = client.list_groups(
+            offset=args.offset,
+            limit=args.limit,
+            sort_key=args.sort_key,
+            order_by=args.order_by,
+            create_at_ms=args.create_at_ms,
+            update_at_ms=args.update_at_ms,
+        )
         print_json(result)
         return 0
     except ACSAPIError as exc:
@@ -191,8 +239,8 @@ def cmd_update_group(client: ACSClient, args: argparse.Namespace) -> int:
 def cmd_delete_group(client: ACSClient, args: argparse.Namespace) -> int:
     """Handle delete-group command."""
     try:
-        result = client.delete_group(args.group_id)
-        print_json(result)
+        client.delete_group(args.group_id)
+        print(json.dumps({"message": "group deleted"}, indent=2, ensure_ascii=False))
         return 0
     except ACSAPIError as exc:
         return handle_error(exc)
@@ -207,6 +255,26 @@ def cmd_join_member(client: ACSClient, args: argparse.Namespace) -> int:
         except json.JSONDecodeError as exc:
             logger.error("Invalid JSON in --interface: %s", exc)
             return 1
+
+    if args.self_join:
+        kwargs: dict[str, Any] = {"group_id": args.group_id}
+        if args.member_name:
+            kwargs["member_name"] = args.member_name
+        if args.description:
+            kwargs["member_description"] = args.description
+        if args.group_key is not None:
+            kwargs["group_key"] = args.group_key
+        try:
+            result = client.join_member(**kwargs)
+            print_json(result)
+            return 0
+        except ACSAPIError as exc:
+            return handle_error(exc)
+
+    if not args.member_id or not args.member_type:
+        logger.error("--id and --type are required unless --self-join is used.")
+        return 1
+
     try:
         result = client.join_member(
             group_id=args.group_id,
@@ -225,7 +293,23 @@ def cmd_join_member(client: ACSClient, args: argparse.Namespace) -> int:
 def cmd_list_members(client: ACSClient, args: argparse.Namespace) -> int:
     """Handle list-members command."""
     try:
-        result = client.list_members(args.group_id)
+        result = client.list_members(
+            group_id=args.group_id,
+            offset=args.offset,
+            limit=args.limit,
+            sort_key=args.sort_key,
+            order_by=args.order_by,
+        )
+        print_json(result)
+        return 0
+    except ACSAPIError as exc:
+        return handle_error(exc)
+
+
+def cmd_get_group(client: ACSClient, args: argparse.Namespace) -> int:
+    """Handle get-group command."""
+    try:
+        result = client.get_group(args.group_id)
         print_json(result)
         return 0
     except ACSAPIError as exc:
@@ -243,7 +327,7 @@ def cmd_update_member(client: ACSClient, args: argparse.Namespace) -> int:
         kwargs["member_status"] = args.status
     if args.interface is not None:
         try:
-            kwargs["member_interface"] = json.dumps(json.loads(args.interface))
+            kwargs["member_interface"] = json.loads(args.interface)
         except json.JSONDecodeError as exc:
             logger.error("Invalid JSON in --interface: %s", exc)
             return 1
@@ -270,14 +354,27 @@ def cmd_leave_member(client: ACSClient, args: argparse.Namespace) -> int:
 
 def cmd_send_message(client: ACSClient, args: argparse.Namespace) -> int:
     """Handle send-message command."""
+    message_attachments = None
+    if args.attachments:
+        try:
+            message_attachments = json.loads(args.attachments)
+        except json.JSONDecodeError as exc:
+            logger.error("Invalid JSON in --attachments: %s", exc)
+            return 1
+
+    kwargs: dict[str, Any] = {
+        "group_id": args.group_id,
+        "message_text": args.text,
+        "message_attachments": message_attachments,
+        "processed_msg_id": args.processed_msg_id,
+    }
+    if args.sender_id is not None:
+        kwargs["sender_id"] = args.sender_id
+    if args.sender_type is not None:
+        kwargs["sender_type"] = args.sender_type
+
     try:
-        result = client.send_message(
-            group_id=args.group_id,
-            message_text=args.text,
-            sender_id=args.sender_id,
-            sender_type=args.sender_type,
-            processed_msg_id=args.processed_msg_id,
-        )
+        result = client.send_message(**kwargs)
         print_json(result)
         return 0
     except ACSAPIError as exc:
@@ -287,10 +384,50 @@ def cmd_send_message(client: ACSClient, args: argparse.Namespace) -> int:
 def cmd_list_messages(client: ACSClient, args: argparse.Namespace) -> int:
     """Handle list-messages command."""
     try:
-        kwargs: dict[str, Any] = {}
-        if args.processed_msg_id:
-            kwargs["processed_msg_id"] = args.processed_msg_id
-        result = client.list_messages(args.group_id, **kwargs)
+        result = client.list_messages(
+            group_id=args.group_id,
+            offset=args.offset,
+            limit=args.limit,
+            sort_key=args.sort_key,
+            order_by=args.order_by,
+            processed_msg_id=args.processed_msg_id,
+            create_at_ms=args.create_at_ms,
+            update_at_ms=args.update_at_ms,
+        )
+        print_json(result)
+        return 0
+    except ACSAPIError as exc:
+        return handle_error(exc)
+
+
+def cmd_get_message(client: ACSClient, args: argparse.Namespace) -> int:
+    """Handle get-message command."""
+    try:
+        result = client.get_message(args.group_id, args.message_id)
+        print_json(result)
+        return 0
+    except ACSAPIError as exc:
+        return handle_error(exc)
+
+
+def cmd_update_message(client: ACSClient, args: argparse.Namespace) -> int:
+    """Handle update-message command."""
+    try:
+        result = client.update_message(
+            args.group_id,
+            args.message_id,
+            message_text=args.text,
+        )
+        print_json(result)
+        return 0
+    except ACSAPIError as exc:
+        return handle_error(exc)
+
+
+def cmd_delete_message(client: ACSClient, args: argparse.Namespace) -> int:
+    """Handle delete-message command."""
+    try:
+        result = client.delete_message(args.group_id, args.message_id)
         print_json(result)
         return 0
     except ACSAPIError as exc:
@@ -321,7 +458,7 @@ def main() -> int:
         parser.print_help()
         return 1
 
-    client = ACSClient(base_url=args.api_base)
+    client = _build_client(args)
 
     handlers: dict[str, Any] = {
         "create-group": cmd_create_group,
@@ -335,6 +472,9 @@ def main() -> int:
         "leave-member": cmd_leave_member,
         "send-message": cmd_send_message,
         "list-messages": cmd_list_messages,
+        "get-message": cmd_get_message,
+        "update-message": cmd_update_message,
+        "delete-message": cmd_delete_message,
         "trigger-message": cmd_trigger_message,
     }
 

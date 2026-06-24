@@ -1,5 +1,4 @@
-#!/bin/bash
-# Mock failing agent chat command for failure-handling tests.
-# Simulates an agent that is healthy but fails to produce a response.
-echo "Mock agent chat command failed intentionally" >&2
+#!/usr/bin/env bash
+# Mock agent chat command that always fails
+>&2 echo "MOCK_AGENT_FAILURE from $ACS_AGENT_ID mode=$ACS_AGENT_MODE"
 exit 1

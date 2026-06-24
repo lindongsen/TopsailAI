@@ -279,15 +279,10 @@ func (at *AutoTrigger) checkGroup(ctx context.Context, group *models.Group, trac
 	// Build trigger info for NATS.
 	triggerData := trigger.FormatTriggerForNATS(result.Trigger, result.Targets)
 
-	// Publish the original message to NATS as a pending message. Using the
-	// original message ID ensures the agent response's processed_msg_id points
-	// back to the user's message instead of a synthetic pending message.
-	if err := at.publisher.PublishAutoTriggerPendingMessage(group.GroupID, &lastMessage, triggerData); err != nil {
-		return checkResultSkipped, fmt.Errorf("failed to publish auto-trigger pending message: %w", err)
-	}
-
-	// Record processing status as pending so subsequent scans do not re-trigger
-	// the same message-agent pair while the consumer is working.
+	// Record processing status as pending BEFORE publishing the pending message.
+	// The consumer expects a pre-inserted pending record and tries to upgrade it
+	// to running; if we publish first, the consumer may fail to claim the record
+	// and treat the message as a duplicate, leaving it unprocessed.
 	processingRecord := &models.AgentMessageProcessing{
 		GroupID:   group.GroupID,
 		MessageID: lastMessage.MessageID,
@@ -295,7 +290,34 @@ func (at *AutoTrigger) checkGroup(ctx context.Context, group *models.Group, trac
 		Status:    models.ProcessingStatusPending,
 	}
 	if err := at.db.Create(processingRecord).Error; err != nil {
-		logger.ErrorM(autoTriggerModule, traceID, "failed to create processing record", "error", err)
+		if isDuplicateKeyError(err) {
+			logger.DebugM(autoTriggerModule, traceID, "auto-trigger already processed or in-flight for message",
+				"group_id", group.GroupID,
+				"message_id", lastMessage.MessageID,
+				"agent_id", result.Targets[0].AgentID,
+			)
+			return checkResultSkipped, nil
+		}
+		return checkResultSkipped, fmt.Errorf("failed to create processing record: %w", err)
+	}
+
+	// Publish the original message to NATS as a pending message. Using the
+	// original message ID ensures the agent response's processed_msg_id points
+	// back to the user's message instead of a synthetic pending message.
+	if err := at.publisher.PublishAutoTriggerPendingMessage(group.GroupID, &lastMessage, triggerData); err != nil {
+		// Rollback the pending record so we do not leave a stale reservation
+		// that would block future processing of this message-agent pair.
+		if delErr := at.db.Where("group_id = ? AND message_id = ? AND agent_id = ? AND status = ?",
+			group.GroupID, lastMessage.MessageID, result.Targets[0].AgentID, models.ProcessingStatusPending).
+			Delete(&models.AgentMessageProcessing{}).Error; delErr != nil {
+			logger.ErrorM(autoTriggerModule, traceID, "failed to rollback pending record after publish failure",
+				"group_id", group.GroupID,
+				"message_id", lastMessage.MessageID,
+				"agent_id", result.Targets[0].AgentID,
+				"error", delErr,
+			)
+		}
+		return checkResultSkipped, fmt.Errorf("failed to publish auto-trigger pending message: %w", err)
 	}
 
 	logger.InfoM(autoTriggerModule, traceID, "auto-trigger published pending message",

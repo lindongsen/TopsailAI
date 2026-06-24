@@ -49,38 +49,34 @@ When `ACS_DATABASE_DRIVER=sqlite` and `ACS_DATABASE_NAME` is not explicitly set,
 | `ACS_NATS_STREAM_GROUP` | `acs_group` | NATS JetStream stream name prefix |
 | `ACS_NATS_SUBJECT_GROUP_PENDING_MESSAGE_PREFIX` | `acs.group.pending-message` | Subject prefix for pending messages (agent work queue) |
 | `ACS_NATS_SUBJECT_GROUP_MESSAGE_PREFIX` | `acs.group.message` | Subject prefix for group events (pub/sub) |
-| `ACS_NATS_PENDING_MESSAGE_NO_ACK` | `false` | When `true`, pending messages use fire-and-forget mode (no ack/nak, no InProgress heartbeat). **Warning: messages may be lost if consumer crashes.** |
-| `ACS_NATS_ACK_WAIT_SECONDS` | `3600` | NATS consumer AckWait timeout in seconds. Must be greater than the longest expected agent execution time. Only effective when `ACS_NATS_PENDING_MESSAGE_NO_ACK=false`. |
-| `ACS_NATS_MAX_ACK_PENDING` | `10` | Maximum number of unacknowledged messages allowed for a consumer in reliable mode. When exceeded, new messages are not delivered until existing ones are acknowledged. |
-| `ACS_NATS_MAX_DELIVER` | `0` | Maximum number of delivery attempts for a pending message. `0` means unlimited redeliveries. Only effective when `ACS_NATS_PENDING_MESSAGE_NO_ACK=false`. |
+| `ACS_NATS_PENDING_MESSAGE_NO_ACK` | `false` | When `true`, pending messages are published asynchronously and the publisher does **not** wait for or propagate the JetStream publish ack. The API returns immediately after the async publish call. The consumer side is unchanged and still uses explicit ack. **Warning: publish failures may be silently ignored.** |
+| `ACS_NATS_ACK_WAIT_SECONDS` | `3600` | NATS consumer AckWait timeout in seconds. Must be greater than the longest expected agent execution time. |
+| `ACS_NATS_MAX_ACK_PENDING` | `10` | Maximum number of unacknowledged messages allowed for a consumer. When exceeded, new messages are not delivered until existing ones are acknowledged. |
+| `ACS_NATS_MAX_DELIVER` | `0` | Maximum number of delivery attempts for a pending message. `0` means unlimited redeliveries. |
 
-### NATS Consumer Modes
+### Pending Message Publish Modes
 
-#### Reliable Mode (default, `ACS_NATS_PENDING_MESSAGE_NO_ACK=false`)
-- Consumer must manually acknowledge (`Ack`) each message after processing
-- If processing fails, consumer sends negative acknowledgment (`Nak`) to trigger redelivery
-- `InProgress()` heartbeat is sent every 20 seconds during long-running processing to prevent premature redelivery
-- `AckWait` determines how long NATS waits for acknowledgment before redelivering
-- `MaxDeliver` controls the maximum number of delivery attempts; `0` means unlimited
-- Guarantees **at-least-once** message delivery
+#### Synchronous Publish (default, `ACS_NATS_PENDING_MESSAGE_NO_ACK=false`)
+- The publisher calls JetStream `Publish` synchronously.
+- The API waits for the JetStream publish ack and returns an error if publishing fails.
+- This is the safe default for critical agent processing.
 
-#### Fire-and-Forget Mode (`ACS_NATS_PENDING_MESSAGE_NO_ACK=true`)
-- Consumer does not acknowledge messages
-- No `InProgress()` heartbeat
-- NATS removes message from queue immediately after delivery
-- **No redelivery** if processing fails or consumer crashes
-- Suitable for scenarios where occasional message loss is acceptable
-- **Not recommended** for critical agent processing
+#### Asynchronous / Fire-and-Forget Publish (`ACS_NATS_PENDING_MESSAGE_NO_ACK=true`)
+- The publisher calls JetStream `PublishAsync` and does **not** wait for the publish ack.
+- The API returns success immediately after the async publish call.
+- Publish initiation errors are also ignored, so the caller never sees a publish failure.
+- The consumer still acknowledges messages explicitly; delivery guarantees on the consumer side are unchanged.
+- Suitable for scenarios where API latency matters more than guaranteed publish confirmation.
 
 ### MaxAckPending
 
-In reliable mode (`ACS_NATS_PENDING_MESSAGE_NO_ACK=false`), `MaxAckPending` controls how many messages can be delivered to a consumer without being acknowledged. When this limit is reached, NATS stops delivering new messages to that consumer until some messages are acknowledged. This prevents overwhelming slow consumers.
+`MaxAckPending` controls how many messages can be delivered to a consumer without being acknowledged. When this limit is reached, NATS stops delivering new messages to that consumer until some messages are acknowledged. This prevents overwhelming slow consumers.
 
 ### MaxDeliver
 
-In reliable mode, `MaxDeliver` controls how many times NATS will attempt to deliver a pending message. The default is `0` (unlimited), which is appropriate for agent work queues where saturation is a transient backpressure signal rather than a permanent failure. If you set a finite value, ensure it is large enough to outlast the longest expected queue saturation period; otherwise messages may be silently dropped when the work pool is temporarily full.
+`MaxDeliver` controls how many times NATS will attempt to deliver a pending message. The default is `0` (unlimited), which is appropriate for agent work queues where saturation is a transient backpressure signal rather than a permanent failure. If you set a finite value, ensure it is large enough to outlast the longest expected queue saturation period; otherwise messages may be silently dropped when the work pool is temporarily full.
 
----
+----
 
 ## Agent Configuration
 

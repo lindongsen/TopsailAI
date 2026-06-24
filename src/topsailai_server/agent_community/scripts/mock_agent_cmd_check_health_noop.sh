@@ -1,4 +1,2 @@
-#!/bin/bash
-# Always report healthy for mock agent tests
-echo "healthy"
+#!/usr/bin/env bash
 exit 0

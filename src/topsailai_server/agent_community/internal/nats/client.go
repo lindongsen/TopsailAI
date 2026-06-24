@@ -165,65 +165,52 @@ func (c *Client) createStreams() error {
 }
 
 // CreatePendingMessageConsumer creates a durable consumer for pending messages.
+// The consumer always uses explicit ack, regardless of ACS_NATS_PENDING_MESSAGE_NO_ACK.
+// That variable only controls whether the publisher waits for the JetStream publish ack.
 func (c *Client) CreatePendingMessageConsumer(handler nats.MsgHandler) (*nats.Subscription, error) {
 	if c.js == nil {
 		return nil, fmt.Errorf("failed to create pending message consumer: jetstream context not initialized")
 	}
 
 	consumerName := "pending-message-consumer"
-	var requestedAckWait time.Duration
 
-	if !c.cfg.PendingMessageNoAck {
-		ackWaitSeconds := c.cfg.AckWaitSeconds
-		if ackWaitSeconds <= 0 {
-			ackWaitSeconds = 3600 // default 1 hour
+	ackWaitSeconds := c.cfg.AckWaitSeconds
+	if ackWaitSeconds <= 0 {
+		ackWaitSeconds = 3600 // default 1 hour
+	}
+	requestedAckWait := time.Duration(ackWaitSeconds) * time.Second
+
+	// Check if consumer already exists and whether its configuration is compatible.
+	info, err := c.js.ConsumerInfo(pendingMessagesStream, consumerName)
+	if err != nil {
+		if err != nats.ErrConsumerNotFound {
+			logger.Warn("failed to check existing consumer info", "error", err)
 		}
-		requestedAckWait = time.Duration(ackWaitSeconds) * time.Second
-
-		// Check if consumer already exists with different AckWait
-		info, err := c.js.ConsumerInfo(pendingMessagesStream, consumerName)
-		if err != nil {
-			// Consumer does not exist, proceed with creation
-			if err != nats.ErrConsumerNotFound {
-				// Log unexpected error but continue
-				logger.Warn("failed to check existing consumer info", "error", err)
-			}
-		} else {
-			// Consumer exists, compare AckWait
-			existingAckWait := info.Config.AckWait
-			if existingAckWait != requestedAckWait {
-				return nil, fmt.Errorf(
-					"NATS consumer \"%s\" already exists with different AckWait configuration.\n"+
+	} else {
+		// AckWait cannot be changed in place.
+		if info.Config.AckWait != requestedAckWait {
+			return nil, fmt.Errorf(
+				"NATS consumer \"%s\" already exists with different AckWait configuration.\n"+
 					"  Existing AckWait: %s\n"+
 					"  Requested AckWait: %s\n\n"+
 					"To fix this, delete the existing consumer and restart the service:\n"+
 					"  nats consumer rm %s %s -f\n\n"+
 					"Note: Unacknowledged messages will be redelivered after the consumer is recreated.",
-					consumerName, existingAckWait.String(), requestedAckWait.String(),
-					pendingMessagesStream, consumerName,
-				)
-			}
+				consumerName, info.Config.AckWait.String(), requestedAckWait.String(),
+				pendingMessagesStream, consumerName,
+			)
 		}
 	}
 
-	var subOpts []nats.SubOpt
-
-	subOpts = append(subOpts,
+	subOpts := []nats.SubOpt{
 		nats.Durable(consumerName),
 		nats.MaxDeliver(c.cfg.MaxDeliver),
-	)
-
-	if c.cfg.PendingMessageNoAck {
-		// Fire-and-forget mode: no ack required from consumer
-		subOpts = append(subOpts, nats.AckNone())
-		logger.Info("nats consumer created with no-ack mode (fire-and-forget)")
-	} else {
-		// Reliable mode: manual ack with configurable ack wait
-		subOpts = append(subOpts, nats.ManualAck())
-		subOpts = append(subOpts, nats.AckWait(requestedAckWait))
-		subOpts = append(subOpts, nats.MaxAckPending(c.cfg.MaxAckPending))
-		logger.Info("nats consumer created with manual-ack mode", "ack_wait", requestedAckWait.String())
+		nats.ManualAck(),
+		nats.AckWait(requestedAckWait),
+		nats.MaxAckPending(c.cfg.MaxAckPending),
 	}
+
+	logger.Info("nats consumer created with manual-ack mode", "ack_wait", requestedAckWait.String())
 
 	sub, err := c.js.QueueSubscribe(
 		pendingMessageSubjectPrefix+">",

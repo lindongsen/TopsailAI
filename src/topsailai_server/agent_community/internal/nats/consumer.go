@@ -79,7 +79,6 @@ type Consumer struct {
 	contextBuilder *message.ContextBuilder
 	maxChainLength int
 	cfg            *config.Config
-	noAck          bool
 }
 
 // NewConsumer creates a new NATS consumer.
@@ -91,10 +90,6 @@ func NewConsumer(
 	pool *workpool.Pool,
 	cfg *config.Config,
 ) *Consumer {
-	noAck := false
-	if cfg != nil {
-		noAck = cfg.NATS.PendingMessageNoAck
-	}
 	return &Consumer{
 		db:             db,
 		publisher:      publisher,
@@ -104,7 +99,6 @@ func NewConsumer(
 		contextBuilder: message.NewContextBuilder(),
 		maxChainLength: 5,
 		cfg:            cfg,
-		noAck:          noAck,
 	}
 }
 
@@ -127,30 +121,10 @@ func (c *Consumer) Handler() nats.MsgHandler {
 			messageID = "unknown"
 		}
 
-		if c.noAck {
-			// Fire-and-forget mode: process message without ack/nak and without InProgress heartbeat
-			logger.DebugM(consumerModule, traceID, "processing pending message (no-ack mode)", "message_id", messageID)
-
-			// Recover from panic to ensure graceful handling
-			defer func() {
-				if r := recover(); r != nil {
-					logger.ErrorM(consumerModule, traceID, "panic recovered in no-ack message handler", "panic", r)
-				}
-			}()
-
-			if err := c.processMessage(msg, traceID); err != nil {
-				logger.ErrorM(consumerModule, traceID, "failed to process pending message (no-ack mode)",
-					"error", err,
-					"message_id", messageID,
-				)
-				return
-			}
-			logger.DebugM(consumerModule, traceID, "pending message processed (no-ack mode)", "message_id", messageID)
-			return
-		}
-
-		// Reliable mode: ManualAck + InProgress heartbeat
-		// Start a goroutine to periodically send InProgress to reset AckWait timer
+		// Reliable mode: ManualAck + InProgress heartbeat. The consumer always
+		// uses explicit acknowledgement regardless of ACS_NATS_PENDING_MESSAGE_NO_ACK;
+		// that variable only controls publisher-side publish-ack behaviour.
+		// Start a goroutine to periodically send InProgress to reset AckWait timer.
 		stopInProgress := make(chan struct{})
 		logger.DebugM(consumerModule, traceID, "starting InProgress heartbeat for message", "message_id", messageID)
 
@@ -378,21 +352,50 @@ func isDuplicateKeyError(err error) bool {
 		strings.Contains(msg, "duplicate entry") // MySQL
 }
 
-// checkAndCreateRunningRecord atomically creates a running record for the
-// given message-agent pair. The unique index on
-// (group_id, message_id, agent_id) guarantees that only one record can exist,
-// so a plain INSERT is sufficient to detect duplicates across concurrent
-// consumers.
+// checkAndCreateRunningRecord atomically claims a running record for the
+// given message-agent pair. The auto-trigger task pre-inserts a pending
+// reservation, so the consumer first tries to upgrade that pending record to
+// running. If no pending record exists, it falls back to inserting a new
+// running record. The unique index on (group_id, message_id, agent_id)
+// guarantees that only one record can exist, so a plain INSERT is sufficient
+// to detect duplicates across concurrent consumers.
 //
-// Returns (true, nil) if the record was created successfully (agent was not running).
-// Returns (false, nil) if the agent is already processing this message (duplicate detected).
+// Returns (true, nil) if the record was claimed/created successfully.
+// Returns (false, nil) if the agent is already processing this message.
 // Returns (false, err) on database error.
 func (c *Consumer) checkAndCreateRunningRecord(groupID, messageID, agentID, traceID string) (bool, error) {
+	nowMs := time.Now().UnixMilli()
+
+	// First, try to upgrade an existing pending reservation created by the
+	// auto-trigger task. Only update if it is still pending so we do not
+	// overwrite another running consumer.
+	res := c.db.Model(&models.AgentMessageProcessing{}).
+		Where("group_id = ? AND message_id = ? AND agent_id = ? AND status = ?",
+			groupID, messageID, agentID, models.ProcessingStatusPending).
+		Updates(map[string]interface{}{
+			"status":       models.ProcessingStatusRunning,
+			"update_at_ms": nowMs,
+		})
+	if res.Error != nil {
+		return false, fmt.Errorf("failed to claim pending record: %w", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		logger.InfoM(consumerModule, traceID, "pending record claimed as running",
+			"group_id", groupID,
+			"message_id", messageID,
+			"agent_id", agentID,
+		)
+		return true, nil
+	}
+
+	// No pending record to claim; insert a new running record.
 	record := &models.AgentMessageProcessing{
-		GroupID:   groupID,
-		MessageID: messageID,
-		AgentID:   agentID,
-		Status:    models.ProcessingStatusRunning,
+		GroupID:    groupID,
+		MessageID:  messageID,
+		AgentID:    agentID,
+		Status:     models.ProcessingStatusRunning,
+		CreateAtMs: nowMs,
+		UpdateAtMs: nowMs,
 	}
 
 	if err := c.db.Create(record).Error; err != nil {
@@ -431,11 +434,24 @@ func (c *Consumer) processAgentTarget(
 	traceID string,
 ) error {
 	if c.pool != nil {
-		// Use a non-blocking try-acquire so that when the pool is saturated the
-		// message is negatively acknowledged immediately and JetStream can redeliver
-		// it once a slot is free. A blocking acquire with a fixed timeout races
-		// against long-running agent chat commands and produces spurious timeouts.
-		if err := c.pool.TryAcquire(pendingMsg.SenderID, group.GroupID, traceID); err != nil {
+		// Honor ACS_AGENT_WORK_POOL_ACQUIRE_TIMEOUT. A positive timeout lets
+		// the consumer wait briefly for a slot instead of rejecting the
+		// message immediately, which is useful when a burst of agents is
+		// triggered for the same pending message. A zero or negative timeout
+		// preserves the original non-blocking behavior so JetStream can
+		// redeliver the message once a slot is free.
+		acquireTimeout := time.Duration(0)
+		if c.cfg != nil {
+			acquireTimeout = c.cfg.AgentWorkPool.AcquireTimeout
+		}
+
+		var err error
+		if acquireTimeout > 0 {
+			err = c.pool.AcquireWithTimeout(acquireTimeout, pendingMsg.SenderID, group.GroupID, traceID)
+		} else {
+			err = c.pool.TryAcquire(pendingMsg.SenderID, group.GroupID, traceID)
+		}
+		if err != nil {
 			if errors.Is(err, workpool.ErrPoolLimitReached) {
 				return err
 			}
@@ -443,7 +459,6 @@ func (c *Consumer) processAgentTarget(
 		}
 		defer c.pool.Release(pendingMsg.SenderID, group.GroupID, traceID)
 	}
-
 	// Find target agent member. Make a local value copy so each goroutine owns
 	// its own member struct; this avoids data races on the shared members slice
 	// backing array when multiple targets run concurrently.

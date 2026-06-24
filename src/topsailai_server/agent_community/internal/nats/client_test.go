@@ -17,9 +17,9 @@ func startEmbeddedNATSServer(t *testing.T) *server.Server {
 	t.Helper()
 
 	opts := &server.Options{
-		Port: -1, // Random port
+		Port:      -1, // Random port
 		JetStream: true,
-		StoreDir: t.TempDir(),
+		StoreDir:  t.TempDir(),
 	}
 
 	s, err := server.NewServer(opts)
@@ -41,9 +41,9 @@ func startEmbeddedNATSServer(t *testing.T) *server.Server {
 func getTestConfig(t *testing.T, srv *server.Server) *config.NATSConfig {
 	t.Helper()
 	return &config.NATSConfig{
-		Servers:                           srv.ClientURL(),
-		StreamGroup:                       "acs_test",
-		SubjectGroupPendingMessagePrefix:  "acs.group.pending-message",
+		Servers:                          srv.ClientURL(),
+		StreamGroup:                      "acs_test",
+		SubjectGroupPendingMessagePrefix: "acs.group.pending-message",
 		SubjectGroupMessagePrefix:        "acs.group.message",
 		PendingMessageNoAck:              false,
 		AckWaitSeconds:                   3600,
@@ -205,28 +205,6 @@ func TestClient_CreatePendingMessageConsumer(t *testing.T) {
 
 		assert.NotNil(t, sub)
 	})
-
-	t.Run("fails to create consumer in no-ack mode on workqueue stream", func(t *testing.T) {
-		// Note: NATS workqueue streams require explicit ack.
-		// Creating a no-ack consumer on a workqueue stream will fail.
-		srv := startEmbeddedNATSServer(t)
-		cfg := getTestConfig(t, srv)
-		cfg.PendingMessageNoAck = true
-		client := NewClient(cfg)
-
-		err := client.Connect()
-		require.NoError(t, err)
-		defer client.Close()
-
-		handler := func(msg *nats.Msg) {
-			// No-op handler
-		}
-
-		_, err = client.CreatePendingMessageConsumer(handler)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "workqueue stream requires explicit ack")
-	})
-
 	t.Run("fails when not connected", func(t *testing.T) {
 		cfg := &config.NATSConfig{}
 		client := NewClient(cfg)
@@ -239,7 +217,6 @@ func TestClient_CreatePendingMessageConsumer(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "jetstream context not initialized")
 	})
-
 	t.Run("reuses existing consumer with same ack wait", func(t *testing.T) {
 		srv := startEmbeddedNATSServer(t)
 		cfg := getTestConfig(t, srv)
@@ -346,4 +323,3 @@ func TestClient_Close(t *testing.T) {
 		client.Close()
 	})
 }
-

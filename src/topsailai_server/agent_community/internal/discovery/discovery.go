@@ -4,17 +4,27 @@
 // Each service instance registers itself to a NATS KV bucket with a unique ID.
 // Other instances can discover all registered services and determine whether
 // the local instance is the Service-Leader (smallest ID wins).
+//
+// IMPORTANT: All ACS instances that should form a cluster MUST share the same
+// NATS JetStream domain and the same ACS_DISCOVERY_BUCKET_NAME. A restarted
+// node rejoins by writing to the same bucket with a deterministic service ID
+// derived from its service name and listen address, which overwrites any stale
+// registration left behind by the previous process.
 package discovery
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	natsgo "github.com/nats-io/nats.go"
+	"github.com/topsailai/agent-community/pkg/logger"
 )
 
 // ServiceInfo represents the registration information of a single ACS instance.
@@ -45,10 +55,24 @@ type Discovery struct {
 	self   ServiceInfo
 	kv     natsgo.KeyValue
 
-	mu        sync.RWMutex
-	stopCh    chan struct{}
-	wg        sync.WaitGroup
-	started   bool
+	mu      sync.RWMutex
+	stopCh  chan struct{}
+	wg      sync.WaitGroup
+	started bool
+}
+
+// serviceID returns a deterministic identifier for a service instance.
+// It is derived from the service name and listen address so that a restarted
+// node on the same address reuses the same registration key, overwriting any
+// stale entry left by the previous process.
+func serviceID(serviceName, address string, port int) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(serviceName))
+	_, _ = h.Write([]byte("|"))
+	_, _ = h.Write([]byte(address))
+	_, _ = h.Write([]byte(":"))
+	_, _ = h.Write([]byte(strconv.Itoa(port)))
+	return hex.EncodeToString(h.Sum(nil))[:32]
 }
 
 // New creates a new Discovery instance.
@@ -62,7 +86,7 @@ func New(js natsgo.JetStreamContext, config Config) (*Discovery, error) {
 		js:     js,
 		config: config,
 		self: ServiceInfo{
-			ID:          uuid.New().String(),
+			ID:          serviceID(config.ServiceName, config.Address, config.Port),
 			Name:        config.ServiceName,
 			Address:     config.Address,
 			Port:        config.Port,
@@ -74,11 +98,11 @@ func New(js natsgo.JetStreamContext, config Config) (*Discovery, error) {
 
 	// Create or open the KV bucket.
 	kv, err := js.CreateKeyValue(&natsgo.KeyValueConfig{
-		Bucket:      config.BucketName,
-		Description: "ACS service discovery registry",
-		TTL:         config.TTL,
+		Bucket:       config.BucketName,
+		Description:  "ACS service discovery registry",
+		TTL:          config.TTL,
 		MaxValueSize: 8192,
-		History:     1,
+		History:      1,
 	})
 	if err != nil {
 		// Bucket may already exist.
@@ -88,6 +112,12 @@ func New(js natsgo.JetStreamContext, config Config) (*Discovery, error) {
 		}
 	}
 	d.kv = kv
+
+	logger.InfoM("discovery", "", "discovery initialized",
+		slog.String("bucket", config.BucketName),
+		slog.String("service_id", d.self.ID),
+		slog.String("address", fmt.Sprintf("%s:%d", config.Address, config.Port)),
+	)
 
 	return d, nil
 }
@@ -108,6 +138,12 @@ func (d *Discovery) Register() error {
 	d.started = true
 	d.wg.Add(1)
 	go d.heartbeatLoop()
+
+	logger.InfoM("discovery", "", "service registered",
+		slog.String("bucket", d.config.BucketName),
+		slog.String("service_id", d.self.ID),
+		slog.String("address", fmt.Sprintf("%s:%d", d.config.Address, d.config.Port)),
+	)
 
 	return nil
 }
@@ -130,6 +166,11 @@ func (d *Discovery) Deregister() error {
 			return fmt.Errorf("failed to delete service registration: %w", err)
 		}
 	}
+
+	logger.InfoM("discovery", "", "service deregistered",
+		slog.String("bucket", d.config.BucketName),
+		slog.String("service_id", d.self.ID),
+	)
 
 	return nil
 }
@@ -260,8 +301,15 @@ func (d *Discovery) heartbeatLoop() {
 		case <-ticker.C:
 			if err := d.upsertSelf(); err != nil {
 				// Log error but keep trying; NATS may be temporarily unavailable.
+				logger.WarnM("discovery", "", "heartbeat upsert failed",
+					slog.String("service_id", d.self.ID),
+					slog.String("error", err.Error()),
+				)
 				continue
 			}
+			logger.DebugM("discovery", "", "heartbeat upsert succeeded",
+				slog.String("service_id", d.self.ID),
+			)
 		case <-d.stopCh:
 			return
 		}

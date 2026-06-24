@@ -22,7 +22,7 @@ ACS_LOGIN_SESSION_KEY -> Header: x-session-key
 
 ## Script: call_agent
 
-有一个专门用于调用agent的脚本，参数 `-m, --message` 用于传递 message_text。
+有一个专门用于调用agent的脚本，参数 `-m, --message` 用于传递 message_text，不传参数的情况下可以使用环境变量`ACS_AGENT_SUB_TASK`传递 message_text。
 
 工作逻辑是：
 

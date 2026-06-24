@@ -15,6 +15,11 @@ WorkFlow: Make Test-Plans(CAN BE Multiple Files) according to docs (NO NEED READ
   - mock_agent的答复时间测试，设定不同的sleep时间的测试场景
   - mentions中只有多个 worker-agents，没有manager-agent, 能够并发执行的测试场景
 
+## Mock Requirement
+
+- 尽量让Mock脚本具有通用性，让1个mock脚本可以满足多种测试场景需要
+- 不同的测试场景可以对应不同的mock脚本
+
 ---
 
 ## Manual-Test

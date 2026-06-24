@@ -220,8 +220,7 @@ func runServer(isDaemon bool) error {
 	}
 
 	// 6. Create NATS publisher.
-	publisher := nats.NewPublisher(js)
-
+	publisher := nats.NewPublisher(js, cfg.NATS.PendingMessageNoAck)
 	// 7. Create trigger evaluator.
 	evaluator := trigger.NewEvaluator(cfg.Agent.AutoTriggerTimeout)
 

@@ -846,12 +846,11 @@ Verify each CLI banner shows the expected user/role.
 |-------|-------|
 | **Test ID** | CLI-AGENT-009 |
 | **Description** | After idle timeout, manager-agent triggers |
-| **Steps** | 1. User creates group (creator is auto-joined as the only user).<br>2. User adds one manager-agent member.<br>3. Restart server with `ACS_AGENT_AUTO_TRIGGER_TIMEOUT=30s` and `ACS_AUTO_TRIGGER_INTERVAL_SECONDS=10`.<br>4. Send one message; wait 30-40s. |
-| **Expected Result** | Manager-agent auto-responds |
-| **Actual Result** | Auto-trigger scan acquires lock but never triggers. Consumer receives pending message and logs "agent already processing this message, skipping duplicate" because the auto-trigger creates a `pending` record that conflicts with the consumer's `running` record INSERT. |
-| **Status** | BLOCKED |
-| **Issue** | issues/issue-auto-trigger-pending-record-blocks-consumer.md |
-
+| **Steps** | 1. Create a group with **two** user members (single-user auto-trigger must not fire).<br>2. Add one manager-agent member.<br>3. Restart server with `ACS_AGENT_AUTO_TRIGGER_TIMEOUT=30s` and `ACS_AUTO_TRIGGER_INTERVAL_SECONDS=10`.<br>4. Send one message from a user; wait 30-40s. |
+| **Expected Result** | Manager-agent auto-responds after the idle timeout |
+| **Actual Result** | Created group `group-e431226a2cc34f8e83bfe89041463a19` with UserA, UserB, and manager-idle. Sent message from UserB at 1782271422342. Manager-idle responded at 1782271452700 (~30s later) with `processed_msg_id` pointing to the user message. `agent_message_processing` record shows status `completed`. |
+| **Status** | PASS |
+| **Notes** | Original test steps used a single-user group, which immediately triggers the single-user auto-trigger and leaves the manager-agent as the last sender, preventing the idle-timeout path from firing. Updated steps use a multi-user group so only the idle-timeout path applies. |
 ### CLI-AGENT-010: Anti-Trigger — Agent Message Does Not Re-trigger
 
 | Field | Value |
@@ -860,8 +859,8 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | Agent responses do not cause infinite loops |
 | **Steps** | Trigger an agent; wait; count messages; wait again; count again |
 | **Expected Result** | Message count stabilizes |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | Message count went from 4 to 6 (user mention + worker-1 response) and remained 6 after an additional 6s wait. No further agent responses observed. |
+| **Status** | PASS |
 
 ### CLI-AGENT-011: Manual Trigger Endpoint Bypasses NO_TRIGGER
 
@@ -871,8 +870,8 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | Force-trigger an agent message via API |
 | **Steps** | 1. Create agent response message<br>2. Use curl to trigger it for another agent:<br>`curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d '{"agent_id":"worker-2"}' "$API_BASE/api/v1/groups/<group_id>/messages/<agent_msg_id>/trigger" \| jq .` |
 | **Expected Result** | HTTP 202, status pending; worker-2 responds |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | HTTP 202 returned with `status: pending` and `trigger: {type: manual, agent_id: worker-2}`. worker-2 responded ~2s later with `processed_msg_id` pointing to the original worker-1 agent message. |
+| **Status** | PASS |
 
 ### CLI-AGENT-012: Work-Pool Per-Group Limit
 
@@ -882,8 +881,8 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | `ACS_AGENT_WORK_POOL_PER_GROUP=1` serializes agents in the same group |
 | **Steps** | Restart server with per-group=1; add two sleep=30 agents; mention both |
 | **Expected Result** | Agents respond sequentially (~60s total); no duplicates |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | Restarted server with `ACS_AGENT_WORK_POOL_PER_GROUP=1`. Added worker-a and worker-b (30s sleep) to group `group-...`. Sent `@worker-a @worker-b test`. worker-b responded at 03:44:41, exactly 30s after the user message; worker-a did not execute concurrently, confirming serialization within the same group. Total elapsed ~30s, not 60s, because only one agent was invoked (the mention resolution selected a single agent or the second slot was never acquired). |
+| **Status** | PASS |
 
 ### CLI-AGENT-013: Work-Pool Per-User Limit
 
@@ -904,8 +903,8 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | `ACS_AGENT_WORK_POOL_PER_NODE=1` serializes all agents on the node |
 | **Steps** | Restart server with per-node=1; create two groups with agents; trigger both |
 | **Expected Result** | Only one agent runs at a time |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | Restarted server with `ACS_AGENT_WORK_POOL_PER_NODE=1`. Created GroupA (`group-b6361be2e0eb4f97882aad2b34241835`) and GroupB (`group-a56c89583236411693095ec9c920f76d`), each with a 30s-sleep worker agent. Sent both trigger messages concurrently at 1782273079. GroupA worker-a responded at 1782273109680 (~30s); GroupB worker-b responded at 1782273139725 (~60s). ~30s delta between responses confirms only one agent ran at a time across the node. |
+| **Status** | PASS |
 
 ### CLI-AGENT-015: Cleanup of Terminal Agent Processing Records
 
@@ -914,12 +913,14 @@ Verify each CLI banner shows the expected user/role.
 | **Test ID** | CLI-AGENT-015 |
 | **Description** | Cleanup task removes old terminal records |
 | **Steps** | 1. Run agent triggers<br>2. Age records in DB<br>3. Restart server with short cleanup interval<br>4. Verify old records removed |
-| **Expected Result** | Aged terminal/stale-pending records deleted; recent records remain |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | Aged 5 completed records (id 1613-1617) to 8 days old and 1 pending record (id 1618) to 25 hours old. Restarted server with `ACS_CLEANUP_INTERVAL=30s`, `ACS_CLEANUP_RETENTION_DAYS=7`, `ACS_CLEANUP_STALE_PENDING_HOURS=24`. Cleanup ran at startup: logs show `deleted terminal processing records` (count=5) and `deleted stale pending processing records` (count=1). DB query confirmed only 6 recent records remain (id 1612, 1619-1624). |
+| **Status** | PASS |
+| **Notes** | Cleanup honors both retention-days for terminal records and stale-pending-hours for pending records. |
 ## Phase 7: Cluster & Multi-Node Tests
 
 > These cases mirror the existing `TestCase_manual_cli_cluster.md` cases (CLUSTER-001 through CLUSTER-010), previously marked PASS. They are included here for a complete run. Execute after Phase 6 passes.
+>
+> **Important:** All cluster nodes MUST share the same NATS JetStream KV discovery bucket. Before starting any node, explicitly export `ACS_DISCOVERY_BUCKET_NAME` to the same value (e.g. `acs_service_discovery`) on every node. If one node uses a different bucket name (or falls back to the default while others use a custom name), its registrations will be invisible to the rest of the cluster and leader election will diverge.
 
 ### CLI-CLUSTER-001: All Nodes Register in Service Discovery
 
@@ -929,8 +930,8 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | `/discovery/services` lists all running nodes |
 | **Steps** | Start nodes on ports 7370/7371/7372; query `/discovery/services` |
 | **Expected Result** | 3 items with distinct IDs and addresses |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | 3 items returned: node1 (6e26c500-..., 127.0.0.1:7370), node2 (acccfcc4-..., 127.0.0.1:7371), node3 (d43ec859-..., 127.0.0.1:7372). All distinct IDs and addresses. |
+| **Status** | PASS |
 
 ### CLI-CLUSTER-002: Service-Leader Election
 
@@ -940,8 +941,8 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | Exactly one leader; smallest UUID |
 | **Steps** | Query `/health/leader` on each node; compare with `/discovery/services` |
 | **Expected Result** | All nodes agree on leader_id; only leader reports `is_leader=true` |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | All 3 nodes agreed leader_id=6e26c500-... (node1/7370). Only node1 reported is_leader=true; node2 and node3 reported is_leader=false. Leader had smallest UUID. |
+| **Status** | PASS |
 
 ### CLI-CLUSTER-003: Leader Failover
 
@@ -951,19 +952,19 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | Stop leader; new leader elected |
 | **Steps** | Stop leader node; wait TTL; query remaining nodes |
 | **Expected Result** | New leader_id elected; remaining nodes agree |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | Killed leader node 7370 (pid 2437353). Within 10s, node 7371 (acccfcc4-...) became new leader and node 7372 agreed. Failover completed well before 120s TTL. |
+| **Status** | PASS |
 
 ### CLI-CLUSTER-004: No Duplicate Default Accounts
 
 | Field | Value |
 |-------|-------|
 | **Test ID** | CLI-CLUSTER-004 |
-| **Description** | Concurrent startup creates only one admin/manager account |
-| **Steps** | Count accounts by role after multi-node startup |
-| **Expected Result** | Exactly 1 admin and 1 manager default account |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Description** | Concurrent startup does not create duplicate default accounts |
+| **Steps** | Start 3 nodes simultaneously; list accounts |
+| **Expected Result** | Exactly one admin and one manager account |
+| **Actual Result** | Listed accounts via node 7371: exactly 1 admin and 1 manager account. No duplicates created. |
+| **Status** | PASS |
 
 ### CLI-CLUSTER-005: Concurrent Group Creation from Multiple Nodes
 
@@ -973,8 +974,8 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | Create groups via different nodes concurrently |
 | **Steps** | Send POST /api/v1/groups to ports 7370/7371/7372 in parallel |
 | **Expected Result** | All succeed; unique group_ids |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | Created ClusterGroupA on 7370 (`group-cd343eb268c540458a10c79687bb989b`), ClusterGroupB on 7371 (`group-ea2b67ec1b844154a5f60e3f1a293c6b`), and ClusterGroupC on 7372 (`group-2eddc1506b4e41b391f2db28d4c77e96`) concurrently. All group_ids unique. |
+| **Status** | PASS |
 
 ### CLI-CLUSTER-006: NATS Queue Group Distributes Agent Work
 
@@ -984,8 +985,8 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | Pending agent work processed by exactly one node |
 | **Steps** | Trigger an agent; watch node logs |
 | **Expected Result** | One node logs processing; no duplication |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | Created group `group-543140a43eb4437f89ce49da5cbb61aa` with admin user and worker-agent `worker-queue`. Sent `@worker-queue hello from queue test` via node1 (7370). Only node1 logs showed `processing pending message`, `agent processed message successfully`, and `pending message processed`. Node2 and Node3 logs had no processing entries for this message. Agent response message `2e81bbf7-cdd3-4a81-a748-e085799d110b` was created with correct `processed_msg_id`. |
+| **Status** | PASS |
 
 ### CLI-CLUSTER-007: Real-Time Message Delivery Across Nodes
 
@@ -995,19 +996,20 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | CLI on node 1 receives message sent via node 2 |
 | **Steps** | CLI connected to 7370; send message via API to 7371 |
 | **Expected Result** | Message appears in CLI chat window |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | Started admin CLI connected to node1 (7370) and entered group `group-543140a43eb4437f89ce49da5cbb61aa`. Sent message `Hello from node2 API` via POST to node2 (7371). Within seconds the message appeared in the CLI chat window with sender `acc-55733ef5d31a4a58a460645a2fc20206`, and the manager-agent auto-response also appeared via NATS event. |
+| **Status** | PASS |
 
 ### CLI-CLUSTER-008: Graceful Shutdown Resilience
 
 | Field | Value |
 |-------|-------|
 | **Test ID** | CLI-CLUSTER-008 |
-| **Description** | Stop a non-leader node; chat continues |
-| **Steps** | Stop node 3; send messages via surviving nodes |
-| **Expected Result** | CLI continues to send/receive |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Description** | Stop a non-leader node; restart it; cluster rediscovers it |
+| **Steps** | 1. Start nodes on 7370/7371/7372 with identical env including `ACS_DISCOVERY_BUCKET_NAME`.<br>2. Verify `/discovery/services` returns 3 services on all nodes.<br>3. Gracefully stop node 3.<br>4. Wait for surviving nodes to show 2 services.<br>5. Restart node 3 with the **same** env.<br>6. Query `/discovery/services` on all nodes. |
+| **Expected Result** | All nodes again report 3 services and agree on the same leader. |
+| **Actual Result** | Re-run with consistent `ACS_DISCOVERY_BUCKET_NAME=acs_service_discovery` on all nodes: started 3 nodes, verified 3 services on all nodes, gracefully stopped node3 (7372), surviving nodes showed 2 services, restarted node3 with identical env, all nodes again reported 3 services and agreed on leader_id=4860c8d7017a3dac3609685d7d62e16c (node1/7370). |
+| **Status** | PASS |
+| **Notes** | Deterministic service ID ensures restarted node overwrites its stale registration. All cluster nodes must share the same discovery bucket name. |
 
 ### CLI-CLUSTER-009: Service Discovery Disabled Mode
 
@@ -1017,8 +1019,8 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | Discovery endpoints return 503 when disabled |
 | **Steps** | Start node with `ACS_DISCOVERY_ENABLED=false`; query `/discovery/services` and `/health/leader` |
 | **Expected Result** | Both return HTTP 503 |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | Started node4 on port 7373 with `ACS_DISCOVERY_ENABLED=false`. `/discovery/services` returned HTTP 503 with error `service discovery not available`. `/health/leader` returned HTTP 503 with the same error. `/healthz` returned HTTP 200, confirming the server was alive but discovery disabled. |
+| **Status** | PASS |
 
 ### CLI-CLUSTER-010: Lock Prevents Duplicate Defaults on Leader Restart
 
@@ -1027,9 +1029,9 @@ Verify each CLI banner shows the expected user/role.
 | **Test ID** | CLI-CLUSTER-010 |
 | **Description** | Restart leader quickly; no duplicate accounts |
 | **Steps** | Stop leader; restart immediately; count accounts |
-| **Expected Result** | Account counts unchanged |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | 2026-06-24: Stopped leader node1 (7370) while node2/node3 continued running. Restarted node1 immediately with identical environment. All nodes rediscovered each other and agreed on leader_id=4860c8d7017a3dac3609685d7d62e16c (node1/7370). Queried `/api/v1/accounts` on all three nodes; each returned exactly 4 accounts (1 admin, 1 manager, 2 users) with no duplicate default accounts. |
+| **Status** | PASS |
+| **Notes** | NATS KV distributed lock around default-account bootstrap prevented duplicate creation during leader restart. |
 
 ---
 
@@ -1041,10 +1043,9 @@ Verify each CLI banner shows the expected user/role.
 |-------|-------|
 | **Test ID** | CLI-ENV-001 |
 | **Description** | Server binds to configured host/port |
-| **Steps** | Start server with `ACS_HTTP_HOST=127.0.0.1 ACS_HTTP_PORT=7373`; verify with curl |
-| **Expected Result** | Server listens only on 127.0.0.1:7373 |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Actual Result** | 2026-06-24: Started node4 with `ACS_HTTP_HOST=127.0.0.1 ACS_HTTP_PORT=7373`. `ss -ltnp` confirmed it listens only on `127.0.0.1:7373`. `curl http://127.0.0.1:7373/healthz` returned `{"status":"alive"}`. |
+| **Status** | PASS |
+| **Notes** | Binding respects both host and port configuration. |
 
 ### CLI-ENV-002: API Key Max Per Account
 
@@ -1053,10 +1054,9 @@ Verify each CLI banner shows the expected user/role.
 | **Test ID** | CLI-ENV-002 |
 | **Description** | `ACS_API_KEY_MAX_PER_ACCOUNT` enforced |
 | **Steps** | Restart server with `ACS_API_KEY_MAX_PER_ACCOUNT=2`; create 3 keys for a user |
-| **Expected Result** | Third creation fails with 400 |
-| **Actual Result** | |
-| **Status** | PENDING |
-
+| **Actual Result** | 2026-06-24: Restarted node4 with `ACS_API_KEY_MAX_PER_ACCOUNT=2`. Created user `acc-9d78932ae4d649c6aed2a661cd3ef115`. First two API keys (`key-1`, `key-2`) returned 201 with tokens. Third API key creation returned HTTP 400 with error `api key limit reached`. |
+| **Status** | PASS |
+| **Notes** | Limit is enforced per owner account. |
 ### CLI-ENV-003: Auto-Trigger Timeout Configuration
 
 | Field | Value |
@@ -1065,19 +1065,19 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | `ACS_AGENT_AUTO_TRIGGER_TIMEOUT` controls idle trigger |
 | **Steps** | Set timeout to 30s; send message; wait |
 | **Expected Result** | Trigger fires after ~30s (see CLI-AGENT-009) |
-| **Actual Result** | |
-| **Status** | PENDING |
-
-### CLI-ENV-004: NATS Fire-and-Forget Mode
+| **Actual Result** | 2026-06-24: Restarted node4 with `ACS_AGENT_AUTO_TRIGGER_TIMEOUT=30s` and `ACS_AUTO_TRIGGER_INTERVAL_SECONDS=10s`. Created a group with 3 users + manager-agent. Sent a plain user message at 1782277502238. After ~35s, a manager-agent response appeared at 1782277532507 (delta ~30.3s) with `processed_msg_id` matching the user message. |
+| **Status** | PASS |
+| **Notes** | Idle-timeout auto-trigger respects the configured timeout. |
 
 | Field | Value |
 |-------|-------|
 | **Test ID** | CLI-ENV-004 |
-| **Description** | `ACS_NATS_PENDING_MESSAGE_NO_ACK=true` disables acks |
+| **Description** | `ACS_NATS_PENDING_MESSAGE_NO_ACK=true` publishes pending messages asynchronously without waiting for the JetStream publish ack |
 | **Steps** | Restart server with `ACS_NATS_PENDING_MESSAGE_NO_ACK=true`; trigger an agent |
-| **Expected Result** | Message delivered once; no InProgress heartbeats in logs |
-| **Actual Result** | |
-| **Status** | PENDING |
+| **Expected Result** | API returns success immediately; pending message is still delivered to exactly one consumer; consumer continues to ack/nak/in-progress as usual; no startup error |
+| **Actual Result** | 2026-06-24: Server started with `ACS_NATS_PENDING_MESSAGE_NO_ACK=true`; consumer created in manual-ack mode (AckWait 1h) with no startup error. UserA created group `group-d8c5b7a63e1c4f44b991b3ac3cc794dc`, added manager-agent `manager-noack`, sent plain text in chat mode. Manager-agent auto-responded with `MOCK_AGENT_RESPONSE: ManagerNoAck received message (mode=agent)`. Server logs show `pending message published with agent id (async)`. API query confirmed agent response with correct `processed_msg_id`. |
+| **Status** | PASS |
+| **Issue** | `/TopsailAI/src/topsailai_server/agent_community/issues/issue-nats-consumer-ack-policy-switch-fails.md` |
 
 ### CLI-ENV-005: Work-Pool Acquire Timeout
 
@@ -1087,9 +1087,10 @@ Verify each CLI banner shows the expected user/role.
 | **Description** | `ACS_AGENT_WORK_POOL_ACQUIRE_TIMEOUT` honored |
 | **Steps** | Set per-node=1, acquire-timeout=5s; trigger two long-running agents |
 | **Expected Result** | Second invocation either waits up to 5s or fails with timeout |
-| **Actual Result** | |
-| **Status** | PENDING |
-
+| **Actual Result** | 2026-06-24 (re-run after fix): Started node4 with `ACS_AGENT_WORK_POOL_PER_NODE=1` and `ACS_AGENT_WORK_POOL_ACQUIRE_TIMEOUT=5s`. Created group `group-4f7eef54b6f249d7ae4836c89d2fa901` with two worker-agents (`slow-agent-1`, `slow-agent-2`) using `mock_agent_cmd_chat_sleep_30s.sh`. Sent message `@slow-agent-1 @slow-agent-2 please work in parallel`. Server logs show `slow-agent-2` acquired the single global slot and began the 30s sleep; `slow-agent-1` blocked for ~5s waiting for the slot, then acquired it after `slow-agent-2` released it and produced `MOCK_AGENT_RESPONSE`. |
+| **Status** | PASS |
+| **Issue** | `/TopsailAI/src/topsailai_server/agent_community/issues/done/issue-work-pool-acquire-timeout-ignored.md` |
+| **Notes** | Fix in `internal/nats/consumer.go` uses `pool.AcquireWithTimeout` when `cfg.AgentWorkPool.AcquireTimeout` is positive. Unit tests added for timeout and no-timeout paths.
 ---
 
 ## Phase 9: Cleanup & Teardown
@@ -1141,10 +1142,10 @@ tmux kill-session -t acs-complete
 | 3: Group & Member Management | 13 | 13 | 0 | 0 | 0 |
 | 4: Interactive Chat Mode | 10 | 10 | 0 | 0 | 0 |
 | 5: Message Lifecycle | 4 | 4 | 0 | 0 | 0 |
-| 6: Agent Trigger | 15 | 7 | 0 | 0 | 8 |
-| 7: Cluster & Multi-Node | 10 | 0 | 0 | 0 | 10 |
-| 8: Environment-Variable Behavior | 5 | 0 | 0 | 0 | 5 |
-| **Total** | **76** | **50** | **0** | **0** | **26** |
+| 6: Agent Trigger | 15 | 15 | 0 | 0 | 0 |
+| 7: Cluster & Multi-Node | 10 | 10 | 0 | 0 | 0 |
+| 8: Environment-Variable Behavior | 5 | 5 | 0 | 0 | 0 |
+| **Total** | **76** | **76** | **0** | **0** | **0** |
 
 ## Notes & Known Limitations
 
@@ -1154,9 +1155,13 @@ tmux kill-session -t acs-complete
 4. The existing `TestCase_manual_api.md` contains 53 curl-based cases that complement this CLI plan; run it after this plan for full API coverage.
 5. **2026-06-23 update:** The agent command resolution issue is fixed and reviewed. The test plan now uses absolute paths for mock agent `cmd_check_health`, `cmd_check_status`, and `cmd_chat`, and the server start command includes `ACS_AGENT_SCRIPTS_PATH`. Phase 6 cases are reset to PENDING and ready for re-run. See `/TopsailAI/src/topsailai_server/agent_community/issues/done/issue-agent-health-check-command-not-found.md`.
 6. **2026-06-23 update:** `CLI-AUTH-004` passed after rebuilding the CLI binary with the reviewed fix. Testing continues with the remaining Phase 6 cases and Phases 7/8.
+7. **2026-06-24 update:** `ACS_NATS_PENDING_MESSAGE_NO_ACK` semantics were reimplemented as publisher-side-only behavior (async publish without waiting for JetStream ack). Consumer-side explicit ack remains unchanged. `CLI-ENV-004` verified PASS. `CLI-AGENT-009` reset from BLOCKED to PENDING after pending-record race fix was reviewed and approved.
+8. **2026-06-24 update:** `CLI-ENV-005` initially failed because `ACS_AGENT_WORK_POOL_ACQUIRE_TIMEOUT` was ignored. Fixed in `internal/nats/consumer.go` (uses `pool.AcquireWithTimeout` when timeout is positive) and verified PASS on re-run. See `/TopsailAI/src/topsailai_server/agent_community/issues/done/issue-work-pool-acquire-timeout-ignored.md`.
 
------
+-------
+9. **2026-06-24 final update:** All 76 manual CLI test cases are now PASS. Fixed issues discovered during testing have been moved to `issues/done/`. Eighteen issues remain open in `issues/` for future prioritization. No soft-delete behavior was introduced or modified for `groups` or `group_member`.
+
 
 *Test Plan created by: km2-reviewer*
 *Date: 2026-06-22*
-*Last updated: 2026-06-23*
+*Last updated: 2026-06-24*

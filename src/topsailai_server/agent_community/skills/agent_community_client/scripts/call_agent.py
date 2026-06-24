@@ -8,19 +8,30 @@ Workflow:
 3. Poll for the agent's response message
 
 Environment Variables:
-    ACS_AGENT_ID        - member_id (required)
-    ACS_AGENT_NAME      - member_name (optional, defaults to ACS_AGENT_ID)
-    ACS_AGENT_TYPE      - member_type (optional, defaults to "worker-agent")
-    ACS_AGENT_TIMEOUT   - timeout in seconds (optional, defaults to 600)
-    ACS_GROUP_ID        - group_id (required)
-    ACS_MESSAGE_ID      - processed_msg_id for the new message (required)
-    ACS_SERVER_API_BASE - API base URL (optional, defaults to "http://localhost:7370")
-    ACS_LOG_LEVEL       - logging level (optional, defaults to "INFO")
-    ACS_POLL_INTERVAL   - polling interval in seconds (optional, defaults to 2)
+    ACS_AGENT_ID            - member_id (required)
+    ACS_AGENT_NAME          - member_name (optional, informational)
+    ACS_AGENT_TYPE          - member_type (optional, defaults to "worker-agent")
+    ACS_AGENT_TIMEOUT       - timeout in seconds (optional, defaults to 600)
+    ACS_AGENT_SUB_TASK      - message_text when -m/--message is not provided (optional)
+    ACS_GROUP_ID            - group_id (required)
+    ACS_MESSAGE_ID          - processed_msg_id for the new message (required)
+    ACS_SERVER_API_BASE     - API base URL (optional, defaults to "http://localhost:7370")
+    ACS_LOGIN_SESSION_KEY   - Session key for X-Session-Key auth (optional)
+    ACS_API_KEY             - API key token for Bearer auth (optional)
+    ACS_LOG_LEVEL           - logging level (optional, defaults to "INFO")
+    ACS_POLL_INTERVAL       - polling interval in seconds (optional, defaults to 2)
 
 CLI Arguments:
-    -m, --message       - Message text with exactly one @mention (required)
-    --json              - Output the full response message as JSON
+    -m, --message           - Message text with exactly one @mention (optional if
+                              ACS_AGENT_SUB_TASK is set)
+    --session-key           - Override X-Session-Key header
+    --api-key               - Override Authorization: Bearer token
+    --json                  - Output the full response message as JSON
+
+Authentication:
+    ACS protected endpoints require authentication. Provide either --session-key
+    (or ACS_LOGIN_SESSION_KEY) or --api-key (or ACS_API_KEY). If both are
+    provided, the session key takes priority.
 """
 
 from __future__ import annotations
@@ -36,6 +47,9 @@ from api_client import ACSAPIError, ACSClient, setup_logging
 
 logger = logging.getLogger(__name__)
 
+# Matches ACS member_id / member_name format: alphanumeric, hyphens, underscores.
+MENTION_RE = re.compile(r"@([A-Za-z0-9_-]+)")
+
 
 def get_env_var(name: str, default: str | None = None, required: bool = False) -> str | None:
     """Read an environment variable."""
@@ -46,14 +60,30 @@ def get_env_var(name: str, default: str | None = None, required: bool = False) -
     return value
 
 
-def validate_mentions(message_text: str) -> None:
+def extract_mention(message_text: str) -> str | None:
+    """
+    Extract the first @mention from message_text.
+
+    Returns:
+        The mentioned identifier (without the leading @), or None if no mention.
+    """
+    mentions = MENTION_RE.findall(message_text)
+    if not mentions:
+        return None
+    return mentions[0]
+
+
+def validate_mentions(message_text: str) -> str:
     """
     Validate that message_text contains exactly one @mention.
+
+    Returns:
+        The mentioned identifier (without the leading @).
 
     Raises:
         SystemExit: If the message does not contain exactly one @mention.
     """
-    mentions = re.findall(r"@\S+", message_text)
+    mentions = MENTION_RE.findall(message_text)
     if len(mentions) != 1:
         logger.error(
             "Message must contain exactly one @mention, found %d: %s",
@@ -61,6 +91,7 @@ def validate_mentions(message_text: str) -> None:
             mentions,
         )
         sys.exit(1)
+    return mentions[0]
 
 
 def main() -> int:
@@ -76,8 +107,19 @@ def main() -> int:
     parser.add_argument(
         "-m",
         "--message",
-        required=True,
-        help='Message text with exactly one @mention, e.g., "@agent-1 hello"',
+        default=None,
+        help='Message text with exactly one @mention, e.g., "@agent-1 hello". '
+             'If omitted, the value is read from the ACS_AGENT_SUB_TASK environment variable.',
+    )
+    parser.add_argument(
+        "--session-key",
+        default=os.environ.get("ACS_LOGIN_SESSION_KEY"),
+        help="Session key for X-Session-Key auth (default: ACS_LOGIN_SESSION_KEY env var)",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=os.environ.get("ACS_API_KEY"),
+        help="API key token for Authorization: Bearer auth (default: ACS_API_KEY env var)",
     )
     parser.add_argument(
         "--json",
@@ -86,8 +128,20 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # ------------------------------------------------------------------
+    # Resolve message_text: CLI argument takes priority, then env var
+    # ------------------------------------------------------------------
     message_text = args.message
-    validate_mentions(message_text)
+    if message_text is None:
+        message_text = os.environ.get("ACS_AGENT_SUB_TASK")
+    if not message_text:
+        logger.error(
+            "Message text is required. Provide -m/--message or set the ACS_AGENT_SUB_TASK "
+            "environment variable."
+        )
+        return 1
+
+    mentioned_agent = validate_mentions(message_text)
 
     # ------------------------------------------------------------------
     # Read environment variables
@@ -100,6 +154,13 @@ def main() -> int:
     message_id = get_env_var("ACS_MESSAGE_ID", required=True)
     api_base = get_env_var("ACS_SERVER_API_BASE", default="http://localhost:7370")
     poll_interval_str = get_env_var("ACS_POLL_INTERVAL", default="2")
+
+    if not args.session_key and not args.api_key:
+        logger.error(
+            "Authentication required. Provide --session-key (or ACS_LOGIN_SESSION_KEY) "
+            "or --api-key (or ACS_API_KEY)."
+        )
+        return 1
 
     try:
         timeout = int(timeout_str)
@@ -116,7 +177,46 @@ def main() -> int:
     # ------------------------------------------------------------------
     # Initialize client
     # ------------------------------------------------------------------
-    client = ACSClient(base_url=api_base)
+    client = ACSClient(
+        base_url=api_base,
+        api_key=args.api_key,
+        session_key=args.session_key,
+    )
+
+    # ------------------------------------------------------------------
+    # Validate that the mentioned agent exists in the group and is an agent
+    # ------------------------------------------------------------------
+    try:
+        members_result = client.list_members(group_id=group_id, limit=1000)
+        members = members_result.get("items", [])
+        mentioned_member = None
+        for member in members:
+            if member.get("member_id") == mentioned_agent:
+                mentioned_member = member
+                break
+
+        if mentioned_member is None:
+            logger.error(
+                "Mentioned agent '%s' is not a member of group '%s' (caller: '%s' (%s)).",
+                mentioned_agent,
+                group_id,
+                agent_name,
+                agent_id,
+            )
+            return 1
+
+        member_type = mentioned_member.get("member_type", "")
+        if not member_type.endswith("-agent"):
+            logger.error(
+                "Mentioned member '%s' (%s) is not an agent (member_type=%s).",
+                mentioned_agent,
+                mentioned_member.get("member_name", "<unknown>"),
+                member_type,
+            )
+            return 1
+    except ACSAPIError as exc:
+        logger.error("Failed to list group members: %s", exc)
+        return 1
 
     # ------------------------------------------------------------------
     # Step 1: Send a message mentioning the agent
@@ -138,7 +238,13 @@ def main() -> int:
         logger.error("Created message does not contain a message_id.")
         return 1
 
-    logger.info("Sent message %s mentioning %s", new_msg_id1, agent_id)
+    logger.info(
+        "Sent message %s as '%s' (%s) mentioning %s",
+        new_msg_id1,
+        agent_name,
+        agent_id,
+        mentioned_agent,
+    )
 
     # ------------------------------------------------------------------
     # Step 2: Trigger the agent manually
@@ -147,7 +253,7 @@ def main() -> int:
         trigger_result = client.trigger_message(
             group_id=group_id,
             message_id=new_msg_id1,
-            agent_id=agent_id,
+            agent_id=mentioned_agent,
         )
     except ACSAPIError as exc:
         logger.error("Failed to trigger agent: %s", exc)
@@ -155,9 +261,13 @@ def main() -> int:
 
     status = trigger_result.get("status")
     if status != "pending":
-        logger.warning("Unexpected trigger status: %s", status)
-    else:
-        logger.info("Triggered agent %s for message %s", agent_id, new_msg_id1)
+        logger.error(
+            "Trigger did not enter pending state (status=%s). Aborting.",
+            status,
+        )
+        return 1
+
+    logger.info("Triggered agent %s for message %s", mentioned_agent, new_msg_id1)
 
     # ------------------------------------------------------------------
     # Step 3: Poll for the agent's response

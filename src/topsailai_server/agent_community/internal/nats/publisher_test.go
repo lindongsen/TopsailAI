@@ -24,6 +24,30 @@ type publishCall struct {
 	subject string
 	data    []byte
 	opts    []nats.PubOpt
+	async   bool
+}
+
+// asyncAckFuture is a minimal PubAckFuture implementation for tests.
+type asyncAckFuture struct {
+	ack *nats.PubAck
+	err error
+	msg *nats.Msg
+}
+
+func (a *asyncAckFuture) Ok() <-chan *nats.PubAck {
+	ch := make(chan *nats.PubAck, 1)
+	ch <- a.ack
+	return ch
+}
+
+func (a *asyncAckFuture) Err() <-chan error {
+	ch := make(chan error, 1)
+	ch <- a.err
+	return ch
+}
+
+func (a *asyncAckFuture) Msg() *nats.Msg {
+	return a.msg
 }
 
 // fakeJetStream is a test double for nats.JetStreamContext.
@@ -32,6 +56,7 @@ type fakeJetStream struct {
 	calls        []publishCall
 	publishErr   error
 	publishAck   *nats.PubAck
+	asyncErr     error
 }
 
 func newFakeJetStream() *fakeJetStream {
@@ -41,7 +66,7 @@ func newFakeJetStream() *fakeJetStream {
 }
 
 func (f *fakeJetStream) Publish(subj string, data []byte, opts ...nats.PubOpt) (*nats.PubAck, error) {
-	f.calls = append(f.calls, publishCall{subject: subj, data: data, opts: opts})
+	f.calls = append(f.calls, publishCall{subject: subj, data: data, opts: opts, async: false})
 	if f.publishErr != nil {
 		return nil, f.publishErr
 	}
@@ -53,7 +78,11 @@ func (f *fakeJetStream) PublishMsg(m *nats.Msg, opts ...nats.PubOpt) (*nats.PubA
 }
 
 func (f *fakeJetStream) PublishAsync(subj string, data []byte, opts ...nats.PubOpt) (nats.PubAckFuture, error) {
-	panic("not implemented")
+	f.calls = append(f.calls, publishCall{subject: subj, data: data, opts: opts, async: true})
+	if f.asyncErr != nil {
+		return nil, f.asyncErr
+	}
+	return &asyncAckFuture{ack: f.publishAck, err: nil}, nil
 }
 
 func (f *fakeJetStream) PublishMsgAsync(m *nats.Msg, opts ...nats.PubOpt) (nats.PubAckFuture, error) {
@@ -255,7 +284,7 @@ func unmarshalGroupEvent(t *testing.T, data []byte) PendingPublishMessage {
 
 func TestPublisher_PublishPendingMessage(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	msg := sampleMessage("group-abc", "msg-1")
 	trigger := map[string]string{"type": "mention", "agent_id": "agent-1"}
@@ -280,7 +309,7 @@ func TestPublisher_PublishPendingMessage(t *testing.T) {
 
 func TestPublisher_PublishPendingMessage_MarshalError(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	msg := sampleMessage("group-abc", "msg-1")
 	msg.MessageText = "valid" // reset to valid
@@ -296,7 +325,7 @@ func TestPublisher_PublishPendingMessage_MarshalError(t *testing.T) {
 func TestPublisher_PublishPendingMessage_PublishError(t *testing.T) {
 	fake := newFakeJetStream()
 	fake.publishErr = errors.New("nats down")
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	msg := sampleMessage("group-abc", "msg-1")
 	err := pub.PublishPendingMessage("group-abc", msg, nil)
@@ -306,7 +335,7 @@ func TestPublisher_PublishPendingMessage_PublishError(t *testing.T) {
 
 func TestPublisher_PublishGroupEvent(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	msg := sampleMessage("group-abc", "msg-1")
 	err := pub.PublishGroupEvent("message", "create", "group-abc", msg)
@@ -329,7 +358,7 @@ func TestPublisher_PublishGroupEvent(t *testing.T) {
 
 func TestPublisher_PublishGroupEvent_MarshalError(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	err := pub.PublishGroupEvent("message", "create", "group-abc", map[string]interface{}{"ch": make(chan int)})
 	require.Error(t, err)
@@ -340,7 +369,7 @@ func TestPublisher_PublishGroupEvent_MarshalError(t *testing.T) {
 func TestPublisher_PublishGroupEvent_PublishError(t *testing.T) {
 	fake := newFakeJetStream()
 	fake.publishErr = errors.New("nats down")
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	err := pub.PublishGroupEvent("message", "create", "group-abc", map[string]string{"group_id": "group-abc"})
 	require.Error(t, err)
@@ -349,7 +378,7 @@ func TestPublisher_PublishGroupEvent_PublishError(t *testing.T) {
 
 func TestPublisher_PublishMessageCreate(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	msg := sampleMessage("group-abc", "msg-1")
 	err := pub.PublishMessageCreate(msg)
@@ -363,7 +392,7 @@ func TestPublisher_PublishMessageCreate(t *testing.T) {
 
 func TestPublisher_PublishMessageModify(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	msg := sampleMessage("group-abc", "msg-1")
 	err := pub.PublishMessageModify(msg)
@@ -376,7 +405,7 @@ func TestPublisher_PublishMessageModify(t *testing.T) {
 
 func TestPublisher_PublishMessageDelete(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	msg := sampleMessage("group-abc", "msg-1")
 	err := pub.PublishMessageDelete(msg)
@@ -389,7 +418,7 @@ func TestPublisher_PublishMessageDelete(t *testing.T) {
 
 func TestPublisher_PublishGroupCreate(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	group := &models.Group{GroupID: "group-abc", GroupName: "Test Group"}
 	err := pub.PublishGroupCreate(group)
@@ -404,7 +433,7 @@ func TestPublisher_PublishGroupCreate(t *testing.T) {
 
 func TestPublisher_PublishGroupModify(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	group := &models.Group{GroupID: "group-abc", GroupName: "Test Group"}
 	err := pub.PublishGroupModify(group)
@@ -417,7 +446,7 @@ func TestPublisher_PublishGroupModify(t *testing.T) {
 
 func TestPublisher_PublishGroupDelete(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	err := pub.PublishGroupDelete("group-abc")
 	require.NoError(t, err)
@@ -431,7 +460,7 @@ func TestPublisher_PublishGroupDelete(t *testing.T) {
 
 func TestPublisher_PublishGroupMemberCreate(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	member := &models.GroupMember{GroupID: "group-abc", MemberID: "user-1", MemberName: "Alice"}
 	err := pub.PublishGroupMemberCreate(member)
@@ -444,7 +473,7 @@ func TestPublisher_PublishGroupMemberCreate(t *testing.T) {
 
 func TestPublisher_PublishGroupMemberDelete(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	err := pub.PublishGroupMemberDelete("group-abc", "user-1")
 	require.NoError(t, err)
@@ -459,7 +488,7 @@ func TestPublisher_PublishGroupMemberDelete(t *testing.T) {
 
 func TestPublisher_PublishGroupMemberModify(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	member := &models.GroupMember{GroupID: "group-abc", MemberID: "user-1", MemberName: "Alice"}
 	err := pub.PublishGroupMemberModify(member)
@@ -472,7 +501,7 @@ func TestPublisher_PublishGroupMemberModify(t *testing.T) {
 
 func TestPublisher_PublishAgentResponse(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	msg := sampleMessage("group-abc", "msg-1")
 	err := pub.PublishAgentResponse(msg)
@@ -485,7 +514,7 @@ func TestPublisher_PublishAgentResponse(t *testing.T) {
 
 func TestPublisher_PublishSystemError(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	msg := sampleMessage("group-abc", "msg-1")
 	err := pub.PublishSystemError(msg)
@@ -498,7 +527,7 @@ func TestPublisher_PublishSystemError(t *testing.T) {
 
 func TestPublisher_PublishAutoTriggerPendingMessage(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	msg := sampleMessage("group-abc", "msg-1")
 	trigger := map[string]string{"type": "auto"}
@@ -518,7 +547,7 @@ func TestBuildMsgID(t *testing.T) {
 
 func TestPublisher_PublishPendingMessageWithAgentID(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	msg := sampleMessage("group-abc", "msg-1")
 	trigger := map[string]string{"type": "mention", "agent_id": "agent-1"}
@@ -537,7 +566,7 @@ func TestPublisher_PublishPendingMessageWithAgentID(t *testing.T) {
 
 func TestPublisher_PublishPendingMessageWithAgentID_MarshalError(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	msg := sampleMessage("group-abc", "msg-1")
 	trigger := map[string]interface{}{"ch": make(chan int)}
@@ -550,7 +579,7 @@ func TestPublisher_PublishPendingMessageWithAgentID_MarshalError(t *testing.T) {
 func TestPublisher_PublishPendingMessageWithAgentID_PublishError(t *testing.T) {
 	fake := newFakeJetStream()
 	fake.publishErr = errors.New("nats down")
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	msg := sampleMessage("group-abc", "msg-1")
 	err := pub.PublishPendingMessageWithAgentID("group-abc", msg, nil, "agent-1")
@@ -560,7 +589,7 @@ func TestPublisher_PublishPendingMessageWithAgentID_PublishError(t *testing.T) {
 
 func TestPublisher_PublishHeartbeat(t *testing.T) {
 	fake := newFakeJetStream()
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	err := pub.PublishHeartbeat("node-1")
 	require.NoError(t, err)
@@ -584,9 +613,95 @@ func TestPublisher_PublishHeartbeat(t *testing.T) {
 func TestPublisher_PublishHeartbeat_PublishError(t *testing.T) {
 	fake := newFakeJetStream()
 	fake.publishErr = errors.New("nats down")
-	pub := NewPublisher(fake)
+	pub := NewPublisher(fake, false)
 
 	err := pub.PublishHeartbeat("node-1")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to publish heartbeat")
+}
+
+func TestPublisher_PublishPendingMessage_NoAck(t *testing.T) {
+	fake := newFakeJetStream()
+	pub := NewPublisher(fake, true)
+
+	msg := sampleMessage("group-abc", "msg-1")
+	trigger := map[string]interface{}{"type": "mention", "agent_id": "agent-1"}
+
+	err := pub.PublishPendingMessage("group-abc", msg, trigger)
+	require.NoError(t, err)
+	require.Len(t, fake.calls, 1)
+
+	call := fake.calls[0]
+	assert.True(t, call.async, "no-ack mode should use PublishAsync")
+	assert.Equal(t, "acs.group.pending-message.group-abc", call.subject)
+
+	var payload PendingMessagePayload
+	require.NoError(t, json.Unmarshal(call.data, &payload))
+	assert.Equal(t, "msg-1", payload.MessageID)
+	assert.Equal(t, "agent-1", payload.Trigger.(map[string]interface{})["agent_id"])
+
+	// MsgID option should still be set for deduplication.
+	require.Len(t, call.opts, 1)
+	// nats.PubOpt is a function type and cannot be compared directly.
+	_ = call.opts[0]
+}
+
+func TestPublisher_PublishPendingMessage_NoAck_AsyncErrorIgnored(t *testing.T) {
+	fake := newFakeJetStream()
+	fake.asyncErr = errors.New("async publish failed")
+	pub := NewPublisher(fake, true)
+
+	msg := sampleMessage("group-abc", "msg-1")
+	err := pub.PublishPendingMessage("group-abc", msg, nil)
+	require.NoError(t, err, "no-ack mode should not propagate async publish errors")
+	require.Len(t, fake.calls, 1)
+	assert.True(t, fake.calls[0].async)
+}
+
+func TestPublisher_PublishPendingMessageWithAgentID_NoAck(t *testing.T) {
+	fake := newFakeJetStream()
+	pub := NewPublisher(fake, true)
+
+	msg := sampleMessage("group-abc", "msg-1")
+	trigger := map[string]interface{}{"type": "manual", "agent_id": "agent-1"}
+
+	err := pub.PublishPendingMessageWithAgentID("group-abc", msg, trigger, "agent-1")
+	require.NoError(t, err)
+	require.Len(t, fake.calls, 1)
+
+	call := fake.calls[0]
+	assert.True(t, call.async, "no-ack mode should use PublishAsync")
+	assert.Equal(t, "acs.group.pending-message.group-abc", call.subject)
+
+	var payload PendingMessagePayload
+	require.NoError(t, json.Unmarshal(call.data, &payload))
+	assert.Equal(t, "agent-1", payload.Trigger.(map[string]interface{})["agent_id"])
+
+	require.Len(t, call.opts, 1)
+	// nats.PubOpt is a function type and cannot be compared directly.
+	_ = call.opts[0]
+}
+
+func TestPublisher_PublishAutoTriggerPendingMessage_NoAck(t *testing.T) {
+	fake := newFakeJetStream()
+	pub := NewPublisher(fake, true)
+
+	msg := sampleMessage("group-abc", "msg-1")
+	trigger := map[string]string{"type": "auto"}
+	err := pub.PublishAutoTriggerPendingMessage("group-abc", msg, trigger)
+	require.NoError(t, err)
+	require.Len(t, fake.calls, 1)
+
+	call := fake.calls[0]
+	assert.True(t, call.async, "no-ack mode should use PublishAsync")
+	assert.Equal(t, "acs.group.pending-message.group-abc", call.subject)
+
+	var payload PendingMessagePayload
+	require.NoError(t, json.Unmarshal(call.data, &payload))
+	assert.Equal(t, "msg-1", payload.MessageID)
+	assert.Equal(t, "auto", payload.Trigger.(map[string]interface{})["type"])
+
+	require.Len(t, call.opts, 1)
+	// nats.PubOpt is a function type and cannot be compared directly.
+	_ = call.opts[0]
 }

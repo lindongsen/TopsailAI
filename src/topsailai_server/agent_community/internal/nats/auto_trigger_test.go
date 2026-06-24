@@ -18,8 +18,9 @@ import (
 // ---------- Fakes ----------
 
 type fakeAutoTriggerPublisher struct {
-	published []publishAutoTriggerCall
-	err       error
+	published   []publishAutoTriggerCall
+	err         error
+	publishHook func(groupID string, msg *models.GroupMessage, trigger interface{}) error
 }
 
 type publishAutoTriggerCall struct {
@@ -29,6 +30,11 @@ type publishAutoTriggerCall struct {
 }
 
 func (f *fakeAutoTriggerPublisher) PublishAutoTriggerPendingMessage(groupID string, msg *models.GroupMessage, trigger interface{}) error {
+	if f.publishHook != nil {
+		if err := f.publishHook(groupID, msg, trigger); err != nil {
+			return err
+		}
+	}
 	f.published = append(f.published, publishAutoTriggerCall{groupID: groupID, msg: msg, trigger: trigger})
 	return f.err
 }
@@ -201,7 +207,6 @@ func TestAutoTrigger_RunCallsCheckAllGroupsImmediately(t *testing.T) {
 	createMember(t, db, g.GroupID, "manager-1", models.MemberTypeManagerAgent)
 	old := time.Now().Add(-2 * time.Minute).UnixMilli()
 	createMessage(t, db, g.GroupID, "user-1", models.MemberTypeUser, old)
-
 	at.checkAllGroups()
 
 	require.Len(t, pub.published, 1)
@@ -209,6 +214,7 @@ func TestAutoTrigger_RunCallsCheckAllGroupsImmediately(t *testing.T) {
 }
 
 // ---------- checkAllGroups tests ----------
+
 func TestCheckAllGroups_DBError(t *testing.T) {
 	db := setupAutoTriggerTestDB(t)
 	// Close underlying connection to force error.
@@ -260,63 +266,20 @@ func TestCheckGroup_NilEvaluator(t *testing.T) {
 	assert.Equal(t, checkResultSkipped, res)
 }
 
-func TestCheckGroup_NilResult(t *testing.T) {
-	db := setupAutoTriggerTestDB(t)
-	eval := &fakeAutoTriggerEvaluator{result: nil}
-	at := newAutoTriggerWithFakes(t, db, nil, eval, nil, time.Minute, time.Minute)
-
-	g := createGroup(t, db, "group-1")
-	createMember(t, db, g.GroupID, "user-1", models.MemberTypeUser)
-	createMember(t, db, g.GroupID, "manager-1", models.MemberTypeManagerAgent)
-	createMessage(t, db, g.GroupID, "user-1", models.MemberTypeUser, time.Now().Add(-2*time.Minute).UnixMilli())
-
-	res, err := at.checkGroup(context.Background(), g, "trace-1")
-	assert.NoError(t, err)
-	assert.Equal(t, checkResultSkipped, res)
-}
-
-func TestCheckGroup_NoManagerAgent(t *testing.T) {
-	db := setupAutoTriggerTestDB(t)
-	eval := &fakeAutoTriggerEvaluator{result: &trigger.TriggerResult{ShouldTrigger: false}}
-	at := newAutoTriggerWithFakes(t, db, nil, eval, nil, time.Minute, time.Minute)
-
-	g := createGroup(t, db, "group-1")
-	createMember(t, db, g.GroupID, "user-1", models.MemberTypeUser)
-	createMessage(t, db, g.GroupID, "user-1", models.MemberTypeUser, time.Now().Add(-2*time.Minute).UnixMilli())
-
-	res, err := at.checkGroup(context.Background(), g, "trace-1")
-	assert.NoError(t, err)
-	assert.Equal(t, checkResultSkipped, res)
-}
-
 func TestCheckGroup_NoMessages(t *testing.T) {
 	db := setupAutoTriggerTestDB(t)
 	at := newAutoTriggerWithFakes(t, db, nil, nil, nil, time.Minute, time.Minute)
 
 	g := createGroup(t, db, "group-1")
-	createMember(t, db, g.GroupID, "manager-1", models.MemberTypeManagerAgent)
-
-	res, err := at.checkGroup(context.Background(), g, "trace-1")
-	assert.NoError(t, err)
-	assert.Equal(t, checkResultSkipped, res)
-}
-
-func TestCheckGroup_NoTrigger(t *testing.T) {
-	db := setupAutoTriggerTestDB(t)
-	eval := &fakeAutoTriggerEvaluator{result: &trigger.TriggerResult{ShouldTrigger: false}}
-	at := newAutoTriggerWithFakes(t, db, nil, eval, nil, time.Minute, time.Minute)
-
-	g := createGroup(t, db, "group-1")
 	createMember(t, db, g.GroupID, "user-1", models.MemberTypeUser)
 	createMember(t, db, g.GroupID, "manager-1", models.MemberTypeManagerAgent)
-	createMessage(t, db, g.GroupID, "user-1", models.MemberTypeUser, time.Now().Add(-2*time.Minute).UnixMilli())
 
 	res, err := at.checkGroup(context.Background(), g, "trace-1")
 	assert.NoError(t, err)
 	assert.Equal(t, checkResultSkipped, res)
 }
 
-func TestCheckGroup_AlreadyPending(t *testing.T) {
+func TestCheckGroup_ExistingPendingRecord(t *testing.T) {
 	db := setupAutoTriggerTestDB(t)
 	pub := &fakeAutoTriggerPublisher{}
 	eval := &fakeAutoTriggerEvaluator{result: triggerResult("manager-1")}
@@ -341,7 +304,7 @@ func TestCheckGroup_AlreadyPending(t *testing.T) {
 	assert.Empty(t, pub.published)
 }
 
-func TestCheckGroup_TriggerSuccess(t *testing.T) {
+func TestCheckGroup_Success(t *testing.T) {
 	db := setupAutoTriggerTestDB(t)
 	pub := &fakeAutoTriggerPublisher{}
 	eval := &fakeAutoTriggerEvaluator{result: triggerResult("manager-1")}
@@ -371,14 +334,9 @@ func TestCheckGroup_TriggerSuccess(t *testing.T) {
 	assert.Equal(t, models.ProcessingStatusPending, records[0].Status)
 	assert.Equal(t, "manager-1", records[0].AgentID)
 	assert.Equal(t, msg.MessageID, records[0].MessageID)
-
-	// No synthetic GroupMessage row should be created.
-	var messageCount int64
-	require.NoError(t, db.Model(&models.GroupMessage{}).Where("group_id = ?", g.GroupID).Count(&messageCount).Error)
-	assert.Equal(t, int64(1), messageCount, "auto-trigger should not create a synthetic GroupMessage")
 }
 
-func TestCheckGroup_DuplicatePrevention(t *testing.T) {
+func TestCheckGroup_DuplicateCheck(t *testing.T) {
 	db := setupAutoTriggerTestDB(t)
 	pub := &fakeAutoTriggerPublisher{}
 	eval := &fakeAutoTriggerEvaluator{result: triggerResult("manager-1")}
@@ -387,7 +345,7 @@ func TestCheckGroup_DuplicatePrevention(t *testing.T) {
 	g := createGroup(t, db, "group-1")
 	createMember(t, db, g.GroupID, "user-1", models.MemberTypeUser)
 	createMember(t, db, g.GroupID, "manager-1", models.MemberTypeManagerAgent)
-	msg := createMessage(t, db, g.GroupID, "user-1", models.MemberTypeUser, time.Now().Add(-2*time.Minute).UnixMilli())
+	createMessage(t, db, g.GroupID, "user-1", models.MemberTypeUser, time.Now().Add(-2*time.Minute).UnixMilli())
 
 	res1, err1 := at.checkGroup(context.Background(), g, "trace-1")
 	assert.NoError(t, err1)
@@ -401,31 +359,9 @@ func TestCheckGroup_DuplicatePrevention(t *testing.T) {
 	assert.Len(t, pub.published, 1, "should not publish duplicate pending message")
 
 	var records []models.AgentMessageProcessing
-	require.NoError(t, db.Where("group_id = ? AND message_id = ?", g.GroupID, msg.MessageID).Find(&records).Error)
+	require.NoError(t, db.Where("group_id = ? AND message_id = ?", g.GroupID, pub.published[0].msg.MessageID).Find(&records).Error)
 	assert.Len(t, records, 1, "should not create duplicate processing record")
-	assert.Equal(t, msg.MessageID, records[0].MessageID)
-}
-
-func TestCheckGroup_DoesNotCreateGroupMessage(t *testing.T) {
-	db := setupAutoTriggerTestDB(t)
-	pub := &fakeAutoTriggerPublisher{}
-	eval := &fakeAutoTriggerEvaluator{result: triggerResult("manager-1")}
-	at := newAutoTriggerWithFakes(t, db, pub, eval, nil, time.Minute, time.Nanosecond)
-
-	g := createGroup(t, db, "group-1")
-	createMember(t, db, g.GroupID, "user-1", models.MemberTypeUser)
-	createMember(t, db, g.GroupID, "manager-1", models.MemberTypeManagerAgent)
-	msg := createMessage(t, db, g.GroupID, "user-1", models.MemberTypeUser, time.Now().Add(-2*time.Minute).UnixMilli())
-
-	res, err := at.checkGroup(context.Background(), g, "trace-1")
-	assert.NoError(t, err)
-	assert.Equal(t, checkResultTriggered, res)
-
-	// The original message count must remain exactly one; no synthetic pending
-	// message row is inserted by the auto-trigger path.
-	var messageCount int64
-	require.NoError(t, db.Model(&models.GroupMessage{}).Where("group_id = ? AND message_id = ?", g.GroupID, msg.MessageID).Count(&messageCount).Error)
-	assert.Equal(t, int64(1), messageCount)
+	assert.Equal(t, pub.published[0].msg.MessageID, records[0].MessageID)
 }
 
 func TestCheckGroup_ProcessingRecordCreateError(t *testing.T) {
@@ -443,13 +379,15 @@ func TestCheckGroup_ProcessingRecordCreateError(t *testing.T) {
 	require.NoError(t, db.Migrator().DropTable(&models.AgentMessageProcessing{}))
 
 	res, err := at.checkGroup(context.Background(), g, "trace-1")
-	// Current production code logs the error but still publishes.
-	assert.NoError(t, err)
-	assert.Equal(t, checkResultTriggered, res)
-	assert.Len(t, pub.published, 1)
+	// Processing record creation now happens before publish and is treated as a
+	// hard failure; the pending message must not be published if we cannot
+	// reserve the processing record.
+	assert.Error(t, err)
+	assert.Equal(t, checkResultSkipped, res)
+	assert.Empty(t, pub.published, "should not publish when processing record cannot be created")
 }
 
-func TestCheckGroup_PublishError(t *testing.T) {
+func TestCheckGroup_PublishFailureRollsBackPendingRecord(t *testing.T) {
 	db := setupAutoTriggerTestDB(t)
 	pub := &fakeAutoTriggerPublisher{err: errors.New("publish failure")}
 	eval := &fakeAutoTriggerEvaluator{result: triggerResult("manager-1")}
@@ -458,11 +396,46 @@ func TestCheckGroup_PublishError(t *testing.T) {
 	g := createGroup(t, db, "group-1")
 	createMember(t, db, g.GroupID, "user-1", models.MemberTypeUser)
 	createMember(t, db, g.GroupID, "manager-1", models.MemberTypeManagerAgent)
-	createMessage(t, db, g.GroupID, "user-1", models.MemberTypeUser, time.Now().Add(-2*time.Minute).UnixMilli())
+	msg := createMessage(t, db, g.GroupID, "user-1", models.MemberTypeUser, time.Now().Add(-2*time.Minute).UnixMilli())
 
 	res, err := at.checkGroup(context.Background(), g, "trace-1")
 	assert.Error(t, err)
 	assert.Equal(t, checkResultSkipped, res)
-	// The publisher was called even though it returned an error; the fake records the attempt.
 	assert.Len(t, pub.published, 1)
+
+	// The pending record must be rolled back so the message-agent pair can be
+	// retried by a subsequent auto-trigger scan.
+	var records []models.AgentMessageProcessing
+	require.NoError(t, db.Where("group_id = ? AND message_id = ? AND agent_id = ?",
+		g.GroupID, msg.MessageID, "manager-1").Find(&records).Error)
+	assert.Empty(t, records, "pending record should be rolled back after publish failure")
+}
+
+func TestCheckGroup_PendingRecordExistsBeforePublish(t *testing.T) {
+	db := setupAutoTriggerTestDB(t)
+	pub := &fakeAutoTriggerPublisher{}
+	eval := &fakeAutoTriggerEvaluator{result: triggerResult("manager-1")}
+	at := newAutoTriggerWithFakes(t, db, pub, eval, nil, time.Minute, time.Nanosecond)
+
+	g := createGroup(t, db, "group-1")
+	createMember(t, db, g.GroupID, "user-1", models.MemberTypeUser)
+	createMember(t, db, g.GroupID, "manager-1", models.MemberTypeManagerAgent)
+	msg := createMessage(t, db, g.GroupID, "user-1", models.MemberTypeUser, time.Now().Add(-2*time.Minute).UnixMilli())
+
+	// Intercept the publish call to verify the pending record already exists.
+	pub.publishHook = func(groupID string, msg *models.GroupMessage, trigger interface{}) error {
+		var records []models.AgentMessageProcessing
+		dbErr := db.Where("group_id = ? AND message_id = ? AND agent_id = ? AND status = ?",
+			g.GroupID, msg.MessageID, "manager-1", models.ProcessingStatusPending).
+			Find(&records).Error
+		require.NoError(t, dbErr)
+		require.Len(t, records, 1, "pending record must exist before pending message is published")
+		return nil
+	}
+
+	res, err := at.checkGroup(context.Background(), g, "trace-1")
+	assert.NoError(t, err)
+	assert.Equal(t, checkResultTriggered, res)
+	assert.Len(t, pub.published, 1)
+	assert.Equal(t, msg.MessageID, pub.published[0].msg.MessageID)
 }

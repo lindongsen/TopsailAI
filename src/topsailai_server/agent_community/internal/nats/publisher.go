@@ -27,12 +27,15 @@ type PendingMessagePayload struct {
 
 // Publisher publishes messages to NATS subjects.
 type Publisher struct {
-	js nats.JetStreamContext
+	js    nats.JetStreamContext
+	noAck bool
 }
 
 // NewPublisher creates a new NATS publisher.
-func NewPublisher(js nats.JetStreamContext) *Publisher {
-	return &Publisher{js: js}
+// When noAck is true, pending messages are published asynchronously and the
+// publish ack is not waited for or propagated to callers.
+func NewPublisher(js nats.JetStreamContext, noAck bool) *Publisher {
+	return &Publisher{js: js, noAck: noAck}
 }
 
 // PublishPendingMessage publishes a pending message to the pending-message subject.
@@ -51,6 +54,14 @@ func (p *Publisher) PublishPendingMessage(groupID string, msg *models.GroupMessa
 
 	// MsgID dedup: use message_id as MsgID
 	msgID := msg.MessageID
+	if p.noAck {
+		// Fire-and-forget: do not wait for or propagate the JetStream publish ack.
+		// Initiation errors are also ignored so the API returns immediately.
+		_, _ = p.js.PublishAsync(subject, data, nats.MsgId(msgID))
+		logger.Info("pending message published (async)", "subject", subject, "message_id", msgID)
+		return nil
+	}
+
 	_, err = p.js.Publish(subject, data, nats.MsgId(msgID))
 	if err != nil {
 		return fmt.Errorf("failed to publish pending message: %w", err)
@@ -168,6 +179,14 @@ func (p *Publisher) PublishPendingMessageWithAgentID(groupID string, msg *models
 	}
 
 	msgID := BuildMsgID(msg.MessageID, agentID)
+	if p.noAck {
+		// Fire-and-forget: do not wait for or propagate the JetStream publish ack.
+		// Initiation errors are also ignored so the API returns immediately.
+		_, _ = p.js.PublishAsync(subject, data, nats.MsgId(msgID))
+		logger.Info("pending message published with agent id (async)", "subject", subject, "message_id", msgID, "agent_id", agentID)
+		return nil
+	}
+
 	_, err = p.js.Publish(subject, data, nats.MsgId(msgID))
 	if err != nil {
 		return fmt.Errorf("failed to publish pending message with agent id: %w", err)
@@ -181,9 +200,9 @@ func (p *Publisher) PublishPendingMessageWithAgentID(groupID string, msg *models
 func (p *Publisher) PublishHeartbeat(nodeID string) error {
 	subject := "acs.heartbeat"
 	payload := map[string]interface{}{
-		"node_id":    nodeID,
-		"timestamp":  time.Now().UnixMilli(),
-		"status":     "healthy",
+		"node_id":   nodeID,
+		"timestamp": time.Now().UnixMilli(),
+		"status":    "healthy",
 	}
 
 	data, err := json.Marshal(payload)
