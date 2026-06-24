@@ -164,6 +164,10 @@ TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD=97
 # Set to 0 to disable the token-based check.
 TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD=128000
 
+# When the current User2Agent (session) token usage exceeds this threshold, summarization is triggered.
+# Set to 0 to disable the token-based check (default).
+TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD=0
+
 # Keep session messages after summarizing, 1 is enabled(default), 0 is disabled
 TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES=1
 

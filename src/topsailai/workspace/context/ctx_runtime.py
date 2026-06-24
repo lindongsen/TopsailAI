@@ -302,22 +302,40 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         Check if the processed messages need to be summarized.
 
         Determines whether the current message quantity has exceeded
-        the threshold that triggers message summarization. This helps
-        manage memory and context window limitations.
+        the threshold that triggers message summarization, or whether
+        the current User2Agent token usage exceeds the configured token
+        threshold. This helps manage memory and context window limitations.
 
         Returns:
-            bool: True if the number of messages exceeds the quantity
-                  threshold and summarization is needed, False otherwise.
+            bool: True if summarization is needed based on quantity or token
+                  threshold, False otherwise.
 
         Example:
             >>> if runtime.is_need_summarize_for_processed():
             ...     runtime.summarize_messages_for_processed()
         """
         quantity_threshold = self._get_quantity_threshold()
-        if not quantity_threshold:
-            return False
-
-        if len(self.messages) >= quantity_threshold:
+        if quantity_threshold and len(self.messages) >= quantity_threshold:
             return True
+
+        token_threshold = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD",
+            default=0,
+            formatter=int,
+        ) or 0
+
+        if token_threshold > 0:
+            try:
+                current_tokens = int(self.ai_agent.llm_model.tokenStat.current_tokens)
+            except Exception:
+                current_tokens = 0
+
+            if current_tokens > token_threshold:
+                print_step(
+                    f"!!! User2Agent token usage exceeded threshold: current_tokens=[{current_tokens}], threshold=[{token_threshold}]",
+                    need_format=False,
+                    need_log=True,
+                )
+                return True
 
         return False

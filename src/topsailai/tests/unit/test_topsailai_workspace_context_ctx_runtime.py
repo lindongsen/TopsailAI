@@ -316,6 +316,59 @@ class TestIsNeedSummarize(TestContextRuntimeData):
 
             self.assertFalse(result)
 
+    def test_is_need_summarize_by_tokens_disabled(self):
+        """Test token check returns False when threshold is 0 (default/disabled)."""
+        with patch.object(self.runtime, '_get_quantity_threshold', return_value=0):
+            self.runtime.ai_agent = MagicMock()
+            self.runtime.ai_agent.llm_model.tokenStat.current_tokens = 999999
+
+            result = self.runtime.is_need_summarize_for_processed()
+
+            self.assertFalse(result)
+
+    def test_is_need_summarize_by_tokens_below_threshold(self):
+        """Test token check returns False when current tokens are below threshold."""
+        with patch.dict(os.environ, {"TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "1000"}):
+            with patch.object(self.runtime, '_get_quantity_threshold', return_value=0):
+                self.runtime.ai_agent = MagicMock()
+                self.runtime.ai_agent.llm_model.tokenStat.current_tokens = 500
+
+                result = self.runtime.is_need_summarize_for_processed()
+
+                self.assertFalse(result)
+
+    def test_is_need_summarize_by_tokens_exceeded(self):
+        """Test token check returns True when current tokens exceed threshold."""
+        with patch.dict(os.environ, {"TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "1000"}):
+            with patch.object(self.runtime, '_get_quantity_threshold', return_value=0):
+                self.runtime.ai_agent = MagicMock()
+                self.runtime.ai_agent.llm_model.tokenStat.current_tokens = 1500
+
+                result = self.runtime.is_need_summarize_for_processed()
+
+                self.assertTrue(result)
+
+    def test_is_need_summarize_by_tokens_no_ai_agent(self):
+        """Test token check returns False when ai_agent is not available."""
+        with patch.dict(os.environ, {"TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "1000"}):
+            with patch.object(self.runtime, '_get_quantity_threshold', return_value=0):
+                self.runtime.ai_agent = None
+
+                result = self.runtime.is_need_summarize_for_processed()
+
+                self.assertFalse(result)
+
+    def test_is_need_summarize_by_tokens_no_llm_model(self):
+        """Test token check returns False when llm_model is not available."""
+        with patch.dict(os.environ, {"TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "1000"}):
+            with patch.object(self.runtime, '_get_quantity_threshold', return_value=0):
+                self.runtime.ai_agent = MagicMock()
+                self.runtime.ai_agent.llm_model = None
+
+                result = self.runtime.is_need_summarize_for_processed()
+
+                self.assertFalse(result)
+
 
 class TestSummarizeMessages(TestContextRuntimeData):
     """Test cases for summarize_messages_for_processed() method."""

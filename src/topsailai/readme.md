@@ -139,3 +139,52 @@ LLM service errors
 ### LOG_ATTENTION: "[0-9]\- Heavy Task Trigger"
 
 Task execution time is too long
+
+
+## Summarize Trigger Logic
+
+Both the **User2Agent** and **Agent2LLM** layers use a two-threshold strategy to decide when to summarize context. The entry points are `is_need_summarize_for_processed()` (User2Agent, in `workspace/context/ctx_runtime.py`) and `is_need_summarize_for_processing()` (Agent2LLM, in `workspace/context/agent2llm.py`).
+
+### Common Threshold Mechanism
+
+Both methods first call `_get_quantity_threshold()` (defined in `workspace/context/base.py`) to obtain a randomized message-count threshold:
+
+1. Read `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD` as an integer.
+2. If the value is `0`, negative, or unset, quantity-based summarization is disabled.
+3. Otherwise, combine the configured value with a small random prime (`13, 17, 19, 23`) and return the larger one.
+
+This randomization avoids synchronized summarization spikes across multiple agents.
+
+### User2Agent — `is_need_summarize_for_processed()`
+
+- **Quantity check**: compares `len(self.messages)` (the persisted User2Agent session messages) against the randomized quantity threshold.
+- **Token check**: reads `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` (default `0`, i.e. disabled). If set to a positive value, compares `self.ai_agent.llm_model.tokenStat.current_tokens` against it.
+- **Trigger**: returns `True` if either the quantity threshold or the token threshold is exceeded.
+
+### Agent2LLM — `is_need_summarize_for_processing()`
+
+- **Quantity check**: builds an extended candidate list from fixed primes `[23, 27, 29, 31, 37, 41, 43, 47]`, appends the configured quantity threshold, and optionally appends `quantity_threshold * 2`. It then picks a random value from this list and ensures it is at least the configured threshold. Finally it compares `len(self.ai_agent.messages)` against this value.
+- **Token check**: reads `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` (default `128000`). If positive, compares `self.ai_agent.llm_model.tokenStat.current_tokens` against it.
+- **Trigger**: returns `True` if either the quantity threshold or the token threshold is exceeded.
+
+### Key Differences
+
+| Aspect | User2Agent (`is_need_summarize_for_processed`) | Agent2LLM (`is_need_summarize_for_processing`) |
+|--------|-----------------------------------------------|-----------------------------------------------|
+| Source messages | `self.messages` (persisted session) | `self.ai_agent.messages` (ephemeral ReAct context) |
+| Quantity env var | `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD` | `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD` (same) |
+| Token env var | `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` (default `0`, disabled) | `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` (default `128000`) |
+| Randomization | Random prime vs configured value | Extended prime list, may include `2x` configured value |
+| Summary persistence | Saves summary into session/memory and deletes old raw messages | Replaces agent messages with summary while preserving head offset, session messages, and last user message |
+
+### Environment Variables
+
+See `docs/Environment_Variables.md` and `env_template` for full details. The relevant variables are:
+
+- `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD` — message-count threshold shared by both layers.
+- `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` — token threshold for Agent2LLM summarization.
+- `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` — token threshold for User2Agent summarization (disabled by default).
+- `TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP` — number of head messages to retain after summarization.
+- `TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES` — whether Agent2LLM summary should keep User2Agent session messages.
+
+Note: the context-history "slimming" thresholds (`CONTEXT_MESSAGES_SLIM_THRESHOLD_*`) are a separate mechanism handled by `PromptBase.call_hooks_ctx_history()` and archive oversized `action`/`observation` payloads without producing a summary.
