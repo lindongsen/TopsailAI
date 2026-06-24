@@ -369,6 +369,55 @@ class TestIsNeedSummarize(TestContextRuntimeData):
 
                 self.assertFalse(result)
 
+    def test_is_need_summarize_uses_user2agent_env_var(self):
+        """Test that TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD is used."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD": "20",
+            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "50",
+        }):
+            self.runtime.messages = [{"role": "user", "content": f"msg{i}"} for i in range(20)]
+
+            result = self.runtime.is_need_summarize_for_processed()
+
+            self.assertTrue(result)
+
+    def test_is_need_summarize_user2agent_falls_back_to_legacy(self):
+        """Test fallback to legacy shared env var when user2agent var is unset."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD": "",
+            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "30",
+        }):
+            self.runtime.messages = [{"role": "user", "content": f"msg{i}"} for i in range(30)]
+
+            result = self.runtime.is_need_summarize_for_processed()
+
+            self.assertTrue(result)
+
+    @patch('topsailai.workspace.context.base.random.choice', return_value=13)
+    def test_is_need_summarize_user2agent_wins_over_legacy(self, mock_choice):
+        """Test layer-specific env var takes precedence over legacy shared var."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD": "15",
+            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "100",
+        }):
+            self.runtime.messages = [{"role": "user", "content": f"msg{i}"} for i in range(15)]
+
+            result = self.runtime.is_need_summarize_for_processed()
+
+            self.assertTrue(result)
+
+    def test_is_need_summarize_user2agent_disabled(self):
+        """Test quantity summarization disabled when both user2agent and legacy are unset."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD": "",
+            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "",
+        }):
+            self.runtime.messages = [{"role": "user", "content": f"msg{i}"} for i in range(200)]
+
+            result = self.runtime.is_need_summarize_for_processed()
+
+            self.assertFalse(result)
+
 
 class TestSummarizeMessages(TestContextRuntimeData):
     """Test cases for summarize_messages_for_processed() method."""

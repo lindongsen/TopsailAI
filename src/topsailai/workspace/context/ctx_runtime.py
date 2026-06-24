@@ -256,6 +256,8 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
 
         # head_offset_to_keep
         head_offset_to_keep = self._get_head_offset_to_keep_in_summary(head_offset_to_keep)
+        if head_offset_to_keep and len(self.messages) <= head_offset_to_keep:
+            head_offset_to_keep = 1
 
         if self.session_id:
             raw_messages_from_session = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
@@ -314,7 +316,9 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             >>> if runtime.is_need_summarize_for_processed():
             ...     runtime.summarize_messages_for_processed()
         """
-        quantity_threshold = self._get_quantity_threshold()
+        quantity_threshold = self._get_quantity_threshold(
+            "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD"
+        )
         if quantity_threshold and len(self.messages) >= quantity_threshold:
             return True
 

@@ -262,6 +262,151 @@ class TestGetQuantityThreshold(unittest.TestCase):
 
         self.assertEqual(result, 25)
 
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.random')
+    def test_get_quantity_threshold_layer_specific_only(
+        self, mock_random, mock_env_tool, mock_agent_base
+    ):
+        """Test that layer-specific env var is used when set."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        def _env_side_effect(key, **kwargs):
+            if key == "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD":
+                return 30
+            if key == "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD":
+                return None
+            return kwargs.get("default")
+
+        mock_env_tool.EnvReaderInstance.get.side_effect = _env_side_effect
+        mock_random.choice.return_value = 13
+
+        runtime = ContextRuntimeBase()
+        result = runtime._get_quantity_threshold(
+            "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD"
+        )
+
+        self.assertEqual(result, 30)
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.random')
+    def test_get_quantity_threshold_legacy_fallback(
+        self, mock_random, mock_env_tool, mock_agent_base
+    ):
+        """Test fallback to legacy shared env var when layer-specific is unset."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        def _env_side_effect(key, **kwargs):
+            if key == "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD":
+                return None
+            if key == "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD":
+                return 20
+            return kwargs.get("default")
+
+        mock_env_tool.EnvReaderInstance.get.side_effect = _env_side_effect
+        mock_random.choice.return_value = 17
+
+        runtime = ContextRuntimeBase()
+        result = runtime._get_quantity_threshold(
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD"
+        )
+
+        self.assertEqual(result, 20)
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.random')
+    def test_get_quantity_threshold_layer_specific_wins(
+        self, mock_random, mock_env_tool, mock_agent_base
+    ):
+        """Test that layer-specific env var takes precedence over legacy shared var."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        def _env_side_effect(key, **kwargs):
+            if key == "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD":
+                return 35
+            if key == "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD":
+                return 10
+            return kwargs.get("default")
+
+        mock_env_tool.EnvReaderInstance.get.side_effect = _env_side_effect
+        mock_random.choice.return_value = 13
+
+        runtime = ContextRuntimeBase()
+        result = runtime._get_quantity_threshold(
+            "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD"
+        )
+
+        self.assertEqual(result, 35)
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    def test_get_quantity_threshold_neither_set(
+        self, mock_env_tool, mock_agent_base
+    ):
+        """Test that threshold is disabled when neither env var is set."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.get.return_value = None
+
+        runtime = ContextRuntimeBase()
+        result = runtime._get_quantity_threshold(
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD"
+        )
+
+        self.assertEqual(result, 0)
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.random')
+    def test_get_quantity_threshold_layer_zero_falls_back(
+        self, mock_random, mock_env_tool, mock_agent_base
+    ):
+        """Test that zero layer-specific value falls back to legacy shared var."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        def _env_side_effect(key, **kwargs):
+            if key == "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD":
+                return 0
+            if key == "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD":
+                return 22
+            return kwargs.get("default")
+
+        mock_env_tool.EnvReaderInstance.get.side_effect = _env_side_effect
+        mock_random.choice.return_value = 19
+
+        runtime = ContextRuntimeBase()
+        result = runtime._get_quantity_threshold(
+            "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD"
+        )
+
+        self.assertEqual(result, 22)
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    def test_get_quantity_threshold_negative_disabled(
+        self, mock_env_tool, mock_agent_base
+    ):
+        """Test that negative values are treated as disabled."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        def _env_side_effect(key, **kwargs):
+            if key == "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD":
+                return -5
+            if key == "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD":
+                return -1
+            return kwargs.get("default")
+
+        mock_env_tool.EnvReaderInstance.get.side_effect = _env_side_effect
+
+        runtime = ContextRuntimeBase()
+        result = runtime._get_quantity_threshold(
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD"
+        )
+
+        self.assertEqual(result, 0)
+
 
 class TestGetHeadOffsetToKeep(unittest.TestCase):
     """Test suite for _get_head_offset_to_keep_in_summary method."""

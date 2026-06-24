@@ -156,9 +156,16 @@ CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS=127000
 # Token budget used as the denominator for the uncached-token ratio check
 CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS=27000
 
-# When the number of messages reaches a threshold, they will be summarized to limit the message length
+# When the number of messages reaches a threshold, they will be summarized to limit the message length.
+# This is the shared fallback/default. Layer-specific thresholds below take precedence when set.
 TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD=97
 # TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP=0
+
+# Layer-specific message-count thresholds (optional).
+# If a layer-specific threshold is set, it takes precedence over TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD.
+# If unset/empty, the corresponding layer falls back to TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD.
+# TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD=
+# TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD=
 
 # When the current Agent2LLM token usage exceeds this threshold, summarization is triggered.
 # Set to 0 to disable the token-based check.

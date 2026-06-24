@@ -10,6 +10,7 @@ Created: 2026-04-19
 
 import unittest
 from unittest.mock import MagicMock, patch
+import os
 
 
 class TestContextRuntimeAgent2LLM(unittest.TestCase):
@@ -203,6 +204,63 @@ class TestIsNeedSummarizeForProcessing(TestContextRuntimeAgent2LLM):
             result = self.test_instance.is_need_summarize_for_processing()
             self.assertFalse(result)
 
+    def test_is_need_summarize_uses_agent2llm_env_var(self):
+        """Test that TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD is used."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "20",
+            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "50",
+        }):
+            with patch('topsailai.workspace.context.agent2llm.random.choice', return_value=13):
+                self.test_instance._ai_agent.messages = [f"msg{i}" for i in range(20)]
+                # Remove the override so the real _get_quantity_threshold runs.
+                del type(self.test_instance)._get_quantity_threshold
+
+                result = self.test_instance.is_need_summarize_for_processing()
+
+                self.assertTrue(result)
+
+    def test_is_need_summarize_agent2llm_falls_back_to_legacy(self):
+        """Test fallback to legacy shared env var when agent2llm var is unset."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "",
+            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "30",
+        }):
+            with patch('topsailai.workspace.context.agent2llm.random.choice', return_value=13):
+                self.test_instance._ai_agent.messages = [f"msg{i}" for i in range(30)]
+                del type(self.test_instance)._get_quantity_threshold
+
+                result = self.test_instance.is_need_summarize_for_processing()
+
+                self.assertTrue(result)
+
+    @patch('topsailai.workspace.context.agent2llm.random.choice', return_value=23)
+    def test_is_need_summarize_agent2llm_wins_over_legacy(self, mock_choice):
+        """Test layer-specific env var takes precedence over legacy shared var."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "23",
+            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "100",
+        }):
+            self.test_instance._ai_agent.messages = [f"msg{i}" for i in range(23)]
+            del type(self.test_instance)._get_quantity_threshold
+
+            result = self.test_instance.is_need_summarize_for_processing()
+
+            self.assertTrue(result)
+
+    def test_is_need_summarize_agent2llm_disabled(self):
+        """Test quantity summarization disabled when both agent2llm and legacy are unset."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "",
+            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "",
+        }):
+            self.test_instance._ai_agent.messages = [f"msg{i}" for i in range(200)]
+            del type(self.test_instance)._get_quantity_threshold
+
+            result = self.test_instance.is_need_summarize_for_processing()
+
+            self.assertFalse(result)
+
+
 class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
     """Test suite for summarize_messages_for_processing method."""
 
@@ -262,6 +320,109 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
                 self.test_instance.summarize_messages_for_processing()
                 self.assertNotEqual(len(self.test_instance._ai_agent.messages), original_len)
 
+
+    def _make_session_messages(self, count):
+        """Helper to create distinct session messages."""
+        return [{"role": "user", "content": f"session-msg-{i}"} for i in range(count)]
+
+    def _make_agent_messages(self, count):
+        """Helper to create distinct agent messages."""
+        return [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"agent-msg-{i}"}
+            for i in range(count)
+        ]
+
+    def test_summarize_uses_agent2llm_threshold_for_session_keep(self):
+        """Test TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD used to decide keeping session messages."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "20",
+            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "10",
+        }):
+            session_msgs = self._make_session_messages(9)  # 9 < 20/2=10, keep
+            self.test_instance._messages = session_msgs
+            self.test_instance._ai_agent.messages = self._make_agent_messages(30)
+            self.test_instance._first_position = 0
+
+            with patch('topsailai.workspace.context.agent2llm.logger'):
+                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                    self.test_instance.summarize_messages_for_processing()
+
+            final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
+            self.assertIn("session-msg-0", final_contents)
+            self.assertIn("session-msg-8", final_contents)
+
+    def test_summarize_falls_back_to_legacy_threshold_for_session_keep(self):
+        """Test fallback to legacy threshold when agent2llm var is unset."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "",
+            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "20",
+        }):
+            session_msgs = self._make_session_messages(9)  # 9 < 20/2=10, keep
+            self.test_instance._messages = session_msgs
+            self.test_instance._ai_agent.messages = self._make_agent_messages(30)
+            self.test_instance._first_position = 0
+
+            with patch('topsailai.workspace.context.agent2llm.logger'):
+                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                    self.test_instance.summarize_messages_for_processing()
+
+            final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
+            self.assertIn("session-msg-0", final_contents)
+
+    def test_summarize_agent2llm_wins_over_legacy_for_session_keep(self):
+        """Test layer-specific threshold takes precedence over legacy for session keep decision."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "20",
+            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "10",
+        }):
+            # 9 >= 10/2=5 would drop if legacy used; 9 < 20/2=10 should keep with agent2llm
+            session_msgs = self._make_session_messages(9)
+            self.test_instance._messages = session_msgs
+            self.test_instance._ai_agent.messages = self._make_agent_messages(30)
+            self.test_instance._first_position = 0
+
+            with patch('topsailai.workspace.context.agent2llm.logger'):
+                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                    self.test_instance.summarize_messages_for_processing()
+
+            final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
+            self.assertIn("session-msg-0", final_contents)
+
+    def test_summarize_drops_session_when_agent2llm_threshold_exceeded(self):
+        """Test session messages dropped when agent2llm threshold exceeded."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "20",
+            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "100",
+        }):
+            session_msgs = self._make_session_messages(10)  # 10 >= 20/2=10, drop
+            self.test_instance._messages = session_msgs
+            self.test_instance._ai_agent.messages = self._make_agent_messages(30)
+            self.test_instance._first_position = 0
+
+            with patch('topsailai.workspace.context.agent2llm.logger'):
+                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                    self.test_instance.summarize_messages_for_processing()
+
+            final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
+            self.assertNotIn("session-msg-0", final_contents)
+
+    def test_summarize_drops_session_when_legacy_threshold_exceeded(self):
+        """Test session messages dropped when legacy threshold exceeded."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "",
+            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "20",
+        }):
+            session_msgs = self._make_session_messages(10)  # 10 >= 20/2=10, drop
+            self.test_instance._messages = session_msgs
+            self.test_instance._ai_agent.messages = self._make_agent_messages(30)
+            self.test_instance._first_position = 0
+
+            with patch('topsailai.workspace.context.agent2llm.logger'):
+                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                    self.test_instance.summarize_messages_for_processing()
+
+            final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
+            self.assertNotIn("session-msg-0", final_contents)
 
 class TestEdgeCases(TestContextRuntimeAgent2LLM):
     """Test suite for edge cases and error handling."""

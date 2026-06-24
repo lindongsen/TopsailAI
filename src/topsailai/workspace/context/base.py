@@ -133,19 +133,38 @@ class ContextRuntimeBase(object):
     # Env
     ###############################################################
 
-    def _get_quantity_threshold(self) -> int:
+    def _get_quantity_threshold(
+            self,
+            env_key: str = "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD",
+        ) -> int:
         """
         Get the quantity threshold for message summarization.
 
-        If the value is 0 or null, summarization is disabled.
+        The layer-specific env variable (env_key) takes precedence.
+        If it is unset or empty, fall back to the legacy shared variable
+        TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD for backward compatibility.
+        If the final value is 0, null, or negative, summarization is disabled.
+
+        Args:
+            env_key (str): Primary environment variable name to read.
+                Defaults to TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD.
 
         Returns:
             int: The quantity threshold value. Returns 0 if disabled.
         """
+        # Read the layer-specific threshold first.
         env_quantity_threshold = env_tool.EnvReaderInstance.get(
-            "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD",
+            env_key,
             formatter=int,
         )
+
+        # Fall back to the legacy shared threshold for backward compatibility.
+        if not env_quantity_threshold or env_quantity_threshold < 0:
+            env_quantity_threshold = env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD",
+                formatter=int,
+            )
+
         # disabled
         if not env_quantity_threshold or env_quantity_threshold < 0:
             return 0

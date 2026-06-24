@@ -112,11 +112,14 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         need_session_messages = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES", True)
 
         session_msg_len = len(self.messages)
-
         if need_session_messages:
+            # Prefer the Agent2LLM-specific threshold, fall back to the legacy shared threshold.
             ctx_quantity_threshold = env_tool.EnvReaderInstance.get(
-                "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD", default=100, formatter=int) or 100
-            if session_msg_len >= int(ctx_quantity_threshold/2):
+                "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD", formatter=int)
+            if not ctx_quantity_threshold or ctx_quantity_threshold <= 0:
+                ctx_quantity_threshold = env_tool.EnvReaderInstance.get(
+                    "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD", default=100, formatter=int) or 100
+            if session_msg_len >= int(ctx_quantity_threshold / 2):
                 need_session_messages = False
                 logger.warning("summary step cannot keep session messages due to it is too long: [%s]", session_msg_len)
 
@@ -178,7 +181,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         Returns:
             bool: True if summarization is needed, False otherwise.
         """
-        quantity_threshold = self._get_quantity_threshold()
+        quantity_threshold = self._get_quantity_threshold("TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD")
         if quantity_threshold:
             number_list = [23, 27, 29, 31, 37, 41, 43, 47]  # min -> max
             if quantity_threshold >= number_list[0]:
