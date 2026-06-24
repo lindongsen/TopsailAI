@@ -85,6 +85,127 @@ def print_available_items(context_map):
     print(f"\nUse: python3 {sys.argv[0]} --item <item_name>")
 
 
+
+def _load_gitignore_patterns(workspace):
+    """Load .gitignore patterns from workspace root."""
+    gitignore_path = os.path.join(workspace, ".gitignore")
+    patterns = [
+        ".git", ".venv", "__pycache__",
+        ".log", ".db", ".env", ".env.*",
+        ".tmp", ".task",
+        ".DS_Store", ".cache", ".pnp",
+        "node_modules", "__mocks__",
+    ]
+    if not os.path.isfile(gitignore_path):
+        return patterns
+
+    with open(gitignore_path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.rstrip("\n\r")
+            # Remove inline comments, but not escaped #
+            cleaned = []
+            escape = False
+            for ch in line:
+                if escape:
+                    cleaned.append(ch)
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                    cleaned.append(ch)
+                elif ch == "#":
+                    break
+                else:
+                    cleaned.append(ch)
+            line = "".join(cleaned).rstrip()
+            if not line:
+                continue
+            patterns.append(line)
+    return patterns
+
+
+def _match_gitignore_pattern(rel_path, name, is_dir, pattern):
+    """Check if a path matches a single gitignore pattern."""
+    import fnmatch
+
+    negation = False
+    if pattern.startswith("!"):
+        negation = True
+        pattern = pattern[1:]
+
+    if not pattern:
+        return False, negation
+
+    dir_only = pattern.endswith("/")
+    if dir_only:
+        pattern = pattern[:-1]
+        if not is_dir:
+            return False, negation
+
+    pattern = pattern.replace("\\", "/")
+
+    if "/" in pattern:
+        # Anchored pattern: match against relative path
+        if pattern.startswith("/"):
+            pattern = pattern[1:]
+        if fnmatch.fnmatch(rel_path, pattern):
+            return True, negation
+        if is_dir and fnmatch.fnmatch(rel_path, pattern + "/*"):
+            return True, negation
+    else:
+        # Unanchored pattern: match basename anywhere
+        if fnmatch.fnmatch(name, pattern):
+            return True, negation
+
+    return False, negation
+
+
+def _is_ignored(rel_path, name, is_dir, patterns):
+    """Check if a path is ignored by gitignore patterns."""
+    ignored = False
+    for pattern in patterns:
+        matched, negation = _match_gitignore_pattern(rel_path, name, is_dir, pattern)
+        if matched:
+            ignored = not negation
+    return ignored
+
+
+def _scan_workspace_files(workspace):
+    """Scan workspace and return folder structure as a tree string."""
+    workspace = os.path.abspath(workspace)
+    patterns = _load_gitignore_patterns(workspace)
+
+    entries = []
+
+    def walk(current_dir, prefix=""):
+        try:
+            items = sorted(os.listdir(current_dir))
+        except (PermissionError, OSError):
+            return
+
+        visible_items = []
+        for name in items:
+            if name == ".git":
+                continue
+            full_path = os.path.join(current_dir, name)
+            rel_path = os.path.relpath(full_path, workspace).replace("\\", "/")
+            is_dir = os.path.isdir(full_path)
+            if _is_ignored(rel_path, name, is_dir, patterns):
+                continue
+            visible_items.append((name, full_path, is_dir))
+
+        count = len(visible_items)
+        for idx, (name, full_path, is_dir) in enumerate(visible_items):
+            is_last = idx == count - 1
+            connector = "└── " if is_last else "├── "
+            entries.append(f"{prefix}{connector}{name}")
+            if is_dir:
+                extension = "    " if is_last else "│   "
+                walk(full_path, prefix + extension)
+
+    entries.append(".")
+    walk(workspace)
+    return "\n".join(entries)
+
 def main():
     parser = argparse.ArgumentParser(
         description="Launch AI Agent Driver based on .topsailai/settings.yaml"
@@ -169,6 +290,18 @@ def main():
     merged_env.update(default_env)
     merged_env.update(item_env)
 
+    # 3.5 Scan workspace folder structure and append to TOPSAILAI_CONTEXT_USER_MESSAGE
+    original_user_message = merged_env.get("TOPSAILAI_CONTEXT_USER_MESSAGE", "")
+    folder_structure = _scan_workspace_files(workspace)
+    if original_user_message:
+        merged_env["TOPSAILAI_CONTEXT_USER_MESSAGE"] = (
+            f"{original_user_message}\n\n---\n\n# Workspace Folder Structure\n{folder_structure}"
+        )
+    else:
+        merged_env["TOPSAILAI_CONTEXT_USER_MESSAGE"] = (
+            f"---\n\n# Workspace Folder Structure\n{folder_structure}"
+        )
+
     # 4. Assemble command line: ai_agent_driver + context file list
     driver_parts = shlex.split(ai_agent_driver)
     cmd = driver_parts + abs_context
@@ -205,7 +338,9 @@ def main():
         exit_code = result.returncode
     else:
         # Default: os.system mode - build a shell command string with cd and env exports
-        config_env_keys = sorted(set(list(default_env.keys()) + list(item_env.keys())))
+        config_env_keys = sorted(
+            set(list(default_env.keys()) + list(item_env.keys()) + ["TOPSAILAI_CONTEXT_USER_MESSAGE"])
+        )
         env_exports = []
         for key in config_env_keys:
             val = merged_env.get(key, '')
