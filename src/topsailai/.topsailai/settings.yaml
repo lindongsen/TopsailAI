@@ -10,6 +10,8 @@ context:
     - project.yaml
     - readme.md
     - workspace/readme.md
+    - env_template
+    - docs/Environment_Variables.md
 
   default: []
 

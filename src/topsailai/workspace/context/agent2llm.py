@@ -165,32 +165,50 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         print_step(f"!!! New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]", need_format=False, need_log=True)
         logger.info("new context messages: %s", self.ai_agent.messages)
-
         return answer
 
     def is_need_summarize_for_processing(self) -> bool:
         """
-        Check if messages need to be summarized based on quantity threshold.
+        Check if messages need to be summarized based on quantity or token threshold.
 
-        Determines whether the current message count exceeds the configured threshold
-        and requires summarization for efficient processing.
+        Determines whether the current message count exceeds the configured quantity
+        threshold, or whether the current Agent2LLM token usage exceeds the configured
+        token threshold, and requires summarization for efficient processing.
 
         Returns:
             bool: True if summarization is needed, False otherwise.
         """
         quantity_threshold = self._get_quantity_threshold()
-        if not quantity_threshold:
-            return False
+        if quantity_threshold:
+            number_list = [23, 27, 29, 31, 37, 41, 43, 47]  # min -> max
+            if quantity_threshold >= number_list[0]:
+                number_list.append(quantity_threshold)
+            if quantity_threshold * 2 <= number_list[-1]:
+                number_list.append(quantity_threshold * 2)
 
-        number_list = [23, 27, 29, 31, 37, 41, 43, 47]  # min -> max
-        if quantity_threshold >= number_list[0]:
-            number_list.append(quantity_threshold)
-        if quantity_threshold * 2 <= number_list[-1]:
-            number_list.append(quantity_threshold * 2)
+            quantity_threshold = max(random.choice(number_list), quantity_threshold)
 
-        quantity_threshold = max(random.choice(number_list), quantity_threshold)
+            if len(self.ai_agent.messages) >= quantity_threshold:
+                return True
 
-        if len(self.ai_agent.messages) >= quantity_threshold:
-            return True
+        token_threshold = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD",
+            default=128000,
+            formatter=int,
+        ) or 0
+
+        if token_threshold > 0:
+            try:
+                current_tokens = int(self.ai_agent.llm_model.tokenStat.current_tokens)
+            except Exception:
+                current_tokens = 0
+
+            if current_tokens > token_threshold:
+                print_step(
+                    f"!!! Agent2LLM token usage exceeded threshold: current_tokens=[{current_tokens}], threshold=[{token_threshold}]",
+                    need_format=False,
+                    need_log=True,
+                )
+                return True
 
         return False

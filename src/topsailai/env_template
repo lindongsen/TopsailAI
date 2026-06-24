@@ -160,6 +160,10 @@ CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS=27000
 TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD=97
 # TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP=0
 
+# When the current Agent2LLM token usage exceeds this threshold, summarization is triggered.
+# Set to 0 to disable the token-based check.
+TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD=128000
+
 # Keep session messages after summarizing, 1 is enabled(default), 0 is disabled
 TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES=1
 
