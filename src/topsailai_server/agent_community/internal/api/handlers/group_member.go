@@ -344,7 +344,9 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 		if req.MemberName != "" {
 			memberName = req.MemberName
 		} else {
-			memberName = authCtx.Account.AccountName
+			// Default self-join name to the sanitized account name so that
+			// characters outside [A-Za-z0-9_-] are replaced with underscores.
+			memberName = sanitizeMemberName(authCtx.Account.AccountName)
 		}
 		memberDescription = req.MemberDescription
 		memberType = models.MemberTypeUser

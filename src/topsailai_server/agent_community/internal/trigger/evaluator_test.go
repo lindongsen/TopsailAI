@@ -472,9 +472,10 @@ func TestEvaluate_SlidingWindowBoundary11(t *testing.T) {
 	}
 	now := time.Now().UnixMilli()
 
-	// Build 11 agent messages followed by the target user message.
+	// Build 11 agent messages: 10 before the target and 1 after, so the 20-message
+	// window around the target contains 11 consecutive agent messages.
 	contextMessages := make([]models.GroupMessage, 0, 12)
-	for i := 0; i < 11; i++ {
+	for i := 0; i < 10; i++ {
 		contextMessages = append(contextMessages, *makeMessage(
 			fmt.Sprintf("msg_a_%d", i), "agent1", models.MemberTypeWorkerAgent,
 			"agent msg", "", now-int64((20-i)*1000),
@@ -483,6 +484,10 @@ func TestEvaluate_SlidingWindowBoundary11(t *testing.T) {
 
 	targetMsg := makeMessage("target", "user1", models.MemberTypeUser, "Hello", "", now+1000)
 	contextMessages = append(contextMessages, *targetMsg)
+	contextMessages = append(contextMessages, *makeMessage(
+		"msg_after", "agent1", models.MemberTypeWorkerAgent,
+		"agent msg", "", now+2000,
+	))
 
 	result, err := e.Evaluate(context.Background(), targetMsg, members, contextMessages)
 	if err != nil {

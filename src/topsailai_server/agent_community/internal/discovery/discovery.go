@@ -115,6 +115,7 @@ func New(js natsgo.JetStreamContext, config Config) (*Discovery, error) {
 
 	logger.InfoM("discovery", "", "discovery initialized",
 		slog.String("bucket", config.BucketName),
+		slog.String("service_name", config.ServiceName),
 		slog.String("service_id", d.self.ID),
 		slog.String("address", fmt.Sprintf("%s:%d", config.Address, config.Port)),
 	)
@@ -130,9 +131,14 @@ func (d *Discovery) Register() error {
 	if d.started {
 		return fmt.Errorf("discovery already registered")
 	}
-
 	if err := d.upsertSelf(); err != nil {
 		return fmt.Errorf("failed to register service: %w", err)
+	}
+
+	// Count visible peers after registration for operational visibility.
+	peerCount := 0
+	if keys, err := d.kv.Keys(); err == nil {
+		peerCount = len(keys)
 	}
 
 	d.started = true
@@ -141,8 +147,10 @@ func (d *Discovery) Register() error {
 
 	logger.InfoM("discovery", "", "service registered",
 		slog.String("bucket", d.config.BucketName),
+		slog.String("service_name", d.config.ServiceName),
 		slog.String("service_id", d.self.ID),
 		slog.String("address", fmt.Sprintf("%s:%d", d.config.Address, d.config.Port)),
+		slog.Int("peer_count", peerCount),
 	)
 
 	return nil
@@ -169,6 +177,7 @@ func (d *Discovery) Deregister() error {
 
 	logger.InfoM("discovery", "", "service deregistered",
 		slog.String("bucket", d.config.BucketName),
+		slog.String("service_name", d.config.ServiceName),
 		slog.String("service_id", d.self.ID),
 	)
 

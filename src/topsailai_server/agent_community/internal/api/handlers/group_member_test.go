@@ -1238,3 +1238,138 @@ func TestJoinGroup_OwnerCanStillAddMember(t *testing.T) {
 	assert.Equal(t, "agent-001", resp.Data.MemberID)
 	assert.Equal(t, string(models.MemberTypeWorkerAgent), resp.Data.MemberType)
 }
+
+// TestJoinGroup_SelfJoinSanitizesAccountName verifies that when a user self-joins
+// a group without providing member_name, the account name is sanitized to only
+// contain alphanumeric characters, hyphens, and underscores.
+func TestJoinGroup_SelfJoinSanitizesAccountName(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupForMembersWithOwner(t, db, "group-sanitize", testAdminAccountID)
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		IsAuthenticated: true,
+		Account: &models.Account{
+			AccountID:   testUserAccountID,
+			AccountName: "Alice Smith!@#",
+			Role:        models.AccountRoleUser,
+			Status:      models.AccountStatusActive,
+		},
+	})
+	body := JoinGroupRequest{}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-sanitize/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-sanitize"}}
+
+	handler.JoinGroup(c)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	var resp groupMemberResponseWrapper
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, testUserAccountID, resp.Data.MemberID)
+	assert.Equal(t, "Alice_Smith___", resp.Data.MemberName)
+}
+
+// TestJoinGroup_SelfJoin_EmptyAccountNameDefaultsToUser verifies that when a
+// user self-joins without member_name and their account name is empty, the
+// stored member_name falls back to "user".
+func TestJoinGroup_SelfJoin_EmptyAccountNameDefaultsToUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupForMembersWithOwner(t, db, "group-empty-name", testAdminAccountID)
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		IsAuthenticated: true,
+		Account: &models.Account{
+			AccountID:   testUserAccountID,
+			AccountName: "",
+			Role:        models.AccountRoleUser,
+			Status:      models.AccountStatusActive,
+		},
+	})
+	body := JoinGroupRequest{}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-empty-name/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-empty-name"}}
+
+	handler.JoinGroup(c)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	var resp groupMemberResponseWrapper
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, testUserAccountID, resp.Data.MemberID)
+	assert.Equal(t, "user", resp.Data.MemberName)
+}
+
+// TestJoinGroup_SelfJoin_ProvidedMemberNamePreserved verifies that when a user
+// self-joins with a valid member_name, the provided name is stored unchanged.
+func TestJoinGroup_SelfJoin_ProvidedMemberNamePreserved(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupForMembersWithOwner(t, db, "group-provided-name", testAdminAccountID)
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		IsAuthenticated: true,
+		Account: &models.Account{
+			AccountID:   testUserAccountID,
+			AccountName: "Alice Smith!@#",
+			Role:        models.AccountRoleUser,
+			Status:      models.AccountStatusActive,
+		},
+	})
+	body := JoinGroupRequest{MemberName: "Custom_Name-123"}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-provided-name/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-provided-name"}}
+
+	handler.JoinGroup(c)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	var resp groupMemberResponseWrapper
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, testUserAccountID, resp.Data.MemberID)
+	assert.Equal(t, "Custom_Name-123", resp.Data.MemberName)
+}
+
+// TestJoinGroup_SelfJoin_InvalidProvidedMemberNameRejected verifies that when a
+// user self-joins with a member_name containing disallowed characters, the
+// request is rejected rather than stored.
+func TestJoinGroup_SelfJoin_InvalidProvidedMemberNameRejected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupForMembersWithOwner(t, db, "group-invalid-name", testAdminAccountID)
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("auth_context", middleware.AuthContext{
+		IsAuthenticated: true,
+		Account: &models.Account{
+			AccountID:   testUserAccountID,
+			AccountName: "Alice",
+			Role:        models.AccountRoleUser,
+			Status:      models.AccountStatusActive,
+		},
+	})
+	body := JoinGroupRequest{MemberName: "Invalid Name!"}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-invalid-name/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-invalid-name"}}
+
+	handler.JoinGroup(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}

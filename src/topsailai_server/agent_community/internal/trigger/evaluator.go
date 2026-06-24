@@ -115,7 +115,7 @@ func isAgentType(mt models.MemberType) bool {
 }
 
 // isLoopMessage checks the sliding window anti-loop condition.
-// In 22 messages around this one (11 before, 11 after), if >10 consecutive agent messages, skip.
+// In 20 messages around this one (10 before, 10 after), if >10 consecutive agent messages, skip.
 func (e *Evaluator) isLoopMessage(msg *models.GroupMessage, contextMessages []models.GroupMessage) bool {
 	if len(contextMessages) == 0 {
 		return false
@@ -134,12 +134,12 @@ func (e *Evaluator) isLoopMessage(msg *models.GroupMessage, contextMessages []mo
 		return false
 	}
 
-	// Get the window: 11 before and 11 after (excluding target, max 22 messages)
-	start := targetIdx - 11
+	// Get the window: 10 before and 10 after (excluding target, max 20 messages)
+	start := targetIdx - 10
 	if start < 0 {
 		start = 0
 	}
-	end := targetIdx + 11
+	end := targetIdx + 10
 	if end >= len(contextMessages) {
 		end = len(contextMessages) - 1
 	}
