@@ -836,6 +836,37 @@ func TestAccountHandler_Login(t *testing.T) {
 	}
 }
 
+// TestAccountHandler_Login_InactiveAccount verifies that logging in to an
+// inactive account returns 400 Bad Request.
+func TestAccountHandler_Login_InactiveAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupAccountTestDB(t)
+	handler := setupAccountTestHandler(t, db)
+	accountSvc := handler.accountSvc
+
+	acc := createTestAccount(t, accountSvc, "Inactive", "inactive-login", models.AccountRoleUser)
+
+	inactiveStatus := models.AccountStatusInactive
+	_, err := accountSvc.UpdateAccount(services.ContextWithClientIP(context.Background(), "127.0.0.1"), &services.UpdateAccountRequest{
+		AccountID:  acc.AccountID,
+		Status:     &inactiveStatus,
+		CallerRole: models.AccountRoleAdmin,
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := LoginRequest{LoginName: "inactive-login", LoginPassword: "password"}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/accounts/login", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.Login(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "account is not active")
+}
+
 // TestAccountHandler_Login_InvalidJSON verifies malformed login JSON returns 400.
 func TestAccountHandler_Login_InvalidJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)

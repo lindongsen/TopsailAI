@@ -25,6 +25,7 @@ var (
 	ErrRoleNotAllowed       = errors.New("caller role cannot create accounts with this role")
 	ErrInvalidStatus        = errors.New("invalid account status")
 	ErrPasswordNotSet       = errors.New("password login is disabled for this account")
+	ErrAccountInactive      = errors.New("account is not active")
 	ErrInvalidSession       = errors.New("invalid or expired session")
 	ErrSessionFormatInvalid = errors.New("invalid session key format")
 )
@@ -494,7 +495,7 @@ func (s *AccountService) LoginByPassword(ctx context.Context, loginName, passwor
 			ResourceName: account.AccountName,
 			Detail:       "failed login: account is not active",
 		})
-		return nil, "", 0, fmt.Errorf("account is not active")
+		return nil, "", 0, ErrAccountInactive
 	}
 	if account.LoginPassword == "" {
 		s.audit(ctx, AuditLogRequest{

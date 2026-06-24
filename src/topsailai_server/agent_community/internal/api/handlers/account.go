@@ -386,6 +386,10 @@ func (h *AccountHandler) Login(c *gin.Context) {
 			writeErrorResponse(c, http.StatusUnauthorized, "invalid credentials", traceID)
 			return
 		}
+		if err == services.ErrAccountInactive {
+			writeErrorResponse(c, http.StatusBadRequest, "account is not active", traceID)
+			return
+		}
 		writeErrorResponse(c, http.StatusUnauthorized, "invalid credentials", traceID)
 		return
 	}

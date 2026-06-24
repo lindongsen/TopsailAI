@@ -755,8 +755,7 @@ func TestAccountService_LoginByPassword_InactiveAndNoPassword(t *testing.T) {
 	require.NoError(t, err)
 
 	_, _, _, err = accountSvc.LoginByPassword(ctx, "inactive-login", "password")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "account is not active")
+	assert.ErrorIs(t, err, ErrAccountInactive)
 
 	// Account without password.
 	_, err = accountSvc.CreateAccount(ctx, &CreateAccountRequest{
