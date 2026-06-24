@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,10 +42,14 @@ func (f *fakeDiscovery) LeaderInfo() (*discovery.ServiceInfo, error) {
 func (f *fakeDiscovery) SelfInfo() discovery.ServiceInfo {
 	return discovery.ServiceInfo{ID: "self-1", Name: "acs"}
 }
+// routerTestDBCounter generates unique names for in-memory SQLite databases so
+// that parallel and sequential tests do not share the same shared-cache database.
+var routerTestDBCounter int64
 
 // setupRouterTestDB creates an in-memory SQLite database and auto-migrates all models.
 func setupRouterTestDB(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open("file::memory:"), &gorm.Config{})
+	dbName := fmt.Sprintf("file:router_test_%d?mode=memory&cache=shared", atomic.AddInt64(&routerTestDBCounter, 1))
+	db, err := gorm.Open(sqlite.Open(dbName), &gorm.Config{})
 	require.NoError(t, err, "failed to open sqlite database")
 	require.NoError(t, db.AutoMigrate(
 		&models.Group{},
@@ -99,9 +104,8 @@ func setupRouterTestDependencies(t *testing.T, db *gorm.DB) (*Router, *services.
 	cfg := setupRouterTestConfig()
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
 
-	auditSvc := services.NewAuditLogService(db)
-	accountSvc := services.NewAccountService(db, cfg, auditSvc)
-	apiKeySvc := services.NewAPIKeyService(db, cfg, auditSvc)
+	accountSvc := services.NewAccountService(db, cfg)
+	apiKeySvc := services.NewAPIKeyService(db, cfg)
 	accountSvc.SetAPIKeyService(apiKeySvc)
 
 	disc := &fakeDiscovery{}

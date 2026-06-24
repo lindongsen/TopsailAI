@@ -209,12 +209,11 @@ func runServer(isDaemon bool) error {
 	}
 	_ = lockManager
 	// 5.5. Initialize account services and run bootstrap for default accounts.
-	auditSvc := services.NewAuditLogService(database.Conn)
-	accountSvc := services.NewAccountService(database.Conn, cfg, auditSvc)
-	apiKeySvc := services.NewAPIKeyService(database.Conn, cfg, auditSvc)
+	accountSvc := services.NewAccountService(database.Conn, cfg)
+	apiKeySvc := services.NewAPIKeyService(database.Conn, cfg)
 	accountSvc.SetAPIKeyService(apiKeySvc)
 
-	bootstrapSvc := services.NewBootstrapService(database.Conn, cfg, accountSvc, apiKeySvc, auditSvc, kv, log)
+	bootstrapSvc := services.NewBootstrapService(database.Conn, cfg, accountSvc, apiKeySvc, kv, log)
 	if err := bootstrapSvc.Run(context.Background()); err != nil {
 		return fmt.Errorf("failed to bootstrap default accounts: %w", err)
 	}

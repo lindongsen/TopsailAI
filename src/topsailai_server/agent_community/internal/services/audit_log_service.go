@@ -4,6 +4,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -60,7 +61,8 @@ func NewAuditLogService(db *gorm.DB) *AuditLogService {
 	return &AuditLogService{db: db}
 }
 
-// Log writes an audit log record.
+// Log writes an audit log record. For create actions, ResourceID may be empty
+// when the generated ID is not yet available; it will be recorded as "unknown".
 func (s *AuditLogService) Log(ctx context.Context, req *AuditLogRequest) (*models.AuditLog, error) {
 	if req.Action == "" {
 		return nil, fmt.Errorf("action is required")
@@ -68,7 +70,7 @@ func (s *AuditLogService) Log(ctx context.Context, req *AuditLogRequest) (*model
 	if req.ResourceType == "" {
 		return nil, fmt.Errorf("resource_type is required")
 	}
-	if req.ResourceID == "" {
+	if req.ResourceID == "" && !strings.HasPrefix(req.Action, "create_") {
 		return nil, fmt.Errorf("resource_id is required")
 	}
 
@@ -81,6 +83,12 @@ func (s *AuditLogService) Log(ctx context.Context, req *AuditLogRequest) (*model
 		ResourceName: req.ResourceName,
 		Detail:       req.Detail,
 		ClientIP:     req.ClientIP,
+	}
+	if log.ResourceID == "" {
+		log.ResourceID = "unknown"
+	}
+	if log.ResourceName == "" {
+		log.ResourceName = "unknown"
 	}
 
 	if err := s.db.WithContext(ctx).Create(log).Error; err != nil {

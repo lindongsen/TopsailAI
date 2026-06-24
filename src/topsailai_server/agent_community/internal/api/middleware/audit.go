@@ -9,7 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -24,8 +24,29 @@ type AuditLogService interface {
 	Log(ctx context.Context, req *services.AuditLogRequest) (*models.AuditLog, error)
 }
 
+// responseRecorder wraps gin.ResponseWriter to capture the response body for
+// audit log resource ID extraction without altering the client response.
+type responseRecorder struct {
+	gin.ResponseWriter
+	body *bytes.Buffer
+}
+
+func newResponseRecorder(w gin.ResponseWriter) *responseRecorder {
+	return &responseRecorder{ResponseWriter: w, body: &bytes.Buffer{}}
+}
+
+func (r *responseRecorder) Write(b []byte) (int, error) {
+	r.body.Write(b)
+	return r.ResponseWriter.Write(b)
+}
+
+func (r *responseRecorder) WriteString(s string) (int, error) {
+	r.body.WriteString(s)
+	return r.ResponseWriter.WriteString(s)
+}
+
 // AuditLogger returns a Gin middleware that writes audit log records for
-// lifecycle actions (POST, PUT, DELETE) after the handler completes.
+// lifecycle actions (POST, PUT, PATCH, DELETE) after the handler completes.
 func AuditLogger(auditSvc AuditLogService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Capture request body for resource name extraction.
@@ -34,6 +55,10 @@ func AuditLogger(auditSvc AuditLogService) gin.HandlerFunc {
 			bodyBytes, _ = io.ReadAll(c.Request.Body)
 			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		}
+
+		// Wrap the response writer so we can inspect successful create responses.
+		recorder := newResponseRecorder(c.Writer)
+		c.Writer = recorder
 
 		// Process the request.
 		c.Next()
@@ -58,31 +83,36 @@ func AuditLogger(auditSvc AuditLogService) gin.HandlerFunc {
 			apiKeyID = ac.APIKey.APIKeyID
 		}
 
-		action := fmt.Sprintf("%s %s", strings.ToLower(method), resourceType)
-		detail := fmt.Sprintf("status=%d trace_id=%s", c.Writer.Status(), GetTraceID(c))
+		// For successful create responses, try to extract the generated resource ID
+		// from the response envelope so audit logs reference the real object.
+		if isCreateMethod(method) && isSuccessStatus(recorder.Status()) {
+			if extractedID := extractCreatedResourceID(resourceType, recorder.body.Bytes()); extractedID != "" {
+				resourceID = extractedID
+			}
+		}
 
+		action := buildAction(method, resourceType, c)
+		detail := fmt.Sprintf("status=%d trace_id=%s", recorder.Status(), GetTraceID(c))
 		resourceName := extractResourceName(resourceType, bodyBytes)
 
 		// Write audit log asynchronously to avoid delaying the response.
-		// Capture the values needed by the goroutine to avoid races with
-		// request context reuse.
+		// Use a detached context so the write is not cancelled when the HTTP
+		// request completes.
 		clientIP := c.ClientIP()
-		reqCtx := c.Request.Context()
-		var once sync.Once
-		once.Do(func() {
-			go func() {
-				_, _ = auditSvc.Log(reqCtx, &services.AuditLogRequest{
-					AccountID:    accountID,
-					APIKeyID:     apiKeyID,
-					Action:       action,
-					ResourceType: resourceType,
-					ResourceID:   resourceID,
-					ResourceName: resourceName,
-					Detail:       detail,
-					ClientIP:     clientIP,
-				})
-			}()
-		})
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 5*time.Second)
+		go func() {
+			defer cancel()
+			_, _ = auditSvc.Log(ctx, &services.AuditLogRequest{
+				AccountID:    accountID,
+				APIKeyID:     apiKeyID,
+				Action:       action,
+				ResourceType: resourceType,
+				ResourceID:   resourceID,
+				ResourceName: resourceName,
+				Detail:       detail,
+				ClientIP:     clientIP,
+			})
+		}()
 	}
 }
 
@@ -94,6 +124,16 @@ func isAuditMethod(method string) bool {
 	default:
 		return false
 	}
+}
+
+// isCreateMethod returns true for POST requests.
+func isCreateMethod(method string) bool {
+	return method == http.MethodPost
+}
+
+// isSuccessStatus returns true for 2xx status codes.
+func isSuccessStatus(status int) bool {
+	return status >= 200 && status < 300
 }
 
 // extractResource derives resource type and ID from the request path and params.
@@ -146,6 +186,83 @@ func extractResource(c *gin.Context) (string, string) {
 	}
 
 	return "", ""
+}
+
+// buildAction returns a stable action name for the request.
+// Special cases are handled for login, password change, and session creation.
+func buildAction(method, resourceType string, c *gin.Context) string {
+	path := c.Request.URL.Path
+
+	if strings.HasSuffix(path, "/password") && method == http.MethodPost {
+		return "change_password"
+	}
+	if strings.HasSuffix(path, "/session") && method == http.MethodPost {
+		return "create_session"
+	}
+	if strings.HasSuffix(path, "/login") && method == http.MethodPost {
+		return "login"
+	}
+
+	verb := methodVerb(method)
+	return fmt.Sprintf("%s_%s", verb, resourceType)
+}
+
+// methodVerb maps an HTTP method to a stable action verb.
+func methodVerb(method string) string {
+	switch method {
+	case http.MethodPost:
+		return "create"
+	case http.MethodPut, http.MethodPatch:
+		return "update"
+	case http.MethodDelete:
+		return "delete"
+	default:
+		return strings.ToLower(method)
+	}
+}
+
+// extractCreatedResourceID parses a successful create response envelope and
+// returns the generated resource ID for the given resource type.
+func extractCreatedResourceID(resourceType string, body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+
+	var envelope struct {
+		Data map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return ""
+	}
+	if envelope.Data == nil {
+		return ""
+	}
+
+	idField := ""
+	switch resourceType {
+	case "account":
+		idField = "account_id"
+	case "api_key":
+		idField = "api_key_id"
+	case "group":
+		idField = "group_id"
+	case "group_member":
+		idField = "member_id"
+	case "group_message":
+		idField = "message_id"
+	case "audit_log":
+		idField = "audit_log_id"
+	}
+	if idField == "" {
+		return ""
+	}
+
+	if v, ok := envelope.Data[idField]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 // extractResourceName tries to read a friendly name from the request body.

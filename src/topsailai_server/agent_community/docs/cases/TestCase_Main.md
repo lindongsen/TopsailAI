@@ -32,3 +32,15 @@ References:
 
 TASK: Use cli-terminal to do test, ! cli-terminal MUST run in tmux !
 GOAL: Finish Manual-Test for all of functionals/features.
+
+## Integration-Test
+
+References:
+- TestCase_integration.md
+- TestCase_integration_xxx.md
+
+Scripts:
+- tests/integration/
+
+TASK: Implement and Perform Integration-Test scripts.
+GOAL: Finish Integration-Test for all of functionals/features.

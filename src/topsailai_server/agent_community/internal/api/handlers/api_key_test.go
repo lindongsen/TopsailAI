@@ -45,9 +45,8 @@ func setupAPIKeyTestServices(t *testing.T, db *gorm.DB) (*services.AccountServic
 			BcryptCost:                4, // low cost for fast tests
 		},
 	}
-	auditSvc := services.NewAuditLogService(db)
-	accountSvc := services.NewAccountService(db, cfg, auditSvc)
-	apiKeySvc := services.NewAPIKeyService(db, cfg, auditSvc)
+	accountSvc := services.NewAccountService(db, cfg)
+	apiKeySvc := services.NewAPIKeyService(db, cfg)
 	accountSvc.SetAPIKeyService(apiKeySvc)
 	return accountSvc, apiKeySvc
 }
@@ -302,7 +301,7 @@ func TestAPIKeyHandler_CreateAPIKey_LimitReached(t *testing.T) {
 			LoginSessionExpirySeconds: 86400,
 			BcryptCost:                4,
 		},
-	}, services.NewAuditLogService(db))
+	})
 
 	createTestAPIKey(t, apiKeySvc, "Key1", models.APIKeyRoleUser, user.AccountID, admin.AccountID)
 	createTestAPIKey(t, apiKeySvc, "Key2", models.APIKeyRoleUser, user.AccountID, admin.AccountID)

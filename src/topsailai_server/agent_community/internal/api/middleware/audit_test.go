@@ -78,7 +78,7 @@ func TestAuditLogger_LogsPostAccount(t *testing.T) {
 	call := mock.Calls()[0]
 	assert.Equal(t, "acc-001", call.AccountID)
 	assert.Equal(t, "ak-001", call.APIKeyID)
-	assert.Equal(t, "post account", call.Action)
+	assert.Equal(t, "create_account", call.Action)
 	assert.Equal(t, "account", call.ResourceType)
 	assert.Equal(t, "", call.ResourceID)
 	assert.Equal(t, "Alice", call.ResourceName)
@@ -110,7 +110,7 @@ func TestAuditLogger_LogsPutGroup(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 
 	call := mock.Calls()[0]
-	assert.Equal(t, "put group", call.Action)
+	assert.Equal(t, "update_group", call.Action)
 	assert.Equal(t, "group", call.ResourceType)
 	assert.Equal(t, "group-001", call.ResourceID)
 	assert.Equal(t, "Updated Group", call.ResourceName)
@@ -138,7 +138,7 @@ func TestAuditLogger_LogsDeleteMessage(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 
 	call := mock.Calls()[0]
-	assert.Equal(t, "delete group_message", call.Action)
+	assert.Equal(t, "delete_group_message", call.Action)
 	assert.Equal(t, "group_message", call.ResourceType)
 	assert.Equal(t, "msg-001", call.ResourceID)
 	assert.Equal(t, "", call.ResourceName)
@@ -279,7 +279,7 @@ func TestAuditLogger_AnonymousAccount(t *testing.T) {
 	call := mock.Calls()[0]
 	assert.Equal(t, "", call.AccountID)
 	assert.Equal(t, "", call.APIKeyID)
-	assert.Equal(t, "post group", call.Action)
+	assert.Equal(t, "create_group", call.Action)
 	assert.Equal(t, "group", call.ResourceType)
 	assert.Equal(t, "", call.ResourceID)
 	assert.Equal(t, "Anon Group", call.ResourceName)
@@ -308,7 +308,7 @@ func TestAuditLogger_LogsPatch(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 
 	call := mock.Calls()[0]
-	assert.Equal(t, "patch account", call.Action)
+	assert.Equal(t, "update_account", call.Action)
 	assert.Equal(t, "acc-008", call.ResourceID)
 	assert.Equal(t, "Patched", call.ResourceName)
 }

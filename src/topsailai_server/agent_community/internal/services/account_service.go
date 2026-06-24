@@ -80,16 +80,14 @@ type UpdateAccountRequest struct {
 type AccountService struct {
 	db        *gorm.DB
 	cfg       *config.Config
-	auditSvc  *AuditLogService
 	apiKeySvc *APIKeyService
 }
 
 // NewAccountService creates a new AccountService.
-func NewAccountService(db *gorm.DB, cfg *config.Config, auditSvc *AuditLogService) *AccountService {
+func NewAccountService(db *gorm.DB, cfg *config.Config) *AccountService {
 	return &AccountService{
-		db:       db,
-		cfg:      cfg,
-		auditSvc: auditSvc,
+		db:  db,
+		cfg: cfg,
 	}
 }
 
@@ -149,15 +147,6 @@ func (s *AccountService) CreateAccount(ctx context.Context, req *CreateAccountRe
 		}
 		return nil, fmt.Errorf("failed to create account: %w", err)
 	}
-
-	s.audit(ctx, AuditLogRequest{
-		AccountID:    account.AccountID,
-		Action:       "account.create",
-		ResourceType: "account",
-		ResourceID:   account.AccountID,
-		ResourceName: account.AccountName,
-		Detail:       fmt.Sprintf("created account with role %s", account.Role),
-	})
 
 	return account, nil
 }
@@ -305,15 +294,6 @@ func (s *AccountService) UpdateAccount(ctx context.Context, req *UpdateAccountRe
 		return nil, fmt.Errorf("failed to update account: %w", err)
 	}
 
-	s.audit(ctx, AuditLogRequest{
-		AccountID:    account.AccountID,
-		Action:       "account.update",
-		ResourceType: "account",
-		ResourceID:   account.AccountID,
-		ResourceName: account.AccountName,
-		Detail:       "updated account",
-	})
-
 	return account, nil
 }
 
@@ -337,15 +317,6 @@ func (s *AccountService) SoftDeleteAccount(ctx context.Context, accountID string
 			return fmt.Errorf("failed to cascade delete api keys: %w", err)
 		}
 	}
-
-	s.audit(ctx, AuditLogRequest{
-		AccountID:    account.AccountID,
-		Action:       "account.delete",
-		ResourceType: "account",
-		ResourceID:   account.AccountID,
-		ResourceName: account.AccountName,
-		Detail:       "soft-deleted account",
-	})
 
 	return nil
 }
@@ -372,15 +343,6 @@ func (s *AccountService) ChangePassword(ctx context.Context, accountID, newPassw
 	if err := s.db.WithContext(ctx).Save(account).Error; err != nil {
 		return fmt.Errorf("failed to change password: %w", err)
 	}
-
-	s.audit(ctx, AuditLogRequest{
-		AccountID:    account.AccountID,
-		Action:       "account.password.change",
-		ResourceType: "account",
-		ResourceID:   account.AccountID,
-		ResourceName: account.AccountName,
-		Detail:       "changed login password and invalidated active sessions",
-	})
 
 	return nil
 }
@@ -416,15 +378,6 @@ func (s *AccountService) CreateLoginSession(ctx context.Context, accountID strin
 		return "", 0, fmt.Errorf("failed to save session: %w", err)
 	}
 
-	s.audit(ctx, AuditLogRequest{
-		AccountID:    account.AccountID,
-		Action:       "account.session.create",
-		ResourceType: "account",
-		ResourceID:   account.AccountID,
-		ResourceName: account.AccountName,
-		Detail:       "created login session",
-	})
-
 	return sessionKey, expiry, nil
 }
 
@@ -458,6 +411,7 @@ func (s *AccountService) ValidateLoginSession(ctx context.Context, sessionKey st
 	}
 	return account, nil
 }
+
 // EnsureLoginSession returns a valid plaintext login session key for the account.
 // If the account has no session or the existing session has expired, a new session
 // is generated, persisted, and returned. The caller receives the plaintext key
@@ -487,36 +441,12 @@ func (s *AccountService) LoginByPassword(ctx context.Context, loginName, passwor
 		return nil, "", 0, fmt.Errorf("failed to find account: %w", err)
 	}
 	if !account.IsActive() {
-		s.audit(ctx, AuditLogRequest{
-			AccountID:    account.AccountID,
-			Action:       "account.login.password",
-			ResourceType: "account",
-			ResourceID:   account.AccountID,
-			ResourceName: account.AccountName,
-			Detail:       "failed login: account is not active",
-		})
 		return nil, "", 0, ErrAccountInactive
 	}
 	if account.LoginPassword == "" {
-		s.audit(ctx, AuditLogRequest{
-			AccountID:    account.AccountID,
-			Action:       "account.login.password",
-			ResourceType: "account",
-			ResourceID:   account.AccountID,
-			ResourceName: account.AccountName,
-			Detail:       "failed login: password not set",
-		})
 		return nil, "", 0, ErrPasswordNotSet
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(account.LoginPassword), []byte(password)); err != nil {
-		s.audit(ctx, AuditLogRequest{
-			AccountID:    account.AccountID,
-			Action:       "account.login.password",
-			ResourceType: "account",
-			ResourceID:   account.AccountID,
-			ResourceName: account.AccountName,
-			Detail:       "failed login: invalid password",
-		})
 		return nil, "", 0, fmt.Errorf("invalid password")
 	}
 
@@ -524,15 +454,6 @@ func (s *AccountService) LoginByPassword(ctx context.Context, loginName, passwor
 	if err != nil {
 		return nil, "", 0, err
 	}
-
-	s.audit(ctx, AuditLogRequest{
-		AccountID:    account.AccountID,
-		Action:       "account.login.password",
-		ResourceType: "account",
-		ResourceID:   account.AccountID,
-		ResourceName: account.AccountName,
-		Detail:       "logged in with password",
-	})
 
 	return &account, sessionKey, expiry, nil
 }
@@ -571,24 +492,6 @@ func (s *AccountService) hashPassword(password string) (string, error) {
 		return "", err
 	}
 	return string(hash), nil
-}
-
-// audit writes an audit record if the audit service is available.
-// It backfills the client IP from the request context when the caller did not
-// provide one explicitly.
-func (s *AccountService) audit(ctx context.Context, req AuditLogRequest) {
-	if s.auditSvc == nil {
-		return
-	}
-	if req.ClientIP == "" {
-		if ip, ok := ClientIPFromContext(ctx); ok {
-			req.ClientIP = ip
-		}
-	}
-	if _, err := s.auditSvc.Log(ctx, &req); err != nil {
-		// Audit failures are logged but do not break the main flow.
-		fmt.Printf("failed to write audit log: %v\n", err)
-	}
 }
 
 // isValidAccountRole reports whether role is a known account role.

@@ -53,8 +53,7 @@ func newAccountTestConfig() *config.Config {
 func setupAccountTestHandler(t *testing.T, db *gorm.DB) *AccountHandler {
 	t.Helper()
 	cfg := newAccountTestConfig()
-	auditSvc := services.NewAuditLogService(db)
-	accountSvc := services.NewAccountService(db, cfg, auditSvc)
+	accountSvc := services.NewAccountService(db, cfg)
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
 	return NewAccountHandler(accountSvc, log)
 }

@@ -38,8 +38,8 @@ func newTestBootstrapServices(t *testing.T) (*gorm.DB, *AccountService, *APIKeyS
 	db := newTestDB(t)
 	cfg := newTestBootstrapConfig()
 	auditSvc := NewAuditLogService(db)
-	accountSvc := NewAccountService(db, cfg, auditSvc)
-	apiKeySvc := NewAPIKeyService(db, cfg, auditSvc)
+	accountSvc := NewAccountService(db, cfg)
+	apiKeySvc := NewAPIKeyService(db, cfg)
 	accountSvc.SetAPIKeyService(apiKeySvc)
 	return db, accountSvc, apiKeySvc, auditSvc
 }
@@ -212,8 +212,8 @@ func (kv *stubKeyValue) Status() (nats.KeyValueStatus, error) {
 // newTestBootstrapService builds a BootstrapService with the provided NATS KV.
 func newTestBootstrapService(t *testing.T, kv nats.KeyValue) *BootstrapService {
 	t.Helper()
-	db, accountSvc, apiKeySvc, auditSvc := newTestBootstrapServices(t)
-	return NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, auditSvc, kv, newDiscardLogger(t))
+	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
+	return NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, kv, newDiscardLogger(t))
 }
 
 func TestBootstrapService_Run_CreatesDefaultAdminAndManager(t *testing.T) {
@@ -272,7 +272,7 @@ func TestBootstrapService_Run_ValidatesConfiguredAdminKey(t *testing.T) {
 	cfg := newTestBootstrapConfig()
 	cfg.Account.AdminAPIKey = key.Token
 
-	svc := NewBootstrapService(db, cfg, accountSvc, apiKeySvc, nil, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, cfg, accountSvc, apiKeySvc, nil, newDiscardLogger(t))
 	err = svc.Run(ctx)
 	require.NoError(t, err)
 
@@ -312,7 +312,7 @@ func TestBootstrapService_Run_AdminExistsSkipsCreation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
 	err = svc.Run(ctx)
 	require.NoError(t, err)
 
@@ -424,7 +424,7 @@ func TestBootstrapService_validateConfiguredToken_RoleMismatch(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
 	err = svc.validateConfiguredToken(ctx, key.Token, models.AccountRoleAdmin)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expected admin")
@@ -434,7 +434,7 @@ func TestBootstrapService_createDefaultAccount_RoleToKeyRoleMapping(t *testing.T
 	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
 	ctx := context.Background()
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
 
 	tests := []struct {
 		role        models.AccountRole
@@ -502,7 +502,7 @@ func TestBootstrapService_logAccountStats(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
 	// Should not panic and should complete without error.
 	svc.logAccountStats(ctx)
 }
@@ -584,7 +584,7 @@ func TestBootstrapService_validateConfiguredToken_InactiveKey(t *testing.T) {
 	// Deactivate the key directly.
 	require.NoError(t, db.WithContext(ctx).Model(&models.APIKey{}).Where("api_key_id = ?", key.APIKey.APIKeyID).Update("status", models.APIKeyStatusInactive).Error)
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
 	err = svc.validateConfiguredToken(ctx, key.Token, models.AccountRoleAdmin)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "inactive")
@@ -662,7 +662,7 @@ func TestBootstrapService_renewLock_UpdateErrorContinues(t *testing.T) {
 
 func TestBootstrapService_hasAccountWithRole_Error(t *testing.T) {
 	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
 	ctx := context.Background()
 
 	// Close the DB to force an error.

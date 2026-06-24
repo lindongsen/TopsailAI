@@ -182,11 +182,12 @@ func TestAuditLogService_ListAuditLogs_NilFilter(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// CreateAccount also writes an account.create audit log, so total is 5 + 1 = 6.
+	// CreateAccount no longer writes an account.create audit log (handled by middleware),
+	// so total is exactly 5.
 	logs, total, err := auditSvc.ListAuditLogs(ctx, nil, 0, 100)
 	require.NoError(t, err)
-	assert.Equal(t, int64(6), total)
-	assert.Len(t, logs, 6)
+	assert.Equal(t, int64(5), total)
+	assert.Len(t, logs, 5)
 }
 
 func TestAuditLogService_ListAuditLogs_IndividualFilters(t *testing.T) {
@@ -237,14 +238,14 @@ func TestAuditLogService_ListAuditLogs_IndividualFilters(t *testing.T) {
 		{
 			name:   "account_id",
 			filter: &AuditLogFilter{AccountID: acc.AccountID},
-			// account.create + api_key.create + group create
-			want: 3,
+			// api_key.create + group create
+			want: 1,
 		},
 		{
 			name:   "api_key_id",
 			filter: &AuditLogFilter{APIKeyID: key.APIKey.APIKeyID},
 			// api_key.create + group create
-			want: 2,
+			want: 1,
 		},
 		{
 			name:   "action",
@@ -264,8 +265,8 @@ func TestAuditLogService_ListAuditLogs_IndividualFilters(t *testing.T) {
 		{
 			name:   "time_range",
 			filter: &AuditLogFilter{StartTimeMs: 0, EndTimeMs: time.Now().UnixMilli() + 3600000},
-			// account.create + api_key.create + 2 explicit logs
-			want: 4,
+			// api_key.create + 2 explicit logs
+			want: 2,
 		},
 	}
 
@@ -349,33 +350,37 @@ func TestAuditLogService_ListAuditLogs_PaginationAndErrors(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// CreateAccount writes one account.create audit log, so baseline total is 5 + 1 = 6.
+	// CreateAccount no longer writes an account.create audit log (handled by middleware),
+	// so baseline total is exactly 5.
 	t.Run("limit defaults to 1000", func(t *testing.T) {
 		logs, total, err := auditSvc.ListAuditLogs(ctx, nil, 0, 0)
 		require.NoError(t, err)
-		assert.Equal(t, int64(6), total)
-		assert.Len(t, logs, 6)
+		assert.Equal(t, int64(5), total)
+		assert.Len(t, logs, 5)
 	})
 
 	t.Run("offset and limit", func(t *testing.T) {
 		logs, total, err := auditSvc.ListAuditLogs(ctx, nil, 2, 2)
 		require.NoError(t, err)
-		assert.Equal(t, int64(6), total)
+		assert.Equal(t, int64(5), total)
 		assert.Len(t, logs, 2)
 	})
 
 	t.Run("offset beyond total", func(t *testing.T) {
 		logs, total, err := auditSvc.ListAuditLogs(ctx, nil, 100, 10)
 		require.NoError(t, err)
-		assert.Equal(t, int64(6), total)
+		assert.Equal(t, int64(5), total)
 		assert.Empty(t, logs)
 	})
 
-	t.Run("count error", func(t *testing.T) {
-		require.NoError(t, db.Exec("DROP TABLE audit_logs").Error)
-		_, _, err := auditSvc.ListAuditLogs(ctx, nil, 0, 10)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to count audit logs")
+	t.Run("count query error", func(t *testing.T) {
+		// Close the database to force a query error.
+		sqlDB, err := db.DB()
+		require.NoError(t, err)
+		require.NoError(t, sqlDB.Close())
+
+		_, _, err = auditSvc.ListAuditLogs(ctx, nil, 0, 10)
+		assert.Error(t, err)
 	})
 }
 

@@ -57,9 +57,8 @@ func newTestServices(t *testing.T) *testServices {
 			BcryptCost:                4,
 		},
 	}
-	auditSvc := services.NewAuditLogService(db)
-	accountSvc := services.NewAccountService(db, cfg, auditSvc)
-	apiKeySvc := services.NewAPIKeyService(db, cfg, auditSvc)
+	accountSvc := services.NewAccountService(db, cfg)
+	apiKeySvc := services.NewAPIKeyService(db, cfg)
 	accountSvc.SetAPIKeyService(apiKeySvc)
 	return &testServices{db: db, accountSvc: accountSvc, apiKeySvc: apiKeySvc}
 }

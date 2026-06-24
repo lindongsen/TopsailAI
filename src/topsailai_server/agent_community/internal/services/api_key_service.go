@@ -42,17 +42,15 @@ type APIKeyWithToken struct {
 
 // APIKeyService provides API key lifecycle operations.
 type APIKeyService struct {
-	db       *gorm.DB
-	cfg      *config.Config
-	auditSvc *AuditLogService
+	db  *gorm.DB
+	cfg *config.Config
 }
 
 // NewAPIKeyService creates a new APIKeyService.
-func NewAPIKeyService(db *gorm.DB, cfg *config.Config, auditSvc *AuditLogService) *APIKeyService {
+func NewAPIKeyService(db *gorm.DB, cfg *config.Config) *APIKeyService {
 	return &APIKeyService{
-		db:       db,
-		cfg:      cfg,
-		auditSvc: auditSvc,
+		db:  db,
+		cfg: cfg,
 	}
 }
 
@@ -121,16 +119,6 @@ func (s *APIKeyService) CreateAPIKey(ctx context.Context, req *CreateAPIKeyReque
 
 	token := key.APIKeyID + "." + secret
 
-	s.audit(ctx, AuditLogRequest{
-		AccountID:    owner.AccountID,
-		APIKeyID:     key.APIKeyID,
-		Action:       "api_key.create",
-		ResourceType: "api_key",
-		ResourceID:   key.APIKeyID,
-		ResourceName: key.APIKeyName,
-		Detail:       fmt.Sprintf("created api key with role %s", key.Role),
-	})
-
 	return &APIKeyWithToken{APIKey: key, Token: token}, nil
 }
 
@@ -193,24 +181,13 @@ func (s *APIKeyService) ListAPIKeysByOwner(ctx context.Context, ownerID string, 
 
 // DeleteAPIKey hard-deletes an API key by ID.
 func (s *APIKeyService) DeleteAPIKey(ctx context.Context, apiKeyID string) error {
-	key, err := s.getByID(ctx, apiKeyID)
-	if err != nil {
+	if _, err := s.getByID(ctx, apiKeyID); err != nil {
 		return err
 	}
 
 	if err := s.db.WithContext(ctx).Delete(&models.APIKey{}, "api_key_id = ?", apiKeyID).Error; err != nil {
 		return fmt.Errorf("failed to delete api key: %w", err)
 	}
-
-	s.audit(ctx, AuditLogRequest{
-		AccountID:    key.OwnerID,
-		APIKeyID:     key.APIKeyID,
-		Action:       "api_key.delete",
-		ResourceType: "api_key",
-		ResourceID:   key.APIKeyID,
-		ResourceName: key.APIKeyName,
-		Detail:       "deleted api key",
-	})
 
 	return nil
 }
@@ -304,21 +281,4 @@ func isValidAPIKeyRole(role models.APIKeyRole) bool {
 		return true
 	}
 	return false
-}
-
-// audit writes an audit record if the audit service is available.
-// It backfills the client IP from the request context when the caller did not
-// provide one explicitly.
-func (s *APIKeyService) audit(ctx context.Context, req AuditLogRequest) {
-	if s.auditSvc == nil {
-		return
-	}
-	if req.ClientIP == "" {
-		if ip, ok := ClientIPFromContext(ctx); ok {
-			req.ClientIP = ip
-		}
-	}
-	if _, err := s.auditSvc.Log(ctx, &req); err != nil {
-		fmt.Printf("failed to write audit log: %v\n", err)
-	}
 }

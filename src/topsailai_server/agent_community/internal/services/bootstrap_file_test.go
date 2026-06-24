@@ -53,7 +53,7 @@ func TestBootstrapService_Run_ExistingAccountsMissingACSFile(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
 	require.NoError(t, svc.Run(ctx))
 
 	pwd, _ := os.Getwd()
@@ -116,7 +116,7 @@ func TestBootstrapService_Run_ExistingAccountsWithValidACSFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(adminFile, []byte(adminKey.Token), 0600))
 	require.NoError(t, os.WriteFile(managerFile, []byte(managerKey.Token), 0600))
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
 	require.NoError(t, svc.Run(ctx))
 
 	adminData, err := os.ReadFile(adminFile)
@@ -180,7 +180,7 @@ func TestBootstrapService_Run_ExistingAccountsWithInvalidACSFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(adminFile, []byte("ak-invalid.invalidsecret"), 0600))
 	require.NoError(t, os.WriteFile(managerFile, []byte("ak-invalid.invalidsecret"), 0600))
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
 	require.NoError(t, svc.Run(ctx))
 
 	adminData, err := os.ReadFile(adminFile)

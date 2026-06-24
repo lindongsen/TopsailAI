@@ -53,8 +53,8 @@ func newTestServices(t *testing.T) (*gorm.DB, *AccountService, *APIKeyService, *
 	db := newTestDB(t)
 	cfg := newTestConfig()
 	auditSvc := NewAuditLogService(db)
-	accountSvc := NewAccountService(db, cfg, auditSvc)
-	apiKeySvc := NewAPIKeyService(db, cfg, auditSvc)
+	accountSvc := NewAccountService(db, cfg)
+	apiKeySvc := NewAPIKeyService(db, cfg)
 	accountSvc.SetAPIKeyService(apiKeySvc)
 	return db, accountSvc, apiKeySvc, auditSvc
 }
@@ -587,8 +587,7 @@ func TestAccountService_SoftDeleteAccount_APIKeySvcNil(t *testing.T) {
 	// Create a service without API key service injection.
 	cfg := newTestConfig()
 	db := newTestDB(t)
-	auditSvc := NewAuditLogService(db)
-	standaloneSvc := NewAccountService(db, cfg, auditSvc)
+	standaloneSvc := NewAccountService(db, cfg)
 
 	ctx := context.Background()
 	acc, err := standaloneSvc.CreateAccount(ctx, &CreateAccountRequest{
@@ -874,18 +873,18 @@ func TestValidateLoginPassword_LoginNameNotFound(t *testing.T) {
 func TestAccountService_DB(t *testing.T) {
 	db := newTestDB(t)
 	cfg := newTestConfig()
-	auditSvc := NewAuditLogService(db)
-	svc := NewAccountService(db, cfg, auditSvc)
+	svc := NewAccountService(db, cfg)
 
 	assert.Equal(t, db, svc.DB())
 }
 
-// TestAccountService_Audit verifies the audit helper creates an audit log record.
-func TestAccountService_Audit(t *testing.T) {
-	_, accountSvc, _, auditSvc := newTestServices(t)
+// TestAccountService_AuditLogService verifies the shared audit log service creates a record.
+func TestAccountService_AuditLogService(t *testing.T) {
+	db := newTestDB(t)
 	ctx := context.Background()
+	auditSvc := NewAuditLogService(db)
 
-	accountSvc.audit(ctx, AuditLogRequest{
+	_, err := auditSvc.Log(ctx, &AuditLogRequest{
 		AccountID:    "acc-test",
 		APIKeyID:     "ak-test",
 		Action:       "test_action",
@@ -895,6 +894,7 @@ func TestAccountService_Audit(t *testing.T) {
 		Detail:       "test detail",
 		ClientIP:     "127.0.0.1",
 	})
+	require.NoError(t, err)
 
 	logs, total, err := auditSvc.ListAuditLogs(ctx, nil, 0, 10)
 	require.NoError(t, err)
@@ -910,20 +910,19 @@ func TestAccountService_Audit(t *testing.T) {
 	assert.Equal(t, "127.0.0.1", logs[0].ClientIP)
 }
 
-// TestAccountService_Audit_NoPanicOnError verifies audit failures are logged but not propagated.
-func TestAccountService_Audit_NoPanicOnError(t *testing.T) {
+// TestAccountService_AuditLogService_NoPanicOnError verifies audit failures are logged but not propagated.
+func TestAccountService_AuditLogService_NoPanicOnError(t *testing.T) {
 	db := newTestDB(t)
-	cfg := newTestConfig()
-	// Construct a service without an audit service to exercise the nil guard.
-	svc := NewAccountService(db, cfg, nil)
-
 	ctx := context.Background()
+	// Construct a service without an audit service to exercise the nil guard.
+	auditSvc := NewAuditLogService(db)
+
 	assert.NotPanics(t, func() {
-		svc.audit(ctx, AuditLogRequest{
+		// ResourceID is required; this call returns an error but does not panic.
+		_, _ = auditSvc.Log(ctx, &AuditLogRequest{
 			AccountID:    "acc-test",
 			Action:       "test_action",
 			ResourceType: "account",
-			ResourceID:   "acc-target",
 		})
 	})
 }

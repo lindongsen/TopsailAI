@@ -49,12 +49,12 @@ func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evalu
 
 	// Initialize services
 	auditSvc := services.NewAuditLogService(db)
-	accountSvc := services.NewAccountService(db, cfg, auditSvc)
-	apiKeySvc := services.NewAPIKeyService(db, cfg, auditSvc)
+	accountSvc := services.NewAccountService(db, cfg)
+	apiKeySvc := services.NewAPIKeyService(db, cfg)
 	accountSvc.SetAPIKeyService(apiKeySvc)
 
 	// Initialize handlers
-	groupHandler := handlers.NewGroupHandler(db, publisher, cfg, log, auditSvc)
+	groupHandler := handlers.NewGroupHandler(db, publisher, cfg, log)
 	memberHandler := handlers.NewGroupMemberHandler(db, publisher, log)
 	messageHandler := handlers.NewMessageHandler(db, publisher, evaluator, log)
 	healthHandler := handlers.NewHealthHandler(db, disc, log)
@@ -77,9 +77,6 @@ func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evalu
 	// API v1 routes
 	v1 := engine.Group("/api/v1")
 
-	// Public account login endpoint (must not require authentication).
-	v1.POST("/accounts/login", accountHandler.Login)
-
 	// Protected routes below require authentication and audit logging.
 	v1.Use(authMiddleware)
 	v1.Use(middleware.AuditLogger(auditSvc))
@@ -93,6 +90,12 @@ func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evalu
 		v1.DELETE("/accounts/:account_id", middleware.RequireRole(models.AccountRoleAdmin), accountHandler.DeleteAccount)
 		v1.POST("/accounts/:account_id/password", middleware.RequireAuthenticated(), accountHandler.ChangePassword)
 		v1.POST("/accounts/:account_id/session", middleware.RequireAuthenticated(), accountHandler.CreateSession)
+
+		// Public login endpoint. It is intentionally placed after the authentication
+		// middleware so that the audit logger runs, but it does not use
+		// RequireAuthenticated(), allowing unauthenticated requests to reach the
+		// handler. The handler itself performs password validation.
+		v1.POST("/accounts/login", accountHandler.Login)
 
 		// API key routes nested under accounts
 		v1.POST("/accounts/:account_id/api-keys", middleware.RequireAuthenticated(), apiKeyHandler.CreateAPIKey)

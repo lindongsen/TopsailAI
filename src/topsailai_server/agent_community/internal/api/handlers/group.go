@@ -14,7 +14,6 @@ import (
 	"github.com/topsailai/agent-community/internal/api/middleware"
 	"github.com/topsailai/agent-community/internal/config"
 	"github.com/topsailai/agent-community/internal/models"
-	"github.com/topsailai/agent-community/internal/services"
 	"github.com/topsailai/agent-community/internal/utils"
 	"github.com/topsailai/agent-community/pkg/logger"
 	"gorm.io/gorm"
@@ -34,17 +33,15 @@ type GroupHandler struct {
 	publisher GroupPublisher
 	cfg       *config.Config
 	log       *logger.Logger
-	auditSvc  *services.AuditLogService
 }
 
 // NewGroupHandler creates a new GroupHandler.
-func NewGroupHandler(db *gorm.DB, publisher GroupPublisher, cfg *config.Config, log *logger.Logger, auditSvc *services.AuditLogService) *GroupHandler {
+func NewGroupHandler(db *gorm.DB, publisher GroupPublisher, cfg *config.Config, log *logger.Logger) *GroupHandler {
 	return &GroupHandler{
 		db:        db,
 		publisher: publisher,
 		cfg:       cfg,
 		log:       log,
-		auditSvc:  auditSvc,
 	}
 }
 
@@ -53,36 +50,6 @@ type CreateGroupRequest struct {
 	GroupName    string `json:"group_name" binding:"required"`
 	GroupContext string `json:"group_context"`
 	GroupKey     string `json:"group_key"`
-}
-
-// audit writes an audit log record using the request context's client IP.
-func (h *GroupHandler) audit(c *gin.Context, action, resourceType, resourceID, resourceName, detail string) {
-	if h.auditSvc == nil {
-		return
-	}
-	authCtx, ok := middleware.GetAuthContext(c)
-	if !ok {
-		authCtx = middleware.AuthContext{}
-	}
-	accountID := ""
-	apiKeyID := ""
-	if authCtx.Account != nil {
-		accountID = authCtx.Account.AccountID
-	}
-	if authCtx.APIKey != nil {
-		apiKeyID = authCtx.APIKey.APIKeyID
-	}
-	clientIP, _ := services.ClientIPFromContext(c.Request.Context())
-	_, _ = h.auditSvc.Log(c.Request.Context(), &services.AuditLogRequest{
-		AccountID:    accountID,
-		APIKeyID:     apiKeyID,
-		Action:       action,
-		ResourceType: resourceType,
-		ResourceID:   resourceID,
-		ResourceName: resourceName,
-		Detail:       detail,
-		ClientIP:     clientIP,
-	})
 }
 
 // UpdateGroupRequest represents the request body for updating a group.
@@ -206,7 +173,6 @@ func (h *GroupHandler) CreateGroup(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "group created", "group_id", group.GroupID, "creator_id", creatorMember.MemberID)
-	h.audit(c, "group.create", "group", group.GroupID, group.GroupName, "group created")
 	writeDataResponse(c, http.StatusCreated, toGroupResponse(&group), traceID)
 }
 
@@ -505,7 +471,6 @@ func (h *GroupHandler) UpdateGroup(c *gin.Context) {
 	}
 
 	h.log.Info("api", traceID, "group updated", "group_id", groupID)
-	h.audit(c, "group.update", "group", group.GroupID, group.GroupName, "group updated")
 	writeDataResponse(c, http.StatusOK, toGroupResponse(&group), traceID)
 }
 
@@ -520,13 +485,12 @@ func (h *GroupHandler) DeleteGroup(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
-	groupName := ""
+
 	if err := h.db.Transaction(func(tx *gorm.DB) error {
 		var group models.Group
 		if err := tx.Where("group_id = ?", groupID).First(&group).Error; err != nil {
 			return err
 		}
-		groupName = group.GroupName
 
 		// Non-admin callers must own the group.
 		if authCtx.Account.Role != models.AccountRoleAdmin && group.OwnerID != authCtx.Account.AccountID {
@@ -561,9 +525,7 @@ func (h *GroupHandler) DeleteGroup(c *gin.Context) {
 	if err := h.publisher.PublishGroupDelete(groupID); err != nil {
 		h.log.Warn("api", traceID, "failed to publish group delete event", "error", err.Error())
 	}
-
 	h.log.Info("api", traceID, "group deleted", "group_id", groupID)
-	h.audit(c, "group.delete", "group", groupID, groupName, "group deleted")
 	c.Status(http.StatusNoContent)
 }
 

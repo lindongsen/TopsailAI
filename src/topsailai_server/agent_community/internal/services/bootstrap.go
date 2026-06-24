@@ -29,7 +29,6 @@ type BootstrapService struct {
 	cfg        *config.Config
 	accountSvc *AccountService
 	apiKeySvc  *APIKeyService
-	auditSvc   *AuditLogService
 	kv         nats.KeyValue
 	log        *logger.Logger
 
@@ -43,7 +42,6 @@ func NewBootstrapService(
 	cfg *config.Config,
 	accountSvc *AccountService,
 	apiKeySvc *APIKeyService,
-	auditSvc *AuditLogService,
 	kv nats.KeyValue,
 	log *logger.Logger,
 ) *BootstrapService {
@@ -52,7 +50,6 @@ func NewBootstrapService(
 		cfg:          cfg,
 		accountSvc:   accountSvc,
 		apiKeySvc:    apiKeySvc,
-		auditSvc:     auditSvc,
 		kv:           kv,
 		log:          log,
 		inMemoryLock: &sync.Mutex{},
@@ -76,17 +73,17 @@ func (s *BootstrapService) Run(ctx context.Context) error {
 	defer release()
 
 	if err := s.ensureDefaultAccount(ctx, defaultAccountSpec{
-		role:          models.AccountRoleAdmin,
-		configKey:     s.cfg.Account.AdminAPIKey,
-		filename:      "ACS_ACCOUNT_ADMIN_API_KEY.acs",
+		role:      models.AccountRoleAdmin,
+		configKey: s.cfg.Account.AdminAPIKey,
+		filename:  "ACS_ACCOUNT_ADMIN_API_KEY.acs",
 	}); err != nil {
 		return err
 	}
 
 	if err := s.ensureDefaultAccount(ctx, defaultAccountSpec{
-		role:          models.AccountRoleManager,
-		configKey:     s.cfg.Account.ManagerAPIKey,
-		filename:      "ACS_ACCOUNT_MANAGER_API_KEY.acs",
+		role:      models.AccountRoleManager,
+		configKey: s.cfg.Account.ManagerAPIKey,
+		filename:  "ACS_ACCOUNT_MANAGER_API_KEY.acs",
 	}); err != nil {
 		return err
 	}

@@ -85,7 +85,7 @@ func TestAPIKeyService_PerOwnerLimit(t *testing.T) {
 
 	cfg := newTestConfig()
 	cfg.Account.APIKeyMaxPerAccount = 2
-	limitedKeySvc := NewAPIKeyService(db, cfg, nil)
+	limitedKeySvc := NewAPIKeyService(db, cfg)
 
 	for i := 0; i < 2; i++ {
 		_, err := limitedKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
@@ -272,7 +272,7 @@ func TestAPIKeyService_CreateAPIKey_MaxKeysDefault(t *testing.T) {
 	// Zero or negative max keys should fall back to the default of 10.
 	cfg := newTestConfig()
 	cfg.Account.APIKeyMaxPerAccount = 0
-	svc := NewAPIKeyService(db, cfg, nil)
+	svc := NewAPIKeyService(db, cfg)
 
 	for i := 0; i < 10; i++ {
 		_, err := svc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
@@ -308,7 +308,7 @@ func TestAPIKeyService_CreateAPIKey_CountError(t *testing.T) {
 	// Drop the api_keys table to force a count error.
 	require.NoError(t, db.Exec("DROP TABLE api_keys").Error)
 
-	_, err = NewAPIKeyService(db, newTestConfig(), nil).CreateAPIKey(ctx, &CreateAPIKeyRequest{
+	_, err = NewAPIKeyService(db, newTestConfig()).CreateAPIKey(ctx, &CreateAPIKeyRequest{
 		APIKeyName: "count-error-key",
 		Role:       models.APIKeyRoleUser,
 		OwnerID:    owner.AccountID,
@@ -532,7 +532,7 @@ func TestAPIKeyService_DeleteAPIKeysByOwner_SuccessAndError(t *testing.T) {
 
 	// Error path: drop table and expect delete to fail.
 	require.NoError(t, db.Exec("DROP TABLE api_keys").Error)
-	err = NewAPIKeyService(db, newTestConfig(), nil).DeleteAPIKeysByOwner(ctx, owner.AccountID)
+	err = NewAPIKeyService(db, newTestConfig()).DeleteAPIKeysByOwner(ctx, owner.AccountID)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to delete api keys by owner")
 }

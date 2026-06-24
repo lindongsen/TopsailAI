@@ -91,10 +91,11 @@ class ThresholdContextHistory(object):
     configured thresholds and needs to be slimmed down or managed.
     """
 
-    # variables
-    token_max = 1280000
+    # variables, set default value
+    token_max = 128000
     token_ratio = 0.8
     slim_len = 43
+    uncached_token_max = 27000
 
     # constants
     SLIM_MIN_LEN = 27
@@ -171,7 +172,8 @@ class ThresholdContextHistory(object):
                     if _v_exceed_uncached_tokens:
                         return True
 
-                    # tips
+                    # no exceed on uncached_tokens.
+                    # tips for current_tokens is exceeded.
                     _v_exceed_current_tokens = self.exceed_ratio(current_tokens)
                     if _v_exceed_current_tokens:
                         logger.warning(
