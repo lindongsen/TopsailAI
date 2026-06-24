@@ -26,7 +26,7 @@ class TestPromptBase(unittest.TestCase):
         # Store original env vars
         self.original_env = {}
         for var in ["TOPSAILAI_FLAG_DUMP_MESSAGES", "TOPSAILAI_OBTAIN_SYSTEM_PROMPT_SCRIPT",
-                    "TOPSAILAI_OBTAIN_TOOL_PROMPT_SCRIPT"]:
+                    "TOPSAILAI_OBTAIN_TOOL_PROMPT_SCRIPT", "TOPSAILAI_CONTEXT_USER_MESSAGE"]:
             self.original_env[var] = os.environ.get(var)
             # Clear to avoid interference
             if var in os.environ:
@@ -496,6 +496,107 @@ class TestPromptBase(unittest.TestCase):
         pb.new_session("test")
 
         mock_hook.assert_called_once_with(pb)
+
+    # =========================================================================
+    # Group F: Context User Messages Tests
+    # =========================================================================
+
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_context_user_messages_initialized_empty(self, mock_generate_prompt, mock_get_managers):
+        """Test context_user_messages is initialized as empty list."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+
+        pb = PromptBase(system_prompt="test")
+
+        self.assertEqual(pb.context_user_messages, [])
+
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_context_user_messages_env_seed(self, mock_generate_prompt, mock_get_managers):
+        """Test TOPSAILAI_CONTEXT_USER_MESSAGE is loaded into context_user_messages."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+
+        os.environ["TOPSAILAI_CONTEXT_USER_MESSAGE"] = "env context"
+        pb = PromptBase(system_prompt="test")
+
+        self.assertEqual(pb.context_user_messages, ["env context"])
+
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_build_context_message_format(self, mock_generate_prompt, mock_get_managers):
+        """Test _build_context_message combines items with separator format."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+
+        pb = PromptBase(system_prompt="test")
+        pb.context_user_messages = ["msg1", "msg2", "msg3"]
+
+        result = pb._build_context_message(pb.context_user_messages)
+        expected = "---\nmsg1\n---\nmsg2\n---\nmsg3\n---\n"
+
+        self.assertEqual(result, expected)
+
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    @patch("topsailai.ai_base.prompt_base.print_step")
+    def test_new_session_injects_context_message(self, mock_print, mock_generate_prompt, mock_get_managers):
+        """Test new_session injects combined context message before user message."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        pb = PromptBase(system_prompt="test")
+        pb.context_user_messages = ["ctx1", "ctx2"]
+
+        pb.new_session("user task", need_print_message=False)
+
+        user_messages = [m for m in pb.messages if m["role"] == "user"]
+        self.assertEqual(len(user_messages), 2)
+        # add_user_message formats content via to_json_str, which strips trailing newlines
+        self.assertEqual(user_messages[0]["content"], "---\nctx1\n---\nctx2\n---")
+        self.assertEqual(user_messages[1]["content"], "user task")
+
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    @patch("topsailai.ai_base.prompt_base.print_step")
+    def test_new_session_no_context_messages_unchanged(self, mock_print, mock_generate_prompt, mock_get_managers):
+        """Test new_session with empty context_user_messages behaves unchanged."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+
+        pb = PromptBase(system_prompt="test")
+        pb.context_user_messages = []
+
+        pb.new_session("user task", need_print_message=False)
+
+        user_messages = [m for m in pb.messages if m["role"] == "user"]
+        self.assertEqual(len(user_messages), 1)
+        self.assertEqual(user_messages[0]["content"], "user task")
+
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_reset_messages_preserves_context_user_messages(self, mock_generate_prompt, mock_get_managers):
+        """Test reset_messages does not clear context_user_messages."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+
+        pb = PromptBase(system_prompt="test")
+        pb.context_user_messages = ["ctx1"]
+
+        pb.reset_messages(to_suppress_log=True)
+
+        self.assertEqual(pb.context_user_messages, ["ctx1"])
 
     @patch("topsailai.ai_base.prompt_base.logger")
     @patch("topsailai.ai_base.prompt_base.get_managers_by_env")

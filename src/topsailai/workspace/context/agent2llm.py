@@ -172,7 +172,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         self.ai_agent.llm_model.tokenStat.add_msgs(self.ai_agent.messages)
         # Log message count and token usage after summarization
-        _token_count_after = self._get_current_tokens()
+        _token_count_after = self._get_current_tokens(realtime=True)
         logger.info("[summarize_processing] after: messages=%s, tokens=%s", len(self.ai_agent.messages), _token_count_after)
 
         print_step(f"!!! New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]", need_format=False, need_log=True)

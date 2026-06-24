@@ -191,3 +191,38 @@ See `docs/Environment_Variables.md` and `env_template` for full details. The rel
 - `TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES` — whether Agent2LLM summary should keep User2Agent session messages.
 
 Note: the context-history "slimming" thresholds (`CONTEXT_MESSAGES_SLIM_THRESHOLD_*`) are a separate mechanism handled by `PromptBase.call_hooks_ctx_history()` and archive oversized `action`/`observation` payloads without producing a summary.
+
+## Adding Messages to a Session
+
+There are two primary ways to add a message to a session.
+
+### 1. CLI Script
+
+**File:** `/TopsailAI/cli/topsailai_session_add_message.py`
+
+A thin wrapper around `workspace.llm_shell.get_llm_chat()`.
+
+| Item | Detail |
+|------|--------|
+| **Purpose** | Prepare an `LLMChat` instance for a given session with an initial user message. |
+| **Entry point** | `python /TopsailAI/cli/topsailai_session_add_message.py -s <session_id> -m <message>` |
+| **Key parameters** | `-s/--session_id` (required), `-m/--message` (required); `session_id` falls back to `env_tool.get_session_id()` if omitted. |
+| **Side effects** | Loads existing session messages via `ctx_manager.get_messages_by_session()`; creates the session via `ctx_manager.create_session(session_id, task=message)` if it does not exist; appends the new message to the in-memory `PromptBase`. It does **not** call `LLMChat.chat()`, so no LLM request is made and no assistant reply is produced. Persistence of the new message depends on the configured chat-history managers and any hooks triggered later. |
+
+### 2. Direct API
+
+**File:** `/TopsailAI/src/topsailai/context/ctx_manager.py`
+
+**Function:** `add_session_message(session_id: str, message: dict) -> bool`
+
+| Item | Detail |
+|------|--------|
+| **Purpose** | Persist a raw message dictionary directly to all configured chat-history managers. |
+| **Entry point** | `from topsailai.context import ctx_manager; ctx_manager.add_session_message(session_id, message)` |
+| **Key parameters** | `session_id` — target session; `message` — message dict (e.g., `{"role": "user", "content": "..."}`). |
+| **Side effects** | Reads `CONTEXT_HISTORY_MANAGERS` to obtain manager instances; calls `mgr.add_session_message(message, session_id=session_id)` for each. Returns `True` only if at least one manager is configured and the message is handed to it. Does **not** create the session, acquire locks, or trigger summarization hooks. |
+
+### When to Use Which
+
+- Use the **CLI script** when you want to bootstrap an `LLMChat` session with a user message without running a full agent loop.
+- Use **`ctx_manager.add_session_message()`** when you need to append a pre-built message dict to session storage directly from code.

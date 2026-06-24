@@ -27,6 +27,7 @@ These variables control when the agent archives or summarizes message history to
 | `TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD` | (unset) | Layer-specific message-count threshold for User2Agent. Takes precedence over `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD`. |
 | `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` | `128000` | Token threshold for triggering Agent2LLM context summarization. Set to `0` to disable. |
 | `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` | `0` | Token threshold for triggering User2Agent (session) context summarization. Set to `0` to disable (default). |
+| `TOPSAILAI_CONTEXT_USER_MESSAGE` | (unset) | File path or raw text used as the first `context_user_message`. Combined with other context user messages into a single user message at session start. |
 | `TOPSAILAI_REALTIME_TOKEN_CALCULATION` | `0` | When set to `1`, token counts for summarization thresholds are calculated from the actual message content instead of the cached `TokenStat` value. |
 
 ### Details

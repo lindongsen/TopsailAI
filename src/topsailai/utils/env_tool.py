@@ -176,6 +176,23 @@ class EnvironmentReader(object):
         content = self.try_read_file(env_var)
         return content or env_var
 
+    @property
+    def context_user_message_content(self):
+        """Retrieve context user message content from environment variable.
+
+        The environment variable TOPSAILAI_CONTEXT_USER_MESSAGE may contain either
+        a file path or the actual content. If it's a file path, the file is read;
+        otherwise the variable's value is returned directly.
+
+        Returns:
+            str: Context user message content, or empty string if not set.
+        """
+        env_var = os.getenv("TOPSAILAI_CONTEXT_USER_MESSAGE")
+        if not env_var:
+            return ""
+        content = self.try_read_file(env_var)
+        return content or env_var
+
     def check_bool(self, name, default=None) -> bool:
         """ value in [1, true] for True """
         return str(os.getenv(name, default)).lower() in ["1", "true"]

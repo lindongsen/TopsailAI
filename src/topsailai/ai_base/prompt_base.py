@@ -25,6 +25,7 @@ from topsailai.utils import (
     cmd_tool,
     thread_local_tool,
 )
+from topsailai.utils.env_tool import EnvReaderInstance
 from topsailai.utils.thread_local_tool import (
     get_agent_name,
 )
@@ -246,10 +247,15 @@ class PromptBase(object):
         # context history messages
         self.threshold_ctx_history = ThresholdContextHistory()
         self.hooks_ctx_history = get_managers_by_env() # list[ChatHistoryBase]
-
         # context messages
         self.messages = []
         self.reset_messages(to_suppress_log=True)
+
+        # agent-dimension context user messages
+        self.context_user_messages: list[str] = []
+        context_user_message = EnvReaderInstance.context_user_message_content
+        if context_user_message:
+            self.context_user_messages.append(context_user_message)
 
         # set flags
         if os.getenv("TOPSAILAI_FLAG_DUMP_MESSAGES") == "1":
@@ -343,6 +349,9 @@ class PromptBase(object):
             user_message: The initial user message for the new session
         """
         self.init_prompt()
+        context_message = self._build_context_message(self.context_user_messages)
+        if context_message:
+            self.add_user_message(context_message, need_print=need_print_message)
         if user_message:
             self.add_user_message(user_message, need_print=need_print_message)
         for hook in self.hooks_after_new_session:
@@ -351,6 +360,29 @@ class PromptBase(object):
             except Exception as e:
                 logger.exception("failed to call hook [%s]: %s", hook, e)
         return
+
+    def _build_context_message(self, message_list: list[str]) -> str | None:
+        """Build a single combined context message from a list of fragments.
+
+        Args:
+            message_list (list[str]): Context message fragments.
+
+        Returns:
+            str | None: Combined message with separator format, or None if empty.
+        """
+        if not message_list:
+            return None
+
+        parts = []
+        for item in message_list:
+            item = item.strip()
+            if not item:
+                continue
+            parts.append(item)
+        if not parts:
+            return None
+
+        return "".join(f"---\n{item}\n" for item in parts) + "---\n"
 
     def hook_format_content(self, content):
         """

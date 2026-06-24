@@ -239,7 +239,10 @@ TOPSAILAI_HEAVY_TASK_PROMPT=""
 # When set to 1, chat history messages are automatically dumped to a file
 # after each execution for debugging and analysis purposes
 TOPSAILAI_FLAG_DUMP_MESSAGES=0
-
+# Context User Message
+# File path or raw text. If provided, it is prepended as the first context_user_message
+# and combined into a single user message at the start of the session.
+# TOPSAILAI_CONTEXT_USER_MESSAGE=""
 
 # =============================================================================
 # Tool Configuration

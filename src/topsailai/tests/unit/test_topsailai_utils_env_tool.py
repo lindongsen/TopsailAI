@@ -235,3 +235,25 @@ class TestEnvReaderInstance:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+    def test_context_user_message_content_no_env_var(self):
+        """Test context_user_message_content when TOPSAILAI_CONTEXT_USER_MESSAGE is not set"""
+        with patch.dict(os.environ, {}, clear=True):
+            assert self.reader.context_user_message_content == ""
+
+    def test_context_user_message_content_direct_content(self):
+        """Test context_user_message_content with direct content"""
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": "direct context content"}):
+            assert self.reader.context_user_message_content == "direct context content"
+
+    def test_context_user_message_content_file_path(self):
+        """Test context_user_message_content with file path"""
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
+            tmp.write("file context content")
+            tmp_path = tmp.name
+
+        try:
+            with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_USER_MESSAGE": tmp_path}):
+                assert self.reader.context_user_message_content == "file context content"
+        finally:
+            os.unlink(tmp_path)
