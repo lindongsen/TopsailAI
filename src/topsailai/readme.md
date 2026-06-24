@@ -147,11 +147,12 @@ Both the **User2Agent** and **Agent2LLM** layers use a two-threshold strategy to
 
 ### Common Threshold Mechanism
 
-Both methods first call `_get_quantity_threshold()` (defined in `workspace/context/base.py`) to obtain a randomized message-count threshold:
+Both methods first call `_get_quantity_threshold(env_key)` (defined in `workspace/context/base.py`) to obtain a randomized message-count threshold. Each layer uses its own environment variable, falling back to the legacy shared variable only when the layer-specific one is not configured:
 
-1. Read `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD` as an integer.
-2. If the value is `0`, negative, or unset, quantity-based summarization is disabled.
-3. Otherwise, combine the configured value with a small random prime (`13, 17, 19, 23`) and return the larger one.
+1. Read the layer-specific quantity threshold (`TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD` for User2Agent, `TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD` for Agent2LLM) as an integer.
+2. If the layer-specific value is unset, empty, `0`, or negative, fall back to `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD`.
+3. If the fallback value is also `0`, negative, or unset, quantity-based summarization is disabled.
+4. Otherwise, combine the configured value with a small random prime (`13, 17, 19, 23`) and return the larger one.
 
 This randomization avoids synchronized summarization spikes across multiple agents.
 
@@ -172,7 +173,7 @@ This randomization avoids synchronized summarization spikes across multiple agen
 | Aspect | User2Agent (`is_need_summarize_for_processed`) | Agent2LLM (`is_need_summarize_for_processing`) |
 |--------|-----------------------------------------------|-----------------------------------------------|
 | Source messages | `self.messages` (persisted session) | `self.ai_agent.messages` (ephemeral ReAct context) |
-| Quantity env var | `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD` | `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD` (same) |
+| Quantity env var | `TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD` (falls back to `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD`) | `TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD` (falls back to `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD`) |
 | Token env var | `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` (default `0`, disabled) | `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` (default `128000`) |
 | Randomization | Random prime vs configured value | Extended prime list, may include `2x` configured value |
 | Summary persistence | Saves summary into session/memory and deletes old raw messages | Replaces agent messages with summary while preserving head offset, session messages, and last user message |
@@ -181,7 +182,9 @@ This randomization avoids synchronized summarization spikes across multiple agen
 
 See `docs/Environment_Variables.md` and `env_template` for full details. The relevant variables are:
 
-- `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD` — message-count threshold shared by both layers.
+- `TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD` — message-count threshold for User2Agent summarization. Falls back to `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD` when unset/empty/0/negative.
+- `TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD` — message-count threshold for Agent2LLM summarization. Falls back to `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD` when unset/empty/0/negative.
+- `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD` — legacy shared message-count threshold used as a fallback by both layers.
 - `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` — token threshold for Agent2LLM summarization.
 - `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` — token threshold for User2Agent summarization (disabled by default).
 - `TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP` — number of head messages to retain after summarization.
