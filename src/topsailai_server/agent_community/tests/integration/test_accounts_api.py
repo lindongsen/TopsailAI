@@ -7,11 +7,12 @@ access control against a running ACS server.
 
 import pytest
 import requests
+from .conftest import get_response_data
 
 
 def _resp_data(response: requests.Response) -> dict:
-    """Return the JSON payload (conftest monkey-patches response.json() to unwrap the envelope)."""
-    return response.json()
+    """Return the JSON payload (conftest monkey-patches get_response_data(response) to unwrap the envelope)."""
+    return get_response_data(response)
 
 
 class TestAccountAuthentication:
@@ -20,7 +21,7 @@ class TestAccountAuthentication:
         """Protected endpoints must reject requests without credentials."""
         response = unauthenticated_client.get(f"{server_url}/api/v1/accounts")
         assert response.status_code == 401
-        data = response.json()
+        data = get_response_data(response)
         assert "error" in data
 
     def test_admin_token_can_list_accounts(self, admin_client: requests.Session, server_url: str):
@@ -35,7 +36,7 @@ class TestAccountAuthentication:
         """GET /api/v1/accounts/me should return the authenticated account."""
         response = admin_client.get(f"{server_url}/api/v1/accounts/me")
         assert response.status_code == 200
-        data = response.json()
+        data = get_response_data(response)
         assert data["role"] == "admin"
         assert "login_password" not in data
         assert "login_session_key" not in data
@@ -55,7 +56,7 @@ class TestAccountCRUD:
 
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
         assert response.status_code == 201
-        data = response.json()
+        data = get_response_data(response)
         assert data["account_name"] == account_data["account_name"]
         assert data["role"] == "user"
         assert data["status"] == "active"
@@ -76,7 +77,7 @@ class TestAccountCRUD:
 
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
         assert response.status_code == 201
-        data = response.json()
+        data = get_response_data(response)
         assert data["role"] == "manager"
 
         # Cleanup
@@ -94,7 +95,7 @@ class TestAccountCRUD:
 
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
         assert response.status_code == 201
-        created = response.json()
+        created = get_response_data(response)
 
         # Second attempt with same login_name should conflict.
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
@@ -107,7 +108,7 @@ class TestAccountCRUD:
         """Admin should be able to retrieve an account by ID."""
         response = admin_client.get(f"{server_url}/api/v1/accounts/{test_account['account_id']}")
         assert response.status_code == 200
-        data = response.json()
+        data = get_response_data(response)
         assert data["account_id"] == test_account["account_id"]
         assert data["login_name"] == test_account["login_name"]
         assert "login_password" not in data
@@ -124,7 +125,7 @@ class TestAccountCRUD:
             json=update_data,
         )
         assert response.status_code == 200
-        data = response.json()
+        data = get_response_data(response)
         assert data["account_name"] == update_data["account_name"]
         assert data["account_description"] == update_data["account_description"]
 
@@ -139,7 +140,7 @@ class TestAccountCRUD:
 
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
         assert response.status_code == 201
-        account = response.json()
+        account = get_response_data(response)
 
         response = admin_client.delete(f"{server_url}/api/v1/accounts/{account['account_id']}")
         assert response.status_code == 200
@@ -147,7 +148,7 @@ class TestAccountCRUD:
         # Verify the account is marked deleted.
         response = admin_client.get(f"{server_url}/api/v1/accounts/{account['account_id']}")
         assert response.status_code == 200
-        data = response.json()
+        data = get_response_data(response)
         assert data["status"] == "deleted"
         assert data["delete_at_ms"] > 0
 
@@ -193,7 +194,7 @@ class TestAccountLoginAndSession:
         headers = {"X-Session-Key": session["session_key"]}
         response = session_client.get(f"{server_url}/api/v1/accounts/me", headers=headers)
         assert response.status_code == 200
-        data = response.json()
+        data = get_response_data(response)
         assert data["account_id"] == test_account["account_id"]
 
     def test_change_password(self, admin_client: requests.Session, unauthenticated_client: requests.Session, server_url: str, test_account: dict):
@@ -236,7 +237,7 @@ class TestManagerAccountLimitations:
 
         response = manager_client.post(f"{server_url}/api/v1/accounts", json=account_data)
         assert response.status_code == 201
-        data = response.json()
+        data = get_response_data(response)
         assert data["role"] == "user"
 
         # Cleanup
@@ -267,7 +268,7 @@ class TestManagerAccountLimitations:
         # We need the manager account ID. Resolve it via /accounts/me.
         response = manager_client.get(f"{server_url}/api/v1/accounts/me")
         assert response.status_code == 200
-        manager_account = response.json()
+        manager_account = get_response_data(response)
 
         key_data = {"api_key_name": "manager-key-attempt", "role": "manager"}
         response = manager_client.post(
@@ -291,7 +292,7 @@ class TestAccountAuditLogs:
 
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
         assert response.status_code == 201
-        account = response.json()
+        account = get_response_data(response)
 
         # Query audit logs for the account creation action.
         response = admin_client.get(

@@ -17,11 +17,12 @@ import time
 
 import pytest
 import requests
+from .conftest import get_response_data
 
 
 def _resp_data(response: requests.Response) -> dict:
-    """Return the JSON payload (conftest monkey-patches response.json() to unwrap the envelope)."""
-    return response.json()
+    """Return the JSON payload (conftest monkey-patches get_response_data(response) to unwrap the envelope)."""
+    return get_response_data(response)
 
 
 def _make_attachment(data: str, size: int, fmt: str) -> dict:
@@ -61,7 +62,7 @@ class TestCreateMessageAttachments:
         )
         assert response.status_code == 201, f"Failed to create message: {response.text}"
 
-        data = response.json()
+        data = get_response_data(response)
         assert data["message_text"] == message_data["message_text"]
         assert "message_attachments" in data
         stored = data["message_attachments"]
@@ -94,7 +95,7 @@ class TestCreateMessageAttachments:
         )
         assert response.status_code == 201, f"Failed to create message: {response.text}"
 
-        data = response.json()
+        data = get_response_data(response)
         stored = data["message_attachments"]
         assert isinstance(stored, list)
         assert len(stored) == 2
@@ -123,7 +124,7 @@ class TestCreateMessageAttachments:
         )
         assert response.status_code == 201, f"Failed to create message: {response.text}"
 
-        data = response.json()
+        data = get_response_data(response)
         stored = data["message_attachments"]
         assert stored[0]["data"] == "s3://bucket/path/object.png"
 
@@ -146,7 +147,7 @@ class TestCreateMessageAttachments:
         )
         assert response.status_code == 201, f"Failed to create message: {response.text}"
 
-        data = response.json()
+        data = get_response_data(response)
         assert data["message_attachments"] == []
 
         api_client.delete(
@@ -168,7 +169,7 @@ class TestCreateMessageAttachments:
         )
         assert response.status_code == 201, f"Unexpected response: {response.text}"
 
-        data = response.json()
+        data = get_response_data(response)
         stored = data["message_attachments"]
         assert stored == [{"data": "missing-size-and-format"}]
 
@@ -196,7 +197,7 @@ class TestCreateMessageAttachments:
         )
         assert response.status_code == 201, f"Failed to create large message: {response.text}"
 
-        data = response.json()
+        data = get_response_data(response)
         stored = data["message_attachments"]
         assert len(stored) == 1
         assert stored[0]["size"] == attachment["size"]
@@ -221,7 +222,7 @@ class TestCreateMessageAttachments:
         )
         assert response.status_code == 201, f"Failed to create message: {response.text}"
 
-        data = response.json()
+        data = get_response_data(response)
         stored = data["message_attachments"]
         assert isinstance(stored, list)
         assert len(stored) == 1
@@ -267,7 +268,7 @@ class TestRetrieveMessageAttachments:
             json=message_data,
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = get_response_data(response)["message_id"]
 
         response = api_client.get(
             f"{server_url}/api/v1/groups/{test_group['group_id']}/messages"
@@ -305,7 +306,7 @@ class TestRetrieveMessageAttachments:
             json=message_data,
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = get_response_data(response)["message_id"]
 
         response = api_client.get(
             f"{server_url}/api/v1/groups/{test_group['group_id']}/messages"
@@ -340,7 +341,7 @@ class TestUpdateMessageAttachments:
             json=message_data,
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = get_response_data(response)["message_id"]
 
         update_data = {"message_text": "Updated text"}
         response = api_client.put(
@@ -349,7 +350,7 @@ class TestUpdateMessageAttachments:
         )
         assert response.status_code == 200
 
-        data = response.json()
+        data = get_response_data(response)
         assert data["message_text"] == "Updated text"
         stored = data["message_attachments"]
         assert isinstance(stored, list)
@@ -375,7 +376,7 @@ class TestUpdateMessageAttachments:
             json=message_data,
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = get_response_data(response)["message_id"]
 
         new_attachment = _make_attachment("new-base64-data", 512, "image/jpeg")
         update_data = {"message_attachments": [new_attachment]}
@@ -385,7 +386,7 @@ class TestUpdateMessageAttachments:
         )
         assert response.status_code == 200
 
-        data = response.json()
+        data = get_response_data(response)
         stored = data["message_attachments"]
         assert isinstance(stored, list)
         assert len(stored) == 1
@@ -411,7 +412,7 @@ class TestUpdateMessageAttachments:
             json=message_data,
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = get_response_data(response)["message_id"]
 
         response = api_client.put(
             f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}",
@@ -419,7 +420,7 @@ class TestUpdateMessageAttachments:
         )
         assert response.status_code == 200
 
-        data = response.json()
+        data = get_response_data(response)
         assert data["message_attachments"] == []
 
         api_client.delete(
@@ -444,7 +445,7 @@ class TestDeleteMessageAttachments:
             json=message_data,
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = get_response_data(response)["message_id"]
 
         response = api_client.delete(
             f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}"
@@ -503,7 +504,7 @@ class TestAttachmentOwnership:
             json=message_data,
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = get_response_data(response)["message_id"]
 
         # Admin can update
         response = admin_client.put(
@@ -524,7 +525,7 @@ class TestAttachmentOwnership:
             f"{server_url}/api/v1/accounts", json=other_account_data
         )
         assert response.status_code == 201
-        other_account = response.json()
+        other_account = get_response_data(response)
 
         key_data = {"api_key_name": "other-key", "role": "user"}
         response = admin_client.post(
@@ -532,7 +533,7 @@ class TestAttachmentOwnership:
             json=key_data,
         )
         assert response.status_code == 201
-        other_token = response.json()["token"]
+        other_token = get_response_data(response)["token"]
 
         other_member_data = {
             "member_id": other_account["account_id"],
@@ -590,7 +591,7 @@ class TestMentionsWithAttachments:
         )
         assert response.status_code == 201, f"Failed to create message: {response.text}"
 
-        data = response.json()
+        data = get_response_data(response)
         assert data["message_text"] == message_text
         assert "mentions" in data
         mentions = data["mentions"]

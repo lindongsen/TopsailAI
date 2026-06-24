@@ -19,7 +19,7 @@ def _create_user_account(admin_client: requests.Session, server_url: str, unique
     }
     response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
     assert response.status_code == 201, f"Failed to create user account: {response.text}"
-    return response.json()
+    return get_response_data(response)
 
 
 def _api_key_client(admin_client: requests.Session, server_url: str, account_id: str) -> tuple[requests.Session, str]:
@@ -27,7 +27,7 @@ def _api_key_client(admin_client: requests.Session, server_url: str, account_id:
     key_data = {"api_key_name": "rbac-test-key", "role": "user"}
     response = admin_client.post(f"{server_url}/api/v1/accounts/{account_id}/api-keys", json=key_data)
     assert response.status_code == 201, f"Failed to create API key: {response.text}"
-    key = response.json()
+    key = get_response_data(response)
     token = key["token"]
 
     session = requests.Session()
@@ -60,7 +60,7 @@ class TestAccountCreationRBAC:
         }
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
         assert response.status_code == 201
-        account = response.json()
+        account = get_response_data(response)
         assert account["role"] == "admin"
         admin_client.delete(f"{server_url}/api/v1/accounts/{account['account_id']}")
 
@@ -74,7 +74,7 @@ class TestAccountCreationRBAC:
         }
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
         assert response.status_code == 201
-        account = response.json()
+        account = get_response_data(response)
         assert account["role"] == "manager"
         admin_client.delete(f"{server_url}/api/v1/accounts/{account['account_id']}")
 
@@ -97,7 +97,7 @@ class TestAccountCreationRBAC:
         }
         response = manager_client.post(f"{server_url}/api/v1/accounts", json=account_data)
         assert response.status_code == 201
-        account = response.json()
+        account = get_response_data(response)
         assert account["role"] == "user"
         # Cleanup requires admin client; use server_url with admin auth if available.
 
@@ -161,7 +161,7 @@ class TestAPIKeyRBAC:
         }
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=admin_account_data)
         assert response.status_code == 201
-        admin_account = response.json()
+        admin_account = get_response_data(response)
 
         try:
             # Admin can create a user-level key for a user account.
@@ -401,7 +401,7 @@ class TestAccountAccessRBAC:
         }
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
         assert response.status_code == 201
-        user_account = response.json()
+        user_account = get_response_data(response)
 
         try:
             response = manager_client.get(
@@ -555,7 +555,7 @@ class TestAccountAccessRBAC:
         }
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
         assert response.status_code == 201
-        admin_account = response.json()
+        admin_account = get_response_data(response)
 
         try:
             response = manager_client.post(

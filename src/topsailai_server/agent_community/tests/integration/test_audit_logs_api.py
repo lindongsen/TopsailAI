@@ -9,11 +9,12 @@ import time
 
 import pytest
 import requests
+from .conftest import get_response_data
 
 
 def _resp_data(response: requests.Response) -> dict:
-    """Return the JSON payload (conftest monkey-patches response.json() to unwrap the envelope)."""
-    return response.json()
+    """Return the JSON payload (conftest monkey-patches get_response_data(response) to unwrap the envelope)."""
+    return get_response_data(response)
 
 
 class TestAuditLogAuthentication:
@@ -71,7 +72,7 @@ class TestAuditLogAuthentication:
 
         response = admin_client.get(f"{server_url}/api/v1/audit-logs/{audit_log_id}")
         assert response.status_code == 200
-        log = response.json()
+        log = get_response_data(response)
         assert log["audit_log_id"] == audit_log_id
 
     def test_get_audit_log_denied_for_user(
@@ -246,7 +247,7 @@ class TestAuditLogFiltering:
         # Resolve the admin account ID.
         response = admin_client.get(f"{server_url}/api/v1/accounts/me")
         assert response.status_code == 200
-        admin_account = response.json()
+        admin_account = get_response_data(response)
 
         response = admin_client.get(
             f"{server_url}/api/v1/audit-logs", params={"account_id": admin_account["account_id"]}
@@ -307,7 +308,7 @@ class TestAuditLogFiltering:
         }
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
         assert response.status_code == 201
-        account = response.json()
+        account = get_response_data(response)
         after_ms = int(time.time() * 1000)
 
         try:
@@ -368,7 +369,7 @@ class TestAuditLogLifecycleEvents:
         }
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
         assert response.status_code == 201
-        account = response.json()
+        account = get_response_data(response)
 
         try:
             response = admin_client.get(
@@ -392,7 +393,7 @@ class TestAuditLogLifecycleEvents:
             json=key_data,
         )
         assert response.status_code == 201
-        api_key = response.json()
+        api_key = get_response_data(response)
 
         try:
             response = admin_client.get(
@@ -476,7 +477,7 @@ class TestAuditLogLifecycleEvents:
         }
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
         assert response.status_code == 201
-        account = response.json()
+        account = get_response_data(response)
 
         response = admin_client.delete(
             f"{server_url}/api/v1/accounts/{account['account_id']}"
@@ -503,7 +504,7 @@ class TestAuditLogLifecycleEvents:
         }
         response = admin_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201
-        group = response.json()
+        group = get_response_data(response)
 
         try:
             response = admin_client.get(

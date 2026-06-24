@@ -45,6 +45,15 @@ def get_tool_prompt() -> str:
 
     return
 
+def get_messages() -> str:
+    """
+    Print current messages
+    """
+    agent = get_ai_agent()
+    if agent:
+        return json_tool.json_dump(agent.messages)
+    return
+
 def get_tools() -> list[str]:
     """
     Print tools
@@ -89,4 +98,5 @@ INSTRUCTIONS = dict(
     tools=get_tools,
     set_llm=set_llm,
     llm=get_llm,
+    messages=get_messages,
 )

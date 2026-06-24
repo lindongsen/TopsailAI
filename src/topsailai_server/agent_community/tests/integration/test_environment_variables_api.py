@@ -43,7 +43,7 @@ class TestApiKeyMaxPerAccount:
             json={"api_key_name": "over-limit-key", "role": "user"},
         )
         assert response.status_code == 400
-        data = response.json()
+        data = get_response_data(response)
         assert "limit" in data.get("error", "").lower() or "max" in data.get("error", "").lower()
 
 
@@ -54,7 +54,7 @@ class TestHttpServerReachability:
         """CLI-ENV-001: server responds on configured host/port."""
         response = unauthenticated_client.get(f"{server_url}/healthz")
         assert response.status_code == 200
-        data = response.json()
+        data = get_response_data(response)
         assert data.get("status") == "alive"
 
 

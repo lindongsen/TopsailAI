@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 import requests
+from .conftest import get_response_data
 
 PROJECT_ROOT = "/TopsailAI/src/topsailai_server/agent_community"
 SERVER_BIN = os.path.join(PROJECT_ROOT, "bin", "acs-server")
@@ -192,7 +193,7 @@ def manager_session(session_expiry_server: str) -> requests.Session | None:
 
 def _resp_data(response: requests.Response) -> dict:
     """Return the response payload, handling both wrapped and flat JSON shapes."""
-    body = response.json()
+    body = get_response_data(response)
     if isinstance(body, dict) and "data" in body and "trace_id" in body:
         return body["data"]
     return body

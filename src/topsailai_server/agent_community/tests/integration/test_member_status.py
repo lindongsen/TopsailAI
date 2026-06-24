@@ -16,6 +16,7 @@ import pytest
 import requests
 
 from .mock_agent_server import MockAgentServer
+from .conftest import get_response_data
 
 
 class TestMemberStatusActiveUpdate:
@@ -26,7 +27,7 @@ class TestMemberStatusActiveUpdate:
         response = api_client.get(f"{server_url}/api/v1/groups/{group_id}/members")
         assert response.status_code == 200, f"Failed to list members: {response.text}"
 
-        data = response.json()
+        data = get_response_data(response)
         for member in data.get("items", []):
             if member.get("member_id") == member_id:
                 return member.get("member_status", "")
@@ -535,7 +536,7 @@ class TestMemberStatusActiveUpdate:
                 json={"message_text": f"Hello @{agent_id}, can you help me?"},
             )
             assert response.status_code == 201, f"Failed to send message: {response.text}"
-            message_id = response.json()["message_id"]
+            message_id = get_response_data(response)["message_id"]
 
             # Wait for agent response
             deadline = time.time() + 15.0
@@ -543,7 +544,7 @@ class TestMemberStatusActiveUpdate:
             while time.time() < deadline:
                 response = api_client.get(f"{server_url}/api/v1/groups/{group_id}/messages")
                 assert response.status_code == 200
-                data = response.json()
+                data = get_response_data(response)
                 for msg in data.get("items", []):
                     if msg.get("processed_msg_id") == message_id:
                         found_response = True

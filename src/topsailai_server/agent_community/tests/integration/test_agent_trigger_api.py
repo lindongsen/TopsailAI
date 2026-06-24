@@ -26,6 +26,7 @@ from typing import Generator
 
 import pytest
 import requests
+from .conftest import get_response_data
 
 PROJECT_ROOT = "/TopsailAI/src/topsailai_server/agent_community"
 SERVER_BIN = os.path.join(PROJECT_ROOT, "bin", "acs-server")
@@ -228,7 +229,7 @@ def _create_group(admin_session: requests.Session, server_url: str, unique_id: s
         },
     )
     assert response.status_code == 201, f"Failed to create group: {response.text}"
-    return response.json()
+    return get_response_data(response)
 
 
 def _delete_group(admin_session: requests.Session, server_url: str, group_id: str) -> None:
@@ -260,7 +261,7 @@ def _add_member(
         json=payload,
     )
     assert response.status_code == 201, f"Failed to add member: {response.text}"
-    return response.json()
+    return get_response_data(response)
 
 
 def _update_member(
@@ -276,7 +277,7 @@ def _update_member(
         json={"member_interface": json.dumps(member_interface)},
     )
     assert response.status_code == 200, f"Failed to update member: {response.text}"
-    return response.json()
+    return get_response_data(response)
 
 
 def _ensure_manager_agent_record_path(
@@ -332,7 +333,7 @@ def _send_message(
         json={"message_text": text},
     )
     assert response.status_code == 201, f"Failed to create message: {response.text}"
-    return response.json()
+    return get_response_data(response)
 
 
 def _list_messages(
@@ -345,7 +346,7 @@ def _list_messages(
         f"{server_url}/api/v1/groups/{group_id}/messages?limit=1000"
     )
     assert response.status_code == 200
-    return response.json()["items"]
+    return get_response_data(response)["items"]
 
 
 def _list_members(
@@ -358,7 +359,7 @@ def _list_members(
         f"{server_url}/api/v1/groups/{group_id}/members?limit=1000"
     )
     assert response.status_code == 200
-    return response.json()["items"]
+    return get_response_data(response)["items"]
 
 
 def _get_member(
@@ -923,7 +924,7 @@ class TestManualTrigger:
                 json={"agent_id": agent_id},
             )
             assert response.status_code == 202
-            data = response.json()
+            data = get_response_data(response)
             assert data["status"] == "pending"
             assert data["trigger"]["type"] == "manual"
             assert data["trigger"]["agent_id"] == agent_id

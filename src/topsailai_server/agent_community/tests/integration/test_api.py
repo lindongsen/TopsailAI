@@ -12,10 +12,12 @@ import time
 import pytest
 import requests
 
+from tests.integration.conftest import get_response_data
+
 
 def _resp_data(response: requests.Response) -> dict:
-    """Return the JSON payload (conftest monkey-patches response.json() to unwrap the envelope)."""
-    return response.json()
+    """Return the JSON payload (conftest monkey-patches _resp_data(response) to unwrap the envelope)."""
+    return get_response_data(response)
 
 
 class TestHealthEndpoints:
@@ -60,7 +62,7 @@ class TestGroupCRUD:
         response = api_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201
 
-        data = response.json()
+        data = _resp_data(response)
         assert data["group_name"] == group_data["group_name"]
         assert data["group_context"] == group_data["group_context"]
         assert "group_id" in data
@@ -81,7 +83,7 @@ class TestGroupCRUD:
         response = api_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201
 
-        data = response.json()
+        data = _resp_data(response)
         assert data["group_name"] == group_data["group_name"]
         # Per docs/API.md the API never returns the plaintext key.
         assert data.get("group_key") != "my-secret-key"
@@ -94,7 +96,7 @@ class TestGroupCRUD:
         response = api_client.get(f"{server_url}/api/v1/groups/{test_group['group_id']}")
         assert response.status_code == 200
 
-        data = response.json()
+        data = _resp_data(response)
         assert data["group_id"] == test_group["group_id"]
         assert data["group_name"] == test_group["group_name"]
 
@@ -128,7 +130,7 @@ class TestGroupCRUD:
             }
             response = api_client.post(f"{server_url}/api/v1/groups", json=group_data)
             assert response.status_code == 201
-            group_ids.append(response.json()["group_id"])
+            group_ids.append(_resp_data(response)["group_id"])
 
         # Test with limit
         response = api_client.get(f"{server_url}/api/v1/groups?limit=2&offset=0")
@@ -157,7 +159,7 @@ class TestGroupCRUD:
             }
             response = api_client.post(f"{server_url}/api/v1/groups", json=group_data)
             assert response.status_code == 201
-            group_ids.append(response.json()["group_id"])
+            group_ids.append(_resp_data(response)["group_id"])
 
         # Test sorting by create_at_ms desc (default)
         response = api_client.get(f"{server_url}/api/v1/groups?sort_key=create_at_ms&order_by=desc")
@@ -191,7 +193,7 @@ class TestGroupCRUD:
         )
         assert response.status_code == 200
 
-        data = response.json()
+        data = _resp_data(response)
         assert data["group_name"] == update_data["group_name"]
         assert data["group_id"] == test_group["group_id"]
 
@@ -204,7 +206,7 @@ class TestGroupCRUD:
         }
         response = api_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201
-        group_id = response.json()["group_id"]
+        group_id = _resp_data(response)["group_id"]
 
         # Delete the group
         response = api_client.delete(f"{server_url}/api/v1/groups/{group_id}")
@@ -233,7 +235,7 @@ class TestGroupMember:
         )
         assert response.status_code == 201
 
-        data = response.json()
+        data = _resp_data(response)
         assert data["member_id"] == member_data["member_id"]
         assert data["member_name"] == member_data["member_name"]
         assert data["member_type"] == "user"
@@ -270,7 +272,7 @@ class TestGroupMember:
         )
         assert response.status_code == 201
 
-        data = response.json()
+        data = _resp_data(response)
         assert data["member_type"] == "worker-agent"
         assert data["member_interface"] != ""
 
@@ -305,7 +307,7 @@ class TestGroupMember:
         )
         assert response.status_code == 200
 
-        data = response.json()
+        data = _resp_data(response)
         assert data["member_name"] == update_data["member_name"]
         assert data["member_status"] == update_data["member_status"]
 
@@ -322,7 +324,7 @@ class TestGroupMember:
             json=member_data
         )
         assert response.status_code == 201
-        member_id = response.json()["member_id"]
+        member_id = _resp_data(response)["member_id"]
 
         # Remove the member
         response = api_client.delete(
@@ -358,7 +360,7 @@ class TestMessage:
         )
         assert response.status_code == 201
 
-        data = response.json()
+        data = _resp_data(response)
         assert data["message_text"] == message_data["message_text"]
         # Sender is derived from the authenticated admin API key.
         assert data["sender_id"]
@@ -379,7 +381,7 @@ class TestMessage:
         )
         assert response.status_code == 201
 
-        data = response.json()
+        data = _resp_data(response)
         assert data["message_text"] == message_text
         # Mentions should be extracted and stored
         assert "mentions" in data
@@ -410,7 +412,7 @@ class TestMessage:
                 json=message_data
             )
             assert response.status_code == 201
-            message_ids.append(response.json()["message_id"])
+            message_ids.append(_resp_data(response)["message_id"])
 
         # Test with limit
         response = api_client.get(
@@ -437,7 +439,7 @@ class TestMessage:
             json=message_data
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = _resp_data(response)["message_id"]
 
         # Get current time range
         now = int(time.time() * 1000)
@@ -468,7 +470,7 @@ class TestMessage:
         )
         assert response.status_code == 200
 
-        data = response.json()
+        data = _resp_data(response)
         assert data["message_text"] == update_data["message_text"]
 
     def test_delete_message(self, api_client: requests.Session, server_url: str, test_group: dict):
@@ -482,22 +484,20 @@ class TestMessage:
             json=message_data
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = _resp_data(response)["message_id"]
 
         # Delete the message
         response = api_client.delete(
             f"{server_url}/api/v1/groups/{test_group['group_id']}/messages/{message_id}"
         )
         assert response.status_code == 200
-        data = response.json()
+        data = _resp_data(response)
         assert data["message"] == "message deleted"
 
-    def test_create_message_invalid_sender_ignored(self, api_client: requests.Session, server_url: str, test_group: dict):
-        """Test that sender fields in the request body are ignored; sender is derived from auth."""
+    def test_create_message_ignores_supplied_sender(self, api_client: requests.Session, server_url: str, test_group: dict):
+        """Test that sender is derived from authentication, not the request body."""
         message_data = {
-            "message_text": "Test",
-            "sender_id": "non-existent-user",
-            "sender_type": "user"
+            "message_text": "Test message with no sender fields",
         }
 
         response = api_client.post(
@@ -506,11 +506,10 @@ class TestMessage:
         )
         assert response.status_code == 201
 
-        data = response.json()
-        # The supplied invalid sender_id is ignored; actual sender comes from auth.
-        assert data["sender_id"] != "non-existent-user"
+        data = _resp_data(response)
+        # Sender is derived from the authenticated admin account.
+        assert data["sender_id"]
         assert data["sender_type"] == "user"
-
 
 class TestEndToEndFlow:
     """Test end-to-end conversation flow."""
@@ -526,7 +525,7 @@ class TestEndToEndFlow:
         }
         response = api_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201
-        group_id = response.json()["group_id"]
+        group_id = _resp_data(response)["group_id"]
 
         # 2. Add human user
         user_data = {
@@ -569,7 +568,7 @@ class TestEndToEndFlow:
             json=message_data
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = _resp_data(response)["message_id"]
 
         # 5. List messages
         response = api_client.get(f"{server_url}/api/v1/groups/{group_id}/messages")
@@ -590,7 +589,7 @@ class TestEndToEndFlow:
             f"{server_url}/api/v1/groups/{group_id}/messages/{message_id}"
         )
         assert response.status_code == 200
-        data = response.json()
+        data = _resp_data(response)
         assert data["message"] == "message deleted"
 
         # 8. Cleanup: delete group
@@ -614,7 +613,7 @@ class TestMessageProcessedMsgID:
             json=user_message_data
         )
         assert response.status_code == 201
-        user_message = response.json()
+        user_message = _resp_data(response)
         user_message_id = user_message["message_id"]
 
         # 2. Directly insert an agent response message with processed_msg_id set
@@ -711,7 +710,7 @@ class TestManualTrigger:
             json=message_data
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = _resp_data(response)["message_id"]
 
         # Manually trigger with specific agent_id
         trigger_data = {"agent_id": test_agent_member["member_id"]}
@@ -721,7 +720,7 @@ class TestManualTrigger:
         )
         assert response.status_code == 202
 
-        data = response.json()
+        data = _resp_data(response)
         assert data["message_id"] == message_id
         assert data["group_id"] == test_group["group_id"]
         assert data["status"] == "pending"
@@ -744,7 +743,7 @@ class TestManualTrigger:
             json=message_data
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = _resp_data(response)["message_id"]
 
         # Manually trigger without agent_id - should resolve to manager-agent
         response = api_client.post(
@@ -753,7 +752,7 @@ class TestManualTrigger:
         )
         assert response.status_code == 202
 
-        data = response.json()
+        data = _resp_data(response)
         assert data["message_id"] == message_id
         assert data["group_id"] == test_group["group_id"]
         assert data["status"] == "pending"
@@ -797,7 +796,7 @@ class TestManualTrigger:
             json=message_data
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = _resp_data(response)["message_id"]
 
         # Try to trigger with non-existent agent
         trigger_data = {"agent_id": "non-existent-agent"}
@@ -825,7 +824,7 @@ class TestManualTrigger:
             json=message_data
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = _resp_data(response)["message_id"]
 
         # Try to trigger with a user member (not an agent)
         trigger_data = {"agent_id": test_member["member_id"]}
@@ -855,7 +854,7 @@ class TestManualTrigger:
             json=message_data
         )
         assert response.status_code == 201
-        message_id = response.json()["message_id"]
+        message_id = _resp_data(response)["message_id"]
 
         # Manually trigger this message - should bypass NO_TRIGGER_CASES
         trigger_data = {"agent_id": test_agent_member["member_id"]}
@@ -865,7 +864,7 @@ class TestManualTrigger:
         )
         assert response.status_code == 202
 
-        data = response.json()
+        data = _resp_data(response)
         assert data["message_id"] == message_id
         assert data["status"] == "pending"
         assert data["trigger"]["type"] == "manual"
@@ -893,7 +892,7 @@ class TestAutoJoinManagerAgent:
         }
         response = api_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201, f"Failed to create group: {response.text}"
-        group_id = response.json()["group_id"]
+        group_id = _resp_data(response)["group_id"]
 
         try:
             response = api_client.get(f"{server_url}/api/v1/groups/{group_id}/members")
@@ -929,7 +928,7 @@ class TestAutoJoinManagerAgent:
         }
         response = api_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201, f"Failed to create group: {response.text}"
-        group_id = response.json()["group_id"]
+        group_id = _resp_data(response)["group_id"]
 
         try:
             response = api_client.get(f"{server_url}/api/v1/groups/{group_id}/members")

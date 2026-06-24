@@ -10,6 +10,7 @@ import os
 import psycopg2
 import pytest
 import requests
+from .conftest import get_response_data
 
 
 PLAINTEXT_KEY = "my-secret-key"
@@ -54,7 +55,7 @@ def user_client(admin_client: requests.Session, server_url: str, unique_id: str)
     }
     response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
     assert response.status_code == 201, f"Failed to create user account: {response.text}"
-    account = response.json()
+    account = get_response_data(response)
 
     key_data = {"api_key_name": "gk-user-key", "role": "user"}
     response = admin_client.post(
@@ -62,7 +63,7 @@ def user_client(admin_client: requests.Session, server_url: str, unique_id: str)
         json=key_data,
     )
     assert response.status_code == 201, f"Failed to create user API key: {response.text}"
-    token = response.json()["token"]
+    token = get_response_data(response)["token"]
 
     session = requests.Session()
     session.headers.update({"Content-Type": "application/json"})
@@ -85,7 +86,7 @@ def another_user_client(admin_client: requests.Session, server_url: str, unique_
     }
     response = admin_client.post(f"{server_url}/api/v1/accounts", json=account_data)
     assert response.status_code == 201, f"Failed to create other user account: {response.text}"
-    account = response.json()
+    account = get_response_data(response)
 
     key_data = {"api_key_name": "gk-other-user-key", "role": "user"}
     response = admin_client.post(
@@ -93,7 +94,7 @@ def another_user_client(admin_client: requests.Session, server_url: str, unique_
         json=key_data,
     )
     assert response.status_code == 201, f"Failed to create other user API key: {response.text}"
-    token = response.json()["token"]
+    token = get_response_data(response)["token"]
 
     session = requests.Session()
     session.headers.update({"Content-Type": "application/json"})
@@ -115,7 +116,7 @@ def private_group(user_client: requests.Session, admin_client: requests.Session,
     }
     response = user_client.post(f"{server_url}/api/v1/groups", json=group_data)
     assert response.status_code == 201, f"Failed to create private group: {response.text}"
-    group = response.json()
+    group = get_response_data(response)
 
     yield group
 
@@ -136,7 +137,7 @@ class TestGroupKeyPrivacy:
         }
         response = user_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201, f"Failed to create group: {response.text}"
-        data = response.json()
+        data = get_response_data(response)
 
         assert data["group_name"] == group_data["group_name"]
         assert data.get("group_key") != PLAINTEXT_KEY
@@ -152,7 +153,7 @@ class TestGroupKeyPrivacy:
         """TC-INT-GK-002: GET group must not return the plaintext group_key."""
         response = user_client.get(f"{server_url}/api/v1/groups/{private_group['group_id']}")
         assert response.status_code == 200, f"Failed to get group: {response.text}"
-        data = response.json()
+        data = get_response_data(response)
 
         assert data.get("group_key") != PLAINTEXT_KEY
 
@@ -166,13 +167,13 @@ class TestGroupKeyPrivacy:
             json=update_data,
         )
         assert response.status_code == 200, f"Failed to update group key: {response.text}"
-        data = response.json()
+        data = get_response_data(response)
         assert data.get("group_key") != NEW_PLAINTEXT_KEY
 
         # Verify GET also does not leak the new key.
         response = user_client.get(f"{server_url}/api/v1/groups/{private_group['group_id']}")
         assert response.status_code == 200
-        data = response.json()
+        data = get_response_data(response)
         assert data.get("group_key") != NEW_PLAINTEXT_KEY
 
     def test_list_groups_does_not_return_plaintext_keys(
@@ -181,7 +182,7 @@ class TestGroupKeyPrivacy:
         """TC-INT-GK-004: Listing groups must not expose plaintext keys."""
         response = user_client.get(f"{server_url}/api/v1/groups")
         assert response.status_code == 200, f"Failed to list groups: {response.text}"
-        data = response.json()
+        data = get_response_data(response)
 
         assert "items" in data
         for group in data["items"]:
@@ -198,14 +199,14 @@ class TestGroupKeyPrivacy:
         }
         response = user_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201, f"Failed to create public group: {response.text}"
-        group = response.json()
+        group = get_response_data(response)
 
         try:
             assert group.get("group_key") == ""
 
             response = user_client.get(f"{server_url}/api/v1/groups/{group['group_id']}")
             assert response.status_code == 200
-            data = response.json()
+            data = get_response_data(response)
             assert data.get("group_key") == ""
         finally:
             user_client.delete(f"{server_url}/api/v1/groups/{group['group_id']}")
@@ -225,7 +226,7 @@ class TestGroupKeyHashStorage:
         }
         response = user_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201, f"Failed to create group: {response.text}"
-        group = response.json()
+        group = get_response_data(response)
 
         try:
             stored_key = _get_group_key_from_db(group["group_id"])
@@ -292,7 +293,7 @@ class TestGroupKeyAccessControl:
             f"{server_url}/api/v1/groups/{private_group['group_id']}/messages"
         )
         assert response.status_code == 200, f"Owner failed to list messages: {response.text}"
-        data = response.json()
+        data = get_response_data(response)
         assert data["total"] >= 1
 
     def test_owner_can_update_group_key(
@@ -333,7 +334,7 @@ class TestGroupKeyAccessControl:
         }
         response = user_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201, f"Failed to create public group: {response.text}"
-        group = response.json()
+        group = get_response_data(response)
 
         try:
             update_data = {"group_key": PLAINTEXT_KEY}
@@ -362,7 +363,7 @@ class TestGroupKeyAccessControl:
 
         response = user_client.get(f"{server_url}/api/v1/groups/{private_group['group_id']}")
         assert response.status_code == 200
-        data = response.json()
+        data = get_response_data(response)
         assert data.get("group_key") == ""
 
     def test_admin_can_access_any_private_group(
@@ -375,7 +376,7 @@ class TestGroupKeyAccessControl:
         """TC-INT-GK-010: Admin can access any private group without the key."""
         response = admin_client.get(f"{server_url}/api/v1/groups/{private_group['group_id']}")
         assert response.status_code == 200, f"Admin failed to access private group: {response.text}"
-        data = response.json()
+        data = get_response_data(response)
         assert data["group_id"] == private_group["group_id"]
 
         response = admin_client.get(
@@ -401,7 +402,7 @@ class TestGroupKeyJoinBehavior:
         }
         response = user_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201, f"Failed to create public group: {response.text}"
-        group = response.json()
+        group = get_response_data(response)
 
         try:
             response = another_user_client.post(
@@ -411,7 +412,7 @@ class TestGroupKeyJoinBehavior:
             assert response.status_code == 201, (
                 f"Expected 201 for public self-join, got {response.status_code}: {response.text}"
             )
-            data = response.json()
+            data = get_response_data(response)
             # Self-join overrides member_id to the caller's account_id.
             me = another_user_client.get(f"{server_url}/api/v1/accounts/me").json()
             assert data["member_id"] == me["account_id"]
@@ -452,7 +453,7 @@ class TestGroupKeyJoinBehavior:
         assert response.status_code == 201, (
             f"Expected 201 for key-based self-join, got {response.status_code}: {response.text}"
         )
-        data = response.json()
+        data = get_response_data(response)
         me = another_user_client.get(f"{server_url}/api/v1/accounts/me").json()
         assert data["member_id"] == me["account_id"]
         assert data["member_type"] == "user"
@@ -499,7 +500,7 @@ class TestGroupKeyJoinBehavior:
         # Resolve the invited user's account_id.
         response = another_user_client.get(f"{server_url}/api/v1/accounts/me")
         assert response.status_code == 200, f"Failed to get invited account: {response.text}"
-        invited_account = response.json()
+        invited_account = get_response_data(response)
 
         # member_name must contain only alphanumeric characters, hyphens, and underscores.
         member_name = f"Invited_{unique_id}"
@@ -513,7 +514,7 @@ class TestGroupKeyJoinBehavior:
             json=member_data,
         )
         assert response.status_code == 201, f"Owner failed to add member: {response.text}"
-        data = response.json()
+        data = get_response_data(response)
         assert data["member_id"] == member_data["member_id"]
 
         # The invited member can now list messages.

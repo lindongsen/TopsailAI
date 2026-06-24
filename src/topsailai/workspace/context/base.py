@@ -354,7 +354,7 @@ Summarize Messages
         print_tool.print_debug(f"All of messages: length=[{len(all_messages)}]")
 
         llm_chat = get_llm_chat(
-            message="NA",
+            message="> SUMMARIZE MESSAGES",
             session_id="",
             system_prompt="",
 

@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 import requests
+from .conftest import get_response_data
 
 
 # The integration tests live in tests/integration/, so two levels up is the
@@ -55,7 +56,7 @@ def admin_account_id(server_url: str, admin_token: str) -> str:
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert response.status_code == 200, f"Failed to get admin account: {response.text}"
-    return response.json()["data"]["account_id"]
+    return get_response_data(response)["data"]["account_id"]
 
 
 class TestCLIBinary:
@@ -131,7 +132,7 @@ class TestCLIAuthenticatedCommands:
         """CLI-AUTH-004: login with session key via CLI."""
         response = admin_client.post(f"{server_url}/api/v1/accounts/{test_account['account_id']}/session")
         assert response.status_code == 200, f"Failed to create session: {response.text}"
-        session_key = response.json()["data"]["session_key"]
+        session_key = get_response_data(response)["data"]["session_key"]
 
         stdin = (
             f"/login session-key={session_key}\n"
@@ -190,7 +191,7 @@ class TestCLIAuthenticatedCommands:
         }
         response = admin_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201, f"Failed to create private group: {response.text}"
-        group_id = response.json()["data"]["group_id"]
+        group_id = get_response_data(response)["data"]["group_id"]
 
         try:
             stdin = (
@@ -217,7 +218,7 @@ class TestCLIAuthenticatedCommands:
         }
         response = admin_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201, f"Failed to create private group: {response.text}"
-        group_id = response.json()["data"]["group_id"]
+        group_id = get_response_data(response)["data"]["group_id"]
 
         try:
             stdin = (
@@ -285,7 +286,7 @@ class TestCLIAuthenticatedCommands:
             json={"message_text": "CLI original message", "sender_id": test_member["member_id"], "sender_type": "user"},
         )
         assert response.status_code == 201, f"Failed to create message: {response.text}"
-        message_id = response.json()["data"]["message_id"]
+        message_id = get_response_data(response)["data"]["message_id"]
 
         stdin = (
             f"/message:list group-id={test_group['group_id']}\n"

@@ -7,6 +7,7 @@ constraint enforcement against a running ACS server.
 
 import pytest
 import requests
+from .conftest import get_response_data
 
 
 class TestAPIKeyCRUD:
@@ -24,7 +25,7 @@ class TestAPIKeyCRUD:
             json=key_data,
         )
         assert response.status_code == 201
-        data = response.json()
+        data = get_response_data(response)
         assert data["api_key_name"] == key_data["api_key_name"]
         assert data["role"] == "user"
         assert data["owner_id"] == test_account["account_id"]
@@ -46,7 +47,7 @@ class TestAPIKeyCRUD:
             f"{server_url}/api/v1/accounts/{test_account['account_id']}/api-keys"
         )
         assert response.status_code == 200
-        data = response.json()
+        data = get_response_data(response)
         assert data["total"] >= 1
         assert any(key["api_key_name"] == key_data["api_key_name"] for key in data["items"])
 
@@ -63,7 +64,7 @@ class TestAPIKeyCRUD:
         headers = {"Authorization": f"Bearer {token}"}
         response = api_client.get(f"{server_url}/api/v1/accounts/me", headers=headers)
         assert response.status_code == 200
-        data = response.json()
+        data = get_response_data(response)
         assert data["account_id"] == account["account_id"]
 
     def test_deleted_api_key_cannot_authenticate(
@@ -108,7 +109,7 @@ class TestAPIKeyConstraints:
             json=key_data,
         )
         assert response.status_code == 403
-        data = response.json()
+        data = get_response_data(response)
         assert "role" in data["error"].lower() or "api key role" in data["error"].lower()
 
     def test_user_can_create_own_api_key(
@@ -121,7 +122,7 @@ class TestAPIKeyConstraints:
         # Create a session for the test account.
         response = admin_client.post(f"{server_url}/api/v1/accounts/{test_account['account_id']}/session")
         assert response.status_code == 200
-        session_key = response.json()["session_key"]
+        session_key = get_response_data(response)["session_key"]
         # Use a fresh session so the X-Session-Key header is the only credential.
         session_client = requests.Session()
         session_client.headers.update({"Content-Type": "application/json"})
@@ -133,7 +134,7 @@ class TestAPIKeyConstraints:
             json=key_data,
         )
         assert response.status_code == 201
-        data = response.json()
+        data = get_response_data(response)
         assert data["role"] == "user"
         assert "token" in data
 
@@ -154,14 +155,14 @@ class TestAPIKeyConstraints:
         }
         response = admin_client.post(f"{server_url}/api/v1/accounts", json=other_account_data)
         assert response.status_code == 201
-        other_account = response.json()
+        other_account = get_response_data(response)
 
         # Create a session for the first test account.
         response = admin_client.post(f"{server_url}/api/v1/accounts/{test_account['account_id']}/session")
         # Create a session for the first test account.
         response = admin_client.post(f"{server_url}/api/v1/accounts/{test_account['account_id']}/session")
         assert response.status_code == 200
-        session_key = response.json()["session_key"]
+        session_key = get_response_data(response)["session_key"]
         # so the X-Session-Key header is the only credential.
         session_client = requests.Session()
         session_client.headers.update({"Content-Type": "application/json"})
@@ -191,7 +192,7 @@ class TestAPIKeyConstraints:
             f"{server_url}/api/v1/accounts/{test_account['account_id']}/api-keys"
         )
         assert limit_response.status_code == 200
-        existing_count = limit_response.json()["total"]
+        existing_count = get_response_data(limit_response)["total"]
 
         created_keys = []
         try:
@@ -202,7 +203,7 @@ class TestAPIKeyConstraints:
                     json=key_data,
                 )
                 if response.status_code == 201:
-                    created_keys.append(response.json()["api_key_id"])
+                    created_keys.append(get_response_data(response)["api_key_id"])
                 elif response.status_code == 409:
                     # Limit reached.
                     break
@@ -231,7 +232,7 @@ class TestAPIKeyAuditLogs:
             json=key_data,
         )
         assert response.status_code == 201
-        api_key = response.json()
+        api_key = get_response_data(response)
 
         response = admin_client.get(
             f"{server_url}/api/v1/audit-logs",
@@ -242,7 +243,7 @@ class TestAPIKeyAuditLogs:
             },
         )
         assert response.status_code == 200
-        data = response.json()
+        data = get_response_data(response)
         assert data["total"] >= 1
         assert any(
             log["resource_id"] == api_key["api_key_id"] and log["action"] == "api_key.create"

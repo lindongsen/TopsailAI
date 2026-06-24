@@ -210,11 +210,13 @@ def test_manager_agent(api_client: requests.Session, server_url: str, test_group
 
 @pytest.fixture(scope="function")
 def test_message(api_client: requests.Session, server_url: str, test_group: dict, test_member: dict) -> dict:
-    """Create a test message in the test group."""
+    """Create a test message in the test group.
+
+    The API derives sender_id and sender_type from the authenticated caller,
+    so we do not send them in the request body.
+    """
     message_data = {
         "message_text": "Hello, this is a test message!",
-        "sender_id": test_member["member_id"],
-        "sender_type": "user"
     }
 
     response = api_client.post(
@@ -260,13 +262,11 @@ async def nats_jetstream(nats_client: nats.NATS) -> AsyncGenerator:
     js = nats_client.jetstream()
     yield js
 
-
 # ---------------------------------------------------------------------------
 # Account / API key test helpers
 # ---------------------------------------------------------------------------
 
-PROJECT_ROOT = "/TopsailAI/src/topsailai_server/agent_community"
-
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _read_token(env_var: str, file_name: str) -> str | None:
     """Read an API key token from environment or the server-generated file."""

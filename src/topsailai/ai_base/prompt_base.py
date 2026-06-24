@@ -351,6 +351,10 @@ class PromptBase(object):
         self.init_prompt()
         context_message = self._build_context_message(self.context_user_messages)
         if context_message:
+            context_message = {
+                "step_name": "observation",
+                "raw_text": context_message,
+            }
             self.add_user_message(context_message, need_print=need_print_message)
         if user_message:
             self.add_user_message(user_message, need_print=need_print_message)
