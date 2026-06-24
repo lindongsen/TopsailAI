@@ -186,19 +186,16 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
 
         return deleted_list
 
-    def _get_current_tokens(self) -> int | None:
+    def _get_token_calculation_messages(self):
         """
-        Get the current token count from the LLM model safely.
+        Get the messages used for real-time token calculation.
+
+        For User2Agent, tokens are calculated from the session messages.
 
         Returns:
-            int | None: The current token count, or None if not available.
+            list | None: The session messages, or None if not available.
         """
-        try:
-            if self.ai_agent and self.ai_agent.llm_model and self.ai_agent.llm_model.tokenStat:
-                return int(self.ai_agent.llm_model.tokenStat.current_tokens)
-        except Exception:
-            pass
-        return None
+        return self.messages
 
     def summarize_messages_for_processed(
             self,
@@ -244,7 +241,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         print_step(f"!!! Summarizing context messages for processed: msg_len=[{len(messages)}]", need_format=False, need_log=True)
 
         # Log message count and token usage before summarization
-        _token_count_before = self._get_current_tokens()
+        _token_count_before = self._get_current_tokens(realtime=True)
         logger.info("[summarize_processed] before: messages=%s, tokens=%s", len(messages), _token_count_before)
 
         llm_chat, answer = self._summarize_messages(messages, extra_prompt=story_tool.PROMPT_SUMMARY_MEMORY)
@@ -315,7 +312,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             self.set_messages(new_messages)
 
         # Log message count and token usage after summarization
-        _token_count_after = self._get_current_tokens()
+        _token_count_after = self._get_current_tokens(realtime=True)
         logger.info("[summarize_processed] after: messages=%s, tokens=%s", len(self.messages), _token_count_after)
 
         return answer
@@ -351,11 +348,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         ) or 0
 
         if token_threshold > 0:
-            try:
-                current_tokens = int(self.ai_agent.llm_model.tokenStat.current_tokens)
-            except Exception:
-                current_tokens = 0
-
+            current_tokens = self._get_current_tokens() or 0
             if current_tokens > token_threshold:
                 print_step(
                     f"!!! User2Agent token usage exceeded threshold: current_tokens=[{current_tokens}], threshold=[{token_threshold}]",

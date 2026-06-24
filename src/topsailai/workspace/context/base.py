@@ -14,6 +14,7 @@ from topsailai.ai_base.agent_base import (
     AgentBase,
 )
 from topsailai.context import ctx_manager
+from topsailai.context.token import count_tokens
 from topsailai.tools import (
     story_tool,
 )
@@ -198,6 +199,57 @@ class ContextRuntimeBase(object):
             head_offset_to_keep = 0
 
         return head_offset_to_keep
+
+    def _get_token_calculation_messages(self):
+        """
+        Get the messages used for real-time token calculation.
+
+        Subclasses may override this to return the message source appropriate
+        for their layer (e.g. User2Agent session messages or Agent2LLM messages).
+
+        Returns:
+            list | None: The messages to count, or None if not available.
+        """
+        if self.ai_agent:
+            return self.ai_agent.messages
+        return self.messages
+
+    def _get_current_tokens(self, messages=None, realtime=False) -> int | None:
+        """
+        Get the current token count.
+
+        When TOPSAILAI_REALTIME_TOKEN_CALCULATION is enabled, tokens are
+        calculated from the provided messages (or the layer-appropriate
+        message source). Otherwise, the cached tokenStat.current_tokens value
+        is returned for backward compatibility.
+
+        Args:
+            messages (list | str, optional): Messages to count. If None, the
+                layer-appropriate message source is used.
+
+        Returns:
+            int | None: The current token count, or None if not available.
+        """
+        if not realtime:
+            realtime = env_tool.EnvReaderInstance.check_bool(
+                "TOPSAILAI_REALTIME_TOKEN_CALCULATION", False
+            )
+        if realtime:
+            if messages is None:
+                messages = self._get_token_calculation_messages()
+            if messages is None:
+                return None
+            try:
+                return int(count_tokens(str(messages)))
+            except Exception:
+                return None
+
+        try:
+            if self.ai_agent and self.ai_agent.llm_model and self.ai_agent.llm_model.tokenStat:
+                return int(self.ai_agent.llm_model.tokenStat.current_tokens)
+        except Exception:
+            pass
+        return None
 
     ###############################################################
     # Summary

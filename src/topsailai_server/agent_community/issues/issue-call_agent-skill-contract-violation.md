@@ -1,7 +1,7 @@
 # Issue: call_agent skill contract violated by ACS server message creation
 
 ## Status
-**Fixed** — Server-side implementation merged; unit tests passing.
+**Closed** — Server-side implementation merged, unit tests passing, and manual skill tests verified.
 
 ## Summary
 The `agent_community_client` skill (`call_agent.py`) expects to send a message with explicit `sender_id`, `sender_type`, and `processed_msg_id` fields. The ACS server previously derived `sender_id`/`sender_type` from the authenticated caller and ignored `processed_msg_id` in the request body. This broke the skill contract documented in `/TopsailAI/src/topsailai_server/agent_community/skills/agent_community_client.md`.
@@ -46,7 +46,9 @@ Adopt **Option A**: Extend `POST /api/v1/groups/{group_id}/messages` to accept c
 - Added `resolveSenderIdentity` helper for sender override authorization.
 - Added handler-level guard in `evaluateAndTrigger` to skip messages that already have `processed_msg_id`.
 
-## Test Coverage Required
+## Test Coverage
+
+### Unit Tests
 - [x] Backward compatibility: omitting new fields uses auth-derived sender.
 - [x] Caller sends as their own group member (user type) with `processed_msg_id`.
 - [x] Caller sends as their own group member (worker-agent type).
@@ -59,7 +61,27 @@ Adopt **Option A**: Extend `POST /api/v1/groups/{group_id}/messages` to accept c
 - [x] `processed_msg_id` references message in another group → 400.
 - [x] `processed_msg_id` blocks automatic trigger.
 
-## Suggested Fix (Historical)
-Option A (preferred): Update `CreateMessageRequest` in `internal/api/handlers/message.go` to include `sender_id`, `sender_type`, and `processed_msg_id`, and use them when provided by trusted callers.
+### Manual Skill Tests (Post-Fix)
+- [x] Happy path: `call_agent.py` sends as worker-agent, triggers target worker-agent, receives reply.
+- [x] Contract verified: sent message has `sender_id=ACS_AGENT_ID`, `sender_type=ACS_AGENT_TYPE`, `processed_msg_id=ACS_MESSAGE_ID`.
+- [x] Timeout behavior when target agent does not reply within `ACS_AGENT_TIMEOUT`.
+- [x] User member can use `call_agent.py` to send as themselves and trigger an agent.
+- [x] User member can send on behalf of a manager-agent member and trigger an agent.
+- [x] Impersonation of another worker-agent member is rejected with 403.
+- [x] Non-member caller attempting sender override is rejected with 403.
 
-Option B: Update skill doc and `call_agent.py` to remove the `processed_msg_id` requirement and adapt to server-derived sender fields.
+## Manual Test Artifacts
+- Setup log: `/tmp/acs_manual_test/setup.log`
+- Happy-path log: `/tmp/acs_manual_test/call_agent_happy2.log`
+- Verification log: `/tmp/acs_manual_test/verify_happy.log`
+- Timeout log: `/tmp/acs_manual_test/call_agent_timeout.log`
+- User-member log: `/tmp/acs_manual_test/call_agent_user.log`
+- Manager-agent log: `/tmp/acs_manual_test/call_agent_manager.log`
+- Impersonation log: `/tmp/acs_manual_test/test_impersonation.log`
+- Server log: `/tmp/acs_manual_test/server.log`
+- Test config: `/tmp/acs_manual_test/test_config.json`
+
+## Suggested Fix (Historical)
+Option A (preferred): Update `CreateMessageRequest` in `internal/api/handlers/message.go` to include `sender_id`, `sender_type`, and `processed_msg_id`, and use them when provided by trusted callers. **Implemented and verified.**
+
+Option B: Update skill doc and `call_agent.py` to remove the `processed_msg_id` requirement and adapt to server-derived sender fields. **Not needed.**

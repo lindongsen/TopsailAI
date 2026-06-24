@@ -77,19 +77,6 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         return deleted_list
 
-    def _get_current_tokens(self) -> int | None:
-        """
-        Get the current token count from the LLM model safely.
-
-        Returns:
-            int | None: The current token count, or None if not available.
-        """
-        try:
-            if self.ai_agent and self.ai_agent.llm_model and self.ai_agent.llm_model.tokenStat:
-                return int(self.ai_agent.llm_model.tokenStat.current_tokens)
-        except Exception:
-            pass
-        return None
 
     def summarize_messages_for_processing(
             self,
@@ -183,6 +170,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 new_messages.append(last_user_msg)
         self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
 
+        self.ai_agent.llm_model.tokenStat.add_msgs(self.ai_agent.messages)
         # Log message count and token usage after summarization
         _token_count_after = self._get_current_tokens()
         logger.info("[summarize_processing] after: messages=%s, tokens=%s", len(self.ai_agent.messages), _token_count_after)
@@ -222,10 +210,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         ) or 0
 
         if token_threshold > 0:
-            try:
-                current_tokens = int(self.ai_agent.llm_model.tokenStat.current_tokens)
-            except Exception:
-                current_tokens = 0
+            current_tokens = self._get_current_tokens() or 0
 
             if current_tokens > token_threshold:
                 print_step(

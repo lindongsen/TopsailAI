@@ -27,6 +27,7 @@ These variables control when the agent archives or summarizes message history to
 | `TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD` | (unset) | Layer-specific message-count threshold for User2Agent. Takes precedence over `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD`. |
 | `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` | `128000` | Token threshold for triggering Agent2LLM context summarization. Set to `0` to disable. |
 | `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` | `0` | Token threshold for triggering User2Agent (session) context summarization. Set to `0` to disable (default). |
+| `TOPSAILAI_REALTIME_TOKEN_CALCULATION` | `0` | When set to `1`, token counts for summarization thresholds are calculated from the actual message content instead of the cached `TokenStat` value. |
 
 ### Details
 
@@ -38,5 +39,6 @@ These variables control when the agent archives or summarizes message history to
 - `CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS` provides an independent token budget for uncached tokens. The effective threshold is approximately `uncached_token_max * token_ratio`. For example, with the default `27000` and `token_ratio=0.8`, archiving is triggered when uncached tokens reach about `21600`.
 - `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` is checked by `ContextRuntimeAgent2LLM.is_need_summarize_for_processing()`. When the current Agent2LLM token usage (`TokenStat.current_tokens`) exceeds this threshold, summarization is triggered in addition to the existing message-count check. Setting this variable to `0` disables the token-based check.
 - `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` is checked by `ContextRuntimeData.is_need_summarize_for_processed()`. When the current User2Agent (session) token usage (`TokenStat.current_tokens`) exceeds this threshold, summarization is triggered in addition to the existing message-count check. The default is `0`, which disables the token-based check.
+- `TOPSAILAI_REALTIME_TOKEN_CALCULATION` controls whether `_get_current_tokens()` calculates tokens from the actual message content (`1`) or uses the cached `TokenStat.current_tokens` value (`0`, default). When enabled, User2Agent tokens are calculated from `self.messages` and Agent2LLM tokens are calculated from `self.ai_agent.messages`. This variable is read on each call to `_get_current_tokens()`.
 
 The first three variables are read at `ThresholdContextHistory` initialization time and can be overridden per process. `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` and `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` are read on each call to their respective `is_need_summarize_*` methods.

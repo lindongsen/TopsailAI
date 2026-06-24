@@ -286,6 +286,32 @@ class TestDelSessionMessages(TestContextRuntimeData):
         self.assertEqual(deleted, [])
 
 
+
+class TestGetCurrentTokens(TestContextRuntimeData):
+    """Test cases for _get_current_tokens and _get_token_calculation_messages."""
+
+    def test_get_token_calculation_messages_returns_session_messages(self):
+        """Test User2Agent uses self.messages for real-time token calculation."""
+        self.runtime.messages = [{"role": "user", "content": "session"}]
+        result = self.runtime._get_token_calculation_messages()
+        self.assertEqual(result, self.runtime.messages)
+
+    def test_get_current_tokens_realtime_uses_session_messages(self):
+        """Test real-time calculation uses session messages for User2Agent."""
+        with patch.dict(os.environ, {"TOPSAILAI_REALTIME_TOKEN_CALCULATION": "1"}):
+            self.runtime.messages = [{"role": "user", "content": "x" * 1000}]
+            result = self.runtime._get_current_tokens()
+            self.assertIsNotNone(result)
+            self.assertGreater(result, 10)
+
+    def test_get_current_tokens_default_uses_cached_stat(self):
+        """Test default behavior returns cached tokenStat.current_tokens."""
+        with patch.dict(os.environ, {"TOPSAILAI_REALTIME_TOKEN_CALCULATION": "0"}):
+            self.runtime.ai_agent = MagicMock()
+            self.runtime.ai_agent.llm_model.tokenStat.current_tokens = 777
+            result = self.runtime._get_current_tokens()
+            self.assertEqual(result, 777)
+
 class TestIsNeedSummarize(TestContextRuntimeData):
     """Test cases for is_need_summarize_for_processed() method."""
 
@@ -369,7 +395,8 @@ class TestIsNeedSummarize(TestContextRuntimeData):
 
                 self.assertFalse(result)
 
-    def test_is_need_summarize_uses_user2agent_env_var(self):
+    @patch('topsailai.workspace.context.base.random.choice', return_value=13)
+    def test_is_need_summarize_uses_user2agent_env_var(self, mock_choice):
         """Test that TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD is used."""
         with patch.dict(os.environ, {
             "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD": "20",
@@ -381,7 +408,8 @@ class TestIsNeedSummarize(TestContextRuntimeData):
 
             self.assertTrue(result)
 
-    def test_is_need_summarize_user2agent_falls_back_to_legacy(self):
+    @patch('topsailai.workspace.context.base.random.choice', return_value=13)
+    def test_is_need_summarize_user2agent_falls_back_to_legacy(self, mock_choice):
         """Test fallback to legacy shared env var when user2agent var is unset."""
         with patch.dict(os.environ, {
             "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD": "",
@@ -392,7 +420,6 @@ class TestIsNeedSummarize(TestContextRuntimeData):
             result = self.runtime.is_need_summarize_for_processed()
 
             self.assertTrue(result)
-
     @patch('topsailai.workspace.context.base.random.choice', return_value=13)
     def test_is_need_summarize_user2agent_wins_over_legacy(self, mock_choice):
         """Test layer-specific env var takes precedence over legacy shared var."""
@@ -417,6 +444,19 @@ class TestIsNeedSummarize(TestContextRuntimeData):
             result = self.runtime.is_need_summarize_for_processed()
 
             self.assertFalse(result)
+
+    def test_is_need_summarize_by_tokens_realtime_enabled(self):
+        """Test token check uses real-time calculation when enabled."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "10",
+            "TOPSAILAI_REALTIME_TOKEN_CALCULATION": "1",
+        }):
+            with patch.object(self.runtime, '_get_quantity_threshold', return_value=0):
+                self.runtime.messages = [{"role": "user", "content": "x" * 1000}]
+
+                result = self.runtime.is_need_summarize_for_processed()
+
+                self.assertTrue(result)
 
 
 class TestSummarizeMessages(TestContextRuntimeData):

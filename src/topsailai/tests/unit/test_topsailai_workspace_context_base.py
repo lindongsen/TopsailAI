@@ -534,5 +534,144 @@ class TestSummarizeMessages(unittest.TestCase):
         self.assertEqual(answer, "Summarized string")
 
 
+
+class TestGetCurrentTokens(unittest.TestCase):
+    """Test suite for _get_current_tokens method."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.mock_agent = MagicMock()
+        self.mock_agent.llm_model.tokenStat.current_tokens = 1234
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    def test_get_current_tokens_default_cached(self, mock_env_tool, mock_agent_base):
+        """Test default behavior returns cached tokenStat.current_tokens."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = False
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = self.mock_agent
+
+        result = runtime._get_current_tokens()
+
+        self.assertEqual(result, 1234)
+        mock_env_tool.EnvReaderInstance.check_bool.assert_called_once_with(
+            "TOPSAILAI_REALTIME_TOKEN_CALCULATION", False
+        )
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.count_tokens')
+    def test_get_current_tokens_realtime_with_messages(
+        self, mock_count_tokens, mock_env_tool, mock_agent_base
+    ):
+        """Test real-time token calculation from provided messages."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = True
+        mock_count_tokens.return_value = 42
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = self.mock_agent
+
+        result = runtime._get_current_tokens(messages=[{"role": "user", "content": "hi"}])
+
+        self.assertEqual(result, 42)
+        mock_count_tokens.assert_called_once()
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.count_tokens')
+    def test_get_current_tokens_realtime_uses_default_messages(
+        self, mock_count_tokens, mock_env_tool, mock_agent_base
+    ):
+        """Test real-time calculation falls back to _get_token_calculation_messages."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = True
+        mock_count_tokens.return_value = 99
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = self.mock_agent
+        runtime.ai_agent.messages = [{"role": "user", "content": "hello"}]
+
+        result = runtime._get_current_tokens()
+
+        self.assertEqual(result, 99)
+        mock_count_tokens.assert_called_once_with(str(runtime.ai_agent.messages))
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    def test_get_current_tokens_no_agent_returns_none(self, mock_env_tool, mock_agent_base):
+        """Test that None is returned when no ai_agent is available."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = False
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = None
+
+        result = runtime._get_current_tokens()
+
+        self.assertIsNone(result)
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    def test_get_current_tokens_no_llm_model_returns_none(
+        self, mock_env_tool, mock_agent_base
+    ):
+        """Test that None is returned when llm_model is not available."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = False
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = MagicMock()
+        runtime.ai_agent.llm_model = None
+
+        result = runtime._get_current_tokens()
+
+        self.assertIsNone(result)
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    def test_get_current_tokens_no_token_stat_returns_none(
+        self, mock_env_tool, mock_agent_base
+    ):
+        """Test that None is returned when tokenStat is not available."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = False
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = MagicMock()
+        runtime.ai_agent.llm_model.tokenStat = None
+
+        result = runtime._get_current_tokens()
+
+        self.assertIsNone(result)
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.count_tokens')
+    def test_get_current_tokens_realtime_no_messages_returns_none(
+        self, mock_count_tokens, mock_env_tool, mock_agent_base
+    ):
+        """Test real-time mode returns None when no messages are available."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = True
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = None
+        runtime.messages = None
+
+        result = runtime._get_current_tokens()
+
+        self.assertIsNone(result)
+        mock_count_tokens.assert_not_called()
+
 if __name__ == '__main__':
     unittest.main()

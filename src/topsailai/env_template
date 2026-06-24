@@ -175,6 +175,10 @@ TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD=128000
 # Set to 0 to disable the token-based check (default).
 TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD=0
 
+# When set to 1, calculate tokens from the actual message content for summarization thresholds.
+# When set to 0 (default), use the cached TokenStat.current_tokens value.
+TOPSAILAI_REALTIME_TOKEN_CALCULATION=0
+
 # Keep session messages after summarizing, 1 is enabled(default), 0 is disabled
 TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES=1
 

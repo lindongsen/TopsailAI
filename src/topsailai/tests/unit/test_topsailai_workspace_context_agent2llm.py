@@ -138,6 +138,43 @@ class TestDelAgentMessages(TestContextRuntimeAgent2LLM):
             self.assertIsNotNone(self.test_instance._ai_agent.messages)
 
 
+
+class TestGetCurrentTokens(TestContextRuntimeAgent2LLM):
+    """Test suite for _get_current_tokens method in Agent2LLM."""
+
+    def test_get_current_tokens_default_cached(self):
+        """Test default behavior returns cached tokenStat.current_tokens."""
+        with patch('topsailai.workspace.context.base.env_tool') as mock_env:
+            mock_env.EnvReaderInstance.check_bool.return_value = False
+            result = self.test_instance._get_current_tokens()
+            self.assertEqual(result, 0)
+
+    def test_get_current_tokens_realtime(self):
+        """Test real-time calculation uses ai_agent.messages."""
+        with patch('topsailai.workspace.context.base.env_tool') as mock_env:
+            mock_env.EnvReaderInstance.check_bool.return_value = True
+            with patch('topsailai.workspace.context.base.count_tokens') as mock_count:
+                mock_count.return_value = 55
+                self.test_instance._ai_agent.messages = [
+                    {"role": "user", "content": "hello"},
+                    {"role": "assistant", "content": "world"},
+                ]
+                result = self.test_instance._get_current_tokens()
+                self.assertEqual(result, 55)
+                mock_count.assert_called_once_with(
+                    str(self.test_instance._ai_agent.messages)
+                )
+
+    def test_get_current_tokens_realtime_with_messages_arg(self):
+        """Test real-time calculation respects explicit messages argument."""
+        with patch('topsailai.workspace.context.base.env_tool') as mock_env:
+            mock_env.EnvReaderInstance.check_bool.return_value = True
+            with patch('topsailai.workspace.context.base.count_tokens') as mock_count:
+                mock_count.return_value = 7
+                custom_messages = [{"role": "user", "content": "custom"}]
+                result = self.test_instance._get_current_tokens(messages=custom_messages)
+                self.assertEqual(result, 7)
+                mock_count.assert_called_once_with(str(custom_messages))
 class TestIsNeedSummarizeForProcessing(TestContextRuntimeAgent2LLM):
     """Test suite for is_need_summarize_for_processing method."""
 
@@ -259,6 +296,17 @@ class TestIsNeedSummarizeForProcessing(TestContextRuntimeAgent2LLM):
             result = self.test_instance.is_need_summarize_for_processing()
 
             self.assertFalse(result)
+
+    def test_token_usage_above_threshold_with_realtime(self):
+        """Test token threshold uses real-time calculation when enabled."""
+        self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
+        self.test_instance._ai_agent.messages = [{"role": "user", "content": "x" * 1000}]
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD": "10",
+            "TOPSAILAI_REALTIME_TOKEN_CALCULATION": "1",
+        }):
+            result = self.test_instance.is_need_summarize_for_processing()
+            self.assertTrue(result)
 
 
 class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
