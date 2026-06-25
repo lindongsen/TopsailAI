@@ -68,7 +68,7 @@ class ChatHistoryMessageData(object):
                     self.message = json_tool.json_dump(new_msg, indent=0)
                 elif "content" in new_msg:
                     self.message_content = new_msg["content"]
-        else:
+        elif message:
             logger.critical("message is not string: [%s]", message)
 
         # Generate msg_id from message content if not provided
