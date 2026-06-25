@@ -95,9 +95,9 @@ class ChatHistoryMessageData(object):
             msg_dict = json_tool.safe_json_load(message)
             if not msg_dict or not isinstance(msg_dict, dict):
                 return None
-            msg_content = msg_dict["content"]
+            msg_content = msg_dict.get("content")
             new_msg_content = None
-            if isinstance(msg_content, str):
+            if msg_content and isinstance(msg_content, str):
                 new_msg_content = json_tool.safe_json_load(msg_content)
                 if not new_msg_content:
                     try:
