@@ -241,15 +241,20 @@ def update_response_item(item:dict) -> dict:
         if item_extra and isinstance(item_extra, list):
             # get tool_call item
             item_tool_call = None
+            item_generic = None
             for _item in item_extra:
-                if isinstance(_item, dict) and ('tool_call' in _item or _item.get("step_name") == "action"):
-                    item_tool_call = _item
-                    break
-            if not item_tool_call:
-                return item
-            print_error(f"{LLM_KEYWORD_MISTAKE}: TOPSAILAI_HOOK_AFTER_LLM_CHAT, action content format is unexpected")
-            # {'step_name': 'action', 'tool_call': ..., 'tool_args': ...}
-            item.update(item_tool_call)
+                if isinstance(_item, dict):
+                    if 'tool_call' in _item or _item.get("step_name") == "action":
+                        item_tool_call = _item
+                        break
+                    else:
+                        item_generic = _item
+            if item_tool_call:
+                print_error(f"{LLM_KEYWORD_MISTAKE}: TOPSAILAI_HOOK_AFTER_LLM_CHAT, action content format is unexpected")
+                # {'step_name': 'action', 'tool_call': ..., 'tool_args': ...}
+                item.update(item_tool_call)
+            elif item_generic:
+                item.update(item_generic)
     return item
 
 def format_response_finally(response, rsp_obj=None, messages=None):

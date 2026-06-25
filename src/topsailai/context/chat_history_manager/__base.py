@@ -45,7 +45,7 @@ class ChatHistoryMessageData(object):
         access_count (int or None): Number of times the message has been retrieved.
     """
 
-    def __init__(self, message: str|dict, msg_id: str, session_id: str):
+    def __init__(self, message: str, msg_id: str, session_id: str):
         """
         Initialize a ChatHistoryMessageData instance.
 
@@ -62,10 +62,14 @@ class ChatHistoryMessageData(object):
         self.message_content = ""
         if isinstance(message, str):
             new_msg = self.message_dict
-            if self.message_content:
-                self.message = json_tool.json_dump(new_msg, indent=0)
-            else:
-                self.message_content = new_msg["content"]
+            if new_msg:
+                # if exists message_content, new message will be set
+                if self.message_content:
+                    self.message = json_tool.json_dump(new_msg, indent=0)
+                elif "content" in new_msg:
+                    self.message_content = new_msg["content"]
+        else:
+            logger.critical("message is not string: [%s]", message)
 
         # Generate msg_id from message content if not provided
         if not self.msg_id and message:
@@ -80,13 +84,17 @@ class ChatHistoryMessageData(object):
         self.access_count = None
 
     @property
-    def message_dict(self) -> dict:
+    def message_dict(self) -> dict|None:
         """ return dict """
         message = self.message
-        msg_dict = message
+        msg_dict = None
+        if isinstance(message, dict):
+            return message
         # format message.content
-        if isinstance(message, str):
-            msg_dict = json_tool.json_load(message)
+        elif isinstance(message, str):
+            msg_dict = json_tool.safe_json_load(message)
+            if not msg_dict or not isinstance(msg_dict, dict):
+                return None
             msg_content = msg_dict["content"]
             new_msg_content = None
             if isinstance(msg_content, str):
