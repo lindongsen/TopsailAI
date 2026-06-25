@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-AI Agent Launcher Script
+AI Agent TopsailAI-Launcher Script
 
 Parse .topsailai/settings.yaml in the current working directory,
 assemble environment variables based on --item argument,
@@ -24,7 +24,7 @@ if PWD:
     os.chdir(PWD)
 
 
-CONFIG_TEMPLATE = """# AI Agent Launcher Configuration Template
+CONFIG_TEMPLATE = """# AI Agent TopsailAI-Launcher Configuration Template
 # Save this file as .topsailai/settings.yaml in your project root
 
 # AI Agent driver path or command
@@ -338,10 +338,10 @@ def main():
     cmd = driver_parts
 
     # 5. Print execution info
-    print(f"[Launcher] Command: {' '.join(cmd)}")
-    print(f"[Launcher] Workspace: {workspace}")
+    print(f"[TopsailAI-Launcher] Command: {' '.join(cmd)}")
+    print(f"[TopsailAI-Launcher] Workspace: {workspace}")
     print(
-        f"[Launcher] Merged env keys: {sorted(set(list(default_env.keys()) + list(item_env.keys())))}"
+        f"[TopsailAI-Launcher] Merged env keys: {sorted(set(list(default_env.keys()) + list(item_env.keys())))}"
     )
 
     # In dry-run mode, only print the details and exit without execution
@@ -357,7 +357,7 @@ def main():
 
     if args.use_subprocess:
         # Optional: subprocess.run mode (inherit stdin/stdout/stderr for interactive and real-time output)
-        print("[Launcher] Subprocess mode (--subprocess)")
+        print("[TopsailAI-Launcher] Subprocess mode (--subprocess)")
         result = subprocess.run(
             cmd,
             env=merged_env,
@@ -376,8 +376,8 @@ def main():
         cmd_str = ' '.join(shlex.quote(c) for c in cmd)
         full_cmd = f"cd {shlex.quote(workspace)} && {cmd_str}"
 
-        print("[Launcher] Default os.system mode")
-        print(f"[Launcher] Shell command: {full_cmd}")
+        print("[TopsailAI-Launcher] Default os.system mode")
+        print(f"[TopsailAI-Launcher] Shell command: {full_cmd}")
         ret = os.system(full_cmd)
         # Convert wait-status to exit code (Python 3.9+)
         if hasattr(os, 'waitstatus_to_exitcode'):
@@ -388,9 +388,9 @@ def main():
             exit_code = ret
 
     if exit_code == 0:
-        print(f"[Launcher] Task completed successfully, exit code: {exit_code}")
+        print(f"[TopsailAI-Launcher] Task completed successfully, exit code: {exit_code}")
     else:
-        print(f"[Launcher] Task failed, exit code: {exit_code}")
+        print(f"[TopsailAI-Launcher] Task failed, exit code: {exit_code}")
 
     sys.exit(exit_code)
 
