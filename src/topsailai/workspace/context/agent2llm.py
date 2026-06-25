@@ -220,6 +220,11 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         """
         quantity_threshold = self._get_quantity_threshold("TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD")
         if quantity_threshold:
+            # Agent2LLM uses a larger candidate pool than User2Agent because
+            # this layer represents the agent actively working: a single human
+            # task can trigger many agent-to-LLM turns. A higher/different
+            # distribution avoids summarizing too aggressively in the middle of
+            # active task execution, while still respecting the configured floor.
             number_list = [23, 27, 29, 31, 37, 41, 43, 47]  # min -> max
             if quantity_threshold >= number_list[0]:
                 number_list.append(quantity_threshold)

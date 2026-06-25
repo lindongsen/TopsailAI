@@ -278,6 +278,15 @@ See `docs/Environment_Variables.md` and `env_template` for full details. The rel
 
 Note: the context-history "slimming" thresholds (`CONTEXT_MESSAGES_SLIM_THRESHOLD_*`) are a separate mechanism handled by `PromptBase.call_hooks_ctx_history()` and archive oversized `action`/`observation` payloads without producing a summary.
 
+### Why Agent2LLM Uses a Larger Quantity-Threshold Pool
+
+The two conversation layers have very different message rates, so their quantity-threshold randomization is tuned separately:
+
+- **User2Agent** is the human↔agent layer. It receives messages only when the human sends input, so the message count grows slowly.
+- **Agent2LLM** is the agent↔LLM layer while the agent is actively working. A single human task can trigger many ReAct turns, tool calls, and observations, so the message count grows much faster.
+
+Because one user2agent message can spawn many agent2llm messages, Agent2LLM uses a larger candidate pool (`[23, 27, 29, 31, 37, 41, 43, 47]` plus optional `quantity_threshold * 2`) and enforces `max(random_choice, quantity_threshold)`. This raises the effective ceiling for the busier layer and avoids summarizing the agent's working context too aggressively in the middle of task execution, while still guaranteeing the threshold never drops below the configured value.
+
 ## Adding Messages to a Session
 
 There are two primary ways to add a message to a session.
