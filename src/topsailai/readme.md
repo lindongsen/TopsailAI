@@ -101,6 +101,14 @@ Archived messages can later be retrieved by `msg_id` using `ContextManager.retri
 - The tail window (`index_end=-11`) is preserved so the most recent context remains fully materialized for the next LLM call.
 - Errors during hook execution are caught and logged; a failure in one manager does not block the others.
 
+### new_session and context_message persistence
+
+In `PromptBase.new_session()`, `context_message` and `user_message` are appended as two separate user messages. Although `append_message()` calls `call_hooks_ctx_history()` to persist the latest message immediately, this only happens when the thread-local `KEY_SESSION_ID` is set.
+
+1. `thread_local KEY_SESSION_ID` is intentionally used as a switch to control whether new messages are persisted to the session.
+2. `llm_shell` sets `KEY_SESSION_ID`, but `agent_shell` does NOT set `KEY_SESSION_ID`. `agent_shell` intentionally does **not** set `thread_local KEY_SESSION_ID`, so `PromptBase.new_session()` → `append_message()` → `call_hooks_ctx_history()` is a no-op for persistence in the agent path.
+3. `PromptBase.new_session()` is only for initializing in-memory `messages`; it is unrelated to persistent session storage. There is no "Session-ID timing gap". Persistent storage is handled later by workspace-layer hooks that already have `session_id`.
+
 ---
 
 ## Logs that need attention

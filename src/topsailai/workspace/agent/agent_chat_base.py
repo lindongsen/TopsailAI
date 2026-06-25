@@ -13,6 +13,7 @@ from topsailai.utils import (
 )
 from topsailai.ai_base.constants import (
     ROLE_ASSISTANT,
+    ROLE_SYSTEM,
 )
 from topsailai.ai_base.prompt_base import (
     MessageData,
@@ -168,7 +169,10 @@ class AgentChatBase(object):
             Args:
                 _ai_agent: The agent instance to operate on.
             """
-            ctx_rt_aiagent.add_session_message()
+            for message in self.ai_agent.messages:
+                if message["role"] == ROLE_SYSTEM:
+                    continue
+                ctx_rt_aiagent.add_session_message(message)
             return
 
         def hook_summarize_messages(_ai_agent):

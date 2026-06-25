@@ -193,6 +193,15 @@ class EnvironmentReader(object):
         content = self.try_read_file(env_var)
         return content or env_var
 
+    def clean_context_x_message(self):
+        """ Only use once in a session """
+        for env_key in [
+            "TOPSAILAI_CONTEXT_USER_MESSAGE",
+        ]:
+            if env_key in os.environ:
+                os.environ[env_key] = ""
+        return
+
     def check_bool(self, name, default=None) -> bool:
         """ value in [1, true] for True """
         return str(os.getenv(name, default)).lower() in ["1", "true"]

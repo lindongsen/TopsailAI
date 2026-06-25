@@ -251,12 +251,6 @@ class PromptBase(object):
         self.messages = []
         self.reset_messages(to_suppress_log=True)
 
-        # agent-dimension context user messages
-        self.context_user_messages: list[str] = []
-        context_user_message = EnvReaderInstance.context_user_message_content
-        if context_user_message:
-            self.context_user_messages.append(context_user_message)
-
         # set flags
         if os.getenv("TOPSAILAI_FLAG_DUMP_MESSAGES") == "1":
             self.flag_dump_messages = True
@@ -349,7 +343,7 @@ class PromptBase(object):
             user_message: The initial user message for the new session
         """
         self.init_prompt()
-        context_message = self._build_context_message(self.context_user_messages)
+        context_message = self._build_context_message()
         if context_message:
             context_message = {
                 "step_name": "observation",
@@ -365,15 +359,23 @@ class PromptBase(object):
                 logger.exception("failed to call hook [%s]: %s", hook, e)
         return
 
-    def _build_context_message(self, message_list: list[str]) -> str | None:
+    def _build_context_message(self) -> str | None:
         """Build a single combined context message from a list of fragments.
 
-        Args:
-            message_list (list[str]): Context message fragments.
+        **ONLY ONCE**, The context messages will be store to session.
 
         Returns:
             str | None: Combined message with separator format, or None if empty.
         """
+        # agent-dimension context user messages
+        message_list: list[str] = []
+        context_user_message = EnvReaderInstance.context_user_message_content
+        if context_user_message:
+            message_list.append(context_user_message)
+
+        # ONLY ONCE: clean context xxx messages in env
+        EnvReaderInstance.clean_context_x_message()
+
         if not message_list:
             return None
 
