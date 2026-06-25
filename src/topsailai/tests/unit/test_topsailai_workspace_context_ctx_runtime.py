@@ -736,5 +736,103 @@ class TestSummarizeMessages(TestContextRuntimeData):
         self.assertLess(idx_task1, idx_summary)
 
 
+
+class TestSummarizeRuntimeMessagesForProcessed(TestContextRuntimeData):
+    """Test runtime-mode summarization source selection for User2Agent."""
+
+    def _make_messages(self, count, prefix="session"):
+        """Helper to create distinct session messages."""
+        return [{"role": "user", "content": f"{prefix}-msg-{i}"} for i in range(count)]
+
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    def test_runtime_summary_uses_session_messages_when_agent_messages_short(self, mock_get_llm_chat):
+        """User2Agent summary uses self.messages even if ai_agent.messages is short."""
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime"}):
+            self.runtime.session_id = None
+            self.runtime.messages = self._make_messages(20, "session")
+            self.runtime.ai_agent = MagicMock()
+            self.runtime.ai_agent.messages = [{"role": "assistant", "content": "short"}]
+
+            mock_llm_chat = MagicMock()
+            mock_llm_chat.prompt_ctl.messages = [
+                {"role": "assistant", "content": "Summary"}
+            ]
+            mock_get_llm_chat.return_value = mock_llm_chat
+
+            with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=1):
+                with patch.object(self.runtime, 'set_messages'):
+                    with patch.object(
+                        type(self.runtime),
+                        'last_user_message',
+                        new_callable=PropertyMock,
+                        return_value={"role": "user", "content": "session-msg-19"}
+                    ):
+                        self.runtime.summarize_messages_for_processed()
+
+            # The LLM should receive self.messages, not the short ai_agent.messages
+            self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 20)
+            self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "session-msg-0")
+
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    def test_runtime_summary_uses_session_messages_when_both_long(self, mock_get_llm_chat):
+        """User2Agent summary uses self.messages even when ai_agent.messages is also long."""
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime"}):
+            self.runtime.session_id = None
+            self.runtime.messages = self._make_messages(20, "session")
+            self.runtime.ai_agent = MagicMock()
+            self.runtime.ai_agent.messages = self._make_messages(20, "agent")
+
+            mock_llm_chat = MagicMock()
+            mock_llm_chat.prompt_ctl.messages = [
+                {"role": "assistant", "content": "Summary"}
+            ]
+            mock_get_llm_chat.return_value = mock_llm_chat
+
+            with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=1):
+                with patch.object(self.runtime, 'set_messages'):
+                    with patch.object(
+                        type(self.runtime),
+                        'last_user_message',
+                        new_callable=PropertyMock,
+                        return_value={"role": "user", "content": "session-msg-19"}
+                    ):
+                        self.runtime.summarize_messages_for_processed()
+
+            # The LLM should still receive self.messages, not ai_agent.messages
+            self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 20)
+            self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "session-msg-0")
+
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    def test_runtime_summary_fallback_when_session_messages_empty(self, mock_get_llm_chat):
+        """User2Agent summary falls back to caller messages when session is empty."""
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime"}):
+            self.runtime.session_id = None
+            self.runtime.messages = []
+            self.runtime.ai_agent = MagicMock()
+            self.runtime.ai_agent.messages = []
+
+            mock_llm_chat = MagicMock()
+            mock_llm_chat.prompt_ctl.messages = [
+                {"role": "assistant", "content": "Summary"}
+            ]
+            mock_get_llm_chat.return_value = mock_llm_chat
+
+            fallback = self._make_messages(10, "fallback")
+
+            with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=1):
+                with patch.object(self.runtime, 'set_messages'):
+                    with patch.object(
+                        type(self.runtime),
+                        'last_user_message',
+                        new_callable=PropertyMock,
+                        return_value={"role": "user", "content": "fallback-msg-9"}
+                    ):
+                        self.runtime.summarize_messages_for_processed(messages=fallback)
+
+            # Should fall back to caller-provided messages
+            self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 10)
+            self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "fallback-msg-0")
+
+
 if __name__ == '__main__':
     unittest.main()

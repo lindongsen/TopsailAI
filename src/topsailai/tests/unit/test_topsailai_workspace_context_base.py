@@ -673,5 +673,121 @@ class TestGetCurrentTokens(unittest.TestCase):
         self.assertIsNone(result)
         mock_count_tokens.assert_not_called()
 
+
+
+class TestSummarizeRuntimeMessages(unittest.TestCase):
+    """Test suite for _summarize_runtime_messages method."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.mock_agent = MagicMock()
+        self.mock_agent.agent_type = "test_agent"
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.file_tool')
+    @patch('topsailai.workspace.context.base.summary_tool')
+    @patch('topsailai.workspace.context.base.story_tool')
+    def test_runtime_summary_uses_token_calculation_messages(
+        self, mock_story_tool, mock_summary_tool, mock_file_tool,
+        mock_env_tool, mock_get_llm_chat, mock_agent_base
+    ):
+        """Test that runtime summary uses _get_token_calculation_messages source."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.get.return_value = "runtime"
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
+        mock_summary_tool.get_summary_prompt.return_value = None
+        mock_story_tool.PROMPT_SUMMARY_TASK = "default prompt"
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = "Summarized content"
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = self.mock_agent
+        runtime.ai_agent.messages = [{"role": "assistant", "content": "short"}]
+        runtime.messages = [{"role": "user", "content": f"msg{i}"} for i in range(20)]
+
+        # Simulate User2Agent override: _get_token_calculation_messages returns self.messages
+        runtime._get_token_calculation_messages = lambda: runtime.messages
+
+        runtime._summarize_runtime_messages([])
+
+        # The LLM should receive self.messages, not the short ai_agent.messages
+        self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 20)
+        self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "msg0")
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.file_tool')
+    @patch('topsailai.workspace.context.base.summary_tool')
+    @patch('topsailai.workspace.context.base.story_tool')
+    def test_runtime_summary_agent2llm_short_store_not_fallback(
+        self, mock_story_tool, mock_summary_tool, mock_file_tool,
+        mock_env_tool, mock_get_llm_chat, mock_agent_base
+    ):
+        """Test Agent2LLM uses self.ai_agent.messages even when fewer than 7."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.get.return_value = "runtime"
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
+        mock_summary_tool.get_summary_prompt.return_value = None
+        mock_story_tool.PROMPT_SUMMARY_TASK = "default prompt"
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = "Summarized content"
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = self.mock_agent
+        runtime.ai_agent.messages = [{"role": "user", "content": "agent-msg"}]
+        runtime.messages = [{"role": "user", "content": f"session-msg-{i}"} for i in range(20)]
+
+        # Default _get_token_calculation_messages returns ai_agent.messages
+        fallback = [{"role": "user", "content": f"fallback-{i}"} for i in range(20)]
+        runtime._summarize_runtime_messages(fallback)
+
+        # Should use the short Agent2LLM store, not the fallback
+        self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 1)
+        self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "agent-msg")
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.file_tool')
+    @patch('topsailai.workspace.context.base.summary_tool')
+    @patch('topsailai.workspace.context.base.story_tool')
+    def test_runtime_summary_fallback_to_caller_messages(
+        self, mock_story_tool, mock_summary_tool, mock_file_tool,
+        mock_env_tool, mock_get_llm_chat, mock_agent_base
+    ):
+        """Test fallback to caller-provided messages when runtime store is empty."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.get.return_value = "runtime"
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
+        mock_summary_tool.get_summary_prompt.return_value = None
+        mock_story_tool.PROMPT_SUMMARY_TASK = "default prompt"
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = "Summarized content"
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = self.mock_agent
+        runtime.ai_agent.messages = []
+        runtime.messages = []
+
+        fallback = [{"role": "user", "content": f"fallback-{i}"} for i in range(10)]
+        runtime._summarize_runtime_messages(fallback)
+
+        # Should fall back to caller-provided messages
+        self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 10)
+        self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "fallback-0")
+
+
 if __name__ == '__main__':
     unittest.main()

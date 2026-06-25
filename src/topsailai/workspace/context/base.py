@@ -561,9 +561,8 @@ Summarize Messages
 
         The LLM summary is built from the layer's full runtime message store
         (self.messages for User2Agent, self.ai_agent.messages for Agent2LLM).
-        The `messages` argument is only used as a fallback when the runtime
-        store is unavailable or too short, preserving the contract that the
-        caller passes the current runtime messages.
+        The `messages` argument is retained for API compatibility and is used
+        only as a fallback when the layer-specific runtime store is unavailable.
 
         Args:
             messages: Fallback messages passed by the caller.
@@ -574,8 +573,8 @@ Summarize Messages
         Returns:
             tuple: (llm_chat, answer) from the summarization chat.
         """
-        all_messages = self.ai_agent.messages[:] if self.ai_agent else None
-        if not all_messages or len(all_messages) < 7:
+        all_messages = self._get_token_calculation_messages()
+        if not all_messages:
             all_messages = messages
         assert all_messages, "null of messages"
         print_tool.print_debug(f"All of messages: length=[{len(all_messages)}]")
@@ -590,7 +589,7 @@ Summarize Messages
             need_print_session=False,
             need_print_message=False,
         )
-        llm_chat.prompt_ctl.messages = all_messages
+        llm_chat.prompt_ctl.messages = all_messages[:]
         TIPS = "\n> DONOT INVOKE ANY TOOLS, DIRECTLY OUTPUT FINAL_ANSWER!"
         answer = llm_chat.chat(
             self._get_summary_prompt(prompt=prompt, extra_prompt=extra_prompt) + TIPS,

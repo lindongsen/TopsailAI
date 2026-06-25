@@ -150,9 +150,10 @@ CONTEXT_HISTORY_MANAGERS="sql.ChatHistorySQLAlchemy conn=sqlite:///memory.db;"
 
 # Message Slimming Threshold to optimize context window usage and prevent token overflow
 # Length longer than this threshold will be automatically slimmed
+# Effective minimum is 27
 CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH=43
 # Token budget used as the denominator for the cached-token ratio check
-CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS=127000
+CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS=128000
 # Token budget used as the denominator for the uncached-token ratio check
 CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS=27000
 

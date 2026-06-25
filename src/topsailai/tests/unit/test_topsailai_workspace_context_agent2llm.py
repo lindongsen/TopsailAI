@@ -612,5 +612,73 @@ class TestEdgeCases(TestContextRuntimeAgent2LLM):
         self.assertLess(idx_task1, idx_summary)
 
 
+
+class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
+    """Test runtime-mode summarization source selection for Agent2LLM."""
+
+    def _make_messages(self, count, prefix="agent"):
+        """Helper to create distinct agent messages."""
+        return [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"{prefix}-msg-{i}"}
+            for i in range(count)
+        ]
+
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    def test_runtime_summary_uses_agent_messages_even_when_short(self, mock_get_llm_chat):
+        """Agent2LLM summary uses self.ai_agent.messages even when fewer than 7."""
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime"}):
+            self.test_instance._ai_agent.messages = self._make_messages(3, "agent")
+            self.test_instance._messages = self._make_messages(20, "session")
+            self.test_instance._ai_agent.agent_type = "test_agent"
+
+            mock_llm_chat = MagicMock()
+            mock_llm_chat.chat.return_value = "Summary"
+            mock_get_llm_chat.return_value = mock_llm_chat
+
+            self.test_instance._summarize_runtime_messages([])
+
+            # The LLM should receive self.ai_agent.messages, not fall back
+            self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 3)
+            self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "agent-msg-0")
+
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    def test_runtime_summary_uses_agent_messages_not_fallback(self, mock_get_llm_chat):
+        """Agent2LLM summary uses self.ai_agent.messages even with longer fallback."""
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime"}):
+            self.test_instance._ai_agent.messages = self._make_messages(5, "agent")
+            self.test_instance._messages = self._make_messages(20, "session")
+            self.test_instance._ai_agent.agent_type = "test_agent"
+
+            mock_llm_chat = MagicMock()
+            mock_llm_chat.chat.return_value = "Summary"
+            mock_get_llm_chat.return_value = mock_llm_chat
+
+            fallback = self._make_messages(30, "fallback")
+            self.test_instance._summarize_runtime_messages(fallback)
+
+            # Should use the short Agent2LLM store, not the fallback
+            self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 5)
+            self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "agent-msg-0")
+
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    def test_runtime_summary_fallback_when_agent_messages_empty(self, mock_get_llm_chat):
+        """Agent2LLM summary falls back to caller messages when agent store is empty."""
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime"}):
+            self.test_instance._ai_agent.messages = []
+            self.test_instance._messages = []
+            self.test_instance._ai_agent.agent_type = "test_agent"
+
+            mock_llm_chat = MagicMock()
+            mock_llm_chat.chat.return_value = "Summary"
+            mock_get_llm_chat.return_value = mock_llm_chat
+
+            fallback = self._make_messages(10, "fallback")
+            self.test_instance._summarize_runtime_messages(fallback)
+
+            # Should fall back to caller-provided messages
+            self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 10)
+            self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "fallback-msg-0")
+
+
 if __name__ == '__main__':
     unittest.main()
