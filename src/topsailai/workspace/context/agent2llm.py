@@ -73,8 +73,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         if not deleted_list:
             return []
-        self.ai_agent.messages = new_messages
-
+        self.ai_agent.messages = self.ai_agent.messages[:first_position] + new_messages
         return deleted_list
 
 

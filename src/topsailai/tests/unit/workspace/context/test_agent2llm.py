@@ -78,8 +78,8 @@ class TestDelAgentMessages:
         ]
         result = mock_agent2llm.del_agent_messages([0])
         assert result == [0]
-        assert len(mock_agent2llm.ai_agent.messages) == 1
-
+        assert len(mock_agent2llm.ai_agent.messages) == 2
+        assert mock_agent2llm.ai_agent.messages[0] == '{"role": "system", "content": "sys"}'
     def test_delete_last_flag_with_messages(self, mock_agent2llm):
         """Test deletion with to_del_last flag when there are messages to delete."""
         mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
@@ -121,6 +121,22 @@ class TestDelAgentMessages:
         ]
         result = mock_agent2llm.del_agent_messages([-1])
         assert result == []
+
+    def test_system_prefix_preserved_when_deleting_agent_messages(self, mock_agent2llm):
+        """Test that system messages before first_position are preserved."""
+        mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 2
+        mock_agent2llm.ai_agent.messages = [
+            '{"role": "system", "content": "system prompt 1"}',
+            '{"role": "system", "content": "system prompt 2"}',
+            '{"role": "user", "content": "msg1"}',
+            '{"role": "assistant", "content": "msg2"}',
+            '{"role": "user", "content": "msg3"}',
+        ]
+        result = mock_agent2llm.del_agent_messages([1])
+        assert result == [1]
+        assert len(mock_agent2llm.ai_agent.messages) == 4
+        assert mock_agent2llm.ai_agent.messages[0] == '{"role": "system", "content": "system prompt 1"}'
+        assert mock_agent2llm.ai_agent.messages[1] == '{"role": "system", "content": "system prompt 2"}'
 
     def test_system_message_not_deleted(self, mock_agent2llm):
         """Test that system messages are not deleted."""
