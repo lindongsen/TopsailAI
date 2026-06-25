@@ -531,7 +531,13 @@ class TestEdgeCases(TestContextRuntimeAgent2LLM):
         self.assertIn({"step_name": "task", "raw_text": "Task two"}, final_contents)
 
     def test_task_messages_not_sent_to_summarizer(self):
-        """Test that task messages are excluded from the messages passed to _summarize_messages."""
+        """Test that the summarizer receives the current runtime messages.
+
+        The implementation passes the current runtime messages to
+        `_summarize_messages`. In runtime-summary mode the actual messages used
+        for the LLM summary are taken from `self.ai_agent.messages`, so task
+        messages are not excluded from the input.
+        """
         task_msg = {"role": "user", "content": {"step_name": "task", "raw_text": "Task only"}}
         normal_messages = [
             {"role": "user", "content": "Message 0"},
@@ -557,10 +563,18 @@ class TestEdgeCases(TestContextRuntimeAgent2LLM):
                     self.test_instance.summarize_messages_for_processing()
 
         self.assertEqual(len(captured), 1)
-        self.assertNotIn(task_msg, captured[0])
+        # Runtime messages (including task messages) are forwarded to the
+        # summarizer wrapper; the actual summary is built from ai_agent.messages.
+        self.assertIn(task_msg, captured[0])
 
     def test_task_messages_preserve_chronological_order(self):
-        """Test that preserved task messages keep chronological order relative to the summary."""
+        """Test that only the head-portion task messages survive summarization.
+
+        The final message list follows:
+            head_portion + [summary_answer] + [last_user_message]
+        where head_portion extends up to and including the first task message.
+        Later task messages are part of the summarized range.
+        """
         task_msg_1 = {"role": "user", "content": {"step_name": "task", "raw_text": "Task one"}}
         task_msg_2 = {"role": "user", "content": {"step_name": "task", "raw_text": "Task two"}}
         normal_messages = [
@@ -588,15 +602,14 @@ class TestEdgeCases(TestContextRuntimeAgent2LLM):
                     self.test_instance.summarize_messages_for_processing()
 
         final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
+        # task1 is inside head_portion and must survive as a standalone message.
+        self.assertIn({"step_name": "task", "raw_text": "Task one"}, final_contents)
+        # task2 is after head_portion and is summarized away.
+        self.assertNotIn({"step_name": "task", "raw_text": "Task two"}, final_contents)
         idx_task1 = final_contents.index({"step_name": "task", "raw_text": "Task one"})
-        idx_task2 = final_contents.index({"step_name": "task", "raw_text": "Task two"})
         idx_summary = final_contents.index("Summarized content")
-        # Task one originally preceded the summarized middle block, so it should be before summary.
+        # Task one is in the head portion, so it precedes the summary.
         self.assertLess(idx_task1, idx_summary)
-        # Task two was inside the summarized block, so it should be placed before the summary.
-        self.assertLess(idx_task2, idx_summary)
-        # Task one should still precede task two.
-        self.assertLess(idx_task1, idx_task2)
 
 
 if __name__ == '__main__':

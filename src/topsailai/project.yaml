@@ -32,3 +32,4 @@ Note:
   - |
     Factual Info MUST SYNC:
     - When there are changes to the environment variables, this file also needs to be updated: `/env_template`
+  - If you need run all of unit-tests, you should call `tests/run_tests.sh` instead of call `pytest tests/unit`, if you call `pytest tests/unit` will inevitably fail!

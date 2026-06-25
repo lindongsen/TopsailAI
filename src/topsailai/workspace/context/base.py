@@ -132,7 +132,25 @@ class ContextRuntimeBase(object):
         return
 
     ###############################################################
-    # Task messages preservation helpers
+    # Summarization message-structure helpers
+    ###############################################################
+    #
+    # Clarified design for context summarization (both User2Agent and Agent2LLM):
+    #
+    #   final new_messages = head_portion + [summary_answer] + [last_user_message]
+    #
+    # - head_portion: messages from the beginning of the list up to and
+    #   including the first message whose role == "user" and step_name == "task".
+    #   The variable `keeping_messages` (formerly `task_messages`) represents
+    #   this head_portion, NOT the set of all task messages.
+    # - summary_answer: exactly one assistant message produced by _summarize_messages.
+    # - last_user_message: exactly one final user message kept at the tail.
+    #
+    # The summarizer still receives the current runtime messages. In the default
+    # "runtime" summary mode the LLM is fed from the layer's full runtime message
+    # store (self.messages for User2Agent, self.ai_agent.messages for Agent2LLM),
+    # so the wrapper argument is the runtime messages while the actual summary
+    # context is the full runtime history.
     ###############################################################
 
     @staticmethod
@@ -187,6 +205,23 @@ class ContextRuntimeBase(object):
         return task_messages, non_task_messages
 
     def _get_messages_before_first_user_task_message(self, messages: list, max_count:int=7) -> list:
+        """
+        Build the head_portion used by context summarization.
+
+        The head_portion contains messages from the beginning of `messages`
+        up to and including the first message whose role == "user" and
+        step_name == "task". It is stored in the `keeping_messages` variable
+        in the summarizers. Messages after this head_portion (except the
+        last user message) are summarized.
+
+        Args:
+            messages (list): The message list to scan.
+            max_count (int): Safety cap on how far to scan when no task
+                message is found. Defaults to 7.
+
+        Returns:
+            list: The head_portion messages in original order.
+        """
         head_messages = []
         for i, msg in enumerate(messages):
             head_messages.append(msg)
@@ -217,27 +252,34 @@ class ContextRuntimeBase(object):
             task_messages: list,
         ) -> list:
         """
-        Merge preserved task messages back into the summarized message list.
+        Merge the head_portion back into the summarized message list.
 
-        Task messages are placed immediately after their original predecessor
-        if that predecessor survived summarization. If the predecessor was
-        summarized away, the task message is inserted right before the summary
-        message. This keeps task messages in chronological order relative to
-        the summary and any surviving head/tail messages.
+        `task_messages` here is actually the head_portion: messages from the
+        beginning of the original list up to and including the first user task
+        message. They are re-inserted into new_messages so the final structure
+        remains:
+
+            head_portion + [summary_answer] + [last_user_message]
+
+        Each head_portion message is placed immediately after its original
+        predecessor if that predecessor survived summarization. If the
+        predecessor was summarized away, the message is inserted right before
+        the summary message, keeping chronological order relative to the
+        summary and any surviving tail messages.
 
         Args:
             original_messages (list): The full original message list, including
-                task messages that were split out.
-            new_messages (list): The post-summary message list without task
-                messages (typically head + session + summary + last user).
-            task_messages (list): The task messages that must be preserved.
+                the head_portion messages that were split out.
+            new_messages (list): The post-summary message list without the
+                head_portion (typically head_offset + session + summary +
+                last user message).
+            task_messages (list): The head_portion messages to preserve.
 
         Returns:
-            list: The merged message list with task messages in chronological order.
+            list: The merged message list with the head_portion in place.
         """
         if not task_messages:
             return new_messages
-
         task_ids = {id(m) for m in task_messages}
         original_ids = {id(m) for m in original_messages}
         new_ids = {id(m) for m in new_messages}
@@ -454,8 +496,16 @@ class ContextRuntimeBase(object):
         """
         Summarize messages into a single text using LLM.
 
+        The caller passes the current runtime messages, which is the expected
+        input. In the default "runtime" summary mode the actual messages fed
+        to the LLM are taken from the layer's full runtime message store
+        (self.messages for User2Agent, self.ai_agent.messages for Agent2LLM),
+        so the wrapper receives runtime messages while the summary itself is
+        built from the full runtime context.
+
         Args:
-            messages: The messages to summarize. Can be a string or list/dict.
+            messages: The runtime messages passed by the caller. Can be a
+                string or list/dict.
             prompt (str, optional): Custom prompt for summarization. If None, uses
                 default from environment variable.
 
@@ -506,6 +556,24 @@ Summarize Messages
             prompt: str = None,
             extra_prompt: str=None,
         ):
+        """
+        Runtime-mode summarization.
+
+        The LLM summary is built from the layer's full runtime message store
+        (self.messages for User2Agent, self.ai_agent.messages for Agent2LLM).
+        The `messages` argument is only used as a fallback when the runtime
+        store is unavailable or too short, preserving the contract that the
+        caller passes the current runtime messages.
+
+        Args:
+            messages: Fallback messages passed by the caller.
+            prompt (str, optional): Custom prompt for summarization.
+            extra_prompt (str, optional): Extra prompt appended to the summary
+                instructions.
+
+        Returns:
+            tuple: (llm_chat, answer) from the summarization chat.
+        """
         all_messages = self.ai_agent.messages[:] if self.ai_agent else None
         if not all_messages or len(all_messages) < 7:
             all_messages = messages

@@ -206,9 +206,19 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         """
         Summarize the processed conversation messages into a single text.
 
-        This method compresses the conversation history by summarizing
-        older messages while preserving the most recent messages. It can
-        operate in interactive mode to prompt the user for confirmation.
+        Final message structure after summarization:
+            head_portion + [summary_answer] + [last_user_message]
+
+        - head_portion: messages from the beginning up to and including the
+          first role=user, step_name=task message. It is held in the local
+          variable `keeping_messages` (formerly `task_messages`).
+        - summary_answer: exactly one assistant message produced by the LLM.
+        - last_user_message: exactly one final user message kept at the tail.
+
+        The summarizer receives the current runtime messages. In the default
+        "runtime" summary mode the LLM is fed from self.messages, so the
+        wrapper argument is the runtime messages while the actual summary
+        context is the full User2Agent history.
 
         Args:
             messages (list, optional): List of messages to summarize.
@@ -237,10 +247,13 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         if not messages:
             return None
 
-        # Preserve task messages (role=user, step_name=task) from summarization/deletion.
+        # Build the head_portion: messages from the beginning up to and
+        # including the first role=user, step_name=task message. This is
+        # stored in keeping_messages and later merged back so the final
+        # structure remains head_portion + [summary_answer] + [last_user_message].
         original_messages = list(messages)
-        task_messages = self._get_messages_before_first_user_task_message(messages)
-        print_step(f"!!! head_messages_before_first_user_task_message_to_keep(session_messages)={len(task_messages)}", need_format=False, need_log=True)
+        keeping_messages = self._get_messages_before_first_user_task_message(messages)
+        print_step(f"!!! head_messages_before_first_user_task_message_to_keep(session_messages)={len(keeping_messages)}", need_format=False, need_log=True)
 
         # print info
         print_step(f"!!! Summarizing context messages for processed: msg_len=[{len(messages)}]", need_format=False, need_log=True)
@@ -249,6 +262,9 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         _token_count_before = self._get_current_tokens(realtime=True)
         logger.info("[summarize_processed] before: messages=%s, tokens=%s", len(messages), _token_count_before)
 
+        # The summarizer is called with the current runtime messages. In
+        # runtime mode the LLM actually consumes self.messages, but the
+        # wrapper-level contract is to pass the runtime messages.
         llm_chat, answer = self._summarize_messages(messages, extra_prompt=story_tool.PROMPT_SUMMARY_MEMORY)
         if not answer:
             return None
@@ -322,15 +338,18 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             # keep last user message
             last_user_msg = self.last_user_message
 
-            # new messages
+            # new messages: start with head_offset, then add summary answer,
+            # then append last_user_message. The final structure is completed
+            # by merging keeping_messages (head_portion) back in below.
             new_messages = messages[:head_offset_to_keep]
             new_messages.append(llm_chat.prompt_ctl.messages[-1]) # add answer(summary) to messages
             if last_user_msg:
                 new_messages.append(last_user_msg)
 
-            # Re-insert preserved task messages in chronological order.
-            if task_messages:
-                new_messages = self._merge_task_messages(original_messages, new_messages, task_messages)
+            # Re-insert the head_portion in chronological order so the final
+            # list follows head_portion + [summary_answer] + [last_user_message].
+            if keeping_messages:
+                new_messages = self._merge_task_messages(original_messages, new_messages, keeping_messages)
             self.set_messages(new_messages)
 
         # Log message count and token usage after summarization

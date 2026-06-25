@@ -99,14 +99,14 @@ Manages **User2Agent** layer messages.
 
 - `add_session_message(role, message)` — adds message to session + persists via `ctx_manager`
 - `del_session_messages(indexes)` — deletes messages by index
-- `summarize_messages_for_processed()` — summarizes User2Agent history, persists summary
+- `summarize_messages_for_processed()` — summarizes User2Agent history into `head_portion + [summary_answer] + [last_user_message]`; persists summary
 - `is_need_summarize_for_processed()` — checks if message count exceeds threshold
 
 #### `context/agent2llm.py` — `ContextRuntimeAgent2LLM`
 Manages **Agent2LLM** layer messages.
 
 - `del_agent_messages(indexes)` — deletes agent messages by index
-- `summarize_messages_for_processing()` — summarizes Agent2LLM context, keeps head offset + session messages + last user message
+- `summarize_messages_for_processing()` — summarizes Agent2LLM context into `head_portion + [summary_answer] + [last_user_message]`; keeps head offset/session messages/last user message as configured
 - `is_need_summarize_for_processing()` — checks if agent messages exceed threshold
 
 #### `context/agent.py` — `ContextRuntimeAIAgent`

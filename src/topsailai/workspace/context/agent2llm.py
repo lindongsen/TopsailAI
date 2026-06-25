@@ -86,6 +86,20 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         """
         Summarize messages into a single text for processing.
 
+        Final message structure after summarization:
+            head_portion + [summary_answer] + [last_user_message]
+
+        - head_portion: messages from the beginning up to and including the
+          first role=user, step_name=task message. It is held in the local
+          variable `keeping_messages` (formerly `task_messages`).
+        - summary_answer: exactly one assistant message produced by the LLM.
+        - last_user_message: exactly one final user message kept at the tail.
+
+        The summarizer receives the current runtime messages. In the default
+        "runtime" summary mode the LLM is fed from self.ai_agent.messages, so
+        the wrapper argument is the runtime messages while the actual summary
+        context is the full Agent2LLM history.
+
         Args:
             messages (list | str, optional): Messages to summarize. Defaults to None.
             head_offset_to_keep (int, optional): Number of recent messages to keep. Defaults to None.
@@ -135,8 +149,8 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         # Preserve task messages (role=user, step_name=task) from summarization/deletion.
         original_messages = list(messages)
-        task_messages = self._get_messages_before_first_user_task_message(messages)
-        print_step(f"!!! head_messages_before_first_user_task_message_to_keep(session_messages)={len(task_messages)}", need_format=False, need_log=True)
+        keeping_messages = self._get_messages_before_first_user_task_message(messages)
+        print_step(f"!!! head_messages_before_first_user_task_message_to_keep(session_messages)={len(keeping_messages)}", need_format=False, need_log=True)
 
         # Log message count and token usage before summarization
         _token_count_before = self._get_current_tokens()
@@ -154,7 +168,10 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         print_step(f"!!! head_offset_to_keep={head_offset_to_keep}, last_user_message_to_keep=1", need_format=False, need_log=True)
 
-        # new messages
+        # new messages: start with head_offset, then add session messages
+        # if configured, then add summary answer, then append last_user_message.
+        # The final structure is completed by merging keeping_messages
+        # (head_portion) back in below.
         new_messages = messages[:head_offset_to_keep]
 
         # add session messages
@@ -176,10 +193,10 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             if last_user_msg not in new_messages:
                 new_messages.append(last_user_msg)
 
-        # Re-insert preserved task messages in chronological order.
-        if task_messages:
-            new_messages = self._merge_task_messages(original_messages, new_messages, task_messages)
-
+        # Re-insert the head_portion in chronological order so the final
+        # list follows head_portion + [summary_answer] + [last_user_message].
+        if keeping_messages:
+            new_messages = self._merge_task_messages(original_messages, new_messages, keeping_messages)
         self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
 
         self.ai_agent.llm_model.tokenStat.add_msgs(self.ai_agent.messages)

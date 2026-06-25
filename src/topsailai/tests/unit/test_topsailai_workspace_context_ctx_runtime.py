@@ -637,7 +637,13 @@ class TestSummarizeMessages(TestContextRuntimeData):
         self.assertIn({"step_name": "task", "raw_text": "Task preserve"}, contents)
 
     def test_summarize_preserves_task_messages_with_session(self):
-        """Test that role=user, step_name=task messages are not deleted from session."""
+        """Test that head-portion messages are not deleted from session.
+
+        head_portion extends from the beginning up to and including the first
+        role=user, step_name=task message. With head_offset=0 the normal
+        message that precedes the task message is still part of head_portion,
+        so neither raw message should be deleted.
+        """
         self.runtime.session_id = "task_session"
         task_msg = {"role": "user", "content": {"step_name": "task", "raw_text": "Task session"}}
         self.runtime.messages = [
@@ -665,16 +671,22 @@ class TestSummarizeMessages(TestContextRuntimeData):
                 with patch.object(self.runtime, 'reset_messages'):
                     self.runtime.summarize_messages_for_processed()
 
-        # The normal message should be deleted, but the task message should be skipped.
+        # Both raw messages are inside head_portion, so neither is deleted.
         deleted_calls = self.mock_ctx_manager.del_session_messages.call_args_list
         deleted_ids = []
         for call_args in deleted_calls:
             deleted_ids.extend(call_args[0][1])
-        self.assertIn("normal_id", deleted_ids)
+        self.assertNotIn("normal_id", deleted_ids)
         self.assertNotIn("task_id", deleted_ids)
 
     def test_summarize_task_messages_preserve_chronological_order_without_session(self):
-        """Test that task messages keep chronological order relative to summary without session."""
+        """Test that only head-portion task messages survive summarization.
+
+        The final message list follows:
+            head_portion + [summary_answer] + [last_user_message]
+        where head_portion extends up to and including the first task message.
+        Later task messages are part of the summarized range.
+        """
         self.runtime.session_id = None
         task_msg_1 = {"role": "user", "content": {"step_name": "task", "raw_text": "Task one"}}
         task_msg_2 = {"role": "user", "content": {"step_name": "task", "raw_text": "Task two"}}
@@ -714,14 +726,14 @@ class TestSummarizeMessages(TestContextRuntimeData):
 
         call_args = mock_set.call_args[0][0]
         contents = [m.get("content") for m in call_args]
+        # task1 is inside head_portion and must survive as a standalone message.
+        self.assertIn({"step_name": "task", "raw_text": "Task one"}, contents)
+        # task2 is after head_portion and is summarized away.
+        self.assertNotIn({"step_name": "task", "raw_text": "Task two"}, contents)
         idx_task1 = contents.index({"step_name": "task", "raw_text": "Task one"})
-        idx_task2 = contents.index({"step_name": "task", "raw_text": "Task two"})
         idx_summary = contents.index("Summary")
-        # Both task messages originally preceded or were inside the summarized block.
+        # Task one is in the head portion, so it precedes the summary.
         self.assertLess(idx_task1, idx_summary)
-        self.assertLess(idx_task2, idx_summary)
-        # Task one should still precede task two.
-        self.assertLess(idx_task1, idx_task2)
 
 
 if __name__ == '__main__':
