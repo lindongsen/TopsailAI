@@ -253,6 +253,8 @@ func canLeaveGroup(db *gorm.DB, ac middleware.AuthContext, groupID, memberID str
 //   - Admin may add any member to any group.
 //   - Group owner may add any member to their own group.
 //   - Any authenticated, active account may self-join a public group.
+//     Self-join requests must not supply member_id or member_type; doing so is
+//     treated as an attempt to add a member and is forbidden.
 //   - Any authenticated, active account may self-join a private group when the
 //     correct group_key is provided in the request body.
 //
@@ -322,6 +324,13 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 		memberDescription = req.MemberDescription
 		memberType = models.MemberType(req.MemberType)
 	} else {
+		// Self-join mode. Non-owners/admins may not supply member_id or
+		// member_type; doing so is treated as an attempt to add a member.
+		if req.MemberID != "" || req.MemberType != "" {
+			writeErrorResponse(c, http.StatusForbidden, "only group owners and admins can add members", traceID)
+			return
+		}
+
 		// Self-join mode.
 		alreadyMember, err := isGroupMember(h.db, groupID, authCtx.Account.AccountID)
 		if err != nil {

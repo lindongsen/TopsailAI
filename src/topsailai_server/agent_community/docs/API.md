@@ -949,9 +949,9 @@ Add a member (user or agent) to a group, or self-join a group using its access k
 - Any authenticated account can **self-join** a public group (a group whose `group_key` is null/empty).
 - Any authenticated account can **self-join** a private group by providing the correct `group_key` in the request body.
 
-When self-joining, the server ignores any `member_id` and `member_type` supplied by the client and overrides them as follows:
-- `member_id` is set to the caller's `account_id`.
-- `member_type` is set to `user`.
+When self-joining, the caller must **not** supply `member_id` or `member_type`. A self-join request that includes either field is treated as an attempt to add a member and is rejected with `403 Forbidden`. On a valid self-join, the server sets:
+- `member_id` to the caller's `account_id`.
+- `member_type` to `user`.
 
 **Path Parameters:**
 - group_id: group identifier in `group-{id}` format
@@ -985,6 +985,14 @@ For agent members:
 }
 ```
 
+**Request Body (self-joining a public group):**
+```json
+{
+  "member_name": "Alice",
+  "member_description": "Project manager"
+}
+```
+
 **Request Body (self-joining a private group):**
 ```json
 {
@@ -995,7 +1003,7 @@ For agent members:
 ```
 
 - `group_key` is required when self-joining a private group. It is ignored when an `admin` or group owner adds a member.
-- `member_name` and `member_description` may be provided for self-joins; `member_id` and `member_type` are overridden by the server.
+- `member_name` and `member_description` may be provided for self-joins; `member_id` and `member_type` must not be supplied.
 
 **Response:**
 ```json

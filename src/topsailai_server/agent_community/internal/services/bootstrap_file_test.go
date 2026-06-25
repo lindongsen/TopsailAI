@@ -185,13 +185,26 @@ func TestBootstrapService_Run_ExistingAccountsWithInvalidACSFile(t *testing.T) {
 
 	adminData, err := os.ReadFile(adminFile)
 	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(string(adminData), "ak-"))
-	assert.NotEqual(t, "ak-invalid.invalidsecret", string(adminData), "invalid admin .acs file should be regenerated")
+	adminToken := strings.TrimSpace(string(adminData))
+	assert.True(t, strings.HasPrefix(adminToken, "ak-"))
+	assert.NotEqual(t, "ak-invalid.invalidsecret", adminToken, "invalid admin .acs file should be regenerated")
 
 	managerData, err := os.ReadFile(managerFile)
 	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(string(managerData), "ak-"))
-	assert.NotEqual(t, "ak-invalid.invalidsecret", string(managerData), "invalid manager .acs file should be regenerated")
+	managerToken := strings.TrimSpace(string(managerData))
+	assert.True(t, strings.HasPrefix(managerToken, "ak-"))
+	assert.NotEqual(t, "ak-invalid.invalidsecret", managerToken, "invalid manager .acs file should be regenerated")
+
+	// Verify the regenerated plaintext tokens authenticate against the stored hashes.
+	verifiedAdminKey, verifiedAdminOwner, err := apiKeySvc.VerifyAPIKey(ctx, adminToken)
+	require.NoError(t, err, "regenerated admin token must authenticate")
+	assert.Equal(t, models.APIKeyRoleAdmin, verifiedAdminKey.Role)
+	assert.Equal(t, models.AccountRoleAdmin, verifiedAdminOwner.Role)
+
+	verifiedManagerKey, verifiedManagerOwner, err := apiKeySvc.VerifyAPIKey(ctx, managerToken)
+	require.NoError(t, err, "regenerated manager token must authenticate")
+	assert.Equal(t, models.APIKeyRoleManager, verifiedManagerKey.Role)
+	assert.Equal(t, models.AccountRoleManager, verifiedManagerOwner.Role)
 
 	adminKeys, _, err := apiKeySvc.ListAPIKeysByOwner(ctx, admin.AccountID, 0, 1000)
 	require.NoError(t, err)
@@ -202,4 +215,37 @@ func TestBootstrapService_Run_ExistingAccountsWithInvalidACSFile(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, managerKeys, 1)
 	assert.NotEqual(t, oldManagerKey.APIKey.APIKeyID, managerKeys[0].APIKeyID)
+}
+
+// TestBootstrapService_Run_DefaultKeysAuthenticate verifies that the plaintext
+// tokens written to both .acs files successfully authenticate against the
+// stored API key hashes and return the expected roles.
+func TestBootstrapService_Run_DefaultKeysAuthenticate(t *testing.T) {
+	t.Chdir(t.TempDir())
+	svc := newTestBootstrapService(t, nil)
+	ctx := context.Background()
+
+	require.NoError(t, svc.Run(ctx))
+
+	pwd, _ := os.Getwd()
+	adminFile := filepath.Join(pwd, "ACS_ACCOUNT_ADMIN_API_KEY.acs")
+	managerFile := filepath.Join(pwd, "ACS_ACCOUNT_MANAGER_API_KEY.acs")
+
+	adminData, err := os.ReadFile(adminFile)
+	require.NoError(t, err)
+	managerData, err := os.ReadFile(managerFile)
+	require.NoError(t, err)
+
+	adminToken := strings.TrimSpace(string(adminData))
+	managerToken := strings.TrimSpace(string(managerData))
+
+	adminKey, adminOwner, err := svc.apiKeySvc.VerifyAPIKey(ctx, adminToken)
+	require.NoError(t, err, "admin default key token should authenticate")
+	assert.Equal(t, models.APIKeyRoleAdmin, adminKey.Role)
+	assert.Equal(t, models.AccountRoleAdmin, adminOwner.Role)
+
+	managerKey, managerOwner, err := svc.apiKeySvc.VerifyAPIKey(ctx, managerToken)
+	require.NoError(t, err, "manager default key token should authenticate")
+	assert.Equal(t, models.APIKeyRoleManager, managerKey.Role)
+	assert.Equal(t, models.AccountRoleManager, managerOwner.Role)
 }

@@ -931,10 +931,14 @@ func TestGroupMemberHandler_Join_UserOwnGroupOnly(t *testing.T) {
 	handler.JoinGroup(c)
 	require.Equal(t, http.StatusCreated, w.Code)
 
-	// User can self-join a public group they do not own.
+	// User can self-join a public group they do not own (no member_id/member_type).
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
 	setUserAuth(c, testUserAccountID)
+	selfJoinBody := JoinGroupRequest{
+		MemberName: "SelfJoin",
+	}
+	jsonBody, _ = json.Marshal(selfJoinBody)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-user-other-public/members", bytes.NewBuffer(jsonBody))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Params = gin.Params{{Key: "group_id", Value: "group-user-other-public"}}
@@ -945,10 +949,49 @@ func TestGroupMemberHandler_Join_UserOwnGroupOnly(t *testing.T) {
 	require.Equal(t, testUserAccountID, joinResp.Data.MemberID)
 	require.Equal(t, string(models.MemberTypeUser), joinResp.Data.MemberType)
 
-	// User cannot join (self-join) a private group they do not own without the key.
+	// User cannot self-join a public group while supplying member_id/member_type
+	// (treated as an attempt to add a member).
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
 	setUserAuth(c, testUserAccountID)
+	jsonBody, _ = json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-user-other-public/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-user-other-public"}}
+	handler.JoinGroup(c)
+	require.Equal(t, http.StatusForbidden, w.Code)
+
+	// User cannot self-join (self-join) a private group they do not own without the key.
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-user-other-private/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-user-other-private"}}
+	handler.JoinGroup(c)
+	require.Equal(t, http.StatusForbidden, w.Code)
+
+	// User can self-join a private group with the correct key.
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	privateJoinBody := JoinGroupRequest{
+		MemberName: "SelfJoinPrivate",
+		GroupKey:   "secret-key",
+	}
+	jsonBody, _ = json.Marshal(privateJoinBody)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-user-other-private/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-user-other-private"}}
+	handler.JoinGroup(c)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	// User cannot self-join a private group with the wrong key.
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	privateJoinBody.GroupKey = "wrong-key"
+	jsonBody, _ = json.Marshal(privateJoinBody)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-user-other-private/members", bytes.NewBuffer(jsonBody))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Params = gin.Params{{Key: "group_id", Value: "group-user-other-private"}}
