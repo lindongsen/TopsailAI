@@ -591,7 +591,7 @@ Summarize Messages
             need_print_message=False,
         )
         llm_chat.prompt_ctl.messages = all_messages
-        TIPS = "\nDONOT CALL ANY TOOLS, DIRECTLY OUTPUT FINAL_ANSWER!"
+        TIPS = "\n> DONOT INVOKE ANY TOOLS, DIRECTLY OUTPUT FINAL_ANSWER!"
         answer = llm_chat.chat(
             self._get_summary_prompt(prompt=prompt, extra_prompt=extra_prompt) + TIPS,
             need_print=env_tool.is_interactive_mode(),
