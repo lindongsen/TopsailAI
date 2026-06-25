@@ -169,6 +169,15 @@ class AgentChatBase(object):
             Args:
                 _ai_agent: The agent instance to operate on.
             """
+            # ctx_runtime_data is user2agent, persistent storage
+            # self.messages is agent2llm, in-memory storage
+            if not ctx_runtime_data.messages:
+                # this is a new session
+                for _msg in self.ai_agent.messages[:]:
+                    if _msg["role"] == ROLE_SYSTEM:
+                        continue
+                    ctx_rt_aiagent.add_session_message(_msg)
+                return
             ctx_rt_aiagent.add_session_message()
             return
 
