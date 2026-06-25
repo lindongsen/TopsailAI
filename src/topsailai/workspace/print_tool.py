@@ -222,9 +222,7 @@ def print_context_messages(messages):
         except Exception:
             pass
         if content:
-            lines = content.split('\n')
-            for line in lines:
-                print(f"{line}")
+            print(json_tool.safe_json_dump(content))
         else:
             print("  [No content]")
 

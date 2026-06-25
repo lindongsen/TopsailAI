@@ -606,6 +606,123 @@ class TestSummarizeMessages(TestContextRuntimeData):
         self.assertEqual(result, "No session summary")
         mock_set.assert_called_once()
 
+    def test_summarize_preserves_task_messages_without_session(self):
+        """Test that role=user, step_name=task messages are preserved when no session_id."""
+        self.runtime.session_id = None
+        task_msg = {"role": "user", "content": {"step_name": "task", "raw_text": "Task preserve"}}
+        self.runtime.messages = [
+            {"role": "user", "content": "msg0"},
+            {"role": "assistant", "content": "msg1"},
+            task_msg,
+        ]
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary"}
+        ]
+
+        with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "Summary with task")):
+            with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=1):
+                with patch.object(self.runtime, 'set_messages') as mock_set:
+                    with patch.object(
+                        type(self.runtime),
+                        'last_user_message',
+                        new_callable=PropertyMock,
+                        return_value={"role": "user", "content": "msg0"}
+                    ):
+                        self.runtime.summarize_messages_for_processed()
+
+        call_args = mock_set.call_args[0][0]
+        contents = [m.get("content") for m in call_args]
+        self.assertIn({"step_name": "task", "raw_text": "Task preserve"}, contents)
+
+    def test_summarize_preserves_task_messages_with_session(self):
+        """Test that role=user, step_name=task messages are not deleted from session."""
+        self.runtime.session_id = "task_session"
+        task_msg = {"role": "user", "content": {"step_name": "task", "raw_text": "Task session"}}
+        self.runtime.messages = [
+            {"role": "user", "content": "msg0"},
+            {"role": "assistant", "content": "msg1"},
+            task_msg,
+        ]
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary"}
+        ]
+
+        mock_raw_task = MagicMock()
+        mock_raw_task.msg_id = "task_id"
+        mock_raw_task.message = task_msg
+        mock_raw_normal = MagicMock()
+        mock_raw_normal.msg_id = "normal_id"
+        mock_raw_normal.message = {"role": "user", "content": "msg0"}
+
+        self.mock_ctx_manager.get_messages_by_session.return_value = [mock_raw_normal, mock_raw_task]
+
+        with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "Summary with task")):
+            with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+                with patch.object(self.runtime, 'reset_messages'):
+                    self.runtime.summarize_messages_for_processed()
+
+        # The normal message should be deleted, but the task message should be skipped.
+        deleted_calls = self.mock_ctx_manager.del_session_messages.call_args_list
+        deleted_ids = []
+        for call_args in deleted_calls:
+            deleted_ids.extend(call_args[0][1])
+        self.assertIn("normal_id", deleted_ids)
+        self.assertNotIn("task_id", deleted_ids)
+
+    def test_summarize_task_messages_preserve_chronological_order_without_session(self):
+        """Test that task messages keep chronological order relative to summary without session."""
+        self.runtime.session_id = None
+        task_msg_1 = {"role": "user", "content": {"step_name": "task", "raw_text": "Task one"}}
+        task_msg_2 = {"role": "user", "content": {"step_name": "task", "raw_text": "Task two"}}
+        normal_messages = [
+            {"role": "user", "content": "msg0"},
+            {"role": "assistant", "content": "msg1"},
+            {"role": "user", "content": "msg2"},
+            {"role": "assistant", "content": "msg3"},
+            {"role": "user", "content": "msg4"},
+        ]
+        # Order: msg0, msg1, task1, msg2, msg3, task2, msg4
+        self.runtime.messages = [
+            normal_messages[0],
+            normal_messages[1],
+            task_msg_1,
+            normal_messages[2],
+            normal_messages[3],
+            task_msg_2,
+            normal_messages[4],
+        ]
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary"}
+        ]
+
+        with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "Summary with tasks")):
+            with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=1):
+                with patch.object(self.runtime, 'set_messages') as mock_set:
+                    with patch.object(
+                        type(self.runtime),
+                        'last_user_message',
+                        new_callable=PropertyMock,
+                        return_value=normal_messages[4]
+                    ):
+                        self.runtime.summarize_messages_for_processed()
+
+        call_args = mock_set.call_args[0][0]
+        contents = [m.get("content") for m in call_args]
+        idx_task1 = contents.index({"step_name": "task", "raw_text": "Task one"})
+        idx_task2 = contents.index({"step_name": "task", "raw_text": "Task two"})
+        idx_summary = contents.index("Summary")
+        # Both task messages originally preceded or were inside the summarized block.
+        self.assertLess(idx_task1, idx_summary)
+        self.assertLess(idx_task2, idx_summary)
+        # Task one should still precede task two.
+        self.assertLess(idx_task1, idx_task2)
+
 
 if __name__ == '__main__':
     unittest.main()

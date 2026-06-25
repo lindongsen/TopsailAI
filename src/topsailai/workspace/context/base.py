@@ -9,6 +9,7 @@ import random
 
 from topsailai.ai_base.constants import (
     ROLE_USER,
+    STEP_NAME_TASK,
 )
 from topsailai.ai_base.agent_base import (
     AgentBase,
@@ -129,6 +130,164 @@ class ContextRuntimeBase(object):
             messages_from_session = ctx_manager.get_messages_by_session(self.session_id) or []
             self.set_messages(messages_from_session)
         return
+
+    ###############################################################
+    # Task messages preservation helpers
+    ###############################################################
+
+    @staticmethod
+    def _is_task_message(msg) -> bool:
+        """
+        Check whether a message is a user task message that must be preserved.
+
+        A task message is identified by:
+        - role == "user"
+        - content is a dict (or JSON object) with step_name == "task"
+
+        Args:
+            msg: A message dict or JSON-serialized message string.
+
+        Returns:
+            bool: True if the message is a task message, False otherwise.
+        """
+        msg_dict = json_tool.safe_json_load(msg)
+        if not isinstance(msg_dict, dict):
+            return False
+        if msg_dict.get("role") != ROLE_USER:
+            return False
+        content = msg_dict.get("content")
+        if isinstance(content, dict):
+            return content.get("step_name") == STEP_NAME_TASK
+        if isinstance(content, str):
+            try:
+                parsed = json_tool.json_load(content)
+                if isinstance(parsed, dict):
+                    return parsed.get("step_name") == STEP_NAME_TASK
+            except Exception:
+                pass
+        return False
+
+    def _split_task_messages(self, messages: list) -> tuple[list, list]:
+        """
+        Split messages into task messages and non-task messages.
+
+        Args:
+            messages (list): The original message list.
+
+        Returns:
+            tuple[list, list]: (task_messages, non_task_messages) in original order.
+        """
+        task_messages = []
+        non_task_messages = []
+        for msg in messages:
+            if self._is_task_message(msg):
+                task_messages.append(msg)
+            else:
+                non_task_messages.append(msg)
+        return task_messages, non_task_messages
+
+    def _get_messages_before_first_user_task_message(self, messages: list, max_count:int=7) -> list:
+        head_messages = []
+        for i, msg in enumerate(messages):
+            head_messages.append(msg)
+            if self._is_task_message(msg):
+                break
+            if i > max_count:
+                break
+        return head_messages
+
+    def _get_first_and_last_task_messages(self, messages: list) -> list:
+        task_messages, _ = self._split_task_messages(messages)
+        if not task_messages:
+            return []
+        first_and_last_task_messages = []
+        if task_messages:
+            first_and_last_task_messages = [
+                task_messages[0],
+                task_messages[-1],
+            ]
+            if task_messages[0] is task_messages[-1]:
+                first_and_last_task_messages = [task_messages[0]]
+        return first_and_last_task_messages
+
+    def _merge_task_messages(
+            self,
+            original_messages: list,
+            new_messages: list,
+            task_messages: list,
+        ) -> list:
+        """
+        Merge preserved task messages back into the summarized message list.
+
+        Task messages are placed immediately after their original predecessor
+        if that predecessor survived summarization. If the predecessor was
+        summarized away, the task message is inserted right before the summary
+        message. This keeps task messages in chronological order relative to
+        the summary and any surviving head/tail messages.
+
+        Args:
+            original_messages (list): The full original message list, including
+                task messages that were split out.
+            new_messages (list): The post-summary message list without task
+                messages (typically head + session + summary + last user).
+            task_messages (list): The task messages that must be preserved.
+
+        Returns:
+            list: The merged message list with task messages in chronological order.
+        """
+        if not task_messages:
+            return new_messages
+
+        task_ids = {id(m) for m in task_messages}
+        original_ids = {id(m) for m in original_messages}
+        new_ids = {id(m) for m in new_messages}
+
+        # Find each task message's predecessor in the original list.
+        task_predecessors = {}
+        for i, msg in enumerate(original_messages):
+            if id(msg) in task_ids:
+                task_predecessors[id(msg)] = original_messages[i - 1] if i > 0 else None
+
+        # Locate the summary message: the first message in new_messages that did
+        # not exist in original_messages (e.g. the LLM-generated summary).
+        summary_index = None
+        for i, msg in enumerate(new_messages):
+            _id = id(msg)
+            if _id not in original_ids:
+                summary_index = i
+                break
+
+        # Track current positions in the result list for predecessor lookup.
+        result = list(new_messages)
+        positions = {id(m): i for i, m in enumerate(result)}
+
+        for task_msg in task_messages:
+            _id_task = id(task_msg)
+            if _id_task in new_ids:
+                continue
+            predecessor = task_predecessors.get(_id_task)
+
+            if predecessor is None:
+                insert_pos = 0
+            elif id(predecessor) in positions:
+                insert_pos = positions[id(predecessor)] + 1
+            else:
+                # Predecessor was summarized; place task before the summary.
+                insert_pos = summary_index if summary_index is not None else len(result)
+
+            result.insert(insert_pos, task_msg)
+
+            # Update positions for messages shifted by this insertion.
+            for msg_id in list(positions.keys()):
+                if positions[msg_id] >= insert_pos:
+                    positions[msg_id] += 1
+            positions[_id_task] = insert_pos
+
+            # Summary index shifts if we inserted before it.
+            if summary_index is not None and insert_pos <= summary_index:
+                summary_index += 1
+
+        return result
 
     ###############################################################
     # Env

@@ -23,6 +23,8 @@ from topsailai.ai_base.constants import (
     ROLE_SYSTEM,
     ROLE_USER,
     NON_SYSTEM_PROMPT_MESSAGE_INDEX,
+    MSG_KEY_STEP_NAME,
+    MSG_KEY_RAW_TEXT,
 )
 
 
@@ -43,7 +45,7 @@ class ChatHistoryMessageData(object):
         access_count (int or None): Number of times the message has been retrieved.
     """
 
-    def __init__(self, message: str, msg_id: str, session_id: str):
+    def __init__(self, message: str|dict, msg_id: str, session_id: str):
         """
         Initialize a ChatHistoryMessageData instance.
 
@@ -56,6 +58,15 @@ class ChatHistoryMessageData(object):
         self.session_id = session_id
         self.message = message
 
+        # key content
+        self.message_content = ""
+        if isinstance(message, str):
+            new_msg = self.message_dict
+            if self.message_content:
+                self.message = json_tool.json_dump(new_msg, indent=0)
+            else:
+                self.message_content = new_msg["content"]
+
         # Generate msg_id from message content if not provided
         if not self.msg_id and message:
             self.msg_id = md5sum(message)
@@ -67,6 +78,37 @@ class ChatHistoryMessageData(object):
         self.create_time = None
         self.access_time = None
         self.access_count = None
+
+    @property
+    def message_dict(self) -> dict:
+        """ return dict """
+        message = self.message
+        msg_dict = message
+        # format message.content
+        if isinstance(message, str):
+            msg_dict = json_tool.json_load(message)
+            msg_content = msg_dict["content"]
+            new_msg_content = None
+            if isinstance(msg_content, str):
+                new_msg_content = json_tool.safe_json_load(msg_content)
+                if not new_msg_content:
+                    try:
+                        new_msg_content = format_tool.format_dict_to_list(
+                            format_tool.parse_topsailai_format(msg_content),
+                            key_name=MSG_KEY_STEP_NAME,
+                            value_name=MSG_KEY_RAW_TEXT,
+                        )
+                    except Exception as _:
+                        pass
+                else:
+                    new_msg_content = None
+                # keep str to match the if statement above
+                if new_msg_content and not isinstance(new_msg_content, str):
+                    new_msg_content = json_tool.json_dump(new_msg_content, indent=0)
+            if new_msg_content and new_msg_content != msg_content:
+                msg_dict["content"] = new_msg_content
+                self.message_content = new_msg_content
+        return msg_dict
 
 
 class MessageStorageBase(object):

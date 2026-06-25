@@ -11,6 +11,7 @@ from topsailai.logger.log_chat import logger
 from topsailai.ai_base.constants import (
     ROLE_USER, ROLE_ASSISTANT, ROLE_SYSTEM, ROLE_TOOL,
     NON_SYSTEM_PROMPT_MESSAGE_INDEX,
+    STEP_NAME_OBSERVATION,
 )
 from topsailai.utils.print_tool import (
     print_step,
@@ -346,7 +347,7 @@ class PromptBase(object):
         context_message = self._build_context_message()
         if context_message:
             context_message = {
-                "step_name": "observation",
+                "step_name": STEP_NAME_OBSERVATION,
                 "raw_text": context_message,
             }
             self.add_user_message(context_message, need_print=need_print_message)

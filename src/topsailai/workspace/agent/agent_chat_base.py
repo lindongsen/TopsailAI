@@ -169,10 +169,7 @@ class AgentChatBase(object):
             Args:
                 _ai_agent: The agent instance to operate on.
             """
-            for message in self.ai_agent.messages:
-                if message["role"] == ROLE_SYSTEM:
-                    continue
-                ctx_rt_aiagent.add_session_message(message)
+            ctx_rt_aiagent.add_session_message()
             return
 
         def hook_summarize_messages(_ai_agent):

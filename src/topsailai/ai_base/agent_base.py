@@ -18,6 +18,10 @@ from topsailai.utils import (
     env_tool,
 )
 
+from topsailai.ai_base.constants import (
+    STEP_NAME_TASK,
+    STEP_NAME_OBSERVATION,
+)
 from topsailai.ai_base.agent_types.exception import (
     AgentNoCareResult,
     AgentNeedRefreshSession,
@@ -160,7 +164,7 @@ class AgentRun(AgentBase):
             print_step(f"[effective_tools] [{len(tools_for_chat)}] {list(tools_for_chat.keys())}", need_format=False)
 
         # new session
-        user_message = {"step_name":"task","raw_text":user_input} if user_input else None
+        user_message = {"step_name":STEP_NAME_TASK,"raw_text":user_input} if user_input else None
         self.new_session(user_message)
 
         while True:
@@ -205,7 +209,7 @@ class AgentRun(AgentBase):
                         # add result of tool_call to session
                         self.add_tool_message(
                             {
-                                "step_name": "observation",
+                                "step_name": STEP_NAME_OBSERVATION,
                                 "raw_text": data.tool_result,
                             }
                         )

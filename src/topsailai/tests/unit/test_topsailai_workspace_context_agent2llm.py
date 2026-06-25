@@ -27,6 +27,10 @@ class TestContextRuntimeAgent2LLM(unittest.TestCase):
                 self._messages = []
                 self._session_id = "test-session-123"
                 self._first_position = 0
+                self._summarize_messages_impl = None
+                # The implementation reads the first position from the ai_agent mock,
+                # so wire the mock to return the current test value.
+                self._ai_agent.get_work_memory_first_position.side_effect = lambda: self._first_position
             
             @property
             def ai_agent(self):
@@ -44,6 +48,8 @@ class TestContextRuntimeAgent2LLM(unittest.TestCase):
                 return self._first_position
             
             def _summarize_messages(self, messages):
+                if self._summarize_messages_impl is not None:
+                    return self._summarize_messages_impl(messages)
                 mock_prompt = MagicMock()
                 mock_prompt.prompt_ctl.messages = [
                     {"role": "assistant", "content": "Summarized content"}
@@ -55,7 +61,6 @@ class TestContextRuntimeAgent2LLM(unittest.TestCase):
             
             def _get_quantity_threshold(self):
                 return 50
-        
         self.test_instance = TestableAgent2LLM()
 
     def tearDown(self):
@@ -502,6 +507,96 @@ class TestEdgeCases(TestContextRuntimeAgent2LLM):
                 result2 = self.test_instance.summarize_messages_for_processing()
                 self.assertIsNotNone(result1)
                 self.assertIsInstance(result2, (str, type(None)))
+
+    def test_summarize_preserves_task_messages(self):
+        """Test that role=user, step_name=task messages are preserved during summarization."""
+        task_msg_1 = {"role": "user", "content": {"step_name": "task", "raw_text": "Task one"}}
+        task_msg_2 = {"role": "user", "content": {"step_name": "task", "raw_text": "Task two"}}
+        normal_messages = [
+            {"role": "user", "content": "Message 0"},
+            {"role": "assistant", "content": "Reply 1"},
+            {"role": "user", "content": "Message 2"},
+            {"role": "assistant", "content": "Reply 3"},
+        ]
+        self.test_instance._ai_agent.messages = normal_messages + [task_msg_1, task_msg_2]
+        self.test_instance._first_position = 0
+
+        with patch('topsailai.workspace.context.agent2llm.logger'):
+            with patch('topsailai.workspace.context.agent2llm.print_step'):
+                self.test_instance.summarize_messages_for_processing()
+
+        final_messages = self.test_instance._ai_agent.messages
+        final_contents = [m.get("content") for m in final_messages]
+        self.assertIn({"step_name": "task", "raw_text": "Task one"}, final_contents)
+        self.assertIn({"step_name": "task", "raw_text": "Task two"}, final_contents)
+
+    def test_task_messages_not_sent_to_summarizer(self):
+        """Test that task messages are excluded from the messages passed to _summarize_messages."""
+        task_msg = {"role": "user", "content": {"step_name": "task", "raw_text": "Task only"}}
+        normal_messages = [
+            {"role": "user", "content": "Message 0"},
+            {"role": "assistant", "content": "Reply 1"},
+            {"role": "user", "content": "Message 2"},
+        ]
+        self.test_instance._ai_agent.messages = normal_messages + [task_msg]
+        self.test_instance._first_position = 0
+
+        captured = []
+        def mock_summarize(messages):
+            captured.append(messages)
+            mock_llm_chat = MagicMock()
+            mock_llm_chat.prompt_ctl.messages = [
+                {"role": "assistant", "content": "Summarized content"}
+            ]
+            return mock_llm_chat, "Summarized content"
+        self.test_instance._summarize_messages_impl = mock_summarize
+
+        with patch.dict(os.environ, {"TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0"}):
+            with patch('topsailai.workspace.context.agent2llm.logger'):
+                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                    self.test_instance.summarize_messages_for_processing()
+
+        self.assertEqual(len(captured), 1)
+        self.assertNotIn(task_msg, captured[0])
+
+    def test_task_messages_preserve_chronological_order(self):
+        """Test that preserved task messages keep chronological order relative to the summary."""
+        task_msg_1 = {"role": "user", "content": {"step_name": "task", "raw_text": "Task one"}}
+        task_msg_2 = {"role": "user", "content": {"step_name": "task", "raw_text": "Task two"}}
+        normal_messages = [
+            {"role": "user", "content": "Message 0"},
+            {"role": "assistant", "content": "Reply 1"},
+            {"role": "user", "content": "Message 2"},
+            {"role": "assistant", "content": "Reply 3"},
+            {"role": "user", "content": "Message 4"},
+        ]
+        # Order: normal0, normal1, task1, normal2, normal3, task2, normal4
+        self.test_instance._ai_agent.messages = [
+            normal_messages[0],
+            normal_messages[1],
+            task_msg_1,
+            normal_messages[2],
+            normal_messages[3],
+            task_msg_2,
+            normal_messages[4],
+        ]
+        self.test_instance._first_position = 0
+
+        with patch.dict(os.environ, {"TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0"}):
+            with patch('topsailai.workspace.context.agent2llm.logger'):
+                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                    self.test_instance.summarize_messages_for_processing()
+
+        final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
+        idx_task1 = final_contents.index({"step_name": "task", "raw_text": "Task one"})
+        idx_task2 = final_contents.index({"step_name": "task", "raw_text": "Task two"})
+        idx_summary = final_contents.index("Summarized content")
+        # Task one originally preceded the summarized middle block, so it should be before summary.
+        self.assertLess(idx_task1, idx_summary)
+        # Task two was inside the summarized block, so it should be placed before the summary.
+        self.assertLess(idx_task2, idx_summary)
+        # Task one should still precede task two.
+        self.assertLess(idx_task1, idx_task2)
 
 
 if __name__ == '__main__':

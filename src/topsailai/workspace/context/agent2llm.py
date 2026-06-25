@@ -133,6 +133,11 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         # print info
         print_step(f"!!! Summarizing context messages for processing: msg_len=[{len(messages)}]", need_format=False, need_log=True)
 
+        # Preserve task messages (role=user, step_name=task) from summarization/deletion.
+        original_messages = list(messages)
+        task_messages = self._get_messages_before_first_user_task_message(messages)
+        print_step(f"!!! head_messages_before_first_user_task_message_to_keep(session_messages)={len(task_messages)}", need_format=False, need_log=True)
+
         # Log message count and token usage before summarization
         _token_count_before = self._get_current_tokens()
         logger.info("[summarize_processing] before: messages=%s, tokens=%s", len(messages), _token_count_before)
@@ -146,6 +151,8 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         # keep last user message
         last_user_msg = self.last_user_message
+
+        print_step(f"!!! head_offset_to_keep={head_offset_to_keep}, last_user_message_to_keep=1", need_format=False, need_log=True)
 
         # new messages
         new_messages = messages[:head_offset_to_keep]
@@ -168,6 +175,11 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         if last_user_msg:
             if last_user_msg not in new_messages:
                 new_messages.append(last_user_msg)
+
+        # Re-insert preserved task messages in chronological order.
+        if task_messages:
+            new_messages = self._merge_task_messages(original_messages, new_messages, task_messages)
+
         self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
 
         self.ai_agent.llm_model.tokenStat.add_msgs(self.ai_agent.messages)

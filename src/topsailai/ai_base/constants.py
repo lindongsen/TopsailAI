@@ -24,3 +24,17 @@ DEFAULT_LLM_SLOW_CHAT_THRESHOLD = 60
 
 # context messages
 NON_SYSTEM_PROMPT_MESSAGE_INDEX = 3
+
+# step name
+STEP_NAME_TASK = "task"
+STEP_NAME_ACTION = "action"
+STEP_NAME_THOUGHT = "thought"
+STEP_NAME_INQUIRY = "inquiry"
+STEP_NAME_FINAL = "final"
+STEP_NAME_OBSERVATION = "observation"
+
+# message content key
+MSG_KEY_STEP_NAME = "step_name"
+MSG_KEY_RAW_TEXT = "raw_text"
+MSG_KEY_TOOL_CALL = "tool_call"
+MSG_KEY_TOOL_ARGS = "tool_args"

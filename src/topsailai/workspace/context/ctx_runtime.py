@@ -237,6 +237,11 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         if not messages:
             return None
 
+        # Preserve task messages (role=user, step_name=task) from summarization/deletion.
+        original_messages = list(messages)
+        task_messages = self._get_messages_before_first_user_task_message(messages)
+        print_step(f"!!! head_messages_before_first_user_task_message_to_keep(session_messages)={len(task_messages)}", need_format=False, need_log=True)
+
         # print info
         print_step(f"!!! Summarizing context messages for processed: msg_len=[{len(messages)}]", need_format=False, need_log=True)
 
@@ -274,11 +279,23 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         if head_offset_to_keep and len(self.messages) <= head_offset_to_keep:
             head_offset_to_keep = 1
 
+        print_step(f"!!! head_offset_to_keep={head_offset_to_keep}, last_user_message_to_keep=1", need_format=False, need_log=True)
+
         if self.session_id:
             raw_messages_from_session = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
 
             # add answer to session
             ctx_manager.add_session_message(self.session_id, llm_chat.prompt_ctl.messages[-1])
+
+            # keep messages before first user task message
+            raw_msg_ids_to_keep = []
+            for i, raw_msg in enumerate(raw_messages_from_session):
+                raw_msg_ids_to_keep.append(raw_msg.msg_id)
+                if self._is_task_message(raw_msg.message):
+                    break
+                if i > 7:
+                    break
+            print_step(f"!!! head_messages_before_first_user_task_message_to_keep(session_raw_messages)={len(raw_msg_ids_to_keep)}")
 
             # keep last user message
             last_user_raw_msg = None
@@ -292,6 +309,8 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             if raw_messages_from_session:
                 for raw_msg in raw_messages_from_session[head_offset_to_keep:]:
                     if last_user_raw_msg and raw_msg.msg_id == last_user_raw_msg.msg_id:
+                        continue
+                    if raw_msg_ids_to_keep and raw_msg.msg_id in raw_msg_ids_to_keep:
                         continue
                     ctx_manager.del_session_messages(self.session_id, [raw_msg.msg_id])
             else:
@@ -309,12 +328,14 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             if last_user_msg:
                 new_messages.append(last_user_msg)
 
+            # Re-insert preserved task messages in chronological order.
+            if task_messages:
+                new_messages = self._merge_task_messages(original_messages, new_messages, task_messages)
             self.set_messages(new_messages)
 
         # Log message count and token usage after summarization
         _token_count_after = self._get_current_tokens(realtime=True)
         logger.info("[summarize_processed] after: messages=%s, tokens=%s", len(self.messages), _token_count_after)
-
         return answer
 
 
