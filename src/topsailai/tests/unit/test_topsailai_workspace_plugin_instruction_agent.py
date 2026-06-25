@@ -216,6 +216,38 @@ class TestGetTools(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestGetMessages(unittest.TestCase):
+    """Test get_messages() function"""
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent.json_tool")
+    def test_success(self, mock_json_tool, mock_get_agent):
+        """Test successful messages retrieval"""
+        mock_agent = MagicMock()
+        mock_agent.messages = [
+            {"role": "system", "content": "System"},
+            {"role": "user", "content": "Hello"}
+        ]
+        mock_get_agent.return_value = mock_agent
+        mock_json_tool.json_dump.return_value = '[{"role": "system", "content": "System"}]'
+        
+        from topsailai.workspace.plugin_instruction.agent import get_messages
+        result = get_messages()
+        
+        mock_json_tool.json_dump.assert_called_once_with(mock_agent.messages)
+        self.assertEqual(result, '[{"role": "system", "content": "System"}]')
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_no_agent(self, mock_get_agent):
+        """Test when no agent is available"""
+        mock_get_agent.return_value = None
+        
+        from topsailai.workspace.plugin_instruction.agent import get_messages
+        result = get_messages()
+        
+        self.assertIsNone(result)
+
+
 class TestInstructions(unittest.TestCase):
     """Test INSTRUCTIONS dict"""
 
@@ -238,6 +270,7 @@ class TestInstructions(unittest.TestCase):
         """Test INSTRUCTIONS has 'tools' key"""
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
         self.assertIn("tools", INSTRUCTIONS)
+
     def test_has_set_llm_key(self):
         """Test INSTRUCTIONS has 'set_llm' key"""
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
@@ -248,11 +281,15 @@ class TestInstructions(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
         self.assertIn("llm", INSTRUCTIONS)
 
+    def test_has_messages_key(self):
+        """Test INSTRUCTIONS has 'messages' key"""
+        from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
+        self.assertIn("messages", INSTRUCTIONS)
 
     def test_correct_count(self):
         """Test INSTRUCTIONS has correct number of entries"""
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
-        self.assertEqual(len(INSTRUCTIONS), 6)
+        self.assertEqual(len(INSTRUCTIONS), 7)
 
     def test_values_are_callable(self):
         """Test all INSTRUCTIONS values are callable"""

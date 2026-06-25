@@ -230,18 +230,19 @@ Verify soft-deleting a message with attachments clears content and marks deleted
 
 1. Create message with attachment.
 2. Send DELETE.
-3. List messages.
+3. List messages with `include_deleted=true` (admin only; deleted messages are excluded by default).
 
 ### Expected Output
 
 Status: 200 or 204
 - `is_deleted=true`.
-- `message_text` empty or marked deleted.
-- `message_attachments` empty or marked deleted.
+- `message_text` empty.
+- `message_attachments` empty.
 
 ### Pass Criteria
 
-- Soft delete handles attachments correctly.
+- Soft delete clears message content and attachments.
+- Deleted message is retrievable by admin when `include_deleted=true`.
 
 ---
 

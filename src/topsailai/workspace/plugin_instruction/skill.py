@@ -25,10 +25,10 @@ def show_skills(word:str=None):
         if word:
             if word in skill.name:
                 print(str(skill))
-                skill_list.append(skill.folder)
+                skill_list.append(str(skill.folder))
         else:
             print(str(skill))
-            skill_list.append(skill.folder)
+            skill_list.append(str(skill.folder))
     print(
 f"""
 ---

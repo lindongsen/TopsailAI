@@ -453,7 +453,8 @@ class TestDeleteMessageAttachments:
         assert response.status_code in (200, 204)
 
         response = api_client.get(
-            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages"
+            f"{server_url}/api/v1/groups/{test_group['group_id']}/messages",
+            params={"include_deleted": "true"},
         )
         assert response.status_code == 200
 
