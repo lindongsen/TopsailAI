@@ -391,6 +391,23 @@ func (c *APIClient) CreateGroup(name, context, key string) (*APIResponse, error)
 	return c.Post("/api/v1/groups", payload)
 }
 
+// JoinGroup self-joins the authenticated account to a group.
+// groupKey is optional and only required for private groups.
+// Self-join requests must not include member_id or member_type; the server
+// derives them from the authenticated account.
+func (c *APIClient) JoinGroup(groupID, memberName, memberDesc, groupKey string) (*APIResponse, error) {
+	payload := map[string]interface{}{
+		"member_name": memberName,
+	}
+	if memberDesc != "" {
+		payload["member_description"] = memberDesc
+	}
+	if groupKey != "" {
+		payload["group_key"] = groupKey
+	}
+	return c.Post(fmt.Sprintf("/api/v1/groups/%s/members", groupID), payload)
+}
+
 // GetGroup gets a single group.
 func (c *APIClient) GetGroup(groupID string) (*APIResponse, error) {
 	return c.Get(fmt.Sprintf("/api/v1/groups/%s", groupID))
@@ -441,23 +458,6 @@ func (c *APIClient) AddMember(groupID, memberID, memberName, memberDesc, memberT
 	}
 	return c.Post(fmt.Sprintf("/api/v1/groups/%s/members", groupID), payload)
 }
-// JoinGroup self-joins the authenticated account to a group.
-// groupKey is optional and only required for private groups.
-func (c *APIClient) JoinGroup(groupID, memberID, memberName, memberDesc, groupKey string) (*APIResponse, error) {
-	payload := map[string]interface{}{
-		"member_id":   memberID,
-		"member_name": memberName,
-		"member_type": "user",
-	}
-	if memberDesc != "" {
-		payload["member_description"] = memberDesc
-	}
-	if groupKey != "" {
-		payload["group_key"] = groupKey
-	}
-	return c.Post(fmt.Sprintf("/api/v1/groups/%s/members", groupID), payload)
-}
-
 
 // GetMember gets a single member.
 func (c *APIClient) GetMember(groupID, memberID string) (*APIResponse, error) {

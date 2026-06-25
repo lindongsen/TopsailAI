@@ -324,10 +324,15 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 		memberDescription = req.MemberDescription
 		memberType = models.MemberType(req.MemberType)
 	} else {
-		// Self-join mode. Non-owners/admins may not supply member_id or
-		// member_type; doing so is treated as an attempt to add a member.
-		if req.MemberID != "" || req.MemberType != "" {
-			writeErrorResponse(c, http.StatusForbidden, "only group owners and admins can add members", traceID)
+		// Self-join mode. Non-owners/admins may only supply their own
+		// account_id as member_id and "user" as member_type. Anything else is
+		// treated as an attempt to add a member.
+		if req.MemberID != "" && req.MemberID != authCtx.Account.AccountID {
+			writeErrorResponse(c, http.StatusForbidden, "self-join cannot specify a different member_id", traceID)
+			return
+		}
+		if req.MemberType != "" && req.MemberType != string(models.MemberTypeUser) {
+			writeErrorResponse(c, http.StatusForbidden, "self-join cannot specify a member_type other than user", traceID)
 			return
 		}
 

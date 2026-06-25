@@ -1052,7 +1052,7 @@ func handleGroupJoin(args []string, state *CLIState) error {
 	if memberName == "" {
 		memberName = state.userID
 	}
-	_, err := state.apiClient.JoinGroup(groupID, state.userID, memberName, "", groupKey)
+	_, err := state.apiClient.JoinGroup(groupID, memberName, "", groupKey)
 	if err != nil {
 		return formatAPIError(err)
 	}

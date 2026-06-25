@@ -912,9 +912,10 @@ func TestGroupMemberHandler_Join_UserOwnGroupOnly(t *testing.T) {
 	db := setupGroupMemberTestDB(t)
 	createTestGroupForMembersWithOwner(t, db, "group-user-own", testUserAccountID)
 	createTestGroupForMembers(t, db, "group-user-other-public")
+	createTestGroupForMembers(t, db, "group-user-other-public-tolerant")
 	createTestGroupForMembersWithKey(t, db, "group-user-other-private", "secret-key")
+	createTestGroupForMembersWithKey(t, db, "group-user-other-private-tolerant", "secret-key")
 	handler := setupGroupMemberTestHandler(t, db, nil)
-
 	// User can add member to own group.
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -949,8 +950,24 @@ func TestGroupMemberHandler_Join_UserOwnGroupOnly(t *testing.T) {
 	require.Equal(t, testUserAccountID, joinResp.Data.MemberID)
 	require.Equal(t, string(models.MemberTypeUser), joinResp.Data.MemberType)
 
-	// User cannot self-join a public group while supplying member_id/member_type
-	// (treated as an attempt to add a member).
+	// User can self-join a public group while supplying their own member_id and
+	// user member_type (tolerant self-join form used by some clients).
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	tolerantBody := JoinGroupRequest{
+		MemberID:   testUserAccountID,
+		MemberName: "SelfJoinTolerant",
+		MemberType: string(models.MemberTypeUser),
+	}
+	jsonBody, _ = json.Marshal(tolerantBody)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-user-other-public-tolerant/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-user-other-public-tolerant"}}
+	handler.JoinGroup(c)
+	require.Equal(t, http.StatusCreated, w.Code)
+	// User cannot self-join a public group while supplying a different member_id
+	// or non-user member_type (treated as an attempt to add a member).
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
 	setUserAuth(c, testUserAccountID)
@@ -983,6 +1000,27 @@ func TestGroupMemberHandler_Join_UserOwnGroupOnly(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-user-other-private/members", bytes.NewBuffer(jsonBody))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Params = gin.Params{{Key: "group_id", Value: "group-user-other-private"}}
+	handler.JoinGroup(c)
+	require.Equal(t, http.StatusCreated, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &joinResp))
+	require.Equal(t, testUserAccountID, joinResp.Data.MemberID)
+	require.Equal(t, string(models.MemberTypeUser), joinResp.Data.MemberType)
+
+	// User can self-join a private group with the correct key and their own
+	// member_id/member_type (tolerant self-join form).
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	privateTolerantBody := JoinGroupRequest{
+		MemberID:   testUserAccountID,
+		MemberName: "SelfJoinPrivateTolerant",
+		MemberType: string(models.MemberTypeUser),
+		GroupKey:   "secret-key",
+	}
+	jsonBody, _ = json.Marshal(privateTolerantBody)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-user-other-private-tolerant/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-user-other-private-tolerant"}}
 	handler.JoinGroup(c)
 	require.Equal(t, http.StatusCreated, w.Code)
 

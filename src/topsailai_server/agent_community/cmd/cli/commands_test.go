@@ -1516,8 +1516,16 @@ func TestHandleGroupJoin(t *testing.T) {
 		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/groups/group-123/members" {
 			var body map[string]interface{}
 			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body["member_id"] != "u1" || body["member_name"] != "Alice" || body["member_type"] != "user" {
-				t.Errorf("unexpected join body: %v", body)
+			// Self-join requests must not include member_id or member_type;
+			// the server derives them from the authenticated account.
+			if _, ok := body["member_id"]; ok {
+				t.Errorf("self-join should not include member_id, got %v", body)
+			}
+			if _, ok := body["member_type"]; ok {
+				t.Errorf("self-join should not include member_type, got %v", body)
+			}
+			if body["member_name"] != "Alice" {
+				t.Errorf("unexpected member_name in join body: %v", body)
 			}
 			if _, ok := body["group_key"]; ok {
 				t.Errorf("public group join should not include group_key, got %v", body)
