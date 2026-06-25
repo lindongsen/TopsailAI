@@ -203,6 +203,34 @@ Task execution time is too long
 
 Both the **User2Agent** and **Agent2LLM** layers use a two-threshold strategy to decide when to summarize context. The entry points are `is_need_summarize_for_processed()` (User2Agent, in `workspace/context/ctx_runtime.py`) and `is_need_summarize_for_processing()` (Agent2LLM, in `workspace/context/agent2llm.py`).
 
+### Summarization Implementation Location
+
+| Layer | Trigger / Decision | Actual Summarization Logic |
+|-------|-------------------|---------------------------|
+| **User2Agent** | `is_need_summarize_for_processed()` in `workspace/context/ctx_runtime.py` | `summarize_messages_for_processed()` in `workspace/context/ctx_runtime.py` |
+| **Agent2LLM** | `is_need_summarize_for_processing()` in `workspace/context/agent2llm.py` | `summarize_messages_for_processing()` in `workspace/context/agent2llm.py` |
+
+Both implementations share the same final message structure:
+
+```
+new_messages = head_portion + [summary_answer] + [last_user_message]
+```
+
+- `head_portion` — messages from the start of the list up to and including the first `role=user, step_name=task` message.
+- `summary_answer` — a single assistant message produced by `_summarize_messages()` (defined in `workspace/context/base.py`), which receives the current runtime messages as input.
+- `last_user_message` — the final user message in the original list, preserved unchanged so the next turn still has a user prompt to respond to.
+
+### Runtime Message Variables
+
+The messages that are evaluated and summarized are the **runtime** message lists held by each context-runtime class:
+
+| Layer | Class | Runtime Message Variable | Defined in |
+|-------|-------|--------------------------|------------|
+| **User2Agent** | `ContextRuntimeData` | `self.messages` | `workspace/context/ctx_runtime.py` |
+| **Agent2LLM** | `ContextRuntimeAgent2LLM` | `self.ai_agent.messages` | `workspace/context/agent2llm.py` |
+
+These variables contain the current in-memory conversation context. The summarization methods read from them, produce the `summary_answer`, and then rebuild the list as `head_portion + [summary_answer] + [last_user_message]`.
+
 ### Common Threshold Mechanism
 
 Both methods first call `_get_quantity_threshold(env_key)` (defined in `workspace/context/base.py`) to obtain a randomized message-count threshold. Each layer uses its own environment variable, falling back to the legacy shared variable only when the layer-specific one is not configured:
