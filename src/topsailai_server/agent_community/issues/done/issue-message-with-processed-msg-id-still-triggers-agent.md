@@ -1,5 +1,5 @@
 ---
-status: open
+status: done
 severity: high
 component: trigger-evaluation / message-processing
 related_test: docs/cases/TestCase_manual_cli_agent_trigger.md

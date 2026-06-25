@@ -53,6 +53,7 @@ build_server() {
 start_server() {
     log "Starting ACS server for integration tests..."
     export PATH="${AGENT_CMD_DIR}:${PATH}"
+    export ACS_HTTP_HOST="${TEST_HOST}"
     export ACS_HTTP_PORT="${TEST_PORT}"
     export ACS_DATABASE_DRIVER="postgres"
     export ACS_DATABASE_HOST="localhost"

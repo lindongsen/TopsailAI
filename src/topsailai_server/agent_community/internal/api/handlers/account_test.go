@@ -55,7 +55,7 @@ func setupAccountTestHandler(t *testing.T, db *gorm.DB) *AccountHandler {
 	cfg := newAccountTestConfig()
 	accountSvc := services.NewAccountService(db, cfg)
 	log := logger.New(logger.Config{Output: "stdout", Level: "error"})
-	return NewAccountHandler(accountSvc, log)
+	return NewAccountHandler(accountSvc, nil, log)
 }
 
 // createTestAccount creates an account through the service for test setup.

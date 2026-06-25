@@ -1872,26 +1872,118 @@ func TestListMessages_IncludesAgentMessages(t *testing.T) {
 	assert.True(t, ids[managerMsg.MessageID], "manager-agent message should be listed")
 }
 
-// TestListMessages_SoftDeletedExcluded verifies that soft-deleted messages are
-// omitted from list results.
-func TestListMessages_SoftDeletedExcluded(t *testing.T) {
+// TestListMessages_SoftDeletedExcludedByDefault verifies that soft-deleted
+// messages are excluded from list results unless an admin explicitly requests them.
+func TestListMessages_SoftDeletedExcludedByDefault(t *testing.T) {
 	db := setupMessageTestDB(t)
 	userID := "acc-list-deleted-user"
+	adminID := "acc-list-deleted-admin"
 	groupID := "group-list-deleted"
 	createTestGroup(t, db, groupID, "List Deleted Group")
 	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
 
 	visibleMsg := createTestMessage(t, db, groupID, "msg-visible", userID, models.MemberTypeUser, "")
 	deletedMsg := createTestMessage(t, db, groupID, "msg-deleted-list", userID, models.MemberTypeUser, "")
+	nowMs := time.Now().UnixMilli()
 	err := db.Model(&models.GroupMessage{}).Where("message_id = ?", deletedMsg.MessageID).Updates(map[string]interface{}{
 		"is_deleted":   true,
-		"delete_at_ms": time.Now().UnixMilli(),
-		"update_at_ms": time.Now().UnixMilli(),
+		"message_text": "",
+		"delete_at_ms": nowMs,
+		"update_at_ms": nowMs,
 	}).Error
 	require.NoError(t, err)
 
 	router, handler := setupMessageTestRouter(t, db, nil, nil)
 	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
+
+	// Non-admin default request excludes deleted messages.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var resp listMessagesResponseWrapper
+	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), resp.Data.Total)
+	require.Len(t, resp.Data.Items, 1)
+	assert.Equal(t, visibleMsg.MessageID, resp.Data.Items[0].MessageID)
+	assert.False(t, resp.Data.Items[0].IsDeleted)
+
+	// Admin request with include_deleted=true returns both messages.
+	adminRouter, _ := setupMessageTestRouter(t, db, nil, nil)
+	adminRouter.Use(authContextMiddleware(testAuthContext(adminID, models.AccountRoleAdmin)))
+	adminRouter.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
+
+	adminReq := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages?include_deleted=true", nil)
+	adminW := httptest.NewRecorder()
+	adminRouter.ServeHTTP(adminW, adminReq)
+
+	require.Equal(t, http.StatusOK, adminW.Code, "body: %s", adminW.Body.String())
+	var adminResp listMessagesResponseWrapper
+	err = json.Unmarshal(adminW.Body.Bytes(), &adminResp)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), adminResp.Data.Total)
+	require.Len(t, adminResp.Data.Items, 2)
+
+	ids := make(map[string]MessageResponse)
+	for _, item := range adminResp.Data.Items {
+		ids[item.MessageID] = item
+	}
+	require.Contains(t, ids, visibleMsg.MessageID)
+	require.Contains(t, ids, deletedMsg.MessageID)
+	assert.False(t, ids[visibleMsg.MessageID].IsDeleted)
+	assert.Equal(t, "Test message msg-visible", ids[visibleMsg.MessageID].MessageText)
+	assert.True(t, ids[deletedMsg.MessageID].IsDeleted)
+	assert.Empty(t, ids[deletedMsg.MessageID].MessageText)
+	assert.Empty(t, ids[deletedMsg.MessageID].MessageAttachments)
+}
+
+// TestListMessages_NonAdminCannotIncludeDeleted verifies that a non-admin user
+// receives 403 when explicitly requesting deleted messages.
+func TestListMessages_NonAdminCannotIncludeDeleted(t *testing.T) {
+	db := setupMessageTestDB(t)
+	userID := "acc-list-deleted-forbidden"
+	groupID := "group-list-deleted-forbidden"
+	createTestGroup(t, db, groupID, "List Deleted Forbidden Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+	createTestMessage(t, db, groupID, "msg-forbidden", userID, models.MemberTypeUser, "")
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(userID, models.AccountRoleUser)))
+	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages?include_deleted=true", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+}
+
+// TestListMessages_AdminWithoutIncludeDeletedExcludesDeleted verifies that an
+// admin request without include_deleted=true excludes soft-deleted messages.
+func TestListMessages_AdminWithoutIncludeDeletedExcludesDeleted(t *testing.T) {
+	db := setupMessageTestDB(t)
+	adminID := "acc-list-deleted-admin-default"
+	userID := "acc-list-deleted-user-default"
+	groupID := "group-list-deleted-default"
+	createTestGroup(t, db, groupID, "List Deleted Default Group")
+	createTestGroupMember(t, db, groupID, userID, models.MemberTypeUser)
+
+	visibleMsg := createTestMessage(t, db, groupID, "msg-visible-default", userID, models.MemberTypeUser, "")
+	deletedMsg := createTestMessage(t, db, groupID, "msg-deleted-default", userID, models.MemberTypeUser, "")
+	nowMs := time.Now().UnixMilli()
+	err := db.Model(&models.GroupMessage{}).Where("message_id = ?", deletedMsg.MessageID).Updates(map[string]interface{}{
+		"is_deleted":   true,
+		"message_text": "",
+		"delete_at_ms": nowMs,
+		"update_at_ms": nowMs,
+	}).Error
+	require.NoError(t, err)
+
+	router, handler := setupMessageTestRouter(t, db, nil, nil)
+	router.Use(authContextMiddleware(testAuthContext(adminID, models.AccountRoleAdmin)))
 	router.GET("/api/v1/groups/:group_id/messages", handler.ListMessages)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+groupID+"/messages", nil)

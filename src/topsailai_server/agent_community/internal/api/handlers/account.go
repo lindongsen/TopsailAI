@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,13 +18,15 @@ import (
 // AccountHandler handles account-related HTTP requests.
 type AccountHandler struct {
 	accountSvc *services.AccountService
+	auditSvc   *services.AuditLogService
 	log        *logger.Logger
 }
 
 // NewAccountHandler creates a new AccountHandler.
-func NewAccountHandler(accountSvc *services.AccountService, log *logger.Logger) *AccountHandler {
+func NewAccountHandler(accountSvc *services.AccountService, auditSvc *services.AuditLogService, log *logger.Logger) *AccountHandler {
 	return &AccountHandler{
 		accountSvc: accountSvc,
+		auditSvc:   auditSvc,
 		log:        log,
 	}
 }
@@ -375,31 +378,63 @@ func (h *AccountHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// The login endpoint is public and does not run the auth middleware, so
-	// inject the client IP into the context here so audit logs can capture it.
-	ctx := services.ContextWithClientIP(c.Request.Context(), c.ClientIP())
+	ctx := c.Request.Context()
+	clientIP := c.ClientIP()
 
 	account, sessionKey, expiry, err := h.accountSvc.LoginByPassword(ctx, req.LoginName, req.LoginPassword)
 	if err != nil {
 		h.log.Warn("api", traceID, "login failed", "error", err.Error())
-		if err == services.ErrAccountNotFound || err == services.ErrPasswordNotSet {
+
+		// Audit failed login attempts. The audit middleware cannot determine the
+		// account ID for failed logins because the response body does not contain it.
+		if err == services.ErrAccountNotFound {
+			h.writeLoginAuditLog(ctx, req.LoginName, req.LoginName, "login_failed", "login failed: account not found", clientIP)
+			writeErrorResponse(c, http.StatusUnauthorized, "invalid credentials", traceID)
+			return
+		}
+		if err == services.ErrPasswordNotSet {
+			h.writeLoginAuditLog(ctx, req.LoginName, req.LoginName, "login_failed", "login failed: password not set", clientIP)
 			writeErrorResponse(c, http.StatusUnauthorized, "invalid credentials", traceID)
 			return
 		}
 		if err == services.ErrAccountInactive {
+			if acct, lookupErr := h.accountSvc.GetAccountByLoginName(ctx, req.LoginName); lookupErr == nil && acct != nil {
+				h.writeLoginAuditLog(ctx, acct.AccountID, acct.AccountName, "login_failed", "login failed: account is not active", clientIP)
+			}
 			writeErrorResponse(c, http.StatusBadRequest, "account is not active", traceID)
 			return
+		}
+		if acct, lookupErr := h.accountSvc.GetAccountByLoginName(ctx, req.LoginName); lookupErr == nil && acct != nil {
+			h.writeLoginAuditLog(ctx, acct.AccountID, acct.AccountName, "login_failed", "login failed: invalid password", clientIP)
 		}
 		writeErrorResponse(c, http.StatusUnauthorized, "invalid credentials", traceID)
 		return
 	}
 
+	h.writeLoginAuditLog(ctx, account.AccountID, account.AccountName, "login_success", "login succeeded", clientIP)
 	h.log.Info("api", traceID, "login succeeded", "account_id", account.AccountID)
 	writeDataResponse(c, http.StatusOK, LoginResponse{
 		AccountID:   account.AccountID,
 		SessionKey:  sessionKey,
 		ExpiresAtMs: expiry,
 	}, traceID)
+}
+
+// writeLoginAuditLog writes a login-related audit log record.
+func (h *AccountHandler) writeLoginAuditLog(ctx context.Context, accountID, accountName, action, detail, clientIP string) {
+	if h.auditSvc == nil {
+		return
+	}
+	go func() {
+		_, _ = h.auditSvc.Log(context.WithoutCancel(ctx), &services.AuditLogRequest{
+			Action:       action,
+			ResourceType: "account",
+			ResourceID:   accountID,
+			ResourceName: accountName,
+			Detail:       detail,
+			ClientIP:     clientIP,
+		})
+	}()
 }
 
 // CreateSession handles POST /api/v1/accounts/:account_id/session.

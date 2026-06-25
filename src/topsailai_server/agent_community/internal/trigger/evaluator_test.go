@@ -498,6 +498,116 @@ func TestEvaluate_SlidingWindowBoundary11(t *testing.T) {
 	}
 }
 
+// TestEvaluate_SlidingWindowExcludesDeletedAgentMessages verifies that deleted
+// agent messages are not counted toward the consecutive-agent run.
+func TestEvaluate_SlidingWindowExcludesDeletedAgentMessages(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
+		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
+	}
+	now := time.Now().UnixMilli()
+
+	// Build 11 agent messages before target, but mark 2 as deleted.
+	// After excluding deleted messages, only 9 consecutive agent messages remain,
+	// so the trigger should proceed.
+	contextMessages := make([]models.GroupMessage, 0, 12)
+	for i := 0; i < 11; i++ {
+		m := makeMessage(
+			fmt.Sprintf("msg_a_%d", i), "agent1", models.MemberTypeWorkerAgent,
+			"agent msg", "", now-int64((20-i)*1000),
+		)
+		if i < 2 {
+			m.IsDeleted = true
+			m.DeleteAtMs = now - int64((20-i)*1000) + 1
+		}
+		contextMessages = append(contextMessages, *m)
+	}
+
+	targetMsg := makeMessage("target", "user1", models.MemberTypeUser, "Hello", "", now+1000)
+	contextMessages = append(contextMessages, *targetMsg)
+
+	result, err := e.Evaluate(context.Background(), targetMsg, members, contextMessages)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.ShouldTrigger {
+		t.Error("expected trigger when deleted agent messages are excluded from consecutive count")
+	}
+}
+
+// TestEvaluate_SlidingWindowExcludesDeletedNonAgentMessages verifies that deleted
+// non-agent messages do not break a consecutive-agent run.
+func TestEvaluate_SlidingWindowExcludesDeletedNonAgentMessages(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("agent1", "Bot", models.MemberTypeWorkerAgent),
+		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
+	}
+	now := time.Now().UnixMilli()
+
+	// Build 10 agent messages, then a deleted user message, then 1 more agent message.
+	// Excluding the deleted user message leaves 11 consecutive agent messages in the
+	// window around the target, so the trigger should be blocked.
+	contextMessages := make([]models.GroupMessage, 0, 13)
+	for i := 0; i < 10; i++ {
+		contextMessages = append(contextMessages, *makeMessage(
+			fmt.Sprintf("msg_a_%d", i), "agent1", models.MemberTypeWorkerAgent,
+			"agent msg", "", now-int64((20-i)*1000),
+		))
+	}
+	deletedUserMsg := makeMessage(
+		"msg_user_deleted", "user1", models.MemberTypeUser, "deleted", "", now-9000,
+	)
+	deletedUserMsg.IsDeleted = true
+	deletedUserMsg.DeleteAtMs = now - 8999
+	contextMessages = append(contextMessages, *deletedUserMsg)
+
+	targetMsg := makeMessage("target", "user1", models.MemberTypeUser, "Hello", "", now+1000)
+	contextMessages = append(contextMessages, *targetMsg)
+
+	contextMessages = append(contextMessages, *makeMessage(
+		"msg_after", "agent1", models.MemberTypeWorkerAgent,
+		"agent msg", "", now+2000,
+	))
+
+	result, err := e.Evaluate(context.Background(), targetMsg, members, contextMessages)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ShouldTrigger {
+		t.Error("expected no trigger when deleted non-agent messages are excluded and 11 agent messages are consecutive")
+	}
+}
+
+// TestEvaluate_TargetMessageDeleted verifies that a deleted target message is
+// not found in the filtered context and loop protection is skipped.
+func TestEvaluate_TargetMessageDeleted(t *testing.T) {
+	e := NewEvaluator(10 * time.Minute)
+	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
+		makeMember("mgr1", "Manager", models.MemberTypeManagerAgent),
+	}
+	now := time.Now().UnixMilli()
+
+	contextMessages := []models.GroupMessage{
+		*makeMessage("msg1", "agent1", models.MemberTypeWorkerAgent, "agent", "", now-1000),
+	}
+	targetMsg := makeMessage("target", "user1", models.MemberTypeUser, "Hello", "", now)
+	targetMsg.IsDeleted = true
+	targetMsg.DeleteAtMs = now + 1
+
+	result, err := e.Evaluate(context.Background(), targetMsg, members, contextMessages)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.ShouldTrigger {
+		t.Error("expected trigger when target message is deleted and not in filtered context")
+	}
+}
+
 // TestEvaluate_TargetNotInContext verifies evaluation continues when target is missing from context.
 func TestEvaluate_TargetNotInContext(t *testing.T) {
 	e := NewEvaluator(10 * time.Minute)

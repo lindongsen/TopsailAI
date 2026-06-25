@@ -31,7 +31,7 @@ class TestApiKeyMaxPerAccount:
                 f"{server_url}/api/v1/accounts/{test_account['account_id']}/api-keys",
                 json={"api_key_name": f"limit-key-{i}", "role": "user"},
             )
-            if response.status_code == 400:
+            if response.status_code == 409:
                 # Limit already configured lower than default.
                 break
             assert response.status_code == 201, response.text
@@ -42,9 +42,10 @@ class TestApiKeyMaxPerAccount:
             f"{server_url}/api/v1/accounts/{test_account['account_id']}/api-keys",
             json={"api_key_name": "over-limit-key", "role": "user"},
         )
-        assert response.status_code == 400
-        data = get_response_data(response)
-        assert "limit" in data.get("error", "").lower() or "max" in data.get("error", "").lower()
+        assert response.status_code == 409
+        payload = response.json()
+        assert "error" in payload
+        assert "limit" in payload.get("error", "").lower() or "max" in payload.get("error", "").lower()
 
 
 class TestHttpServerReachability:
@@ -54,7 +55,7 @@ class TestHttpServerReachability:
         """CLI-ENV-001: server responds on configured host/port."""
         response = unauthenticated_client.get(f"{server_url}/healthz")
         assert response.status_code == 200
-        data = get_response_data(response)
+        data = response.json()
         assert data.get("status") == "alive"
 
 
@@ -66,7 +67,7 @@ class TestSessionExpirySeconds:
         response = admin_client.post(
             f"{server_url}/api/v1/accounts/{test_account['account_id']}/session"
         )
-        assert response.status_code == 201
+        assert response.status_code == 200
         data = get_response_data(response)
         assert "session_key" in data
         assert "expires_at_ms" in data

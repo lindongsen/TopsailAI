@@ -163,6 +163,18 @@ func (s *AccountService) GetAccountByID(ctx context.Context, accountID string) (
 	return &account, nil
 }
 
+// GetAccountByLoginName retrieves an account by its unique login name.
+func (s *AccountService) GetAccountByLoginName(ctx context.Context, loginName string) (*models.Account, error) {
+	var account models.Account
+	if err := s.db.WithContext(ctx).First(&account, "login_name = ?", loginName).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrAccountNotFound
+		}
+		return nil, fmt.Errorf("failed to get account by login_name: %w", err)
+	}
+	return &account, nil
+}
+
 // GetAccountByExternalID retrieves an account by external ID.
 func (s *AccountService) GetAccountByExternalID(ctx context.Context, externalID string) (*models.Account, error) {
 	var account models.Account

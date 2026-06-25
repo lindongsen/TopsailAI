@@ -109,8 +109,12 @@ class TestAPIKeyConstraints:
             json=key_data,
         )
         assert response.status_code == 403
-        data = get_response_data(response)
-        assert "role" in data["error"].lower() or "api key role" in data["error"].lower()
+        payload = response.json()
+        assert "error" in payload
+        assert (
+            "role" in payload["error"].lower()
+            or "api key role" in payload["error"].lower()
+        )
 
     def test_user_can_create_own_api_key(
         self,
@@ -157,8 +161,6 @@ class TestAPIKeyConstraints:
         assert response.status_code == 201
         other_account = get_response_data(response)
 
-        # Create a session for the first test account.
-        response = admin_client.post(f"{server_url}/api/v1/accounts/{test_account['account_id']}/session")
         # Create a session for the first test account.
         response = admin_client.post(f"{server_url}/api/v1/accounts/{test_account['account_id']}/session")
         assert response.status_code == 200
@@ -237,7 +239,7 @@ class TestAPIKeyAuditLogs:
         response = admin_client.get(
             f"{server_url}/api/v1/audit-logs",
             params={
-                "action": "api_key.create",
+                "action": "create_api_key",
                 "resource_type": "api_key",
                 "resource_id": api_key["api_key_id"],
             },
@@ -246,7 +248,8 @@ class TestAPIKeyAuditLogs:
         data = get_response_data(response)
         assert data["total"] >= 1
         assert any(
-            log["resource_id"] == api_key["api_key_id"] and log["action"] == "api_key.create"
+            log["resource_id"] == api_key["api_key_id"]
+            and log["action"] == "create_api_key"
             for log in data["items"]
         )
 

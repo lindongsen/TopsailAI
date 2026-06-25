@@ -327,9 +327,10 @@ func (h *MessageHandler) evaluateAndTrigger(c *gin.Context, traceID string, msg 
 		return
 	}
 
-	// Get context messages for sliding window check
+	// Get context messages for sliding window check. Exclude deleted messages
+	// here as an optimization; the evaluator also filters them defensively.
 	var contextMessages []models.GroupMessage
-	if err := h.db.Where("group_id = ?", msg.GroupID).
+	if err := h.db.Where("group_id = ? AND is_deleted = ?", msg.GroupID, false).
 		Order("create_at_ms ASC").
 		Find(&contextMessages).Error; err != nil {
 		h.log.Warn("api", traceID, "failed to get context messages for trigger evaluation", "error", err.Error())
@@ -423,10 +424,22 @@ func (h *MessageHandler) ListMessages(c *gin.Context) {
 		return
 	}
 
-	// Build query
-	// Build query. Explicitly exclude soft-deleted messages (is_deleted) while
-	// still relying on GORM's deleted_at scope as defense-in-depth.
-	query := h.db.Model(&models.GroupMessage{}).Where("group_id = ? AND is_deleted = ?", groupID, false)
+	// Determine whether the caller wants to include soft-deleted messages.
+	// Only admin users may request this; non-admin callers are rejected when
+	// they explicitly pass include_deleted=true.
+	includeDeletedParam := strings.ToLower(c.Query("include_deleted"))
+	includeDeleted := includeDeletedParam == "true" || includeDeletedParam == "1"
+	if includeDeleted && !isAdmin(authCtx) {
+		writeErrorResponse(c, http.StatusForbidden, "only admin can use include_deleted=true", traceID)
+		return
+	}
+
+	// Build query. By default exclude soft-deleted messages; include them only
+	// when an admin explicitly requests it.
+	query := h.db.Model(&models.GroupMessage{}).Where("group_id = ?", groupID)
+	if !includeDeleted {
+		query = query.Where("is_deleted = ?", false)
+	}
 
 	// Time range filtering
 	if createRange := c.Query("create_at_ms"); createRange != "" {

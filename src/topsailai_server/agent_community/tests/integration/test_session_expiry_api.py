@@ -34,7 +34,7 @@ SERVER_BIN = os.path.join(PROJECT_ROOT, "bin", "acs-server")
 AGENT_CMD_DIR = os.path.join(PROJECT_ROOT, "scripts", "topsailai_agent_cmd")
 
 SECONDARY_HOST = "127.1.0.5"
-TEST_PORT = 7370
+TEST_PORT = 7371
 
 
 def _read_token_file(file_name: str) -> str | None:

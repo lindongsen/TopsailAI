@@ -90,6 +90,9 @@ Columns:
 - is_deleted
 - delete_at_ms
 
+关于 删除消息（仅清空消息内容，但记录还在，即”撤回消息“）：
+1. user 不能查询到已删除的消息，仅 admin 才能显式传参地去查询到这些已删除的消息。
+
 ---
 
 ## Table: audit_logs
@@ -262,7 +265,7 @@ ACS_GROUP_MANAGER_AGENT_TIMEOUT_CHECK_STATUS
 [NO_TRIGGER_CASES] 这些情况下不会触发：
 1. 消息的 sender_type 是 xxx-agent；
 2. 消息的 processed_msg_id 有值；
-3. 获取 消息 之前的10条消息和之后的10条消息，当这20条中存在连续超过10条（滑动窗口）都是 member_type=xxx-agent 的属性
+3. 获取 消息 之前的10条消息和之后的10条消息，不包括已删除的消息，当这20条中存在连续超过10条（滑动窗口）都是 member_type=xxx-agent 的属性
 
 Note: 支持一个api接口去主动触发特定的消息，此时 `NO_TRIGGER_CASES` 就会被忽略。
 

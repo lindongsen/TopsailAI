@@ -1211,6 +1211,7 @@ List messages in a group with pagination and filtering.
 
 **Query Parameters:**
 - offset, limit, sort_key, order_by, create_at_ms, update_at_ms, processed_msg_id
+- `include_deleted` (bool, default `false`): When `true`, the response includes messages where `is_deleted=true`. **Only `admin` callers may use this parameter.** Non-admin callers that explicitly set `include_deleted=true` receive `403 Forbidden`.
 
 **Example Request:**
 ```bash
@@ -1250,6 +1251,9 @@ GET /api/v1/groups/group-abc123/messages?processed_msg_id=msg-001&limit=10
   "trace_id": "..."
 }
 ```
+
+**Response 403 Forbidden:**
+- Caller is not `admin` and `include_deleted=true` was requested.
 
 ### Update Message
 

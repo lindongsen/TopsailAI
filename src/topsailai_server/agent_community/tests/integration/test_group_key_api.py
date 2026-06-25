@@ -414,7 +414,7 @@ class TestGroupKeyJoinBehavior:
             )
             data = get_response_data(response)
             # Self-join overrides member_id to the caller's account_id.
-            me = another_user_client.get(f"{server_url}/api/v1/accounts/me").json()
+            me = get_response_data(another_user_client.get(f"{server_url}/api/v1/accounts/me"))
             assert data["member_id"] == me["account_id"]
             assert data["member_type"] == "user"
         finally:
@@ -454,7 +454,7 @@ class TestGroupKeyJoinBehavior:
             f"Expected 201 for key-based self-join, got {response.status_code}: {response.text}"
         )
         data = get_response_data(response)
-        me = another_user_client.get(f"{server_url}/api/v1/accounts/me").json()
+        me = get_response_data(another_user_client.get(f"{server_url}/api/v1/accounts/me"))
         assert data["member_id"] == me["account_id"]
         assert data["member_type"] == "user"
 

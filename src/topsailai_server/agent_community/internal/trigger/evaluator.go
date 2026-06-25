@@ -116,14 +116,24 @@ func isAgentType(mt models.MemberType) bool {
 
 // isLoopMessage checks the sliding window anti-loop condition.
 // In 20 messages around this one (10 before, 10 after), if >10 consecutive agent messages, skip.
+// Deleted messages (is_deleted=true) are excluded from the window and from the consecutive count.
 func (e *Evaluator) isLoopMessage(msg *models.GroupMessage, contextMessages []models.GroupMessage) bool {
 	if len(contextMessages) == 0 {
 		return false
 	}
 
-	// Find the index of the target message in contextMessages
+	// Filter out deleted messages. The spec requires the 10-before/10-after window
+	// to be computed over non-deleted messages only.
+	filtered := make([]models.GroupMessage, 0, len(contextMessages))
+	for _, m := range contextMessages {
+		if !m.IsDeleted && m.DeleteAtMs == 0 {
+			filtered = append(filtered, m)
+		}
+	}
+
+	// Find the index of the target message in the filtered list
 	targetIdx := -1
-	for i, m := range contextMessages {
+	for i, m := range filtered {
 		if m.MessageID == msg.MessageID {
 			targetIdx = i
 			break
@@ -140,14 +150,14 @@ func (e *Evaluator) isLoopMessage(msg *models.GroupMessage, contextMessages []mo
 		start = 0
 	}
 	end := targetIdx + 10
-	if end >= len(contextMessages) {
-		end = len(contextMessages) - 1
+	if end >= len(filtered) {
+		end = len(filtered) - 1
 	}
 
 	window := make([]models.GroupMessage, 0)
 	for i := start; i <= end; i++ {
 		if i != targetIdx {
-			window = append(window, contextMessages[i])
+			window = append(window, filtered[i])
 		}
 	}
 

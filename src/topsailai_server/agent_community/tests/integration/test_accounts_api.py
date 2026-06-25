@@ -21,8 +21,8 @@ class TestAccountAuthentication:
         """Protected endpoints must reject requests without credentials."""
         response = unauthenticated_client.get(f"{server_url}/api/v1/accounts")
         assert response.status_code == 401
-        data = get_response_data(response)
-        assert "error" in data
+        payload = response.json()
+        assert "error" in payload
 
     def test_admin_token_can_list_accounts(self, admin_client: requests.Session, server_url: str):
         """An admin API key should be able to list accounts."""
@@ -298,7 +298,7 @@ class TestAccountAuditLogs:
         response = admin_client.get(
             f"{server_url}/api/v1/audit-logs",
             params={
-                "action": "account.create",
+                "action": "create_account",
                 "resource_type": "account",
                 "resource_id": account["account_id"],
             },
@@ -307,7 +307,7 @@ class TestAccountAuditLogs:
         data = _resp_data(response)
         assert data["total"] >= 1
         assert any(
-            log["resource_id"] == account["account_id"] and log["action"] == "account.create"
+            log["resource_id"] == account["account_id"] and log["action"] == "create_account"
             for log in data["items"]
         )
 

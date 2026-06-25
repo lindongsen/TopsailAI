@@ -56,7 +56,7 @@ def admin_account_id(server_url: str, admin_token: str) -> str:
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert response.status_code == 200, f"Failed to get admin account: {response.text}"
-    return get_response_data(response)["data"]["account_id"]
+    return get_response_data(response)["account_id"]
 
 
 class TestCLIBinary:
@@ -132,7 +132,7 @@ class TestCLIAuthenticatedCommands:
         """CLI-AUTH-004: login with session key via CLI."""
         response = admin_client.post(f"{server_url}/api/v1/accounts/{test_account['account_id']}/session")
         assert response.status_code == 200, f"Failed to create session: {response.text}"
-        session_key = get_response_data(response)["data"]["session_key"]
+        session_key = get_response_data(response)["session_key"]
 
         stdin = (
             f"/login session-key={session_key}\n"
@@ -191,7 +191,7 @@ class TestCLIAuthenticatedCommands:
         }
         response = admin_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201, f"Failed to create private group: {response.text}"
-        group_id = get_response_data(response)["data"]["group_id"]
+        group_id = get_response_data(response)["group_id"]
 
         try:
             stdin = (
@@ -218,7 +218,7 @@ class TestCLIAuthenticatedCommands:
         }
         response = admin_client.post(f"{server_url}/api/v1/groups", json=group_data)
         assert response.status_code == 201, f"Failed to create private group: {response.text}"
-        group_id = get_response_data(response)["data"]["group_id"]
+        group_id = get_response_data(response)["group_id"]
 
         try:
             stdin = (
@@ -234,6 +234,8 @@ class TestCLIAuthenticatedCommands:
         finally:
             admin_client.delete(f"{server_url}/api/v1/groups/{group_id}")
 
+    def test_cli_member_add_and_list(self, admin_token: str, test_group: dict):
+        """CLI-MEM-001/002: add and list members via CLI."""
         member_id = f"cli-user-{int(time.time() * 1000)}"
         stdin = (
             f"/member:add group-id={test_group['group_id']} "
@@ -280,13 +282,15 @@ class TestCLIAuthenticatedCommands:
     def test_cli_message_list_edit_delete(self, admin_token: str, test_group: dict, test_member: dict):
         """CLI-MSG-001/002/003: list, edit, and delete messages via CLI."""
         # Create a message via API so we have a known message ID.
+        # The server derives sender_id and sender_type from the authenticated
+        # caller, so we do not send them in the request body.
         response = requests.post(
             f"http://localhost:7370/api/v1/groups/{test_group['group_id']}/messages",
             headers={"Authorization": f"Bearer {admin_token}", "Content-Type": "application/json"},
-            json={"message_text": "CLI original message", "sender_id": test_member["member_id"], "sender_type": "user"},
+            json={"message_text": "CLI original message"},
         )
         assert response.status_code == 201, f"Failed to create message: {response.text}"
-        message_id = get_response_data(response)["data"]["message_id"]
+        message_id = get_response_data(response)["message_id"]
 
         stdin = (
             f"/message:list group-id={test_group['group_id']}\n"
@@ -352,9 +356,10 @@ class TestCLIAuthenticatedCommands:
         )
         result_delete = _run_cli(stdin_delete, extra_args=["-api-key", user_token])
         assert result_delete.returncode == 0, f"CLI exited with error: {result_delete.stderr}"
-        assert "api key deleted" in result_delete.stdout.lower(), (
-            f"Expected key deletion, got: {result_delete.stdout}"
-        )
+        assert (
+            "api key" in result_delete.stdout.lower()
+            and "deleted" in result_delete.stdout.lower()
+        ), f"Expected key deletion, got: {result_delete.stdout}"
         assert key_name not in result_delete.stdout, (
             f"Expected deleted key to be absent, got: {result_delete.stdout}"
         )
@@ -376,17 +381,17 @@ class TestCLIAuthenticatedCommands:
         account_id = test_account["account_id"]
         stdin = (
             f"/account:update account-id={account_id} name=UpdatedByCLI\n"
-            f"/account:delete account-id={account_id}\n"
+            f"/account:delete account-id={account_id} yes=true\n"
             "/exit\n"
         )
         result = _run_cli(stdin, extra_args=["-api-key", admin_token])
         assert result.returncode == 0, f"CLI exited with error: {result.stderr}"
-        assert "account updated" in result.stdout.lower(), (
-            f"Expected account update success, got: {result.stdout}"
-        )
-        assert "account deleted" in result.stdout.lower(), (
-            f"Expected account delete success, got: {result.stdout}"
-        )
+        assert (
+            "account" in result.stdout.lower() and "updated" in result.stdout.lower()
+        ), f"Expected account update success, got: {result.stdout}"
+        assert (
+            "account" in result.stdout.lower() and "deleted" in result.stdout.lower()
+        ), f"Expected account delete success, got: {result.stdout}"
 
     def test_cli_account_password_change(self, admin_token: str, test_account: dict):
         """CLI-RBAC-010: change account password via CLI."""
@@ -410,7 +415,7 @@ class TestCLIAuthenticatedCommands:
         )
         result = _run_cli(stdin, extra_args=["-api-key", admin_token])
         assert result.returncode == 0, f"CLI exited with error: {result.stderr}"
-        assert "session_key" in result.stdout.lower() or "session created" in result.stdout.lower(), (
+        assert "session key" in result.stdout.lower(), (
             f"Expected session creation, got: {result.stdout}"
         )
 

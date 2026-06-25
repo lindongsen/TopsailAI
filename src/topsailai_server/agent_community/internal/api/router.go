@@ -58,7 +58,7 @@ func NewRouter(cfg *config.Config, db *gorm.DB, publisher *nats.Publisher, evalu
 	memberHandler := handlers.NewGroupMemberHandler(db, publisher, log)
 	messageHandler := handlers.NewMessageHandler(db, publisher, evaluator, log)
 	healthHandler := handlers.NewHealthHandler(db, disc, log)
-	accountHandler := handlers.NewAccountHandler(accountSvc, log)
+	accountHandler := handlers.NewAccountHandler(accountSvc, auditSvc, log)
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeySvc, accountSvc, log)
 	auditLogHandler := handlers.NewAuditLogHandler(auditSvc, log)
 
