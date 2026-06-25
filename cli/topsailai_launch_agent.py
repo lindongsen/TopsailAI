@@ -4,7 +4,8 @@
 AI Agent Launcher Script
 
 Parse .topsailai/settings.yaml in the current working directory,
-assemble command line and environment variables based on --item argument,
+assemble environment variables based on --item argument,
+read configured context files into TOPSAILAI_CONTEXT_USER_MESSAGE,
 and launch the subprocess via os.system (default) or subprocess.run (with --subprocess).
 """
 
@@ -206,6 +207,22 @@ def _scan_workspace_files(workspace):
     walk(workspace)
     return "> " + workspace + "\n" + "\n".join(entries)
 
+def _read_context_file_blocks(context_paths):
+    """Read each context file and return formatted blocks."""
+    blocks = []
+    for path in context_paths:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except (OSError, UnicodeDecodeError) as exc:
+            print(
+                f"Warning: Failed to read context file '{path}': {exc}",
+                file=sys.stderr,
+            )
+            continue
+        blocks.append(f"> File: {path} > START\n{content}\n> File: {path} > END")
+    return "\n\n".join(blocks)
+
 def main():
     parser = argparse.ArgumentParser(
         description="Launch AI Agent Driver based on .topsailai/settings.yaml"
@@ -282,6 +299,9 @@ def main():
         else:
             abs_context.append(os.path.join(workspace, ctx))
 
+    # 2.5 Read context file contents and format them
+    context_content = _read_context_file_blocks(abs_context)
+
     # 3. Assemble environment variables: system env <- _default <- item (latter overrides former)
     default_env = env_map.get("_default", {})
     item_env = env_map.get(item_name, {}) if item_name != "_default" else {}
@@ -290,21 +310,32 @@ def main():
     merged_env.update(default_env)
     merged_env.update(item_env)
 
-    # 3.5 Scan workspace folder structure and append to TOPSAILAI_CONTEXT_USER_MESSAGE
+    # 3.5 Append context file contents and workspace folder structure to TOPSAILAI_CONTEXT_USER_MESSAGE
     original_user_message = merged_env.get("TOPSAILAI_CONTEXT_USER_MESSAGE", "")
     folder_structure = _scan_workspace_files(workspace)
+
+    message_parts = []
+    if context_content:
+        message_parts.append(context_content)
+    if folder_structure:
+        message_parts.append(f"# Workspace Folder Structure\n{folder_structure}")
+
     if original_user_message:
-        merged_env["TOPSAILAI_CONTEXT_USER_MESSAGE"] = (
-            f"{original_user_message}\n\n---\n\n# Workspace Folder Structure\n{folder_structure}"
-        )
+        if message_parts:
+            merged_env["TOPSAILAI_CONTEXT_USER_MESSAGE"] = (
+                f"{original_user_message}\n\n---\n\n"
+                + "\n\n---\n\n".join(message_parts)
+            )
+        else:
+            merged_env["TOPSAILAI_CONTEXT_USER_MESSAGE"] = original_user_message
     else:
-        merged_env["TOPSAILAI_CONTEXT_USER_MESSAGE"] = (
-            f"---\n\n# Workspace Folder Structure\n{folder_structure}"
+        merged_env["TOPSAILAI_CONTEXT_USER_MESSAGE"] = "\n\n---\n\n".join(
+            message_parts
         )
 
-    # 4. Assemble command line: ai_agent_driver + context file list
+    # 4. Assemble command line: ai_agent_driver only (context is passed via env)
     driver_parts = shlex.split(ai_agent_driver)
-    cmd = driver_parts + abs_context
+    cmd = driver_parts
 
     # 5. Print execution info
     print(f"[Launcher] Command: {' '.join(cmd)}")
@@ -337,21 +368,13 @@ def main():
         )
         exit_code = result.returncode
     else:
-        # Default: os.system mode - build a shell command string with cd and env exports
-        config_env_keys = sorted(
-            set(list(default_env.keys()) + list(item_env.keys()) + ["TOPSAILAI_CONTEXT_USER_MESSAGE"])
-        )
-        env_exports = []
-        for key in config_env_keys:
-            val = merged_env.get(key, '')
-            env_exports.append(f"export {key}={shlex.quote(str(val))}")
+        # Default: os.system mode - set environment variables via os.environ,
+        # then build a minimal shell command string (cd + command).
+        for key, val in merged_env.items():
+            os.environ[key] = str(val)
 
         cmd_str = ' '.join(shlex.quote(c) for c in cmd)
-        parts = [f"cd {shlex.quote(workspace)}"]
-        if env_exports:
-            parts.extend(env_exports)
-        parts.append(cmd_str)
-        full_cmd = " && ".join(parts)
+        full_cmd = f"cd {shlex.quote(workspace)} && {cmd_str}"
 
         print("[Launcher] Default os.system mode")
         print(f"[Launcher] Shell command: {full_cmd}")

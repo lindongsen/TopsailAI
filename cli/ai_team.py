@@ -103,10 +103,11 @@ def main():
 
     # prompt
     sys_prompt_content = generate_system_prompt()
-    print(sys_prompt_content)
+    # print(sys_prompt_content)
 
     # show members
-    print(get_members_cache())
+    print("\n")
+    print("[TopsailAI] Team: " + f"{get_members_cache()}")
 
     # agent chat
     agent_chat = get_agent_chat(
