@@ -82,7 +82,7 @@ class AgentChatBase(object):
             ctx_rt_aiagent:ContextRuntimeAIAgent,
             ctx_rt_instruction:ContextRuntimeInstructions,
 
-            session_head_tail_offset:int=DEFAULT_HEAD_TAIL_OFFSET, # cut messages
+            session_head_tail_offset:int|None=None, # cut messages
         ):
         """Initialize the AgentChat controller.
 
