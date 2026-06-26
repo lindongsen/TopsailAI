@@ -733,8 +733,8 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "agent-msg-0")
 
     @patch('topsailai.workspace.context.base.get_llm_chat')
-    def test_runtime_summary_uses_agent_messages_not_fallback(self, mock_get_llm_chat):
-        """Agent2LLM summary uses self.ai_agent.messages even with longer fallback."""
+    def test_runtime_summary_uses_fallback_when_longer(self, mock_get_llm_chat):
+        """Defensive fallback: use caller messages when longer than runtime store."""
         with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime"}):
             self.test_instance._ai_agent.messages = self._make_messages(5, "agent")
             self.test_instance._messages = self._make_messages(20, "session")
@@ -747,7 +747,26 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             fallback = self._make_messages(30, "fallback")
             self.test_instance._summarize_runtime_messages(fallback)
 
-            # Should use the Agent2LLM store, not the longer fallback
+            # Defensive fallback prefers the longer caller-supplied messages.
+            self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 30)
+            self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "fallback-msg-0")
+
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    def test_runtime_summary_uses_agent_messages_when_longer(self, mock_get_llm_chat):
+        """Agent2LLM summary uses self.ai_agent.messages when it is the longer source."""
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime"}):
+            self.test_instance._ai_agent.messages = self._make_messages(5, "agent")
+            self.test_instance._messages = self._make_messages(20, "session")
+            self.test_instance._ai_agent.agent_type = "test_agent"
+
+            mock_llm_chat = MagicMock()
+            mock_llm_chat.chat.return_value = "Summary"
+            mock_get_llm_chat.return_value = mock_llm_chat
+
+            fallback = self._make_messages(3, "fallback")
+            self.test_instance._summarize_runtime_messages(fallback)
+
+            # When ai_agent.messages is longer than fallback, the runtime store is used.
             self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 5)
             self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "agent-msg-0")
 

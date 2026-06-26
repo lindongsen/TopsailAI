@@ -745,8 +745,8 @@ class TestSummarizeRuntimeMessagesForProcessed(TestContextRuntimeData):
         return [{"role": "user", "content": f"{prefix}-msg-{i}"} for i in range(count)]
 
     @patch('topsailai.workspace.context.base.get_llm_chat')
-    def test_runtime_summary_uses_agent_messages_when_short(self, mock_get_llm_chat):
-        """User2Agent runtime summary uses ai_agent.messages by design."""
+    def test_runtime_summary_uses_fallback_when_longer(self, mock_get_llm_chat):
+        """User2Agent runtime summary falls back to caller messages when longer."""
         with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime"}):
             self.runtime.session_id = None
             self.runtime.messages = self._make_messages(20, "session")
@@ -759,20 +759,52 @@ class TestSummarizeRuntimeMessagesForProcessed(TestContextRuntimeData):
             ]
             mock_get_llm_chat.return_value = mock_llm_chat
 
+            fallback = self._make_messages(25, "fallback")
+
             with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=1):
                 with patch.object(self.runtime, 'set_messages'):
                     with patch.object(
                         type(self.runtime),
                         'last_user_message',
                         new_callable=PropertyMock,
-                        return_value={"role": "user", "content": "session-msg-19"}
+                        return_value={"role": "user", "content": "fallback-msg-24"}
                     ):
-                        self.runtime.summarize_messages_for_processed()
+                        self.runtime.summarize_messages_for_processed(messages=fallback)
 
-            # Per MEMO.md design, _get_token_calculation_messages returns
-            # self.ai_agent.messages when an agent is present.
-            self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 1)
-            self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "short")
+            # Defensive fallback prefers the longer caller-supplied messages.
+            self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 25)
+            self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "fallback-msg-0")
+
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    def test_runtime_summary_uses_agent_messages_when_longer(self, mock_get_llm_chat):
+        """User2Agent runtime summary uses ai_agent.messages when it is longer."""
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime"}):
+            self.runtime.session_id = None
+            self.runtime.messages = self._make_messages(20, "session")
+            self.runtime.ai_agent = MagicMock()
+            self.runtime.ai_agent.messages = self._make_messages(25, "agent")
+
+            mock_llm_chat = MagicMock()
+            mock_llm_chat.prompt_ctl.messages = [
+                {"role": "assistant", "content": "Summary"}
+            ]
+            mock_get_llm_chat.return_value = mock_llm_chat
+
+            fallback = self._make_messages(20, "fallback")
+
+            with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=1):
+                with patch.object(self.runtime, 'set_messages'):
+                    with patch.object(
+                        type(self.runtime),
+                        'last_user_message',
+                        new_callable=PropertyMock,
+                        return_value={"role": "user", "content": "agent-msg-24"}
+                    ):
+                        self.runtime.summarize_messages_for_processed(messages=fallback)
+
+            # When ai_agent.messages is longer than fallback, runtime store is used.
+            self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 25)
+            self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "agent-msg-0")
 
     @patch('topsailai.workspace.context.base.get_llm_chat')
     def test_runtime_summary_uses_agent_messages_when_both_long(self, mock_get_llm_chat):

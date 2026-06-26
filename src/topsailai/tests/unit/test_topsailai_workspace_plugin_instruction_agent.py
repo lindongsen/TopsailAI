@@ -222,7 +222,7 @@ class TestGetMessages(unittest.TestCase):
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     @patch("topsailai.workspace.plugin_instruction.agent.json_tool")
     def test_success(self, mock_json_tool, mock_get_agent):
-        """Test successful messages retrieval"""
+        """Test successful messages retrieval including TotalCount footer."""
         mock_agent = MagicMock()
         mock_agent.messages = [
             {"role": "system", "content": "System"},
@@ -235,7 +235,8 @@ class TestGetMessages(unittest.TestCase):
         result = get_messages()
         
         mock_json_tool.json_dump.assert_called_once_with(mock_agent.messages)
-        self.assertEqual(result, '[{"role": "system", "content": "System"}]')
+        self.assertTrue(result.startswith('[{"role": "system", "content": "System"}]'))
+        self.assertIn("TotalCount: 2", result)
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     def test_no_agent(self, mock_get_agent):

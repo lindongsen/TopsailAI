@@ -725,15 +725,15 @@ class TestSummarizeRuntimeMessages(unittest.TestCase):
     @patch('topsailai.workspace.context.base.file_tool')
     @patch('topsailai.workspace.context.base.summary_tool')
     @patch('topsailai.workspace.context.base.story_tool')
-    def test_runtime_summary_uses_agent_messages_not_fallback(
+    def test_runtime_summary_uses_fallback_when_longer(
         self, mock_story_tool, mock_summary_tool, mock_file_tool,
         mock_env_tool, mock_get_llm_chat, mock_agent_base
     ):
-        """Test that runtime summary uses ai_agent.messages even when fallback is longer.
+        """Defensive fallback: use caller messages when longer than runtime store.
 
-        Per design, _get_token_calculation_messages() returns self.ai_agent.messages
-        whenever an agent is present. The caller-provided fallback is only used when
-        the runtime store is unavailable, not because it is longer.
+        The base implementation keeps a defensive fallback that switches to the
+        caller-provided messages when they are longer than the runtime-derived
+        message list, protecting against a pruned runtime store.
         """
         from topsailai.workspace.context.base import ContextRuntimeBase
 
@@ -751,13 +751,46 @@ class TestSummarizeRuntimeMessages(unittest.TestCase):
         runtime.ai_agent.messages = [{"role": "user", "content": "agent-msg"}]
         runtime.messages = [{"role": "user", "content": f"session-msg-{i}"} for i in range(20)]
 
-        # Default _get_token_calculation_messages returns ai_agent.messages (length 1)
         fallback = [{"role": "user", "content": f"fallback-{i}"} for i in range(20)]
         runtime._summarize_runtime_messages(fallback)
 
-        # Design choice: ai_agent.messages is used when an agent is present.
-        self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 1)
-        self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "agent-msg")
+        # Defensive fallback chooses the longer caller-supplied messages.
+        self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 20)
+        self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "fallback-0")
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.file_tool')
+    @patch('topsailai.workspace.context.base.summary_tool')
+    @patch('topsailai.workspace.context.base.story_tool')
+    def test_runtime_summary_uses_agent_messages_when_longer(
+        self, mock_story_tool, mock_summary_tool, mock_file_tool,
+        mock_env_tool, mock_get_llm_chat, mock_agent_base
+    ):
+        """Runtime summary uses ai_agent.messages when it is the longer source."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.get.return_value = "runtime"
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
+        mock_summary_tool.get_summary_prompt.return_value = None
+        mock_story_tool.PROMPT_SUMMARY_TASK = "default prompt"
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = "Summarized content"
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = self.mock_agent
+        runtime.ai_agent.messages = [{"role": "user", "content": f"agent-msg-{i}"} for i in range(25)]
+        runtime.messages = [{"role": "user", "content": f"session-msg-{i}"} for i in range(20)]
+
+        fallback = [{"role": "user", "content": f"fallback-{i}"} for i in range(20)]
+        runtime._summarize_runtime_messages(fallback)
+
+        # When ai_agent.messages is longer than fallback, runtime store is used.
+        self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 25)
+        self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "agent-msg-0")
     @patch('topsailai.workspace.context.base.AgentBase')
     @patch('topsailai.workspace.context.base.get_llm_chat')
     @patch('topsailai.workspace.context.base.env_tool')
