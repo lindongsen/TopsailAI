@@ -12,7 +12,24 @@ AI-Agent Core, Agent Workers
 2. Agent Core       -> Agent Enginering Framework
 3. Agent Workers    -> Worker Entry
 
-Folder details can be got from `test.md`
+Folder Details:
+```
+- Common Utils
+  - logger/
+  - utils/
+  - human/        -> General methods closely related to humans, such as defining names, identity identifiers, etc.
+
+- Agent Core
+  - prompt_hub/   -> Prompt Management & External
+  - skill_hub/    -> Skill Management & External
+  - tools/        -> Agent can use these Tools
+  - context/      -> Context Messages Management
+  - ai_base/      -> LLM/Agent Enginering Framework
+
+- Agent Workers
+  - ai_team/      -> A team work mode
+  - workspace/    -> Worker Entry
+```
 
 ## Core Modules
 
@@ -420,8 +437,8 @@ Overriding a shared accessor in a subclass breaks polymorphic expectations: call
 
 ## MEMO: `last_user_message` intentionally scans the User2Agent layer
 
-**Date:** 2026-06-26  
-**File:** `/TopsailAI/src/topsailai/workspace/context/base.py` (`last_user_message` property)  
+**Date:** 2026-06-26
+**File:** `/TopsailAI/src/topsailai/workspace/context/base.py` (`last_user_message` property)
 **Discussion:** Review of context-runtime override/mutator pitfalls
 
 ### Conclusion
