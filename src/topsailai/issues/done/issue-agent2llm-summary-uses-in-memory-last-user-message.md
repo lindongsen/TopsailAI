@@ -38,3 +38,13 @@ last_user_msg = self.last_user_message
 
 ## Suggested Direction
 Add an Agent2LLM-specific helper that scans `self.ai_agent.messages` for the last user message, or parameterize `last_user_message` to accept a message source.
+
+
+---
+
+## Resolution
+
+- **Status:** closed as expected behavior
+- **Reason:** Per `MEMO.md`, `last_user_message` intentionally scans `self.messages` (User2Agent persisted session layer) rather than `self.ai_agent.messages` (Agent2LLM ephemeral context). The tail message to preserve is the most recent real human input, not an internal tool observation or ReAct turn.
+- **Verified by:** AIMember.km2-reviewer
+- **Date:** 2026-06-26

@@ -41,3 +41,13 @@ try:
 
 ## Suggested Direction
 Force real-time token calculation for the User2Agent layer, or maintain a separate `tokenStat` for User2Agent session messages. At minimum, `is_need_summarize_for_processed` should call `self._get_current_tokens(realtime=True)` so the override in `ctx_runtime.py` is used.
+
+
+---
+
+## Resolution
+
+- **Status:** closed / already fixed
+- **Reason:** Current code in `ContextRuntimeData.is_need_summarize_for_processed()` calls `self._get_current_tokens(self.messages)`. Passing `self.messages` forces `_get_current_tokens()` into realtime mode, which counts tokens from the User2Agent session messages directly. The `_get_token_calculation_messages()` override mentioned in the issue was removed from `ContextRuntimeData` per `MEMO.md`.
+- **Verified by:** AIMember.km2-reviewer
+- **Date:** 2026-06-26

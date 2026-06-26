@@ -29,3 +29,13 @@ Either:
 2. Only `add_msgs` for the newly added summary message (and any net-new retained messages).
 
 Make the behavior consistent with `ctx_runtime.py`, which does not call `add_msgs` after summarization and relies on `_get_current_tokens(realtime=True)` for logging.
+
+
+---
+
+## Resolution
+
+- **Status:** closed as expected behavior
+- **Reason:** `TokenStat.add_msgs()` resets `current_count` to 0 and recalculates tokens from the full buffer. Calling it with the rebuilt `self.ai_agent.messages` after summarization correctly updates `current_tokens` to reflect the new, smaller context. It does not double-count retained messages.
+- **Verified by:** AIMember.km2-reviewer
+- **Date:** 2026-06-26

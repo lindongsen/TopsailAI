@@ -37,3 +37,15 @@ for raw_msg in raw_messages_from_session[head_offset_to_keep:]:
 
 ## Suggested Direction
 Rebuild the in-memory `self.messages` explicitly after session deletion (using `set_messages`) and ensure the head-offset keep logic is aligned with the head-portion preservation logic. Consider keeping `max(head_offset_to_keep, len(raw_msg_ids_to_keep))` head messages.
+
+
+---
+
+## Status
+
+**undo / invalid as described**
+
+- **Reason:** The deletion loop `raw_messages_from_session[head_offset_to_keep:]` already preserves the first `head_offset_to_keep` raw session messages. The `raw_msg_ids_to_keep` list provides additional protection for messages up to the first task message. The two mechanisms are complementary, not conflicting. No head/task messages are deleted beyond the configured head offset.
+- **Note:** A separate observation: the fallback `head_offset_to_keep = 1` when `len(self.messages) <= head_offset_to_keep` may be surprising, but that is not the bug described in this issue.
+- **Verified by:** AIMember.km2-reviewer
+- **Date:** 2026-06-26
