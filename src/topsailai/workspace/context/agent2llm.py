@@ -118,28 +118,53 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         msg_len = len(messages)
 
-        if msg_len <= 2:
-            logger.warning("no need summarize due to messages too short: [%s]", msg_len)
-            return None
-
         # if need keep session messages, user2agent session
-        need_session_messages = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES", True)
-
+        need_session_messages = env_tool.EnvReaderInstance.check_bool(
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES", True)
         session_msg_len = len(self.messages)
-        if need_session_messages:
+
+        if need_session_messages and session_msg_len > 0:
             # Prefer the Agent2LLM-specific threshold, fall back to the legacy shared threshold.
             ctx_quantity_threshold = env_tool.EnvReaderInstance.get(
                 "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD", formatter=int)
             if not ctx_quantity_threshold or ctx_quantity_threshold <= 0:
                 ctx_quantity_threshold = env_tool.EnvReaderInstance.get(
                     "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD", default=100, formatter=int) or 100
-            if session_msg_len >= int(ctx_quantity_threshold / 2):
+
+            session_max_ratio = env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO",
+                default=0.5,
+                formatter=float,
+            )
+            if session_max_ratio is None or session_max_ratio <= 0 or session_max_ratio > 1:
+                logger.warning("invalid TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO [%s], using default 0.5", session_max_ratio)
+                session_max_ratio = 0.5
+
+            if session_msg_len >= int(ctx_quantity_threshold * session_max_ratio):
                 need_session_messages = False
                 logger.warning("summary step cannot keep session messages due to it is too long: [%s]", session_msg_len)
 
+        # When session messages are kept, count them toward the "too short" guard
+        # so that the MIN_EXTRA_MESSAGES check can decide whether summarizing is worthwhile.
+        total_len = msg_len
+        if need_session_messages:
+            total_len += session_msg_len
+
+        if total_len <= 2:
+            logger.warning("no need summarize due to messages too short: [%s]", total_len)
+            return None
+
         if need_session_messages:
             # the messages too short
-            if msg_len < (session_msg_len + 17):
+            min_extra_messages = env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES",
+                default=17,
+                formatter=int,
+            )
+            if min_extra_messages is None or min_extra_messages < 0:
+                logger.warning("invalid TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES [%s], using default 17", min_extra_messages)
+                min_extra_messages = 17
+            if msg_len < (session_msg_len + min_extra_messages):
                 logger.info("no need summarize due to messages too short: [%s]", msg_len)
                 return None
 

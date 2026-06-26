@@ -745,8 +745,8 @@ class TestSummarizeRuntimeMessagesForProcessed(TestContextRuntimeData):
         return [{"role": "user", "content": f"{prefix}-msg-{i}"} for i in range(count)]
 
     @patch('topsailai.workspace.context.base.get_llm_chat')
-    def test_runtime_summary_uses_session_messages_when_agent_messages_short(self, mock_get_llm_chat):
-        """User2Agent summary uses self.messages even if ai_agent.messages is short."""
+    def test_runtime_summary_uses_agent_messages_when_short(self, mock_get_llm_chat):
+        """User2Agent runtime summary uses ai_agent.messages by design."""
         with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime"}):
             self.runtime.session_id = None
             self.runtime.messages = self._make_messages(20, "session")
@@ -769,13 +769,14 @@ class TestSummarizeRuntimeMessagesForProcessed(TestContextRuntimeData):
                     ):
                         self.runtime.summarize_messages_for_processed()
 
-            # The LLM should receive self.messages, not the short ai_agent.messages
-            self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 20)
-            self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "session-msg-0")
+            # Per MEMO.md design, _get_token_calculation_messages returns
+            # self.ai_agent.messages when an agent is present.
+            self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 1)
+            self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "short")
 
     @patch('topsailai.workspace.context.base.get_llm_chat')
-    def test_runtime_summary_uses_session_messages_when_both_long(self, mock_get_llm_chat):
-        """User2Agent summary uses self.messages even when ai_agent.messages is also long."""
+    def test_runtime_summary_uses_agent_messages_when_both_long(self, mock_get_llm_chat):
+        """User2Agent runtime summary still prefers ai_agent.messages when both are long."""
         with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime"}):
             self.runtime.session_id = None
             self.runtime.messages = self._make_messages(20, "session")
@@ -798,9 +799,10 @@ class TestSummarizeRuntimeMessagesForProcessed(TestContextRuntimeData):
                     ):
                         self.runtime.summarize_messages_for_processed()
 
-            # The LLM should still receive self.messages, not ai_agent.messages
+            # Per MEMO.md design, ai_agent.messages represents the complete
+            # runtime context and is used for runtime summary.
             self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 20)
-            self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "session-msg-0")
+            self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "agent-msg-0")
 
     @patch('topsailai.workspace.context.base.get_llm_chat')
     def test_runtime_summary_fallback_when_session_messages_empty(self, mock_get_llm_chat):

@@ -1,3 +1,15 @@
+# Agent2LLM summary session-message keep logic.
+# When TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES=1, the Agent2LLM summary
+# may include the User2Agent session messages. These variables tune that logic.
+# Maximum ratio of the Agent2LLM quantity threshold that the User2Agent session
+# may occupy before session messages are dropped from the Agent2LLM summary.
+# Must be a float in (0, 1]. Default is 0.5 (half the threshold).
+TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO=0.5
+# Minimum number of extra Agent2LLM messages required beyond the User2Agent
+# session length for the summary to be considered worthwhile.
+# Must be a non-negative integer. Default is 17.
+TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES=17
+
 # =============================================================================
 # OpenAI Configuration
 # =============================================================================

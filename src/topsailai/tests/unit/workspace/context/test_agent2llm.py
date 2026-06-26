@@ -285,7 +285,19 @@ class TestSummarizeMessagesForProcessing:
         ]
         mock_agent2llm.messages = ['{"role": "user", "content": "session1"}']
         mock_env_reader.check_bool.return_value = True
-        mock_env_reader.get.return_value = 100
+
+        def _get_side_effect(key, **kwargs):
+            if key == "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD":
+                return 100
+            if key == "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD":
+                return kwargs.get("default")
+            if key == "TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO":
+                return kwargs.get("default", 0.5)
+            if key == "TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES":
+                return kwargs.get("default", 17)
+            return kwargs.get("default")
+
+        mock_env_reader.get.side_effect = _get_side_effect
         with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
             mock_llm_chat = MagicMock()
             mock_prompt_ctl = MagicMock()

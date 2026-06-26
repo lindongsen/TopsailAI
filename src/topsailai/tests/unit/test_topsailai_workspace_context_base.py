@@ -725,15 +725,15 @@ class TestSummarizeRuntimeMessages(unittest.TestCase):
     @patch('topsailai.workspace.context.base.file_tool')
     @patch('topsailai.workspace.context.base.summary_tool')
     @patch('topsailai.workspace.context.base.story_tool')
-    def test_runtime_summary_defensive_fallback_to_larger_caller_messages(
+    def test_runtime_summary_uses_agent_messages_not_fallback(
         self, mock_story_tool, mock_summary_tool, mock_file_tool,
         mock_env_tool, mock_get_llm_chat, mock_agent_base
     ):
-        """Test defensive fallback prefers larger caller-provided messages.
+        """Test that runtime summary uses ai_agent.messages even when fallback is longer.
 
-        When the runtime-derived message list is unexpectedly shorter than the
-        caller-supplied messages, the passed-in messages are preferred to avoid
-        summarizing an incomplete or stale context.
+        Per design, _get_token_calculation_messages() returns self.ai_agent.messages
+        whenever an agent is present. The caller-provided fallback is only used when
+        the runtime store is unavailable, not because it is longer.
         """
         from topsailai.workspace.context.base import ContextRuntimeBase
 
@@ -755,9 +755,9 @@ class TestSummarizeRuntimeMessages(unittest.TestCase):
         fallback = [{"role": "user", "content": f"fallback-{i}"} for i in range(20)]
         runtime._summarize_runtime_messages(fallback)
 
-        # Defensive fallback: passed-in messages are longer, so they should be used
-        self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 20)
-        self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "fallback-0")
+        # Design choice: ai_agent.messages is used when an agent is present.
+        self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 1)
+        self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "agent-msg")
     @patch('topsailai.workspace.context.base.AgentBase')
     @patch('topsailai.workspace.context.base.get_llm_chat')
     @patch('topsailai.workspace.context.base.env_tool')

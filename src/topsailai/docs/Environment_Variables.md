@@ -1,3 +1,17 @@
+## Agent2LLM Summary Session-Message Tuning
+
+These variables tune the conditions under which the Agent2LLM summarizer keeps or drops User2Agent session messages when `TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES` is enabled.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO` | `0.5` | Maximum ratio of the Agent2LLM quantity threshold that the User2Agent session may occupy before session messages are dropped from the Agent2LLM summary. Must be a float in `(0, 1]`. Values outside this range fall back to `0.5`. |
+| `TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES` | `17` | Minimum number of extra Agent2LLM messages required beyond the User2Agent session length for the summary to be considered worthwhile. Must be a non-negative integer. Negative values fall back to `17`. |
+
+### Details
+
+- `TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO` replaces the previous hard-coded division of the Agent2LLM quantity threshold by `2`. For example, with the default `0.5`, if the effective Agent2LLM quantity threshold is `97`, session messages are dropped when the User2Agent session length reaches `int(97 * 0.5) = 48` messages.
+- `TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES` replaces the previous hard-coded value `17`. If the total Agent2LLM message count is less than `session_msg_len + min_extra_messages`, summarization is skipped because the context is not long enough to justify a summary.
+
 ---
 maintainer: AI
 workspace: /TopsailAI/src/topsailai

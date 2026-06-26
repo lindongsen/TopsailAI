@@ -385,6 +385,97 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             for i in range(count)
         ]
 
+    def test_summarize_session_keep_ratio_env_var(self):
+        """Test TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO controls session drop."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "100",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO": "0.3",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES": "0",
+        }):
+            # 29 >= 100 * 0.3 = 30? No, 29 < 30 => keep
+            session_msgs = self._make_session_messages(29)
+            self.test_instance._messages = session_msgs
+            self.test_instance._ai_agent.messages = self._make_agent_messages(30)
+            self.test_instance._first_position = 0
+
+            with patch('topsailai.workspace.context.agent2llm.logger'):
+                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                    self.test_instance.summarize_messages_for_processing()
+
+            final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
+            self.assertIn("session-msg-0", final_contents)
+    def test_summarize_session_keep_ratio_env_var_drop(self):
+        """Test TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO triggers drop."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "100",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO": "0.3",
+        }):
+            # 30 >= 100 * 0.3 = 30 => drop
+            session_msgs = self._make_session_messages(30)
+            self.test_instance._messages = session_msgs
+            self.test_instance._ai_agent.messages = self._make_agent_messages(30)
+            self.test_instance._first_position = 0
+
+            with patch('topsailai.workspace.context.agent2llm.logger'):
+                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                    self.test_instance.summarize_messages_for_processing()
+
+            final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
+            self.assertNotIn("session-msg-0", final_contents)
+
+    def test_summarize_session_keep_ratio_invalid_fallback(self):
+        """Test invalid TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO falls back to 0.5."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "100",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO": "1.5",
+        }):
+            # fallback ratio 0.5 => threshold 50; 50 >= 50 => drop
+            session_msgs = self._make_session_messages(50)
+            self.test_instance._messages = session_msgs
+            self.test_instance._ai_agent.messages = self._make_agent_messages(30)
+            self.test_instance._first_position = 0
+
+            with patch('topsailai.workspace.context.agent2llm.logger'):
+                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                    self.test_instance.summarize_messages_for_processing()
+
+            final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
+            self.assertNotIn("session-msg-0", final_contents)
+
+    def test_summarize_min_extra_messages_env_var(self):
+        """Test TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES controls short-circuit."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "100",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES": "5",
+        }):
+            session_msgs = self._make_session_messages(10)
+            self.test_instance._messages = session_msgs
+            # total 12, session 10, need total >= 10 + 5 = 15 => skip summary
+            self.test_instance._ai_agent.messages = self._make_agent_messages(2)
+            self.test_instance._first_position = 0
+
+            with patch('topsailai.workspace.context.agent2llm.logger') as mock_logger:
+                result = self.test_instance.summarize_messages_for_processing()
+                self.assertIsNone(result)
+                mock_logger.info.assert_called()
+
+    def test_summarize_min_extra_messages_invalid_fallback(self):
+        """Test invalid TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES falls back to 17."""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "100",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES": "-3",
+        }):
+            session_msgs = self._make_session_messages(10)
+            self.test_instance._messages = session_msgs
+            # fallback min_extra=17 => need total >= 10 + 17 = 27; total 20 => skip
+            self.test_instance._ai_agent.messages = self._make_agent_messages(10)
+            self.test_instance._first_position = 0
+
+            with patch('topsailai.workspace.context.agent2llm.logger') as mock_logger:
+                result = self.test_instance.summarize_messages_for_processing()
+                self.assertIsNone(result)
+                mock_logger.info.assert_called()
+
     def test_summarize_uses_agent2llm_threshold_for_session_keep(self):
         """Test TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD used to decide keeping session messages."""
         with patch.dict(os.environ, {
@@ -656,7 +747,7 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             fallback = self._make_messages(30, "fallback")
             self.test_instance._summarize_runtime_messages(fallback)
 
-            # Should use the short Agent2LLM store, not the fallback
+            # Should use the Agent2LLM store, not the longer fallback
             self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 5)
             self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "agent-msg-0")
 
