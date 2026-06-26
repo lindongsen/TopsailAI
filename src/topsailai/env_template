@@ -65,7 +65,7 @@ TOPSAILAI_AGENT_NAME="TopsailAI"
 TOPSAILAI_HUMAN_NAME = "Topsail"
 
 # tee out to log file, 1 to enabled
-TOPSAILAI_ENABLE_SESSION_TEE_OUT=0
+TOPSAILAI_ENABLE_SESSION_TEE_OUT=1
 
 # =============================================================================
 # LLM Parameters
@@ -144,7 +144,7 @@ TOPSAILAI_CONTEXT_ONE_MESSAGE_MAX_KB=30
 # Number of messages to keep from head and tail when truncating session history.
 # If unset, falls back to DEFAULT_HEAD_TAIL_OFFSET (7).
 # Set to 0 to disable truncation (all session messages are kept).
-# TOPSAILAI_SESSION_HEAD_TAIL_OFFSET=7
+TOPSAILAI_SESSION_HEAD_TAIL_OFFSET=0
 
 # Chat History Managers
 # Format: Manager classes separated by semicolons (';')
@@ -165,13 +165,13 @@ CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS=27000
 # When the number of messages reaches a threshold, they will be summarized to limit the message length.
 # This is the shared fallback/default. Layer-specific thresholds below take precedence when set.
 TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD=97
-# TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP=0
+TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP=0
 
 # Layer-specific message-count thresholds (optional).
 # If a layer-specific threshold is set, it takes precedence over TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD.
 # If unset/empty, the corresponding layer falls back to TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD.
-# TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD=
-# TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD=
+TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD=97
+TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD=17
 
 # When the current Agent2LLM token usage exceeds this threshold, summarization is triggered.
 # Set to 0 to disable the token-based check.
@@ -179,7 +179,7 @@ TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD=128000
 
 # When the current User2Agent (session) token usage exceeds this threshold, summarization is triggered.
 # Set to 0 to disable the token-based check (default).
-TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD=0
+TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD=64000
 
 # When set to 1, calculate tokens from the actual message content for summarization thresholds.
 # When set to 0 (default), use the cached TokenStat.current_tokens value.
@@ -215,18 +215,18 @@ TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION="0"
 
 # This prompt will be embedded at the end of the response
 TOPSAILAI_PROMPT_WHEN_NO_TOOL_CALL="
-CRITICAL SYSTEM ALERT: NO ACTION DETECTED
+CRITICAL-SYSTEM-ALERT: NO ACTION DETECTED
 
-**Status Check:** The previous turn resulted in **zero tool calls**.
-**Current State:** The user's request remains **unfulfilled**.
+StatusCheck: The previous turn resulted in **zero tool calls**.
+CurrentState: The user's request remains **unfulfilled**.
 
-**INSTRUCTIONS:**
+INSTRUCTIONS:
 1.  **DO NOT** apologize or provide conversational filler.
 2.  **DO NOT** explain why you didn't act.
 3.  **IMMEDIATELY** invoke the necessary tool(s) to complete the user's original request.
 4.  If you are waiting for user input, explicitly ask for the specific missing parameter.
 
-**ACTION:** Execute the task now.
+> ACTION: Execute the task now.
 "
 
 # If has severe repetiton, raise error. 1 for enabled, 0 for disabled
@@ -315,12 +315,22 @@ TOPSALAI_TOOL_CMD_TIMEOUT_MAP='
 [
   {
     "cmd": "pytest ",
-    "min_timeout": 300,
+    "min_timeout": 600,
     "max_timeout": 0
   },
   {
     "cmd": "go test",
-    "min_timeout": 300,
+    "min_timeout": 600,
+    "max_timeout": 0
+  },
+  {
+    "cmd": "bash tests/run_test",
+    "min_timeout": 1800,
+    "max_timeout": 0
+  },
+  {
+    "cmd": "make test",
+    "min_timeout": 1800,
     "max_timeout": 0
   }
 ]
