@@ -417,3 +417,21 @@ Overriding a shared accessor in a subclass breaks polymorphic expectations: call
 - If it is layer-specific, give it a name that clearly identifies the layer (`*_for_processing` / `*_for_processed`).
 - If it is shared, move it to `ContextRuntimeBase`.
 - Avoid overriding methods defined in `ContextRuntimeBase`; prefer adding new, explicitly named methods.
+
+## MEMO: `last_user_message` intentionally scans the User2Agent layer
+
+**Date:** 2026-06-26  
+**File:** `/TopsailAI/src/topsailai/workspace/context/base.py` (`last_user_message` property)  
+**Discussion:** Review of context-runtime override/mutator pitfalls
+
+### Conclusion
+The `last_user_message` property intentionally scans `self.messages` (the **User2Agent** persisted session layer), even when it is used from the **Agent2LLM** summarization path.
+
+### Rationale
+- `self.messages` holds the real human-to-agent conversation.
+- `self.ai_agent.messages` holds the ephemeral agent-to-LLM ReAct context, which contains internal `user` role messages such as tool observations and task injections.
+- When summarizing the Agent2LLM context, the "last user message" that must be preserved is the most recent **real human input**, not an internal ReAct/tool message.
+- Therefore, scanning `self.messages` is the correct design choice.
+
+### Note for maintainers
+Do not change `last_user_message` to scan `self.ai_agent.messages`. If a future use case genuinely needs the last user-like message inside the Agent2LLM layer, add a new layer-specific helper instead of modifying this property.

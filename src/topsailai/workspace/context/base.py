@@ -55,6 +55,16 @@ class ContextRuntimeBase(object):
         """
         Get the last user message from self.messages of current session.
 
+        IMPORTANT DESIGN NOTE:
+        This property intentionally scans self.messages (the User2Agent persisted
+        session layer), NOT self.ai_agent.messages (the Agent2LLM ephemeral ReAct
+        context). The "last user message" is defined as the most recent real human
+        input to the agent. The Agent2LLM layer contains internal user-role messages
+        such as tool observations and task injections, which must NOT be treated as
+        the last user message. When Agent2LLM summarization needs to preserve the
+        last user message, it relies on this property to obtain the correct human
+        message from the User2Agent session.
+
         Returns:
             dict or None: The last message from ROLE_USER, or None if not found.
         """
