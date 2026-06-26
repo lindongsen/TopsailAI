@@ -134,6 +134,10 @@ def print_step(msg, need_format=True, need_log=False):
         print_with_time(msg, need_format=need_format)
     return
 
+def print_info(msg):
+    """ Print a message to both logger and console """
+    print_step(msg, need_format=False, need_log=True)
+
 def print_debug(msg):
     """Print a debug message with step printing enabled.
 

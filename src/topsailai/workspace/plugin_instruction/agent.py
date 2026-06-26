@@ -51,7 +51,7 @@ def get_messages() -> str:
     """
     agent = get_ai_agent()
     if agent:
-        return json_tool.json_dump(agent.messages)
+        return json_tool.json_dump(agent.messages) + f"\n\n---\n\nTotalCount: {len(agent.messages)}\n"
     return
 
 def get_tools() -> list[str]:

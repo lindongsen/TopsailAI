@@ -186,16 +186,6 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
 
         return deleted_list
 
-    def _get_token_calculation_messages(self):
-        """
-        Get the messages used for real-time token calculation.
-
-        For User2Agent, tokens are calculated from the session messages.
-
-        Returns:
-            list | None: The session messages, or None if not available.
-        """
-        return self.messages
 
     def summarize_messages_for_processed(
             self,

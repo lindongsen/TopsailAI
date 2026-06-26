@@ -370,3 +370,88 @@ Message content is commonly represented as a dictionary using the following keys
 | `LLM_KEYWORD_SERVICE` | `"LLM Service"` | Keyword prefix used in logs for LLM service events. |
 | `DEFAULT_LLM_SLOW_CHAT_THRESHOLD` | `60` | Default threshold in seconds for detecting slow LLM chats. |
 | `NON_SYSTEM_PROMPT_MESSAGE_INDEX` | `3` | Starting index for non-system messages when processing context history. |
+
+
+## Known Pitfall: `_get_token_calculation_messages` Override in `ContextRuntimeData`
+
+**File:** `workspace/context/ctx_runtime.py`  
+**Related:** `workspace/context/base.py` (`_summarize_runtime_messages`, `_get_current_tokens`)
+
+### Problem
+
+`ContextRuntimeData` previously overrode `_get_token_calculation_messages()` with:
+
+```python
+def _get_token_calculation_messages(self):
+    return self.messages
+```
+
+This override unconditionally returned the **User2Agent** session messages (`self.messages`), bypassing the base-class logic that returns `self.ai_agent.messages` when an agent is present.
+
+### Impact
+
+When `_summarize_runtime_messages()` in `workspace/context/base.py` called `self._get_token_calculation_messages()` during **Agent2LLM** summarization, it received the wrong message source. The summarizer could end up consuming User2Agent session messages instead of the ephemeral Agent2LLM messages it was supposed to summarize.
+
+### Fix
+
+The override was removed from `ContextRuntimeData`. The base implementation now handles both layers correctly:
+
+```python
+def _get_token_calculation_messages(self):
+    if self.ai_agent:
+        return self.ai_agent.messages[:]
+    return self.messages[:]
+```
+
+### Lesson
+
+Do **not** override layer-aware accessors in subclasses unless the layer semantics genuinely change. `ContextRuntimeData` is the concrete runtime class used for both User2Agent and Agent2LLM operations; overriding a shared accessor here silently broke Agent2LLM token calculation and summarization.
+
+
+## Context Runtime Design Convention
+
+**Applies to:** `workspace/context/base.py`, `workspace/context/agent2llm.py`, `workspace/context/ctx_runtime.py`
+
+### Class Hierarchy
+
+```
+ContextRuntimeBase
+  └── ContextRuntimeAgent2LLM
+        └── ContextRuntimeData
+```
+
+- `ContextRuntimeBase` defines the shared runtime state (`session_id`, `messages`, `ai_agent`) and common helpers.
+- `ContextRuntimeAgent2LLM` adds behavior for the **Agent2LLM** layer (agent → LLM ReAct context).
+- `ContextRuntimeData` extends the same instance to add **User2Agent** layer behavior (user → agent session messages).
+
+Because `ContextRuntimeAgent2LLM` is the parent of `ContextRuntimeData`, both layers operate on the **same `ContextRuntime` instance**. `self.messages` (User2Agent session) and `self.ai_agent.messages` (Agent2LLM context) coexist on one object.
+
+### Design Rule
+
+1. **Common/shared methods must live in `ContextRuntimeBase`.**
+   Examples: `append_message`, `set_messages`, `reset_messages`, `_summarize_messages`, `_get_quantity_threshold`, `_get_head_offset_to_keep_in_summary`.
+
+2. **Layer-specific methods must use distinct names rather than overriding a base method with different semantics.**
+   - Agent2LLM layer uses the `*_for_processing` suffix:
+     - `summarize_messages_for_processing`
+     - `is_need_summarize_for_processing`
+     - `del_agent_messages`
+   - User2Agent layer uses the `*_for_processed` suffix or session-oriented names:
+     - `summarize_messages_for_processed`
+     - `is_need_summarize_for_processed`
+     - `del_session_messages`
+     - `add_session_message`
+
+3. **Do not override layer-aware accessors in subclasses.**
+   A subclass such as `ContextRuntimeData` must not override a base method like `_get_token_calculation_messages()` to return a different message layer. Because the instance is shared, such an override silently changes behavior for both layers. If a layer genuinely needs a different accessor, introduce a new method with a layer-specific name instead.
+
+### Why This Matters
+
+Overriding a shared accessor in a subclass breaks polymorphic expectations: callers in the base class (e.g. `_summarize_runtime_messages` or `_get_current_tokens`) invoke the method expecting the layer-appropriate message source, but the override forces every caller to receive the same layer. Since `ContextRuntimeData` is the concrete runtime used by the agent shell, the override affected both User2Agent and Agent2LLM code paths.
+
+### Practical Checklist
+
+- Before adding a method to `ContextRuntimeAgent2LLM` or `ContextRuntimeData`, ask whether it is truly layer-specific.
+- If it is layer-specific, give it a name that clearly identifies the layer (`*_for_processing` / `*_for_processed`).
+- If it is shared, move it to `ContextRuntimeBase`.
+- Avoid overriding methods defined in `ContextRuntimeBase`; prefer adding new, explicitly named methods.

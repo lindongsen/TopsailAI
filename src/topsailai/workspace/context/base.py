@@ -412,8 +412,8 @@ class ContextRuntimeBase(object):
             list | None: The messages to count, or None if not available.
         """
         if self.ai_agent:
-            return self.ai_agent.messages
-        return self.messages
+            return self.ai_agent.messages[:]
+        return self.messages[:]
 
     def _get_current_tokens(self, messages=None, realtime=False) -> int | None:
         """
@@ -575,9 +575,13 @@ Summarize Messages
         """
         all_messages = self._get_token_calculation_messages()
         if not all_messages:
+            print_tool.print_error("[summarize_runtime_messages] no found runtime-messages, fallback to passed-messages")
+            all_messages = messages
+        if all_messages and messages and len(all_messages) < len(messages):
+            print_tool.print_step("[summarize_runtime_messages] use passed-messages due to larger length", need_format=False, need_log=True)
             all_messages = messages
         assert all_messages, "null of messages"
-        print_tool.print_debug(f"All of messages: length=[{len(all_messages)}]")
+        print_tool.print_step(f"[summarize_runtime_messages] All of messages: length=[{len(all_messages)}]", need_format=False, need_log=True)
 
         llm_chat = get_llm_chat(
             message="> SUMMARIZE MESSAGES",
