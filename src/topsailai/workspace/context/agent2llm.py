@@ -163,6 +163,14 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         head_offset_to_keep = self._get_head_offset_to_keep_in_summary(head_offset_to_keep)
 
         # keep last user message
+        # IMPORTANT DESIGN NOTE:
+        # ``self.last_user_message`` intentionally reads from ``self.messages``
+        # (the User2Agent persisted session layer), NOT from
+        # ``self.ai_agent.messages`` (the Agent2LLM ephemeral ReAct context).
+        # The message to preserve here is the most recent real human input to
+        # the agent, not an internal tool observation or ReAct turn. This
+        # ensures the summarized Agent2LLM context still ends with a clear
+        # user prompt for the next LLM call.
         last_user_msg = self.last_user_message
 
         print_step(f"!!! head_offset_to_keep={head_offset_to_keep}, last_user_message_to_keep=1", need_format=False, need_log=True)

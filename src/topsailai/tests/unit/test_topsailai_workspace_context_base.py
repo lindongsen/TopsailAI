@@ -725,11 +725,16 @@ class TestSummarizeRuntimeMessages(unittest.TestCase):
     @patch('topsailai.workspace.context.base.file_tool')
     @patch('topsailai.workspace.context.base.summary_tool')
     @patch('topsailai.workspace.context.base.story_tool')
-    def test_runtime_summary_agent2llm_short_store_not_fallback(
+    def test_runtime_summary_defensive_fallback_to_larger_caller_messages(
         self, mock_story_tool, mock_summary_tool, mock_file_tool,
         mock_env_tool, mock_get_llm_chat, mock_agent_base
     ):
-        """Test Agent2LLM uses self.ai_agent.messages even when fewer than 7."""
+        """Test defensive fallback prefers larger caller-provided messages.
+
+        When the runtime-derived message list is unexpectedly shorter than the
+        caller-supplied messages, the passed-in messages are preferred to avoid
+        summarizing an incomplete or stale context.
+        """
         from topsailai.workspace.context.base import ContextRuntimeBase
 
         mock_env_tool.EnvReaderInstance.get.return_value = "runtime"
@@ -746,14 +751,13 @@ class TestSummarizeRuntimeMessages(unittest.TestCase):
         runtime.ai_agent.messages = [{"role": "user", "content": "agent-msg"}]
         runtime.messages = [{"role": "user", "content": f"session-msg-{i}"} for i in range(20)]
 
-        # Default _get_token_calculation_messages returns ai_agent.messages
+        # Default _get_token_calculation_messages returns ai_agent.messages (length 1)
         fallback = [{"role": "user", "content": f"fallback-{i}"} for i in range(20)]
         runtime._summarize_runtime_messages(fallback)
 
-        # Should use the short Agent2LLM store, not the fallback
-        self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 1)
-        self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "agent-msg")
-
+        # Defensive fallback: passed-in messages are longer, so they should be used
+        self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 20)
+        self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "fallback-0")
     @patch('topsailai.workspace.context.base.AgentBase')
     @patch('topsailai.workspace.context.base.get_llm_chat')
     @patch('topsailai.workspace.context.base.env_tool')

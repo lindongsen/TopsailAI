@@ -94,7 +94,11 @@ class ContextRuntimeBase(object):
 
     def append_message(self, message: dict):
         """
-        Append a message to the messages list.
+        Append a message to the in-memory messages list.
+
+        The generic name is intentional: this method operates on the in-memory
+        ``self.messages`` list, not on persistent session storage. Names like
+        ``append_session_message`` would incorrectly imply a storage operation.
 
         Args:
             message (dict): The message dictionary to append.
@@ -109,9 +113,16 @@ class ContextRuntimeBase(object):
 
     def set_messages(self, value: list):
         """
-        Set a new value for the messages list.
+        Set a new value for the in-memory messages list.
 
-        Replaces all existing messages with the provided list.
+        Replaces all existing messages with the provided list. The replacement
+        is performed in-place (clear + extend) so that the ``self.messages``
+        object reference is preserved and any external references to the same
+        list remain valid.
+
+        The generic name is intentional: this method operates on the in-memory
+        ``self.messages`` list, not on persistent session storage. Names like
+        ``set_session_messages`` would incorrectly imply a storage operation.
 
         Args:
             value (list): New list of messages to set.
@@ -129,9 +140,14 @@ class ContextRuntimeBase(object):
 
     def reset_messages(self):
         """
-        Reset messages to the newest from session storage.
+        Reset the in-memory messages list from session storage.
 
-        Retrieves messages from the session storage and updates the internal messages list.
+        Retrieves messages from the session storage and updates the in-memory
+        ``self.messages`` list via ``set_messages``.
+
+        The generic name is intentional: this method operates on the in-memory
+        ``self.messages`` list, not on persistent session storage. Names like
+        ``reset_session_messages`` would incorrectly imply a storage operation.
 
         Returns:
             None
@@ -143,10 +159,10 @@ class ContextRuntimeBase(object):
 
     def delete_message(self, index: int):
         """
-        Delete a single message from the messages list by index.
+        Delete a single message from the in-memory messages list by index.
 
         This mutates the list in-place, which is safe because it does not
-        replace the `self.messages` reference. The method is kept as a
+        replace the ``self.messages`` reference. The method is kept as a
         controlled mutator entry point so that all deletions go through the
         same API.
 
@@ -159,7 +175,6 @@ class ContextRuntimeBase(object):
         Returns:
             None
         """
-        assert isinstance(index, int), "index must be an integer"
         assert 0 <= index < len(self.messages), "index out of range"
 
         del self.messages[index]
@@ -167,10 +182,10 @@ class ContextRuntimeBase(object):
 
     def clear_messages(self):
         """
-        Clear all messages from the messages list.
+        Clear all messages from the in-memory messages list.
 
         This mutates the list in-place, which is safe because it does not
-        replace the `self.messages` reference. The method is kept as a
+        replace the ``self.messages`` reference. The method is kept as a
         controlled mutator entry point so that all clear operations go through
         the same API.
 
@@ -471,9 +486,12 @@ class ContextRuntimeBase(object):
             list | None: The messages to count, or None if not available.
         """
         if self.ai_agent:
+            if self.ai_agent.messages is None:
+                return None
             return self.ai_agent.messages[:]
+        if self.messages is None:
+            return None
         return self.messages[:]
-
     def _get_current_tokens(self, messages=None, realtime=False) -> int | None:
         """
         Get the current token count.
@@ -638,6 +656,12 @@ Summarize Messages
         if not all_messages:
             print_tool.print_error("[summarize_runtime_messages] no found runtime-messages, fallback to passed-messages")
             all_messages = messages
+        # Defensive fallback: if the runtime-derived message list is unexpectedly
+        # shorter than the caller-supplied messages, prefer the passed-in messages.
+        # This protects against cases where the runtime store has been partially
+        # pruned or desynchronized, ensuring we do not summarize an incomplete or
+        # stale context. The passed-in messages are the authoritative view from
+        # the layer that triggered summarization.
         if all_messages and messages and len(all_messages) < len(messages):
             print_tool.print_step("[summarize_runtime_messages] use passed-messages due to larger length", need_format=False, need_log=True)
             all_messages = messages
