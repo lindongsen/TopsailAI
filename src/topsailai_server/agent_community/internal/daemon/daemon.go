@@ -20,8 +20,11 @@ const (
 )
 
 // getACSHome returns the ACS_HOME directory.
-// It checks TOPSAILAI_HOME environment variable first, then falls back to /topsailai.
+// It checks ACS_HOME first, then TOPSAILAI_HOME, then falls back to /topsailai.
 func getACSHome() string {
+	if home := os.Getenv("ACS_HOME"); home != "" {
+		return home
+	}
 	if home := os.Getenv("TOPSAILAI_HOME"); home != "" {
 		return home
 	}
@@ -179,12 +182,13 @@ func StartWithExecutable(exe string) error {
 		_ = removePID(pidPath)
 	}
 
-	// Build command to run the server in daemon mode
-	// We pass a special flag to indicate daemon mode
+	// Build command to run the server in daemon mode.
+	// Preserve the parent's environment so ACS_HOME/TOPSAILAI_HOME are inherited.
 	cmd := exec.Command(exe, "--daemon-internal")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Stdin = nil
+	cmd.Env = os.Environ()
 
 	// Start the process
 	if err := cmd.Start(); err != nil {

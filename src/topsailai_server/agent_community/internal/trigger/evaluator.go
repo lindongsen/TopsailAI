@@ -122,7 +122,7 @@ func (e *Evaluator) isLoopMessage(msg *models.GroupMessage, contextMessages []mo
 		return false
 	}
 
-	// Filter out deleted messages. The spec requires the 10-before/10-after window
+	// Filter out deleted messages. The spec requires the window
 	// to be computed over non-deleted messages only.
 	filtered := make([]models.GroupMessage, 0, len(contextMessages))
 	for _, m := range contextMessages {
@@ -144,24 +144,36 @@ func (e *Evaluator) isLoopMessage(msg *models.GroupMessage, contextMessages []mo
 		return false
 	}
 
-	// Get the window: 10 before and 10 after (excluding target, max 20 messages)
-	start := targetIdx - 10
+	// Build a window of up to 21 messages centered on the target
+	// (10 before, the target itself, 10 after). When the target is near the
+	// start or end of the message list, shift the window to stay within bounds
+	// while keeping it as large as possible. Including the target ensures that
+	// a run of 11+ agent messages immediately before a user target is counted
+	// correctly and suppresses the trigger.
+	const windowHalf = 10
+	start := targetIdx - windowHalf
+	end := targetIdx + windowHalf
+
+	if start < 0 {
+		end += -start
+		start = 0
+	}
+	if end >= len(filtered) {
+		start -= end - (len(filtered) - 1)
+		end = len(filtered) - 1
+	}
 	if start < 0 {
 		start = 0
 	}
-	end := targetIdx + 10
-	if end >= len(filtered) {
-		end = len(filtered) - 1
-	}
 
-	window := make([]models.GroupMessage, 0)
-	for i := start; i <= end; i++ {
-		if i != targetIdx {
-			window = append(window, filtered[i])
-		}
-	}
-
-	// Check for >10 consecutive agent messages in the window
+	window := filtered[start : end+1]
+	// Check for >10 consecutive agent messages in the window.
+	// The target message itself is included in the window so that a run of
+	// 11+ agent messages immediately before a user target is counted as a
+	// run of 11+ (the user target terminates the run but does not reduce the
+	// length of the preceding run). For a target that is itself an agent
+	// message, Evaluate already returns false earlier, but including it here
+	// keeps the window logic consistent with the documented 20-message window.
 	maxConsecutive := 0
 	currentConsecutive := 0
 

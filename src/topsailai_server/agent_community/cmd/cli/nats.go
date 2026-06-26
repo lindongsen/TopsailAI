@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	natspkg "github.com/nats-io/nats.go"
 	"github.com/topsailai/agent-community/internal/nats"
 )
@@ -45,14 +46,16 @@ type NATSManager struct {
 	connected       bool
 	lastPollTime    int64
 	connectFn       func() (natsConn, error)
-	newSubscriberFn func(js natspkg.JetStreamContext, handler nats.MessageHandler) groupSubscriber
+	newSubscriberFn func(js natspkg.JetStreamContext, handler nats.MessageHandler, instanceID string) groupSubscriber
+	instanceID      string
 }
 
 // NewNATSManager creates a new NATS manager.
 func NewNATSManager(apiClient *APIClient, onEvent func(*nats.PendingPublishMessage)) *NATSManager {
 	return &NATSManager{
-		apiClient: apiClient,
-		onEvent:   onEvent,
+		apiClient:  apiClient,
+		onEvent:    onEvent,
+		instanceID: uuid.New().String(),
 	}
 }
 
@@ -80,7 +83,7 @@ func (m *NATSManager) Connect() error {
 		servers := getEnv("ACS_NATS_SERVERS", defaultNATSServers)
 
 		nc, err = natspkg.Connect(servers,
-			natspkg.Name("acs-cli"),
+			natspkg.Name("acs-cli-"+m.instanceID),
 			natspkg.ReconnectWait(2*time.Second),
 			natspkg.MaxReconnects(10),
 			natspkg.DisconnectErrHandler(func(_ *natspkg.Conn, err error) {
@@ -115,9 +118,9 @@ func (m *NATSManager) Connect() error {
 
 	var sub groupSubscriber
 	if m.newSubscriberFn != nil {
-		sub = m.newSubscriberFn(js, handler)
+		sub = m.newSubscriberFn(js, handler, m.instanceID)
 	} else {
-		sub = nats.NewSubscriber(js, handler)
+		sub = nats.NewSubscriberWithInstanceID(js, handler, m.instanceID)
 	}
 
 	m.nc = nc

@@ -1,24 +1,17 @@
-// Package nats provides NATS integration for the ACS service.
+// Package nats provides unit tests for the NATS subscriber.
 package nats
 
 import (
-	"encoding/json"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
+	"unsafe"
 
-	"github.com/nats-io/nats.go"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	natspkg "github.com/nats-io/nats.go"
 )
 
-// subscribeCall records a single call to the fake JetStream Subscribe method.
-type subscribeCall struct {
-	subject string
-	handler nats.MsgHandler
-	opts    []nats.SubOpt
-}
-
-// fakeSubscription is a test double for the internal subscription interface.
+// fakeSubscription records whether Unsubscribe was called.
 type fakeSubscription struct {
 	unsubscribed bool
 	unsubErr     error
@@ -29,424 +22,284 @@ func (f *fakeSubscription) Unsubscribe() error {
 	return f.unsubErr
 }
 
-// fakeJetStreamSubscriber extends the publisher fake with Subscribe support.
-type fakeJetStreamSubscriber struct {
-	*fakeJetStream
-	subscribeCalls []subscribeCall
-	subscribeErr   error
+// fakeSubscriberJetStream records Subscribe calls so we can assert durable names.
+type fakeSubscriberJetStream struct {
+	natspkg.JetStreamContext
+	subjects []string
+	opts     [][]natspkg.SubOpt
+	subErr   error
 }
 
-func newFakeJetStreamSubscriber() *fakeJetStreamSubscriber {
-	return &fakeJetStreamSubscriber{
-		fakeJetStream: newFakeJetStream(),
+func (f *fakeSubscriberJetStream) Subscribe(subj string, cb natspkg.MsgHandler, opts ...natspkg.SubOpt) (*natspkg.Subscription, error) {
+	if f.subErr != nil {
+		return nil, f.subErr
+	}
+	f.subjects = append(f.subjects, subj)
+	f.opts = append(f.opts, opts)
+	return &natspkg.Subscription{}, nil
+}
+
+// containsDurable reports whether any SubOpt in opts sets the given durable name.
+func containsDurable(opts []natspkg.SubOpt, name string) bool {
+	for _, opt := range opts {
+		if durableFromOpt(opt) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// durableFromOpts returns the first non-empty durable name set by opts.
+func durableFromOpts(opts []natspkg.SubOpt) string {
+	for _, opt := range opts {
+		if d := durableFromOpt(opt); d != "" {
+			return d
+		}
+	}
+	return ""
+}
+
+// durableFromOpt extracts the Durable consumer name from a nats.SubOpt by
+// invoking it against a mirrored subOpts value. It returns "" for options that
+// do not set Durable.
+func durableFromOpt(opt natspkg.SubOpt) string {
+	v := reflect.ValueOf(opt)
+	if v.Kind() != reflect.Func || v.Type().NumIn() != 1 {
+		return ""
+	}
+	natsSubOptsType := v.Type().In(0).Elem()
+	ptr := reflect.New(natsSubOptsType)
+	elem := ptr.Elem()
+	cfgField := elem.FieldByName("cfg")
+	cfgType := cfgField.Type().Elem()
+	newCfg := reflect.New(cfgType)
+	// subOpts.cfg is unexported; use unsafe to initialize the pointer so the
+	// option function can write to opts.cfg.Durable.
+	cfgPtr := (*unsafe.Pointer)(unsafe.Pointer(cfgField.UnsafeAddr()))
+	*cfgPtr = unsafe.Pointer(newCfg.Pointer())
+	res := v.Call([]reflect.Value{ptr})
+	if !res[0].IsNil() {
+		return ""
+	}
+	return newCfg.Elem().FieldByName("Durable").String()
+}
+
+func TestNewSubscriber_GeneratesInstanceID(t *testing.T) {
+	js := &fakeSubscriberJetStream{}
+	s := NewSubscriber(js, nil)
+	if s.instanceID == "" {
+		t.Fatal("expected generated instanceID")
+	}
+	if len(s.subs) != 0 {
+		t.Errorf("expected 0 subscriptions, got %d", len(s.subs))
 	}
 }
 
-func (f *fakeJetStreamSubscriber) Subscribe(subj string, cb nats.MsgHandler, opts ...nats.SubOpt) (*nats.Subscription, error) {
-	f.subscribeCalls = append(f.subscribeCalls, subscribeCall{subject: subj, handler: cb, opts: opts})
-	if f.subscribeErr != nil {
-		return nil, f.subscribeErr
+func TestNewSubscriberWithInstanceID_UsesProvidedID(t *testing.T) {
+	js := &fakeSubscriberJetStream{}
+	s := NewSubscriberWithInstanceID(js, nil, "my-instance")
+	if s.instanceID != "my-instance" {
+		t.Errorf("instanceID = %q, want my-instance", s.instanceID)
 	}
-	// Return a non-nil *nats.Subscription. The Subscriber will not use it
-	// directly because jsSubscribe is overridden in tests that exercise
-	// Unsubscribe; otherwise the wrapper returns this value as a subscription.
-	return &nats.Subscription{}, nil
 }
 
-// TestNewSubscriber verifies construction.
-func TestNewSubscriber(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	var called bool
-	handler := func(msg *PendingPublishMessage) error {
-		called = true
-		return nil
+func TestNewSubscriberWithInstanceID_GeneratesWhenEmpty(t *testing.T) {
+	js := &fakeSubscriberJetStream{}
+	s := NewSubscriberWithInstanceID(js, nil, "")
+	if s.instanceID == "" {
+		t.Fatal("expected generated instanceID")
+	}
+}
+
+func TestSubscriber_SubscribeGroup_DurableNameIncludesInstanceID(t *testing.T) {
+	js := &fakeSubscriberJetStream{}
+	s := NewSubscriberWithInstanceID(js, nil, "inst-1")
+
+	if err := s.SubscribeGroup("group-123"); err != nil {
+		t.Fatalf("SubscribeGroup() error = %v", err)
 	}
 
-	sub := NewSubscriber(fake, handler)
-	require.NotNil(t, sub)
-	assert.Equal(t, fake, sub.js)
-	assert.NotNil(t, sub.handler)
-	assert.Empty(t, sub.subs)
-	assert.NotNil(t, sub.acker)
-	assert.False(t, called)
+	if len(js.subjects) != 1 {
+		t.Fatalf("expected 1 subject, got %d", len(js.subjects))
+	}
+	if js.subjects[0] != groupMessageSubjectPrefix+"group-123" {
+		t.Errorf("subject = %q, want %q", js.subjects[0], groupMessageSubjectPrefix+"group-123")
+	}
+	if len(js.opts) != 1 || len(js.opts[0]) != 2 {
+		t.Fatalf("expected 1 call with 2 SubOpts, got %d calls / %d opts", len(js.opts), len(js.opts[0]))
+	}
+	wantDurable := "cli-group-123-inst-1"
+	if !containsDurable(js.opts[0], wantDurable) {
+		t.Errorf("durable options do not contain %q, got opts=%v", wantDurable, js.opts[0])
+	}
 }
 
-// TestSubscriber_SubscribeGroup verifies subject, durable name and manual ack.
-func TestSubscriber_SubscribeGroup(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	sub := NewSubscriber(fake, func(msg *PendingPublishMessage) error { return nil })
+func TestSubscriber_SubscribeAllGroups_DurableNameIncludesInstanceID(t *testing.T) {
+	js := &fakeSubscriberJetStream{}
+	s := NewSubscriberWithInstanceID(js, nil, "inst-2")
 
-	err := sub.SubscribeGroup("group-abc")
-	require.NoError(t, err)
-	assert.True(t, sub.IsSubscribed())
-	assert.Equal(t, 1, sub.SubscriptionCount())
+	if err := s.SubscribeAllGroups(); err != nil {
+		t.Fatalf("SubscribeAllGroups() error = %v", err)
+	}
 
-	require.Len(t, fake.subscribeCalls, 1)
-	call := fake.subscribeCalls[0]
-	assert.Equal(t, "acs.group.message.group-abc", call.subject)
-	assert.NotNil(t, call.handler)
-	assert.Len(t, call.opts, 2) // Durable + ManualAck
+	wantDurable := "cli-all-groups-inst-2"
+	if !containsDurable(js.opts[0], wantDurable) {
+		t.Errorf("durable options do not contain %q, got opts=%v", wantDurable, js.opts[0])
+	}
 }
 
-// TestSubscriber_SubscribeGroup_Error verifies error wrapping on subscribe failure.
+func TestSubscriber_SubscribePendingMessages_DurableNameIncludesInstanceID(t *testing.T) {
+	js := &fakeSubscriberJetStream{}
+	s := NewSubscriberWithInstanceID(js, nil, "inst-3")
+
+	if err := s.SubscribePendingMessages("group-456"); err != nil {
+		t.Fatalf("SubscribePendingMessages() error = %v", err)
+	}
+
+	wantDurable := "pending-monitor-group-456-inst-3"
+	if !containsDurable(js.opts[0], wantDurable) {
+		t.Errorf("durable options do not contain %q, got opts=%v", wantDurable, js.opts[0])
+	}
+}
+
+func TestSubscriber_SubscribeHeartbeats_DurableNameIncludesInstanceID(t *testing.T) {
+	js := &fakeSubscriberJetStream{}
+	s := NewSubscriberWithInstanceID(js, nil, "inst-4")
+
+	if err := s.SubscribeHeartbeats(nil); err != nil {
+		t.Fatalf("SubscribeHeartbeats() error = %v", err)
+	}
+
+	wantDurable := "heartbeat-monitor-inst-4"
+	if !containsDurable(js.opts[0], wantDurable) {
+		t.Errorf("durable options do not contain %q, got opts=%v", wantDurable, js.opts[0])
+	}
+}
+
+func TestSubscriber_MultipleInstancesCanSubscribeSameGroup(t *testing.T) {
+	js := &fakeSubscriberJetStream{}
+	s1 := NewSubscriberWithInstanceID(js, nil, "inst-a")
+	s2 := NewSubscriberWithInstanceID(js, nil, "inst-b")
+
+	if err := s1.SubscribeGroup("group-shared"); err != nil {
+		t.Fatalf("s1.SubscribeGroup() error = %v", err)
+	}
+	if err := s2.SubscribeGroup("group-shared"); err != nil {
+		t.Fatalf("s2.SubscribeGroup() error = %v", err)
+	}
+
+	if len(js.opts) != 2 {
+		t.Fatalf("expected 2 subscribe calls, got %d", len(js.opts))
+	}
+	d1 := durableFromOpts(js.opts[0])
+	d2 := durableFromOpts(js.opts[1])
+	if d1 == "" || d2 == "" {
+		t.Fatalf("expected durable names, got d1=%q d2=%q", d1, d2)
+	}
+	if d1 == d2 {
+		t.Errorf("durables should be unique, got %q and %q", d1, d2)
+	}
+	for _, d := range []string{d1, d2} {
+		if !strings.HasPrefix(d, "cli-group-shared-") {
+			t.Errorf("durable %q does not have expected prefix", d)
+		}
+	}
+}
+
 func TestSubscriber_SubscribeGroup_Error(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	fake.subscribeErr = errors.New("nats down")
-	sub := NewSubscriber(fake, func(msg *PendingPublishMessage) error { return nil })
+	wantErr := errors.New("nats unavailable")
+	js := &fakeSubscriberJetStream{subErr: wantErr}
+	s := NewSubscriberWithInstanceID(js, nil, "inst-err")
 
-	err := sub.SubscribeGroup("group-abc")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to subscribe to group group-abc")
-	assert.False(t, sub.IsSubscribed())
-	assert.Equal(t, 0, sub.SubscriptionCount())
+	err := s.SubscribeGroup("group-123")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "nats unavailable") {
+		t.Errorf("error = %v, want containing 'nats unavailable'", err)
+	}
 }
 
-// TestSubscriber_SubscribeGroup_Dispatch verifies the callback invokes the handler and acks.
-func TestSubscriber_SubscribeGroup_Dispatch(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
+func TestSubscriber_Unsubscribe(t *testing.T) {
+	js := &fakeSubscriberJetStream{}
+	s := NewSubscriberWithInstanceID(js, nil, "inst-unsub")
+
+	// Replace jsSubscribe to return a fake subscription we can inspect.
+	fakeSub := &fakeSubscription{}
+	orig := jsSubscribe
+	jsSubscribe = func(js natspkg.JetStreamContext, subj string, cb natspkg.MsgHandler, opts ...natspkg.SubOpt) (subscription, error) {
+		return fakeSub, nil
+	}
+	defer func() { jsSubscribe = orig }()
+
+	if err := s.SubscribeGroup("group-123"); err != nil {
+		t.Fatalf("SubscribeGroup() error = %v", err)
+	}
+	if !s.IsSubscribed() {
+		t.Fatal("expected subscriber to be subscribed")
+	}
+
+	if err := s.Unsubscribe(); err != nil {
+		t.Fatalf("Unsubscribe() error = %v", err)
+	}
+	if s.IsSubscribed() {
+		t.Error("expected subscriber to be unsubscribed")
+	}
+	if !fakeSub.unsubscribed {
+		t.Error("expected fake subscription Unsubscribe to be called")
+	}
+}
+
+func TestSubscriber_handleMessage(t *testing.T) {
+	js := &fakeSubscriberJetStream{}
+
 	var received *PendingPublishMessage
 	handler := func(msg *PendingPublishMessage) error {
 		received = msg
 		return nil
 	}
-	sub := NewSubscriber(fake, handler)
+	s := NewSubscriberWithInstanceID(js, handler, "inst-msg")
 
-	var acked bool
-	sub.acker = func(msg *nats.Msg) error { acked = true; return nil }
-
-	err := sub.SubscribeGroup("group-abc")
-	require.NoError(t, err)
-
-	payload := PendingPublishMessage{
-		Type:    "message",
-		Action:  "create",
-		GroupID: "group-abc",
-		Data:    map[string]string{"message_id": "msg-1"},
+	payload := []byte(`{"type":"message","action":"create","groupId":"g1","data":{"message_id":"m1"}}`)
+	msg := &natspkg.Msg{Data: payload}
+	if err := s.handleMessage(msg); err != nil {
+		t.Fatalf("handleMessage() error = %v", err)
 	}
-	data, _ := json.Marshal(payload)
 
-	fake.subscribeCalls[0].handler(&nats.Msg{Data: data})
-
-	require.NotNil(t, received)
-	assert.Equal(t, "message", received.Type)
-	assert.Equal(t, "create", received.Action)
-	assert.Equal(t, "group-abc", received.GroupID)
-	assert.True(t, acked)
+	if received == nil {
+		t.Fatal("handler was not called")
+	}
+	if received.Type != "message" || received.GroupID != "g1" {
+		t.Errorf("received = %+v", received)
+	}
 }
 
-// TestSubscriber_SubscribeGroup_HandlerError verifies handler errors are logged but still acked.
-func TestSubscriber_SubscribeGroup_HandlerError(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
+func TestSubscriber_handleMessage_InvalidJSON(t *testing.T) {
+	js := &fakeSubscriberJetStream{}
+	s := NewSubscriberWithInstanceID(js, nil, "inst-msg")
+
+	msg := &natspkg.Msg{Data: []byte("not-json")}
+	err := s.handleMessage(msg)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestSubscriber_handleMessage_HandlerError(t *testing.T) {
+	js := &fakeSubscriberJetStream{}
+	wantErr := errors.New("handler failed")
 	handler := func(msg *PendingPublishMessage) error {
-		return errors.New("handler error")
+		return wantErr
 	}
-	sub := NewSubscriber(fake, handler)
+	s := NewSubscriberWithInstanceID(js, handler, "inst-msg")
 
-	var acked bool
-	sub.acker = func(msg *nats.Msg) error { acked = true; return nil }
-
-	err := sub.SubscribeGroup("group-abc")
-	require.NoError(t, err)
-
-	payload := PendingPublishMessage{Type: "message", Action: "create", GroupID: "group-abc"}
-	data, _ := json.Marshal(payload)
-	fake.subscribeCalls[0].handler(&nats.Msg{Data: data})
-
-	assert.True(t, acked)
-}
-
-// TestSubscriber_SubscribeGroup_UnmarshalError verifies unmarshal errors are logged but still acked.
-func TestSubscriber_SubscribeGroup_UnmarshalError(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	sub := NewSubscriber(fake, func(msg *PendingPublishMessage) error { return nil })
-
-	var acked bool
-	sub.acker = func(msg *nats.Msg) error { acked = true; return nil }
-
-	err := sub.SubscribeGroup("group-abc")
-	require.NoError(t, err)
-
-	fake.subscribeCalls[0].handler(&nats.Msg{Data: []byte("not json")})
-
-	assert.True(t, acked)
-}
-
-// TestSubscriber_SubscribeGroups verifies subscribing to multiple groups.
-func TestSubscriber_SubscribeGroups(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	sub := NewSubscriber(fake, func(msg *PendingPublishMessage) error { return nil })
-
-	err := sub.SubscribeGroups([]string{"g1", "g2"})
-	require.NoError(t, err)
-	assert.Equal(t, 2, sub.SubscriptionCount())
-
-	require.Len(t, fake.subscribeCalls, 2)
-	assert.Equal(t, "acs.group.message.g1", fake.subscribeCalls[0].subject)
-	assert.Equal(t, "acs.group.message.g2", fake.subscribeCalls[1].subject)
-}
-
-// TestSubscriber_SubscribeGroups_Error verifies first error is returned.
-func TestSubscriber_SubscribeGroups_Error(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	fake.subscribeErr = errors.New("nats down")
-	sub := NewSubscriber(fake, func(msg *PendingPublishMessage) error { return nil })
-
-	err := sub.SubscribeGroups([]string{"g1", "g2"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to subscribe to group g1")
-	assert.Equal(t, 0, sub.SubscriptionCount())
-}
-
-// TestSubscriber_SubscribeAllGroups verifies wildcard subscription.
-func TestSubscriber_SubscribeAllGroups(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	sub := NewSubscriber(fake, func(msg *PendingPublishMessage) error { return nil })
-
-	err := sub.SubscribeAllGroups()
-	require.NoError(t, err)
-	assert.Equal(t, 1, sub.SubscriptionCount())
-
-	require.Len(t, fake.subscribeCalls, 1)
-	call := fake.subscribeCalls[0]
-	assert.Equal(t, "acs.group.message.>", call.subject)
-	assert.Len(t, call.opts, 2)
-}
-
-// TestSubscriber_SubscribeAllGroups_Error verifies error wrapping.
-func TestSubscriber_SubscribeAllGroups_Error(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	fake.subscribeErr = errors.New("nats down")
-	sub := NewSubscriber(fake, func(msg *PendingPublishMessage) error { return nil })
-
-	err := sub.SubscribeAllGroups()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to subscribe to all groups")
-}
-
-// TestSubscriber_SubscribePendingMessages verifies pending message subscription.
-func TestSubscriber_SubscribePendingMessages(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	sub := NewSubscriber(fake, func(msg *PendingPublishMessage) error { return nil })
-
-	err := sub.SubscribePendingMessages("group-abc")
-	require.NoError(t, err)
-	assert.Equal(t, 1, sub.SubscriptionCount())
-
-	require.Len(t, fake.subscribeCalls, 1)
-	call := fake.subscribeCalls[0]
-	assert.Equal(t, "acs.group.pending-message.group-abc", call.subject)
-	assert.Len(t, call.opts, 2)
-}
-
-// TestSubscriber_SubscribePendingMessages_Error verifies error wrapping.
-func TestSubscriber_SubscribePendingMessages_Error(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	fake.subscribeErr = errors.New("nats down")
-	sub := NewSubscriber(fake, func(msg *PendingPublishMessage) error { return nil })
-
-	err := sub.SubscribePendingMessages("group-abc")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to subscribe to pending messages for group group-abc")
-}
-
-// TestSubscriber_SubscribePendingMessages_Dispatch verifies callback acks valid messages.
-func TestSubscriber_SubscribePendingMessages_Dispatch(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	sub := NewSubscriber(fake, func(msg *PendingPublishMessage) error { return nil })
-
-	var acked bool
-	sub.acker = func(msg *nats.Msg) error { acked = true; return nil }
-
-	err := sub.SubscribePendingMessages("group-abc")
-	require.NoError(t, err)
-
-	payload := PendingMessagePayload{Trigger: map[string]string{"type": "mention"}}
-	data, _ := json.Marshal(payload)
-	fake.subscribeCalls[0].handler(&nats.Msg{Data: data})
-
-	assert.True(t, acked)
-}
-
-// TestSubscriber_SubscribeHeartbeats verifies heartbeat subscription and dispatch.
-func TestSubscriber_SubscribeHeartbeats(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	var receivedNodeID string
-	var receivedTimestamp int64
-	handler := func(nodeID string, timestamp int64) {
-		receivedNodeID = nodeID
-		receivedTimestamp = timestamp
+	payload := []byte(`{"type":"message","action":"create","groupId":"g1"}`)
+	msg := &natspkg.Msg{Data: payload}
+	err := s.handleMessage(msg)
+	if err == nil {
+		t.Fatal("expected error from handler")
 	}
-	sub := NewSubscriber(fake, nil)
-
-	var acked bool
-	sub.acker = func(msg *nats.Msg) error { acked = true; return nil }
-
-	err := sub.SubscribeHeartbeats(handler)
-	require.NoError(t, err)
-	assert.Equal(t, 1, sub.SubscriptionCount())
-
-	require.Len(t, fake.subscribeCalls, 1)
-	call := fake.subscribeCalls[0]
-	assert.Equal(t, "acs.heartbeat", call.subject)
-	assert.Len(t, call.opts, 2)
-
-	data, _ := json.Marshal(map[string]interface{}{
-		"node_id":   "node-1",
-		"timestamp": int64(123456789),
-		"status":    "healthy",
-	})
-	call.handler(&nats.Msg{Data: data})
-
-	assert.Equal(t, "node-1", receivedNodeID)
-	assert.Equal(t, int64(123456789), receivedTimestamp)
-	assert.True(t, acked)
-}
-
-// TestSubscriber_SubscribeHeartbeats_UnmarshalError verifies invalid JSON is logged but acked.
-func TestSubscriber_SubscribeHeartbeats_UnmarshalError(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	sub := NewSubscriber(fake, nil)
-
-	var acked bool
-	sub.acker = func(msg *nats.Msg) error { acked = true; return nil }
-
-	err := sub.SubscribeHeartbeats(func(nodeID string, timestamp int64) {})
-	require.NoError(t, err)
-
-	fake.subscribeCalls[0].handler(&nats.Msg{Data: []byte("not json")})
-
-	assert.True(t, acked)
-}
-
-// TestSubscriber_SubscribeHeartbeats_MissingFields verifies missing fields invoke handler with zero values.
-func TestSubscriber_SubscribeHeartbeats_MissingFields(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	var receivedNodeID string
-	var receivedTimestamp int64
-	handler := func(nodeID string, timestamp int64) {
-		receivedNodeID = nodeID
-		receivedTimestamp = timestamp
+	if !errors.Is(err, wantErr) {
+		t.Errorf("error = %v, want %v", err, wantErr)
 	}
-	sub := NewSubscriber(fake, nil)
-
-	var acked bool
-	sub.acker = func(msg *nats.Msg) error { acked = true; return nil }
-
-	err := sub.SubscribeHeartbeats(handler)
-	require.NoError(t, err)
-
-	data, _ := json.Marshal(map[string]interface{}{"status": "healthy"})
-	fake.subscribeCalls[0].handler(&nats.Msg{Data: data})
-
-	assert.Equal(t, "", receivedNodeID)
-	assert.Equal(t, int64(0), receivedTimestamp)
-	assert.True(t, acked)
-}
-
-// TestSubscriber_SubscribeHeartbeats_Error verifies error wrapping on subscribe failure.
-func TestSubscriber_SubscribeHeartbeats_Error(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	fake.subscribeErr = errors.New("nats down")
-	sub := NewSubscriber(fake, nil)
-
-	err := sub.SubscribeHeartbeats(func(nodeID string, timestamp int64) {})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to subscribe to heartbeats")
-}
-
-// TestSubscriber_Unsubscribe verifies unsubscribing from all active subscriptions.
-func TestSubscriber_Unsubscribe(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	sub := NewSubscriber(fake, func(msg *PendingPublishMessage) error { return nil })
-
-	fake1 := &fakeSubscription{}
-	fake2 := &fakeSubscription{}
-	original := jsSubscribe
-	callCount := 0
-	jsSubscribe = func(js nats.JetStreamContext, subj string, cb nats.MsgHandler, opts ...nats.SubOpt) (subscription, error) {
-		callCount++
-		if callCount == 1 {
-			return fake1, nil
-		}
-		return fake2, nil
-	}
-	defer func() { jsSubscribe = original }()
-
-	err := sub.SubscribeGroup("g1")
-	require.NoError(t, err)
-	err = sub.SubscribeGroup("g2")
-	require.NoError(t, err)
-	assert.Equal(t, 2, sub.SubscriptionCount())
-
-	err = sub.Unsubscribe()
-	require.NoError(t, err)
-	assert.Equal(t, 0, sub.SubscriptionCount())
-	assert.True(t, fake1.unsubscribed)
-	assert.True(t, fake2.unsubscribed)
-}
-
-// TestSubscriber_Unsubscribe_WithError verifies unsubscribe errors are logged but processing continues.
-func TestSubscriber_Unsubscribe_WithError(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	sub := NewSubscriber(fake, func(msg *PendingPublishMessage) error { return nil })
-
-	fake1 := &fakeSubscription{unsubErr: errors.New("unsubscribe failed")}
-	fake2 := &fakeSubscription{}
-	original := jsSubscribe
-	callCount := 0
-	jsSubscribe = func(js nats.JetStreamContext, subj string, cb nats.MsgHandler, opts ...nats.SubOpt) (subscription, error) {
-		callCount++
-		if callCount == 1 {
-			return fake1, nil
-		}
-		return fake2, nil
-	}
-	defer func() { jsSubscribe = original }()
-
-	err := sub.SubscribeGroup("g1")
-	require.NoError(t, err)
-	err = sub.SubscribeGroup("g2")
-	require.NoError(t, err)
-
-	err = sub.Unsubscribe()
-	require.NoError(t, err)
-	assert.True(t, fake1.unsubscribed)
-	assert.True(t, fake2.unsubscribed)
-	assert.Equal(t, 0, sub.SubscriptionCount())
-}
-
-// TestSubscriber_IsSubscribed verifies subscription state lifecycle.
-func TestSubscriber_IsSubscribed(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	sub := NewSubscriber(fake, func(msg *PendingPublishMessage) error { return nil })
-
-	assert.False(t, sub.IsSubscribed())
-
-	err := sub.SubscribeGroup("group-abc")
-	require.NoError(t, err)
-	assert.True(t, sub.IsSubscribed())
-
-	err = sub.Unsubscribe()
-	require.NoError(t, err)
-	assert.False(t, sub.IsSubscribed())
-}
-
-// TestSubscriber_SubscriptionCount verifies count lifecycle.
-func TestSubscriber_SubscriptionCount(t *testing.T) {
-	fake := newFakeJetStreamSubscriber()
-	sub := NewSubscriber(fake, func(msg *PendingPublishMessage) error { return nil })
-
-	assert.Equal(t, 0, sub.SubscriptionCount())
-
-	err := sub.SubscribeGroup("g1")
-	require.NoError(t, err)
-	assert.Equal(t, 1, sub.SubscriptionCount())
-
-	err = sub.SubscribeGroup("g2")
-	require.NoError(t, err)
-	assert.Equal(t, 2, sub.SubscriptionCount())
-
-	err = sub.Unsubscribe()
-	require.NoError(t, err)
-	assert.Equal(t, 0, sub.SubscriptionCount())
 }

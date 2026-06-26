@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +22,11 @@ import (
 // ErrBootstrapLockHeld indicates another node is already running bootstrap.
 var ErrBootstrapLockHeld = errors.New("bootstrap lock held by another node")
 
+// bootstrapLockKey is the NATS KV key used to coordinate default account
+// creation across ACS nodes. It uses the same dotted format as
+// internal/lock/distributed_lock.go and must not contain ':'.
+const bootstrapLockKey = "acs.lock.bootstrap.default-accounts"
+
 // BootstrapService handles default admin/manager account creation on startup.
 type BootstrapService struct {
 	db         *gorm.DB
@@ -31,9 +35,6 @@ type BootstrapService struct {
 	apiKeySvc  *APIKeyService
 	kv         nats.KeyValue
 	log        *logger.Logger
-
-	// inMemoryLock is used as a fallback when NATS KV is unavailable.
-	inMemoryLock *sync.Mutex
 }
 
 // NewBootstrapService creates a new BootstrapService.
@@ -46,23 +47,21 @@ func NewBootstrapService(
 	log *logger.Logger,
 ) *BootstrapService {
 	return &BootstrapService{
-		db:           db,
-		cfg:          cfg,
-		accountSvc:   accountSvc,
-		apiKeySvc:    apiKeySvc,
-		kv:           kv,
-		log:          log,
-		inMemoryLock: &sync.Mutex{},
+		db:         db,
+		cfg:        cfg,
+		accountSvc: accountSvc,
+		apiKeySvc:  apiKeySvc,
+		kv:         kv,
+		log:        log,
 	}
 }
 
 // Run executes the startup bootstrap logic.
 // It acquires a distributed lock, validates or creates default accounts, and logs statistics.
 func (s *BootstrapService) Run(ctx context.Context) error {
-	lockKey := "acs:lock:bootstrap:default-accounts"
 	lockToken := uuid.New().String()
 
-	release, err := s.acquireLock(ctx, lockKey, lockToken)
+	release, err := s.acquireLock(ctx, bootstrapLockKey, lockToken)
 	if err != nil {
 		if errors.Is(err, ErrBootstrapLockHeld) {
 			s.log.Warn("bootstrap", "", "bootstrap lock held by another node, skipping default account creation")
@@ -72,7 +71,7 @@ func (s *BootstrapService) Run(ctx context.Context) error {
 	}
 	defer release()
 
-	if err := s.ensureDefaultAccount(ctx, defaultAccountSpec{
+	if _, err := s.ensureDefaultAccount(ctx, defaultAccountSpec{
 		role:      models.AccountRoleAdmin,
 		configKey: s.cfg.Account.AdminAPIKey,
 		filename:  "ACS_ACCOUNT_ADMIN_API_KEY.acs",
@@ -80,7 +79,7 @@ func (s *BootstrapService) Run(ctx context.Context) error {
 		return err
 	}
 
-	if err := s.ensureDefaultAccount(ctx, defaultAccountSpec{
+	if _, err := s.ensureDefaultAccount(ctx, defaultAccountSpec{
 		role:      models.AccountRoleManager,
 		configKey: s.cfg.Account.ManagerAPIKey,
 		filename:  "ACS_ACCOUNT_MANAGER_API_KEY.acs",
@@ -101,47 +100,58 @@ type defaultAccountSpec struct {
 
 // ensureDefaultAccount validates a configured token or creates a default
 // account and writes its plaintext API key to a file in the working directory.
-// When the default account already exists but its .acs file is missing or
-// invalid, a new default API key is created and the file is regenerated.
-func (s *BootstrapService) ensureDefaultAccount(ctx context.Context, spec defaultAccountSpec) error {
+// When the default account already exists, the node that did not create it in
+// this bootstrap run must not regenerate API keys or write token files, because
+// doing so would invalidate the keys created by another node in a multi-node
+// deployment.
+func (s *BootstrapService) ensureDefaultAccount(ctx context.Context, spec defaultAccountSpec) (bool, error) {
 	roleName := string(spec.role)
 
 	if spec.configKey != "" {
 		if err := s.validateConfiguredToken(ctx, spec.configKey, spec.role); err != nil {
 			s.log.Error("bootstrap", "", fmt.Sprintf("configured %s api key is invalid", roleName), "error", err.Error())
-			return fmt.Errorf("configured %s api key mismatch: %w", roleName, err)
+			return false, fmt.Errorf("configured %s api key mismatch: %w", roleName, err)
 		}
 		s.log.Info("bootstrap", "", fmt.Sprintf("configured %s api key validated", roleName))
-		return nil
+		return false, nil
 	}
 
 	exists, err := s.hasAccountWithRole(ctx, spec.role)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if exists {
 		account, err := s.findDefaultAccount(ctx, spec.role)
 		if err != nil {
-			return fmt.Errorf("failed to locate default %s account: %w", roleName, err)
+			return false, fmt.Errorf("failed to locate default %s account: %w", roleName, err)
 		}
-		if err := s.ensureTokenFile(ctx, account, spec.filename); err != nil {
-			return fmt.Errorf("failed to ensure %s api key file: %w", roleName, err)
+		pwd, err := os.Getwd()
+		if err != nil {
+			return false, fmt.Errorf("failed to get working directory: %w", err)
 		}
-		s.log.Info("bootstrap", "", fmt.Sprintf("default %s account verified", roleName),
-			"account_id", account.AccountID,
-			"file", spec.filename,
-		)
-		return nil
+		path := filepath.Join(pwd, spec.filename)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			s.log.Warn("bootstrap", "", fmt.Sprintf("default %s account exists but local token file is missing; skipping regeneration to avoid invalidating keys created by another node", roleName),
+				"account_id", account.AccountID,
+				"file", spec.filename,
+			)
+		} else {
+			s.log.Info("bootstrap", "", fmt.Sprintf("default %s account already exists, skipping key generation", roleName),
+				"account_id", account.AccountID,
+				"file", spec.filename,
+			)
+		}
+		return false, nil
 	}
 
 	account, token, err := s.createDefaultAccount(ctx, spec.role)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	path, err := s.writeTokenFile(spec.filename, token)
 	if err != nil {
-		return fmt.Errorf("failed to write %s api key file: %w", roleName, err)
+		return false, fmt.Errorf("failed to write %s api key file: %w", roleName, err)
 	}
 
 	s.log.Info("bootstrap", "", fmt.Sprintf("created default %s account", roleName),
@@ -149,7 +159,7 @@ func (s *BootstrapService) ensureDefaultAccount(ctx context.Context, spec defaul
 		"file", spec.filename,
 		"path", path,
 	)
-	return nil
+	return true, nil
 }
 
 // validateConfiguredToken checks that the provided plaintext token matches an
@@ -211,77 +221,6 @@ func (s *BootstrapService) findDefaultAccount(ctx context.Context, role models.A
 		return nil, fmt.Errorf("failed to query %s account: %w", role, err)
 	}
 	return &account, nil
-}
-
-// ensureTokenFile verifies that the plaintext token file exists and is valid.
-// If the file is missing or its token cannot be verified, any existing
-// system-created API keys for the account are removed and a new default key is
-// created and written to the file.
-func (s *BootstrapService) ensureTokenFile(ctx context.Context, account *models.Account, filename string) error {
-	pwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
-	}
-	path := filepath.Join(pwd, filename)
-
-	if data, err := os.ReadFile(path); err == nil {
-		token := strings.TrimSpace(string(data))
-		if token != "" {
-			_, _, verifyErr := s.apiKeySvc.VerifyAPIKey(ctx, token)
-			if verifyErr == nil {
-				s.log.Info("bootstrap", "", "existing token file is valid", "file", filename)
-				return nil
-			}
-			s.log.Warn("bootstrap", "", "existing token file is invalid, regenerating", "file", filename, "error", verifyErr.Error())
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read token file %s: %w", path, err)
-	} else {
-		s.log.Warn("bootstrap", "", "token file is missing, regenerating", "file", filename)
-	}
-
-	if err := s.deleteSystemAPIKeysForAccount(ctx, account.AccountID); err != nil {
-		return fmt.Errorf("failed to clean up old default api keys: %w", err)
-	}
-
-	keyRole := models.APIKeyRoleUser
-	switch account.Role {
-	case models.AccountRoleAdmin:
-		keyRole = models.APIKeyRoleAdmin
-	case models.AccountRoleManager:
-		keyRole = models.APIKeyRoleManager
-	}
-
-	result, err := s.apiKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
-		APIKeyName: fmt.Sprintf("Default %s Key", strings.Title(string(account.Role))),
-		Role:       keyRole,
-		OwnerID:    account.AccountID,
-		CreatorID:  "system",
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create replacement api key: %w", err)
-	}
-
-	if _, err := s.writeTokenFile(filename, result.Token); err != nil {
-		return fmt.Errorf("failed to write regenerated token file: %w", err)
-	}
-
-	s.log.Info("bootstrap", "", "regenerated default api key file",
-		"account_id", account.AccountID,
-		"file", filename,
-		"path", path,
-	)
-	return nil
-}
-
-// deleteSystemAPIKeysForAccount removes API keys created by system for the given account.
-func (s *BootstrapService) deleteSystemAPIKeysForAccount(ctx context.Context, accountID string) error {
-	if err := s.db.WithContext(ctx).
-		Where("owner_id = ? AND creator_id = ?", accountID, "system").
-		Delete(&models.APIKey{}).Error; err != nil {
-		return fmt.Errorf("failed to delete system api keys: %w", err)
-	}
-	return nil
 }
 
 // createDefaultAccount creates a system account with the given role and an API key.
@@ -387,36 +326,37 @@ func (s *BootstrapService) logAccountStats(ctx context.Context) {
 	)
 }
 
-// acquireLock attempts to acquire a distributed lock using NATS KV, falling
-// back to an in-memory lock when NATS KV is unavailable.
+// acquireLock attempts to acquire a distributed lock using NATS KV.
+// It returns a release function on success, ErrBootstrapLockHeld if another
+// node already holds the lock, or an error if the lock could not be acquired.
+// There is no in-memory fallback: bootstrap requires a working distributed
+// lock to prevent duplicate default accounts across ACS nodes.
 func (s *BootstrapService) acquireLock(ctx context.Context, key, token string) (func(), error) {
-	if s.kv != nil {
-		_, err := s.kv.Create(key, []byte(token))
-		if err == nil {
-			// Start a background renewal goroutine.
-			renewCtx, cancel := context.WithCancel(context.Background())
-			done := make(chan struct{})
-			go s.renewLock(renewCtx, key, token, done)
-
-			return func() {
-				cancel()
-				<-done
-				_ = s.kv.Delete(key)
-			}, nil
-		}
-		if errors.Is(err, nats.ErrKeyExists) {
-			// Another node holds the lock; signal the caller to skip bootstrap.
-			return nil, ErrBootstrapLockHeld
-		}
-		// NATS KV error but not because key exists; fall back to in-memory.
-		s.log.Warn("bootstrap", "", "failed to acquire distributed lock, falling back to in-memory lock", "error", err.Error())
+	if s.kv == nil {
+		return nil, fmt.Errorf("NATS KV is nil; distributed lock required for bootstrap")
 	}
 
-	// In-memory fallback.
-	s.inMemoryLock.Lock()
-	return func() {
-		s.inMemoryLock.Unlock()
-	}, nil
+	_, err := s.kv.Create(key, []byte(token))
+	if err == nil {
+		// Start a background renewal goroutine.
+		renewCtx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go s.renewLock(renewCtx, key, token, done)
+
+		return func() {
+			cancel()
+			<-done
+			_ = s.kv.Delete(key)
+		}, nil
+	}
+	if errors.Is(err, nats.ErrKeyExists) {
+		// Another node holds the lock; signal the caller to skip bootstrap.
+		return nil, ErrBootstrapLockHeld
+	}
+
+	// Any other NATS KV error is propagated; do not fall back to an unsafe
+	// in-memory lock because cross-node coordination is required.
+	return nil, fmt.Errorf("failed to create bootstrap lock key %q: %w", key, err)
 }
 
 // renewLock periodically renews the NATS KV lock until the context is cancelled.

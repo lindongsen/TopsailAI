@@ -378,7 +378,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         ) or 0
 
         if token_threshold > 0:
-            current_tokens = self._get_current_tokens() or 0
+            current_tokens = self._get_current_tokens(self.messages) or 0
             if current_tokens > token_threshold:
                 print_step(
                     f"!!! User2Agent token usage exceeded threshold: current_tokens=[{current_tokens}], threshold=[{token_threshold}]",

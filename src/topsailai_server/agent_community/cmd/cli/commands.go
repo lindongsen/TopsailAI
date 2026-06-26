@@ -90,9 +90,11 @@ var commandHandlers = map[string]CommandHandler{
 }
 
 var commandAliases = map[string]string{
-	"exit": "/exit",
-	"quit": "/exit",
-	"help": "/help",
+	"exit":        "/exit",
+	"quit":        "/exit",
+	"help":        "/help",
+	"/members":    "/member:list",
+	"members":     "/member:list",
 }
 
 // DispatchCommand parses and dispatches a command line.

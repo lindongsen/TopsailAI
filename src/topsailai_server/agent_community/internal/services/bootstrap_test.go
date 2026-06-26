@@ -210,9 +210,14 @@ func (kv *stubKeyValue) Status() (nats.KeyValueStatus, error) {
 }
 
 // newTestBootstrapService builds a BootstrapService with the provided NATS KV.
+// If kv is nil, a stub KeyValue implementation is used so that the distributed
+// lock can be exercised without a real NATS server.
 func newTestBootstrapService(t *testing.T, kv nats.KeyValue) *BootstrapService {
 	t.Helper()
 	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
+	if kv == nil {
+		kv = newStubKeyValue()
+	}
 	return NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, kv, newDiscardLogger(t))
 }
 
@@ -247,6 +252,112 @@ func TestBootstrapService_Run_CreatesDefaultAdminAndManager(t *testing.T) {
 	assert.True(t, strings.HasPrefix(string(managerData), "ak-"))
 }
 
+// TestBootstrapService_Run_LeaderCreatesDefaultAccountAndWritesACSFile verifies
+// that the node which creates the default accounts also generates API keys and
+// writes the plaintext .acs files to the working directory.
+func TestBootstrapService_Run_LeaderCreatesDefaultAccountAndWritesACSFile(t *testing.T) {
+	t.Chdir(t.TempDir())
+	svc := newTestBootstrapService(t, nil)
+	ctx := context.Background()
+
+	require.NoError(t, svc.Run(ctx))
+
+	adminExists, err := svc.hasAccountWithRole(ctx, models.AccountRoleAdmin)
+	require.NoError(t, err)
+	assert.True(t, adminExists, "leader should create admin account")
+
+	managerExists, err := svc.hasAccountWithRole(ctx, models.AccountRoleManager)
+	require.NoError(t, err)
+	assert.True(t, managerExists, "leader should create manager account")
+
+	pwd, _ := os.Getwd()
+	adminFile := filepath.Join(pwd, "ACS_ACCOUNT_ADMIN_API_KEY.acs")
+	managerFile := filepath.Join(pwd, "ACS_ACCOUNT_MANAGER_API_KEY.acs")
+
+	adminData, err := os.ReadFile(adminFile)
+	require.NoError(t, err, "leader should write admin .acs file")
+	adminToken := strings.TrimSpace(string(adminData))
+	assert.True(t, strings.HasPrefix(adminToken, "ak-"))
+
+	managerData, err := os.ReadFile(managerFile)
+	require.NoError(t, err, "leader should write manager .acs file")
+	managerToken := strings.TrimSpace(string(managerData))
+	assert.True(t, strings.HasPrefix(managerToken, "ak-"))
+
+	verifiedAdminKey, verifiedAdminOwner, err := svc.apiKeySvc.VerifyAPIKey(ctx, adminToken)
+	require.NoError(t, err, "leader admin token must authenticate")
+	assert.Equal(t, models.APIKeyRoleAdmin, verifiedAdminKey.Role)
+	assert.Equal(t, models.AccountRoleAdmin, verifiedAdminOwner.Role)
+
+	verifiedManagerKey, verifiedManagerOwner, err := svc.apiKeySvc.VerifyAPIKey(ctx, managerToken)
+	require.NoError(t, err, "leader manager token must authenticate")
+	assert.Equal(t, models.APIKeyRoleManager, verifiedManagerKey.Role)
+	assert.Equal(t, models.AccountRoleManager, verifiedManagerOwner.Role)
+}
+
+// TestBootstrapService_Run_FollowerFindsExistingAccountAndDoesNotRegenerateKeys
+// verifies that a follower node which finds default accounts already created
+// does not delete, rotate, or recreate API keys and does not write .acs files.
+func TestBootstrapService_Run_FollowerFindsExistingAccountAndDoesNotRegenerateKeys(t *testing.T) {
+	t.Chdir(t.TempDir())
+	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
+	ctx := context.Background()
+
+	admin, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Existing Admin",
+		LoginName:   "existing-admin",
+		Role:        models.AccountRoleAdmin,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	manager, err := accountSvc.CreateAccount(ctx, &CreateAccountRequest{
+		AccountName: "Existing Manager",
+		LoginName:   "existing-manager",
+		Role:        models.AccountRoleManager,
+		CreatorID:   "system",
+	})
+	require.NoError(t, err)
+
+	adminKey, err := apiKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
+		APIKeyName: "Default Admin Key",
+		Role:       models.APIKeyRoleAdmin,
+		OwnerID:    admin.AccountID,
+		CreatorID:  "system",
+	})
+	require.NoError(t, err)
+
+	managerKey, err := apiKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
+		APIKeyName: "Default Manager Key",
+		Role:       models.APIKeyRoleManager,
+		OwnerID:    manager.AccountID,
+		CreatorID:  "system",
+	})
+	require.NoError(t, err)
+
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, newStubKeyValue(), newDiscardLogger(t))
+	require.NoError(t, svc.Run(ctx))
+
+	pwd, _ := os.Getwd()
+	adminFile := filepath.Join(pwd, "ACS_ACCOUNT_ADMIN_API_KEY.acs")
+	managerFile := filepath.Join(pwd, "ACS_ACCOUNT_MANAGER_API_KEY.acs")
+
+	_, err = os.Stat(adminFile)
+	assert.True(t, os.IsNotExist(err), "follower should not write admin .acs file")
+	_, err = os.Stat(managerFile)
+	assert.True(t, os.IsNotExist(err), "follower should not write manager .acs file")
+
+	adminKeys, _, err := apiKeySvc.ListAPIKeysByOwner(ctx, admin.AccountID, 0, 1000)
+	require.NoError(t, err)
+	require.Len(t, adminKeys, 1)
+	assert.Equal(t, adminKey.APIKey.APIKeyID, adminKeys[0].APIKeyID, "follower should not rotate admin key")
+
+	managerKeys, _, err := apiKeySvc.ListAPIKeysByOwner(ctx, manager.AccountID, 0, 1000)
+	require.NoError(t, err)
+	require.Len(t, managerKeys, 1)
+	assert.Equal(t, managerKey.APIKey.APIKeyID, managerKeys[0].APIKeyID, "follower should not rotate manager key")
+}
+
 func TestBootstrapService_Run_ValidatesConfiguredAdminKey(t *testing.T) {
 	t.Chdir(t.TempDir())
 	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
@@ -272,7 +383,7 @@ func TestBootstrapService_Run_ValidatesConfiguredAdminKey(t *testing.T) {
 	cfg := newTestBootstrapConfig()
 	cfg.Account.AdminAPIKey = key.Token
 
-	svc := NewBootstrapService(db, cfg, accountSvc, apiKeySvc, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, cfg, accountSvc, apiKeySvc, newStubKeyValue(), newDiscardLogger(t))
 	err = svc.Run(ctx)
 	require.NoError(t, err)
 
@@ -312,7 +423,7 @@ func TestBootstrapService_Run_AdminExistsSkipsCreation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, newStubKeyValue(), newDiscardLogger(t))
 	err = svc.Run(ctx)
 	require.NoError(t, err)
 
@@ -331,7 +442,7 @@ func TestBootstrapService_Run_LockHeldSkipsBootstrap(t *testing.T) {
 	t.Chdir(t.TempDir())
 	kv := newStubKeyValue()
 	// Pre-create the lock key so the first service sees it as held.
-	_, err := kv.Create("acs:lock:bootstrap:default-accounts", []byte("other-token"))
+	_, err := kv.Create("acs.lock.bootstrap.default-accounts", []byte("other-token"))
 	require.NoError(t, err)
 
 	svc := newTestBootstrapService(t, kv)
@@ -351,12 +462,13 @@ func TestBootstrapService_ensureDefaultAccount_NoKeyCreatesFile(t *testing.T) {
 	svc := newTestBootstrapService(t, nil)
 	ctx := context.Background()
 
-	err := svc.ensureDefaultAccount(ctx, defaultAccountSpec{
-		role:     models.AccountRoleAdmin,
+	created, err := svc.ensureDefaultAccount(ctx, defaultAccountSpec{
+		role:      models.AccountRoleAdmin,
 		configKey: "",
-		filename: "ACS_ACCOUNT_ADMIN_API_KEY.acs",
+		filename:  "ACS_ACCOUNT_ADMIN_API_KEY.acs",
 	})
 	require.NoError(t, err)
+	assert.True(t, created, "leader should report account created")
 
 	pwd, _ := os.Getwd()
 	adminFile := filepath.Join(pwd, "ACS_ACCOUNT_ADMIN_API_KEY.acs")
@@ -370,12 +482,13 @@ func TestBootstrapService_ensureDefaultAccount_ManagerNoKeyCreatesFile(t *testin
 	svc := newTestBootstrapService(t, nil)
 	ctx := context.Background()
 
-	err := svc.ensureDefaultAccount(ctx, defaultAccountSpec{
-		role:     models.AccountRoleManager,
+	created, err := svc.ensureDefaultAccount(ctx, defaultAccountSpec{
+		role:      models.AccountRoleManager,
 		configKey: "",
-		filename: "ACS_ACCOUNT_MANAGER_API_KEY.acs",
+		filename:  "ACS_ACCOUNT_MANAGER_API_KEY.acs",
 	})
 	require.NoError(t, err)
+	assert.True(t, created, "leader should report account created")
 
 	pwd, _ := os.Getwd()
 	managerFile := filepath.Join(pwd, "ACS_ACCOUNT_MANAGER_API_KEY.acs")
@@ -383,6 +496,7 @@ func TestBootstrapService_ensureDefaultAccount_ManagerNoKeyCreatesFile(t *testin
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(string(data), "ak-"))
 }
+
 func TestBootstrapService_validateConfiguredToken_FormatErrors(t *testing.T) {
 	svc := newTestBootstrapService(t, nil)
 	ctx := context.Background()
@@ -403,7 +517,6 @@ func TestBootstrapService_validateConfiguredToken_FormatErrors(t *testing.T) {
 		})
 	}
 }
-
 func TestBootstrapService_validateConfiguredToken_RoleMismatch(t *testing.T) {
 	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
 	ctx := context.Background()
@@ -424,7 +537,7 @@ func TestBootstrapService_validateConfiguredToken_RoleMismatch(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, newStubKeyValue(), newDiscardLogger(t))
 	err = svc.validateConfiguredToken(ctx, key.Token, models.AccountRoleAdmin)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expected admin")
@@ -434,7 +547,7 @@ func TestBootstrapService_createDefaultAccount_RoleToKeyRoleMapping(t *testing.T
 	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
 	ctx := context.Background()
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, newStubKeyValue(), newDiscardLogger(t))
 
 	tests := []struct {
 		role        models.AccountRole
@@ -502,33 +615,31 @@ func TestBootstrapService_logAccountStats(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, newStubKeyValue(), newDiscardLogger(t))
 	// Should not panic and should complete without error.
 	svc.logAccountStats(ctx)
 }
 
-func TestBootstrapService_acquireLock_InMemoryFallback(t *testing.T) {
-	// nil kv falls back to in-memory lock.
-	svc := newTestBootstrapService(t, nil)
+func TestBootstrapService_acquireLock_NilKVReturnsError(t *testing.T) {
+	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
 	ctx := context.Background()
 
-	release, err := svc.acquireLock(ctx, "acs:lock:bootstrap:test", "token")
-	require.NoError(t, err)
-	require.NotNil(t, release)
-
-	// Release should not panic.
-	release()
+	release, err := svc.acquireLock(ctx, "acs.lock.bootstrap.test", "token")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "NATS KV is nil")
+	assert.Nil(t, release)
 }
 
 func TestBootstrapService_acquireLock_NatsKeyExists(t *testing.T) {
 	kv := newStubKeyValue()
-	_, err := kv.Create("acs:lock:bootstrap:test", []byte("other-token"))
+	_, err := kv.Create("acs.lock.bootstrap.test", []byte("other-token"))
 	require.NoError(t, err)
 
 	svc := newTestBootstrapService(t, kv)
 	ctx := context.Background()
 
-	release, err := svc.acquireLock(ctx, "acs:lock:bootstrap:test", "token")
+	release, err := svc.acquireLock(ctx, "acs.lock.bootstrap.test", "token")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrBootstrapLockHeld)
 	assert.Nil(t, release)
@@ -536,7 +647,7 @@ func TestBootstrapService_acquireLock_NatsKeyExists(t *testing.T) {
 
 func TestBootstrapService_renewLock_TokenMismatchStops(t *testing.T) {
 	kv := newStubKeyValue()
-	key := "acs:lock:bootstrap:renew"
+	key := "acs.lock.bootstrap.renew"
 	// Create the key with a different token value.
 	_, err := kv.Create(key, []byte("other-token"))
 	require.NoError(t, err)
@@ -584,7 +695,7 @@ func TestBootstrapService_validateConfiguredToken_InactiveKey(t *testing.T) {
 	// Deactivate the key directly.
 	require.NoError(t, db.WithContext(ctx).Model(&models.APIKey{}).Where("api_key_id = ?", key.APIKey.APIKeyID).Update("status", models.APIKeyStatusInactive).Error)
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, newStubKeyValue(), newDiscardLogger(t))
 	err = svc.validateConfiguredToken(ctx, key.Token, models.AccountRoleAdmin)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "inactive")
@@ -603,18 +714,18 @@ func TestBootstrapService_acquireLock_CreateSuccess(t *testing.T) {
 	svc := newTestBootstrapService(t, kv)
 	ctx := context.Background()
 
-	release, err := svc.acquireLock(ctx, "acs:lock:bootstrap:create-success", "token")
+	release, err := svc.acquireLock(ctx, "acs.lock.bootstrap.create-success", "token")
 	require.NoError(t, err)
 	require.NotNil(t, release)
 
 	// Verify the key was created.
-	_, err = kv.Get("acs:lock:bootstrap:create-success")
+	_, err = kv.Get("acs.lock.bootstrap.create-success")
 	require.NoError(t, err)
 
 	release()
 
 	// After release the key should be deleted.
-	_, err = kv.Get("acs:lock:bootstrap:create-success")
+	_, err = kv.Get("acs.lock.bootstrap.create-success")
 	require.ErrorIs(t, err, nats.ErrKeyNotFound)
 }
 
@@ -625,17 +736,15 @@ func TestBootstrapService_acquireLock_CreateOtherError(t *testing.T) {
 	svc := newTestBootstrapService(t, kv)
 	ctx := context.Background()
 
-	release, err := svc.acquireLock(ctx, "acs:lock:bootstrap:create-error", "token")
-	require.NoError(t, err)
-	require.NotNil(t, release)
-
-	// Should fall back to in-memory lock.
-	release()
+	release, err := svc.acquireLock(ctx, "acs.lock.bootstrap.create-error", "token")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nats unavailable")
+	assert.Nil(t, release)
 }
 
 func TestBootstrapService_renewLock_UpdateErrorContinues(t *testing.T) {
 	kv := newStubKeyValue()
-	key := "acs:lock:bootstrap:renew-update-error"
+	key := "acs.lock.bootstrap.renew-update-error"
 	_, err := kv.Create(key, []byte("token"))
 	require.NoError(t, err)
 
@@ -662,7 +771,7 @@ func TestBootstrapService_renewLock_UpdateErrorContinues(t *testing.T) {
 
 func TestBootstrapService_hasAccountWithRole_Error(t *testing.T) {
 	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, newStubKeyValue(), newDiscardLogger(t))
 	ctx := context.Background()
 
 	// Close the DB to force an error.
@@ -672,4 +781,45 @@ func TestBootstrapService_hasAccountWithRole_Error(t *testing.T) {
 
 	_, err = svc.hasAccountWithRole(ctx, models.AccountRoleAdmin)
 	require.Error(t, err)
+}
+
+func TestBootstrapService_LockKey_HasValidFormat(t *testing.T) {
+	// The lock key must not contain ':' because NATS KV rejects such keys.
+	assert.NotContains(t, bootstrapLockKey, ":")
+	assert.Equal(t, "acs.lock.bootstrap.default-accounts", bootstrapLockKey)
+}
+
+func TestBootstrapService_Run_SkipsWhenLockHeld(t *testing.T) {
+	t.Chdir(t.TempDir())
+	kv := newStubKeyValue()
+	svc2 := newTestBootstrapService(t, kv)
+	ctx := context.Background()
+
+	// Pre-create the lock key so svc2 sees it as held.
+	_, err := kv.Create(bootstrapLockKey, []byte("other-node"))
+	require.NoError(t, err)
+
+	// svc2 should detect the lock is held and skip bootstrap without error.
+	err = svc2.Run(ctx)
+	require.NoError(t, err)
+
+	// No default accounts should have been created by svc2.
+	adminExists, err := svc2.hasAccountWithRole(ctx, models.AccountRoleAdmin)
+	require.NoError(t, err)
+	assert.False(t, adminExists)
+
+	managerExists, err := svc2.hasAccountWithRole(ctx, models.AccountRoleManager)
+	require.NoError(t, err)
+	assert.False(t, managerExists)
+}
+
+func TestBootstrapService_Run_FailsWhenKVNil(t *testing.T) {
+	t.Chdir(t.TempDir())
+	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
+	ctx := context.Background()
+
+	err := svc.Run(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "NATS KV is nil")
 }

@@ -114,6 +114,9 @@ func TestNATSManager_New(t *testing.T) {
 	if m.GetOnEvent() == nil {
 		t.Error("onEvent not set correctly")
 	}
+	if m.instanceID == "" {
+		t.Error("instanceID should be generated")
+	}
 }
 
 func TestNATSManager_SetGetOnEvent(t *testing.T) {
@@ -140,7 +143,7 @@ func TestNATSManager_Connect_Success(t *testing.T) {
 	m.connectFn = func() (natsConn, error) {
 		return fakeConn, nil
 	}
-	m.newSubscriberFn = func(js natspkg.JetStreamContext, handler nats.MessageHandler) groupSubscriber {
+	m.newSubscriberFn = func(js natspkg.JetStreamContext, handler nats.MessageHandler, instanceID string) groupSubscriber {
 		return &fakeGroupSubscriber{}
 	}
 
@@ -183,7 +186,7 @@ func TestNATSManager_SubscribeGroup_Success(t *testing.T) {
 	m.connectFn = func() (natsConn, error) {
 		return fakeConn, nil
 	}
-	m.newSubscriberFn = func(js natspkg.JetStreamContext, handler nats.MessageHandler) groupSubscriber {
+	m.newSubscriberFn = func(js natspkg.JetStreamContext, handler nats.MessageHandler, instanceID string) groupSubscriber {
 		return fakeSub
 	}
 
@@ -230,7 +233,7 @@ func TestNATSManager_Unsubscribe(t *testing.T) {
 	m.connectFn = func() (natsConn, error) {
 		return &fakeNATSConn{}, nil
 	}
-	m.newSubscriberFn = func(js natspkg.JetStreamContext, handler nats.MessageHandler) groupSubscriber {
+	m.newSubscriberFn = func(js natspkg.JetStreamContext, handler nats.MessageHandler, instanceID string) groupSubscriber {
 		return fakeSub
 	}
 
@@ -264,7 +267,7 @@ func TestNATSManager_Close(t *testing.T) {
 	m.connectFn = func() (natsConn, error) {
 		return fakeConn, nil
 	}
-	m.newSubscriberFn = func(js natspkg.JetStreamContext, handler nats.MessageHandler) groupSubscriber {
+	m.newSubscriberFn = func(js natspkg.JetStreamContext, handler nats.MessageHandler, instanceID string) groupSubscriber {
 		return fakeSub
 	}
 
@@ -297,7 +300,7 @@ func TestNATSManager_SubscribeGroup_SubscriberError(t *testing.T) {
 	m.connectFn = func() (natsConn, error) {
 		return &fakeNATSConn{}, nil
 	}
-	m.newSubscriberFn = func(js natspkg.JetStreamContext, handler nats.MessageHandler) groupSubscriber {
+	m.newSubscriberFn = func(js natspkg.JetStreamContext, handler nats.MessageHandler, instanceID string) groupSubscriber {
 		return fakeSub
 	}
 
@@ -395,7 +398,7 @@ func TestNATSManager_EventHandlerDispatch(t *testing.T) {
 	m.connectFn = func() (natsConn, error) {
 		return &fakeNATSConn{}, nil
 	}
-	m.newSubscriberFn = func(js natspkg.JetStreamContext, handler nats.MessageHandler) groupSubscriber {
+	m.newSubscriberFn = func(js natspkg.JetStreamContext, handler nats.MessageHandler, instanceID string) groupSubscriber {
 		capturedHandler = handler
 		return fakeSub
 	}

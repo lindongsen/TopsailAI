@@ -472,10 +472,12 @@ func TestEvaluate_SlidingWindowBoundary11(t *testing.T) {
 	}
 	now := time.Now().UnixMilli()
 
-	// Build 11 agent messages: 10 before the target and 1 after, so the 20-message
-	// window around the target contains 11 consecutive agent messages.
+	// Build 11 agent messages before the target so that the window around the
+	// target contains 11 consecutive agent messages. Because the target is a
+	// user message, it terminates the run; including the target in the window
+	// means the preceding 11 agent messages are counted as a run of 11.
 	contextMessages := make([]models.GroupMessage, 0, 12)
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 11; i++ {
 		contextMessages = append(contextMessages, *makeMessage(
 			fmt.Sprintf("msg_a_%d", i), "agent1", models.MemberTypeWorkerAgent,
 			"agent msg", "", now-int64((20-i)*1000),
@@ -484,10 +486,6 @@ func TestEvaluate_SlidingWindowBoundary11(t *testing.T) {
 
 	targetMsg := makeMessage("target", "user1", models.MemberTypeUser, "Hello", "", now+1000)
 	contextMessages = append(contextMessages, *targetMsg)
-	contextMessages = append(contextMessages, *makeMessage(
-		"msg_after", "agent1", models.MemberTypeWorkerAgent,
-		"agent msg", "", now+2000,
-	))
 
 	result, err := e.Evaluate(context.Background(), targetMsg, members, contextMessages)
 	if err != nil {
@@ -548,30 +546,28 @@ func TestEvaluate_SlidingWindowExcludesDeletedNonAgentMessages(t *testing.T) {
 	}
 	now := time.Now().UnixMilli()
 
-	// Build 10 agent messages, then a deleted user message, then 1 more agent message.
-	// Excluding the deleted user message leaves 11 consecutive agent messages in the
+	// Build 12 agent messages with a deleted user message somewhere in the middle.
+	// Excluding the deleted user message leaves 12 consecutive agent messages in the
 	// window around the target, so the trigger should be blocked.
-	contextMessages := make([]models.GroupMessage, 0, 13)
-	for i := 0; i < 10; i++ {
+	contextMessages := make([]models.GroupMessage, 0, 14)
+	for i := 0; i < 12; i++ {
+		if i == 5 {
+			deletedUserMsg := makeMessage(
+				"msg_user_deleted", "user1", models.MemberTypeUser, "deleted", "", now-int64((20-i)*1000),
+			)
+			deletedUserMsg.IsDeleted = true
+			deletedUserMsg.DeleteAtMs = now - int64((20-i)*1000) + 1
+			contextMessages = append(contextMessages, *deletedUserMsg)
+			continue
+		}
 		contextMessages = append(contextMessages, *makeMessage(
 			fmt.Sprintf("msg_a_%d", i), "agent1", models.MemberTypeWorkerAgent,
 			"agent msg", "", now-int64((20-i)*1000),
 		))
 	}
-	deletedUserMsg := makeMessage(
-		"msg_user_deleted", "user1", models.MemberTypeUser, "deleted", "", now-9000,
-	)
-	deletedUserMsg.IsDeleted = true
-	deletedUserMsg.DeleteAtMs = now - 8999
-	contextMessages = append(contextMessages, *deletedUserMsg)
 
 	targetMsg := makeMessage("target", "user1", models.MemberTypeUser, "Hello", "", now+1000)
 	contextMessages = append(contextMessages, *targetMsg)
-
-	contextMessages = append(contextMessages, *makeMessage(
-		"msg_after", "agent1", models.MemberTypeWorkerAgent,
-		"agent msg", "", now+2000,
-	))
 
 	result, err := e.Evaluate(context.Background(), targetMsg, members, contextMessages)
 	if err != nil {
@@ -631,7 +627,6 @@ func TestEvaluate_TargetNotInContext(t *testing.T) {
 	}
 }
 
-// TestResolveAgents_AllNoManager verifies @all without manager does not trigger.
 func TestResolveAgents_AllNoManager(t *testing.T) {
 	e := NewEvaluator(10 * time.Minute)
 	members := []models.GroupMember{
@@ -686,10 +681,11 @@ func TestResolveAgents_DuplicateMentions(t *testing.T) {
 	}
 }
 
-// TestEvaluateMentions_MultipleManagers verifies multiple manager mentions picks one manager.
-func TestEvaluateMentions_MultipleManagers(t *testing.T) {
+// TestResolveAgents_MultipleManagersRandom verifies multiple managers trigger one randomly.
+func TestResolveAgents_MultipleManagersRandom(t *testing.T) {
 	e := NewEvaluator(10 * time.Minute)
 	members := []models.GroupMember{
+		makeMember("user1", "Alice", models.MemberTypeUser),
 		makeMember("mgr1", "Manager1", models.MemberTypeManagerAgent),
 		makeMember("mgr2", "Manager2", models.MemberTypeManagerAgent),
 	}

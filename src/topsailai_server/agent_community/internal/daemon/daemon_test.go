@@ -32,6 +32,12 @@ func TestGetACSHome_Default(t *testing.T) {
 	assert.Equal(t, "/topsailai", getACSHome())
 }
 
+func TestGetACSHome_FromACS_HOME(t *testing.T) {
+	t.Setenv("ACS_HOME", "/custom/acs")
+	t.Setenv("TOPSAILAI_HOME", "/custom/topsail")
+	assert.Equal(t, "/custom/acs", getACSHome())
+}
+
 func TestGetACSHome_FromTOPSAILAI_HOME(t *testing.T) {
 	t.Setenv("TOPSAILAI_HOME", "/custom/topsail")
 	t.Setenv("ACS_HOME", "")
@@ -39,12 +45,12 @@ func TestGetACSHome_FromTOPSAILAI_HOME(t *testing.T) {
 }
 
 func TestGetLogPath(t *testing.T) {
-	t.Setenv("TOPSAILAI_HOME", "/tmp/acs")
+	t.Setenv("ACS_HOME", "/tmp/acs")
 	assert.Equal(t, "/tmp/acs/log/agent_community.log", getLogPath())
 }
 
 func TestGetPIDPath(t *testing.T) {
-	t.Setenv("TOPSAILAI_HOME", "/tmp/acs")
+	t.Setenv("ACS_HOME", "/tmp/acs")
 	assert.Equal(t, "/tmp/acs/run/agent_community.pid", getPIDPath())
 }
 
@@ -99,7 +105,7 @@ func TestIsProcessRunning(t *testing.T) {
 
 func TestStartWithExecutable_WritesPIDFile(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("TOPSAILAI_HOME", home)
+	t.Setenv("ACS_HOME", home)
 
 	bin := buildSleepyBinary(t)
 	require.NoError(t, StartWithExecutable(bin))
@@ -119,9 +125,29 @@ func TestStartWithExecutable_WritesPIDFile(t *testing.T) {
 	assert.NoFileExists(t, pidPath)
 }
 
+func TestStartWithExecutable_PreservesACS_HOME(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ACS_HOME", home)
+	t.Setenv("TOPSAILAI_HOME", "/should/be/ignored")
+
+	bin := buildSleepyBinary(t)
+	require.NoError(t, StartWithExecutable(bin))
+	time.Sleep(200 * time.Millisecond)
+
+	pidPath := filepath.Join(home, "run", "agent_community.pid")
+	require.FileExists(t, pidPath)
+
+	pid, err := readPID(pidPath)
+	require.NoError(t, err)
+	assert.True(t, isProcessRunning(pid), "helper process should be running")
+
+	require.NoError(t, Stop())
+	assert.NoFileExists(t, pidPath)
+}
+
 func TestStartWithExecutable_AlreadyRunning(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("TOPSAILAI_HOME", home)
+	t.Setenv("ACS_HOME", home)
 
 	bin := buildSleepyBinary(t)
 	require.NoError(t, StartWithExecutable(bin))
@@ -137,7 +163,7 @@ func TestStartWithExecutable_AlreadyRunning(t *testing.T) {
 
 func TestStop_StalePID(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("TOPSAILAI_HOME", home)
+	t.Setenv("ACS_HOME", home)
 
 	pidPath := getPIDPath()
 	require.NoError(t, ensureDir(filepath.Dir(pidPath)))
@@ -152,7 +178,7 @@ func TestStop_StalePID(t *testing.T) {
 
 func TestRestart(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("TOPSAILAI_HOME", home)
+	t.Setenv("ACS_HOME", home)
 
 	bin := buildSleepyBinary(t)
 	require.NoError(t, StartWithExecutable(bin))
@@ -174,7 +200,7 @@ func TestRestart(t *testing.T) {
 
 func TestStatus(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("TOPSAILAI_HOME", home)
+	t.Setenv("ACS_HOME", home)
 
 	// No PID file: not running.
 	status, err := Status()
@@ -205,7 +231,7 @@ func TestSetupDaemon_InSubprocess(t *testing.T) {
 	// which is started by StartWithExecutable in other tests. This test verifies
 	// the log file is created when the helper runs.
 	home := t.TempDir()
-	t.Setenv("TOPSAILAI_HOME", home)
+	t.Setenv("ACS_HOME", home)
 
 	bin := buildSleepyBinary(t)
 	require.NoError(t, StartWithExecutable(bin))
@@ -218,7 +244,7 @@ func TestSetupDaemon_InSubprocess(t *testing.T) {
 
 func TestStop_Graceful(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("TOPSAILAI_HOME", home)
+	t.Setenv("ACS_HOME", home)
 
 	bin := buildSleepyBinary(t)
 	require.NoError(t, StartWithExecutable(bin))
@@ -238,7 +264,7 @@ func TestStop_Graceful(t *testing.T) {
 func TestStop_ForceKill(t *testing.T) {
 	// Start a process that ignores SIGTERM to exercise the force-kill path.
 	home := t.TempDir()
-	t.Setenv("TOPSAILAI_HOME", home)
+	t.Setenv("ACS_HOME", home)
 
 	// Build a helper that ignores SIGTERM.
 	src := `

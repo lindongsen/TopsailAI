@@ -949,7 +949,7 @@ Add a member (user or agent) to a group, or self-join a group using its access k
 - Any authenticated account can **self-join** a public group (a group whose `group_key` is null/empty).
 - Any authenticated account can **self-join** a private group by providing the correct `group_key` in the request body.
 
-When self-joining, the caller should **not** supply `member_id` or `member_type`; the server derives them from the authenticated account. For backward compatibility, a self-join request that includes these fields is accepted only when `member_id` equals the caller's `account_id` and `member_type` equals `user`. Any other value is treated as an attempt to add a member and is rejected with `403 Forbidden`. On a valid self-join, the server sets:
+When self-joining, the caller must **not** supply `member_id` or `member_type`; the server derives them from the authenticated account. A self-join request that includes either field is rejected with `403 Forbidden`, even if the values would otherwise match the caller. On a valid self-join, the server sets:
 - `member_id` to the caller's `account_id`.
 - `member_type` to `user`.
 

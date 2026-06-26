@@ -38,7 +38,7 @@ func newTestConfig(dbCfg config.DatabaseConfig) *config.Config {
 func TestNew_SQLite_Success(t *testing.T) {
 	cfg := newTestConfig(sqliteInMemory(t))
 
-	db, err := New(cfg)
+	db, err := New(cfg, nil)
 	require.NoError(t, err)
 	require.NotNil(t, db)
 	require.NotNil(t, db.Conn)
@@ -71,7 +71,7 @@ func TestNew_SQLite_InvalidPath(t *testing.T) {
 		Name:   filepath.Join(dir, "test.db"),
 	})
 
-	db, err := New(cfg)
+	db, err := New(cfg, nil)
 	require.Error(t, err)
 	assert.Nil(t, db)
 	assert.Contains(t, err.Error(), "failed to create directory for sqlite database")
@@ -81,7 +81,7 @@ func TestNew_SQLite_InvalidPath(t *testing.T) {
 func TestNew_SQLite_ConnectionPool(t *testing.T) {
 	cfg := newTestConfig(sqliteInMemory(t))
 
-	db, err := New(cfg)
+	db, err := New(cfg, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -214,7 +214,7 @@ func TestAutoMigrate_Idempotent(t *testing.T) {
 func TestDB_Close(t *testing.T) {
 	cfg := newTestConfig(sqliteInMemory(t))
 
-	db, err := New(cfg)
+	db, err := New(cfg, nil)
 	require.NoError(t, err)
 	require.NotNil(t, db)
 
@@ -234,7 +234,7 @@ func TestDB_Close(t *testing.T) {
 func TestNew_AllowsModelCreation(t *testing.T) {
 	cfg := newTestConfig(sqliteInMemory(t))
 
-	db, err := New(cfg)
+	db, err := New(cfg, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -264,7 +264,7 @@ func TestNew_AllowsModelCreation(t *testing.T) {
 func TestNew_EnforcesUniqueLoginName(t *testing.T) {
 	cfg := newTestConfig(sqliteInMemory(t))
 
-	db, err := New(cfg)
+	db, err := New(cfg, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -292,7 +292,7 @@ func TestNew_EnforcesUniqueLoginName(t *testing.T) {
 func TestNew_EnforcesCompositePrimaryKey(t *testing.T) {
 	cfg := newTestConfig(sqliteInMemory(t))
 
-	db, err := New(cfg)
+	db, err := New(cfg, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -411,7 +411,7 @@ func TestDB_Close_NilConn(t *testing.T) {
 func TestNew_SQLite_IsolatedBetweenTests(t *testing.T) {
 	cfg := newTestConfig(sqliteInMemory(t))
 
-	db, err := New(cfg)
+	db, err := New(cfg, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 

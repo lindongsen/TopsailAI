@@ -950,8 +950,8 @@ func TestGroupMemberHandler_Join_UserOwnGroupOnly(t *testing.T) {
 	require.Equal(t, testUserAccountID, joinResp.Data.MemberID)
 	require.Equal(t, string(models.MemberTypeUser), joinResp.Data.MemberType)
 
-	// User can self-join a public group while supplying their own member_id and
-	// user member_type (tolerant self-join form used by some clients).
+	// User cannot self-join a public group while supplying their own member_id
+	// and user member_type (self-join must not include those fields).
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
 	setUserAuth(c, testUserAccountID)
@@ -965,7 +965,7 @@ func TestGroupMemberHandler_Join_UserOwnGroupOnly(t *testing.T) {
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Params = gin.Params{{Key: "group_id", Value: "group-user-other-public-tolerant"}}
 	handler.JoinGroup(c)
-	require.Equal(t, http.StatusCreated, w.Code)
+	require.Equal(t, http.StatusForbidden, w.Code)
 	// User cannot self-join a public group while supplying a different member_id
 	// or non-user member_type (treated as an attempt to add a member).
 	w = httptest.NewRecorder()
@@ -1006,8 +1006,9 @@ func TestGroupMemberHandler_Join_UserOwnGroupOnly(t *testing.T) {
 	require.Equal(t, testUserAccountID, joinResp.Data.MemberID)
 	require.Equal(t, string(models.MemberTypeUser), joinResp.Data.MemberType)
 
-	// User can self-join a private group with the correct key and their own
-	// member_id/member_type (tolerant self-join form).
+	// User cannot self-join a private group with the correct key while also
+	// supplying their own member_id/member_type (self-join must not include
+	// those fields, even with the right key).
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
 	setUserAuth(c, testUserAccountID)
@@ -1022,7 +1023,7 @@ func TestGroupMemberHandler_Join_UserOwnGroupOnly(t *testing.T) {
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Params = gin.Params{{Key: "group_id", Value: "group-user-other-private-tolerant"}}
 	handler.JoinGroup(c)
-	require.Equal(t, http.StatusCreated, w.Code)
+	require.Equal(t, http.StatusForbidden, w.Code)
 
 	// User cannot self-join a private group with the wrong key.
 	w = httptest.NewRecorder()
@@ -1034,6 +1035,106 @@ func TestGroupMemberHandler_Join_UserOwnGroupOnly(t *testing.T) {
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Params = gin.Params{{Key: "group_id", Value: "group-user-other-private"}}
 	handler.JoinGroup(c)
+	require.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestGroupMemberHandler_Join_SelfJoinMismatchedMemberIDOnly verifies that a
+// non-owner self-join supplying a mismatched member_id (with member_type
+// omitted) is rejected.
+func TestGroupMemberHandler_Join_SelfJoinMismatchedMemberIDOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupForMembersWithOwner(t, db, "group-mismatch-id", testAdminAccountID)
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	body := JoinGroupRequest{
+		MemberID:   "different-user",
+		MemberName: "MismatchID",
+	}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-mismatch-id/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-mismatch-id"}}
+	handler.JoinGroup(c)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestGroupMemberHandler_Join_SelfJoinMismatchedMemberTypeOnly verifies that a
+// non-owner self-join supplying a non-user member_type (with member_id omitted)
+// is rejected.
+func TestGroupMemberHandler_Join_SelfJoinMismatchedMemberTypeOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupForMembersWithOwner(t, db, "group-mismatch-type", testAdminAccountID)
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	body := JoinGroupRequest{
+		MemberName: "MismatchType",
+		MemberType: string(models.MemberTypeWorkerAgent),
+	}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-mismatch-type/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-mismatch-type"}}
+	handler.JoinGroup(c)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestGroupMemberHandler_Join_SelfJoinMatchingMemberIDOnly verifies that a
+// non-owner self-join supplying their own member_id (with member_type omitted)
+// is still rejected; self-join must not include member_id at all.
+func TestGroupMemberHandler_Join_SelfJoinMatchingMemberIDOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupForMembersWithOwner(t, db, "group-match-id", testAdminAccountID)
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	body := JoinGroupRequest{
+		MemberID:   testUserAccountID,
+		MemberName: "MatchID",
+	}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-match-id/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-match-id"}}
+	handler.JoinGroup(c)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestGroupMemberHandler_Join_SelfJoinMatchingMemberTypeOnly verifies that a
+// non-owner self-join supplying user member_type (with member_id omitted) is
+// still rejected; self-join must not include member_type at all.
+func TestGroupMemberHandler_Join_SelfJoinMatchingMemberTypeOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupForMembersWithOwner(t, db, "group-match-type", testAdminAccountID)
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	setUserAuth(c, testUserAccountID)
+	body := JoinGroupRequest{
+		MemberName: "MatchType",
+		MemberType: string(models.MemberTypeUser),
+	}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-match-type/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-match-type"}}
+	handler.JoinGroup(c)
+
 	require.Equal(t, http.StatusForbidden, w.Code)
 }
 

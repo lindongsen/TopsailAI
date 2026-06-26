@@ -269,6 +269,13 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 		return
 	}
 
+	var req JoinGroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.log.Warn("api", traceID, "invalid join group request", "error", err.Error())
+		writeErrorResponse(c, http.StatusBadRequest, err.Error(), traceID)
+		return
+	}
+
 	// Verify group exists
 	var group models.Group
 	if err := h.db.Where("group_id = ?", groupID).First(&group).Error; err != nil {
@@ -278,13 +285,6 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 		}
 		h.log.Error("api", traceID, "failed to get group", "error", err.Error())
 		writeErrorResponse(c, http.StatusInternalServerError, "failed to join group", traceID)
-		return
-	}
-
-	var req JoinGroupRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		h.log.Warn("api", traceID, "invalid join group request", "error", err.Error())
-		writeErrorResponse(c, http.StatusBadRequest, err.Error(), traceID)
 		return
 	}
 
@@ -324,19 +324,17 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 		memberDescription = req.MemberDescription
 		memberType = models.MemberType(req.MemberType)
 	} else {
-		// Self-join mode. Non-owners/admins may only supply their own
-		// account_id as member_id and "user" as member_type. Anything else is
-		// treated as an attempt to add a member.
-		if req.MemberID != "" && req.MemberID != authCtx.Account.AccountID {
-			writeErrorResponse(c, http.StatusForbidden, "self-join cannot specify a different member_id", traceID)
+		// Self-join mode. Non-owners/admins may not supply member_id or
+		// member_type; those fields are reserved for owner/admin member addition.
+		if req.MemberID != "" {
+			writeErrorResponse(c, http.StatusForbidden, "self-join cannot specify member_id", traceID)
 			return
 		}
-		if req.MemberType != "" && req.MemberType != string(models.MemberTypeUser) {
-			writeErrorResponse(c, http.StatusForbidden, "self-join cannot specify a member_type other than user", traceID)
+		if req.MemberType != "" {
+			writeErrorResponse(c, http.StatusForbidden, "self-join cannot specify member_type", traceID)
 			return
 		}
 
-		// Self-join mode.
 		alreadyMember, err := isGroupMember(h.db, groupID, authCtx.Account.AccountID)
 		if err != nil {
 			h.log.Error("api", traceID, "failed to check group membership", "error", err.Error())

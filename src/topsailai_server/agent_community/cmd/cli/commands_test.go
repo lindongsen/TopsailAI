@@ -106,6 +106,8 @@ func TestDispatchCommandAliases(t *testing.T) {
 		{"exit", "/exit"},
 		{"quit", "/exit"},
 		{"help", "/help"},
+		{"/members", "/member:list"},
+		{"members", "/member:list"},
 	}
 
 	for _, tt := range tests {

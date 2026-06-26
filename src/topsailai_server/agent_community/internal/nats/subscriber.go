@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/topsailai/agent-community/pkg/logger"
 )
@@ -30,20 +31,38 @@ var jsSubscribe = func(js nats.JetStreamContext, subj string, cb nats.MsgHandler
 
 // Subscriber subscribes to NATS subjects for real-time updates.
 type Subscriber struct {
-	js      nats.JetStreamContext
-	subs    []subscription
-	handler MessageHandler
-	acker   func(*nats.Msg) error
+	js         nats.JetStreamContext
+	subs       []subscription
+	handler    MessageHandler
+	acker      func(*nats.Msg) error
+	instanceID string
 }
 
-// NewSubscriber creates a new NATS subscriber.
+// NewSubscriber creates a new NATS subscriber with a generated instance ID.
+// The instance ID is used to build unique durable consumer names so that
+// multiple subscriber instances can coexist for the same subject.
 func NewSubscriber(js nats.JetStreamContext, handler MessageHandler) *Subscriber {
-	return &Subscriber{
-		js:      js,
-		subs:    make([]subscription, 0),
-		handler: handler,
-		acker:   func(msg *nats.Msg) error { return msg.Ack() },
+	return NewSubscriberWithInstanceID(js, handler, "")
+}
+
+// NewSubscriberWithInstanceID creates a new NATS subscriber with the provided
+// instance ID. If instanceID is empty, a random UUID is generated.
+func NewSubscriberWithInstanceID(js nats.JetStreamContext, handler MessageHandler, instanceID string) *Subscriber {
+	if instanceID == "" {
+		instanceID = uuid.New().String()
 	}
+	return &Subscriber{
+		js:         js,
+		subs:       make([]subscription, 0),
+		handler:    handler,
+		acker:      func(msg *nats.Msg) error { return msg.Ack() },
+		instanceID: instanceID,
+	}
+}
+
+// durableName returns a durable consumer name scoped to this subscriber instance.
+func (s *Subscriber) durableName(prefix string) string {
+	return fmt.Sprintf("%s-%s", prefix, s.instanceID)
 }
 
 // SubscribeGroup subscribes to group events for a specific group.
@@ -57,13 +76,13 @@ func (s *Subscriber) SubscribeGroup(groupID string) error {
 		if err := s.acker(msg); err != nil {
 			logger.Error("failed to ack group message", "subject", subject, "error", err)
 		}
-	}, nats.Durable("cli-"+groupID), nats.ManualAck())
+	}, nats.Durable(s.durableName("cli-"+groupID)), nats.ManualAck())
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to group %s: %w", groupID, err)
 	}
 
 	s.subs = append(s.subs, sub)
-	logger.Info("subscribed to group events", "group_id", groupID, "subject", subject)
+	logger.Info("subscribed to group events", "group_id", groupID, "subject", subject, "instance_id", s.instanceID)
 	return nil
 }
 
@@ -88,13 +107,13 @@ func (s *Subscriber) SubscribeAllGroups() error {
 		if err := s.acker(msg); err != nil {
 			logger.Error("failed to ack group message", "subject", subject, "error", err)
 		}
-	}, nats.Durable("cli-all-groups"), nats.ManualAck())
+	}, nats.Durable(s.durableName("cli-all-groups")), nats.ManualAck())
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to all groups: %w", err)
 	}
 
 	s.subs = append(s.subs, sub)
-	logger.Info("subscribed to all group events", "subject", subject)
+	logger.Info("subscribed to all group events", "subject", subject, "instance_id", s.instanceID)
 	return nil
 }
 
@@ -122,7 +141,7 @@ func (s *Subscriber) Unsubscribe() error {
 		}
 	}
 	s.subs = s.subs[:0]
-	logger.Info("unsubscribed from all group events")
+	logger.Info("unsubscribed from all group events", "instance_id", s.instanceID)
 	return nil
 }
 
@@ -145,13 +164,13 @@ func (s *Subscriber) SubscribePendingMessages(groupID string) error {
 		if err := s.acker(msg); err != nil {
 			logger.Error("failed to ack pending message", "subject", subject, "error", err)
 		}
-	}, nats.Durable("pending-monitor-"+groupID), nats.ManualAck())
+	}, nats.Durable(s.durableName("pending-monitor-"+groupID)), nats.ManualAck())
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to pending messages for group %s: %w", groupID, err)
 	}
 
 	s.subs = append(s.subs, sub)
-	logger.Info("subscribed to pending messages", "group_id", groupID, "subject", subject)
+	logger.Info("subscribed to pending messages", "group_id", groupID, "subject", subject, "instance_id", s.instanceID)
 	return nil
 }
 
@@ -179,12 +198,12 @@ func (s *Subscriber) SubscribeHeartbeats(handler func(nodeID string, timestamp i
 		if err := s.acker(msg); err != nil {
 			logger.Error("failed to ack heartbeat", "error", err)
 		}
-	}, nats.Durable("heartbeat-monitor"), nats.ManualAck())
+	}, nats.Durable(s.durableName("heartbeat-monitor")), nats.ManualAck())
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to heartbeats: %w", err)
 	}
 
 	s.subs = append(s.subs, sub)
-	logger.Info("subscribed to heartbeats", "subject", subject)
+	logger.Info("subscribed to heartbeats", "subject", subject, "instance_id", s.instanceID)
 	return nil
 }

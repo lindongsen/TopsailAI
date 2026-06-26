@@ -198,6 +198,9 @@ LLM service errors
 
 Task execution time is too long
 
+### LOG_ATTENTION: "[0-9]\- \[summarize_"
+
+Summarization info
 
 ## Summarize Trigger Logic
 
@@ -374,7 +377,7 @@ Message content is commonly represented as a dictionary using the following keys
 
 ## Known Pitfall: `_get_token_calculation_messages` Override in `ContextRuntimeData`
 
-**File:** `workspace/context/ctx_runtime.py`  
+**File:** `workspace/context/ctx_runtime.py`
 **Related:** `workspace/context/base.py` (`_summarize_runtime_messages`, `_get_current_tokens`)
 
 ### Problem

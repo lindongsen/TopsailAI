@@ -106,7 +106,8 @@ func printUsage() {
 	fmt.Println("  help    Show this help message")
 	fmt.Println("")
 	fmt.Println("Environment variables:")
-	fmt.Println("  TOPSAILAI_HOME    Base directory for logs and PID files (default: /topsailai)")
+	fmt.Println("  ACS_HOME          Base directory for logs and PID files (default: /topsailai)")
+	fmt.Println("  TOPSAILAI_HOME    Fallback base directory when ACS_HOME is not set (default: /topsailai)")
 	fmt.Println("")
 	fmt.Println("Files:")
 	fmt.Printf("  Log: %s\n", daemon.GetLogPath())
@@ -181,18 +182,8 @@ func runServer(isDaemon bool) error {
 
 	log.Info("server", "", "starting ACS server", "port", cfg.Server.Port)
 
-	// 3. Connect to database (auto-create, auto-migrate).
-	database, err := db.New(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to initialize database: %w", err)
-	}
-	defer func() {
-		if err := database.Close(); err != nil {
-			log.Error("server", "", "failed to close database", "error", err.Error())
-		}
-	}()
-
-	// 4. Connect to NATS (create streams, consumers, KV bucket).
+	// 3. Connect to NATS (create streams, consumers, KV bucket) before the
+	// database so that the migration distributed lock is available.
 	natsClient := nats.NewClient(&cfg.NATS)
 	if err := natsClient.Connect(); err != nil {
 		return fmt.Errorf("failed to connect to NATS: %w", err)
@@ -201,6 +192,18 @@ func runServer(isDaemon bool) error {
 
 	js := natsClient.JetStream()
 	kv := natsClient.KV()
+
+	// 4. Connect to database (auto-create, auto-migrate). Migration is
+	// coordinated via the NATS KV lock obtained above.
+	database, err := db.New(cfg, kv)
+	if err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+	defer func() {
+		if err := database.Close(); err != nil {
+			log.Error("server", "", "failed to close database", "error", err.Error())
+		}
+	}()
 
 	// 5. Create distributed lock manager.
 	lockManager, err := lock.NewDistributedLock(js, "acs_locks")

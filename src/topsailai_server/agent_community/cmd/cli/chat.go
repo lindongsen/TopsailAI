@@ -89,6 +89,7 @@ func (cm *ChatMode) printError(msg string) {
 func (cm *ChatMode) printSeparator() {
 	fmt.Fprintln(cm.output(), white(strings.Repeat(boxHorizontal(), 42)))
 }
+
 // EnterChat enters the chat window for a group.
 func (cm *ChatMode) EnterChat(groupID, userID, userName string) error {
 	cm.groupID = groupID
@@ -139,7 +140,7 @@ func (cm *ChatMode) EnterChat(groupID, userID, userName string) error {
 
 	cm.printSuccess(fmt.Sprintf("Entered chat mode for group %s", groupID))
 	cm.printInfo("Type your message and press Enter to send.")
-	cm.printInfo("Commands: /members, /exit")
+	cm.printInfo("Commands: /member:list, /exit")
 
 	// Start input reader goroutine.
 	go cm.readInput()
@@ -198,7 +199,7 @@ func (cm *ChatMode) handleInput(line string) {
 	case "/exit", "exit", "quit":
 		cm.LeaveChat()
 		return
-	case "/members":
+	case "/member:list", "/members":
 		cm.showMembers()
 	case "/help":
 		cm.showChatHelp()
@@ -345,14 +346,16 @@ func (cm *ChatMode) showMembers() {
 func (cm *ChatMode) showChatHelp() {
 	cm.printSeparator()
 	cm.println("Chat Commands:")
-	cm.println("  /members  - Show group members")
-	cm.println("  /help     - Show this help")
-	cm.println("  /exit     - Leave chat mode")
-	cm.println("  exit      - Alias for /exit")
-	cm.println("  quit      - Alias for /exit")
-	cm.println("  (any text) - Send a message to the group")
+	cm.println("  /member:list  - Show group members")
+	cm.println("  /members      - Alias for /member:list")
+	cm.println("  /help         - Show this help")
+	cm.println("  /exit         - Leave chat mode")
+	cm.println("  exit          - Alias for /exit")
+	cm.println("  quit          - Alias for /exit")
+	cm.println("  (any text)    - Send a message to the group")
 	cm.printSeparator()
 }
+
 // displayEvent displays a NATS event in chat mode.
 func (cm *ChatMode) displayEvent(event *nats.PendingPublishMessage) {
 	if event.GroupID != "" && event.GroupID != cm.groupID {

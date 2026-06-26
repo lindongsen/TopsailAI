@@ -13,10 +13,11 @@ import (
 	"github.com/topsailai/agent-community/internal/models"
 )
 
-// TestBootstrapService_Run_ExistingAccountsMissingACSFile verifies that when
-// default accounts already exist but their .acs plaintext key files are missing,
-// bootstrap regenerates the files so CLI/API authentication can proceed.
-func TestBootstrapService_Run_ExistingAccountsMissingACSFile(t *testing.T) {
+// TestBootstrapService_Run_FollowerDoesNotRegenerateMissingACSFile verifies that
+// when default accounts already exist (created by another node) but the local
+// .acs plaintext key files are missing, bootstrap does NOT regenerate keys or
+// files. This prevents follower nodes from invalidating the leader's keys.
+func TestBootstrapService_Run_FollowerDoesNotRegenerateMissingACSFile(t *testing.T) {
 	t.Chdir(t.TempDir())
 	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
 	ctx := context.Background()
@@ -37,7 +38,7 @@ func TestBootstrapService_Run_ExistingAccountsMissingACSFile(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = apiKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
+	adminKey, err := apiKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
 		APIKeyName: "Default Admin Key",
 		Role:       models.APIKeyRoleAdmin,
 		OwnerID:    admin.AccountID,
@@ -45,7 +46,7 @@ func TestBootstrapService_Run_ExistingAccountsMissingACSFile(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = apiKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
+	managerKey, err := apiKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
 		APIKeyName: "Default Manager Key",
 		Role:       models.APIKeyRoleManager,
 		OwnerID:    manager.AccountID,
@@ -53,25 +54,32 @@ func TestBootstrapService_Run_ExistingAccountsMissingACSFile(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, newStubKeyValue(), newDiscardLogger(t))
 	require.NoError(t, svc.Run(ctx))
 
 	pwd, _ := os.Getwd()
 	adminFile := filepath.Join(pwd, "ACS_ACCOUNT_ADMIN_API_KEY.acs")
 	managerFile := filepath.Join(pwd, "ACS_ACCOUNT_MANAGER_API_KEY.acs")
 
-	adminData, err := os.ReadFile(adminFile)
-	require.NoError(t, err, "admin .acs file should be regenerated when missing")
-	assert.True(t, strings.HasPrefix(string(adminData), "ak-"))
+	_, err = os.Stat(adminFile)
+	assert.True(t, os.IsNotExist(err), "follower should not create admin .acs file when account already exists")
+	_, err = os.Stat(managerFile)
+	assert.True(t, os.IsNotExist(err), "follower should not create manager .acs file when account already exists")
 
-	managerData, err := os.ReadFile(managerFile)
-	require.NoError(t, err, "manager .acs file should be regenerated when missing")
-	assert.True(t, strings.HasPrefix(string(managerData), "ak-"))
+	adminKeys, _, err := apiKeySvc.ListAPIKeysByOwner(ctx, admin.AccountID, 0, 1000)
+	require.NoError(t, err)
+	require.Len(t, adminKeys, 1)
+	assert.Equal(t, adminKey.APIKey.APIKeyID, adminKeys[0].APIKeyID, "follower should not rotate existing admin key")
+
+	managerKeys, _, err := apiKeySvc.ListAPIKeysByOwner(ctx, manager.AccountID, 0, 1000)
+	require.NoError(t, err)
+	require.Len(t, managerKeys, 1)
+	assert.Equal(t, managerKey.APIKey.APIKeyID, managerKeys[0].APIKeyID, "follower should not rotate existing manager key")
 }
 
 // TestBootstrapService_Run_ExistingAccountsWithValidACSFile verifies that a
 // valid existing .acs file is preserved and the underlying API key is not
-// rotated.
+// rotated when the default account already exists.
 func TestBootstrapService_Run_ExistingAccountsWithValidACSFile(t *testing.T) {
 	t.Chdir(t.TempDir())
 	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
@@ -116,7 +124,7 @@ func TestBootstrapService_Run_ExistingAccountsWithValidACSFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(adminFile, []byte(adminKey.Token), 0600))
 	require.NoError(t, os.WriteFile(managerFile, []byte(managerKey.Token), 0600))
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, newStubKeyValue(), newDiscardLogger(t))
 	require.NoError(t, svc.Run(ctx))
 
 	adminData, err := os.ReadFile(adminFile)
@@ -133,10 +141,11 @@ func TestBootstrapService_Run_ExistingAccountsWithValidACSFile(t *testing.T) {
 	assert.Equal(t, adminKey.APIKey.APIKeyID, adminKeys[0].APIKeyID)
 }
 
-// TestBootstrapService_Run_ExistingAccountsWithInvalidACSFile verifies that an
-// invalid .acs file is replaced with a new token and the old system-created API
-// key is rotated.
-func TestBootstrapService_Run_ExistingAccountsWithInvalidACSFile(t *testing.T) {
+// TestBootstrapService_Run_FollowerDoesNotReplaceInvalidACSFile verifies that
+// when default accounts already exist, an invalid local .acs file is NOT
+// replaced and the existing system API keys are NOT rotated. This prevents
+// follower nodes from invalidating keys created by the leader.
+func TestBootstrapService_Run_FollowerDoesNotReplaceInvalidACSFile(t *testing.T) {
 	t.Chdir(t.TempDir())
 	db, accountSvc, apiKeySvc, _ := newTestBootstrapServices(t)
 	ctx := context.Background()
@@ -157,7 +166,7 @@ func TestBootstrapService_Run_ExistingAccountsWithInvalidACSFile(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	oldAdminKey, err := apiKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
+	adminKey, err := apiKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
 		APIKeyName: "Default Admin Key",
 		Role:       models.APIKeyRoleAdmin,
 		OwnerID:    admin.AccountID,
@@ -165,7 +174,7 @@ func TestBootstrapService_Run_ExistingAccountsWithInvalidACSFile(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	oldManagerKey, err := apiKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
+	managerKey, err := apiKeySvc.CreateAPIKey(ctx, &CreateAPIKeyRequest{
 		APIKeyName: "Default Manager Key",
 		Role:       models.APIKeyRoleManager,
 		OwnerID:    manager.AccountID,
@@ -180,41 +189,26 @@ func TestBootstrapService_Run_ExistingAccountsWithInvalidACSFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(adminFile, []byte("ak-invalid.invalidsecret"), 0600))
 	require.NoError(t, os.WriteFile(managerFile, []byte("ak-invalid.invalidsecret"), 0600))
 
-	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, nil, newDiscardLogger(t))
+	svc := NewBootstrapService(db, newTestBootstrapConfig(), accountSvc, apiKeySvc, newStubKeyValue(), newDiscardLogger(t))
 	require.NoError(t, svc.Run(ctx))
 
 	adminData, err := os.ReadFile(adminFile)
 	require.NoError(t, err)
-	adminToken := strings.TrimSpace(string(adminData))
-	assert.True(t, strings.HasPrefix(adminToken, "ak-"))
-	assert.NotEqual(t, "ak-invalid.invalidsecret", adminToken, "invalid admin .acs file should be regenerated")
+	assert.Equal(t, "ak-invalid.invalidsecret", string(adminData), "invalid admin .acs file should not be replaced by follower")
 
 	managerData, err := os.ReadFile(managerFile)
 	require.NoError(t, err)
-	managerToken := strings.TrimSpace(string(managerData))
-	assert.True(t, strings.HasPrefix(managerToken, "ak-"))
-	assert.NotEqual(t, "ak-invalid.invalidsecret", managerToken, "invalid manager .acs file should be regenerated")
-
-	// Verify the regenerated plaintext tokens authenticate against the stored hashes.
-	verifiedAdminKey, verifiedAdminOwner, err := apiKeySvc.VerifyAPIKey(ctx, adminToken)
-	require.NoError(t, err, "regenerated admin token must authenticate")
-	assert.Equal(t, models.APIKeyRoleAdmin, verifiedAdminKey.Role)
-	assert.Equal(t, models.AccountRoleAdmin, verifiedAdminOwner.Role)
-
-	verifiedManagerKey, verifiedManagerOwner, err := apiKeySvc.VerifyAPIKey(ctx, managerToken)
-	require.NoError(t, err, "regenerated manager token must authenticate")
-	assert.Equal(t, models.APIKeyRoleManager, verifiedManagerKey.Role)
-	assert.Equal(t, models.AccountRoleManager, verifiedManagerOwner.Role)
+	assert.Equal(t, "ak-invalid.invalidsecret", string(managerData), "invalid manager .acs file should not be replaced by follower")
 
 	adminKeys, _, err := apiKeySvc.ListAPIKeysByOwner(ctx, admin.AccountID, 0, 1000)
 	require.NoError(t, err)
 	require.Len(t, adminKeys, 1)
-	assert.NotEqual(t, oldAdminKey.APIKey.APIKeyID, adminKeys[0].APIKeyID)
+	assert.Equal(t, adminKey.APIKey.APIKeyID, adminKeys[0].APIKeyID, "follower should not rotate existing admin key")
 
 	managerKeys, _, err := apiKeySvc.ListAPIKeysByOwner(ctx, manager.AccountID, 0, 1000)
 	require.NoError(t, err)
 	require.Len(t, managerKeys, 1)
-	assert.NotEqual(t, oldManagerKey.APIKey.APIKeyID, managerKeys[0].APIKeyID)
+	assert.Equal(t, managerKey.APIKey.APIKeyID, managerKeys[0].APIKeyID, "follower should not rotate existing manager key")
 }
 
 // TestBootstrapService_Run_DefaultKeysAuthenticate verifies that the plaintext
