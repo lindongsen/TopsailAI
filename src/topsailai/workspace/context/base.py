@@ -141,6 +141,45 @@ class ContextRuntimeBase(object):
             self.set_messages(messages_from_session)
         return
 
+    def delete_message(self, index: int):
+        """
+        Delete a single message from the messages list by index.
+
+        This mutates the list in-place, which is safe because it does not
+        replace the `self.messages` reference. The method is kept as a
+        controlled mutator entry point so that all deletions go through the
+        same API.
+
+        Args:
+            index (int): Zero-based index of the message to remove.
+
+        Raises:
+            AssertionError: If index is out of the valid range.
+
+        Returns:
+            None
+        """
+        assert isinstance(index, int), "index must be an integer"
+        assert 0 <= index < len(self.messages), "index out of range"
+
+        del self.messages[index]
+        return
+
+    def clear_messages(self):
+        """
+        Clear all messages from the messages list.
+
+        This mutates the list in-place, which is safe because it does not
+        replace the `self.messages` reference. The method is kept as a
+        controlled mutator entry point so that all clear operations go through
+        the same API.
+
+        Returns:
+            None
+        """
+        self.messages.clear()
+        return
+
     ###############################################################
     # Summarization message-structure helpers
     ###############################################################

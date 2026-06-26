@@ -91,7 +91,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             print(f"Context cannot be clear due to exist session_id({session_id})")
         else:
             # clear context messages
-            self.messages.clear()
+            self.ctx_runtime_data.clear_messages()
             print("Context already is clear")
         return
 

@@ -128,7 +128,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             index_msg_id = index_msg.msg_id
             ctx_manager.del_session_messages(session_id, [index_msg_id])
 
-        del self.messages[index]
+        self.delete_message(index)
 
         return
 

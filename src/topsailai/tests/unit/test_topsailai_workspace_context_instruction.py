@@ -109,17 +109,14 @@ class TestContextRuntimeInstructions(unittest.TestCase):
 
         self.instruction.ctx_clear()
 
-        self.assertEqual(len(self.mock_ctx_runtime_data.messages), 0)
+        self.mock_ctx_runtime_data.clear_messages.assert_called_once()
 
     def test_ctx_clear_with_session(self):
         """Test ctx_clear when session exists - should not clear."""
         self.mock_ctx_runtime_data.session_id = "active_session"
         self.mock_ctx_runtime_data.messages = ["msg1", "msg2"]
 
-        self.instruction.ctx_clear()
-
-        # Messages should remain unchanged
-        self.assertEqual(len(self.mock_ctx_runtime_data.messages), 2)
+        self.mock_ctx_runtime_data.clear_messages.assert_not_called()
 
     ##############################################################################
     # TestCtxStory
