@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# topsailai_check_log.sh - Check logs based on LOG_ATTENTION keywords from readme.md
+# topsailai_check_log.sh - Check logs based on LOG_ATTENTION keywords from LOG.md
 #
 # Author: topsailai
 # Date: 2025-04-16
@@ -22,8 +22,8 @@ set -eo pipefail
 # =============================================================================
 # Global Variables
 # =============================================================================
-README_FILE="${EXE_FOLDER}/../src/topsailai/readme.md"
-[ -e "${README_FILE}" ] || README_FILE="${EXE_FOLDER}/../topsailai/readme.md"
+README_FILE="${EXE_FOLDER}/../src/topsailai/LOG.md"
+[ -e "${README_FILE}" ] || README_FILE="${EXE_FOLDER}/../topsailai/LOG.md"
 [ -n "${TOPSAILAI_HOME}" ] || TOPSAILAI_HOME="/topsailai"
 LOG_FILE="${TOPSAILAI_HOME}/log/chat.log"
 
@@ -34,7 +34,7 @@ show_help() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS] [file=]
 
-Check logs based on LOG_ATTENTION keywords from readme.md
+Check logs based on LOG_ATTENTION keywords from LOG.md
 
 Options:
     -h, --help      Display this help message and exit
@@ -57,7 +57,7 @@ EOF
 main() {
     # Check if files exist
     if [[ ! -f "${README_FILE}" ]]; then
-        echo "Error: readme.md not found at ${README_FILE}"
+        echo "Error: LOG.md not found at ${README_FILE}"
         exit 2
     fi
 
@@ -66,7 +66,7 @@ main() {
         exit 2
     fi
 
-    # Extract LOG_ATTENTION content from readme.md
+    # Extract LOG_ATTENTION content from LOG.md
 
     # The fact information From Human:
     # The content in [] in the following cases is the original content
@@ -79,7 +79,7 @@ main() {
     keywords=$(grep -oP '(?<=# LOG_ATTENTION:).*' "${README_FILE}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed "s/^['\"]//; s/['\"]$//")
 
     if [[ -z "${keywords}" ]]; then
-        echo "No LOG_ATTENTION keywords found in readme.md"
+        echo "No LOG_ATTENTION keywords found in LOG.md"
         exit 0
     fi
 

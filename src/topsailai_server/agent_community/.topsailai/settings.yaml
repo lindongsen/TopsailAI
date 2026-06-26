@@ -13,6 +13,7 @@ context:
     - ORIGIN.md
     - docs/API.md
     - docs/Environment_Variables.md
+    - MEMO.md
 
   default: []
 

@@ -1555,3 +1555,62 @@ func TestJoinGroup_SelfJoin_InvalidProvidedMemberNameRejected(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+// TestJoinGroup_AdminSelfJoinPublicGroup verifies that an admin account can
+// self-join a public group without supplying member_id or member_type. The
+// member_id should be derived from the authenticated account.
+func TestJoinGroup_AdminSelfJoinPublicGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupForMembersWithOwner(t, db, "group-admin-self-join", testUserAccountID)
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	setAdminAuth(c, testAdminAccountID)
+	body := JoinGroupRequest{MemberName: "AdminMember"}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-admin-self-join/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-admin-self-join"}}
+
+	handler.JoinGroup(c)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	var resp groupMemberResponseWrapper
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, testAdminAccountID, resp.Data.MemberID)
+	assert.Equal(t, "AdminMember", resp.Data.MemberName)
+	assert.Equal(t, string(models.MemberTypeUser), resp.Data.MemberType)
+}
+
+// TestJoinGroup_AdminCanStillAddMember verifies that an admin can still add
+// another member by supplying member_id and member_type.
+func TestJoinGroup_AdminCanStillAddMember(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupGroupMemberTestDB(t)
+	createTestGroupForMembersWithOwner(t, db, "group-admin-add", testUserAccountID)
+	handler := setupGroupMemberTestHandler(t, db, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	setAdminAuth(c, testAdminAccountID)
+	body := JoinGroupRequest{
+		MemberID:   "agent-001",
+		MemberName: "AgentOne",
+		MemberType: string(models.MemberTypeWorkerAgent),
+		MemberInterface: MemberInterfaceField{value: `{"adaptor":"mock_agent"}`},
+	}
+	jsonBody, _ := json.Marshal(body)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/groups/group-admin-add/members", bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "group_id", Value: "group-admin-add"}}
+
+	handler.JoinGroup(c)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	var resp groupMemberResponseWrapper
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "agent-001", resp.Data.MemberID)
+	assert.Equal(t, string(models.MemberTypeWorkerAgent), resp.Data.MemberType)
+}

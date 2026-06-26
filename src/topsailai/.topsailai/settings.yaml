@@ -8,7 +8,7 @@ workspace: /TopsailAI/src/topsailai
 context:
   _default:
     - project.yaml
-    - readme.md
+    - MEMO.md
     - workspace/readme.md
     - env_template
     - docs/Environment_Variables.md

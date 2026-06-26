@@ -289,17 +289,23 @@ func (h *GroupMemberHandler) JoinGroup(c *gin.Context) {
 	}
 
 	// Determine authorization mode.
+	// Self-join is detected by the absence of member_id/member_type in the
+	// request body. This applies to all authenticated accounts, including
+	// admins, matching the documented API behavior. When those fields are
+	// supplied, the request is treated as an owner/admin member addition.
 	ownerMode := false
-	if isAdmin(authCtx) {
-		ownerMode = true
-	} else {
-		isOwner, err := isGroupOwner(h.db, groupID, authCtx.Account.AccountID)
-		if err != nil {
-			h.log.Error("api", traceID, "failed to check group ownership", "error", err.Error())
-			writeErrorResponse(c, http.StatusInternalServerError, "failed to join group", traceID)
-			return
+	if req.MemberID != "" || req.MemberType != "" {
+		if isAdmin(authCtx) {
+			ownerMode = true
+		} else {
+			isOwner, err := isGroupOwner(h.db, groupID, authCtx.Account.AccountID)
+			if err != nil {
+				h.log.Error("api", traceID, "failed to check group ownership", "error", err.Error())
+				writeErrorResponse(c, http.StatusInternalServerError, "failed to join group", traceID)
+				return
+			}
+			ownerMode = isOwner
 		}
-		ownerMode = isOwner
 	}
 
 	var memberID, memberName, memberDescription string
