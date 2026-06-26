@@ -43,3 +43,9 @@ These variables control when the agent archives or summarizes message history to
 - `TOPSAILAI_REALTIME_TOKEN_CALCULATION` controls whether `_get_current_tokens()` calculates tokens from the actual message content (`1`) or uses the cached `TokenStat.current_tokens` value (`0`, default). When enabled, User2Agent tokens are calculated from `self.messages` and Agent2LLM tokens are calculated from `self.ai_agent.messages`. This variable is read on each call to `_get_current_tokens()`.
 
 The first three variables are read at `ThresholdContextHistory` initialization time and can be overridden per process. `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` and `TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD` are read on each call to their respective `is_need_summarize_*` methods.
+
+## Session Truncation
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_SESSION_HEAD_TAIL_OFFSET` | (unset) | Number of messages to keep from the head and tail when truncating session history on agent startup. If unset, falls back to `DEFAULT_HEAD_TAIL_OFFSET` (`7`). Used by `AgentChatBase` via `ctx_manager.cut_messages()`. |

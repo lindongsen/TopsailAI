@@ -91,7 +91,8 @@ class AgentChatBase(object):
             ctx_rt_aiagent: Context runtime AI agent instance.
             ctx_rt_instruction: Context runtime instructions instance.
             session_head_tail_offset: Number of messages to keep from head and tail
-                                      when truncating conversation history. Defaults to 7.
+                                      when truncating conversation history. Can be set via
+                                      TOPSAILAI_SESSION_HEAD_TAIL_OFFSET env var. Defaults to 7.
         """
         self.hook_instruction = hook_instruction
         self.ctx_rt_aiagent = ctx_rt_aiagent
@@ -103,7 +104,15 @@ class AgentChatBase(object):
         self.last_message = None
 
         if session_head_tail_offset is None:
-            session_head_tail_offset = DEFAULT_HEAD_TAIL_OFFSET
+            env_offset = env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_SESSION_HEAD_TAIL_OFFSET",
+                default=None,
+                formatter=int,
+            )
+            if env_offset is not None:
+                session_head_tail_offset = env_offset
+            else:
+                session_head_tail_offset = DEFAULT_HEAD_TAIL_OFFSET
         self.session_head_tail_offset = session_head_tail_offset
 
         set_ai_agent(self.ai_agent)

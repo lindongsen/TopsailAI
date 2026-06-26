@@ -141,6 +141,10 @@ TOPSAILAI_SESSION_LOCK_FILE_NEED_DELETE=1
 # Truncate Message
 TOPSAILAI_CONTEXT_ONE_MESSAGE_MAX_KB=30
 
+# Number of messages to keep from head and tail when truncating session history.
+# If unset, falls back to DEFAULT_HEAD_TAIL_OFFSET (7).
+# TOPSAILAI_SESSION_HEAD_TAIL_OFFSET=7
+
 # Chat History Managers
 # Format: Manager classes separated by semicolons (';')
 # Each manager: class_name parameters separated by spaces (' ')
