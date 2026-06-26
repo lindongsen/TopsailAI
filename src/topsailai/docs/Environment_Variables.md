@@ -48,4 +48,4 @@ The first three variables are read at `ThresholdContextHistory` initialization t
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TOPSAILAI_SESSION_HEAD_TAIL_OFFSET` | (unset) | Number of messages to keep from the head and tail when truncating session history on agent startup. If unset, falls back to `DEFAULT_HEAD_TAIL_OFFSET` (`7`). Used by `AgentChatBase` via `ctx_manager.cut_messages()`. |
+| `TOPSAILAI_SESSION_HEAD_TAIL_OFFSET` | (unset) | Number of messages to keep from the head and tail when truncating session history on agent startup. If unset, falls back to `DEFAULT_HEAD_TAIL_OFFSET` (`7`). Set to `0` to disable truncation and keep all session messages. Used by `AgentChatBase` via `ctx_manager.cut_messages()`. |

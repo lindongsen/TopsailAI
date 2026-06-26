@@ -441,6 +441,8 @@ class ContextRuntimeBase(object):
         Returns:
             int | None: The current token count, or None if not available.
         """
+        if messages:
+            realtime = True
         if not realtime:
             realtime = env_tool.EnvReaderInstance.check_bool(
                 "TOPSAILAI_REALTIME_TOKEN_CALCULATION", False

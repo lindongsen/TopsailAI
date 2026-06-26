@@ -143,6 +143,7 @@ TOPSAILAI_CONTEXT_ONE_MESSAGE_MAX_KB=30
 
 # Number of messages to keep from head and tail when truncating session history.
 # If unset, falls back to DEFAULT_HEAD_TAIL_OFFSET (7).
+# Set to 0 to disable truncation (all session messages are kept).
 # TOPSAILAI_SESSION_HEAD_TAIL_OFFSET=7
 
 # Chat History Managers
