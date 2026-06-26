@@ -21,6 +21,7 @@ Environment Variables:
     TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: Set to "1" to save messages, "0" to not save (default: 0)
     TOPSAILAI_TASK: Optional file path or content for the task
     TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET: Number for offset (msgs[:offset] + msgs[-offset:]), default is 7
+    TOPSAILAI_SESSION_HEAD_TAIL_OFFSET: Fallback offset for session context (default: 7)
 """
 
 import sys
@@ -38,9 +39,6 @@ os.environ["TOPSAILAI_COLLABORATION_MODE"] = "1"
 from topsailai.ai_team.role import (
     get_member_name,
 )
-from topsailai.ai_team.constants import (
-    DEFAULT_HEAD_TAIL_OFFSET,
-)
 from topsailai.ai_team.member_agent import (
     get_system_prompt,
 )
@@ -48,6 +46,9 @@ from topsailai.utils import (
     env_tool,
 )
 from topsailai.workspace.agent_shell import get_agent_chat
+from topsailai.ai_team.common import (
+    get_session_head_tail_offset,
+)
 
 
 def hook_build_message(message:str, **kwargs) -> str:
@@ -96,6 +97,7 @@ def main():
     Environment Variables Used:
         TOPSAILAI_TEAM_AGENT_SESSION_NEED_SAVE_MESSAGE: Whether to save messages (default: false)
         TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET: Session message offset (default: 7)
+        TOPSAILAI_SESSION_HEAD_TAIL_OFFSET: Fallback session message offset (default: 7)
 
     Returns:
         str or None: The final answer from the agent, or None if no answer generated.
@@ -118,10 +120,7 @@ def main():
         agent_type="react",
 
         agent_name=agent_name,
-        session_head_tail_offset=env_tool.EnvReaderInstance.get(
-            "TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET",
-            formatter=int,
-        ) or DEFAULT_HEAD_TAIL_OFFSET,
+        session_head_tail_offset=get_session_head_tail_offset(),
         need_print_session=False,
         need_input_message=False,
     )

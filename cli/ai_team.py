@@ -24,9 +24,6 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root + "/src")
 os.chdir(project_root)
 
-from topsailai.ai_team.constants import (
-    DEFAULT_HEAD_TAIL_OFFSET,
-)
 from topsailai.ai_team.manager import (
     get_members_cache,
     build_manager_message,
@@ -38,15 +35,13 @@ from topsailai.ai_team.role import (
 from topsailai.human.role import (
     get_human_name,
 )
-from topsailai.utils import (
-    env_tool,
-)
 from topsailai.workspace.input_tool import (
     SPLIT_LINE,
 )
 from topsailai.workspace.agent_shell import get_agent_chat
 from topsailai.ai_team.common import (
     get_session_id,
+    get_session_head_tail_offset,
 )
 
 
@@ -97,6 +92,7 @@ def main():
 
     Environment Variables:
         TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET: Optional offset for session context (default: 7)
+        TOPSAILAI_SESSION_HEAD_TAIL_OFFSET: Fallback offset for session context (default: 7)
     """
     # agent name
     manager_name = get_manager_name()
@@ -119,10 +115,7 @@ def main():
         agent_name=manager_name,
         session_id=get_session_id(),
 
-        session_head_tail_offset=env_tool.EnvReaderInstance.get(
-            "TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET",
-            formatter=int,
-        ) or DEFAULT_HEAD_TAIL_OFFSET,
+        session_head_tail_offset=get_session_head_tail_offset(),
     )
 
     ##########################################################################################

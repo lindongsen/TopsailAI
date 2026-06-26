@@ -188,5 +188,136 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(id1[8], id2[8], "Both should have T at position 8")
 
 
+
+class TestGetSessionHeadTailOffset(unittest.TestCase):
+    """Test cases for get_session_head_tail_offset() function"""
+
+    def setUp(self):
+        """Set up clean environment for each test"""
+        self.env_patcher = patch.dict(os.environ, {}, clear=True)
+        self.env_patcher.start()
+        # Clear any cached import
+        if 'topsailai.ai_team.common' in sys.modules:
+            del sys.modules['topsailai.ai_team.common']
+
+    def tearDown(self):
+        """Clean up environment after each test"""
+        self.env_patcher.stop()
+
+    def test_team_offset_takes_precedence(self):
+        """Test TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET takes precedence"""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET": "3",
+            "TOPSAILAI_SESSION_HEAD_TAIL_OFFSET": "5",
+        }):
+            from topsailai.ai_team.common import get_session_head_tail_offset
+            result = get_session_head_tail_offset()
+            self.assertEqual(result, 3)
+
+    def test_falls_back_to_global_offset(self):
+        """Test TOPSAILAI_SESSION_HEAD_TAIL_OFFSET is used when team offset is unset"""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_SESSION_HEAD_TAIL_OFFSET": "5",
+        }):
+            from topsailai.ai_team.common import get_session_head_tail_offset
+            result = get_session_head_tail_offset()
+            self.assertEqual(result, 5)
+
+    def test_uses_default_when_both_unset(self):
+        """Test default value is used when both env vars are unset"""
+        from topsailai.ai_team.common import get_session_head_tail_offset, DEFAULT_HEAD_TAIL_OFFSET
+        result = get_session_head_tail_offset()
+        self.assertEqual(result, DEFAULT_HEAD_TAIL_OFFSET)
+
+    def test_team_offset_zero_is_valid(self):
+        """Test team offset of 0 is used (not treated as unset)"""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET": "0",
+        }):
+            from topsailai.ai_team.common import get_session_head_tail_offset
+            result = get_session_head_tail_offset()
+            self.assertEqual(result, 0)
+
+    def test_global_offset_zero_is_valid(self):
+        """Test global offset of 0 is used when team offset is unset"""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_SESSION_HEAD_TAIL_OFFSET": "0",
+        }):
+            from topsailai.ai_team.common import get_session_head_tail_offset
+            result = get_session_head_tail_offset()
+            self.assertEqual(result, 0)
+
+    def test_team_empty_string_falls_back(self):
+        """Test empty team offset falls back to global offset"""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET": "",
+            "TOPSAILAI_SESSION_HEAD_TAIL_OFFSET": "4",
+        }):
+            from topsailai.ai_team.common import get_session_head_tail_offset
+            result = get_session_head_tail_offset()
+            self.assertEqual(result, 4)
+
+    def test_global_empty_string_falls_back_to_default(self):
+        """Test empty global offset falls back to default"""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_SESSION_HEAD_TAIL_OFFSET": "",
+        }):
+            from topsailai.ai_team.common import get_session_head_tail_offset, DEFAULT_HEAD_TAIL_OFFSET
+            result = get_session_head_tail_offset()
+            self.assertEqual(result, DEFAULT_HEAD_TAIL_OFFSET)
+
+    def test_team_invalid_integer_falls_back(self):
+        """Test invalid team offset falls back to global offset"""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET": "not_a_number",
+            "TOPSAILAI_SESSION_HEAD_TAIL_OFFSET": "6",
+        }):
+            from topsailai.ai_team.common import get_session_head_tail_offset
+            result = get_session_head_tail_offset()
+            self.assertEqual(result, 6)
+
+    def test_global_invalid_integer_falls_back_to_default(self):
+        """Test invalid global offset falls back to default"""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_SESSION_HEAD_TAIL_OFFSET": "invalid",
+        }):
+            from topsailai.ai_team.common import get_session_head_tail_offset, DEFAULT_HEAD_TAIL_OFFSET
+            result = get_session_head_tail_offset()
+            self.assertEqual(result, DEFAULT_HEAD_TAIL_OFFSET)
+
+    def test_negative_team_offset_falls_back(self):
+        """Test negative team offset falls back to global offset"""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET": "-1",
+            "TOPSAILAI_SESSION_HEAD_TAIL_OFFSET": "2",
+        }):
+            from topsailai.ai_team.common import get_session_head_tail_offset
+            result = get_session_head_tail_offset()
+            self.assertEqual(result, 2)
+
+    def test_negative_global_offset_falls_back_to_default(self):
+        """Test negative global offset falls back to default"""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_SESSION_HEAD_TAIL_OFFSET": "-3",
+        }):
+            from topsailai.ai_team.common import get_session_head_tail_offset, DEFAULT_HEAD_TAIL_OFFSET
+            result = get_session_head_tail_offset()
+            self.assertEqual(result, DEFAULT_HEAD_TAIL_OFFSET)
+
+    def test_custom_default_is_used(self):
+        """Test custom default is used when both env vars are unset"""
+        from topsailai.ai_team.common import get_session_head_tail_offset
+        result = get_session_head_tail_offset(default=10)
+        self.assertEqual(result, 10)
+
+    def test_team_offset_overrides_custom_default(self):
+        """Test team offset overrides custom default"""
+        with patch.dict(os.environ, {
+            "TOPSAILAI_TEAM_SESSION_HEAD_AND_TAIL_OFFSET": "8",
+        }):
+            from topsailai.ai_team.common import get_session_head_tail_offset
+            result = get_session_head_tail_offset(default=10)
+            self.assertEqual(result, 8)
+
 if __name__ == '__main__':
     unittest.main()
