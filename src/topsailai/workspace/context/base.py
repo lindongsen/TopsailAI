@@ -415,8 +415,18 @@ class ContextRuntimeBase(object):
         """
         Get the messages used for real-time token calculation.
 
-        Subclasses may override this to return the message source appropriate
-        for their layer (e.g. User2Agent session messages or Agent2LLM messages).
+        IMPORTANT DESIGN NOTE:
+        This method intentionally returns self.ai_agent.messages when an agent is
+        present, even for User2Agent-layer callers. self.messages (User2Agent session)
+        is loaded as the starting prefix of self.ai_agent.messages via
+        ContextRuntimeAIAgent.add_runtime_messages(), so self.ai_agent.messages
+        already contains self.messages and represents the complete runtime context
+        seen by the LLM. Both User2Agent and Agent2LLM summarization/token checks
+        therefore use the same full context source.
+
+        Subclasses should NOT override this method to return a different layer
+        unless the layer semantics genuinely change. If a layer needs a different
+        message source, add a new layer-specific helper instead.
 
         Returns:
             list | None: The messages to count, or None if not available.

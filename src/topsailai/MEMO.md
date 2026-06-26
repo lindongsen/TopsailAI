@@ -435,3 +435,21 @@ The `last_user_message` property intentionally scans `self.messages` (the **User
 
 ### Note for maintainers
 Do not change `last_user_message` to scan `self.ai_agent.messages`. If a future use case genuinely needs the last user-like message inside the Agent2LLM layer, add a new layer-specific helper instead of modifying this property.
+
+## MEMO: `_get_token_calculation_messages` returns `self.ai_agent.messages` by design
+
+**Date:** 2026-06-26
+**File:** `/TopsailAI/src/topsailai/workspace/context/base.py` (`_get_token_calculation_messages`)
+**Discussion:** Review challenge from Human.Topsail
+
+### Conclusion
+`_get_token_calculation_messages()` intentionally returns `self.ai_agent.messages` whenever an agent is present, even when called from the User2Agent summarization path.
+
+### Rationale
+- `self.messages` (User2Agent persisted session) is loaded as the starting prefix of `self.ai_agent.messages` via `ContextRuntimeAIAgent.add_runtime_messages()`.
+- Therefore `self.ai_agent.messages` already contains `self.messages`.
+- `self.ai_agent.messages` represents the complete runtime context that the LLM actually sees, including both the human↔agent conversation and the agent's internal ReAct messages.
+- Using `self.ai_agent.messages` for token calculation and runtime-mode summarization gives a consistent, complete view of the active context for both User2Agent and Agent2LLM layers.
+
+### Note for maintainers
+Do not change `_get_token_calculation_messages()` to return `self.messages` for User2Agent calls. If a future use case genuinely needs to count only the User2Agent session messages, add a new layer-specific helper instead of modifying this shared accessor.
