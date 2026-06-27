@@ -23,6 +23,13 @@ def get_truncation_len() -> int|None:
         pass
     return None
 
+def _format_truncated_msg(msg:str, truncation_len:int|None=None) -> str:
+    if truncation_len is None:
+        truncation_len = get_truncation_len()
+    if msg and len(msg) > truncation_len:
+        return msg[:truncation_len] + f" (truncated)\n\n---\n\n> (truncated) ... total_len={len(msg)} tail_content=[{msg[-30:]}]"
+    return msg
+
 def truncate_msg(msg:str|list|dict, key_name="step_name", value_name="raw_text") -> str:
     """Truncate message content if it exceeds configured length.
 
@@ -35,6 +42,11 @@ def truncate_msg(msg:str|list|dict, key_name="step_name", value_name="raw_text")
     Returns:
         str: Truncated message as string (possibly JSON).
     """
+    from topsailai.ai_base.constants import (
+        STEP_NAME_FINAL, STEP_NAME_FINAL_ANSWER, STEP_NAME_THOUGHT,
+        STEP_NAME_TASK,
+        STEP_NAME_INQUIRY,
+    )
     from topsailai.utils import json_tool
     from .format_tool import to_list
 
@@ -45,13 +57,27 @@ def truncate_msg(msg:str|list|dict, key_name="step_name", value_name="raw_text")
             if msg_d:
                 msg = msg_d
 
+        # Ignore Now
+        #if isinstance(msg, str):
+        #    if len(msg) > truncation_len:
+        #        return _format_truncated_msg(msg)
+
         if isinstance(msg, (dict, list)):
             for _msg_d in to_list(msg):
                 if not isinstance(_msg_d, dict):
                     continue
+                _key_text = _msg_d.get(key_name)
+                if _key_text in [
+                    STEP_NAME_THOUGHT,
+                    STEP_NAME_FINAL,
+                    STEP_NAME_FINAL_ANSWER,
+                    STEP_NAME_TASK,
+                    STEP_NAME_INQUIRY,
+                ]:
+                    continue
                 _raw_text = _msg_d.get(value_name)
-                if _raw_text and len(_raw_text) > truncation_len:
-                    _msg_d[value_name] = _msg_d[value_name][:truncation_len] + f" (truncated)\n\n---\n\n> (truncated) ... total_len={len(_raw_text)} tail_content=[{_raw_text[-30:]}]"
+                if _raw_text:
+                    _msg_d[value_name] = _format_truncated_msg(_raw_text)
 
             msg = json_tool.json_dump(msg, indent=2)
 

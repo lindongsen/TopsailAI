@@ -31,6 +31,7 @@ STEP_NAME_ACTION = "action"
 STEP_NAME_THOUGHT = "thought"
 STEP_NAME_INQUIRY = "inquiry"
 STEP_NAME_FINAL = "final"
+STEP_NAME_FINAL_ANSWER = "final_answer"
 STEP_NAME_OBSERVATION = "observation"
 
 # message content key
