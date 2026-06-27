@@ -35,7 +35,9 @@ def check_or_fix_mistakes(response, rsp_obj=None, **kwargs):
     """
     new_response = response
 
-    for name, func in MISTAKES.items():
+    # Iterate in deterministic order so that the same mistake handler is
+    # preferred across processes regardless of module discovery order.
+    for name, func in sorted(MISTAKES.items()):
         tmp_response = func(new_response, rsp_obj=rsp_obj, **kwargs)
 
         if tmp_response is None:

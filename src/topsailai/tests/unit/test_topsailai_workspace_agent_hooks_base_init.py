@@ -84,8 +84,8 @@ class TestGetHooks:
             result = get_hooks("any")
             assert isinstance(result, list)
 
-    def test_get_hooks_preserves_order(self):
-        """Test get_hooks preserves iteration order of HOOKS."""
+    def test_get_hooks_sorted_order(self):
+        """Test get_hooks returns hooks in lexicographical order."""
         from topsailai.workspace.agent.hooks.base.init import get_hooks
 
         mock_hooks = {
@@ -96,11 +96,10 @@ class TestGetHooks:
 
         with patch("topsailai.workspace.agent.hooks.base.init.HOOKS", mock_hooks):
             result = get_hooks("")
-            # Should preserve dict insertion order (Python 3.7+)
-            assert result[0] == mock_hooks["z.func"]
-            assert result[1] == mock_hooks["a.func"]
-            assert result[2] == mock_hooks["m.func"]
-
+            # Hooks must be returned in strict lexicographical order.
+            assert result[0] == mock_hooks["a.func"]
+            assert result[1] == mock_hooks["m.func"]
+            assert result[2] == mock_hooks["z.func"]
     def test_get_hooks_with_single_match(self):
         """Test get_hooks returns single item list for one match."""
         from topsailai.workspace.agent.hooks.base.init import get_hooks

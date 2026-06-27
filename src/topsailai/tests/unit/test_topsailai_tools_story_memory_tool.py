@@ -333,5 +333,38 @@ class TestIntegration(unittest.TestCase):
         self.assertTrue(delete_result)
 
 
+class TestGetAllMemoriesOrdering(unittest.TestCase):
+    """Tests verifying deterministic ordering in memory retrieval."""
+
+    @patch('topsailai.tools.story_memory_tool.list_memories')
+    @patch('topsailai.tools.story_memory_tool.read_memory')
+    def test_get_all_memories_sorts_by_title(self, mock_read_memory, mock_list_memories):
+        """Verify get_all_memories returns memories sorted by title."""
+        from topsailai.tools import story_memory_tool
+
+        mock_list_memories.return_value = ["z_memory.md", "a_memory.md", "m_memory.md"]
+        mock_read_memory.side_effect = lambda title: f"content of {title}"
+
+        result = story_memory_tool.get_all_memories()
+
+        self.assertEqual(list(result.keys()), ["a_memory.md", "m_memory.md", "z_memory.md"])
+
+    @patch('topsailai.tools.story_memory_tool.list_memories')
+    @patch('topsailai.tools.story_memory_tool.read_memory')
+    def test_get_all_memories_markdown_sorts_by_title(self, mock_read_memory, mock_list_memories):
+        """Verify get_all_memories_markdown emits titles in sorted order."""
+        from topsailai.tools import story_memory_tool
+
+        mock_list_memories.return_value = ["z_memory.md", "a_memory.md", "m_memory.md"]
+        mock_read_memory.side_effect = lambda title: f"content of {title}"
+
+        result = story_memory_tool.get_all_memories_markdown()
+
+        # Extract headings in order of appearance
+        import re
+        headings = re.findall(r"## ([^\n]+)", result)
+        self.assertEqual(headings, ["a_memory.md", "m_memory.md", "z_memory.md"])
+
+
 if __name__ == '__main__':
     unittest.main()

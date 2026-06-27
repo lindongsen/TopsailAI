@@ -562,5 +562,62 @@ class TestModuleExports(unittest.TestCase):
         self.assertTrue(callable(PromptHubExtractor))
 
 
+class TestPromptConstructionOrder(unittest.TestCase):
+    """Tests verifying deterministic prompt construction order."""
+
+    @patch('topsailai.prompt_hub.prompt_tool.get_extra_tools')
+    @patch('topsailai.prompt_hub.prompt_tool.get_prompt_by_tools')
+    @patch('topsailai.prompt_hub.prompt_tool.env_tool')
+    def test_generate_prompt_by_tools_sorts_tool_names(self, mock_env, mock_get_prompt, mock_extra):
+        """Verify tool names are sorted lexicographically before prompt generation."""
+        from topsailai.prompt_hub.prompt_tool import generate_prompt_by_tools
+        mock_env.is_use_tool_calls.return_value = True
+        mock_get_prompt.return_value = ""
+        mock_extra.return_value = ""
+
+        unsorted_tools = ["z_tool-func", "a_tool-func", "m_tool-func"]
+        generate_prompt_by_tools(unsorted_tools)
+
+        called_tools = mock_get_prompt.call_args[0][0]
+        self.assertEqual(called_tools, sorted(unsorted_tools))
+
+    @patch('topsailai.prompt_hub.prompt_tool.exists_prompt_file')
+    @patch('topsailai.prompt_hub.prompt_tool.read_prompt')
+    @patch('topsailai.prompt_hub.prompt_tool.get_prompt_from_module')
+    @patch('topsailai.prompt_hub.prompt_tool.reload_prompt_on_module')
+    @patch('topsailai.prompt_hub.prompt_tool.logger')
+    def test_get_prompt_by_tools_sorts_modules(self, mock_logger, mock_reload, mock_get_prompt, mock_read, mock_exists):
+        """Verify module prompts are loaded in lexicographically sorted module order."""
+        from topsailai.prompt_hub.prompt_tool import get_prompt_by_tools
+        mock_get_prompt.return_value = "module prompt"
+        mock_exists.return_value = False
+
+        tools = ["z_module-f1", "a_module-f1", "m_module-f1"]
+        get_prompt_by_tools(tools)
+
+        called_modules = [call[0][0] for call in mock_get_prompt.call_args_list]
+        self.assertEqual(called_modules, sorted(called_modules))
+        self.assertEqual(set(called_modules), {"z_module", "a_module", "m_module"})
+
+    @patch('topsailai.prompt_hub.prompt_tool.exists_prompt_file')
+    @patch('topsailai.prompt_hub.prompt_tool.read_prompt')
+    @patch('topsailai.prompt_hub.prompt_tool.get_prompt_from_module')
+    @patch('topsailai.prompt_hub.prompt_tool.reload_prompt_on_module')
+    @patch('topsailai.prompt_hub.prompt_tool.logger')
+    def test_get_prompt_by_tools_sorts_prompt_keys(self, mock_logger, mock_reload, mock_get_prompt, mock_read, mock_exists):
+        """Verify prompt_hub file prompts are appended in lexicographically sorted key order."""
+        from topsailai.prompt_hub.prompt_tool import get_prompt_by_tools
+        mock_get_prompt.return_value = ""
+        mock_exists.return_value = True
+        mock_read.return_value = "file prompt"
+
+        tools = ["z_module-f1", "a_module-f1", "m_module-f1"]
+        get_prompt_by_tools(tools)
+
+        called_keys = [call[0][0] for call in mock_read.call_args_list]
+        self.assertEqual(called_keys, sorted(called_keys))
+        self.assertEqual(set(called_keys), {"tools/z_module.md", "tools/a_module.md", "tools/m_module.md"})
+
+
 if __name__ == '__main__':
     unittest.main()

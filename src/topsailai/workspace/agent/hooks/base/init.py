@@ -17,7 +17,8 @@ HOOKS = get_function_map(
 def get_hooks(key_prefix:str) -> list:
     """ return hook func list """
     result = []
-    for hook_name, hook_func in HOOKS.items():
+    # Iterate in deterministic lexicographical order.
+    for hook_name, hook_func in sorted(HOOKS.items()):
         if hook_name.startswith(key_prefix):
             result.append(hook_func)
     return result

@@ -33,7 +33,8 @@ class ContextRuntimeAgentTools(ContextRuntimeAIAgent):
             "context-cut_messages": self.tool_delete_messages_for_processing,
         }
 
-        for tool_name, tool_call in self.TOOLS.items():
+        # Register context tools in deterministic order.
+        for tool_name, tool_call in sorted(self.TOOLS.items()):
             add_tool(tool_name, tool_call)
 
         return

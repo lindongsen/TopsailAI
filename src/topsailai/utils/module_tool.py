@@ -65,7 +65,10 @@ def list_sub_mods_name(path):
         list: List of submodule names, or None if package not found
 
     Note:
-        Only returns modules that are not packages and don't start with '__'
+        Only returns modules that are not packages and don't start with '__'.
+        Names are sorted lexicographically so that downstream consumers
+        (tool registries, hook registries, etc.) are deterministic across
+        processes and filesystems.
     """
     mod = get_mod(path)
     if not mod:
@@ -75,7 +78,7 @@ def list_sub_mods_name(path):
     for _, modname, ispkg in pkgutil.iter_modules(mod.__path__):
         if not ispkg and not modname.startswith('__'):
             mod_name_set.append(modname)
-    return mod_name_set
+    return sorted(mod_name_set)
 
 def get_function_map(
         path,

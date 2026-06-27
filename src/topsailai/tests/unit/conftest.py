@@ -57,6 +57,42 @@ def clean_env():
             os.environ[key] = value
 
 
+@pytest.fixture(autouse=True)
+def fast_tool_approval_timeout():
+    """
+    Set a short default timeout for tool approval tests.
+
+    The production default timeout is intentionally long (human-in-the-loop),
+    but unit tests must complete quickly. This fixture runs after ``clean_env``
+    and sets a small default so deny/ask_again timeout paths execute fast.
+    """
+    os.environ['TOPSAILAI_TOOL_APPROVAL_DEFAULT_TIMEOUT'] = '0.05'
+    yield
+
+
+@pytest.fixture(autouse=True)
+def clear_approval_state():
+    """
+    Automatically clear tool approval state before and after each test.
+
+    This fixture prevents state leaks between tool_approval tests by:
+    1. Clearing cached approval rules.
+    2. Clearing pending approval instances from the registry.
+    3. Resetting the singleton LocalApprovalTransport instance.
+    """
+    from topsailai.ai_base.tool_approval import matcher, registry
+    from topsailai.ai_base.tool_approval.transport import LocalApprovalTransport
+
+    matcher.clear_approval_rules_cache()
+    registry.clear_pending_approvals()
+    LocalApprovalTransport.reset_instance()
+
+    yield
+
+    matcher.clear_approval_rules_cache()
+    registry.clear_pending_approvals()
+    LocalApprovalTransport.reset_instance()
+
 @pytest.fixture
 def temp_workspace():
     """

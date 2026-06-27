@@ -26,6 +26,10 @@ from topsailai.utils import (
 from topsailai.ai_base.constants import (
     LLM_KEYWORD_MISTAKE,
 )
+from topsailai.ai_base.tool_approval import (
+    with_tool_approval,
+    ToolApprovalDeniedError,
+)
 
 from . import context as agent_ctx
 from . import exception as agent_exception
@@ -66,6 +70,7 @@ def get_tool_func(tool_map: dict, tool_name: str):
 
     return None
 
+@with_tool_approval
 def exec_tool_func(tool_func, args, tool_name:str=None):
     """
     Execute a tool function with the given arguments.
@@ -193,7 +198,7 @@ class StepCallTool(StepCallBase):
             return agent_exception.ToolError(f"no found such as tool: {tool}")
 
         try:
-            return exec_tool_func(tool_func, args, tool_name=tool)
+            return exec_tool_func(tool_func=tool_func, args=args, tool_name=tool)
         except agent_exception.AgentFinalAnswer as e:
             self.complete_final(
                 {
@@ -201,6 +206,8 @@ class StepCallTool(StepCallBase):
                 }
             )
             return e
+        except ToolApprovalDeniedError as e:
+            return str(e)
 
     def execute_step_interactive(self):
         """

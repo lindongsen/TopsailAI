@@ -93,7 +93,7 @@ class CurrentDate(_Base):
         Returns:
             str: Formatted string containing current date
         """
-        return f"""CurrentDate: {time_tool.get_current_day()}"""
+        return f"""CurrentDate: {time_tool.get_current_day()}\n"""
 
 
 class CurrentSystem(_Base):
@@ -116,12 +116,28 @@ class CurrentSystem(_Base):
             str: Formatted string containing system information
                  with each item on a separate line
         """
-        result = "System Info:\n"
+        result = "SystemInfo:\n"
         # Format each system info item with bullet points
         for k, v in self.system_info.items():
             if v:
                 result += f"- {k}:{v}\n"
         return result
+
+
+class CurrentProject(_Base):
+    """
+    Working Environment
+    """
+
+    @property
+    def prompt(self) -> str:
+        """
+        Project info, working folder
+        """
+        return (
+            f'''ProjectFolder={os.environ.get("TOPSAILAI_PROJECT_WORKSPACE", "")}\n'''
+            f'''PWD={os.environ.get("TOPSAILAI_PWD", "")}\n'''
+        )
 
 
 def get_prompt_file_path(relative_path:str) -> str:
@@ -168,6 +184,7 @@ def generate_prompt_for_env() -> str:
         [
             CurrentDate().prompt,
             CurrentSystem().prompt,
+            CurrentProject().prompt,
             env_prompt,
         ]
     )

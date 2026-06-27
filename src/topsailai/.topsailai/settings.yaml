@@ -10,8 +10,7 @@ context:
     - project.yaml
     - MEMO.md
     - workspace/readme.md
-    - env_template
-    - docs/Environment_Variables.md
+    - docs/Environment_Variables.md # env_template
 
   default: []
 
@@ -21,3 +20,6 @@ context:
   llm_mistake:
     - ai_base/llm_control/llm_mistakes/readme.md
     - ai_base/llm_hooks/hook_after_chat/README.md
+
+  approval:
+    - features/91-tool_approval.md

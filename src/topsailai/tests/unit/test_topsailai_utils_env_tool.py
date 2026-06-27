@@ -8,9 +8,29 @@ from topsailai.utils.env_tool import (
     is_debug_mode,
     is_use_tool_calls,
     is_chat_multi_line,
+    is_true,
     EnvironmentReader,
     EnvReaderInstance
 )
+
+
+class TestIsTrue:
+    """Test is_true helper for boolean environment variable parsing."""
+
+    def test_truthy_values(self):
+        for value in ("1", "true", "True", "TRUE", "yes", "Yes", "YES", "on", "On", "ON", "enabled", "Enabled", "ENABLED"):
+            assert is_true(value) is True
+
+    def test_falsy_values(self):
+        for value in ("0", "false", "False", "no", "off", "disabled", "", "maybe", "2"):
+            assert is_true(value) is False
+
+    def test_none_is_false(self):
+        assert is_true(None) is False
+
+    def test_whitespace_is_trimmed(self):
+        assert is_true("  true  ") is True
+        assert is_true("  0  ") is False
 
 
 class TestDebugMode:
@@ -220,22 +240,6 @@ class TestEnvironmentReader:
             assert self.reader.get("TEST_VAR") == "value"
             assert self.reader.get("TEST_VAR", "default") == "value"
 
-
-class TestEnvReaderInstance:
-    """Test the global EnvReaderInstance"""
-    
-    def test_singleton_instance(self):
-        """Test that EnvReaderInstance is a singleton"""
-        from topsailai.utils.env_tool import EnvReaderInstance
-        reader1 = EnvReaderInstance
-        reader2 = EnvReaderInstance
-        assert reader1 is reader2
-        assert isinstance(reader1, EnvironmentReader)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
     def test_context_user_message_content_no_env_var(self):
         """Test context_user_message_content when TOPSAILAI_CONTEXT_USER_MESSAGE is not set"""
         with patch.dict(os.environ, {}, clear=True):
@@ -257,3 +261,19 @@ if __name__ == "__main__":
                 assert self.reader.context_user_message_content == "file context content"
         finally:
             os.unlink(tmp_path)
+
+
+class TestEnvReaderInstance:
+    """Test the global EnvReaderInstance"""
+    
+    def test_singleton_instance(self):
+        """Test that EnvReaderInstance is a singleton"""
+        from topsailai.utils.env_tool import EnvReaderInstance
+        reader1 = EnvReaderInstance
+        reader2 = EnvReaderInstance
+        assert reader1 is reader2
+        assert isinstance(reader1, EnvironmentReader)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

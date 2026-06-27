@@ -511,3 +511,63 @@ Do not change `last_user_message` to scan `self.ai_agent.messages`. If a future 
 
 ### Note for maintainers
 Do not change `_get_token_calculation_messages()` to return `self.messages` for User2Agent calls. If a future use case genuinely needs to count only the User2Agent session messages, add a new layer-specific helper instead of modifying this shared accessor.
+
+## MEMO: Strict Prompt Construction Order Requirement
+
+**Date:** 2026-06-27
+**Files Changed:**
+- `src/topsailai/prompt_hub/prompt_tool.py`
+- `src/topsailai/tools/base/common.py`
+- `src/topsailai/tools/story_memory_tool.py`
+
+### Conclusion
+Prompt construction has a strict ordering requirement: tool names, module names, prompt keys, and memory titles must be sorted into a deterministic, lexicographical order before the final prompt is assembled. The change enforces this by replacing set/dict iteration with `sorted()` and by using `OrderedDict` for tool documentation.
+
+### What Changed
+
+1. **`prompt_hub/prompt_tool.py`**
+   - `get_prompt_by_tools()` now sorts `modules` and `prompt_keys` before iterating.
+   - `generate_prompt_by_tools()` now sorts `tools_name` before generating the tool prompt.
+
+2. **`tools/base/common.py`**
+   - `tools_doc` is now an `OrderedDict` instead of a plain `dict`.
+   - Tool names from both `tools_name` and `tools_map` are sorted before being added to `tools_doc`.
+
+3. **`tools/story_memory_tool.py`**
+   - Memories are now read in sorted title order and rendered as Markdown sections.
+
+### Why It Matters
+
+- **Determinism:** Without explicit sorting, set/dict iteration order can vary across Python processes or versions. The same tool set could produce prompts in different orders, leading to inconsistent LLM behavior and cache misses.
+- **Reproducibility:** A fixed order makes unit tests, prompt snapshots, and debugging predictable.
+- **Stability:** `OrderedDict` guarantees that once tool docs are inserted in sorted order, downstream consumers iterate over them in that exact order.
+- **Clarity:** Sorting gives the LLM a consistent visual structure (module prompts first, then individual tool prompts), which helps the model reliably locate tool documentation.
+
+### Note for maintainers
+
+When adding new prompt-assembly logic or modifying tool-prompt generation, always ensure iteration over tools, modules, prompt keys, or memory titles is deterministic. Prefer `sorted()` for collections and `OrderedDict` when order must be preserved through multiple processing stages. Do not rely on the implicit ordering of plain `dict` or `set` objects for prompt construction.
+
+## MEMO: Context Environment Information in System Prompt
+
+**Date:** 2026-06-27
+**File:** `/TopsailAI/src/topsailai/context/prompt_env.py`
+
+### Conclusion
+Context environment information can be added to the system prompt through `/TopsailAI/src/topsailai/context/prompt_env.py`.
+
+### What it does
+- `generate_prompt_for_env()` builds an `# Environment` block that includes:
+  - `CurrentDate` — current date in ISO 8601 format.
+  - `CurrentSystem` — OS information (`uname`, `/etc/issue`).
+  - `CurrentProject` — `TOPSAILAI_PROJECT_WORKSPACE` and `TOPSAILAI_PWD`.
+  - Optional custom content from `ENV_PROMPT` (file path or raw text).
+
+### Relevant environment variables
+See `docs/Environment_Variables.md` for full details:
+- `ENV_PROMPT` — custom environment prompt (file path or raw text).
+- `TOPSAILAI_PROJECT_WORKSPACE` / `TOPSAILAI_PROJECT_FOLDER` — project folder injected into the prompt.
+- `TOPSAILAI_PWD` — working directory at process startup injected into the prompt.
+- `SYSTEM_PROMPT` / `SYSTEM_PROMPT_EXTRA_FILES` — general system-prompt extension mechanisms that may consume or coexist with the environment block.
+
+### Note for maintainers
+When modifying how environment context is injected into the system prompt, keep `prompt_env.py` in sync with the variables documented in `docs/Environment_Variables.md`. Any new environment fields added here should also be documented there.

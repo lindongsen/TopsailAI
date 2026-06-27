@@ -366,5 +366,49 @@ class TestFormatToolsMap(unittest.TestCase):
         self.assertTrue(result.get("prefix.tool1") or "prefix.tool1" in result)
 
 
+class TestGetToolPromptOrdering(unittest.TestCase):
+    """Tests verifying deterministic ordering in get_tool_prompt."""
+
+    @patch('topsailai.tools.base.common.format_tool')
+    @patch('topsailai.tools.base.common.print_tool')
+    @patch('topsailai.tools.base.common.TOOL_PROMPT', "Tools:\n{__TOOLS__}")
+    @patch('topsailai.tools.base.common.TOOLS', {
+        "z_tool": MagicMock(__doc__="Z doc"),
+        "a_tool": MagicMock(__doc__="A doc"),
+        "m_tool": MagicMock(__doc__="M doc"),
+    })
+    def test_get_tool_prompt_sorts_tools_name(self, mock_print, mock_format):
+        """Verify tools_name entries are processed in lexicographically sorted order."""
+        from topsailai.tools.base.common import get_tool_prompt
+
+        mock_format.to_list.return_value = ["z_tool", "a_tool", "m_tool"]
+        mock_print.format_dict_to_md.return_value = "formatted"
+
+        get_tool_prompt(tools_name=["z_tool", "a_tool", "m_tool"])
+
+        tools_doc = mock_print.format_dict_to_md.call_args[0][0]
+        self.assertEqual(list(tools_doc.keys()), ["a_tool", "m_tool", "z_tool"])
+
+    @patch('topsailai.tools.base.common.format_tool')
+    @patch('topsailai.tools.base.common.print_tool')
+    @patch('topsailai.tools.base.common.TOOL_PROMPT', "Tools:\n{__TOOLS__}")
+    def test_get_tool_prompt_sorts_tools_map(self, mock_print, mock_format):
+        """Verify tools_map keys are processed in lexicographically sorted order."""
+        from topsailai.tools.base.common import get_tool_prompt
+
+        mock_format.to_list.return_value = []
+        mock_print.format_dict_to_md.return_value = "formatted"
+
+        tools_map = {
+            "z_map_tool": MagicMock(__doc__="Z doc"),
+            "a_map_tool": MagicMock(__doc__="A doc"),
+            "m_map_tool": MagicMock(__doc__="M doc"),
+        }
+        get_tool_prompt(tools_map=tools_map)
+
+        tools_doc = mock_print.format_dict_to_md.call_args[0][0]
+        self.assertEqual(list(tools_doc.keys()), ["a_map_tool", "m_map_tool", "z_map_tool"])
+
+
 if __name__ == '__main__':
     unittest.main()

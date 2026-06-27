@@ -34,6 +34,6 @@ Note:
     When there are changes to the environment variables, these files also need to be updated: `env_template`, `docs/Environment_Variables.md`;
   - |
     > How to run all of Unit Tests:
-    You should call `tests/run_tests.sh` instead of call `pytest tests/unit`,
+    You should call `tests/run_tests.py` instead of call `pytest tests/unit`,
     If you call `pytest tests/unit` to run ALL will inevitably fail!
     Call single `pytest tests/unit/xxx.py` is OK.

@@ -5,7 +5,7 @@ maintainer: human
 
 Enhance unit tests.
 
-Run all of tests via this script: `tests/run_tests.sh`
+Run all of tests via this script: `tests/run_tests.py`
 
 ## Test Sequence
 

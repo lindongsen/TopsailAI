@@ -1,14 +1,36 @@
-'''
-  Author: DawsonLin
-  Email: lin_dongsen@126.com
-  Created: 2025-10-27
-  Purpose: Environment variable utilities and configuration helpers
-'''
+"""
+Author: DawsonLin
+Email: lin_dongsen@126.com
+Created: 2025-10-27
+Purpose: Environment variable utilities and configuration helpers
+"""
 
 import os
 from contextlib import contextmanager
 
 from topsailai.logger import logger
+
+
+# Values considered truthy when parsing boolean environment variables.
+# Covers common affirmative spellings used across the project.
+_TRUTHY_VALUES = {"1", "true", "yes", "on", "enabled"}
+
+
+def is_true(value: str | None) -> bool:
+    """Return True when value represents an affirmative boolean setting.
+
+    Truthy values (case-insensitive): "1", "true", "yes", "on", "enabled".
+    Anything else (including None and empty string) is treated as False.
+
+    Args:
+        value: Raw environment variable value, or None when unset.
+
+    Returns:
+        bool: True for affirmative values, False otherwise.
+    """
+    if value is None:
+        return False
+    return str(value).strip().lower() in _TRUTHY_VALUES
 
 
 @contextmanager
@@ -204,7 +226,7 @@ class EnvironmentReader(object):
 
     def check_bool(self, name, default=None) -> bool:
         """ value in [1, true] for True """
-        return str(os.getenv(name, default)).lower() in ["1", "true"]
+        return is_true(str(os.getenv(name, default)).lower())
 
     def get_list_str(
             self,
