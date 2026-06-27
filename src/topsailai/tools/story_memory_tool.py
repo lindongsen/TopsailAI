@@ -6,6 +6,7 @@
 '''
 
 import os
+from collections import OrderedDict
 
 from topsailai.workspace.folder_constants import FOLDER_MEMORY
 from .story_tool import (
@@ -25,7 +26,7 @@ if WORKSPACE:
     assert WORKSPACE[0] == "/", f"Require the use of absolute paths: [{WORKSPACE}]"
 
 _PROMPT_NEW_MEMORY = """
-[Note] You should only keep the latest memory, and for 'repeated old memories', either merge them into new memory or delete them
+> [Note] You should only keep the latest memory, and for 'repeated old memories', either merge them into new memory or delete them
 """
 
 
@@ -86,6 +87,20 @@ def delete_memory(title:str) -> bool:
     """
     return StoryFileInstance.delete_story(workspace=WORKSPACE, story_id=title)
 
+def get_all_memories() -> dict:
+    mem_map = OrderedDict()
+    for _title in sorted(list_memories()):
+        try:
+            mem_map[_title] = read_memory(_title)
+        except:
+            pass
+    return mem_map
+
+def get_all_memories_markdown() -> str:
+    result = ""
+    for _title, _content in get_all_memories().items():
+        result += f"\n## {_title}\n" + _content + "\n"
+    return result
 
 TOOLS = dict(
     write_memory=write_memory,
@@ -102,7 +117,7 @@ if not WORKSPACE:
 
 PROMPT_MEMORY = f"""
 # Current Memories
-{'\n'.join([str("- "+s) for s in list_memories()])}
+{get_all_memories_markdown()}
 """ + _PROMPT_NEW_MEMORY
 
 PROMPT = """

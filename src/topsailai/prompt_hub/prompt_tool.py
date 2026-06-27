@@ -268,7 +268,7 @@ def get_prompt_by_tools(tools:list[str], need_reload=False) -> str:
         module_name = tool_name.split(CONN_CHAR, 1)[0]
         modules.add(module_name)
 
-    for module_name in modules:
+    for module_name in sorted(list(modules)):
         # from prompt_hub
         key = f"tools/{module_name}.md"
         if exists_prompt_file(key):
@@ -283,7 +283,7 @@ def get_prompt_by_tools(tools:list[str], need_reload=False) -> str:
             logger.debug("got prompt from module: [%s]", module_name)
             prompt_content += f"## TOOL PROMPT:{module_name} \n\n<prompt:{module_name}>\n\n" + tool_prompt.strip() + f"\n\n</prompt:{module_name}>\n\n"
 
-    for key in prompt_keys:
+    for key in sorted(list(prompt_keys)):
         prompt_content += read_prompt(key)
 
     return prompt_content
@@ -299,6 +299,7 @@ def generate_prompt_by_tools(tools:list[str]|dict, need_reload=False) -> str:
         tools_map = tools
 
     tool_prompt = ""
+    tools_name.sort()
 
     if not env_tool.is_use_tool_calls():
         # get tool docs as prompt

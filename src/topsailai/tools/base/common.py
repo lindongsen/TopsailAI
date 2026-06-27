@@ -5,6 +5,8 @@
   Purpose:
 '''
 
+from collections import OrderedDict
+
 from topsailai.tools.base import init as base_init
 from topsailai.utils import (
     module_tool,
@@ -54,16 +56,16 @@ def get_tool_prompt(tools_name:list=None, tools_map:dict=None):
     :tools_map: dict, key is tool name, value is function.
 
     return tool_prompt for tools """
-    tools_doc = {}
+    tools_doc = OrderedDict()
 
     if tools_name:
-        for tool_name in format_tool.to_list(tools_name, to_ignore_none=True):
+        for tool_name in sorted(format_tool.to_list(tools_name, to_ignore_none=True)):
             if tool_name in TOOLS:
                 tools_doc[tool_name] = TOOLS[tool_name].__doc__
 
     if tools_map:
-        for tool_name, tool_func in tools_map.items():
-            tools_doc[tool_name] = tool_func.__doc__
+        for tool_name in sorted(tools_map.keys()):
+            tools_doc[tool_name] = tools_map[tool_name].__doc__
 
     if not tools_doc:
         return ""

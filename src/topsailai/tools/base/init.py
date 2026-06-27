@@ -116,7 +116,10 @@ TOOL_PROMPT = """
 ---
 # TOOLS
 Attention: You MUST use the tool name (completely), e.g. whole name is 'x_tool%sy_func', you cannot use 'y_func'.
-You should pay attention to the [Attention]/[Remember] sections in the tool documentation.
+
+Mandatory Requirement: You must strictly identify and adhere to all instructions, constraints, and warnings explicitly marked as [Attention], [Remember], or [Note].
+These sections contain critical context that must be integrated into your execution logic.
+
 {__TOOLS__}
 ---
 """ % CONN_CHAR

@@ -277,12 +277,12 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                 return answer
 
         # persistent memory with story
-        if story_memory_tool.WORKSPACE:
-            story_file = story_memory_tool.write_memory(
-                title=answer.split('\n', 1)[0],
-                content=answer,
-            )
-            logger.info("new memory with story: [%s]", story_file)
+        # if story_memory_tool.WORKSPACE:
+        #     story_file = story_memory_tool.write_memory(
+        #         title=answer.split('\n', 1)[0],
+        #         content=answer,
+        #     )
+        #     logger.info("new memory with story: [%s]", story_file)
 
         # head_offset_to_keep
         head_offset_to_keep = self._get_head_offset_to_keep_in_summary(head_offset_to_keep)
