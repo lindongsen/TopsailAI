@@ -267,11 +267,12 @@ class TestMatchApprovalRule:
             assert match_approval_rule("cmd_tool-exec_cmd", {"cmd": "example other"}) is None
 
 
+
 class TestLoadApprovalRules:
     """Tests for configuration loading."""
 
-    def test_empty_rules(self):
-        with patch.dict(os.environ, {"TOPSAILAI_TOOL_APPROVAL_RULES": ""}, clear=True):
+    def test_empty_rules(self, temp_workspace):
+        with patch.dict(os.environ, {"TOPSAILAI_TOOL_APPROVAL_RULES": "", "TOPSAILAI_WORK_FOLDER": str(temp_workspace)}, clear=True):
             clear_approval_rules_cache()
             assert load_approval_rules() == []
 

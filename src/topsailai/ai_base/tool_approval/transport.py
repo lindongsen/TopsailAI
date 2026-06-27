@@ -92,20 +92,31 @@ class LocalApprovalTransport(ApprovalTransport):
             cls._instance = None
 
     def _read_stdin_input(self, instance: "ToolApprovalInstance") -> None:
-        """Background worker that reads one line from stdin and resolves the instance."""
-        try:
-            prompt = (
-                f"\n[APPROVAL REQUEST] {instance.id}\n"
-                f"  Tool: {instance.tool_name}\n"
-                f"  Args: {instance.tool_args}\n"
-                f"  Timeout: {instance.timeout}s\n"
-                "  Type 'approve' or 'deny': "
-            )
-            sys.stdout.write(prompt)
-            sys.stdout.flush()
-            line = sys.stdin.readline()
-        except Exception as exc:  # pragma: no cover - stdin may be unavailable
-            logger.debug("Stdin read failed for approval %s: %s", instance.id, exc)
+        """
+        Background worker that reads one line from stdin and resolves the instance.
+
+        This delegates to :func:`topsailai.utils.input_tool.input_with_timeout`
+        so the terminal is configured for visible echo and the read can time
+        out without blocking forever.
+        """
+        from topsailai.utils.input_tool import input_with_timeout
+
+        prompt = (
+            f"\n[APPROVAL REQUEST] {instance.id}\n"
+            f"  Tool: {instance.tool_name}\n"
+            f"  Args: {instance.tool_args}\n"
+            f"  Timeout: {instance.timeout}s\n"
+            "  Type 'approve' or 'deny': "
+        )
+
+        line = input_with_timeout(
+            prompt=prompt,
+            timeout=instance.timeout,
+            stream=sys.stdin,
+            output=sys.stdout,
+        )
+
+        if line is None:
             return
 
         decision = line.strip().lower()

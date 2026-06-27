@@ -7,7 +7,6 @@ import time
 
 import pytest
 
-from topsailai.ai_base.agent_types.exception import AgentToolCallException
 from topsailai.ai_base.tool_approval.decorator import with_tool_approval, is_tool_approval_enabled
 from topsailai.ai_base.tool_approval.exceptions import ToolApprovalDeniedError
 from topsailai.ai_base.tool_approval.instance import set_default_approval_transport
@@ -147,8 +146,9 @@ class TestDecoratorDeny:
 
         assert len(calls) == 0
 
-    def test_deny_inherits_from_agent_tool_call_exception(self):
-        assert issubclass(ToolApprovalDeniedError, AgentToolCallException)
+    def test_deny_is_not_agent_tool_call_exception(self):
+        from topsailai.ai_base.agent_types.exception import AgentToolCallException
+        assert not issubclass(ToolApprovalDeniedError, AgentToolCallException)
 
     def test_unknown_mode_defaults_to_require(self, monkeypatch):
         monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")

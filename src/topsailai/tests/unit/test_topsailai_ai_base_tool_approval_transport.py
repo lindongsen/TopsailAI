@@ -2,7 +2,10 @@
 Unit tests for the tool approval transport layer.
 """
 
+import fcntl
 import io
+import os
+import pty
 import sys
 import threading
 import time
@@ -132,41 +135,82 @@ class TestLocalApprovalTransport:
         second = LocalApprovalTransport.get_instance()
         assert first is not second
 
-    def test_stdin_thread_approve(self, monkeypatch):
-        transport = LocalApprovalTransport()
-        instance = ToolApprovalInstance("cmd_tool-exec_cmd", {}, transport=transport)
+    def _run_stdin_thread_with_pty(self, input_text: str, timeout: float = 1.0):
+        """
+        Create a real PTY, feed *input_text* to it, and run the local transport
+        stdin reader against the PTY's slave side.
 
-        monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-        input_stream = io.StringIO("approve\n")
-        monkeypatch.setattr(sys.stdin, "readline", input_stream.readline)
+        Returns the resolved status of the instance and any bytes echoed back to
+        the PTY master (used to verify terminal echo is enabled).
+        """
+        master_fd, slave_fd = pty.openpty()
+        try:
+            # Make the master non-blocking so we can drain it later.
+            flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+            fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
-        transport.send_request(instance)
-        status = transport.wait_response(instance, timeout=1.0)
-        assert status == instance.STATUS_APPROVED
+            slave_in = os.fdopen(slave_fd, "r")
+            stdout_capture = io.StringIO()
 
-    def test_stdin_thread_deny(self, monkeypatch):
-        transport = LocalApprovalTransport()
-        instance = ToolApprovalInstance("cmd_tool-exec_cmd", {}, transport=transport)
+            transport = LocalApprovalTransport()
+            instance = ToolApprovalInstance(
+                "cmd_tool-exec_cmd", {}, transport=transport
+            )
+            instance.timeout = timeout
 
-        monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-        input_stream = io.StringIO("deny\n")
-        monkeypatch.setattr(sys.stdin, "readline", input_stream.readline)
+            with patch.object(sys, "stdin", slave_in), patch.object(
+                sys, "stdout", stdout_capture
+            ):
+                transport.send_request(instance)
+                # Give the stdin reader thread a moment to start and configure
+                # the terminal before we feed input.
+                time.sleep(0.05)
+                if input_text:
+                    os.write(master_fd, input_text.encode())
+                status = transport.wait_response(instance, timeout=timeout + 0.5)
 
-        transport.send_request(instance)
-        status = transport.wait_response(instance, timeout=1.0)
-        assert status == instance.STATUS_DENIED
+            # Drain any bytes echoed by the terminal (the input itself).
+            echoed = b""
+            deadline = time.monotonic() + 0.2
+            while time.monotonic() < deadline:
+                try:
+                    chunk = os.read(master_fd, 4096)
+                    if chunk:
+                        echoed += chunk
+                    else:
+                        break
+                except BlockingIOError:
+                    time.sleep(0.01)
 
-    def test_stdin_thread_unrecognized_defaults_to_deny(self, monkeypatch):
-        transport = LocalApprovalTransport()
-        instance = ToolApprovalInstance("cmd_tool-exec_cmd", {}, transport=transport)
+            return status, echoed
+        finally:
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
+            try:
+                slave_in.close()
+            except OSError:
+                pass
 
-        monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-        input_stream = io.StringIO("maybe\n")
-        monkeypatch.setattr(sys.stdin, "readline", input_stream.readline)
+    def test_stdin_thread_approve(self):
+        status, echoed = self._run_stdin_thread_with_pty("approve\n")
+        assert status == ToolApprovalInstance.STATUS_APPROVED
+        assert b"approve" in echoed
 
-        transport.send_request(instance)
-        status = transport.wait_response(instance, timeout=1.0)
-        assert status == instance.STATUS_DENIED
+    def test_stdin_thread_deny(self):
+        status, echoed = self._run_stdin_thread_with_pty("deny\n")
+        assert status == ToolApprovalInstance.STATUS_DENIED
+        assert b"deny" in echoed
+
+    def test_stdin_thread_unrecognized_defaults_to_deny(self):
+        status, echoed = self._run_stdin_thread_with_pty("maybe\n")
+        assert status == ToolApprovalInstance.STATUS_DENIED
+        assert b"maybe" in echoed
+
+    def test_stdin_thread_timeout(self):
+        status, echoed = self._run_stdin_thread_with_pty("", timeout=0.2)
+        assert status == ToolApprovalInstance.STATUS_TIMEOUT
 
     def test_stdin_thread_not_started_when_non_interactive(self, monkeypatch):
         transport = LocalApprovalTransport()

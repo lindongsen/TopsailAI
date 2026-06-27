@@ -115,7 +115,10 @@ if not WORKSPACE:
     TOOLS.clear()
 
 
-PROMPT_MEMORY = f"""
+def get_prompt_memory():
+    """ refer to context/prompt_env.py """
+    return \
+f"""
 # Current Memories
 {get_all_memories_markdown()}
 """ + _PROMPT_NEW_MEMORY
@@ -152,4 +155,4 @@ Proactively retrieve relevant memory whenever the user's input contains personal
 ## Action & Output
 - **Synthesize**: Seamlessly integrate retrieved memory into the response to provide a personalized answer.
 - **Verify**: If the memory is ambiguous, ask for clarification rather than assuming.
-""" + PROMPT_MEMORY
+""" + get_prompt_memory()
