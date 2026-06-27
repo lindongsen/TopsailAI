@@ -337,12 +337,11 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             {"role": "assistant", "content": "Hi"},
         ]
         self.test_instance._first_position = 0
-        
-        with patch('topsailai.workspace.context.agent2llm.logger') as mock_logger:
+
+        with patch('topsailai.workspace.context.agent2llm.print_error') as mock_print_error:
             result = self.test_instance.summarize_messages_for_processing()
             self.assertIsNone(result)
-            mock_logger.warning.assert_called()
-
+            mock_print_error.assert_called()
     def test_summarize_with_custom_messages(self):
         """Test summarization with custom messages."""
         custom_messages = [
@@ -454,10 +453,10 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.test_instance._ai_agent.messages = self._make_agent_messages(2)
             self.test_instance._first_position = 0
 
-            with patch('topsailai.workspace.context.agent2llm.logger') as mock_logger:
+            with patch('topsailai.workspace.context.agent2llm.print_info') as mock_print_info:
                 result = self.test_instance.summarize_messages_for_processing()
                 self.assertIsNone(result)
-                mock_logger.info.assert_called()
+                mock_print_info.assert_called()
 
     def test_summarize_min_extra_messages_invalid_fallback(self):
         """Test invalid TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES falls back to 17."""
@@ -471,10 +470,10 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.test_instance._ai_agent.messages = self._make_agent_messages(10)
             self.test_instance._first_position = 0
 
-            with patch('topsailai.workspace.context.agent2llm.logger') as mock_logger:
+            with patch('topsailai.workspace.context.agent2llm.print_info') as mock_print_info:
                 result = self.test_instance.summarize_messages_for_processing()
                 self.assertIsNone(result)
-                mock_logger.info.assert_called()
+                mock_print_info.assert_called()
 
     def test_summarize_uses_agent2llm_threshold_for_session_keep(self):
         """Test TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD used to decide keeping session messages."""

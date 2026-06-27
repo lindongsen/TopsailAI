@@ -18,6 +18,9 @@ from topsailai.ai_base.constants import (
 )
 from topsailai.utils.print_tool import (
     print_step,
+    print_info,
+    print_error,
+    print_critical,
 )
 from topsailai.utils import (
     json_tool,
@@ -151,7 +154,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             total_len += session_msg_len
 
         if total_len <= 2:
-            logger.warning("no need summarize due to messages too short: [%s]", total_len)
+            print_error(f"!!! [Agent2LLM] [Summarization] no need summarize due to messages too short: [{total_len}]")
             return None
 
         if need_session_messages:
@@ -165,16 +168,16 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 logger.warning("invalid TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES [%s], using default 17", min_extra_messages)
                 min_extra_messages = 17
             if msg_len < (session_msg_len + min_extra_messages):
-                logger.info("no need summarize due to messages too short: [%s]", msg_len)
+                print_info(f"!!! [Agent2LLM] [Summarization] no need summarize due to messages too short: [{msg_len}]")
                 return None
 
         # print info
-        print_step(f"!!! Summarizing context messages for processing: msg_len=[{len(messages)}]", need_format=False, need_log=True)
+        print_step(f"!!! [Agent2LLM] [Summarization] Summarizing context messages for processing: msg_len=[{len(messages)}]", need_format=False, need_log=True)
 
         # Preserve task messages (role=user, step_name=task) from summarization/deletion.
         original_messages = list(messages)
         keeping_messages = self._get_messages_before_first_user_task_message(messages)
-        print_step(f"!!! head_messages_before_first_user_task_message_to_keep(session_messages)={len(keeping_messages)}", need_format=False, need_log=True)
+        print_step(f"!!! [Agent2LLM] [Summarization] head_messages_before_first_user_task_message_to_keep(session_messages)={len(keeping_messages)}", need_format=False, need_log=True)
 
         # Log message count and token usage before summarization
         _token_count_before = self._get_current_tokens()
@@ -182,6 +185,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         llm_chat, answer = self._summarize_messages(messages)
         if not answer:
+            print_critical("!!! [Agent2LLM] [Summarization] NO ANSWER")
             return None
 
         # head_offset_to_keep
@@ -198,7 +202,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         # user prompt for the next LLM call.
         last_user_msg = self.last_user_message
 
-        print_step(f"!!! head_offset_to_keep={head_offset_to_keep}, last_user_message_to_keep=1", need_format=False, need_log=True)
+        print_step(f"!!! [Agent2LLM] [Summarization] head_offset_to_keep={head_offset_to_keep}, last_user_message_to_keep=1", need_format=False, need_log=True)
 
         # new messages: start with head_offset, then add session messages
         # if configured, then add summary answer, then append last_user_message.
@@ -236,7 +240,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         _token_count_after = self._get_current_tokens(realtime=True)
         logger.info("[summarize_processing] after: messages=%s, tokens=%s", len(self.ai_agent.messages), _token_count_after)
 
-        print_step(f"!!! New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]", need_format=False, need_log=True)
+        print_step(f"!!! [Agent2LLM] [Summarization] New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]", need_format=False, need_log=True)
         logger.info("new context messages: %s", self.ai_agent.messages)
         return answer
 
@@ -280,7 +284,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
             if current_tokens > token_threshold:
                 print_step(
-                    f"!!! Agent2LLM token usage exceeded threshold: current_tokens=[{current_tokens}], threshold=[{token_threshold}]",
+                    f"!!! [Agent2LLM] [Summarization] token usage exceeded threshold: current_tokens=[{current_tokens}], threshold=[{token_threshold}]",
                     need_format=False,
                     need_log=True,
                 )

@@ -23,12 +23,14 @@ def get_truncation_len() -> int|None:
         pass
     return None
 
-def _format_truncated_msg(msg:str, truncation_len:int|None=None) -> str:
+def _format_truncated_msg(msg, truncation_len:int|None=None) -> str:
     if truncation_len is None:
         truncation_len = get_truncation_len()
+    raw_msg = msg
+    msg = str(msg)
     if msg and len(msg) > truncation_len:
         return msg[:truncation_len] + f" (truncated)\n\n---\n\n> (truncated) ... total_len={len(msg)} tail_content=[{msg[-30:]}]"
-    return msg
+    return raw_msg
 
 def truncate_msg(msg:str|list|dict, key_name="step_name", value_name="raw_text") -> str:
     """Truncate message content if it exceeds configured length.
