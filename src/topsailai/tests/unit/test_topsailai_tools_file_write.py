@@ -33,7 +33,7 @@ class TestFileToolWriteFile:
     def test_write_file_create_new(self, test_file):
         """Test creating a new file with content"""
         result = write_file(test_file, "Hello World!")
-        assert result == ""
+        assert result == "OK"
         assert os.path.exists(test_file)
         with open(test_file, 'r') as f:
             content = f.read()
@@ -44,7 +44,7 @@ class TestFileToolWriteFile:
         with open(test_file, 'w') as f:
             f.write("Initial content")
         result = write_file(test_file, "New content")
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "New content"
@@ -64,7 +64,7 @@ class TestFileToolWriteFile:
         with open(test_file, 'w') as f:
             f.write("Hello World!")
         result = write_file(test_file, "Beautiful ", seek=6, to_insert=True)
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Hello Beautiful World!"
@@ -74,7 +74,7 @@ class TestFileToolWriteFile:
         with open(test_file, 'w') as f:
             f.write("World!")
         result = write_file(test_file, "Hello ", seek=0, to_insert=True)
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Hello World!"
@@ -84,7 +84,7 @@ class TestFileToolWriteFile:
         with open(test_file, 'w') as f:
             f.write("Hello World!")
         result = write_file(test_file, "Universe", seek=6, to_insert=False)
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Hello Universe"
@@ -94,7 +94,7 @@ class TestFileToolWriteFile:
         with open(test_file, 'w') as f:
             f.write("Hello World!")
         result = write_file(test_file, "Universe", seek=-6, to_insert=False)
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Hello Universe"
@@ -104,7 +104,7 @@ class TestFileToolWriteFile:
         with open(test_file, 'w') as f:
             f.write("Hello World!")
         result = write_file(test_file, "New", seek=0, to_insert=False)
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "New"
@@ -112,7 +112,7 @@ class TestFileToolWriteFile:
     def test_write_file_insert_mode_nonexistent_file(self, test_file):
         """Test insert mode on non-existent file (should create file)"""
         result = write_file(test_file, "Content", seek=5, to_insert=True)
-        assert result == ""
+        assert result == "OK"
         assert os.path.exists(test_file)
         with open(test_file, 'r') as f:
             content = f.read()
@@ -130,7 +130,7 @@ class TestFileToolWriteFile:
         with open(test_file, 'w') as f:
             f.write("Short")
         result = write_file(test_file, " text", seek=100, to_insert=True)
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Short text"
@@ -140,7 +140,7 @@ class TestFileToolWriteFile:
         with open(test_file, 'w') as f:
             f.write("Short")
         result = write_file(test_file, "Longer content", seek=100, to_insert=False)
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "ShortLonger content"
@@ -148,14 +148,14 @@ class TestFileToolWriteFile:
     def test_write_file_integration_with_read_file(self, test_file):
         """Test integration between write_file and read_file"""
         result = write_file(test_file, "Test content")
-        assert result == ""
+        assert result == "OK"
         content = read_file(test_file)
         assert content == "Test content"
 
     def test_write_file_empty_content(self, test_file):
         """Test writing empty content"""
         result = write_file(test_file, "")
-        assert result == ""
+        assert result == "OK"
         assert os.path.exists(test_file)
         with open(test_file, 'r') as f:
             content = f.read()
@@ -165,7 +165,7 @@ class TestFileToolWriteFile:
         """Test writing content with special characters"""
         content = "Hello\nWorld!\tTabbed\nNewline"
         result = write_file(test_file, content)
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r') as f:
             read_content = f.read()
         assert read_content == content
@@ -174,7 +174,7 @@ class TestFileToolWriteFile:
         """Test writing content with Unicode characters"""
         content = "你好世界！🌍✨\nUnicode test: ñáéíóú\nEmoji: 😊🚀🎉"
         result = write_file(test_file, content)
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r', encoding='utf-8') as f:
             read_content = f.read()
         assert read_content == content
@@ -183,7 +183,7 @@ class TestFileToolWriteFile:
         """Test writing large content"""
         large_content = "A" * 10000
         result = write_file(test_file, large_content)
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r') as f:
             read_content = f.read()
         assert len(read_content) == 10000
@@ -192,13 +192,13 @@ class TestFileToolWriteFile:
     def test_write_file_complex_seek_patterns(self, test_file):
         """Test complex seek patterns with multiple operations"""
         result = write_file(test_file, "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        assert result == ""
+        assert result == "OK"
         result = write_file(test_file, "INSERT", seek=10, to_insert=True)
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r') as f:
             assert f.read() == "ABCDEFGHIJINSERTKLMNOPQRSTUVWXYZ"
         result = write_file(test_file, "OVERWRITE", seek=5, to_insert=False)
-        assert result == ""
+        assert result == "OK"
         # append_file returns True, not ""
         result = write_file(test_file, "APPEND", seek=-1, to_insert=True)
         assert result in ("", True)
@@ -210,12 +210,12 @@ class TestFileToolWriteFile:
     def test_write_file_edge_case_seek_values(self, test_file):
         """Test edge case seek values"""
         result = write_file(test_file, "Content", seek=-1000, to_insert=True)
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Content"
         result = write_file(test_file, "Content", seek=1000, to_insert=False)
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "ContentContent"
@@ -224,9 +224,9 @@ class TestFileToolWriteFile:
         """Test seek operations with multibyte characters"""
         content = "你好世界Hello世界你好"
         result = write_file(test_file, content)
-        assert result == ""
+        assert result == "OK"
         result = write_file(test_file, "INSERT", seek=6, to_insert=True)
-        assert result == ""
+        assert result == "OK"
         with open(test_file, 'r', encoding='utf-8') as f:
             final_content = f.read()
         assert "INSERT" in final_content
@@ -235,10 +235,10 @@ class TestFileToolWriteFile:
         """Test performance with multiple large operations"""
         large_content = "X" * 5000
         result = write_file(test_file, large_content)
-        assert result == ""
+        assert result == "OK"
         for i in range(10):
             result = write_file(test_file, f"INSERT{i}", seek=100 * i, to_insert=True)
-            assert result == ""
+            assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
         assert len(content) > 5000
@@ -247,7 +247,7 @@ class TestFileToolWriteFile:
     def test_write_file_error_recovery(self, test_file):
         """Test error recovery scenarios"""
         result = write_file(test_file, "Valid content")
-        assert result == ""
+        assert result == "OK"
         # Use /proc/ path that will genuinely fail
         invalid_result = write_file("/proc/1/cmdline_fake/test.txt", "content")
         assert invalid_result != ""

@@ -207,7 +207,7 @@ class TestWriteFile:
         
         try:
             result = write_file(temp_path, "New content")
-            assert result == ""
+            assert result == "OK"
             with open(temp_path, 'r') as f:
                 assert f.read() == "New content"
         finally:
@@ -223,7 +223,7 @@ class TestWriteFile:
                 f.write("Initial content")
             
             result = write_file(temp_path, "New content")
-            assert result == ""
+            assert result == "OK"
             with open(temp_path, 'r') as f:
                 assert f.read() == "New content"
         finally:
@@ -239,7 +239,7 @@ class TestWriteFile:
                 f.write("Hello World")
             
             result = write_file(temp_path, " Beautiful", seek=5, to_insert=True)
-            assert result == ""
+            assert result == "OK"
             with open(temp_path, 'r') as f:
                 assert f.read() == "Hello Beautiful World"
         finally:
@@ -271,7 +271,7 @@ class TestWriteFile:
                 f.write("Hello World")
             
             result = write_file(temp_path, "Python", seek=6, to_insert=False)
-            assert result == ""
+            assert result == "OK"
             with open(temp_path, 'r') as f:
                 assert f.read() == "Hello Python"
         finally:
@@ -287,7 +287,7 @@ class TestWriteFile:
                 f.write("abcdef")
             
             result = write_file(temp_path, "XX", seek=-2, to_insert=False)
-            assert result == ""
+            assert result == "OK"
             with open(temp_path, 'r') as f:
                 assert f.read() == "abcdXX"
         finally:
@@ -827,7 +827,7 @@ class TestIntegration:
         
         try:
             write_result = write_file(temp_path, "Integration test content")
-            assert write_result == ""
+            assert write_result == "OK"
             
             read_result = read_file(temp_path)
             assert read_result == "Integration test content"

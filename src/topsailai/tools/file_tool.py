@@ -86,7 +86,7 @@ def write_file(file_path:str, content:str, seek:int=0, to_insert:bool=False):
                                    content starting at seek position. Defaults to False.
 
     Returns:
-        str: Empty string on success, error message string on failure
+        str: error message on failure
 
     Raises:
         This function catches all exceptions and returns them as strings rather than raising
@@ -160,7 +160,7 @@ def write_file(file_path:str, content:str, seek:int=0, to_insert:bool=False):
                     _file_tool.write_text(file_path, content)
     except Exception as e:
         return str(e)
-    return ""
+    return "OK"
 
 def write_file_simple(file_path:str, content:str):
     """Write content to a file.
@@ -169,7 +169,7 @@ def write_file_simple(file_path:str, content:str):
         content (str): text
 
     Returns:
-        str: Empty string on success, error message string on failure
+        str: error message on failure
     """
     return write_file(file_path=file_path, content=content)
 
