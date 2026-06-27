@@ -22,3 +22,8 @@ members = [
     "src/topsailai_server/agent_daemon",
 ]
 
+[dependency-groups]
+dev = [
+    "coverage>=7.14.3",
+]
+
