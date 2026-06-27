@@ -306,6 +306,8 @@ def main():
     default_env = env_map.get("_default", {})
     item_env = env_map.get(item_name, {}) if item_name != "_default" else {}
 
+    os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = workspace
+
     merged_env = os.environ.copy()
     merged_env.update(default_env)
     merged_env.update(item_env)
