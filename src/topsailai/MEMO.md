@@ -46,6 +46,16 @@ The following environment variables define the agent's runtime environment and f
 | `TOPSAILAI_WORK_FOLDER` | Process startup | The working directory of the Agent process, including `.env`, `db`, etc. It is a working environment of the agent. **This variable cannot be set manually; it is set automatically when the process starts.** See `__init__.py` for the auto-discovery logic. |
 | `TOPSAILAI_PROJECT_WORKSPACE` (alias `TOPSAILAI_PROJECT_FOLDER`) | User / system | The project folder is the permission range that the agent can actively read and write files within. |
 
+### Project Information Naming Convention
+
+For the purpose of operating or implementing a project, environment variables that expose project information to the LLM should be defined with the prefix `TOPSAILAI_PROJECT_`.
+
+This makes project-related context explicit and distinguishable from agent runtime or workspace variables.
+
+Examples:
+- `TOPSAILAI_PWD` (alias: `TOPSAILAI_PROJECT_PWD`)
+- `TOPSAILAI_PROJECT_WORKSPACE`
+
 ## Core Modules
 
 ### Thread-Local Agent Object

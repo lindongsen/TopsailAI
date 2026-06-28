@@ -5,6 +5,7 @@
 PROJECT_NAME := agent-community
 SERVER_BINARY := bin/acs-server
 CLI_BINARY := bin/acs-cli
+CLI_CHAT_BINARY := bin/acs-cli-chat
 NATCTL_BINARY := bin/natsctl
 GO := go
 GOFLAGS := -v
@@ -24,7 +25,7 @@ all: build
 
 # Build all binaries
 .PHONY: build
-build: build-server build-cli build-natsctl
+build: build-server build-cli build-cli-chat build-natsctl
 
 # Build server binary
 .PHONY: build-server
@@ -39,6 +40,13 @@ build-cli:
 	@echo "Building CLI..."
 	@mkdir -p bin
 	$(GO) build $(GOFLAGS) -o $(CLI_BINARY) ./cmd/cli
+
+# Build chat CLI binary
+.PHONY: build-cli-chat
+build-cli-chat:
+	@echo "Building chat CLI..."
+	@mkdir -p bin
+	$(GO) build $(GOFLAGS) -o $(CLI_CHAT_BINARY) ./cmd/cli_chat
 
 # Build natsctl binary
 .PHONY: build-natsctl
@@ -127,9 +135,10 @@ docker-run:
 .PHONY: help
 help:
 	@echo "ACS Makefile targets:"
-	@echo "  build            - Build all binaries (server, CLI, natsctl)"
+	@echo "  build            - Build all binaries (server, CLI, chat CLI, natsctl)"
 	@echo "  build-server     - Build server binary only"
 	@echo "  build-cli        - Build CLI binary only"
+	@echo "  build-cli-chat   - Build chat CLI binary only"
 	@echo "  build-natsctl    - Build natsctl binary only"
 	@echo "  test             - Run unit tests"
 	@echo "  test-integration - Run integration tests (Python)"

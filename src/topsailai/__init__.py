@@ -20,6 +20,13 @@ Environment variables used by this module:
 3. TOPSAILAI_PROJECT_WORKSPACE (alias: TOPSAILAI_PROJECT_FOLDER)
    The project folder is the permission range that the agent can actively read
    and write files within.
+
+4. TOPSAILAI_PWD (alias: TOPSAILAI_PROJECT_PWD)
+   Print Working Directory, i.e. the folder at the time of process startup.
+   It is captured and injected into the environment prompt (see
+   `context/prompt_env.py`) so the agent knows its startup working directory.
+   NOTE: This variable is set automatically at process startup. Do not set it
+   manually.
 '''
 
 import os
@@ -45,13 +52,22 @@ for WORK_FOLDER in [
     os.path.join(HOME_FOLDER, ".topsailai"),
     os.getcwd(),
 ]:
-    env_file = os.path.join(WORK_FOLDER, ".env")
-    if os.path.isdir(WORK_FOLDER) and os.path.exists(env_file):
-        os.chdir(WORK_FOLDER)
-        os.environ["TOPSAILAI_WORK_FOLDER"] = WORK_FOLDER
-        os.environ["PWD"] = WORK_FOLDER
-        load_dotenv(env_file)
-        TOPSAILAI_WORK_FOLDER = WORK_FOLDER
+    env_file = ""
+    # sequence required
+    for env_name in [
+        ".env.local",
+        ".env",
+    ]:
+        env_file = os.path.join(WORK_FOLDER, env_name)
+        if os.path.isdir(WORK_FOLDER) and os.path.exists(env_file):
+            os.chdir(WORK_FOLDER)
+            os.environ["TOPSAILAI_WORK_FOLDER"] = WORK_FOLDER
+            os.environ["PWD"] = WORK_FOLDER
+            load_dotenv(env_file)
+            TOPSAILAI_WORK_FOLDER = WORK_FOLDER
+        else:
+            env_file = ""
+    if env_file:
         break
 
 def customize_for_llm():
@@ -76,6 +92,16 @@ def customize_for_llm():
 def init_after_loading_dotenv():
     """ Init something """
     customize_for_llm()
+
+    # log
+    env_info = dict(
+        TOPSAILAI_HOME=TOPSAILAI_HOME,
+        TOPSAILAI_WORK_FOLDER=TOPSAILAI_WORK_FOLDER,
+        TOPSAILAI_PROJECT_WORKSPACE=os.getenv("TOPSAILAI_PROJECT_WORKSPACE"),
+        TOPSAILAI_PWD=os.getenv("TOPSAILAI_PWD"),
+    )
+    from topsailai.logger import logger
+    logger.info("Folder Environment: %s", env_info)
 
 # init
 os.makedirs(folder_constants.FOLDER_LOG, exist_ok=True)

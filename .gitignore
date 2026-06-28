@@ -4,6 +4,7 @@
 *.db
 *.db-shm
 *.db-wal
+.env\.*
 .env
 .venv
 __pycache__/

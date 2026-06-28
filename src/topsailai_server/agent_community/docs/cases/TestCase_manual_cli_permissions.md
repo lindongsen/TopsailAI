@@ -383,3 +383,50 @@ tmux kill-session -t acs-perm
 
 *Test Plan created by: km2-reviewer*
 *Date: 2026-06-21*
+
+
+---
+
+## cmd/cli_chat/ (New Group-Chat Terminal)
+
+A new Claude Code style group-only CLI terminal is available at `cmd/cli_chat/`. It is separate from the legacy `cmd/cli/` terminal and focuses exclusively on group lifecycle, member management, and chat.
+
+### Build
+
+```bash
+cd /TopsailAI/src/topsailai_server/agent_community
+go build -o bin/acs-cli-chat ./cmd/cli_chat
+```
+
+### Authentication
+
+```bash
+# API key
+./bin/acs-cli-chat --api-key "ak-xxx.yyyy" --api-base http://127.0.0.1:7370
+
+# Or set via environment
+ACS_API_KEY="ak-xxx.yyyy" ./bin/acs-cli-chat
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/group list` | List groups |
+| `/group create <name> [context] [key]` | Create a group (positional args) |
+| `/group create --name <name> --context <context> --key <key>` | Create a group (flag style) |
+| `/chat <group_id>` | Enter a group chat |
+| `/member list` | List members of the current group |
+| `/member add <member_id> <member_name> <member_type>` | Add a member to the current group |
+| `/group leave` | Leave the current chat |
+| `exit` / `quit` | Exit the CLI |
+
+Legacy aliases are also supported for backward compatibility:
+
+- `/group:list`, `/group:create`, `/group:enter`, `/member:list`, `/member:add`
+
+### Notes
+
+- The new terminal is group-chat focused; account/API key/audit/admin operations remain in `cmd/cli/`.
+- It uses the same NATS real-time events and HTTP polling fallback as the legacy CLI.
+- The prompt is yellow: `acs@{userName}: ` outside a group and `acs@{userName}:{groupId}# ` inside a group.
