@@ -1,6 +1,8 @@
 // Package main contains shared data models for the ACS chat CLI.
 package main
 
+import "encoding/json"
+
 // Response is the standard API response envelope.
 type Response[T any] struct {
 	Data    T      `json:"data"`
@@ -74,21 +76,59 @@ type AddMemberRequest struct {
 	MemberInterface     any    `json:"member_interface,omitempty"`
 }
 
+// JSONStringOrArray can unmarshal from either a JSON string containing a JSON
+// array, or a JSON array directly. This handles the server publishing
+// models.GroupMessage where MessageAttachments and Mentions are stored as
+// strings in the database but emitted as JSON strings on the wire.
+type JSONStringOrArray []any
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *JSONStringOrArray) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 {
+		*j = nil
+		return nil
+	}
+	// Server publishes these fields as JSON strings (e.g. "[]" or "[{...}]").
+	if data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		if s == "" {
+			*j = nil
+			return nil
+		}
+		var arr []any
+		if err := json.Unmarshal([]byte(s), &arr); err != nil {
+			return err
+		}
+		*j = arr
+		return nil
+	}
+	// API responses use JSON arrays directly; keep that working too.
+	var arr []any
+	if err := json.Unmarshal(data, &arr); err != nil {
+		return err
+	}
+	*j = arr
+	return nil
+}
+
 // Message represents a group message.
 type Message struct {
-	MessageID          string `json:"message_id"`
-	GroupID            string `json:"group_id"`
-	MessageText        string `json:"message_text"`
-	MessageAttachments []any  `json:"message_attachments"`
-	SenderID           string `json:"sender_id"`
-	SenderName         string `json:"sender_name"`
-	SenderType         string `json:"sender_type"`
-	ProcessedMsgID     string `json:"processed_msg_id"`
-	Mentions           []any  `json:"mentions"`
-	IsDeleted          bool   `json:"is_deleted"`
-	DeleteAtMs         int64  `json:"delete_at_ms"`
-	CreateAtMs         int64  `json:"create_at_ms"`
-	UpdateAtMs         int64  `json:"update_at_ms"`
+	MessageID          string            `json:"message_id"`
+	GroupID            string            `json:"group_id"`
+	MessageText        string            `json:"message_text"`
+	MessageAttachments JSONStringOrArray `json:"message_attachments"`
+	SenderID           string            `json:"sender_id"`
+	SenderName         string            `json:"sender_name"`
+	SenderType         string            `json:"sender_type"`
+	ProcessedMsgID     string            `json:"processed_msg_id"`
+	Mentions           JSONStringOrArray `json:"mentions"`
+	IsDeleted          bool              `json:"is_deleted"`
+	DeleteAtMs         int64             `json:"delete_at_ms"`
+	CreateAtMs         int64             `json:"create_at_ms"`
+	UpdateAtMs         int64             `json:"update_at_ms"`
 }
 
 // SendMessageRequest is the body for sending a message.

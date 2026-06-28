@@ -3,10 +3,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chzyer/readline"
 )
 
 // EnterChat enters a group chat session.
@@ -25,10 +29,11 @@ func (app *App) EnterChat(ctx context.Context, groupID string) error {
 		fmt.Println(app.display.Warning(fmt.Sprintf("failed to load messages: %v", err)))
 	}
 	if app.nats != nil {
-		if err := app.nats.Connect(); err == nil {
-			app.nats.onMessage = app.handleIncomingMessage
-			app.nats.onMember = app.handleMemberEvent
-			_ = app.nats.SubscribeGroup(groupID)
+		if err := app.nats.Connect(); err != nil {
+			return fmt.Errorf("failed to connect to NATS: %w", err)
+		}
+		if err := app.nats.SubscribeGroup(groupID); err != nil {
+			return fmt.Errorf("failed to subscribe to group events: %w", err)
 		}
 	}
 	return app.chatLoop(ctx)
@@ -38,7 +43,12 @@ func (app *App) chatLoop(ctx context.Context) error {
 	pollInterval := 2 * time.Second
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
-	msgCh := make(chan string, 1)
+
+	type inputResult struct {
+		line string
+		err  error
+	}
+	inputCh := make(chan inputResult, 1)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -47,9 +57,10 @@ func (app *App) chatLoop(ctx context.Context) error {
 			app.rl.SetPrompt(app.prompt.String())
 			line, err := app.rl.Readline()
 			if err != nil {
-				if strings.Contains(err.Error(), "interrupt") {
+				if errors.Is(err, readline.ErrInterrupt) {
 					continue
 				}
+				inputCh <- inputResult{err: err}
 				return
 			}
 			line = strings.TrimSpace(line)
@@ -57,50 +68,68 @@ func (app *App) chatLoop(ctx context.Context) error {
 				continue
 			}
 			if line == "/group leave" || line == "/leave" {
-				msgCh <- "__leave__"
+				inputCh <- inputResult{line: "__leave__"}
 				return
 			}
 			if line == "/member list" || line == "/members" {
-				msgCh <- "__members__"
+				inputCh <- inputResult{line: "__members__"}
 				continue
 			}
 			if strings.HasPrefix(line, "/member add ") {
-				msgCh <- "__member_add__" + line[len("/member add "):]
+				inputCh <- inputResult{line: "__member_add__" + line[len("/member add "):]}
 				continue
 			}
 			if line == "/help" {
-				msgCh <- "__help__"
+				inputCh <- inputResult{line: "__help__"}
 				continue
 			}
 			if line == "exit" || line == "quit" {
-				msgCh <- "__exit__"
+				inputCh <- inputResult{line: "__exit__"}
 				return
 			}
-			msgCh <- line
+			inputCh <- inputResult{line: line}
 		}
 	}()
 	defer wg.Wait()
+
+	var msgCh <-chan Message
+	var memberCh <-chan Member
+	if app.nats != nil {
+		msgCh = app.nats.Messages()
+		memberCh = app.nats.Members()
+	}
+
 	for {
 		select {
-		case line := <-msgCh:
+		case msg := <-msgCh:
+			app.handleIncomingMessage(msg)
+		case member := <-memberCh:
+			app.handleMemberEvent(member)
+		case result := <-inputCh:
+			if result.err != nil {
+				if errors.Is(result.err, io.EOF) {
+					return errExit
+				}
+				return result.err
+			}
 			switch {
-			case line == "__leave__":
+			case result.line == "__leave__":
 				return app.LeaveCurrentGroup(ctx)
-			case line == "__members__":
+			case result.line == "__members__":
 				if err := app.ListMembers(ctx); err != nil {
 					app.display.PrintError(err, "/member list")
 				}
-			case strings.HasPrefix(line, "__member_add__"):
-				args := strings.TrimSpace(strings.TrimPrefix(line, "__member_add__"))
+			case strings.HasPrefix(result.line, "__member_add__"):
+				args := strings.TrimSpace(strings.TrimPrefix(result.line, "__member_add__"))
 				if err := app.handleMemberAddInline(ctx, args); err != nil {
 					app.display.PrintError(err, "/member add")
 				}
-			case line == "__help__":
+			case result.line == "__help__":
 				printChatHelp(app)
-			case line == "__exit__":
+			case result.line == "__exit__":
 				return errExit
 			default:
-				if err := app.sendMessage(ctx, line); err != nil {
+				if err := app.sendMessage(ctx, result.line); err != nil {
 					app.display.PrintError(err, "send message")
 				}
 			}
@@ -161,22 +190,35 @@ func (app *App) handleIncomingMessage(msg Message) {
 		return
 	}
 	fmt.Println(app.display.Message(msg, app.accountID))
+	if app.rl != nil {
+		app.rl.Refresh()
+	}
 }
 
 func (app *App) handleMemberEvent(member Member) {
 	if app.currentGroup == nil || member.GroupID != app.currentGroup.GroupID {
 		return
 	}
-	_ = app.refreshMembers(context.Background())
+	found := false
+	for i, m := range app.members {
+		if m.MemberID == member.MemberID {
+			app.members[i] = member
+			found = true
+			break
+		}
+	}
+	if !found {
+		app.members = append(app.members, member)
+	}
+	app.completer.SetMembers(app.members)
+	app.statusBar.Update(app.members)
 }
 
 func printChatHelp(app *App) {
-	fmt.Println(app.display.Info("Chat Mode Commands"))
-	fmt.Println()
-	fmt.Println("  @<name>                  Mention a member")
-	fmt.Println("  /member list             List members of current group")
-	fmt.Println("  /members                 Alias for /member list")
-	fmt.Println("  /group leave             Leave current group chat")
-	fmt.Println("  /help                    Show this help")
-	fmt.Println("  exit | quit              Exit the CLI")
+	fmt.Println(app.display.Info("Chat commands:"))
+	fmt.Println("  /member list        list group members")
+	fmt.Println("  /member add <args>  add a member to the group")
+	fmt.Println("  /group leave        leave the current group")
+	fmt.Println("  /help               show this help")
+	fmt.Println("  exit / quit         exit the application")
 }

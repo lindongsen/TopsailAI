@@ -50,7 +50,7 @@ func main() {
 func parseFlags() config {
 	var cfg config
 	flag.StringVar(&cfg.apiBase, "api-base", getEnv("ACS_SERVER_API_BASE", "http://localhost:7370"), "ACS server API base URL")
-	flag.StringVar(&cfg.natsURL, "nats-url", getEnv("ACS_NATS_SERVERS", ""), "NATS server URL (optional)")
+	flag.StringVar(&cfg.natsURL, "nats-url", getEnv("ACS_NATS_SERVERS", ""), "NATS server URL for real-time events (optional)")
 	flag.StringVar(&cfg.apiKey, "api-key", "", "API key token in the form ak-{id}.{secret} (also ACS_API_KEY env)")
 	flag.StringVar(&cfg.sessionKey, "session-key", "", "Login session key (also ACS_SESSION_KEY env)")
 	flag.BoolVar(&cfg.noColor, "no-color", false, "Disable colored output")
@@ -74,9 +74,9 @@ func newAppFromConfig(cfg config) (*App, error) {
 	case cfg.apiKey != "":
 		client.SetAPIKey(cfg.apiKey)
 	}
-	var natsClient *NATSClient
+	var nats natsClient
 	if cfg.natsURL != "" {
-		natsClient = NewNATSClient(cfg.natsURL)
+		nats = NewNATSClient(cfg.natsURL)
 	}
 	completer := NewCompleter()
 	display := NewDisplay(cfg.noColor)
@@ -91,7 +91,7 @@ func newAppFromConfig(cfg config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewApp(client, rl, completer, display, prompt, natsClient), nil
+	return NewApp(client, rl, completer, display, prompt, nats), nil
 }
 
 func printUsage() {

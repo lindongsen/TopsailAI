@@ -6,33 +6,37 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/chzyer/readline"
 )
+
 type App struct {
 	client       *Client
 	rl           *readline.Instance
 	prompt       *PromptManager
 	display      *Display
 	completer    *Completer
-	nats         *NATSClient
+	nats         natsClient
 	statusBar    *StatusBar
 	accountID    string
 	accountName  string
 	currentGroup *Group
 	members      []Member
+	pollInterval time.Duration
 }
 
 // NewApp creates a new App instance.
-func NewApp(client *Client, rl *readline.Instance, completer *Completer, display *Display, prompt *PromptManager, nats *NATSClient) *App {
+func NewApp(client *Client, rl *readline.Instance, completer *Completer, display *Display, prompt *PromptManager, nats natsClient) *App {
 	return &App{
-		client:    client,
-		rl:        rl,
-		prompt:    prompt,
-		display:   display,
-		completer: completer,
-		nats:      nats,
-		statusBar: NewStatusBar(0),
+		client:       client,
+		rl:           rl,
+		prompt:       prompt,
+		display:      display,
+		completer:    completer,
+		nats:         nats,
+		statusBar:    NewStatusBar(0),
+		pollInterval: 2 * time.Second,
 	}
 }
 
