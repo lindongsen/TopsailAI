@@ -268,3 +268,19 @@ def clean_thread_local():
     
     # Clear thread-local storage after test
     thread_local_tool.rid_all_thread_vars()
+
+
+@pytest.fixture(autouse=True)
+def set_test_logger_identity(clean_thread_local):
+    """
+    Set a distinctive logger identifier for unit tests.
+
+    This fixture runs after ``clean_thread_local`` and temporarily sets the
+    thread-local agent name to ``unit-test``. The logger formatter combines
+    this with the thread name to produce a message_id such as
+    ``(unit-test:<thread_name>)``, making it easy to distinguish unit-test
+    logs from production logs.
+    """
+    from topsailai.utils.thread_local_tool import ctxm_give_agent_name
+    with ctxm_give_agent_name("unit-test"):
+        yield

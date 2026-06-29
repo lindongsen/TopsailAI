@@ -581,3 +581,23 @@ See `docs/Environment_Variables.md` for full details:
 
 ### Note for maintainers
 When modifying how environment context is injected into the system prompt, keep `prompt_env.py` in sync with the variables documented in `docs/Environment_Variables.md`. Any new environment fields added here should also be documented there.
+
+## MEMO: Logger Identifier Information
+
+**Date:** 2026-06-29
+**File:** `/TopsailAI/src/topsailai/logger/base_logger.py`
+
+### Conclusion
+The logger in `logger/base_logger.py` can set identifier information beyond `thread_name`.
+
+### Supported identifiers
+- `agent_name` — read from thread-local `KEY_AGENT_NAME` via `get_agent_name()`; falls back to environment variables `AGENT_NAME` or `AI_AGENT`.
+- `message_id` — composed as `(agent_name:thread_name)` when either value is present.
+- Standard `LogRecord` fields — `thread` id, `pathname`, and `lineno` are included via the formatter string in `setup_logger()`.
+
+### Note for maintainers
+`session_id` is available in thread-local storage (`KEY_SESSION_ID`), default `thread_name` is it, references:
+```
+workspace/llm_shell.py: set_thread_name(session_id)
+workspace/agent_shell.py: thread_local_tool.set_thread_name(session_id)
+```
