@@ -255,7 +255,9 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         Returns:
             bool: True if summarization is needed, False otherwise.
         """
-        quantity_threshold = self._get_quantity_threshold("TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD")
+        quantity_threshold = self._get_quantity_threshold(
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD"
+        )
         if quantity_threshold:
             # Agent2LLM uses a larger candidate pool than User2Agent because
             # this layer represents the agent actively working: a single human
@@ -269,8 +271,11 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 number_list.append(quantity_threshold * 2)
 
             quantity_threshold = max(random.choice(number_list), quantity_threshold)
-
             if len(self.ai_agent.messages) >= quantity_threshold:
+                print_info(
+                    f"!!! [Agent2LLM] [Summarization] quantity_threshold exceeded: "
+                    f"threshold=[{quantity_threshold}], current_messages=[{len(self.ai_agent.messages)}]"
+                )
                 return True
 
         token_threshold = env_tool.EnvReaderInstance.get(

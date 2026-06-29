@@ -382,8 +382,13 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         quantity_threshold = self._get_quantity_threshold(
             "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD"
         )
-        if quantity_threshold and len(self.messages) >= quantity_threshold:
-            return True
+        if quantity_threshold:
+            if len(self.messages) >= quantity_threshold:
+                print_info(
+                    f"!!! [User2Agent] [Summarization] quantity_threshold exceeded: "
+                    f"threshold=[{quantity_threshold}], current_messages=[{len(self.messages)}]"
+                )
+                return True
 
         token_threshold = env_tool.EnvReaderInstance.get(
             "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD",

@@ -200,6 +200,7 @@ def _safe_unlink(path: str) -> None:
     except OSError as exc:  # pragma: no cover - defensive cleanup
         logger.error("Failed to remove pipe file %s: %s", abs_path, exc)
 
+
 def _ensure_fifo(pipe_path: str) -> None:
     """Create a FIFO at *pipe_path*, ensuring the parent directory exists."""
     parent = os.path.dirname(pipe_path)
@@ -228,6 +229,47 @@ def _has_eof_marker(decoded: str, eof_marker: str) -> bool:
     return f"\n{eof_marker}\n" in decoded or decoded.endswith(f"\n{eof_marker}")
 
 
+def _set_nonblocking(fd: int) -> int:
+    """Set *fd* to non-blocking mode and return the original flags.
+
+    Returns -1 if the fd cannot be configured (e.g. on platforms without
+    ``fcntl`` or when the fd is invalid).
+    """
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover - Windows fallback
+        return -1
+    try:
+        original = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, original | os.O_NONBLOCK)
+        return original
+    except OSError:
+        return -1
+
+
+def _restore_fd_flags(fd: int, original: int) -> None:
+    """Restore *fd* flags to *original* if possible."""
+    if original < 0:
+        return
+    try:
+        import fcntl
+        fcntl.fcntl(fd, fcntl.F_SETFL, original)
+    except OSError:  # pragma: no cover - fd may have been closed
+        pass
+
+
+def _read_available(fd: int) -> bytes:
+    """Read available data from a non-blocking file descriptor."""
+    try:
+        return os.read(fd, 4096)
+    except BlockingIOError:
+        return b""
+    except OSError as exc:
+        if exc.errno == errno.EAGAIN:
+            return b""
+        raise
+
+
 def input_from_pipe(
     pipe_path: str,
     *,
@@ -236,20 +278,22 @@ def input_from_pipe(
     eof_marker: str = "EOF",
     single_line: bool = False,
 ) -> str:
-    """Read a message from a named pipe (FIFO).
+    """Read a message from a named pipe (FIFO) and/or standard input.
 
-    Creates the FIFO at *pipe_path*, waits for a writer, reads until the
-    writer closes the pipe, and always removes the FIFO before returning.
+    Creates the FIFO at *pipe_path* and waits for input on either the FIFO
+    or ``sys.stdin`` using ``select.select``. This lets users feed data
+    through the pipe or type directly in the terminal. The FIFO is always
+    removed before returning.
 
     Parameters
     ----------
     pipe_path:
         Absolute path to the FIFO to create and read from.
     timeout:
-        Maximum time in seconds to wait for a writer. ``None`` waits
+        Maximum time in seconds to wait for input. ``None`` waits
         indefinitely.
     encoding:
-        Encoding used to decode bytes read from the pipe.
+        Encoding used to decode bytes read from the pipe/stdin.
     eof_marker:
         Optional marker that terminates input when seen on its own line.
         The marker line and anything after it is stripped from the result.
@@ -261,14 +305,14 @@ def input_from_pipe(
 
     Returns
     -------
-    The decoded message read from the pipe.
+    The decoded message read from the pipe or stdin.
 
     Raises
     ------
     NotImplementedError:
         If the platform does not support named pipes.
     TimeoutError:
-        If *timeout* seconds pass without a writer connecting.
+        If *timeout* seconds pass without receiving any data.
     """
     if getattr(os, "mkfifo", None) is None:
         raise NotImplementedError("Named pipes are not supported on this platform")
@@ -277,73 +321,114 @@ def input_from_pipe(
 
     cleanup = functools.partial(_safe_unlink, pipe_path)
     atexit.register(cleanup)
-    fd = None
-    writer_seen = False
+
+    pipe_fd = None
+    stdin_fd: int | None = None
+    stdin_flags = -1
     try:
-        # Open non-blocking so we can enforce *timeout* ourselves. On Linux
-        # this returns immediately even when no writer is connected yet.
-        fd = os.open(pipe_path, os.O_RDONLY | os.O_NONBLOCK)
+        # Open the FIFO non-blocking so select can multiplex it with stdin.
+        pipe_fd = os.open(pipe_path, os.O_RDONLY | os.O_NONBLOCK)
+
+        # Attempt to use sys.stdin as a secondary input source. If it does not
+        # expose a usable file descriptor we simply ignore it.
+        try:
+            stdin_fd = sys.stdin.fileno()
+        except (AttributeError, OSError, ValueError, io.UnsupportedOperation):
+            stdin_fd = None
+
+        if stdin_fd is not None and stdin_fd >= 0:
+            stdin_flags = _set_nonblocking(stdin_fd)
+            if stdin_flags < 0:
+                stdin_fd = None
+
         chunks: list[bytes] = []
         deadline = None if timeout is None else time.monotonic() + float(timeout)
+        pipe_eof = False
+        stdin_eof = False
+        writer_seen = False
+
         while True:
+            readers: list[int] = []
+            if not pipe_eof:
+                readers.append(pipe_fd)
+            if stdin_fd is not None and not stdin_eof:
+                readers.append(stdin_fd)
+
+            if not readers:
+                break
+
             remaining = None
             if deadline is not None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError(
-                        f"No data received from pipe within {timeout} seconds"
+                        f"No data received from pipe or terminal within {timeout} seconds"
                     )
                 remaining = max(remaining, 0.0)
 
-            ready, _, _ = select.select([fd], [], [], remaining)
+            ready, _, _ = select.select(readers, [], [], remaining)
             if not ready:
                 raise TimeoutError(
-                    f"No data received from pipe within {timeout} seconds"
+                    f"No data received from pipe or terminal within {timeout} seconds"
                 )
 
-            try:
-                data = os.read(fd, 4096)
-            except OSError as exc:
-                if exc.errno == errno.EAGAIN:
-                    continue
-                raise
+            for fd in ready:
+                data = _read_available(fd)
+                if data:
+                    writer_seen = True
+                    chunks.append(data)
+                    try:
+                        decoded = b"".join(chunks).decode(encoding)
+                    except UnicodeDecodeError:
+                        # Partial multi-byte character; keep reading.
+                        continue
 
-            if data:
-                writer_seen = True
-                chunks.append(data)
-                decoded = b"".join(chunks).decode(encoding)
-                if single_line:
-                    newline_pos = decoded.find("\n")
-                    if newline_pos != -1:
-                        return decoded[:newline_pos]
-                    continue
-                if _has_eof_marker(decoded, eof_marker):
-                    break
-                continue
+                    if single_line:
+                        newline_pos = decoded.find("\n")
+                        if newline_pos != -1:
+                            return decoded[:newline_pos]
+                        # Allow EOF marker to terminate a single line that has
+                        # no trailing newline.
+                        stripped = decoded.rstrip("\n")
+                        if stripped.endswith(eof_marker):
+                            return _strip_eof_marker(decoded, eof_marker)
+                    else:
+                        if _has_eof_marker(decoded, eof_marker):
+                            return _strip_eof_marker(decoded, eof_marker)
+                else:
+                    if fd == pipe_fd:
+                        pipe_eof = True
+                    else:
+                        stdin_eof = True
 
-            # read() returned 0 bytes. Once a writer has sent data this is EOF.
-            if writer_seen or chunks:
+            # Once we have seen at least one writer and both sources are EOF,
+            # we are done.
+            if writer_seen and pipe_eof and stdin_eof:
                 break
 
-            # No writer connected yet. Avoid a busy loop by sleeping briefly,
-            # but respect the timeout deadline.
-            if deadline is not None and time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"No data received from pipe within {timeout} seconds"
-                )
-            time.sleep(0.01)
+            # If neither source has produced data yet and the pipe returned
+            # EOF without a writer, avoid a tight busy-loop by sleeping briefly
+            # while still respecting the overall timeout.
+            if not writer_seen and pipe_eof:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"No data received from pipe or terminal within {timeout} seconds"
+                    )
+                time.sleep(0.01)
 
         decoded = b"".join(chunks).decode(encoding)
         if single_line:
             newline_pos = decoded.find("\n")
             if newline_pos != -1:
                 return decoded[:newline_pos]
+            return _strip_eof_marker(decoded, eof_marker)
         return _strip_eof_marker(decoded, eof_marker)
     finally:
-        if fd is not None:
+        if pipe_fd is not None:
             try:
-                os.close(fd)
+                os.close(pipe_fd)
             except OSError:
                 pass
+        _restore_fd_flags(stdin_fd, stdin_flags)
         atexit.unregister(cleanup)
         _safe_unlink(pipe_path)
