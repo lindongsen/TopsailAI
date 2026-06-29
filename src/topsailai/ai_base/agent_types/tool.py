@@ -98,6 +98,8 @@ def with_tool_response_safe(exec_tool_func: Callable) -> Callable:
 
     return wrapper
 
+
+@tool_stat.detect_duplicate_tool_call
 @with_tool_response_safe
 @with_tool_approval
 def exec_tool_func(tool_func, args, tool_name:str=None):

@@ -11,6 +11,36 @@ TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO=0.5
 TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES=17
 
 # =============================================================================
+# Duplicate Tool Call Detection
+# =============================================================================
+
+# Master switch. Set to 1 to enable duplicate tool call detection, 0 to disable.
+TOPSAILAI_DUP_TOOL_CALL_ENABLED=1
+
+# Custom notice template for duplicate tool calls. Must be English.
+# Only the {tool_name} placeholder is supported.
+# When non-empty, duplicate results are wrapped in a dictionary with keys:
+#   original_result, notice, reason
+# When empty or unset, detection still logs a warning but returns the original
+# result unchanged.
+# Example:
+# TOPSAILAI_DUP_TOOL_CALL_NOTICE="""
+# ---
+# ⚠️ SYSTEM NOTICE: Duplicate tool call detected.
+#
+# You have already called tool `{tool_name}` with the same arguments, and it returned the same result.
+# Calling it again is unlikely to yield new information.
+#
+# Recommended actions:
+# 1. Stop repeating this tool call.
+# 2. Analyze the result you already have.
+# 3. Try a different approach or ask the user for clarification if you are stuck.
+# ---
+# """
+TOPSAILAI_DUP_TOOL_CALL_NOTICE="Duplicate tool call detected: `{tool_name}` was already called with the same arguments and returned the same result. Please analyze the existing result instead of repeating the call."
+
+
+# =============================================================================
 # OpenAI Configuration
 # =============================================================================
 

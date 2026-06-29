@@ -265,7 +265,7 @@ class AgentChat(AgentChatBase):
                 sys.stdout.flush()
 
             if env_tool.is_debug_mode():
-                tool_call_stat = tool_stat.get_default_stat()
+                tool_call_stat = tool_stat.get_agent_tool_stat(self.ai_agent)
                 __content = tool_call_stat.export_json()
                 logger.info("ToolStat of tool_calls:\n [%s]", __content)
 

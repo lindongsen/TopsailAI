@@ -16,11 +16,17 @@ from topsailai.utils import (
     json_tool,
 )
 from topsailai.context import tool_stat
+from .base.cache import get_ai_agent
+
+
+def _get_current_tool_stat():
+    """Return the ToolStat for the active agent, falling back to the default."""
+    return tool_stat.get_agent_tool_stat(get_ai_agent())
 
 
 def show_tool_call_stat(tool_name: str = None) -> None:
     """
-    Display tool call statistics from the default ToolStat instance.
+    Display tool call statistics from the current agent's ToolStat instance.
 
     This function retrieves and prints statistics about tool calls that have been
     recorded. It can show statistics for all tools or filter by a specific tool name.
@@ -31,8 +37,8 @@ def show_tool_call_stat(tool_name: str = None) -> None:
             If None, statistics for all tools will be displayed.
             Defaults to None.
     """
-    # Get the default statistics instance
-    stat = tool_stat.get_default_stat()
+    # Get the ToolStat instance bound to the active agent (or the default)
+    stat = _get_current_tool_stat()
 
     # Retrieve all statistics data
     stat_info = stat.stat
@@ -62,7 +68,7 @@ def show_tool_call_stat(tool_name: str = None) -> None:
 
 def show_tool_call_errors(tool_name: str = None) -> None:
     """
-    Display tool call errors from the default ToolStat instance.
+    Display tool call errors from the current agent's ToolStat instance.
 
     This function retrieves and prints information about failed tool calls (errors).
     It can show errors for all tools or filter by a specific tool name.
@@ -73,8 +79,8 @@ def show_tool_call_errors(tool_name: str = None) -> None:
             If None, errors for all tools will be displayed.
             Defaults to None.
     """
-    # Get the default statistics instance
-    stat = tool_stat.get_default_stat()
+    # Get the ToolStat instance bound to the active agent (or the default)
+    stat = _get_current_tool_stat()
 
     # Retrieve error information
     error_info = stat.errors
@@ -104,11 +110,17 @@ def show_tool_call_errors(tool_name: str = None) -> None:
 
 def log_tool_call():
     """ Export tool_call info to log file """
-    stat = tool_stat.get_default_stat()
+    stat = _get_current_tool_stat()
     content = stat.export_json()
     logger.info("ToolStat of tool_calls:\n [%s]", content)
     print("DONE")
     return
+
+
+def _reset_current_tool_stat():
+    """Reset the ToolStat for the active agent, falling back to the default."""
+    _get_current_tool_stat().reset()
+
 
 # Instruction mapping for the workspace plugin system
 # Maps instruction command names to their corresponding handler functions
@@ -116,7 +128,7 @@ def log_tool_call():
 # Available instructions:
 #   - tool_call: Display tool call statistics (see show_tool_call_stat)
 #   - tool_call_errors: Display tool call errors (see show_tool_call_errors)
-#   - tool_call_reset: Reset all statistics to initial state
+#   - tool_call_reset: Reset current agent statistics
 #
 # Usage in plugin system:
 #   The workspace plugin can invoke these instructions by name:
@@ -126,6 +138,6 @@ def log_tool_call():
 INSTRUCTIONS = dict(
     tool_call=show_tool_call_stat,                    # Display tool call statistics
     tool_call_errors=show_tool_call_errors,          # Display tool call errors
-    tool_call_reset=tool_stat.get_default_stat().reset,  # Reset all statistics
+    tool_call_reset=_reset_current_tool_stat,        # Reset current agent statistics
     tool_call_log=log_tool_call,
 )

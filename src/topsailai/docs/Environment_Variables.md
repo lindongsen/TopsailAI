@@ -160,6 +160,13 @@ For team agents, the effective offset is resolved in this order:
 | `TOPSAILAI_FLAG_DUMP_MESSAGES` | `0` | When `1`, chat history messages are automatically dumped to a file after each execution for debugging and analysis. |
 | `TOPSAILAI_CONTEXT_USER_MESSAGE` | `""` | File path or raw text prepended as the first `context_user_message` and combined into a single user message at session start. |
 
+## Duplicate Tool Call Detection
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_DUP_TOOL_CALL_ENABLED` | `1` | Master switch for duplicate tool call detection. `1` = enabled, `0` = disabled. |
+| `TOPSAILAI_DUP_TOOL_CALL_NOTICE` | `"Duplicate tool call detected: `{tool_name}` was already called with the same arguments and returned the same result. Please analyze the existing result instead of repeating the call."` | Custom notice template for duplicate tool calls. Must be English. Supports only the `{tool_name}` placeholder. When non-empty, duplicate results are wrapped in a dictionary with keys `original_result`, `notice`, and `reason`. When empty or unset, detection still logs a warning but the original result is returned unchanged. |
+
 ## Tool Configuration
 
 | Variable | Default | Description |

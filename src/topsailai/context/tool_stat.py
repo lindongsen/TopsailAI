@@ -15,6 +15,8 @@
 '''
 
 import os
+import functools
+import logging
 
 from typing import Dict, List, Optional, Any, Callable
 from datetime import datetime
@@ -22,6 +24,11 @@ from collections import defaultdict
 from contextlib import contextmanager
 import threading
 import json
+
+from topsailai.utils import env_tool, thread_local_tool
+
+
+logger = logging.getLogger(__name__)
 
 
 class ToolStat:
@@ -40,7 +47,6 @@ class ToolStat:
         >>> print(stat.errors)
         {'curl': [{'tool_call': 'curl', 'tool_args': {'url': 'bad'}, ...}]}
     """
-
     def __init__(self, max_records: int = 10000):
         """
         Initialize the ToolStat tracker.
@@ -54,6 +60,51 @@ class ToolStat:
         self._lock = threading.RLock()
         self._start_time = datetime.now()
         self._call_sequence = 0  # Unique sequence number for each call
+
+    @staticmethod
+    def _normalize(value: Any) -> str:
+        """
+        Serialize a value into a deterministic string representation.
+
+        Uses JSON serialization with sorted keys. Falls back to ``str(value)``
+        when JSON serialization fails. This helper is the single source of
+        truth for normalizing both tool arguments and tool results.
+
+        Args:
+            value: Any value to normalize.
+
+        Returns:
+            A deterministic string representation of ``value``.
+        """
+        try:
+            return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+        except Exception:
+            return str(value)
+
+    def is_last_call_duplicate(self) -> bool:
+        """
+        Check whether the last two tool calls in this tracker are duplicates.
+
+        A duplicate is defined as two consecutive calls with the same tool name,
+        the same normalized arguments, and the same normalized result.
+
+        Returns:
+            ``True`` if the last two recorded calls are duplicates, otherwise ``False``.
+        """
+        with self._lock:
+            if len(self._tool_calls) < 2:
+                return False
+
+            last = self._tool_calls[-1]
+            prev = self._tool_calls[-2]
+
+            if last.get("tool_call") != prev.get("tool_call"):
+                return False
+            if self._normalize(last.get("tool_args")) != self._normalize(prev.get("tool_args")):
+                return False
+            if self._normalize(last.get("result")) != self._normalize(prev.get("result")):
+                return False
+            return True
 
     @property
     def tool_calls(self) -> List[Dict[str, Any]]:
@@ -504,6 +555,44 @@ def get_default_stat() -> ToolStat:
         _default_stat = ToolStat()
     return _default_stat
 
+
+def get_agent_tool_stat(agent=None) -> ToolStat:
+    """
+    Get or create the ToolStat instance bound to the current agent.
+
+    When an agent is active (either passed explicitly or available via
+    thread-local storage), the same ToolStat instance attached to that agent is
+    returned so that duplicate detection and statistics are isolated per agent.
+    If no agent is available, the module-level default ToolStat instance is
+    returned as a fallback.
+
+    Args:
+        agent: Optional agent object. When provided, the ToolStat bound to this
+            agent is returned. When omitted, the current agent is resolved from
+            thread-local storage.
+
+    Returns:
+        ToolStat: The agent-bound ToolStat if an agent is available, otherwise
+        the global default ToolStat instance.
+    """
+    if agent is None:
+        agent = thread_local_tool.get_agent_object()
+    if agent is None:
+        return get_default_stat()
+
+    # Prefer a ToolStat attached to the agent's LLM model if present.
+    llm_model = getattr(agent, "llm_model", None)
+    if llm_model is not None:
+        tool_stat = getattr(llm_model, "tool_stat", None)
+        if tool_stat is not None:
+            return tool_stat
+
+    # Otherwise attach a ToolStat directly to the agent instance.
+    if not hasattr(agent, "_tool_stat"):
+        agent._tool_stat = ToolStat()
+    return agent._tool_stat
+
+
 def record_tool_call(
     tool_call: str,
     tool_args: Any = None,
@@ -512,7 +601,9 @@ def record_tool_call(
     metadata: Any = None,
 ) -> int:
     """
-    Record a tool call using the default global instance.
+    Record a tool call using the agent-bound ToolStat instance.
+
+    Falls back to the default global instance when no agent is active.
 
     Args:
         tool_call: Name of the tool being called
@@ -526,8 +617,67 @@ def record_tool_call(
     """
     if os.getenv("TOPSAILAI_ENABLE_TOOL_STAT") in ["1", "true"] or \
         os.getenv("DEBUG") in ["1", "true"]:
-        return get_default_stat().record(tool_call, tool_args, error, result, metadata)
+        return get_agent_tool_stat().record(tool_call, tool_args, error, result, metadata)
     return 0
+
+
+def detect_duplicate_tool_call(func: Callable) -> Callable:
+    """
+    Decorator that detects consecutive duplicate tool calls.
+
+    The decorator is read-only: it inspects the most recent records in the
+    agent-bound ``ToolStat`` but never writes to it. Recording is the
+    responsibility of the wrapped function (typically ``exec_tool_func``).
+
+    When ``TOPSAILAI_DUP_TOOL_CALL_ENABLED`` is true and the last recorded call
+    is a duplicate of the one before it, the original result is wrapped in a
+    dictionary containing a notice and a reason. If the notice template is
+    empty, the original result is returned unchanged (a warning is still
+    logged).
+
+    Args:
+        func: The tool execution function to wrap.
+
+    Returns:
+        A wrapped function that performs duplicate detection after the
+        underlying tool execution completes.
+    """
+    @functools.wraps(func)
+    def wrapper(tool_func, args, tool_name: str = None, **kwargs):
+        if not tool_name:
+            tool_name = getattr(tool_func, "__name__", "unknown_tool")
+
+        result = func(tool_func=tool_func, args=args, tool_name=tool_name, **kwargs)
+
+        if not env_tool.EnvReaderInstance.check_bool(
+            "TOPSAILAI_DUP_TOOL_CALL_ENABLED", True
+        ):
+            return result
+
+        stat = get_agent_tool_stat()
+        if stat.is_last_call_duplicate():
+            logger.warning(
+                "Duplicate tool call detected: tool=%s args=%s", tool_name, args
+            )
+
+            notice_template = env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_DUP_TOOL_CALL_NOTICE", ""
+            )
+            if notice_template:
+                notice = notice_template.replace("{tool_name}", tool_name)
+                reason = (
+                    "Duplicate tool call detected: same tool_name, same arguments, "
+                    "and same result as the previous call in this agent session."
+                )
+                result = {
+                    "original_result": result,
+                    "notice": notice,
+                    "reason": reason,
+                }
+
+        return result
+
+    return wrapper
 
 
 # =============================================================================
