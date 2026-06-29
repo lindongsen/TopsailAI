@@ -93,45 +93,47 @@ def _evaluate_condition(actual: Any, op: str, expected: Any) -> bool:
         return actual != expected
 
     if op == "contains":
-        if isinstance(actual, str) and isinstance(expected, str):
-            return expected in actual
-        return False
+        if not isinstance(expected, str):
+            return False
+        return expected in str(actual)
 
     if op == "not_contains":
-        if isinstance(actual, str) and isinstance(expected, str):
-            return expected not in actual
-        return False
+        if not isinstance(expected, str):
+            return False
+        return expected not in str(actual)
 
     if op == "starts_with":
-        if isinstance(actual, str) and isinstance(expected, str):
-            return actual.startswith(expected)
-        return False
+        if not isinstance(expected, str):
+            return False
+        return str(actual).startswith(expected)
 
     if op == "ends_with":
-        if isinstance(actual, str) and isinstance(expected, str):
-            return actual.endswith(expected)
-        return False
+        if not isinstance(expected, str):
+            return False
+        return str(actual).endswith(expected)
 
     if op == "regex":
-        if isinstance(actual, str) and isinstance(expected, str):
-            try:
-                return bool(re.search(expected, actual))
-            except re.error:
-                return False
-        return False
+        if not isinstance(expected, str):
+            return False
+        try:
+            return bool(re.search(expected, str(actual)))
+        except re.error:
+            return False
 
     if op == "in":
+        actual_str = str(actual)
         if isinstance(expected, list):
-            return actual in expected
+            return actual_str in (str(item) for item in expected)
         if isinstance(expected, str):
-            return str(actual) in expected.split(",")
+            return actual_str in expected.split(",")
         return False
 
     if op == "not_in":
+        actual_str = str(actual)
         if isinstance(expected, list):
-            return actual not in expected
+            return actual_str not in (str(item) for item in expected)
         if isinstance(expected, str):
-            return str(actual) not in expected.split(",")
+            return actual_str not in expected.split(",")
         return False
 
     if op in ("gt", "gte", "lt", "lte"):

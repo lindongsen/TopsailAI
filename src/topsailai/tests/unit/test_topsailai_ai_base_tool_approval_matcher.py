@@ -78,7 +78,7 @@ class TestEvaluateCondition:
         assert _evaluate_condition("example other", "contains", "example test") is False
 
     def test_contains_non_string_operand(self):
-        assert _evaluate_condition(123, "contains", "example") is False
+        assert _evaluate_condition(123, "contains", "2") is True
         assert _evaluate_condition("example", "contains", 123) is False
 
     def test_not_contains(self):
@@ -86,7 +86,8 @@ class TestEvaluateCondition:
         assert _evaluate_condition("privileged ls", "not_contains", "privileged") is False
 
     def test_not_contains_non_string_operand(self):
-        assert _evaluate_condition(123, "not_contains", "privileged") is False
+        assert _evaluate_condition(123, "not_contains", "privileged") is True
+        assert _evaluate_condition(123, "not_contains", "23") is False
 
     def test_eq(self):
         assert _evaluate_condition("/etc/passwd", "eq", "/etc/passwd") is True
@@ -104,7 +105,8 @@ class TestEvaluateCondition:
         assert _evaluate_condition("value", "regex", "[invalid") is False
 
     def test_regex_non_string_operand(self):
-        assert _evaluate_condition(123, "regex", r"\d+") is False
+        assert _evaluate_condition(123, "regex", r"\d+") is True
+        assert _evaluate_condition(123, "regex", r"^abc$") is False
         assert _evaluate_condition("123", "regex", 123) is False
 
     def test_in(self):
@@ -114,15 +116,27 @@ class TestEvaluateCondition:
     def test_in_list(self):
         assert _evaluate_condition("delete", "in", ["delete", "write"]) is True
 
+    def test_in_non_string_operand(self):
+        assert _evaluate_condition(123, "in", "123,456") is True
+        assert _evaluate_condition(123, "in", [123, 456]) is True
+        assert _evaluate_condition(123, "in", ["123", "456"]) is True
+        assert _evaluate_condition(123, "in", "456,789") is False
+
     def test_not_in(self):
         assert _evaluate_condition("read", "not_in", "delete,write") is True
         assert _evaluate_condition("delete", "not_in", "delete,write") is False
+
+    def test_not_in_non_string_operand(self):
+        assert _evaluate_condition(123, "not_in", "456,789") is True
+        assert _evaluate_condition(123, "not_in", [123, 456]) is False
+        assert _evaluate_condition(123, "not_in", ["123", "456"]) is False
 
     def test_starts_with(self):
         assert _evaluate_condition("example prefix here", "starts_with", "example prefix") is True
         assert _evaluate_condition("example other", "starts_with", "example prefix") is False
 
     def test_starts_with_non_string_operand(self):
+        assert _evaluate_condition(123, "starts_with", "12") is True
         assert _evaluate_condition(123, "starts_with", "example") is False
 
     def test_ends_with(self):
@@ -130,6 +144,7 @@ class TestEvaluateCondition:
         assert _evaluate_condition("config.txt", "ends_with", ".env") is False
 
     def test_ends_with_non_string_operand(self):
+        assert _evaluate_condition(123, "ends_with", "23") is True
         assert _evaluate_condition(123, "ends_with", ".env") is False
 
     def test_exists(self):
