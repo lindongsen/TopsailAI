@@ -285,3 +285,70 @@ class TestConfigureTerminal:
             "Prompt: ", timeout=1.0, default="eof_tty_default", stream=mock_stream
         )
         assert value == "eof_tty_default"
+
+
+class TestInputFromPipe:
+    """Tests for input_from_pipe using real FIFOs."""
+
+    def _write_to_pipe_after_delay(self, pipe_path: str, content: bytes, delay: float = 0.05):
+        """Spawn a thread that opens the FIFO and writes content after a short delay."""
+
+        def writer():
+            time.sleep(delay)
+            # Opening a FIFO for writing blocks until a reader opens it.
+            with open(pipe_path, "wb") as fifo:
+                fifo.write(content)
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        return thread
+
+    def test_reads_message_from_pipe(self, tmp_path):
+        pipe_path = str(tmp_path / "test.pipe")
+        message = b"hello from pipe\nsecond line\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            result = input_tool.input_from_pipe(pipe_path, timeout=2.0)
+            assert result == "hello from pipe\nsecond line"
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_eof_marker_terminates_input(self, tmp_path):
+        pipe_path = str(tmp_path / "test.pipe")
+        message = b"line before\nEOF\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            result = input_tool.input_from_pipe(pipe_path, timeout=2.0)
+            assert result == "line before"
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_cleans_up_pipe_after_read(self, tmp_path):
+        pipe_path = str(tmp_path / "test.pipe")
+        writer = self._write_to_pipe_after_delay(pipe_path, b"cleanup test\n")
+        try:
+            input_tool.input_from_pipe(pipe_path, timeout=2.0)
+            assert not os.path.exists(pipe_path)
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_cleans_up_pipe_on_timeout(self, tmp_path):
+        pipe_path = str(tmp_path / "test.pipe")
+        with pytest.raises(TimeoutError):
+            input_tool.input_from_pipe(pipe_path, timeout=0.1)
+        assert not os.path.exists(pipe_path)
+
+    def test_empty_message_returns_empty_string(self, tmp_path):
+        pipe_path = str(tmp_path / "test.pipe")
+        writer = self._write_to_pipe_after_delay(pipe_path, b"\n")
+        try:
+            result = input_tool.input_from_pipe(pipe_path, timeout=2.0)
+            assert result == ""
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_not_implemented_on_windows(self, tmp_path):
+        pipe_path = str(tmp_path / "test.pipe")
+        with patch.object(os, "mkfifo", None):
+            with pytest.raises(NotImplementedError):
+                input_tool.input_from_pipe(pipe_path)

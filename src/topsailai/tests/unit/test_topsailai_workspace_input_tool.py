@@ -425,5 +425,80 @@ class TestInputYes(unittest.TestCase):
         mock_input.assert_called_once_with("Continue [yes/no] ")
 
 
+class TestBuildPipePath(unittest.TestCase):
+    """Test cases for _build_pipe_path function."""
+
+    def tearDown(self):
+        """Clean up environment variables."""
+        for key in ["TOPSAILAI_SESSION_ID", "SESSION_ID"]:
+            if key in os.environ:
+                del os.environ[key]
+
+    @patch("topsailai.workspace.input_tool.os.getpid")
+    @patch("topsailai.workspace.input_tool.env_tool.get_session_id")
+    def test_uses_session_id_from_env(self, mock_get_session_id, mock_getpid):
+        """Test that pipe path uses session id from env_tool."""
+        from topsailai.workspace.input_tool import _build_pipe_path
+        mock_get_session_id.return_value = "test-session"
+        mock_getpid.return_value = 12345
+        result = _build_pipe_path()
+        self.assertIn("test-session.12345.session.pipe", result)
+        self.assertTrue(result.startswith("/"))
+
+    @patch("topsailai.workspace.input_tool.os.getpid")
+    @patch("topsailai.workspace.input_tool.env_tool.get_session_id")
+    def test_defaults_to_default_session(self, mock_get_session_id, mock_getpid):
+        """Test fallback to 'default' when no session id is configured."""
+        from topsailai.workspace.input_tool import _build_pipe_path
+        mock_get_session_id.return_value = None
+        mock_getpid.return_value = 12345
+        result = _build_pipe_path()
+        self.assertIn("default.12345.session.pipe", result)
+
+    @patch("topsailai.workspace.input_tool.os.getpid")
+    def test_uses_provided_session_id(self, mock_getpid):
+        """Test that explicit session_id overrides env lookup."""
+        from topsailai.workspace.input_tool import _build_pipe_path
+        mock_getpid.return_value = 12345
+        result = _build_pipe_path("custom-session")
+        self.assertIn("custom-session.12345.session.pipe", result)
+
+
+class TestInputFromPipeSession(unittest.TestCase):
+    """Test cases for input_from_pipe_session wrapper."""
+
+    @patch("topsailai.workspace.input_tool.utils_input_tool.input_from_pipe")
+    @patch("topsailai.workspace.input_tool._build_pipe_path")
+    def test_delegates_to_utils_function(self, mock_build_path, mock_input_from_pipe):
+        """Test that wrapper builds path and delegates to utils function."""
+        from topsailai.workspace.input_tool import input_from_pipe_session
+        mock_build_path.return_value = "/tmp/test.pipe"
+        mock_input_from_pipe.return_value = "message from pipe"
+        result = input_from_pipe_session(timeout=5.0, encoding="utf-8")
+        self.assertEqual(result, "message from pipe")
+        mock_build_path.assert_called_once_with(None)
+        mock_input_from_pipe.assert_called_once_with(
+            "/tmp/test.pipe",
+            timeout=5.0,
+            encoding="utf-8",
+            eof_marker="EOF",
+        )
+
+    @patch("topsailai.workspace.input_tool.utils_input_tool.input_from_pipe")
+    @patch("topsailai.workspace.input_tool._build_pipe_path")
+    def test_passes_custom_eof_marker(self, mock_build_path, mock_input_from_pipe):
+        """Test that custom eof_marker is forwarded."""
+        from topsailai.workspace.input_tool import input_from_pipe_session
+        mock_build_path.return_value = "/tmp/test.pipe"
+        mock_input_from_pipe.return_value = ""
+        input_from_pipe_session(eof_marker="END")
+        mock_input_from_pipe.assert_called_once_with(
+            "/tmp/test.pipe",
+            timeout=None,
+            encoding="utf-8",
+            eof_marker="END",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

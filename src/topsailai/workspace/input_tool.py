@@ -15,9 +15,13 @@ import readline
 from topsailai.utils import (
     env_tool,
     file_tool,
+    input_tool as utils_input_tool,
     thread_local_tool,
 )
-from topsailai.workspace.folder_constants import FILE_INPUT_HISTORY
+from topsailai.workspace.folder_constants import (
+    FILE_INPUT_HISTORY,
+    FOLDER_WORKSPACE_TASK,
+)
 from topsailai.workspace.hook_instruction import (
     HookInstruction,
     TRIGGER_CHARS,
@@ -329,3 +333,73 @@ def input_yes(tips: str = "Continue [yes/no] ") -> bool:
     """
     yn = input(tips)
     return yn.strip().lower() == "yes"
+
+
+def _build_pipe_path(session_id: str | None = None) -> str:
+    """Build the pipe path for the current session.
+
+    The path follows the convention:
+    ``FOLDER_WORKSPACE_TASK/{session_id}.{pid}.session.pipe``.
+
+    Args:
+        session_id: Optional session identifier. When omitted,
+            ``env_tool.get_session_id()`` is used, falling back to
+            ``"default"`` when no session is configured.
+
+    Returns:
+        Absolute path to the session pipe.
+    """
+    if session_id is None:
+        session_id = env_tool.get_session_id() or "default"
+    return os.path.join(
+        FOLDER_WORKSPACE_TASK,
+        f"{session_id}.{os.getpid()}.session.pipe",
+    )
+
+
+def input_from_pipe_session(
+    session_id: str | None = None,
+    *,
+    timeout: float | None = None,
+    encoding: str = "utf-8",
+    eof_marker: str = "EOF",
+) -> str:
+    """Read a multi-line message from a session-scoped named pipe.
+
+    This is a convenience wrapper around
+    :func:`topsailai.utils.input_tool.input_from_pipe` that constructs the
+    pipe path from the current session and process ID, then delegates to the
+    utility function. The FIFO is always removed after reading, even on
+    error.
+
+    Parameters
+    ----------
+    session_id:
+        Optional session identifier. Defaults to the value returned by
+        :func:`topsailai.utils.env_tool.get_session_id`.
+    timeout:
+        Maximum time in seconds to wait for a writer. ``None`` waits
+        indefinitely.
+    encoding:
+        Encoding used to decode bytes read from the pipe.
+    eof_marker:
+        Optional marker that terminates input when seen on its own line.
+
+    Returns
+    -------
+    The decoded message read from the pipe.
+
+    Raises
+    ------
+    NotImplementedError:
+        If the platform does not support named pipes.
+    TimeoutError:
+        If *timeout* seconds pass without receiving any data.
+    """
+    pipe_path = _build_pipe_path(session_id)
+    return utils_input_tool.input_from_pipe(
+        pipe_path,
+        timeout=timeout,
+        encoding=encoding,
+        eof_marker=eof_marker,
+    )

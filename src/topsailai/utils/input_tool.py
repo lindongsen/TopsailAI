@@ -7,9 +7,13 @@ environments while respecting a timeout and preserving terminal echo.
 
 from __future__ import annotations
 
+import atexit
 import contextlib
+import errno
+import functools
 import io
 import logging
+import os
 import select
 import sys
 import termios
@@ -183,3 +187,146 @@ def input_with_timeout(
         return default
 
     return line.rstrip("\n")
+
+
+def _safe_unlink(path: str) -> None:
+    """Remove *path* if it exists, ignoring errors."""
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:  # pragma: no cover - defensive cleanup
+        logger.debug("Failed to unlink pipe %s: %s", path, exc)
+
+
+def _ensure_fifo(pipe_path: str) -> None:
+    """Create a FIFO at *pipe_path*, ensuring the parent directory exists."""
+    parent = os.path.dirname(pipe_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    try:
+        os.mkfifo(pipe_path)
+    except FileExistsError:
+        # A leftover pipe from a crashed process; replace it.
+        _safe_unlink(pipe_path)
+        os.mkfifo(pipe_path)
+
+
+def _strip_eof_marker(text: str, eof_marker: str) -> str:
+    """Return *text* with the first standalone *eof_marker* line removed."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line == eof_marker:
+            lines = lines[:i]
+            break
+    return "\n".join(lines)
+
+
+def _has_eof_marker(decoded: str, eof_marker: str) -> bool:
+    """Check whether *decoded* contains a standalone EOF marker line."""
+    return f"\n{eof_marker}\n" in decoded or decoded.endswith(f"\n{eof_marker}")
+
+
+def input_from_pipe(
+    pipe_path: str,
+    *,
+    timeout: float | None = None,
+    encoding: str = "utf-8",
+    eof_marker: str = "EOF",
+) -> str:
+    """Read a multi-line message from a named pipe (FIFO).
+
+    Creates the FIFO at *pipe_path*, waits for a writer, reads until the
+    writer closes the pipe, and always removes the FIFO before returning.
+
+    Parameters
+    ----------
+    pipe_path:
+        Absolute path to the FIFO to create and read from.
+    timeout:
+        Maximum time in seconds to wait for a writer. ``None`` waits
+        indefinitely.
+    encoding:
+        Encoding used to decode bytes read from the pipe.
+    eof_marker:
+        Optional marker that terminates input when seen on its own line.
+        The marker line and anything after it is stripped from the result.
+
+    Returns
+    -------
+    The decoded message read from the pipe, with trailing whitespace stripped.
+
+    Raises
+    ------
+    NotImplementedError:
+        If the platform does not support named pipes.
+    TimeoutError:
+        If *timeout* seconds pass without a writer connecting.
+    """
+    if getattr(os, "mkfifo", None) is None:
+        raise NotImplementedError("Named pipes are not supported on this platform")
+
+    _ensure_fifo(pipe_path)
+
+    cleanup = functools.partial(_safe_unlink, pipe_path)
+    atexit.register(cleanup)
+    fd = None
+    writer_seen = False
+    try:
+        # Open non-blocking so we can enforce *timeout* ourselves. On Linux
+        # this returns immediately even when no writer is connected yet.
+        fd = os.open(pipe_path, os.O_RDONLY | os.O_NONBLOCK)
+        chunks: list[bytes] = []
+        deadline = None if timeout is None else time.monotonic() + float(timeout)
+        while True:
+            remaining = None
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"No data received from pipe within {timeout} seconds"
+                    )
+                remaining = max(remaining, 0.0)
+
+            ready, _, _ = select.select([fd], [], [], remaining)
+            if not ready:
+                raise TimeoutError(
+                    f"No data received from pipe within {timeout} seconds"
+                )
+
+            try:
+                data = os.read(fd, 4096)
+            except OSError as exc:
+                if exc.errno == errno.EAGAIN:
+                    continue
+                raise
+
+            if data:
+                writer_seen = True
+                chunks.append(data)
+                decoded = b"".join(chunks).decode(encoding)
+                if _has_eof_marker(decoded, eof_marker):
+                    break
+                continue
+
+            # read() returned 0 bytes. Once a writer has sent data this is EOF.
+            if writer_seen or chunks:
+                break
+
+            # No writer connected yet. Avoid a busy loop by sleeping briefly,
+            # but respect the timeout deadline.
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"No data received from pipe within {timeout} seconds"
+                )
+            time.sleep(0.01)
+
+        return _strip_eof_marker(b"".join(chunks).decode(encoding), eof_marker)
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        atexit.unregister(cleanup)
+        _safe_unlink(pipe_path)
