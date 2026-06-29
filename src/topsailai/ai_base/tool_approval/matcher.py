@@ -256,7 +256,8 @@ def _parse_rules(data: Any) -> list[ApprovalRule]:
         else:
             logger.warning("Skipping invalid approval rule: %s", item)
 
-    return sorted(rules, key=lambda r: r.priority, reverse=True)
+    # Smaller priority values are evaluated first.
+    return sorted(rules, key=lambda r: r.priority)
 
 
 def _disable_approval_due_to_config_error() -> None:
@@ -312,15 +313,15 @@ def load_approval_rules() -> list[ApprovalRule]:
     return rules
 
 
-# Alias used by the implementation.
-load_rules = load_approval_rules
-
-
 def clear_approval_rules_cache() -> None:
-    """Clear the cached rules. Useful for tests."""
+    """Clear the cached approval rules so they are reloaded on next access."""
     global _RULES_CACHE, _CONFIG_ERROR_LOGGED
     _RULES_CACHE = None
     _CONFIG_ERROR_LOGGED = False
+
+
+# Alias used by the implementation.
+load_rules = load_approval_rules
 
 
 # Alias used by older code.
@@ -333,10 +334,10 @@ def get_approval_rules() -> list[ApprovalRule]:
 
 
 def match_approval_rule(tool_name: str | None, tool_args: dict[str, Any] | None) -> ApprovalRule | None:
-    """Return the highest-priority rule that matches the tool call."""
+    """Return the smallest-priority rule that matches the tool call."""
     tool_name = tool_name or ""
     tool_args = tool_args or {}
-    rules = get_approval_rules()
+    rules = sorted(get_approval_rules(), key=lambda r: r.priority)
 
     for rule in rules:
         if _rule_matches(rule, tool_name, tool_args):

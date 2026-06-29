@@ -42,7 +42,7 @@ Configuration is read at call time so rules can be updated without restarting th
 
 ### JSON Rule Format
 
-`TOPSAILAI_TOOL_APPROVAL_RULES` must be valid JSON. The top-level value is an array of rule objects evaluated left-to-right; the first matching rule wins. If no rule matches, the call is allowed without approval.
+`TOPSAILAI_TOOL_APPROVAL_RULES` must be valid JSON. The top-level value is an array of rule objects. Rules are sorted by `priority` ascending (smaller values first) before evaluation; the first matching rule wins. If no rule matches, the call is allowed without approval.
 
 #### Rule Object Schema
 
@@ -56,7 +56,8 @@ Configuration is read at call time so rules can be updated without restarting th
   ],
   "logic": "and | or",
   "timeout": 120,
-  "policy": "deny | allow | ask_again"
+  "policy": "deny | allow | ask_again",
+  "priority": 10
 }
 ```
 
@@ -68,6 +69,7 @@ Fields:
 - `logic` (optional): `and` or `or`. Controls how the conditions inside `params` are combined. Default is `and`. It does **not** affect the `match` requirement: the tool name must always match the rule pattern.
 - `timeout` (optional): Approval wait timeout in seconds. Falls back to `TOPSAILAI_TOOL_APPROVAL_DEFAULT_TIMEOUT`.
 - `policy` (optional): Timeout policy. Falls back to `TOPSAILAI_TOOL_APPROVAL_DEFAULT_POLICY`.
+- `priority` (optional): Integer ordering hint. Default is `0`. **Smaller values are evaluated first**, so a rule with `priority: 1` takes precedence over a rule with `priority: 10` when both match. Rules with the same priority preserve their original array order.
 
 #### Match Pattern Syntax
 
@@ -111,6 +113,12 @@ Supported operators:
 
 Multiple parameter conditions in the same `params` array are combined with AND by default. To use OR, set `"logic": "or"` on the rule. The `match` requirement is always evaluated first and independently; if the tool name does not match the rule pattern, the rule does not match regardless of `params`.
 
+#### Rule Ordering
+
+Rules are evaluated in ascending order of `priority` (smallest first). When two rules have the same `priority`, their relative order is the same as in the original JSON array. Because evaluation stops at the first match, placing a more specific rule at a smaller `priority` ensures it wins over a broader rule.
+
+For example, a `bypass` rule with `match: "cmd_*"` and `priority: 10` will be overridden by a `require` rule with `match: "cmd_*"` and `priority: 1`, because the `require` rule is evaluated first.
+
 ### File Path Support
 
 If the value of `TOPSAILAI_TOOL_APPROVAL_RULES` is a path to an existing file, the file content is read and parsed as JSON. Otherwise the value is parsed directly as JSON. This allows large rule sets to be maintained in separate files.
@@ -128,6 +136,7 @@ The approval mechanism must fail safely. The recommended default behavior is:
 | Rule schema is invalid | Log a warning, skip the invalid rule, and continue evaluating remaining rules. |
 | Unknown `mode` value | Treat as `require` (safe default) and log a warning. |
 | Unknown `policy` value | Treat as `deny` (safe default) and log a warning. |
+| Invalid `priority` value | Treat as `0` and log a warning. |
 
 This fail-open behavior ensures that a misconfigured approval system does not block the agent entirely. In high-security environments, a future `TOPSAILAI_TOOL_APPROVAL_FAIL_CLOSED=1` option could be added to fail closed instead.
 
@@ -139,28 +148,6 @@ TOPSAILAI_TOOL_APPROVAL_DEFAULT_TIMEOUT=120
 TOPSAILAI_TOOL_APPROVAL_DEFAULT_POLICY=deny
 TOPSAILAI_TOOL_APPROVAL_RULES='[
   {
-    "name": "git reset approval",
-    "match": "cmd_tool-exec_cmd",
-    "mode": "require",
-    "params": [
-      { "param": "cmd", "op": "contains", "value": "git reset" }
-    ],
-    "timeout": 300,
-    "policy": "deny"
-  },
-  {
-    "name": "write file approval",
-    "match": "file_tool-write_file",
-    "mode": "require",
-    "timeout": 60,
-    "policy": "ask_again"
-  },
-  {
-    "name": "bypass read-only file tools",
-    "match": "file_tool-read_*",
-    "mode": "bypass"
-  },
-  {
     "name": "deny dangerous rm",
     "match": "cmd_tool-exec_cmd",
     "mode": "require",
@@ -168,25 +155,78 @@ TOPSAILAI_TOOL_APPROVAL_RULES='[
       { "param": "cmd", "op": "contains", "value": "rm -rf" }
     ],
     "timeout": 30,
-    "policy": "deny"
+    "policy": "deny",
+    "priority": 1
+  },
+  {
+    "name": "git reset approval",
+    "match": "cmd_tool-exec_cmd",
+    "mode": "require",
+    "params": [
+      { "param": "cmd", "op": "contains", "value": "git reset" }
+    ],
+    "timeout": 300,
+    "policy": "deny",
+    "priority": 10
+  },
+  {
+    "name": "write file approval",
+    "match": "file_tool-write_file",
+    "mode": "require",
+    "timeout": 60,
+    "policy": "ask_again",
+    "priority": 20
+  },
+  {
+    "name": "bypass read-only file tools",
+    "match": "file_tool-read_*",
+    "mode": "bypass",
+    "priority": 30
   },
   {
     "name": "catch-all approval",
     "match": "*",
     "mode": "require",
     "timeout": 30,
-    "policy": "deny"
+    "policy": "deny",
+    "priority": 100
   }
 ]'
 ```
 
 In this example:
 
-1. Any `cmd_tool-exec_cmd` whose `cmd` argument contains `git reset` requires approval, times out after 300 seconds, and is denied on timeout.
-2. Any `file_tool-write_file` requires approval, times out after 60 seconds, and asks once more on timeout.
-3. Any `file_tool-read_*` bypasses approval.
-4. Any `cmd_tool-exec_cmd` whose `cmd` contains `rm -rf` requires approval and is denied on timeout.
+1. Any `cmd_tool-exec_cmd` whose `cmd` contains `rm -rf` requires approval and is denied on timeout (evaluated first because of the smallest `priority`).
+2. Any `cmd_tool-exec_cmd` whose `cmd` contains `git reset` requires approval, times out after 300 seconds, and is denied on timeout.
+3. Any `file_tool-write_file` requires approval, times out after 60 seconds, and asks once more on timeout.
+4. Any `file_tool-read_*` bypasses approval.
 5. All other tools require approval and are denied on timeout.
+
+#### Priority Example
+
+The following snippet shows how `priority` changes the effective rule even when the broader rule appears first in the array:
+
+```json
+[
+  {
+    "name": "bypass all commands",
+    "match": "cmd_*",
+    "mode": "bypass",
+    "priority": 100
+  },
+  {
+    "name": "require git reset",
+    "match": "cmd_*",
+    "mode": "require",
+    "params": [
+      { "param": "cmd", "op": "contains", "value": "git reset" }
+    ],
+    "priority": 1
+  }
+]
+```
+
+Because the `require` rule has a smaller `priority` (`1` vs `100`), it is evaluated first. A `cmd_tool-exec_cmd` call whose `cmd` contains `git reset` therefore requires approval, even though the `bypass all commands` rule also matches and appears earlier in the array.
 
 ## ApprovalTransport Abstraction
 
@@ -467,8 +507,8 @@ class ToolApprovalInstance:
                 policy=self.policy,
             )
 
-        # Unknown mode defaults to deny.
-        return ApprovalDecision(action=ApprovalDecision.DENY, rule=rule)
+        # Unknown mode defaults to require (safe default).
+        return ApprovalDecision(action=ApprovalDecision.ASK, rule=rule)
 
     def approve(self, by: str = "user"):
         """External caller confirms approval."""
@@ -689,7 +729,7 @@ If the human does not respond within 60 seconds:
 
 ### Unit Tests
 
-1. **Rule matcher**: Test exact, prefix, suffix, and wildcard `match` patterns; case sensitivity; first-match-wins semantics.
+1. **Rule matcher**: Test exact, prefix, suffix, and wildcard `match` patterns; case sensitivity; first-match-wins semantics; and `priority` ordering (smaller values evaluated first).
 2. **Parameter conditions**: Test each operator (`contains`, `eq`, `regex`, `in`, etc.) and the `logic: or` combination.
 3. **ApprovalDecision**: Test `decide()` outcomes for disabled approval, no match, bypass, require, and unknown mode.
 4. **Timeout policies**: Test `apply_timeout_policy()` for `deny`, `allow`, and `ask_again`.

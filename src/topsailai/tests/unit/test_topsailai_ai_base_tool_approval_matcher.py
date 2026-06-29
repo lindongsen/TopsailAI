@@ -248,6 +248,36 @@ class TestMatchApprovalRule:
             assert rule is not None
             assert rule.name == "first"
 
+    def test_priority_smaller_first(self):
+        rules = [
+            ApprovalRule("cmd_*", "bypass", name="low", priority=10),
+            ApprovalRule("cmd_*", "require", name="high", priority=1),
+        ]
+        with patch("topsailai.ai_base.tool_approval.matcher.get_approval_rules", return_value=rules):
+            rule = match_approval_rule("cmd_tool-exec_cmd", {})
+            assert rule is not None
+            assert rule.name == "high"
+
+    def test_priority_larger_later(self):
+        rules = [
+            ApprovalRule("cmd_*", "require", name="high", priority=1),
+            ApprovalRule("cmd_*", "bypass", name="low", priority=10),
+        ]
+        with patch("topsailai.ai_base.tool_approval.matcher.get_approval_rules", return_value=rules):
+            rule = match_approval_rule("cmd_tool-exec_cmd", {})
+            assert rule is not None
+            assert rule.name == "high"
+
+    def test_same_priority_preserves_order(self):
+        rules = [
+            ApprovalRule("cmd_*", "require", name="first", priority=5),
+            ApprovalRule("cmd_*", "bypass", name="second", priority=5),
+        ]
+        with patch("topsailai.ai_base.tool_approval.matcher.get_approval_rules", return_value=rules):
+            rule = match_approval_rule("cmd_tool-exec_cmd", {})
+            assert rule is not None
+            assert rule.name == "first"
+
     def test_no_match(self):
         rules = [ApprovalRule("file_*", "require", name="only")]
         with patch("topsailai.ai_base.tool_approval.matcher.get_approval_rules", return_value=rules):
