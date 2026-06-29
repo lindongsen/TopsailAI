@@ -8,11 +8,12 @@ from topsailai.utils.env_tool import (
     is_debug_mode,
     is_use_tool_calls,
     is_chat_multi_line,
+    is_input_pipe_enabled,
+    get_input_pipe_timeout,
     is_true,
     EnvironmentReader,
     EnvReaderInstance
 )
-
 
 class TestIsTrue:
     """Test is_true helper for boolean environment variable parsing."""
@@ -106,6 +107,74 @@ class TestChatMultiLine:
         with patch.dict(os.environ, {"CHAT_MULTI_LINE": "true"}):
             assert is_chat_multi_line() is True
 
+
+class TestIsInputPipeEnabled:
+    """Test is_input_pipe_enabled function."""
+
+    def test_input_pipe_disabled_default(self):
+        """Test pipe input is disabled by default."""
+        with patch.dict(os.environ, {}, clear=True):
+            assert is_input_pipe_enabled() is False
+
+    def test_input_pipe_disabled_explicit_0(self):
+        """Test pipe input is disabled when TOPSAILAI_INPUT_PIPE_ENABLED="0"."""
+        with patch.dict(os.environ, {"TOPSAILAI_INPUT_PIPE_ENABLED": "0"}):
+            assert is_input_pipe_enabled() is False
+
+    def test_input_pipe_enabled_1(self):
+        """Test pipe input is enabled when TOPSAILAI_INPUT_PIPE_ENABLED="1"."""
+        with patch.dict(os.environ, {"TOPSAILAI_INPUT_PIPE_ENABLED": "1"}):
+            assert is_input_pipe_enabled() is True
+
+    def test_input_pipe_enabled_true(self):
+        """Test pipe input is enabled for truthy string values."""
+        for value in ("true", "True", "TRUE", "yes", "on", "enabled"):
+            with patch.dict(os.environ, {"TOPSAILAI_INPUT_PIPE_ENABLED": value}):
+                assert is_input_pipe_enabled() is True, f"expected True for {value!r}"
+
+    def test_input_pipe_whitespace_trimmed(self):
+        """Test whitespace around the value is ignored."""
+        with patch.dict(os.environ, {"TOPSAILAI_INPUT_PIPE_ENABLED": "  1  "}):
+            assert is_input_pipe_enabled() is True
+
+
+class TestGetInputPipeTimeout:
+    """Test get_input_pipe_timeout function."""
+
+    def test_timeout_none_when_unset(self):
+        """Test timeout is None when variable is unset."""
+        with patch.dict(os.environ, {}, clear=True):
+            assert get_input_pipe_timeout() is None
+
+    def test_timeout_none_when_empty(self):
+        """Test timeout is None when variable is empty."""
+        with patch.dict(os.environ, {"TOPSAILAI_INPUT_PIPE_TIMEOUT": ""}):
+            assert get_input_pipe_timeout() is None
+
+    def test_timeout_positive_float(self):
+        """Test positive float values are returned as-is."""
+        with patch.dict(os.environ, {"TOPSAILAI_INPUT_PIPE_TIMEOUT": "5.5"}):
+            assert get_input_pipe_timeout() == 5.5
+
+    def test_timeout_integer_string(self):
+        """Test integer string values are returned as float."""
+        with patch.dict(os.environ, {"TOPSAILAI_INPUT_PIPE_TIMEOUT": "10"}):
+            assert get_input_pipe_timeout() == 10.0
+
+    def test_timeout_zero_means_none(self):
+        """Test zero timeout means no timeout."""
+        with patch.dict(os.environ, {"TOPSAILAI_INPUT_PIPE_TIMEOUT": "0"}):
+            assert get_input_pipe_timeout() is None
+
+    def test_timeout_negative_means_none(self):
+        """Test negative timeout means no timeout."""
+        with patch.dict(os.environ, {"TOPSAILAI_INPUT_PIPE_TIMEOUT": "-3"}):
+            assert get_input_pipe_timeout() is None
+
+    def test_timeout_invalid_means_none(self):
+        """Test invalid timeout string means no timeout."""
+        with patch.dict(os.environ, {"TOPSAILAI_INPUT_PIPE_TIMEOUT": "not-a-number"}):
+            assert get_input_pipe_timeout() is None
 
 class TestEnvironmentReader:
     """Test EnvironmentReader class"""

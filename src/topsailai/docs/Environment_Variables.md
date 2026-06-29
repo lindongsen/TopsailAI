@@ -33,6 +33,8 @@ These variables define the agent's working environment and project access scope.
 | `TOPSAILAI_INTERACTIVE_MODE` | `1` | Interactive mode. `1` = enabled, `0` = disabled. |
 | `TOPSAILAI_PRINT_TOOL_PROMPT` | `0` | Whether to print tool prompt content. `1` = enabled. |
 | `TOPSAILAI_CHAT_MULTI_LINE` | `0` | Multi-line input mode. `1` = enabled. |
+| `TOPSAILAI_INPUT_PIPE_ENABLED` | `"0"` | Enable pipe-based input. When `1`, interactive `input()` calls read from a session-scoped named pipe (`FOLDER_WORKSPACE_TASK/{session_id}.{pid}.session.pipe`) instead of stdin. |
+| `TOPSAILAI_INPUT_PIPE_TIMEOUT` | `""` | Timeout in seconds for pipe-based input. Empty, unset, or invalid means wait indefinitely. Positive float values are treated as seconds. |
 | `TOPSAILAI_AGENT_TYPE` | `""` | Agent type, default is `react`. |
 | `TOPSAILAI_AGENT_NAME` | `"TopsailAI"` | Default agent name. |
 | `TOPSAILAI_HUMAN_NAME` | `"Topsail"` | Human name used in interactions. |

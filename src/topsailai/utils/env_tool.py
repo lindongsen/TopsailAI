@@ -139,6 +139,40 @@ def is_chat_multi_line() -> bool:
     return False
 
 
+def is_input_pipe_enabled() -> bool:
+    """Check if pipe-based input is enabled.
+
+    Pipe input is controlled by the ``TOPSAILAI_INPUT_PIPE_ENABLED``
+    environment variable. When enabled, interactive ``input()`` calls are
+    redirected to read from a session-scoped named pipe instead of stdin.
+
+    Returns:
+        bool: True when ``TOPSAILAI_INPUT_PIPE_ENABLED`` is set to a truthy
+        value (e.g. ``"1"`` or ``"true"``), False otherwise.
+    """
+    return is_true(os.getenv("TOPSAILAI_INPUT_PIPE_ENABLED"))
+
+
+def get_input_pipe_timeout() -> float | None:
+    """Return the timeout in seconds for pipe-based input.
+
+    Reads ``TOPSAILAI_INPUT_PIPE_TIMEOUT``. An empty, unset, or invalid value
+    means no timeout (wait indefinitely). A positive float is returned as the
+    timeout duration.
+
+    Returns:
+        float | None: Timeout in seconds, or ``None`` for no timeout.
+    """
+    value = os.getenv("TOPSAILAI_INPUT_PIPE_TIMEOUT")
+    if not value:
+        return None
+    try:
+        timeout = float(value)
+        return timeout if timeout > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 class EnvironmentReader(object):
     """ base class to read env """
 

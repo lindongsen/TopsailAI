@@ -112,6 +112,15 @@ TOPSAILAI_PRINT_TOOL_PROMPT=0
 # Input Messages
 TOPSAILAI_CHAT_MULTI_LINE=0
 
+# Pipe-based input. Set to 1 to read interactive input from a session-scoped
+# named pipe instead of stdin. The pipe path is
+# FOLDER_WORKSPACE_TASK/{session_id}.{pid}.session.pipe.
+TOPSAILAI_INPUT_PIPE_ENABLED=0
+
+# Timeout in seconds for pipe-based input. Empty/unset/invalid means wait
+# indefinitely. Positive float values are treated as seconds.
+# TOPSAILAI_INPUT_PIPE_TIMEOUT=""
+
 # Agent Type, default is react
 TOPSAILAI_AGENT_TYPE=""
 

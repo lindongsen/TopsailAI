@@ -482,8 +482,8 @@ class TestInputFromPipeSession(unittest.TestCase):
             timeout=5.0,
             encoding="utf-8",
             eof_marker="EOF",
+            single_line=False,
         )
-
     @patch("topsailai.workspace.input_tool.utils_input_tool.input_from_pipe")
     @patch("topsailai.workspace.input_tool._build_pipe_path")
     def test_passes_custom_eof_marker(self, mock_build_path, mock_input_from_pipe):
@@ -497,8 +497,147 @@ class TestInputFromPipeSession(unittest.TestCase):
             timeout=None,
             encoding="utf-8",
             eof_marker="END",
+            single_line=False,
         )
 
+    @patch("topsailai.workspace.input_tool.utils_input_tool.input_from_pipe")
+    @patch("topsailai.workspace.input_tool._build_pipe_path")
+    def test_passes_single_line_flag(self, mock_build_path, mock_input_from_pipe):
+        """Test that single_line=True is forwarded to utils function."""
+        from topsailai.workspace.input_tool import input_from_pipe_session
+        mock_build_path.return_value = "/tmp/test.pipe"
+        mock_input_from_pipe.return_value = "first line"
+        result = input_from_pipe_session(single_line=True)
+        self.assertEqual(result, "first line")
+        mock_input_from_pipe.assert_called_once_with(
+            "/tmp/test.pipe",
+            timeout=None,
+            encoding="utf-8",
+            eof_marker="EOF",
+            single_line=True,
+        )
+
+
+class TestPrivateInput(unittest.TestCase):
+    """Test cases for the private _input function."""
+
+    def tearDown(self):
+        """Clean up environment variables."""
+        for key in ["TOPSAILAI_INPUT_PIPE_ENABLED", "TOPSAILAI_INPUT_PIPE_TIMEOUT"]:
+            if key in os.environ:
+                del os.environ[key]
+
+    @patch("topsailai.workspace.input_tool.input")
+    def test_falls_back_to_builtin_input_when_pipe_disabled(self, mock_input):
+        """Test _input uses builtin input() when pipe mode is disabled."""
+        from topsailai.workspace.input_tool import _input
+        os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "0"
+        mock_input.return_value = "typed line"
+        result = _input("prompt> ")
+        self.assertEqual(result, "typed line")
+        mock_input.assert_called_once_with("prompt> ")
+
+    @patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_uses_pipe_when_enabled(self, mock_input_from_pipe_session):
+        """Test _input reads from pipe when pipe mode is enabled."""
+        from topsailai.workspace.input_tool import _input
+        os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
+        mock_input_from_pipe_session.return_value = "piped line"
+        result = _input("prompt> ")
+        self.assertEqual(result, "piped line")
+        mock_input_from_pipe_session.assert_called_once_with(
+            timeout=None,
+            single_line=True,
+        )
+
+    @patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_forwards_timeout_to_pipe(self, mock_input_from_pipe_session):
+        """Test _input forwards TOPSAILAI_INPUT_PIPE_TIMEOUT to the pipe reader."""
+        from topsailai.workspace.input_tool import _input
+        os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
+        os.environ["TOPSAILAI_INPUT_PIPE_TIMEOUT"] = "7.5"
+        mock_input_from_pipe_session.return_value = "timed piped line"
+        result = _input("")
+        self.assertEqual(result, "timed piped line")
+        mock_input_from_pipe_session.assert_called_once_with(
+            timeout=7.5,
+            single_line=True,
+        )
+
+
+class TestInputOneLinePipeMode(unittest.TestCase):
+    """Test input_one_line when pipe-based input is enabled."""
+
+    def tearDown(self):
+        """Clean up environment variables."""
+        for key in ["TOPSAILAI_INPUT_PIPE_ENABLED", "TOPSAILAI_INPUT_PIPE_TIMEOUT"]:
+            if key in os.environ:
+                del os.environ[key]
+
+    @patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_returns_piped_input(self, mock_input_from_pipe_session):
+        """Test input_one_line returns data read from the pipe."""
+        from topsailai.workspace.input_tool import input_one_line
+        os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
+        mock_input_from_pipe_session.return_value = "hello from pipe"
+        result = input_one_line(">>> ")
+        self.assertEqual(result, "hello from pipe")
+        mock_input_from_pipe_session.assert_called_once_with(
+            timeout=None,
+            single_line=True,
+        )
+
+    @patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_skips_empty_piped_input(self, mock_input_from_pipe_session):
+        """Test empty piped input continues the loop."""
+        from topsailai.workspace.input_tool import input_one_line
+        os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
+        mock_input_from_pipe_session.side_effect = ["", "valid"]
+        result = input_one_line(">>> ")
+        self.assertEqual(result, "valid")
+        self.assertEqual(mock_input_from_pipe_session.call_count, 2)
+
+
+class TestInputMultiLinePipeMode(unittest.TestCase):
+    """Test input_multi_line when pipe-based input is enabled."""
+
+    def tearDown(self):
+        """Clean up environment variables."""
+        for key in ["TOPSAILAI_INPUT_PIPE_ENABLED", "TOPSAILAI_INPUT_PIPE_TIMEOUT"]:
+            if key in os.environ:
+                del os.environ[key]
+
+    @patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_combines_multiple_piped_lines(self, mock_input_from_pipe_session):
+        """Test multiple pipe lines are combined with newlines."""
+        from topsailai.workspace.input_tool import input_multi_line
+        os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
+        mock_input_from_pipe_session.side_effect = ["line1", "line2", "EOF"]
+        result = input_multi_line(">>> ")
+        self.assertEqual(result, "line1\nline2")
+        self.assertEqual(mock_input_from_pipe_session.call_count, 3)
+        mock_input_from_pipe_session.assert_called_with(
+            timeout=None,
+            single_line=True,
+        )
+
+    @patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_eof_terminates_piped_input(self, mock_input_from_pipe_session):
+        """Test EOF terminates multi-line pipe input."""
+        from topsailai.workspace.input_tool import input_multi_line
+        os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
+        mock_input_from_pipe_session.side_effect = ["only line", "EOF"]
+        result = input_multi_line(">>> ")
+        self.assertEqual(result, "only line")
+
+    @patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_noop_returns_empty_string(self, mock_input_from_pipe_session):
+        """Test /noop returns empty string in pipe mode."""
+        from topsailai.workspace.input_tool import input_multi_line
+        os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
+        mock_input_from_pipe_session.side_effect = ["/noop", "EOF"]
+        result = input_multi_line(">>> ")
+        self.assertEqual(result, "")
 
 if __name__ == "__main__":
     unittest.main()

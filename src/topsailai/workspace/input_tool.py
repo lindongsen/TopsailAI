@@ -6,6 +6,7 @@
 '''
 
 import atexit
+import logging
 import os
 import sys
 
@@ -26,6 +27,8 @@ from topsailai.workspace.hook_instruction import (
     HookInstruction,
     TRIGGER_CHARS,
 )
+
+logger = logging.getLogger(__name__)
 
 SPLIT_LINE = "--------------------------------------------------------------------------------"
 INPUT_TIPS = f">>> Your Turn: (pid={os.getpid()}) "
@@ -110,6 +113,28 @@ def hook_message(message: str, hook: HookInstruction) -> bool:
     return False
 
 
+def _input(tips: str = "") -> str:
+    """Unified line input: read from a named pipe or fall back to stdin.
+
+    When ``TOPSAILAI_INPUT_PIPE_ENABLED`` is set, this function reads a
+    single line from the session-scoped named pipe. Otherwise it delegates
+    to the built-in ``input()`` function.
+
+    Args:
+        tips: Prompt text passed to ``input()`` in interactive mode.
+            Ignored when pipe input is enabled.
+
+    Returns:
+        A single line of input (without the trailing newline).
+    """
+    if env_tool.is_input_pipe_enabled():
+        return input_from_pipe_session(
+            timeout=env_tool.get_input_pipe_timeout(),
+            single_line=True,
+        )
+    return input(tips)
+
+
 def input_one_line(tips: str = "", hook: HookInstruction = None) -> str:
     """
     Get single line input from user with hook processing.
@@ -135,7 +160,7 @@ def input_one_line(tips: str = "", hook: HookInstruction = None) -> str:
 
     message = ""
     while True:
-        message = input(tips)
+        message = _input(tips)
         message = message.strip()
         if not message:
             continue
@@ -183,13 +208,12 @@ def input_multi_line(tips: str = "", hook: HookInstruction = None) -> str:
         count += 1
 
         try:
-            line = input()
+            line = _input("")
             if line == "EOF":
                 break
             message += line + "\n"
         except EOFError:
             break
-
         if count == 1 or '\n' not in message.strip():
             if hook_message(message, hook):
                 message = ""
@@ -363,8 +387,9 @@ def input_from_pipe_session(
     timeout: float | None = None,
     encoding: str = "utf-8",
     eof_marker: str = "EOF",
+    single_line: bool = False,
 ) -> str:
-    """Read a multi-line message from a session-scoped named pipe.
+    """Read a message from a session-scoped named pipe.
 
     This is a convenience wrapper around
     :func:`topsailai.utils.input_tool.input_from_pipe` that constructs the
@@ -384,6 +409,9 @@ def input_from_pipe_session(
         Encoding used to decode bytes read from the pipe.
     eof_marker:
         Optional marker that terminates input when seen on its own line.
+    single_line:
+        When ``True``, return the first line of input (everything before
+        the first ``\\n``). Any remaining content is discarded.
 
     Returns
     -------
@@ -397,9 +425,21 @@ def input_from_pipe_session(
         If *timeout* seconds pass without receiving any data.
     """
     pipe_path = _build_pipe_path(session_id)
-    return utils_input_tool.input_from_pipe(
-        pipe_path,
-        timeout=timeout,
-        encoding=encoding,
-        eof_marker=eof_marker,
-    )
+    abs_path = os.path.abspath(pipe_path)
+    try:
+        return utils_input_tool.input_from_pipe(
+            pipe_path,
+            timeout=timeout,
+            encoding=encoding,
+            eof_marker=eof_marker,
+            single_line=single_line,
+        )
+    finally:
+        if os.path.exists(abs_path):
+            try:
+                os.unlink(abs_path)
+                logger.info("Removed session pipe file: %s", abs_path)
+            except OSError as exc:
+                logger.error("Failed to remove session pipe file %s: %s", abs_path, exc)
+        else:
+            logger.info("Session pipe file already removed: %s", abs_path)
