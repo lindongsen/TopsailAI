@@ -16,79 +16,50 @@ import os
 import unittest
 from unittest.mock import patch, mock_open
 
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 import topsailai as cli
-
-
 class TestGetTopsailaiHome(unittest.TestCase):
     """Tests for get_topsailai_home."""
 
     @patch.dict(os.environ, {"TOPSAILAI_HOME": "/custom/path"})
-    @patch("os.path.isdir")
-    def test_from_env_var(self, mock_isdir):
+    def test_from_env_var(self):
         """Resolve from TOPSAILAI_HOME environment variable."""
-        mock_isdir.return_value = True
         result = cli.get_topsailai_home()
         self.assertEqual(result, "/custom/path")
 
-    @patch.dict(os.environ, {}, clear=True)
-    @patch("os.path.isdir")
-    @patch("os.path.isfile")
-    @patch("builtins.open", new_callable=mock_open, read_data="TOPSAILAI_HOME=/env/file/path\n")
-    def test_from_env_file(self, mock_file, mock_isfile, mock_isdir):
-        """Resolve from .topsailai/.env file."""
-        def isdir_side_effect(path):
-            return path == "/env/file/path"
-        def isfile_side_effect(path):
-            return ".topsailai/.env" in path
-        mock_isdir.side_effect = isdir_side_effect
-        mock_isfile.side_effect = isfile_side_effect
+    @patch.dict(os.environ, {"TOPSAILAI_HOME": "~/relative/path", "HOME": "/home/user"})
+    def test_from_env_var_with_tilde(self):
+        """Expand ~ in TOPSAILAI_HOME environment variable."""
         result = cli.get_topsailai_home()
-        self.assertEqual(result, "/env/file/path")
+        self.assertEqual(result, "/home/user/relative/path")
+
+    @patch.dict(os.environ, {"TOPSAILAI_HOME": "relative/path"}, clear=True)
+    def test_from_env_var_relative(self):
+        """Convert relative TOPSAILAI_HOME to absolute path."""
+        result = cli.get_topsailai_home()
+        self.assertTrue(os.path.isabs(result))
+        self.assertTrue(result.endswith("relative/path"))
 
     @patch.dict(os.environ, {}, clear=True)
-    @patch("os.path.isdir")
-    @patch("os.path.isfile")
-    def test_default_path(self, mock_isfile, mock_isdir):
-        """Fall back to default 'os.path.join(os.environ["HOME"], ".topsailai")'"""
-        mock_isfile.return_value = False
-        mock_isdir.return_value = True
-        result = cli.get_topsailai_home()
-        self.assertEqual(result, os.path.join(os.environ["HOME"], ".topsailai"))
+    def test_default_path(self):
+        """Fall back to default ~/.topsailai when HOME is set."""
+        with patch.dict(os.environ, {"HOME": "/home/user"}):
+            result = cli.get_topsailai_home()
+            self.assertEqual(result, "/home/user/.topsailai")
 
     @patch.dict(os.environ, {}, clear=True)
-    @patch("os.path.isdir")
-    @patch("os.path.isfile")
-    def test_default_not_exist(self, mock_isfile, mock_isdir):
-        """Return default even if it does not exist."""
-        mock_isfile.return_value = False
-        mock_isdir.return_value = False
+    def test_fallback_no_home(self):
+        """Fall back to /topsailai when neither TOPSAILAI_HOME nor HOME is set."""
         result = cli.get_topsailai_home()
-        self.assertEqual(result, os.path.join(os.environ["HOME"], ".topsailai"))
+        self.assertEqual(result, "/topsailai")
 
     @patch.dict(os.environ, {"TOPSAILAI_HOME": "/invalid/path"})
-    @patch("os.path.isdir")
-    @patch("os.path.isfile")
-    @patch("builtins.open", new_callable=mock_open, read_data="")
-    def test_env_var_invalid_fallback(self, mock_file, mock_isfile, mock_isdir):
-        """Fallback when env var points to invalid directory."""
-        mock_isdir.return_value = False
-        mock_isfile.return_value = False
+    def test_env_var_invalid_not_fallback(self):
+        """Use env var value even if the directory does not exist."""
         result = cli.get_topsailai_home()
-        self.assertEqual(result, os.path.join(os.environ["HOME"], ".topsailai"))
-
-    @patch.dict(os.environ, {}, clear=True)
-    @patch("os.path.isdir")
-    @patch("os.path.isfile")
-    @patch("builtins.open", new_callable=mock_open, read_data="OTHER_VAR=value\n")
-    def test_env_file_no_home_var(self, mock_file, mock_isfile, mock_isdir):
-        """Fallback when .env file has no TOPSAILAI_HOME."""
-        mock_isfile.return_value = True
-        mock_isdir.return_value = True
-        result = cli.get_topsailai_home()
-        self.assertEqual(result, os.path.join(os.environ["HOME"], ".topsailai"))
-
+        self.assertEqual(result, "/invalid/path")
 
 class TestFormatSize(unittest.TestCase):
     """Tests for format_size."""

@@ -811,32 +811,25 @@ def get_prompt() -> str:
 def get_topsailai_home() -> str:
     """
     Resolve TOPSAILAI_HOME with the following priority:
-    1. Environment variable TOPSAILAI_HOME
-    2. System home's .topsailai/.env file
-    3. Default: ~/.topsailai
+    1. Environment variable TOPSAILAI_HOME (supports ~ expansion and absolute path)
+    2. Default: ~/.topsailai
+    3. Fallback: /topsailai
     """
     env_home = os.environ.get("TOPSAILAI_HOME")
-    if env_home and os.path.isdir(env_home):
+    if env_home:
+        if env_home.startswith("~"):
+            home = os.environ.get("HOME")
+            if home:
+                env_home = home + env_home[1:]
+        env_home = os.path.abspath(env_home)
+        os.environ["TOPSAILAI_HOME"] = env_home
         return env_home
 
-    system_home = os.path.expanduser("~")
-    env_file = os.path.join(system_home, ".topsailai", ".env")
-    if os.path.isfile(env_file):
-        try:
-            with open(env_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("TOPSAILAI_HOME="):
-                        value = line.split("=", 1)[1].strip().strip('"').strip("'")
-                        if value and os.path.isdir(value):
-                            return value
-        except Exception:
-            pass
+    home = os.environ.get("HOME")
+    if home:
+        return os.path.join(home, ".topsailai")
 
-    default_home = os.path.join(os.environ["HOME"], ".topsailai")
-    if os.path.isdir(default_home):
-        return default_home
-    return default_home
+    return "/topsailai"
 
 
 # =============================================================================
