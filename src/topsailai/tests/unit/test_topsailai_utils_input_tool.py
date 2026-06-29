@@ -352,3 +352,44 @@ class TestInputFromPipe:
         with patch.object(os, "mkfifo", None):
             with pytest.raises(NotImplementedError):
                 input_tool.input_from_pipe(pipe_path)
+
+    def test_single_line_returns_first_line(self, tmp_path):
+        pipe_path = str(tmp_path / "test.pipe")
+        message = b"first line\nsecond line\nthird line\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            result = input_tool.input_from_pipe(pipe_path, timeout=2.0, single_line=True)
+            assert result == "first line"
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_single_line_returns_all_when_no_newline(self, tmp_path):
+        pipe_path = str(tmp_path / "test.pipe")
+        message = b"only line content"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            result = input_tool.input_from_pipe(pipe_path, timeout=2.0, single_line=True)
+            assert result == "only line content"
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_single_line_strips_eof_marker_when_no_newline(self, tmp_path):
+        pipe_path = str(tmp_path / "test.pipe")
+        message = b"content without newline\nEOF\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            result = input_tool.input_from_pipe(
+                pipe_path, timeout=2.0, single_line=True
+            )
+            assert result == "content without newline"
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_single_line_cleans_up_pipe_after_read(self, tmp_path):
+        pipe_path = str(tmp_path / "test.pipe")
+        writer = self._write_to_pipe_after_delay(pipe_path, b"single line\nmore\n")
+        try:
+            input_tool.input_from_pipe(pipe_path, timeout=2.0, single_line=True)
+            assert not os.path.exists(pipe_path)
+        finally:
+            writer.join(timeout=2.0)

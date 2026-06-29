@@ -191,13 +191,14 @@ def input_with_timeout(
 
 def _safe_unlink(path: str) -> None:
     """Remove *path* if it exists, ignoring errors."""
+    abs_path = os.path.abspath(path)
     try:
         os.unlink(path)
+        logger.info("Removed pipe file: %s", abs_path)
     except FileNotFoundError:
-        pass
+        logger.info("Pipe file already removed: %s", abs_path)
     except OSError as exc:  # pragma: no cover - defensive cleanup
-        logger.debug("Failed to unlink pipe %s: %s", path, exc)
-
+        logger.error("Failed to remove pipe file %s: %s", abs_path, exc)
 
 def _ensure_fifo(pipe_path: str) -> None:
     """Create a FIFO at *pipe_path*, ensuring the parent directory exists."""
@@ -233,8 +234,9 @@ def input_from_pipe(
     timeout: float | None = None,
     encoding: str = "utf-8",
     eof_marker: str = "EOF",
+    single_line: bool = False,
 ) -> str:
-    """Read a multi-line message from a named pipe (FIFO).
+    """Read a message from a named pipe (FIFO).
 
     Creates the FIFO at *pipe_path*, waits for a writer, reads until the
     writer closes the pipe, and always removes the FIFO before returning.
@@ -251,10 +253,15 @@ def input_from_pipe(
     eof_marker:
         Optional marker that terminates input when seen on its own line.
         The marker line and anything after it is stripped from the result.
+        In *single_line* mode the marker is only stripped when no newline
+        is present in the input.
+    single_line:
+        When ``True``, return the first line of input (everything before
+        the first ``\\n``). Any remaining content is discarded.
 
     Returns
     -------
-    The decoded message read from the pipe, with trailing whitespace stripped.
+    The decoded message read from the pipe.
 
     Raises
     ------
@@ -305,6 +312,11 @@ def input_from_pipe(
                 writer_seen = True
                 chunks.append(data)
                 decoded = b"".join(chunks).decode(encoding)
+                if single_line:
+                    newline_pos = decoded.find("\n")
+                    if newline_pos != -1:
+                        return decoded[:newline_pos]
+                    continue
                 if _has_eof_marker(decoded, eof_marker):
                     break
                 continue
@@ -321,7 +333,12 @@ def input_from_pipe(
                 )
             time.sleep(0.01)
 
-        return _strip_eof_marker(b"".join(chunks).decode(encoding), eof_marker)
+        decoded = b"".join(chunks).decode(encoding)
+        if single_line:
+            newline_pos = decoded.find("\n")
+            if newline_pos != -1:
+                return decoded[:newline_pos]
+        return _strip_eof_marker(decoded, eof_marker)
     finally:
         if fd is not None:
             try:
