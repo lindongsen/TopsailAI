@@ -9,6 +9,7 @@ Author: AI
 Created: 2026-04-18
 """
 
+import os
 import unittest
 from topsailai.workspace.folder_constants import (
     FOLDER_ROOT,
@@ -19,6 +20,7 @@ from topsailai.workspace.folder_constants import (
     FOLDER_LOG,
     FOLDER_MEMORY_STORY,
     FOLDER_WORKSPACE_TASK,
+    TOPSAILAI_HOME,
 )
 
 
@@ -34,8 +36,15 @@ class TestFolderConstantsRoot(unittest.TestCase):
         self.assertTrue(len(FOLDER_ROOT) > 0)
 
     def test_folder_root_value(self):
-        """Verify FOLDER_ROOT has the expected value."""
-        self.assertEqual(FOLDER_ROOT, "/topsailai")
+        """Verify FOLDER_ROOT resolves from TOPSAILAI_HOME or defaults to ~/.topsailai."""
+        expected = os.environ.get("TOPSAILAI_HOME") or os.path.join(
+            os.environ.get("HOME", ""), ".topsailai"
+        )
+        self.assertEqual(FOLDER_ROOT, expected)
+
+    def test_topsailai_home_matches_folder_root(self):
+        """Verify TOPSAILAI_HOME alias matches FOLDER_ROOT."""
+        self.assertEqual(TOPSAILAI_HOME, FOLDER_ROOT)
 
 
 class TestFolderConstantsLayer2(unittest.TestCase):
@@ -51,7 +60,7 @@ class TestFolderConstantsLayer2(unittest.TestCase):
 
     def test_folder_workspace_value(self):
         """Verify FOLDER_WORKSPACE has the expected value."""
-        self.assertEqual(FOLDER_WORKSPACE, "/topsailai/workspace")
+        self.assertEqual(FOLDER_WORKSPACE, FOLDER_ROOT + "/workspace")
 
     def test_folder_memory_is_string(self):
         """Verify FOLDER_MEMORY is a string type."""
@@ -63,7 +72,7 @@ class TestFolderConstantsLayer2(unittest.TestCase):
 
     def test_folder_memory_value(self):
         """Verify FOLDER_MEMORY has the expected value."""
-        self.assertEqual(FOLDER_MEMORY, "/topsailai/memory")
+        self.assertEqual(FOLDER_MEMORY, FOLDER_ROOT + "/memory")
 
     def test_folder_lock_is_string(self):
         """Verify FOLDER_LOCK is a string type."""
@@ -75,7 +84,7 @@ class TestFolderConstantsLayer2(unittest.TestCase):
 
     def test_folder_lock_value(self):
         """Verify FOLDER_LOCK has the expected value."""
-        self.assertEqual(FOLDER_LOCK, "/topsailai/lock")
+        self.assertEqual(FOLDER_LOCK, FOLDER_ROOT + "/lock")
 
     def test_folder_skill_is_string(self):
         """Verify FOLDER_SKILL is a string type."""
@@ -87,7 +96,7 @@ class TestFolderConstantsLayer2(unittest.TestCase):
 
     def test_folder_skill_value(self):
         """Verify FOLDER_SKILL has the expected value."""
-        self.assertEqual(FOLDER_SKILL, "/topsailai/skill")
+        self.assertEqual(FOLDER_SKILL, FOLDER_ROOT + "/skill")
 
     def test_folder_log_is_string(self):
         """Verify FOLDER_LOG is a string type."""
@@ -99,7 +108,7 @@ class TestFolderConstantsLayer2(unittest.TestCase):
 
     def test_folder_log_value(self):
         """Verify FOLDER_LOG has the expected value."""
-        self.assertEqual(FOLDER_LOG, "/topsailai/log")
+        self.assertEqual(FOLDER_LOG, FOLDER_ROOT + "/log")
 
 
 class TestFolderConstantsLayer3(unittest.TestCase):
@@ -115,7 +124,7 @@ class TestFolderConstantsLayer3(unittest.TestCase):
 
     def test_folder_memory_story_value(self):
         """Verify FOLDER_MEMORY_STORY has the expected value."""
-        self.assertEqual(FOLDER_MEMORY_STORY, "/topsailai/memory/story")
+        self.assertEqual(FOLDER_MEMORY_STORY, FOLDER_MEMORY + "/story")
 
     def test_folder_workspace_task_is_string(self):
         """Verify FOLDER_WORKSPACE_TASK is a string type."""
@@ -127,7 +136,7 @@ class TestFolderConstantsLayer3(unittest.TestCase):
 
     def test_folder_workspace_task_value(self):
         """Verify FOLDER_WORKSPACE_TASK has the expected value."""
-        self.assertEqual(FOLDER_WORKSPACE_TASK, "/topsailai/workspace/task")
+        self.assertEqual(FOLDER_WORKSPACE_TASK, FOLDER_WORKSPACE + "/task")
 
 
 class TestFolderHierarchy(unittest.TestCase):
