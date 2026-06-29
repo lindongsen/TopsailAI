@@ -5,6 +5,9 @@
   Purpose:
 '''
 
+import functools
+from typing import Any, Callable
+
 from topsailai.logger import logger
 from topsailai.context import (
     tool_stat,
@@ -70,6 +73,32 @@ def get_tool_func(tool_map: dict, tool_name: str):
 
     return None
 
+def with_tool_response_safe(exec_tool_func: Callable) -> Callable:
+    """
+    A decorator for context safe to Avoid excessive context that may reach the limit!
+    """
+
+    @functools.wraps(exec_tool_func)
+    def wrapper(*args, **kwargs) -> Any:
+        result = exec_tool_func(*args, **kwargs)
+
+        # safe
+        result_str = str(result)
+        maximum_bytes = env_tool.EnvReaderInstance.get("TOPSAILAI_TOOL_CALL_MAXIMUM_RETURN", 300000, formatter=int)
+        maximum_bytes = max(maximum_bytes, agent_ctx.AgentContextInstance.max_tokens, 30000)
+        if len(result_str) > maximum_bytes:
+            logger.warning(
+                "tool_call result exceeds maximum_bytes: [%s], args=[%s], kwargs=[%s]",
+                maximum_bytes,
+                args, kwargs,
+            )
+            return ctx_safe.truncate_text(result_str, maximum_bytes)
+
+        return result
+
+    return wrapper
+
+@with_tool_response_safe
 @with_tool_approval
 def exec_tool_func(tool_func, args, tool_name:str=None):
     """
@@ -109,17 +138,11 @@ def exec_tool_func(tool_func, args, tool_name:str=None):
             result=result,
         )
 
-    # safe
-    result_str = str(result)
-    maximum_bytes = env_tool.EnvReaderInstance.get("TOPSAILAI_TOOL_CALL_MAXIMUM_RETURN", 300000, formatter=int)
-    if len(result_str) > maximum_bytes:
-        logger.warning("tool_call result exceeds maximum_bytes: [%s], tool=[%s], args=[%s]", maximum_bytes, tool_name, args)
-        return ctx_safe.truncate_text(result_str, maximum_bytes)
-
     if result is None:
+        # Remind developers about this matter
         # tool should give a clear result
-        logger.warning("tool_call result is None: [%s]", tool_name)
-        return result_str
+        logger.critical("tool_call result is None: [%s]", tool_name)
+        return str(result)
 
     return result
 

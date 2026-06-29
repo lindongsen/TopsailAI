@@ -23,8 +23,10 @@ from topsailai.context import tool_stat
 from topsailai.ai_base.constants import (
     ROLE_ASSISTANT,
 )
-from topsailai.ai_base.agent_types import (
+from topsailai.ai_base.agent_types.init import (
     get_agent_step_call,
+)
+from topsailai.ai_base.agent_types import (
     exception as agent_exception,
 )
 from topsailai.workspace.input_tool import (

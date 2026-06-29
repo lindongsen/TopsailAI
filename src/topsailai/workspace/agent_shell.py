@@ -12,7 +12,7 @@ from topsailai.utils import (
     file_tool,
     thread_local_tool,
 )
-from topsailai.ai_base.agent_types import (
+from topsailai.ai_base.agent_types.init import (
     get_agent_type,
 )
 from topsailai.ai_base.agent_base import AgentRun
