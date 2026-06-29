@@ -28,6 +28,7 @@ from topsailai.utils import (
 from topsailai.utils.print_tool import (
     print_step,
     print_critical,
+    print_info,
 )
 from topsailai.tools import (
     story_tool,
@@ -233,7 +234,16 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             ...     need_interactive=True
             ... )
         """
+        raw_messages_from_session = []
+
         if not messages:
+            # check again
+            if self.session_id:
+                self.reset_messages()
+                if not self.is_need_summarize_for_processed():
+                    print_info(f"!!! [User2Agent] [Summarization] No need summarize, current msg_len=[{len(self.messages)}]")
+                    return None
+
             # just the processed Q&A messages for current runtime
             messages = self.messages
 

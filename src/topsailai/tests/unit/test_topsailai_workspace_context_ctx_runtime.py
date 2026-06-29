@@ -475,20 +475,21 @@ class TestSummarizeMessages(TestContextRuntimeData):
         mock_llm_chat.prompt_ctl.messages = [
             {"role": "assistant", "content": "Summarized content"}
         ]
-        
-        with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "This is the summary")) as mock_sum:
-            with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=0) as mock_offset:
-                with patch.object(self.runtime, 'reset_messages'):
-                    # Mock raw messages
-                    mock_raw_msg = MagicMock()
-                    mock_raw_msg.msg_id = "raw_id_0"
-                    self.mock_ctx_manager.get_messages_by_session.return_value = [mock_raw_msg]
 
-                    result = self.runtime.summarize_messages_for_processed()
+        with patch.object(self.runtime, 'is_need_summarize_for_processed', return_value=True):
+            with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "This is the summary")) as mock_sum:
+                with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=0) as mock_offset:
+                    with patch.object(self.runtime, 'reset_messages'):
+                        # Mock raw messages
+                        mock_raw_msg = MagicMock()
+                        mock_raw_msg.msg_id = "raw_id_0"
+                        self.mock_ctx_manager.get_messages_by_session.return_value = [mock_raw_msg]
 
-                    self.assertEqual(result, "This is the summary")
-                    mock_sum.assert_called_once()
-                    mock_offset.assert_called_once()
+                        result = self.runtime.summarize_messages_for_processed()
+
+                        self.assertEqual(result, "This is the summary")
+                        mock_sum.assert_called_once()
+                        mock_offset.assert_called_once()
 
     def test_summarize_messages_no_messages(self):
         """Test returns None when messages list is empty."""
@@ -515,14 +516,15 @@ class TestSummarizeMessages(TestContextRuntimeData):
         mock_llm_chat.prompt_ctl.messages = [
             {"role": "assistant", "content": "Summary"}
         ]
-        
-        with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "Interactive summary")):
-            with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
-                with patch.object(self.runtime, 'reset_messages'):
-                    self.mock_ctx_manager.get_messages_by_session.return_value = []
 
-                    with patch('builtins.input', return_value='yes'):
-                        result = self.runtime.summarize_messages_for_processed(need_interactive=True)
+        with patch.object(self.runtime, 'is_need_summarize_for_processed', return_value=True):
+            with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "Interactive summary")):
+                with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+                    with patch.object(self.runtime, 'reset_messages'):
+                        self.mock_ctx_manager.get_messages_by_session.return_value = []
+
+                        with patch('builtins.input', return_value='yes'):
+                            result = self.runtime.summarize_messages_for_processed(need_interactive=True)
 
         self.assertEqual(result, "Interactive summary")
 
@@ -535,14 +537,15 @@ class TestSummarizeMessages(TestContextRuntimeData):
         mock_llm_chat.prompt_ctl.messages = [
             {"role": "assistant", "content": "Summary"}
         ]
-        
-        with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "Rejected summary")):
-            with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
-                with patch.object(self.runtime, 'reset_messages'):
-                    self.mock_ctx_manager.get_messages_by_session.return_value = []
 
-                    with patch('builtins.input', return_value='no'):
-                        result = self.runtime.summarize_messages_for_processed(need_interactive=True)
+        with patch.object(self.runtime, 'is_need_summarize_for_processed', return_value=True):
+            with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "Rejected summary")):
+                with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+                    with patch.object(self.runtime, 'reset_messages'):
+                        self.mock_ctx_manager.get_messages_by_session.return_value = []
+
+                        with patch('builtins.input', return_value='no'):
+                            result = self.runtime.summarize_messages_for_processed(need_interactive=True)
 
         # Should return answer even when rejected
         self.assertEqual(result, "Rejected summary")
