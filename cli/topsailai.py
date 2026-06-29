@@ -813,7 +813,7 @@ def get_topsailai_home() -> str:
     Resolve TOPSAILAI_HOME with the following priority:
     1. Environment variable TOPSAILAI_HOME
     2. System home's .topsailai/.env file
-    3. Default: /topsailai
+    3. Default: ~/.topsailai
     """
     env_home = os.environ.get("TOPSAILAI_HOME")
     if env_home and os.path.isdir(env_home):
@@ -833,7 +833,7 @@ def get_topsailai_home() -> str:
         except Exception:
             pass
 
-    default_home = "/topsailai"
+    default_home = os.path.join(os.environ["HOME"], ".topsailai")
     if os.path.isdir(default_home):
         return default_home
     return default_home

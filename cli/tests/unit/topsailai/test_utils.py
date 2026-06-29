@@ -51,11 +51,11 @@ class TestGetTopsailaiHome(unittest.TestCase):
     @patch("os.path.isdir")
     @patch("os.path.isfile")
     def test_default_path(self, mock_isfile, mock_isdir):
-        """Fall back to default /topsailai."""
+        """Fall back to default 'os.path.join(os.environ["HOME"], ".topsailai")'"""
         mock_isfile.return_value = False
         mock_isdir.return_value = True
         result = cli.get_topsailai_home()
-        self.assertEqual(result, "/topsailai")
+        self.assertEqual(result, os.path.join(os.environ["HOME"], ".topsailai"))
 
     @patch.dict(os.environ, {}, clear=True)
     @patch("os.path.isdir")
@@ -65,7 +65,7 @@ class TestGetTopsailaiHome(unittest.TestCase):
         mock_isfile.return_value = False
         mock_isdir.return_value = False
         result = cli.get_topsailai_home()
-        self.assertEqual(result, "/topsailai")
+        self.assertEqual(result, os.path.join(os.environ["HOME"], ".topsailai"))
 
     @patch.dict(os.environ, {"TOPSAILAI_HOME": "/invalid/path"})
     @patch("os.path.isdir")
@@ -76,7 +76,7 @@ class TestGetTopsailaiHome(unittest.TestCase):
         mock_isdir.return_value = False
         mock_isfile.return_value = False
         result = cli.get_topsailai_home()
-        self.assertEqual(result, "/topsailai")
+        self.assertEqual(result, os.path.join(os.environ["HOME"], ".topsailai"))
 
     @patch.dict(os.environ, {}, clear=True)
     @patch("os.path.isdir")
@@ -87,7 +87,7 @@ class TestGetTopsailaiHome(unittest.TestCase):
         mock_isfile.return_value = True
         mock_isdir.return_value = True
         result = cli.get_topsailai_home()
-        self.assertEqual(result, "/topsailai")
+        self.assertEqual(result, os.path.join(os.environ["HOME"], ".topsailai"))
 
 
 class TestFormatSize(unittest.TestCase):

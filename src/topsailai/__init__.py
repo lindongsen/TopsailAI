@@ -32,43 +32,50 @@ Environment variables used by this module:
 import os
 from dotenv import load_dotenv
 
+
+############################################################################
+# ORIGINAL Environment
+############################################################################
+
 # Original Environ
 _env_topsailai_use_tool_calls = os.getenv("TOPSAILAI_USE_TOOL_CALLS")
 
-from topsailai.workspace import folder_constants
 
-# SYSTEM home folder
-HOME_FOLDER = os.getenv("HOME") or ""
+############################################################################
+# TopsailAI Base Runtime
+############################################################################
+
+from topsailai.workspace import folder_constants
 
 # TopsailAI home folder
 TOPSAILAI_HOME = folder_constants.TOPSAILAI_HOME
 
 # TopsailAI work folder
 # This variable is set automatically at process startup. Do not set it manually.
-TOPSAILAI_WORK_FOLDER=""
+TOPSAILAI_WORK_FOLDER=TOPSAILAI_HOME
 
-for WORK_FOLDER in [
-    folder_constants.TOPSAILAI_HOME,
-    os.path.join(HOME_FOLDER, ".topsailai"),
-    os.getcwd(),
-]:
-    env_file = ""
+def __set_work_folder(work_folder:str):
+    os.environ["TOPSAILAI_WORK_FOLDER"] = work_folder
+    os.environ["PWD"] = work_folder
+    os.chdir(work_folder)
+    return
+__set_work_folder(TOPSAILAI_WORK_FOLDER)
+
+def __load_env():
     # sequence required
     for env_name in [
         ".env.local",
         ".env",
     ]:
-        env_file = os.path.join(WORK_FOLDER, env_name)
-        if os.path.isdir(WORK_FOLDER) and os.path.exists(env_file):
-            os.chdir(WORK_FOLDER)
-            os.environ["TOPSAILAI_WORK_FOLDER"] = WORK_FOLDER
-            os.environ["PWD"] = WORK_FOLDER
+        env_file = os.path.join(TOPSAILAI_WORK_FOLDER, env_name)
+        if os.path.exists(env_file):
             load_dotenv(env_file)
-            TOPSAILAI_WORK_FOLDER = WORK_FOLDER
-        else:
-            env_file = ""
-    if env_file:
-        break
+__load_env()
+
+
+############################################################################
+# TopsailAI Custom
+############################################################################
 
 def customize_for_llm():
     """ Customize according to the large model """

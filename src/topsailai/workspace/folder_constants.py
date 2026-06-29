@@ -35,6 +35,8 @@ if os.getenv("TOPSAILAI_HOME"):
         FOLDER_ROOT = os.getenv("HOME") + FOLDER_ROOT[1:]
     FOLDER_ROOT = os.path.abspath(FOLDER_ROOT)
     os.environ["TOPSAILAI_HOME"] = FOLDER_ROOT
+elif os.getenv("HOME"):
+    FOLDER_ROOT = os.path.join(os.environ["HOME"], ".topsailai")
 
 TOPSAILAI_HOME=FOLDER_ROOT
 
