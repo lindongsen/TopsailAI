@@ -543,12 +543,21 @@ The approval gate is implemented as a decorator so the body of `exec_tool_func` 
 
 ### ToolApprovalDeniedError
 
-`ToolApprovalDeniedError` inherits from the project's tool-call exception base class so the step loop can distinguish approval denials from generic execution failures.
+`ToolApprovalDeniedError` inherits from `ToolApprovalException` (which extends the base `Exception` class). It is raised by the approval decorator when a tool call is denied by the approval policy or when approval times out.
 
 ```python
-class ToolApprovalDeniedError(AgentToolCallException):
-    """Raised when a tool call is denied by the approval policy."""
+class ToolApprovalException(Exception):
+    """ Base Exception """
     pass
+
+class ToolApprovalDeniedError(ToolApprovalException):
+    """
+    Raised when a tool call is denied by the approval policy.
+    """
+
+    def __init__(self, message: str, instance_id: str | None = None):
+        super().__init__(message)
+        self.instance_id = instance_id
 ```
 
 ### Decorator Design
@@ -626,8 +635,7 @@ def exec_tool_func(tool_func, args, tool_name=None):
 
 - `StepCallTool.execute_step_action()` does not need to change; it continues to call `exec_tool_func(tool_func, args, tool_name=tool)`.
 - `match_approval_rule` evaluates both the tool-name pattern and the parameter conditions defined by the matched rule.
-- If approval is denied, the decorator raises `ToolApprovalDeniedError`. Because it inherits from `AgentToolCallException`, the step loop can treat it as a tool-call failure and surface it to the agent as an observation.
-
+- If approval is denied, the decorator raises `ToolApprovalDeniedError`. The step loop in `ai_base/agent_types/tool.py` explicitly catches `ToolApprovalDeniedError` so the agent can surface the denial as an observation.
 ## Concurrency Safety
 
 The pending-approval registry is a process-wide shared resource. It must be thread-safe:
