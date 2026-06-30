@@ -10,6 +10,7 @@ import os
 from topsailai.logger import logger
 from topsailai.utils import (
     env_tool,
+    print_tool,
 )
 from topsailai.ai_base.constants import (
     ROLE_ASSISTANT,
@@ -128,9 +129,10 @@ class AgentChatBase(object):
         self.hooks_pre_run = get_hooks("pre_run")
         self.hooks_for_final_answer = get_hooks("post_final_answer")
 
-        if env_tool.EnvReaderInstance.get("TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION"):
+        if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION", False):
             def hook_final_summarize_into_session(_) -> None:
                 """ summarize messages of agent2llm, save summary content to session of user2agent """
+                print_tool.print_info("!!! [Agent2LLM] [Summarization] TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION is enabled")
                 summary_content = ctx_runtime_data.summarize_messages_for_processing()
                 if summary_content:
                     ctx_runtime_data.add_session_message(ROLE_ASSISTANT, summary_content)

@@ -307,7 +307,6 @@ def run_external_command(
         f"{Colors.GREEN}[INFO] Execution completed.{Colors.RESET}"
     )
 
-
 def cleanup_children():
     """
     Terminate and kill all tracked child processes.
@@ -343,7 +342,6 @@ def cleanup_children():
             unregister_process(proc)
 
     print(f"{Colors.GREEN}[INFO] All child processes cleaned up.{Colors.RESET}")
-
 
 # Register cleanup on normal interpreter exit
 atexit.register(cleanup_children)
@@ -433,7 +431,7 @@ def get_available_completions() -> List[str]:
     completions: List[str] = []
 
     # Built-in commands (always available)
-    builtins = ["/refresh", "/clean", "/help", "/session"]
+    builtins = ["/refresh", "/clean", "/help", "/session", "/send"]
     completions.extend(builtins)
 
     # YAML commands filtered by current scope
@@ -464,7 +462,6 @@ def get_available_completions() -> List[str]:
             seen.add(c)
             unique.append(c)
     return sorted(unique)
-
 
 def tab_completer(text: str, state: int) -> Optional[str]:
     """
@@ -1599,7 +1596,7 @@ def _format_pipe_payload(message: str) -> bytes:
     """
     message = message.strip()
     if not message.endswith("EOF"):
-        message += "\nEOF"
+        message += "\nEOF\n"
     return message.encode("utf-8")
 
 

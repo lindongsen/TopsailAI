@@ -317,10 +317,11 @@ def configure_root_logger(level=None):
           ``WARNING`` level (i.e. has not been explicitly configured by an external
           framework such as pytest, Django, or Flask). This avoids overriding an
           externally configured root logger.
-        - A default **file** handler (``RotatingFileHandler``) is added only when the
+        - Default **file** handlers (``RotatingFileHandler``) are added only when the
           root logger has no handlers. Logs are written to the folder returned by
-          ``get_log_folder()`` in ``topsailai.log`` so that standard output remains
-          free of logging content.
+          ``get_log_folder()``. The main log file is ``topsailai.log``; a secondary
+          file with the ``.ec`` extension receives only ``ERROR`` and ``CRITICAL``
+          messages so that failures can be located quickly.
         - Existing root handlers are left in place; if they have no formatter, the
           project ``AgentFormatter`` is applied.
 
@@ -350,6 +351,14 @@ def configure_root_logger(level=None):
             handler = RotatingFileHandler(log_file, maxBytes=100000000, backupCount=1)
             handler.setFormatter(AgentFormatter(fmt=ROOT_LOG_FORMAT))
             root.addHandler(handler)
+
+            # Separate handler for ERROR/CRITICAL messages.
+            # This makes it easy to spot failures without scanning the full log.
+            ec_log_file = log_file + ".ec"
+            ec_handler = RotatingFileHandler(ec_log_file, maxBytes=100000000, backupCount=1)
+            ec_handler.setLevel(logging.ERROR)
+            ec_handler.setFormatter(AgentFormatter(fmt=ROOT_LOG_FORMAT))
+            root.addHandler(ec_handler)
     else:
         # Ensure existing root handlers use AgentFormatter if they have no custom formatter.
         for handler in root.handlers:

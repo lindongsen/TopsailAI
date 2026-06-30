@@ -260,13 +260,22 @@ root.setLevel(logging.WARNING)
 with tempfile.TemporaryDirectory() as tmp:
     os.environ["TOPSAILAI_HOME"] = tmp
     configure_root_logger(level=logging.INFO)
-    assert len(root.handlers) > 0, "expected at least one handler"
     file_handlers = [h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
-    assert len(file_handlers) == 1, "expected exactly one RotatingFileHandler"
-    assert isinstance(file_handlers[0].formatter, AgentFormatter), "expected AgentFormatter"
-    assert file_handlers[0].formatter._fmt == ROOT_LOG_FORMAT, f"expected {ROOT_LOG_FORMAT!r}, got {file_handlers[0].formatter._fmt!r}"
-    expected_path = os.path.join(get_log_folder(), ROOT_LOG_FILE_NAME + ".log")
-    assert file_handlers[0].baseFilename == expected_path, f"expected {expected_path}, got {file_handlers[0].baseFilename}"
+    assert len(file_handlers) == 2, f"expected two RotatingFileHandlers, got {len(file_handlers)}"
+
+    main_handler = file_handlers[0]
+    assert isinstance(main_handler.formatter, AgentFormatter), "expected AgentFormatter on main handler"
+    assert main_handler.formatter._fmt == ROOT_LOG_FORMAT, f"expected {ROOT_LOG_FORMAT!r}, got {main_handler.formatter._fmt!r}"
+    expected_main_path = os.path.join(get_log_folder(), ROOT_LOG_FILE_NAME + ".log")
+    assert main_handler.baseFilename == expected_main_path, f"expected {expected_main_path}, got {main_handler.baseFilename}"
+
+    ec_handler = file_handlers[1]
+    assert isinstance(ec_handler.formatter, AgentFormatter), "expected AgentFormatter on .ec handler"
+    assert ec_handler.formatter._fmt == ROOT_LOG_FORMAT, f"expected {ROOT_LOG_FORMAT!r}, got {ec_handler.formatter._fmt!r}"
+    expected_ec_path = expected_main_path + ".ec"
+    assert ec_handler.baseFilename == expected_ec_path, f"expected {expected_ec_path}, got {ec_handler.baseFilename}"
+    assert ec_handler.level == logging.ERROR, f"expected ERROR level, got {ec_handler.level}"
+
     assert root.level == logging.INFO, f"expected INFO, got {root.level}"
 print("ok")
 """
@@ -623,14 +632,21 @@ with tempfile.TemporaryDirectory() as tmp:
     configure_root_logger(level=logging.INFO)
     print(root.level)
     print(len(root.handlers))
-    handler = root.handlers[0]
-    print(isinstance(handler, RotatingFileHandler))
-    print(handler.baseFilename.endswith("topsailai.log"))
+    main_handler = root.handlers[0]
+    ec_handler = root.handlers[1]
+    print(isinstance(main_handler, RotatingFileHandler))
+    print(main_handler.baseFilename.endswith("topsailai.log"))
+    print(isinstance(ec_handler, RotatingFileHandler))
+    print(ec_handler.baseFilename.endswith("topsailai.log.ec"))
+    print(ec_handler.level == logging.ERROR)
 """
     result = _run_in_subprocess(code)
     assert result.returncode == 0, result.stderr or result.stdout
     lines = result.stdout.strip().splitlines()
-    assert lines[-4] == str(logging.INFO)
-    assert lines[-3] == "1"
+    assert lines[-7] == str(logging.INFO)
+    assert lines[-6] == "2"
+    assert lines[-5] == "True"
+    assert lines[-4] == "True"
+    assert lines[-3] == "True"
     assert lines[-2] == "True"
     assert lines[-1] == "True"

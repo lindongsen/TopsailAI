@@ -17,8 +17,10 @@ The default log level is ``INFO`` (``DEBUG`` when ``DEBUG=1``). It can be
 overridden by setting ``TOPSAILAI_LOG_LEVEL`` to one of ``DEBUG``, ``INFO``,
 ``WARNING``, ``ERROR``, or ``CRITICAL`` (case-insensitive).
 
-Logs from the root logger are written to a rotating file under the TopsailAI log
-folder (``topsailai.log``) so that standard output remains free of logging
+Logs from the root logger are written to rotating files under the TopsailAI log
+folder. The main log file is ``topsailai.log``; a secondary file named
+``topsailai.log.ec`` receives only ``ERROR`` and ``CRITICAL`` messages so that
+failures can be located quickly. Standard output remains free of logging
 content. Named loggers created via ``setup_logger()`` also write to files by
 default.
 
@@ -31,7 +33,7 @@ Exports:
     logger: The chat logger instance for convenient import.
     setup_logger: Helper to configure a named logger.
     AgentFormatter: Custom formatter adding agent/thread context.
-    configure_root_logger: Applies the project format and a file handler to the
+    configure_root_logger: Applies the project format and file handlers to the
         root logger.
 
 Example:
