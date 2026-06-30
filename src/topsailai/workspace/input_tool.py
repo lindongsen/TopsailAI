@@ -1,19 +1,17 @@
-import readline
 '''
   Author: DawsonLin
   Email: lin_dongsen@126.com
   Created: 2025-12-19
   Purpose: Input handling utilities for TopsailAI system
 '''
-
 import atexit
+import json
 import logging
 import os
 import sys
 
 # DONOT DELETE THIS FOR FUNCTION 'input'
 import readline
-
 from topsailai.utils import (
     env_tool,
     file_tool,
@@ -21,7 +19,7 @@ from topsailai.utils import (
     thread_local_tool,
 )
 from topsailai.workspace.folder_constants import (
-    FILE_INPUT_HISTORY,
+    FILE_INPUT_HISTORY_JSONL,
     FOLDER_WORKSPACE_TASK,
 )
 from topsailai.workspace.hook_instruction import (
@@ -56,40 +54,49 @@ def _cleanup_session_pipes() -> None:
 
 atexit.register(_cleanup_session_pipes)
 
-def _load_input_history():
-    """
-    Load readline history from FILE_INPUT_HISTORY if it exists.
+def _load_input_history_jsonl() -> None:
+    """Load previous input history from the JSONL file into readline.
 
-    Called at module import time to restore previous input history.
+    Each line in the history file is expected to be a JSON object with a
+    ``text`` field.  The ``text`` values are added to the in-process readline
+    history so the user can recall previous messages with the UP/DOWN arrow
+    keys in direct terminal input mode.
     """
-    if os.path.exists(FILE_INPUT_HISTORY):
-        try:
-            readline.read_history_file(FILE_INPUT_HISTORY)
-        except Exception:
-            pass
-    return
-
-
-def _save_input_history():
-    """
-    Save current readline history to FILE_INPUT_HISTORY.
-
-    Ensures the parent directory exists before writing.
-    Called on program exit via atexit and after each input.
-    """
+    if not os.path.exists(FILE_INPUT_HISTORY_JSONL):
+        return
     try:
-        _dir = os.path.dirname(FILE_INPUT_HISTORY)
-        if _dir and not os.path.exists(_dir):
-            os.makedirs(_dir, exist_ok=True)
-        readline.write_history_file(FILE_INPUT_HISTORY)
+        with open(FILE_INPUT_HISTORY_JSONL, "r", encoding="utf-8") as fd:
+            for line in fd:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    text = entry.get("text", "")
+                    if text:
+                        readline.add_history(text)
+                except json.JSONDecodeError:
+                    continue
     except Exception:
         pass
-    return
 
 
-# Load history on module import and register auto-save on exit
-_load_input_history()
-atexit.register(_save_input_history)
+def _append_input_history_jsonl(message: str) -> None:
+    """Append a submitted message to the JSONL history file.
+
+    The entry is written as ``{"ts": ..., "session_id": ..., "text": ...}``.
+    Empty messages are ignored.
+    """
+    if not message:
+        return
+    session_id = env_tool.get_session_id() or ""
+    utils_input_tool.append_input_history_jsonl(
+        FILE_INPUT_HISTORY_JSONL, session_id, message
+    )
+
+
+# Load JSONL history into readline on module import.
+_load_input_history_jsonl()
 
 
 def hook_message(message: str, hook: HookInstruction) -> bool:
@@ -153,6 +160,7 @@ def _input(tips: str = "") -> str:
             timeout=env_tool.get_input_pipe_timeout(),
             single_line=True,
             prompt=tips,
+            history_file=FILE_INPUT_HISTORY_JSONL,
         )
     return input(tips)
 
@@ -190,9 +198,8 @@ def input_one_line(tips: str = "", hook: HookInstruction = None) -> str:
             continue
         break
     if message.lower() == "/noop":
-        _save_input_history()
         return ""
-    _save_input_history()
+    _append_input_history_jsonl(message)
     return message
 
 
@@ -255,17 +262,15 @@ def input_multi_line(tips: str = "", hook: HookInstruction = None) -> str:
             if hook_message(message, hook):
                 message = ""
                 break
-            if message.strip().lower() ==  "/noop":
-                _save_input_history()
+            if message.strip().lower() == "/noop":
                 return ""
 
     message = message.strip()
 
     if message:
         if not hook_message(message, hook):
-            _save_input_history()
+            _append_input_history_jsonl(message)
             return message
-    _save_input_history()
     return input_multi_line(tips, hook)
 
 
@@ -427,6 +432,7 @@ def input_from_pipe_session(
     raise_eof_error: bool = True,
     single_line: bool = False,
     prompt: str = "",
+    history_file: str = FILE_INPUT_HISTORY_JSONL,
 ) -> str:
     """Read a message from a session-scoped named pipe.
 
@@ -463,6 +469,9 @@ def input_from_pipe_session(
         the first ``\\n``). Any remaining content is discarded.
     prompt:
         Prompt displayed to the user when terminal input is used.
+    history_file:
+        Optional JSONL history file path used to preload readline history
+        in the terminal helper subprocess.
 
     Returns
     -------
@@ -489,4 +498,5 @@ def input_from_pipe_session(
         single_line=single_line,
         prompt=prompt,
         cleanup_pipe=False,
+        history_file=history_file,
     )

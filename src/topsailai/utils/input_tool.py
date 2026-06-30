@@ -12,6 +12,7 @@ import contextlib
 import errno
 import functools
 import io
+import json
 import logging
 import os
 import readline
@@ -204,6 +205,57 @@ def _safe_unlink(path: str) -> None:
         logger.error("Failed to remove pipe file %s: %s", abs_path, exc)
 
 
+def load_input_history_jsonl(history_file: str) -> list[dict]:
+    """Load JSONL input history from *history_file*.
+
+    Each line must be a JSON object. Lines that cannot be parsed are skipped.
+    Returns a list of history entries ordered from oldest to newest.
+    """
+    entries: list[dict] = []
+    if not history_file or not os.path.exists(history_file):
+        return entries
+    try:
+        with open(history_file, "r", encoding="utf-8") as fd:
+            for line in fd:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if isinstance(entry, dict) and "text" in entry:
+                        entries.append(entry)
+                except json.JSONDecodeError:
+                    continue
+    except OSError as exc:
+        logger.debug("Could not load JSONL history %s: %s", history_file, exc)
+    return entries
+
+
+def append_input_history_jsonl(
+    history_file: str, session_id: str, text: str
+) -> None:
+    """Append a single message to the JSONL history file.
+
+    The entry is written as ``{"ts": <ISO8601>, "session_id": ..., "text": ...}``.
+    The parent directory is created if it does not exist.
+    """
+    if not history_file or not text:
+        return
+    try:
+        parent = os.path.dirname(history_file)
+        if parent and not os.path.exists(parent):
+            os.makedirs(parent, exist_ok=True)
+        entry = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
+            "session_id": session_id or "",
+            "text": text,
+        }
+        with open(history_file, "a", encoding="utf-8") as fd:
+            fd.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        logger.debug("Could not append JSONL history %s: %s", history_file, exc)
+
+
 def _ensure_fifo(pipe_path: str) -> None:
     """Create a FIFO at *pipe_path*, ensuring the parent directory exists."""
     parent = os.path.dirname(pipe_path)
@@ -333,6 +385,7 @@ def _spawn_terminal_input_subprocess(
     prompt: str = "",
     timeout: float | None = None,
     stdin_fd: int | None = None,
+    history_file: str | None = None,
 ) -> tuple[subprocess.Popen | None, int | None]:
     """Spawn a helper process that reads a terminal line and forwards it.
 
@@ -341,6 +394,11 @@ def _spawn_terminal_input_subprocess(
     and writes the collected line to an anonymous pipe.  The parent monitors
     the read end of that pipe, so terminal input never blocks pipe input and
     vice versa.
+
+    If *history_file* is provided, it is treated as a JSONL file where each
+    line is ``{"ts": ..., "session_id": ..., "text": ...}``.  The ``text``
+    values are loaded into readline history so the user can navigate previous
+    messages with the UP/DOWN arrow keys.
 
     Parameters
     ----------
@@ -352,6 +410,8 @@ def _spawn_terminal_input_subprocess(
     stdin_fd:
         File descriptor of the terminal to read from.  When ``None``, the
         helper inherits the parent's fd 0.
+    history_file:
+        Optional path to a JSONL history file to preload into readline.
 
     Returns
     -------
@@ -365,6 +425,7 @@ def _spawn_terminal_input_subprocess(
 
     helper = textwrap.dedent(
         f'''
+        import json
         import os
         import readline
         import signal
@@ -374,6 +435,7 @@ def _spawn_terminal_input_subprocess(
         write_fd = {write_fd}
         prompt = {prompt!r}
         timeout = {timeout!r}
+        history_file = {history_file!r}
 
         def _restore_termios():
             try:
@@ -397,6 +459,24 @@ def _spawn_terminal_input_subprocess(
 
         signal.signal(signal.SIGALRM, _alarm_handler)
         signal.signal(signal.SIGTERM, _term_handler)
+
+        # Preload JSONL history so UP/DOWN arrow keys recall previous messages.
+        if history_file:
+            try:
+                with open(history_file, "r", encoding="utf-8") as fd:
+                    for line in fd:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                            text = entry.get("text", "")
+                            if text:
+                                readline.add_history(text)
+                        except Exception:
+                            continue
+            except Exception:
+                pass
 
         line = ""
         eof_or_interrupt = False
@@ -446,7 +526,6 @@ def _spawn_terminal_input_subprocess(
         os.close(write_fd)
         return None, None
 
-
 def input_from_pipe(
     pipe_path: str,
     *,
@@ -457,6 +536,7 @@ def input_from_pipe(
     single_line: bool = False,
     prompt: str = "",
     cleanup_pipe: bool = True,
+    history_file: str | None = None,
 ) -> str:
     """Read a message from a named pipe (FIFO).
 
@@ -476,6 +556,11 @@ def input_from_pipe(
     the first line is returned and the remaining lines are buffered under
     *pipe_path* for subsequent calls. This makes multi-line pipe input work
     when a sender writes several lines at once.
+
+    If *history_file* is provided, it is treated as a JSONL file where each
+    line is ``{"ts": ..., "session_id": ..., "text": ...}``.  The ``text``
+    values are loaded into the helper's readline history so the user can
+    navigate previous messages with the UP/DOWN arrow keys.
 
     Parameters
     ----------
@@ -504,6 +589,9 @@ def input_from_pipe(
     cleanup_pipe:
         When ``True`` (the default), the FIFO is removed before returning.
         When ``False``, the caller is responsible for cleanup.
+    history_file:
+        Optional path to a JSONL history file to preload into the terminal
+        helper's readline history.
 
     Returns
     -------
@@ -595,7 +683,10 @@ def input_from_pipe(
             stdin_fd = sys.stdin.fileno()
             if os.isatty(stdin_fd):
                 terminal_helper, helper_read_fd = _spawn_terminal_input_subprocess(
-                    prompt=prompt, timeout=timeout, stdin_fd=stdin_fd
+                    prompt=prompt,
+                    timeout=timeout,
+                    stdin_fd=stdin_fd,
+                    history_file=history_file,
                 )
         except (AttributeError, OSError, ValueError, io.UnsupportedOperation):
             pass

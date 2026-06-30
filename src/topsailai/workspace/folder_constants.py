@@ -70,6 +70,8 @@ FOLDER_MEMORY_STORY = FOLDER_MEMORY + "/story"
 
 # Task files
 FOLDER_WORKSPACE_TASK = FOLDER_WORKSPACE + "/task"
-
-# Input history file - Stores readline history for interactive input
+# Input history files - Stores readline history for interactive input
 FILE_INPUT_HISTORY = FOLDER_ROOT + "/.input_history"
+
+# Input history file in JSONL format: each line is {"ts", "session_id", "text"}
+FILE_INPUT_HISTORY_JSONL = FOLDER_ROOT + "/.input_history.jsonl"
