@@ -1,35 +1,29 @@
-"""
-Unit tests for the logger.base_logger module.
+"""Unit tests for logger.base_logger."""
 
-This module tests the setup_logger function and AgentFormatter class
-to ensure proper logging configuration and formatting.
-
-Author: AI (Unit Test Enhancement)
-Purpose: Comprehensive test coverage for logger module
-"""
-
-import pytest
 import logging
 import os
+import subprocess
+import sys
 from logging.handlers import RotatingFileHandler
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-from topsailai.logger.base_logger import setup_logger, AgentFormatter
+import pytest
 
-
-# ============================================================================
-# Fixtures
-# ============================================================================
+from topsailai.logger.base_logger import (
+    setup_logger,
+    AgentFormatter,
+    configure_root_logger,
+    _resolve_log_level,
+    _ensure_handler,
+    get_log_folder,
+    ENV_DISABLE_ROOT_LOGGER_CONFIG,
+    ENV_LOG_LEVEL,
+)
 
 
 @pytest.fixture(autouse=True)
 def cleanup_loggers():
-    """
-    Clean up all logger handlers after each test to prevent handler accumulation.
-    This fixture runs automatically for every test in this module.
-    """
     yield
-    # Clean up all loggers and their handlers after each test
     for name in list(logging.Logger.manager.loggerDict.keys()):
         logger = logging.getLogger(name)
         for handler in logger.handlers[:]:
@@ -39,23 +33,18 @@ def cleanup_loggers():
 
 @pytest.fixture
 def mock_log_folder_exists():
-    """Mock os.path.exists to simulate /topsailai/log/ folder exists."""
-    with patch("os.path.exists") as mock_exists:
-        mock_exists.return_value = True
-        yield mock_exists
+    with patch("os.path.exists", return_value=True), patch("os.path.isdir", return_value=True):
+        yield
 
 
 @pytest.fixture
 def mock_log_folder_not_exists():
-    """Mock os.path.exists to simulate /topsailai/log/ folder does not exist."""
-    with patch("os.path.exists") as mock_exists:
-        mock_exists.return_value = False
-        yield mock_exists
+    with patch("os.path.exists", return_value=False):
+        yield
 
 
 @pytest.fixture
 def mock_agent_and_thread_names():
-    """Mock get_agent_name and get_thread_name to return empty values."""
     with patch("topsailai.utils.thread_local_tool.get_agent_name", return_value=None), \
          patch("topsailai.utils.thread_local_tool.get_thread_name", return_value=None):
         yield
@@ -63,441 +52,585 @@ def mock_agent_and_thread_names():
 
 @pytest.fixture
 def mock_agent_name():
-    """Mock get_agent_name to return a test agent name."""
     with patch("topsailai.utils.thread_local_tool.get_agent_name", return_value="TestAgent"):
         yield
 
 
 @pytest.fixture
 def mock_thread_name():
-    """Mock get_thread_name to return a test thread name."""
     with patch("topsailai.utils.thread_local_tool.get_thread_name", return_value="TestThread"):
         yield
 
 
-# ============================================================================
-# Test Cases for setup_logger function
-# ============================================================================
+@pytest.fixture
+def clean_root_logger():
+    root = logging.getLogger()
+    for handler in root.handlers[:]:
+        handler.close()
+        root.removeHandler(handler)
+    root.setLevel(logging.WARNING)
+    yield root
+    for handler in root.handlers[:]:
+        handler.close()
+        root.removeHandler(handler)
+    root.setLevel(logging.WARNING)
 
 
 def test_setup_logger_with_name_only(mock_log_folder_exists):
-    """
-    Test setup_logger creates a logger with the given name.
-    Verifies logger name matches, has handlers, and level is DEBUG.
-    """
     logger = setup_logger(name="test_logger")
-
     assert logger.name == "test_logger"
     assert len(logger.handlers) > 0
-    assert logger.level == logging.DEBUG
-
+    # Default level is INFO unless DEBUG=1 or TOPSAILAI_LOG_LEVEL is set.
+    assert logger.level == logging.INFO
 
 def test_setup_logger_with_name_creates_file_handler(mock_log_folder_exists):
-    """
-    Test that providing a name triggers file handler creation.
-    Verifies log file is created at /topsailai/log/{name}.log.
-    """
     logger = setup_logger(name="file_test_logger")
-
-    # Check that a RotatingFileHandler was added
     file_handlers = [h for h in logger.handlers if isinstance(h, RotatingFileHandler)]
-    assert len(file_handlers) > 0, "Expected RotatingFileHandler to be added"
-
-    # Verify the file path matches expected pattern
-    handler = file_handlers[0]
-    expected_path = "/topsailai/log/file_test_logger.log"
-    assert handler.baseFilename.endswith("file_test_logger.log")
+    assert len(file_handlers) > 0
+    assert file_handlers[0].baseFilename.endswith("file_test_logger.log")
 
 
 def test_setup_logger_with_explicit_log_file(mock_log_folder_exists):
-    """
-    Test setup_logger with explicit log_file path.
-    Verifies handler is created and file path matches provided path.
-    """
     explicit_path = "/tmp/custom_test.log"
     logger = setup_logger(name="explicit_test", log_file=explicit_path)
-
-    # Check that a RotatingFileHandler was added
     file_handlers = [h for h in logger.handlers if isinstance(h, RotatingFileHandler)]
-    assert len(file_handlers) > 0, "Expected RotatingFileHandler to be added"
-
-    # Verify the file path matches provided path
-    handler = file_handlers[0]
-    assert handler.baseFilename == explicit_path
-
-
-def test_setup_logger_no_name_no_file(mock_log_folder_not_exists):
-    """
-    Test setup_logger with no name and no file path.
-    Verifies console-only logging with StreamHandler and no RotatingFileHandler.
-    """
-    logger = setup_logger(name=None, log_file=None)
-
-    # Check for StreamHandler
-    stream_handlers = [h for h in logger.handlers if isinstance(h, logging.StreamHandler)]
-    assert len(stream_handlers) > 0, "Expected StreamHandler for console output"
-
-    # Check no RotatingFileHandler
-    file_handlers = [h for h in logger.handlers if isinstance(h, RotatingFileHandler)]
-    assert len(file_handlers) == 0, "Did not expect RotatingFileHandler when no file specified"
-
-
+    assert len(file_handlers) > 0
+    assert file_handlers[0].baseFilename == explicit_path
 def test_setup_logger_level_info(mock_log_folder_exists):
-    """
-    Test setup_logger with INFO level.
-    Verifies logger level is set to logging.INFO.
-    """
     logger = setup_logger(name="info_level_test", level=logging.INFO)
-
     assert logger.level == logging.INFO
 
 
 def test_setup_logger_level_warning(mock_log_folder_exists):
-    """
-    Test setup_logger with WARNING level.
-    Verifies logger level is set to logging.WARNING.
-    """
     logger = setup_logger(name="warning_level_test", level=logging.WARNING)
-
     assert logger.level == logging.WARNING
 
 
-def test_setup_logger_default_level_debug(mock_log_folder_exists):
-    """
-    Test setup_logger default level is DEBUG.
-    Verifies logger level is logging.DEBUG when no level specified.
-    """
+def test_setup_logger_default_level_info(mock_log_folder_exists):
     logger = setup_logger(name="default_level_test")
-
-    assert logger.level == logging.DEBUG
-
+    assert logger.level == logging.INFO
 
 def test_setup_logger_formatter_is_agent_formatter(mock_log_folder_exists):
-    """
-    Test setup_logger uses AgentFormatter for all handlers.
-    Verifies formatter is an instance of AgentFormatter.
-    """
     logger = setup_logger(name="formatter_test")
-
     for handler in logger.handlers:
-        assert isinstance(handler.formatter, AgentFormatter), \
-            "Handler formatter should be AgentFormatter"
+        assert isinstance(handler.formatter, AgentFormatter)
 
 
 def test_rotating_file_handler_max_bytes(mock_log_folder_exists):
-    """
-    Test RotatingFileHandler configuration.
-    Verifies maxBytes is 100000000 and backupCount is 1.
-    """
     logger = setup_logger(name="rotation_test")
-
     file_handlers = [h for h in logger.handlers if isinstance(h, RotatingFileHandler)]
-    assert len(file_handlers) > 0, "Expected RotatingFileHandler"
-
+    assert len(file_handlers) > 0
     handler = file_handlers[0]
-    assert handler.maxBytes == 100000000, "maxBytes should be 100MB (100000000 bytes)"
-    assert handler.backupCount == 1, "backupCount should be 1"
+    assert handler.maxBytes == 100000000
+    assert handler.backupCount == 1
 
 
 def test_setup_logger_returns_logger_instance(mock_log_folder_exists):
-    """
-    Test setup_logger returns a logging.Logger instance.
-    Verifies the return type is correct.
-    """
     logger = setup_logger(name="return_type_test")
+    assert isinstance(logger, logging.Logger)
 
-    assert isinstance(logger, logging.Logger), "Should return a logging.Logger instance"
 
-
-def test_setup_logger_handler_accumulation_behavior(mock_log_folder_exists):
-    """
-    Test that calling setup_logger twice with same name accumulates handlers.
-    This documents the current behavior - handlers are added without deduplication.
-    """
-    # First call
-    logger1 = setup_logger(name="accumulation_test")
+def test_setup_logger_no_handler_duplication(mock_log_folder_exists):
+    logger1 = setup_logger(name="dedup_test")
     handler_count_1 = len(logger1.handlers)
-
-    # Second call (same name)
-    logger2 = setup_logger(name="accumulation_test")
-    handler_count_2 = len(logger2.handlers)
-
-    # Same logger instance returned
+    logger2 = setup_logger(name="dedup_test")
     assert logger1 is logger2
-    # Handlers accumulate on second call (current behavior)
-    assert handler_count_2 > handler_count_1
+    assert handler_count_1 == len(logger2.handlers)
 
 
 def test_setup_logger_with_empty_string_name(mock_log_folder_not_exists):
-    """
-    Test setup_logger with empty string as name.
-    Verifies it falls back to console-only logging.
-    """
     logger = setup_logger(name="", log_file=None)
-
-    # Should have StreamHandler (console output)
     stream_handlers = [h for h in logger.handlers if isinstance(h, logging.StreamHandler)]
-    assert len(stream_handlers) > 0, "Expected StreamHandler for empty name"
-
-
-# ============================================================================
-# Test Cases for AgentFormatter class
-# ============================================================================
+    assert len(stream_handlers) > 0
 
 
 def test_agent_formatter_format_without_agent(mock_agent_and_thread_names):
-    """
-    Test AgentFormatter.format without agent name or thread.
-    Verifies message_id is empty string.
-    """
     formatter = AgentFormatter()
-    record = logging.LogRecord(
-        name="test",
-        level=logging.INFO,
-        pathname="test.py",
-        lineno=1,
-        msg="Test message",
-        args=(),
-        exc_info=None
-    )
-
-    formatted = formatter.format(record)
-
-    # message_id should be empty when no agent/thread names
-    assert record.message_id == "", "message_id should be empty string without agent/thread"
+    record = logging.LogRecord("test", logging.INFO, "test.py", 1, "Test message", (), None)
+    formatter.format(record)
+    assert record.message_id == ""
 
 
 def test_agent_formatter_format_with_agent_name(mock_agent_name):
-    """
-    Test AgentFormatter.format with agent name set.
-    Verifies message_id contains agent name pattern.
-    """
     formatter = AgentFormatter()
-    record = logging.LogRecord(
-        name="test",
-        level=logging.INFO,
-        pathname="test.py",
-        lineno=1,
-        msg="Test message",
-        args=(),
-        exc_info=None
-    )
-
-    formatted = formatter.format(record)
-
-    # message_id should contain agent name pattern
-    assert "TestAgent" in record.message_id, \
-        "message_id should contain agent name"
+    record = logging.LogRecord("test", logging.INFO, "test.py", 1, "Test message", (), None)
+    formatter.format(record)
+    assert "TestAgent" in record.message_id
 
 
 def test_agent_formatter_format_with_thread_name(mock_thread_name):
-    """
-    Test AgentFormatter.format with thread name set.
-    Verifies message_id contains thread name pattern.
-    """
     formatter = AgentFormatter()
-    record = logging.LogRecord(
-        name="test",
-        level=logging.INFO,
-        pathname="test.py",
-        lineno=1,
-        msg="Test message",
-        args=(),
-        exc_info=None
-    )
-
-    formatted = formatter.format(record)
-
-    # message_id should contain thread name pattern
-    assert "TestThread" in record.message_id, \
-        "message_id should contain thread name"
+    record = logging.LogRecord("test", logging.INFO, "test.py", 1, "Test message", (), None)
+    formatter.format(record)
+    assert "TestThread" in record.message_id
 
 
 def test_agent_formatter_format_with_both_agent_and_thread(mock_agent_name, mock_thread_name):
-    """
-    Test AgentFormatter.format with both agent and thread names.
-    Verifies message_id contains both names in expected format.
-    """
     formatter = AgentFormatter()
-    record = logging.LogRecord(
-        name="test",
-        level=logging.INFO,
-        pathname="test.py",
-        lineno=1,
-        msg="Test message",
-        args=(),
-        exc_info=None
-    )
-
-    formatted = formatter.format(record)
-
-    # message_id should contain both names in format (agent:thread)
-    assert "TestAgent" in record.message_id
-    assert "TestThread" in record.message_id
-    assert record.message_id == "(TestAgent:TestThread)", \
-        f"Expected '(TestAgent:TestThread)', got '{record.message_id}'"
+    record = logging.LogRecord("test", logging.INFO, "test.py", 1, "Test message", (), None)
+    formatter.format(record)
+    assert record.message_id == "(TestAgent:TestThread)"
 
 
 def test_agent_formatter_custom_format_string():
-    """
-    Test AgentFormatter with custom format string.
-    Verifies custom format is applied correctly.
-    """
-    custom_fmt = "%(levelname)s - %(message)s"
-    formatter = AgentFormatter(fmt=custom_fmt)
-
-    record = logging.LogRecord(
-        name="test",
-        level=logging.WARNING,
-        pathname="test.py",
-        lineno=1,
-        msg="Custom format test",
-        args=(),
-        exc_info=None
-    )
-
+    formatter = AgentFormatter(fmt="%(levelname)s - %(message)s")
+    record = logging.LogRecord("test", logging.WARNING, "test.py", 1, "Custom format test", (), None)
     formatted = formatter.format(record)
-
     assert "WARNING" in formatted
     assert "Custom format test" in formatted
 
 
 def test_agent_formatter_custom_date_format():
-    """
-    Test AgentFormatter with custom date format.
-    Verifies custom date format is applied correctly.
-    """
-    custom_fmt = "%(asctime)s %(message)s"
-    custom_datefmt = "%Y-%m-%d"
-    formatter = AgentFormatter(fmt=custom_fmt, datefmt=custom_datefmt)
-
-    record = logging.LogRecord(
-        name="test",
-        level=logging.INFO,
-        pathname="test.py",
-        lineno=1,
-        msg="Date format test",
-        args=(),
-        exc_info=None
-    )
-
-    formatted = formatter.format(record)
-
-    # Should contain date in YYYY-MM-DD format
     import re
-    date_pattern = r"\d{4}-\d{2}-\d{2}"
-    assert re.search(date_pattern, formatted), \
-        "Expected date in YYYY-MM-DD format"
+    formatter = AgentFormatter(fmt="%(asctime)s %(message)s", datefmt="%Y-%m-%d")
+    record = logging.LogRecord("test", logging.INFO, "test.py", 1, "Date format test", (), None)
+    formatted = formatter.format(record)
+    assert re.search(r"\d{4}-\d{2}-\d{2}", formatted)
 
 
 def test_agent_formatter_fallback_to_env_variable(mock_agent_and_thread_names):
-    """
-    Test AgentFormatter falls back to environment variable when thread-local is empty.
-    Verifies AGENT_NAME env var is used as fallback.
-    """
-    env_vars = {"AGENT_NAME": "EnvAgent", "AI_AGENT": ""}
-    with patch.dict(os.environ, env_vars, clear=False), \
-         patch("topsailai.utils.thread_local_tool.get_agent_name", return_value=None), \
-         patch("topsailai.utils.thread_local_tool.get_thread_name", return_value=None):
+    with patch.dict(os.environ, {"AGENT_NAME": "EnvAgent", "AI_AGENT": ""}, clear=False):
         formatter = AgentFormatter()
-        record = logging.LogRecord(
-            name="test",
-            level=logging.INFO,
-            pathname="test.py",
-            lineno=1,
-            msg="Env test",
-            args=(),
-            exc_info=None
-        )
-
+        record = logging.LogRecord("test", logging.INFO, "test.py", 1, "Env test", (), None)
         formatter.format(record)
-
-        assert "EnvAgent" in record.message_id, \
-            "message_id should contain agent name from environment variable"
+        assert "EnvAgent" in record.message_id
 
 
 def test_agent_formatter_fallback_to_ai_agent_env(mock_agent_and_thread_names):
-    """
-    Test AgentFormatter falls back to AI_AGENT env var when AGENT_NAME is not set.
-    Verifies AI_AGENT env var is used as fallback.
-    """
-    env_vars = {"AGENT_NAME": "", "AI_AGENT": "AIAgent"}
-    with patch.dict(os.environ, env_vars, clear=False), \
-         patch("topsailai.utils.thread_local_tool.get_agent_name", return_value=None), \
-         patch("topsailai.utils.thread_local_tool.get_thread_name", return_value=None):
+    with patch.dict(os.environ, {"AGENT_NAME": "", "AI_AGENT": "AIAgent"}, clear=False):
         formatter = AgentFormatter()
-        record = logging.LogRecord(
-            name="test",
-            level=logging.INFO,
-            pathname="test.py",
-            lineno=1,
-            msg="AI_AGENT test",
-            args=(),
-            exc_info=None
-        )
-
+        record = logging.LogRecord("test", logging.INFO, "test.py", 1, "AI_AGENT test", (), None)
         formatter.format(record)
-
-        assert "AIAgent" in record.message_id, \
-            "message_id should contain agent name from AI_AGENT environment variable"
-
-
-# ============================================================================
-# Integration Tests
-# ============================================================================
+        assert "AIAgent" in record.message_id
 
 
 def test_full_logging_pipeline_integration(mock_log_folder_exists, mock_agent_and_thread_names, tmp_path):
-    """
-    Integration test for full logging pipeline.
-    Tests that messages are actually logged to handlers.
-    """
-    # Create a temporary log file
     log_file = str(tmp_path / "integration_test.log")
-
-    # Setup logger
     logger = setup_logger(name="integration_test", log_file=log_file)
-
-    # Log a test message
     test_message = "Integration test message"
     logger.info(test_message)
-
-    # Force flush all handlers
     for handler in logger.handlers:
         handler.flush()
-
-    # Verify log file contains the message
     if os.path.exists(log_file):
         with open(log_file, "r") as f:
-            content = f.read()
-            assert test_message in content, "Logged message should appear in log file"
+            assert test_message in f.read()
 
 
 def test_logger_propagation_to_root(mock_log_folder_exists):
-    """
-    Test that logger propagation is properly configured.
-    Verifies logger does not propagate to root logger by default.
-    """
     logger = setup_logger(name="propagation_test")
-
-    # Logger should not propagate to root by default (handlers are added directly)
-    assert logger.propagate is True, \
-        "Logger should propagate to root logger by default"
+    assert logger.propagate is True
 
 
 def test_multiple_handlers_with_different_levels(mock_log_folder_exists):
-    """
-    Test setup_logger with different handler configurations.
-    Verifies multiple handlers can coexist.
-    """
-    # Create logger with file handler
     logger = setup_logger(name="multi_handler_test")
-
-    # Add another stream handler manually
     additional_handler = logging.StreamHandler()
     additional_handler.setLevel(logging.ERROR)
     logger.addHandler(additional_handler)
-
-    # Verify both handlers exist
     stream_handlers = [h for h in logger.handlers if isinstance(h, logging.StreamHandler)]
-    assert len(stream_handlers) >= 2, "Should have at least 2 stream handlers"
+    assert len(stream_handlers) >= 2
+
+
+def _run_in_subprocess(code: str, env: dict = None) -> subprocess.CompletedProcess:
+    """Run Python code in a subprocess to isolate root logger state from pytest."""
+    environment = os.environ.copy()
+    if env:
+        environment.update(env)
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd="/TopsailAI/src/topsailai",
+        env=environment,
+    )
+
+
+def test_configure_root_logger_adds_file_handler():
+    code = """
+import logging
+import os
+import tempfile
+from topsailai.logger.base_logger import configure_root_logger, AgentFormatter, ROOT_LOG_FILE_NAME, ROOT_LOG_FORMAT
+from topsailai.logger.base_logger import get_log_folder
+
+root = logging.getLogger()
+for h in root.handlers[:]:
+    root.removeHandler(h)
+root.setLevel(logging.WARNING)
+
+with tempfile.TemporaryDirectory() as tmp:
+    os.environ["TOPSAILAI_HOME"] = tmp
+    configure_root_logger(level=logging.INFO)
+    assert len(root.handlers) > 0, "expected at least one handler"
+    file_handlers = [h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
+    assert len(file_handlers) == 1, "expected exactly one RotatingFileHandler"
+    assert isinstance(file_handlers[0].formatter, AgentFormatter), "expected AgentFormatter"
+    assert file_handlers[0].formatter._fmt == ROOT_LOG_FORMAT, f"expected {ROOT_LOG_FORMAT!r}, got {file_handlers[0].formatter._fmt!r}"
+    expected_path = os.path.join(get_log_folder(), ROOT_LOG_FILE_NAME + ".log")
+    assert file_handlers[0].baseFilename == expected_path, f"expected {expected_path}, got {file_handlers[0].baseFilename}"
+    assert root.level == logging.INFO, f"expected INFO, got {root.level}"
+print("ok")
+"""
+    result = _run_in_subprocess(code)
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_standard_getlogger_inherits_root_format():
+    code = """
+import logging
+from topsailai.logger.base_logger import configure_root_logger, AgentFormatter
+root = logging.getLogger()
+for h in root.handlers[:]:
+    root.removeHandler(h)
+root.setLevel(logging.WARNING)
+configure_root_logger(level=logging.INFO)
+std_logger = logging.getLogger("standard.test.module")
+std_logger.setLevel(logging.DEBUG)
+assert std_logger.level == logging.DEBUG
+assert root.level == logging.INFO
+print("ok")
+"""
+    result = _run_in_subprocess(code)
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_configure_root_logger_default_is_info():
+    code = """
+import logging
+from topsailai.logger.base_logger import configure_root_logger
+root = logging.getLogger()
+for h in root.handlers[:]:
+    root.removeHandler(h)
+root.setLevel(logging.WARNING)
+configure_root_logger()
+assert root.level == logging.INFO, f"expected INFO, got {root.level}"
+print("ok")
+"""
+    result = _run_in_subprocess(code, env={"DEBUG": "0"})
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_configure_root_logger_debug_env():
+    code = """
+import logging
+import os
+from topsailai.logger.base_logger import configure_root_logger
+# The project loads .env on import, which may set TOPSAILAI_LOG_LEVEL.
+# For this test we want DEBUG=1 to be the active signal, so clear any
+# externally configured log level before resolving the level.
+os.environ.pop("TOPSAILAI_LOG_LEVEL", None)
+root = logging.getLogger()
+for h in root.handlers[:]:
+    root.removeHandler(h)
+root.setLevel(logging.WARNING)
+configure_root_logger()
+assert root.level == logging.DEBUG, f"expected DEBUG, got {root.level}"
+print("ok")
+"""
+    result = _run_in_subprocess(code, env={"DEBUG": "1"})
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_configure_root_logger_respects_external_config(clean_root_logger):
+    clean_root_logger.setLevel(logging.ERROR)
+    external_handler = logging.StreamHandler()
+    external_handler.setLevel(logging.ERROR)
+    clean_root_logger.addHandler(external_handler)
+    configure_root_logger(level=logging.INFO)
+    assert clean_root_logger.level == logging.ERROR
+    assert external_handler in clean_root_logger.handlers
+
+
+def test_configure_root_logger_no_third_party_flood():
+    code = """
+import logging
+import io
+from topsailai.logger.base_logger import configure_root_logger
+root = logging.getLogger()
+for h in root.handlers[:]:
+    root.removeHandler(h)
+root.setLevel(logging.WARNING)
+configure_root_logger()
+# Capture everything the root handler would emit.
+captured = io.StringIO()
+root.handlers[0].stream = captured
+# Simulate a third-party library that does not set its own level and therefore
+# inherits the root logger's level. With the root at INFO, DEBUG records must
+# not be emitted, while INFO/WARNING records are.
+third_party = logging.getLogger("third_party_lib")
+third_party.debug("third party debug message")
+third_party.info("third party info message")
+third_party.warning("third party warning message")
+assert root.level == logging.INFO, f"expected root INFO, got {root.level}"
+output = captured.getvalue()
+assert "third party debug message" not in output, "third party DEBUG should not be emitted"
+assert "third party info message" in output, "third party INFO should be emitted"
+assert "third party warning message" in output, "third party WARNING should be emitted"
+print("ok")
+"""
+    result = _run_in_subprocess(code, env={"DEBUG": "0"})
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_setup_logger_creates_missing_log_folder(tmp_path):
+    log_folder = tmp_path / "missing_log_folder"
+    assert not log_folder.exists()
+    with patch("topsailai.logger.base_logger.get_log_folder", return_value=str(log_folder) + "/"):
+        logger = setup_logger(name="missing_folder_test")
+    assert log_folder.exists()
+    file_handlers = [h for h in logger.handlers if isinstance(h, RotatingFileHandler)]
+    assert len(file_handlers) == 1
+    assert file_handlers[0].baseFilename.startswith(str(log_folder))
+
+
+def test_setup_logger_raises_when_log_folder_not_creatable(tmp_path):
+    parent_file = tmp_path / "not_a_directory"
+    parent_file.write_text("I am a file")
+    impossible_folder = parent_file / "log_folder"
+    with patch("topsailai.logger.base_logger.get_log_folder", return_value=str(impossible_folder) + "/"):
+        with pytest.raises(RuntimeError):
+            setup_logger(name="cannot_create_test")
+
+
+def test_setup_logger_replaces_different_log_file(tmp_path):
+    first_path = str(tmp_path / "first.log")
+    second_path = str(tmp_path / "second.log")
+    logger1 = setup_logger(name="replace_test", log_file=first_path)
+    file_handlers_1 = [h for h in logger1.handlers if isinstance(h, RotatingFileHandler)]
+    assert len(file_handlers_1) == 1
+    assert file_handlers_1[0].baseFilename == first_path
+    logger2 = setup_logger(name="replace_test", log_file=second_path)
+    assert logger1 is logger2
+    file_handlers_2 = [h for h in logger2.handlers if isinstance(h, RotatingFileHandler)]
+    assert len(file_handlers_2) == 1
+    assert file_handlers_2[0].baseFilename == second_path
+
+
+def test_disable_root_logger_config_env_var():
+    code = """
+import logging
+import os
+os.environ["TOPSAILAI_DISABLE_ROOT_LOGGER_CONFIG"] = "1"
+# Importing topsailai.logger.base_logger must not configure the root logger.
+from topsailai.logger.base_logger import configure_root_logger
+root = logging.getLogger()
+# The module import should not have added handlers. If something else added a
+# handler (e.g. another import), remove it so we can verify our function is a no-op.
+for h in root.handlers[:]:
+    root.removeHandler(h)
+root.setLevel(logging.WARNING)
+configure_root_logger()
+assert len(root.handlers) == 0, f"expected 0 handlers, got {len(root.handlers)}"
+assert root.level == logging.WARNING, f"expected WARNING, got {root.level}"
+print("ok")
+"""
+    result = _run_in_subprocess(code)
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_setup_logger_respects_log_level_env_warning(mock_log_folder_exists):
+    with patch.dict(os.environ, {"TOPSAILAI_LOG_LEVEL": "WARNING"}, clear=False):
+        logger = setup_logger(name="env_warning_test")
+    assert logger.level == logging.WARNING
+
+
+def test_setup_logger_debug_env_sets_debug_level(mock_log_folder_exists):
+    with patch.dict(os.environ, {"DEBUG": "1"}, clear=False):
+        logger = setup_logger(name="env_debug_test")
+    assert logger.level == logging.DEBUG
+
+
+def test_configure_root_logger_respects_log_level_env_warning():
+    code = """
+import logging
+import os
+import tempfile
+from topsailai.logger.base_logger import configure_root_logger
+
+root = logging.getLogger()
+for h in root.handlers[:]:
+    root.removeHandler(h)
+root.setLevel(logging.WARNING)
+
+with tempfile.TemporaryDirectory() as tmp:
+    os.environ["TOPSAILAI_HOME"] = tmp
+    os.environ["TOPSAILAI_LOG_LEVEL"] = "WARNING"
+    configure_root_logger()
+    assert root.level == logging.WARNING, f"expected WARNING, got {root.level}"
+print("ok")
+"""
+    result = _run_in_subprocess(code, env={"DEBUG": "0"})
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_configure_root_logger_no_stdout_output():
+    code = """
+import logging
+import os
+import sys
+import tempfile
+from topsailai.logger.base_logger import configure_root_logger
+
+root = logging.getLogger()
+for h in root.handlers[:]:
+    root.removeHandler(h)
+root.setLevel(logging.WARNING)
+
+with tempfile.TemporaryDirectory() as tmp:
+    os.environ["TOPSAILAI_HOME"] = tmp
+    configure_root_logger(level=logging.INFO)
+    # Redirect stdout/stderr to capture any console output.
+    old_stdout, old_stderr = sys.stdout, sys.stderr
+    captured_stdout = []
+    captured_stderr = []
+    class Capture:
+        def __init__(self, buf):
+            self.buf = buf
+        def write(self, text):
+            self.buf.append(text)
+        def flush(self):
+            pass
+    sys.stdout = Capture(captured_stdout)
+    sys.stderr = Capture(captured_stderr)
+    try:
+        logger = logging.getLogger("stdout.test")
+        logger.info("this should not appear on stdout or stderr")
+    finally:
+        sys.stdout, sys.stderr = old_stdout, old_stderr
+
+stdout_text = "".join(captured_stdout)
+stderr_text = "".join(captured_stderr)
+assert "this should not appear" not in stdout_text, f"unexpected stdout: {stdout_text!r}"
+assert "this should not appear" not in stderr_text, f"unexpected stderr: {stderr_text!r}"
+print("ok")
+"""
+    result = _run_in_subprocess(code)
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_configure_root_logger_writes_to_file():
+    code = """
+import logging
+import os
+import tempfile
+from topsailai.logger.base_logger import configure_root_logger
+
+root = logging.getLogger()
+for h in root.handlers[:]:
+    root.removeHandler(h)
+root.setLevel(logging.WARNING)
+
+with tempfile.TemporaryDirectory() as tmp:
+    os.environ["TOPSAILAI_HOME"] = tmp
+    configure_root_logger(level=logging.INFO)
+    logger = logging.getLogger("file.test")
+    logger.info("hello from file test")
+    for h in root.handlers:
+        h.flush()
+    log_file = root.handlers[0].baseFilename
+    assert os.path.exists(log_file), f"log file not found: {log_file}"
+    with open(log_file, "r") as f:
+        content = f.read()
+    assert "hello from file test" in content, f"message not in log file: {content!r}"
+print("ok")
+"""
+    result = _run_in_subprocess(code)
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+
+def test_resolve_log_level_invalid_env_falls_back_to_info():
+    with patch.dict(os.environ, {ENV_LOG_LEVEL: "NOT_A_LEVEL"}, clear=False):
+        assert _resolve_log_level(None) == logging.INFO
+
+
+def test_resolve_log_level_numeric_env():
+    with patch.dict(os.environ, {ENV_LOG_LEVEL: "25"}, clear=False):
+        assert _resolve_log_level(None) == 25
+
+
+def test_get_log_folder_fallback_when_import_fails():
+    code = """
+import logging
+from topsailai.logger.base_logger import get_log_folder
+
+# The module is already imported; patch the cached module so the next
+# import inside get_log_folder raises ImportError and triggers fallback.
+import sys
+sys.modules["topsailai.workspace.folder_constants"] = None
+try:
+    folder = get_log_folder()
+    print(folder)
+except Exception as e:
+    print(f"ERROR: {e}")
+"""
+    result = _run_in_subprocess(code)
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert result.stdout.strip() == "/topsailai/log/"
+
+
+def test_ensure_handler_closes_duplicate_non_file_handler(mock_log_folder_exists):
+    logger = logging.getLogger("ensure_handler_non_file_test")
+    for h in logger.handlers[:]:
+        h.close()
+        logger.removeHandler(h)
+    first = logging.StreamHandler()
+    logger.addHandler(first)
+    second = logging.StreamHandler()
+    _ensure_handler(logger, second)
+    assert len(logger.handlers) == 1
+    assert logger.handlers[0] is first
+
+
+def test_configure_root_logger_disabled_in_subprocess():
+    code = """
+import logging
+import os
+from topsailai.logger.base_logger import configure_root_logger, ENV_DISABLE_ROOT_LOGGER_CONFIG
+
+os.environ[ENV_DISABLE_ROOT_LOGGER_CONFIG] = "1"
+root = logging.getLogger()
+for h in root.handlers[:]:
+    root.removeHandler(h)
+root.setLevel(logging.WARNING)
+
+configure_root_logger(level=logging.INFO)
+
+print(root.level)
+print(len(root.handlers))
+"""
+    result = _run_in_subprocess(code)
+    assert result.returncode == 0, result.stderr or result.stdout
+    lines = result.stdout.strip().splitlines()
+    assert lines[-2] == str(logging.WARNING)
+    assert lines[-1] == "0"
+
+
+def test_configure_root_logger_adds_file_handler_in_subprocess():
+    code = """
+import logging
+import os
+import tempfile
+from logging.handlers import RotatingFileHandler
+from topsailai.logger.base_logger import configure_root_logger
+
+root = logging.getLogger()
+for h in root.handlers[:]:
+    root.removeHandler(h)
+root.setLevel(logging.WARNING)
+
+with tempfile.TemporaryDirectory() as tmp:
+    os.environ["TOPSAILAI_HOME"] = tmp
+    configure_root_logger(level=logging.INFO)
+    print(root.level)
+    print(len(root.handlers))
+    handler = root.handlers[0]
+    print(isinstance(handler, RotatingFileHandler))
+    print(handler.baseFilename.endswith("topsailai.log"))
+"""
+    result = _run_in_subprocess(code)
+    assert result.returncode == 0, result.stderr or result.stdout
+    lines = result.stdout.strip().splitlines()
+    assert lines[-4] == str(logging.INFO)
+    assert lines[-3] == "1"
+    assert lines[-2] == "True"
+    assert lines[-1] == "True"

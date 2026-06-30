@@ -363,6 +363,8 @@ def input_from_pipe(
         If the platform does not support named pipes.
     TimeoutError:
         If *timeout* seconds pass without receiving any data.
+    EOFError:
+        If terminal stdin reaches EOF before any input is received.
     """
     if getattr(os, "mkfifo", None) is None:
         raise NotImplementedError("Named pipes are not supported on this platform")
@@ -472,10 +474,10 @@ def input_from_pipe(
                         chunks.append(line.encode(encoding))
                     else:
                         stdin_eof = True
-                        # EOF on an idle terminal should return an empty
-                        # string immediately rather than waiting for the pipe.
+                        # EOF on an idle terminal should raise EOFError
+                        # so upper layers can detect Ctrl+D gracefully.
                         if not writer_seen:
-                            return ""
+                            raise EOFError("EOF on terminal stdin")
 
             try:
                 decoded = b"".join(chunks).decode(encoding)

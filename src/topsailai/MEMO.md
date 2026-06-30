@@ -595,6 +595,29 @@ The logger in `logger/base_logger.py` can set identifier information beyond `thr
 - `message_id` — composed as `(agent_name:thread_name)` when either value is present.
 - Standard `LogRecord` fields — `thread` id, `pathname`, and `lineno` are included via the formatter string in `setup_logger()`.
 
+### Standard `logging.getLogger(__name__)` support
+Importing `topsailai.logger` automatically configures the Python root logger with the project's `AgentFormatter`. This allows any module to use standard `logger = logging.getLogger(__name__)` and still receive the unified format and level. The automatic configuration only takes effect when the root logger has no handlers, so it will not override an externally configured root logger (e.g., pytest, Django, Flask). Set `TOPSAILAI_DISABLE_ROOT_LOGGER_CONFIG=1` to disable this behavior entirely.
+
+### Root logger output destination
+By default, the automatic root logger configuration writes to a rotating file under the project's log folder (`FOLDER_LOG` / `get_log_folder()`) and does **not** add a console handler. This keeps stdout/stderr clean of logging output. The log file path is typically `{log_folder}/topsailai.log`.
+
+### Log level override
+The environment variable `TOPSAILAI_LOG_LEVEL` overrides the default level for both the automatically configured root logger and `setup_logger()` when no explicit `level` is passed. Supported values (case-insensitive): `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`; numeric levels are also accepted. If `TOPSAILAI_LOG_LEVEL` is unset, the level falls back to `DEBUG` when `DEBUG=1`, otherwise `INFO`.
+
+### Usage
+```python
+import logging
+import topsailai.logger  # configures root logger on import
+
+logger = logging.getLogger(__name__)
+logger.info("This goes to the project log file, not stdout.")
+```
+
+- Importing `topsailai.logger` (or `topsailai` itself) calls `configure_root_logger()`, which configures the Python root logger with `AgentFormatter` and a rotating file handler.
+- Any module can then use `logger = logging.getLogger(__name__)` and automatically get the project-wide format, level, and identifier fields.
+- `setup_logger(name)` remains available for named loggers that need dedicated file output.
+- If the root logger already has handlers but they lack a formatter, `configure_root_logger()` applies `AgentFormatter` to those handlers to ensure consistent output. Handlers that already have a custom formatter are left unchanged.
+
 ### Note for maintainers
 `session_id` is available in thread-local storage (`KEY_SESSION_ID`), default `thread_name` is it, references:
 ```

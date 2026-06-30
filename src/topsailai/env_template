@@ -133,6 +133,18 @@ TOPSAILAI_HUMAN_NAME = "Topsail"
 # tee out to log file, 1 to enabled
 TOPSAILAI_ENABLE_SESSION_TEE_OUT=1
 
+# Disable automatic root logger configuration.
+# Set to 1 to prevent topsailai.logger from configuring the Python root logger.
+TOPSAILAI_DISABLE_ROOT_LOGGER_CONFIG=0
+
+# Log level for the automatically configured root logger and for named loggers
+# created via setup_logger() when no explicit level is provided.
+# Supported values (case-insensitive): DEBUG, INFO, WARNING, ERROR, CRITICAL.
+# Also accepts numeric logging levels.
+# If unset, falls back to DEBUG when DEBUG=1, otherwise INFO.
+TOPSAILAI_LOG_LEVEL="INFO"
+
+
 # =============================================================================
 # LLM Parameters
 # =============================================================================

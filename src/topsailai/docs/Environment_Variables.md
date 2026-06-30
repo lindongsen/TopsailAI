@@ -28,7 +28,8 @@ These variables define the agent's working environment and project access scope.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DEBUG` | `1` | Debug mode. `0` = production (disabled), `1` = debug (enabled, verbose logging). |
+| `TOPSAILAI_LOG_LEVEL` | `""` | Override the default log level for the automatically configured root logger and for `setup_logger()` when no explicit level is provided. Supported values (case-insensitive): `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. Numeric logging levels are also accepted. If unset, falls back to `DEBUG` when `DEBUG=1`, otherwise `INFO`. |
+| `DEBUG` | `1` | Debug mode. `0` = production (disabled), `1` = debug (enabled, verbose logging). Also controls the default level of the automatically configured root logger: `1` sets `logging.DEBUG`, otherwise `logging.INFO`. |
 | `DEBUG_PRINT_TRUNCATE_LENGTH` | `3000` | Maximum length for debug print truncation. |
 | `TOPSAILAI_INTERACTIVE_MODE` | `1` | Interactive mode. `1` = enabled, `0` = disabled. |
 | `TOPSAILAI_PRINT_TOOL_PROMPT` | `0` | Whether to print tool prompt content. `1` = enabled. |
@@ -39,6 +40,7 @@ These variables define the agent's working environment and project access scope.
 | `TOPSAILAI_AGENT_NAME` | `"TopsailAI"` | Default agent name. |
 | `TOPSAILAI_HUMAN_NAME` | `"Topsail"` | Human name used in interactions. |
 | `TOPSAILAI_ENABLE_SESSION_TEE_OUT` | `1` | Tee output to log file. `1` = enabled. |
+| `TOPSAILAI_DISABLE_ROOT_LOGGER_CONFIG` | `"0"` | When set to `1`, importing `topsailai.logger` will not automatically configure the Python root logger. Useful when integrating with external frameworks that manage their own root logger. |
 
 ## OpenAI Configuration
 
