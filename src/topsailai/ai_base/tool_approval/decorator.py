@@ -61,6 +61,12 @@ def with_tool_approval(exec_tool_func: Callable) -> Callable:
             return exec_tool_func(tool_func=tool_func, args=args, tool_name=tool_name, **kwargs)
 
         if decision.action == ApprovalDecision.DENY:
+            rule_name = decision.rule.name if decision.rule and decision.rule.name else "<unnamed>"
+            logger.info(
+                "Tool approval matched rule: [%s] for tool [%s] decision=deny",
+                rule_name,
+                effective_tool_name,
+            )
             raise ToolApprovalDeniedError(
                 f"Tool '{effective_tool_name}' was denied by approval policy.",
                 instance_id=instance.id,
@@ -68,8 +74,10 @@ def with_tool_approval(exec_tool_func: Callable) -> Callable:
 
         # decision.action == ApprovalDecision.ASK
         register_pending_approval(instance)
+        rule_name = decision.rule.name if decision.rule and decision.rule.name else "<unnamed>"
         logger.info(
-            "Approval required for tool [%s] instance=%s timeout=%s policy=%s",
+            "Tool approval matched rule: [%s] for tool [%s] instance=%s timeout=%s policy=%s",
+            rule_name,
             effective_tool_name,
             instance.id,
             decision.timeout,
