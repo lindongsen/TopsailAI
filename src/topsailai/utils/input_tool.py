@@ -399,6 +399,7 @@ def _spawn_terminal_input_subprocess(
         signal.signal(signal.SIGTERM, _term_handler)
 
         line = ""
+        eof_or_interrupt = False
         try:
             if timeout is not None:
                 signal.setitimer(
@@ -407,16 +408,23 @@ def _spawn_terminal_input_subprocess(
             try:
                 line = input(prompt)
             except (TimeoutError, EOFError, KeyboardInterrupt, OSError):
-                line = ""
+                eof_or_interrupt = True
         finally:
             signal.alarm(0)
             _restore_termios()
 
-        try:
-            with os.fdopen(write_fd, "w", closefd=True) as fifo:
-                fifo.write(line + "\\n")
-        except Exception:
-            pass
+        if eof_or_interrupt:
+            # Signal EOF/interrupt by closing the write end without writing.
+            try:
+                os.close(write_fd)
+            except Exception:
+                pass
+        else:
+            try:
+                with os.fdopen(write_fd, "w", closefd=True) as fifo:
+                    fifo.write(line + "\\n")
+            except Exception:
+                pass
         '''
     )
     try:
@@ -629,6 +637,7 @@ def input_from_pipe(
                     chunks.append(data)
                     result = _process_chunks(chunks)
                     if result is not None:
+                        print(result)
                         return result
                 elif chunks:
                     # Writer closed after sending data; return what we have.
@@ -645,12 +654,16 @@ def input_from_pipe(
                     line = line_bytes.decode(encoding).rstrip("\n")
                     return line
                 # Helper closed its write end without producing a line.
-                # Stop monitoring it and continue waiting for pipe input.
+                # This means the user pressed Ctrl+D / EOF on the terminal.
                 try:
                     os.close(helper_read_fd)
                 except OSError:
                     pass
                 helper_read_fd = None
+                if raise_eof_error:
+                    raise EOFError("Terminal input closed (EOF or interrupt)")
+                # Return empty string for normal EOF.
+                return ""
 
         # Pipe EOF: return whatever we have.
         result = _process_chunks(chunks)
