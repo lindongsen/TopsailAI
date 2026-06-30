@@ -394,7 +394,6 @@ def input_from_pipe(
         pipe_eof = False
         stdin_eof = False
         writer_seen = False
-
         def _maybe_return_single_line(decoded: str) -> str | None:
             """Return the first line and buffer the rest when applicable."""
             newline_pos = decoded.find("\n")
@@ -450,6 +449,15 @@ def input_from_pipe(
                     if data:
                         writer_seen = True
                         chunks.append(data)
+                        # Echo pipe data to the terminal so the user can see
+                        # what was received even when it came from the FIFO.
+                        try:
+                            sys.stdout.buffer.write(data)
+                            sys.stdout.buffer.flush()
+                        except (AttributeError, OSError, ValueError):
+                            # stdout may not expose a binary buffer or may be
+                            # closed; visibility is best-effort here.
+                            pass
                     else:
                         pipe_eof = True
                 else:

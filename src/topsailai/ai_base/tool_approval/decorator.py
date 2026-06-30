@@ -68,6 +68,13 @@ def with_tool_approval(exec_tool_func: Callable) -> Callable:
 
         # decision.action == ApprovalDecision.ASK
         register_pending_approval(instance)
+        logger.info(
+            "Approval required for tool [%s] instance=%s timeout=%s policy=%s",
+            effective_tool_name,
+            instance.id,
+            decision.timeout,
+            decision.policy,
+        )
         try:
             instance.transport.send_request(instance)
             status = instance.wait_for_decision(

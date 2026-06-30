@@ -7,6 +7,7 @@ or policy approval before it can execute.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import uuid
@@ -23,6 +24,7 @@ from topsailai.utils import env_tool
 if TYPE_CHECKING:
     from topsailai.ai_base.tool_approval.transport import ApprovalTransport
 
+logger = logging.getLogger(__name__)
 
 DEFAULT_APPROVAL_TIMEOUT = 60.0
 DEFAULT_APPROVAL_POLICY = "deny"
@@ -150,7 +152,6 @@ class ToolApprovalInstance:
             )
 
         # Unknown modes default to require (safe default) per the feature spec.
-        logger = __import__("logging").getLogger(__name__)
         logger.warning("Unknown approval rule mode '%s', defaulting to require", rule.mode)
         return ApprovalDecision(
             action=ApprovalDecision.ASK,
@@ -164,6 +165,7 @@ class ToolApprovalInstance:
         self.status = self.STATUS_APPROVED
         self.decision_by = by
         self.decision_at = time.time()
+        logger.info("Approval granted for tool [%s] instance=%s by=%s", self.tool_name, self.id, by)
         if self.transport is not None:
             self.transport.on_resolved(self)
 
@@ -172,6 +174,7 @@ class ToolApprovalInstance:
         self.status = self.STATUS_DENIED
         self.decision_by = by
         self.decision_at = time.time()
+        logger.warning("Approval denied for tool [%s] instance=%s by=%s", self.tool_name, self.id, by)
         if self.transport is not None:
             self.transport.on_resolved(self)
 
@@ -191,17 +194,29 @@ class ToolApprovalInstance:
             self.status = self.STATUS_APPROVED
             self.decision_by = "policy"
             self.decision_at = time.time()
+            logger.warning(
+                "Approval timeout auto-allowed for tool [%s] instance=%s policy=%s",
+                self.tool_name, self.id, policy,
+            )
             return self.status
         if policy == "ask_again":
             # Reset state and allow one additional wait cycle.
             self.status = self.STATUS_PENDING
             self.decision_by = None
             self.decision_at = None
+            logger.info(
+                "Approval timeout ask_again for tool [%s] instance=%s, retrying once",
+                self.tool_name, self.id,
+            )
             return self.status
         # "deny" and unknown policies default to deny.
         self.status = self.STATUS_DENIED
         self.decision_by = "policy"
         self.decision_at = time.time()
+        logger.warning(
+            "Approval timeout denied for tool [%s] instance=%s policy=%s",
+            self.tool_name, self.id, policy,
+        )
         return self.status
 
     def wait_for_decision(self, *, timeout: float | None = None, policy: str | None = None) -> str:
