@@ -163,12 +163,14 @@ def list_files(
         excluded_starts = tuple()
 
     for root, dirs, files in os.walk(folder_path):
-        if not match_file(
-            root,
+        relative_dir = root.replace(folder_path, "")
+        if relative_dir and not match_file(
+            relative_dir,
             to_exclude_dot_start=to_exclude_dot_start,
             excluded_starts=excluded_starts,
         ):
             continue
+
         for file in files:
             if not match_file(
                 file,
