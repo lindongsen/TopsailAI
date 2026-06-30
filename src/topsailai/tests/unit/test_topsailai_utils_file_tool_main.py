@@ -25,7 +25,8 @@ from topsailai.utils.file_tool import (
     ctxm_try_file_lock,
     ctxm_wait_flock,
     is_file,
-    is_tmp_dir
+    is_tmp_dir,
+    ctxm_backup_file,
 )
 
 
@@ -681,9 +682,98 @@ class TestCtxmWaitFlock:
                 assert f is not None
                 f.write("default test")
 
+    def test_exception_in_with_block_deletes_lock_file(self):
+        """When an exception is raised inside the with block and to_delete_lock_file=True,
+        the lock file must be removed."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_file = os.path.join(tmp_dir, "exc_delete.lock")
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+            with pytest.raises(ValueError, match="boom"):
+                with ctxm_wait_flock(lock_file, to_delete_lock_file=True) as f:
+                    assert f is not None
+                    assert os.path.exists(lock_file)
+                    raise ValueError("boom")
+
+            assert not os.path.exists(lock_file)
+
+    def test_exception_in_with_block_preserves_lock_file(self):
+        """When an exception is raised inside the with block and to_delete_lock_file=False,
+        the lock file must be preserved."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_file = os.path.join(tmp_dir, "exc_preserve.lock")
+
+            with pytest.raises(ValueError, match="boom"):
+                with ctxm_wait_flock(lock_file, to_delete_lock_file=False) as f:
+                    assert f is not None
+                    assert os.path.exists(lock_file)
+                    raise ValueError("boom")
+
+            assert os.path.exists(lock_file)
+
+
+class TestCtxmBackupFile:
+    """Test suite for ctxm_backup_file context manager."""
+
+    def test_source_does_not_exist_yields_none(self):
+        """If the source file does not exist, ctxm_backup_file yields None."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            missing = os.path.join(tmp_dir, "missing.txt")
+            with ctxm_backup_file(missing) as bak:
+                assert bak is None
+            assert not os.path.exists(f"{missing}.bak0")
+
+    def test_creates_bak0(self):
+        """A fresh backup is created as .bak0."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            src = os.path.join(tmp_dir, "source.txt")
+            write_text(src, "source content")
+
+            with ctxm_backup_file(src) as bak:
+                assert bak == f"{src}.bak0"
+                assert os.path.exists(bak)
+                with open(bak, 'r') as f:
+                    assert f.read() == "source content"
+
+    def test_rotates_existing_backups(self):
+        """Existing backups are rotated outward and the oldest .bak9 is dropped."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            src = os.path.join(tmp_dir, "source.txt")
+            write_text(src, "source content")
+
+            # Create bak0 through bak8
+            for i in range(9):
+                write_text(f"{src}.bak{i}", f"bak{i} content")
+
+            with ctxm_backup_file(src) as bak:
+                assert bak == f"{src}.bak0"
+
+            # bak0 is the new copy of source
+            with open(f"{src}.bak0", 'r') as f:
+                assert f.read() == "source content"
+
+            # Previous bak{i} moved to bak{i+1}
+            for i in range(1, 9):
+                with open(f"{src}.bak{i}", 'r') as f:
+                    assert f.read() == f"bak{i - 1} content"
+
+            # bak9 contains the previous bak8 content
+            with open(f"{src}.bak9", 'r') as f:
+                assert f.read() == "bak8 content"
+
+            # No bak10 should exist
+            assert not os.path.exists(f"{src}.bak10")
+
+
+def test_ctxm_temp_file_all_candidates_exist():
+    """When every candidate filename already exists, file_path stays None.
+
+    This covers the fallback branch in ctxm_temp_file and documents that the
+    function currently raises when all 100 attempts are exhausted.
+    """
+    with patch("topsailai.utils.file_tool.os.path.exists", return_value=True):
+        with pytest.raises(TypeError):
+            with ctxm_temp_file("content") as (path, fd):
+                pass
 
 
 # Additional tests to push coverage of utils/file_tool.py above 95%.
@@ -696,10 +786,21 @@ def test_match_file_empty_keyword_after_strip():
     assert match_file("/tmp/abc.txt", False, (), ["   ", "abc"], keyword_min_len=1) is True
 
 
+def test_match_file_empty_path_raises_index_error():
+    """P0: match_file('') with to_exclude_dot_start=True raises IndexError.
+
+    This documents a potential bug in file_tool.py line 78/90 where
+    file_path[0] == '.' is evaluated before checking for an empty string.
+    """
+    with pytest.raises(IndexError):
+        match_file("", True, ())
+
+
 def test_is_file_directory_returns_false():
     """is_file returns False when the path is a directory."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         assert is_file(tmp_dir) is False
+
 
 def test_append_data_exception_returns_false():
     """append_data returns False when writing raises an exception."""
@@ -711,7 +812,8 @@ def test_append_data_exception_returns_false():
         def raising_write(*args, **kwargs):
             raise OSError("write failed")
 
-        with patch("builtins.open", mock_open()) as mocked_open:
+        # Patch the module-level open reference instead of builtins.open globally.
+        with patch("topsailai.utils.file_tool.open", mock_open()) as mocked_open:
             mocked_open.return_value.write.side_effect = raising_write
             result = append_data(file_path, "more")
             assert result is False
@@ -729,6 +831,33 @@ def test_get_all_files_relative_path_via_pwd():
             assert rel_file in files
 
 
+def test_get_all_files_relative_path_to_directory():
+    """P0: relative path that resolves to a directory sets _flag_all_files=False."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        rel_dir = os.path.join(tmp_dir, "rel_dir")
+        os.makedirs(rel_dir)
+        with patch.dict(os.environ, {"TOPSAILAI_PWD": tmp_dir}):
+            flag, files = get_all_files(["rel_dir"])
+            assert flag is False
+            assert files == []
+
+
+def test_get_all_files_relative_path_long_boundary():
+    """P0: when len(_arg) + len(pwd) >= 255 resolution is skipped."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        rel_file = os.path.join(tmp_dir, "rel.txt")
+        with open(rel_file, "w") as f:
+            f.write("x")
+
+        # Construct a PWD so that a short relative path pushes the sum over 255.
+        long_pwd = "/" + "a" * 250
+        rel_arg = "rel.txt"  # len(rel_arg) + len(long_pwd) == 259 >= 255
+        with patch.dict(os.environ, {"TOPSAILAI_PWD": long_pwd}):
+            flag, files = get_all_files([rel_arg])
+            assert flag is False
+            assert files == []
+
+
 def test_get_all_files_relative_path_pwd_not_set():
     """Relative paths fail when TOPSAILAI_PWD is not set."""
     with patch.dict(os.environ, {}, clear=True):
@@ -737,7 +866,7 @@ def test_get_all_files_relative_path_pwd_not_set():
         assert files == []
 
 
-def test_ctxm_temp_file_collision_fallback():
+def test_ctxm_temp_file_collision_fallback(tmp_path):
     """ctxm_temp_file picks a different path when the first candidate exists."""
     call_count = 0
 
@@ -747,7 +876,7 @@ def test_ctxm_temp_file_collision_fallback():
         return 1234567890.0 + (call_count - 1) * 0.0001
 
     with patch("topsailai.utils.file_tool.time.time", side_effect=fake_time):
-        candidate = "/tmp/topsailai.1234567890.0"
+        candidate = str(tmp_path / "topsailai.1234567890.0")
         path = None
         try:
             with open(candidate, "w") as f:
@@ -793,10 +922,19 @@ class TestIsTmpDir:
     def test_file_input_inside_tmp(self):
         assert is_tmp_dir("/tmp/file.txt") is True
 
+    def test_relative_path(self):
+        """P2: relative paths are not recognized as temporary."""
+        assert is_tmp_dir("tmp/file.txt") is False
+        assert is_tmp_dir(".tmp/file.txt") is False
+
+    def test_empty_string(self):
+        """P2: empty string is not recognized as temporary."""
+        assert is_tmp_dir("") is False
+
 
 def test_list_files_excluded_starts_uses_relative_dir():
     """excluded_starts must be matched against relative_dir, not full folder_path."""
-    with tempfile.TemporaryDirectory(dir="/tmp", prefix="abc_") as tmp_dir:
+    with tempfile.TemporaryDirectory(prefix="abc_") as tmp_dir:
         keep_dir = os.path.join(tmp_dir, "keep_me")
         os.makedirs(keep_dir)
         keep_file = os.path.join(keep_dir, "file.txt")
@@ -836,3 +974,34 @@ def test_list_files_excluded_starts_matches_relative_dir_prefix():
         assert drop_file not in results
         assert keep_file in results
         assert root_file in results
+
+
+def test_list_files_trailing_slash_consistency():
+    """P2: excluded_starts matching against relative_dir should be consistent
+    whether folder_path ends with a trailing slash or not.
+
+    If this test fails, it documents a potential inconsistency in list_files
+    caused by root.replace(folder_path, '') producing different relative_dir
+    shapes (e.g. '/sub' vs 'sub').
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        sub_dir = os.path.join(tmp_dir, "sub_dir")
+        os.makedirs(sub_dir)
+        sub_file = os.path.join(sub_dir, "file.txt")
+        root_file = os.path.join(tmp_dir, "root.txt")
+
+        with open(sub_file, "w") as f:
+            f.write("content")
+        with open(root_file, "w") as f:
+            f.write("content")
+
+        results_no_slash = list_files(tmp_dir, excluded_starts=["sub_dir"])
+        results_with_slash = list_files(tmp_dir + os.sep, excluded_starts=["sub_dir"])
+
+        assert (sub_file in results_no_slash) == (sub_file in results_with_slash)
+        assert root_file in results_no_slash
+        assert root_file in results_with_slash
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
