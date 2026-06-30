@@ -152,7 +152,7 @@ class StoryFile(StoryBase):
             stories = []
             for _file in results:
                 stories.append(os.path.basename(_file))
-            return stories
+            return sorted(stories)
 
     def retrieve_stories(self, workspace:str, keywords:str) -> list[dict]|None:
         """Retrieve lots of stories.
