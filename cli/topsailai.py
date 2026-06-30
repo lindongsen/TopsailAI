@@ -5,19 +5,21 @@
   Created: 2026-05-17
   Purpose: Watch log files in {TOPSAILAI_HOME}/workspace/task/ with interactive selection.
            Lists .stdout log files, shows process ownership, and streams selected file.
-           Supports /refresh, /session {number}, /clean, and /help commands.
+           Supports /refresh, /session {number}, /clean, /send, and /help commands.
            Supports loading additional commands from topsailai.yaml with scope awareness.
            Ensures all child processes are cleaned up on exit.
 """
 
 import atexit
 import json
+import errno
 import os
 import re
 import select
 import shlex
 import sys
 import signal
+import stat
 import subprocess
 import time
 from datetime import datetime
@@ -1072,6 +1074,11 @@ def print_help():
             "example": "Example: /clean 3 5 7",
         },
         {
+            "cmd": "/send [session_id_or_index] [message...]",
+            "desc": "Send a message to a running session through its named pipe. In session scope, omit the session id. If no message is provided, enter multi-line input mode (finish with EOF).",
+            "example": "Example: /send 1 hello  or  /send my-session hello",
+        },
+        {
             "cmd": "/help  or  help",
             "desc": "Display this help message with all available commands.",
             "example": "",
@@ -1524,6 +1531,200 @@ def retrieve_session(session_id: str):
 
 
 # =============================================================================
+# Pipe-Based Message Sending
+# =============================================================================
+
+def _build_session_stdout_path(task_dir: str, session_id: str) -> str:
+    """Build the stdout file path for a session."""
+    return os.path.join(task_dir, f"{session_id}.session.stdout")
+
+
+def _build_pipe_path(task_dir: str, session_id: str, pid: int) -> str:
+    """Build the named-pipe path for a session and process."""
+    return os.path.join(task_dir, f"{session_id}.{pid}.session.pipe")
+
+
+def _resolve_session_id_from_arg(
+    arg: str, task_dir: str, log_files: List[dict]
+) -> Optional[str]:
+    """
+    Resolve a session identifier from a command argument.
+
+    Numeric arguments are mapped to the corresponding 1-based entry in the
+    file list. Literal session IDs are returned as-is.
+    """
+    arg = arg.strip()
+    if not arg:
+        return None
+    if arg.isdigit():
+        idx = int(arg) - 1
+        if 0 <= idx < len(log_files):
+            resolved = log_files[idx].get("session_id")
+            if resolved and resolved != "(temp)":
+                return resolved
+        return None
+    return arg
+
+
+def _read_multiline_input_for_send() -> Optional[str]:
+    """
+    Read multi-line input until a standalone 'EOF' line is entered.
+
+    Returns None if the user cancels with Ctrl+C.
+    """
+    print(
+        f"{Colors.CYAN}[INFO] Enter message (type EOF on its own line to finish):{Colors.RESET}"
+    )
+    lines: List[str] = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        except KeyboardInterrupt:
+            print(f"\n{Colors.YELLOW}[INFO] Cancelled.{Colors.RESET}")
+            return None
+        if line == "EOF":
+            break
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _format_pipe_payload(message: str) -> bytes:
+    """
+    Format a message for the pipe protocol.
+
+    Ensures the message body ends with a newline, then appends the EOF
+    marker on its own line.
+    """
+    message = message.strip()
+    if not message.endswith("EOF"):
+        message += "\nEOF"
+    return message.encode("utf-8")
+
+
+def send_message_to_session(
+    session_id: str, message: str, task_dir: str, timeout: float = 5.0
+) -> bool:
+    """
+    Send a message to a running session through its named pipe.
+
+    The receiver must be waiting for input with pipe input enabled. The
+    sender locates the receiver process via the session stdout file, then
+    writes the formatted payload to the FIFO.
+    """
+    stdout_path = _build_session_stdout_path(task_dir, session_id)
+    pid = get_file_pid(stdout_path)
+    if pid is None:
+        print(
+            f"{Colors.RED}[ERROR] Session '{session_id}' does not appear to be running "
+            f"(no process owns its stdout file).{Colors.RESET}"
+        )
+        return False
+
+    pipe_path = _build_pipe_path(task_dir, session_id, pid)
+    if not os.path.exists(pipe_path):
+        print(
+            f"{Colors.RED}[ERROR] Pipe not found: {pipe_path}. "
+            f"Is the session waiting for input with TOPSAILAI_INPUT_PIPE_ENABLED=1?{Colors.RESET}"
+        )
+        return False
+
+    if not stat.S_ISFIFO(os.stat(pipe_path).st_mode):
+        print(
+            f"{Colors.RED}[ERROR] Path exists but is not a named pipe: {pipe_path}.{Colors.RESET}"
+        )
+        return False
+
+    payload = _format_pipe_payload(message)
+    fd: Optional[int] = None
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                fd = os.open(pipe_path, os.O_WRONLY | os.O_NONBLOCK)
+                break
+            except OSError as exc:
+                if exc.errno == errno.ENXIO:
+                    if time.monotonic() >= deadline:
+                        print(
+                            f"{Colors.RED}[ERROR] Timed out waiting for session to open "
+                            f"the pipe for reading.{Colors.RESET}"
+                        )
+                        return False
+                    time.sleep(0.1)
+                    continue
+                raise
+        os.write(fd, payload)
+        print(
+            f"{Colors.GREEN}[INFO] Message sent to session '{session_id}' "
+            f"({len(payload)} bytes).{Colors.RESET}"
+        )
+        return True
+    except OSError as exc:
+        print(
+            f"{Colors.RED}[ERROR] Failed to write to pipe {pipe_path}: {exc}{Colors.RESET}"
+        )
+        return False
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def handle_send_command(
+    user_input: str, task_dir: str, log_files: List[dict]
+) -> None:
+    """
+    Parse and execute the /send command.
+
+    In session scope, the argument is the message. In workspace scope, the
+    first argument is a session ID or 1-based index, and the remainder is
+    the message. When no message is provided, interactive multi-line input
+    is used.
+    """
+    global current_scope, current_session_id
+
+    parts = user_input.split(None, 1)
+    if len(parts) < 2:
+        if current_scope == "session" and current_session_id:
+            session_id = current_session_id
+            message: Optional[str] = None
+        else:
+            print(
+                f"{Colors.RED}[ERROR] Usage: /send <session_id_or_index> [message...] "
+                f"or enter a session scope first with /cd.{Colors.RESET}"
+            )
+            return
+    else:
+        arg = parts[1]
+        if current_scope == "session" and current_session_id:
+            session_id = current_session_id
+            message = arg
+        else:
+            sub_parts = arg.split(None, 1)
+            session_id = _resolve_session_id_from_arg(
+                sub_parts[0], task_dir, log_files
+            )
+            if session_id is None:
+                print(
+                    f"{Colors.RED}[ERROR] Could not resolve session from "
+                    f"'{sub_parts[0]}'.{Colors.RESET}"
+                )
+                return
+            message = sub_parts[1] if len(sub_parts) > 1 else None
+
+    if message is None:
+        message = _read_multiline_input_for_send()
+        if message is None:
+            return
+
+    send_message_to_session(session_id, message, task_dir)
+
+
+# =============================================================================
 # Interactive Selection
 # =============================================================================
 
@@ -1574,6 +1775,9 @@ def prompt_selection(files: List[dict], task_dir: str) -> Tuple[str, Optional[in
                     )
                     continue
 
+            if lower_input.startswith("/send") or lower_input.startswith("send"):
+                return ("send", user_input)
+
             if lower_input in ("/help", "help"):
                 return ("help", None)
 
@@ -1619,7 +1823,7 @@ def prompt_selection(files: List[dict], task_dir: str) -> Tuple[str, Optional[in
             except ValueError:
                 print(
                     f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
-                    f"Please enter a number, /refresh, /session {{number}}, /clean, /help, or 'q'.{Colors.RESET}"
+                    f"Please enter a number, /refresh, /session {{number}}, /clean, /send, /help, or 'q'.{Colors.RESET}"
                 )
 
         except (EOFError, KeyboardInterrupt):
@@ -1695,6 +1899,10 @@ def main():
                 print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
                 log_files = discover_log_files(task_dir)
                 print_table(log_files)
+                continue
+
+            if action == "send":
+                handle_send_command(value, task_dir, log_files)
                 continue
 
             if action == "session":
