@@ -154,6 +154,39 @@ class TestStoryFile(unittest.TestCase):
         self.assertIsNone(result)
         mock_find_files.assert_called_once_with('/workspace/story', 'nonexistent.md')
 
+    @patch('topsailai.tools.story_tool.file_tool.find_files_by_name')
+    def test_get_story_file_default_fuzzy_multiple_returns_first(self, mock_find_files):
+        """Test get_story_file default behavior returns first match when multiple files match."""
+        mock_find_files.return_value = ['/workspace/story/test.md', '/workspace/story/test2.md']
+        result = self.story_file.get_story_file('/workspace', 'test')
+        self.assertEqual(result, '/workspace/story/test.md')
+        mock_find_files.assert_called_once_with('/workspace/story', 'test')
+
+    @patch('topsailai.tools.story_tool.file_tool.find_files_by_name')
+    def test_get_story_file_must_only_one_found(self, mock_find_files):
+        """Test get_story_file with must_only_one=True when exactly one file matches."""
+        mock_find_files.return_value = ['/workspace/story/test.md']
+        result = self.story_file.get_story_file('/workspace', 'test.md', must_only_one=True)
+        self.assertEqual(result, '/workspace/story/test.md')
+        mock_find_files.assert_called_once_with('/workspace/story', 'test.md')
+
+    @patch('topsailai.tools.story_tool.file_tool.find_files_by_name')
+    def test_get_story_file_must_only_one_not_found(self, mock_find_files):
+        """Test get_story_file with must_only_one=True when no file matches."""
+        mock_find_files.return_value = []
+        result = self.story_file.get_story_file('/workspace', 'nonexistent.md', must_only_one=True)
+        self.assertIsNone(result)
+        mock_find_files.assert_called_once_with('/workspace/story', 'nonexistent.md')
+
+    @patch('topsailai.tools.story_tool.file_tool.find_files_by_name')
+    def test_get_story_file_must_only_one_multiple_raises(self, mock_find_files):
+        """Test get_story_file with must_only_one=True when multiple files match."""
+        mock_find_files.return_value = ['/workspace/story/test.md', '/workspace/story/test2.md']
+        with self.assertRaises(Exception) as context:
+            self.story_file.get_story_file('/workspace', 'test', must_only_one=True)
+        self.assertIn("found multiple stories", str(context.exception))
+        mock_find_files.assert_called_once_with('/workspace/story', 'test')
+
     @patch('topsailai.tools.story_tool.lock_tool.FileLock')
     @patch('topsailai.tools.story_tool.os.makedirs')
     @patch('builtins.open', new_callable=mock_open)
