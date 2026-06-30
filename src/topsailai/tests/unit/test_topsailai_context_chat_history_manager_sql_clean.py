@@ -197,8 +197,8 @@ class TestCleanMessages:
                    access_time=current_time - timedelta(minutes=30), access_count=1),
             Message(msg_id="msg4", message="10 minutes old", msg_size=10,
                    access_time=current_time - timedelta(minutes=10), access_count=1),
-            Message(msg_id="msg5", message="No access time", msg_size=10,
-                   access_time=None, access_count=0),
+            Message(msg_id="msg5", message="Recent access time", msg_size=10,
+                   access_time=current_time - timedelta(minutes=5), access_count=0),
         ]
 
         session.add_all(messages)
@@ -222,7 +222,7 @@ class TestCleanMessages:
         remaining_msg_ids = {msg.msg_id for msg in remaining_messages}
         assert "msg3" in remaining_msg_ids  # 30 minutes old (kept)
         assert "msg4" in remaining_msg_ids  # 10 minutes old (kept)
-        assert "msg5" in remaining_msg_ids  # No access time (kept)
+        assert "msg5" in remaining_msg_ids  # Recent access time (kept)
         assert "msg1" not in remaining_msg_ids  # 1 day old (deleted)
         assert "msg2" not in remaining_msg_ids  # 2 hours old (deleted)
 

@@ -57,7 +57,7 @@ class Message(Base):
         message (str): The content of the message.
         create_time (datetime): Timestamp when the message was created.
         msg_size (int): Length of the message.
-        access_time (datetime): Last access time, updated when queried by msg_id.
+        access_time (datetime): Last access time, defaults to creation time and updated when queried by msg_id.
         access_count (int): Number of times the message has been retrieved.
         sessions (relationship): Relationship to SessionMessage instances.
     """
@@ -67,7 +67,7 @@ class Message(Base):
     message = Column(Text, nullable=False)
     create_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
     msg_size = Column(Integer, nullable=False)
-    access_time = Column(DateTime, nullable=True)
+    access_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
     access_count = Column(Integer, default=0, nullable=False)
 
     # Relationship to sessions - one message can be associated with multiple sessions
@@ -153,9 +153,9 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
                     msg_id=msg.msg_id,
                     message=msg.message,
                     msg_size=len(msg.message),
-                    access_time=None,
                     access_count=0,
                     create_time=datetime.now(),
+                    access_time=datetime.now(),
                 )
                 session.add(new_message)
 
