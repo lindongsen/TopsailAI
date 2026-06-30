@@ -1,3 +1,4 @@
+import readline
 '''
   Author: DawsonLin
   Email: lin_dongsen@126.com
@@ -131,6 +132,7 @@ def _input(tips: str = "") -> str:
         return input_from_pipe_session(
             timeout=env_tool.get_input_pipe_timeout(),
             single_line=True,
+            prompt=tips,
         )
     return input(tips)
 
@@ -181,6 +183,13 @@ def input_multi_line(tips: str = "", hook: HookInstruction = None) -> str:
     Allows user to enter multiple lines of text terminated by EOF (Ctrl+D)
     or the string "EOF". Processes hooks after first line is entered.
 
+    When pipe-based input is enabled, each call to ``_input`` returns one
+    line from the pipe. The pipe reader strips a trailing ``\\nEOF`` marker
+    and signals end-of-input with an empty line; an embedded ``\\nEOF``
+    marker in a multi-line payload is also handled here so that everything
+    from the marker onward is discarded and the marker itself is never
+    returned as content.
+
     Args:
         tips (str, optional): Prompt message to display. Defaults to INPUT_TIPS.
         hook (HookInstruction, optional): Hook instruction manager. Defaults to None.
@@ -209,6 +218,14 @@ def input_multi_line(tips: str = "", hook: HookInstruction = None) -> str:
 
         try:
             line = _input("")
+            # A single read may contain a multi-line payload with an EOF
+            # marker (e.g. a pipe source returning more than one line at
+            # once).  Strip the marker and everything after it, then stop
+            # reading so the marker is never returned as content.
+            if "\nEOF\n" in line or line.endswith("\nEOF"):
+                line = line.split("\nEOF", 1)[0]
+                message += line + "\n"
+                break
             if line == "EOF":
                 break
             message += line + "\n"
@@ -387,7 +404,9 @@ def input_from_pipe_session(
     timeout: float | None = None,
     encoding: str = "utf-8",
     eof_marker: str = "EOF",
+    raise_eof_error: bool = True,
     single_line: bool = False,
+    prompt: str = "",
 ) -> str:
     """Read a message from a session-scoped named pipe.
 
@@ -396,6 +415,11 @@ def input_from_pipe_session(
     pipe path from the current session and process ID, then delegates to the
     utility function. The FIFO is always removed after reading, even on
     error.
+
+    By default *raise_eof_error* is ``True`` so that the EOF marker is
+    signaled to the workspace input loop via :class:`EOFError` rather than
+    being returned as an empty string. This keeps multi-line input logic
+    free of pipe-specific EOF detection.
 
     Parameters
     ----------
@@ -409,9 +433,13 @@ def input_from_pipe_session(
         Encoding used to decode bytes read from the pipe.
     eof_marker:
         Optional marker that terminates input when seen on its own line.
+    raise_eof_error:
+        When ``True`` (the default), an EOF marker raises :class:`EOFError`.
     single_line:
         When ``True``, return the first line of input (everything before
         the first ``\\n``). Any remaining content is discarded.
+    prompt:
+        Prompt displayed to the user when terminal input is used.
 
     Returns
     -------
@@ -423,6 +451,8 @@ def input_from_pipe_session(
         If the platform does not support named pipes.
     TimeoutError:
         If *timeout* seconds pass without receiving any data.
+    EOFError:
+        If *raise_eof_error* is ``True`` and the EOF marker is reached.
     """
     pipe_path = _build_pipe_path(session_id)
     abs_path = os.path.abspath(pipe_path)
@@ -432,7 +462,9 @@ def input_from_pipe_session(
             timeout=timeout,
             encoding=encoding,
             eof_marker=eof_marker,
+            raise_eof_error=raise_eof_error,
             single_line=single_line,
+            prompt=prompt,
         )
     finally:
         if os.path.exists(abs_path):

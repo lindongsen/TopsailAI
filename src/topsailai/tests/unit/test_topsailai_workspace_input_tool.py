@@ -482,8 +482,11 @@ class TestInputFromPipeSession(unittest.TestCase):
             timeout=5.0,
             encoding="utf-8",
             eof_marker="EOF",
+            raise_eof_error=True,
             single_line=False,
+            prompt="",
         )
+
     @patch("topsailai.workspace.input_tool.utils_input_tool.input_from_pipe")
     @patch("topsailai.workspace.input_tool._build_pipe_path")
     def test_passes_custom_eof_marker(self, mock_build_path, mock_input_from_pipe):
@@ -497,7 +500,9 @@ class TestInputFromPipeSession(unittest.TestCase):
             timeout=None,
             encoding="utf-8",
             eof_marker="END",
+            raise_eof_error=True,
             single_line=False,
+            prompt="",
         )
 
     @patch("topsailai.workspace.input_tool.utils_input_tool.input_from_pipe")
@@ -514,7 +519,9 @@ class TestInputFromPipeSession(unittest.TestCase):
             timeout=None,
             encoding="utf-8",
             eof_marker="EOF",
+            raise_eof_error=True,
             single_line=True,
+            prompt="",
         )
 
 
@@ -548,6 +555,7 @@ class TestPrivateInput(unittest.TestCase):
         mock_input_from_pipe_session.assert_called_once_with(
             timeout=None,
             single_line=True,
+            prompt="prompt> ",
         )
 
     @patch("topsailai.workspace.input_tool.input_from_pipe_session")
@@ -562,6 +570,7 @@ class TestPrivateInput(unittest.TestCase):
         mock_input_from_pipe_session.assert_called_once_with(
             timeout=7.5,
             single_line=True,
+            prompt="",
         )
 
 
@@ -585,6 +594,7 @@ class TestInputOneLinePipeMode(unittest.TestCase):
         mock_input_from_pipe_session.assert_called_once_with(
             timeout=None,
             single_line=True,
+            prompt=">>> ",
         )
 
     @patch("topsailai.workspace.input_tool.input_from_pipe_session")
@@ -619,6 +629,7 @@ class TestInputMultiLinePipeMode(unittest.TestCase):
         mock_input_from_pipe_session.assert_called_with(
             timeout=None,
             single_line=True,
+            prompt="",
         )
 
     @patch("topsailai.workspace.input_tool.input_from_pipe_session")

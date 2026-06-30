@@ -4,6 +4,7 @@ Comprehensive tests covering all file utility functions.
 """
 import os
 import tempfile
+import time
 import pytest
 import logging
 from pathlib import Path
@@ -22,7 +23,9 @@ from topsailai.utils.file_tool import (
     append_data,
     get_all_files,
     ctxm_try_file_lock,
-    ctxm_wait_flock
+    ctxm_wait_flock,
+    is_file,
+    is_tmp_dir
 )
 
 
@@ -681,3 +684,155 @@ class TestCtxmWaitFlock:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# Additional tests to push coverage of utils/file_tool.py above 95%.
+
+
+def test_match_file_empty_keyword_after_strip():
+    """Whitespace-only keywords are skipped; no match if no valid keyword."""
+    assert match_file("/tmp/abc.txt", False, (), ["   "], keyword_min_len=1) is False
+    # Mixed: one valid, one whitespace-only should still match.
+    assert match_file("/tmp/abc.txt", False, (), ["   ", "abc"], keyword_min_len=1) is True
+
+
+def test_is_file_directory_returns_false():
+    """is_file returns False when the path is a directory."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        assert is_file(tmp_dir) is False
+
+def test_append_data_exception_returns_false():
+    """append_data returns False when writing raises an exception."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        file_path = os.path.join(tmp_dir, "readonly.txt")
+        with open(file_path, "w") as f:
+            f.write("content")
+
+        def raising_write(*args, **kwargs):
+            raise OSError("write failed")
+
+        with patch("builtins.open", mock_open()) as mocked_open:
+            mocked_open.return_value.write.side_effect = raising_write
+            result = append_data(file_path, "more")
+            assert result is False
+
+
+def test_get_all_files_relative_path_via_pwd():
+    """Relative paths are resolved against TOPSAILAI_PWD when set."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        rel_file = os.path.join(tmp_dir, "rel.txt")
+        with open(rel_file, "w") as f:
+            f.write("x")
+        with patch.dict(os.environ, {"TOPSAILAI_PWD": tmp_dir}):
+            flag, files = get_all_files(["rel.txt"])
+            assert flag is True
+            assert rel_file in files
+
+
+def test_get_all_files_relative_path_pwd_not_set():
+    """Relative paths fail when TOPSAILAI_PWD is not set."""
+    with patch.dict(os.environ, {}, clear=True):
+        flag, files = get_all_files(["rel.txt"])
+        assert flag is False
+        assert files == []
+
+
+def test_ctxm_temp_file_collision_fallback():
+    """ctxm_temp_file picks a different path when the first candidate exists."""
+    call_count = 0
+
+    def fake_time():
+        nonlocal call_count
+        call_count += 1
+        return 1234567890.0 + (call_count - 1) * 0.0001
+
+    with patch("topsailai.utils.file_tool.time.time", side_effect=fake_time):
+        candidate = "/tmp/topsailai.1234567890.0"
+        path = None
+        try:
+            with open(candidate, "w") as f:
+                f.write("collision")
+            with ctxm_temp_file("content") as (path, fd):
+                assert path is not None
+                assert path != candidate
+                assert os.path.exists(path)
+                with open(path, "r") as f:
+                    assert f.read() == "content"
+            assert not os.path.exists(path)
+        finally:
+            delete_file(candidate)
+            if path:
+                delete_file(path)
+
+
+class TestIsTmpDir:
+    """Test suite for is_tmp_dir function."""
+
+    def test_tmp_prefix(self):
+        assert is_tmp_dir("/tmp") is True
+        assert is_tmp_dir("/tmp/something") is True
+        assert is_tmp_dir("/tmp/nested/path") is True
+
+    def test_dot_tmp_suffix(self):
+        assert is_tmp_dir("/workspace/.tmp") is True
+
+    def test_dot_tmp_infix(self):
+        assert is_tmp_dir("/workspace/.tmp/sub") is True
+
+    def test_regular_folder(self):
+        assert is_tmp_dir("/workspace/data") is False
+
+    def test_file_input_regular_folder(self):
+        # Use a directory outside /tmp so the parent is not considered temporary.
+        with tempfile.TemporaryDirectory(dir="/TopsailAI/src/topsailai") as tmp_dir:
+            f = os.path.join(tmp_dir, "file.txt")
+            with open(f, "w") as fp:
+                fp.write("x")
+            assert is_tmp_dir(f) is False
+
+    def test_file_input_inside_tmp(self):
+        assert is_tmp_dir("/tmp/file.txt") is True
+
+
+def test_list_files_excluded_starts_uses_relative_dir():
+    """excluded_starts must be matched against relative_dir, not full folder_path."""
+    with tempfile.TemporaryDirectory(dir="/tmp", prefix="abc_") as tmp_dir:
+        keep_dir = os.path.join(tmp_dir, "keep_me")
+        os.makedirs(keep_dir)
+        keep_file = os.path.join(keep_dir, "file.txt")
+        root_file = os.path.join(tmp_dir, "root.txt")
+
+        with open(keep_file, "w") as f:
+            f.write("content")
+        with open(root_file, "w") as f:
+            f.write("content")
+
+        # "abc" appears in folder_path (/tmp/abc_xxx) but not in relative_dir.
+        results = list_files(tmp_dir, excluded_starts=["abc"])
+        assert keep_file in results
+        assert root_file in results
+
+
+def test_list_files_excluded_starts_matches_relative_dir_prefix():
+    """excluded_starts matched against relative_dir can exclude a subdirectory."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        sub_drop = os.path.join(tmp_dir, "sub_drop")
+        sub_keep = os.path.join(tmp_dir, "sub_keep")
+        os.makedirs(sub_drop)
+        os.makedirs(sub_keep)
+
+        drop_file = os.path.join(sub_drop, "drop.txt")
+        keep_file = os.path.join(sub_keep, "keep.txt")
+        root_file = os.path.join(tmp_dir, "root.txt")
+
+        with open(drop_file, "w") as f:
+            f.write("content")
+        with open(keep_file, "w") as f:
+            f.write("content")
+        with open(root_file, "w") as f:
+            f.write("content")
+
+        results = list_files(tmp_dir, excluded_starts=["/sub_drop"])
+        assert drop_file not in results
+        assert keep_file in results
+        assert root_file in results

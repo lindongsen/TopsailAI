@@ -14,9 +14,12 @@ import functools
 import io
 import logging
 import os
+import readline
 import select
+import subprocess
 import sys
 import termios
+import textwrap
 import time
 import typing
 
@@ -225,8 +228,8 @@ def _strip_eof_marker(text: str, eof_marker: str) -> str:
 
 
 def _has_eof_marker(decoded: str, eof_marker: str) -> bool:
-    """Check whether *decoded* contains a standalone EOF marker line."""
-    return f"\n{eof_marker}\n" in decoded or decoded.endswith(f"\n{eof_marker}")
+    """Check whether *decoded* ends with a standalone EOF marker line."""
+    return decoded.endswith(f"\n{eof_marker}")
 
 
 # Buffer for leftover content read from a pipe when single_line=True.
@@ -238,8 +241,9 @@ _pipe_leftover_buffer: dict[str, list[str]] = {}
 def _get_buffered_line(pipe_path: str, eof_marker: str = "EOF") -> str | None:
     """Return and consume the next buffered line for *pipe_path*.
 
-    The EOF marker line is consumed and returned as an empty string to
-    signal end of input.
+    The EOF marker line is consumed and returned as an empty string so that
+    callers can detect end-of-input while still receiving genuine empty lines
+    as content when *raise_eof_error* is not enabled.
 
     Returns ``None`` when no buffered lines remain.
     """
@@ -252,6 +256,21 @@ def _get_buffered_line(pipe_path: str, eof_marker: str = "EOF") -> str | None:
     if line == eof_marker:
         return ""
     return line
+
+
+def _strip_eof_suffix(text: str, eof_marker: str) -> tuple[str, bool]:
+    """Strip a trailing EOF marker and report whether it was present.
+
+    The marker is recognized only when the text ends with ``\\n{eof_marker}``
+    and ``{eof_marker}`` appears on its own line.  After stripping, the
+    result is also ``str.strip()``-ed so callers receive clean input.
+    """
+    stripped = text.strip()
+    suffix = "\n" + eof_marker
+    eof_seen = stripped.endswith(suffix)
+    if eof_seen:
+        stripped = stripped[: -len(suffix)]
+    return stripped.strip(), eof_seen
 
 
 def _buffer_leftover(pipe_path: str, text: str) -> None:
@@ -309,30 +328,142 @@ def _read_available(fd: int) -> bytes:
             return b""
         raise
 
+
+def _spawn_terminal_input_subprocess(
+    prompt: str = "",
+    timeout: float | None = None,
+    stdin_fd: int | None = None,
+) -> tuple[subprocess.Popen | None, int | None]:
+    """Spawn a helper process that reads a terminal line and forwards it.
+
+    The helper reads from the caller's terminal *stdin_fd* (which must be a
+    terminal), calls ``input(prompt)`` (enabling GNU readline / arrow keys),
+    and writes the collected line to an anonymous pipe.  The parent monitors
+    the read end of that pipe, so terminal input never blocks pipe input and
+    vice versa.
+
+    Parameters
+    ----------
+    prompt:
+        Prompt string displayed by the helper's ``input()`` call.
+    timeout:
+        Maximum time in seconds to wait for terminal input. ``None`` waits
+        indefinitely.
+    stdin_fd:
+        File descriptor of the terminal to read from.  When ``None``, the
+        helper inherits the parent's fd 0.
+
+    Returns
+    -------
+    A ``(Popen, read_fd)`` tuple, or ``(None, None)`` if the platform is not
+    POSIX or the helper cannot be spawned.
+    """
+    if sys.platform == "win32" or not hasattr(os, "mkfifo"):
+        return None, None
+
+    read_fd, write_fd = os.pipe()
+
+    helper = textwrap.dedent(
+        f'''
+        import os
+        import readline
+        import signal
+        import sys
+        import termios
+
+        write_fd = {write_fd}
+        prompt = {prompt!r}
+        timeout = {timeout!r}
+
+        def _restore_termios():
+            try:
+                termios.tcsetattr(0, termios.TCSADRAIN, old_termios)
+            except Exception:
+                pass
+
+        def _alarm_handler(signum, frame):
+            _restore_termios()
+            sys.exit(0)
+
+        def _term_handler(signum, frame):
+            _restore_termios()
+            sys.exit(0)
+
+        old_termios = None
+        try:
+            old_termios = termios.tcgetattr(0)
+        except Exception:
+            pass
+
+        signal.signal(signal.SIGALRM, _alarm_handler)
+        signal.signal(signal.SIGTERM, _term_handler)
+
+        line = ""
+        try:
+            if timeout is not None:
+                signal.setitimer(
+                    signal.ITIMER_REAL, max(float(timeout), 0.001)
+                )
+            try:
+                line = input(prompt)
+            except (TimeoutError, EOFError, KeyboardInterrupt, OSError):
+                line = ""
+        finally:
+            signal.alarm(0)
+            _restore_termios()
+
+        try:
+            with os.fdopen(write_fd, "w", closefd=True) as fifo:
+                fifo.write(line + "\\n")
+        except Exception:
+            pass
+        '''
+    )
+    try:
+        popen_kwargs: dict[str, typing.Any] = {
+            "stdout": None,
+            "stderr": None,
+            "pass_fds": [write_fd],
+        }
+        if stdin_fd is not None:
+            popen_kwargs["stdin"] = stdin_fd
+        proc = subprocess.Popen(
+            [sys.executable, "-c", helper],
+            **popen_kwargs,
+        )
+        os.close(write_fd)
+        return proc, read_fd
+    except OSError:  # pragma: no cover - process spawn may fail in restricted envs
+        os.close(read_fd)
+        os.close(write_fd)
+        return None, None
+
+
 def input_from_pipe(
     pipe_path: str,
     *,
     timeout: float | None = None,
     encoding: str = "utf-8",
     eof_marker: str = "EOF",
+    raise_eof_error: bool = False,
     single_line: bool = False,
+    prompt: str = "",
 ) -> str:
-    """Read a message from a named pipe (FIFO) and/or standard input.
+    """Read a message from a named pipe (FIFO).
 
-    Creates the FIFO at *pipe_path* and waits for input on either the FIFO
-    or ``sys.stdin`` using ``select.select``. This lets users feed data
-    through the pipe or type directly in the terminal. The FIFO is always
-    removed before returning.
+    Creates the FIFO at *pipe_path* and waits for input.  When the caller's
+    ``sys.stdin`` is a real terminal, a small helper process is spawned that
+    calls ``input()`` on the terminal (enabling GNU readline / arrow keys) and
+    forwards the collected line through a separate anonymous pipe.  The main
+    loop monitors both the FIFO and the helper pipe, so pipe input remains
+    non-blocking and takes priority over terminal input.
 
-    Terminal input uses normal blocking line reads (``sys.stdin.readline()``)
-    so that the terminal's line editing, readline history and arrow keys keep
-    working. Pipe input uses non-blocking reads so that both sources can be
-    multiplexed.
+    The FIFO is always removed before returning.
 
     When *single_line* is ``True`` and the pipe delivers more than one line,
     the first line is returned and the remaining lines are buffered under
-    *pipe_path* for subsequent calls. This makes Strategy A multi-line input
-    work when a sender writes several lines to the pipe at once.
+    *pipe_path* for subsequent calls. This makes multi-line pipe input work
+    when a sender writes several lines at once.
 
     Parameters
     ----------
@@ -342,20 +473,26 @@ def input_from_pipe(
         Maximum time in seconds to wait for input. ``None`` waits
         indefinitely.
     encoding:
-        Encoding used to decode bytes read from the pipe/stdin.
+        Encoding used to decode bytes read from the pipe.
     eof_marker:
         Optional marker that terminates input when seen on its own line.
         The marker line and anything after it is stripped from the result.
-        In *single_line* mode the marker is only stripped when no newline
-        is present in the input.
+        The marker is recognized only when it is preceded by a newline
+        (``\\n{eof_marker}``), i.e. when it appears as a standalone line.
+    raise_eof_error:
+        When ``True`` and the EOF marker is detected, raise :class:`EOFError`
+        instead of returning the stripped content. Defaults to ``False`` for
+        backward compatibility.
     single_line:
         When ``True``, return the first line of input (everything before
         the first ``\\n``). Any remaining content is buffered for the next
         call with the same *pipe_path*.
+    prompt:
+        Prompt displayed to the user when terminal input is used.
 
     Returns
     -------
-    The decoded message read from the pipe or stdin.
+    The decoded message read from the pipe or from the terminal helper.
 
     Raises
     ------
@@ -364,13 +501,15 @@ def input_from_pipe(
     TimeoutError:
         If *timeout* seconds pass without receiving any data.
     EOFError:
-        If terminal stdin reaches EOF before any input is received.
+        If *raise_eof_error* is ``True`` and the EOF marker is detected.
     """
     if getattr(os, "mkfifo", None) is None:
         raise NotImplementedError("Named pipes are not supported on this platform")
-    # Serve any leftover lines from a previous single-line read first.
+
     buffered = _get_buffered_line(pipe_path, eof_marker)
     if buffered is not None:
+        if raise_eof_error and buffered == "":
+            raise EOFError(f"EOF marker '{eof_marker}' reached")
         return buffered
 
     _ensure_fifo(pipe_path)
@@ -378,145 +517,158 @@ def input_from_pipe(
     cleanup = functools.partial(_safe_unlink, pipe_path)
     atexit.register(cleanup)
 
-    pipe_fd = None
-    stdin_fd: int | None = None
+    pipe_fd: int | None = None
+    terminal_helper: subprocess.Popen | None = None
+    helper_read_fd: int | None = None
+
+    def _maybe_return_single_line(
+        decoded: str, eof_seen: bool = False
+    ) -> str | None:
+        """Return the first line and buffer the rest when applicable."""
+        newline_pos = decoded.find("\n")
+        if newline_pos != -1:
+            first_line = decoded[:newline_pos]
+            leftover = decoded[newline_pos + 1 :]
+            if eof_seen:
+                # Preserve the EOF marker as a terminator for subsequent
+                # single-line reads.
+                leftover = leftover + "\n" + eof_marker
+            _buffer_leftover(pipe_path, leftover)
+            return first_line
+        # No newline in the payload: single-line mode returns the whole chunk.
+        return None
+
+    def _process_chunks(chunks: list[bytes]) -> str | None:
+        """Decode accumulated chunks and return if a complete result is ready."""
+        try:
+            decoded = b"".join(chunks).decode(encoding)
+        except UnicodeDecodeError:
+            return None
+
+        cleaned, eof_seen = _strip_eof_suffix(decoded, eof_marker)
+        if eof_seen:
+            if single_line:
+                result = _maybe_return_single_line(cleaned, eof_seen=True)
+                if result is not None:
+                    return result
+                if raise_eof_error:
+                    raise EOFError(f"EOF marker '{eof_marker}' reached")
+                return cleaned
+            if raise_eof_error:
+                raise EOFError(f"EOF marker '{eof_marker}' reached")
+            return cleaned
+
+        if single_line:
+            result = _maybe_return_single_line(decoded)
+            if result is not None:
+                return result
+        else:
+            if _has_eof_marker(decoded, eof_marker):
+                return _strip_eof_marker(decoded, eof_marker)
+
+        return None
+
     try:
-        # Open the FIFO non-blocking so select can multiplex it with stdin.
+        # Open the FIFO non-blocking so select can poll it.
         pipe_fd = os.open(pipe_path, os.O_RDONLY | os.O_NONBLOCK)
 
-        # Attempt to use sys.stdin as a secondary input source. If it does not
-        # expose a usable file descriptor we simply ignore it.
+        # If stdin is a real terminal, spawn a helper that owns terminal input.
+        # The helper writes to a separate pipe, so the main loop can monitor
+        # both the FIFO and the terminal without blocking on either.
         try:
             stdin_fd = sys.stdin.fileno()
+            if os.isatty(stdin_fd):
+                terminal_helper, helper_read_fd = _spawn_terminal_input_subprocess(
+                    prompt=prompt, timeout=timeout, stdin_fd=stdin_fd
+                )
         except (AttributeError, OSError, ValueError, io.UnsupportedOperation):
-            stdin_fd = None
+            pass
+
+        if helper_read_fd is not None:
+            _set_nonblocking(helper_read_fd)
 
         chunks: list[bytes] = []
         deadline = None if timeout is None else time.monotonic() + float(timeout)
-        pipe_eof = False
-        stdin_eof = False
-        writer_seen = False
-        def _maybe_return_single_line(decoded: str) -> str | None:
-            """Return the first line and buffer the rest when applicable."""
-            newline_pos = decoded.find("\n")
-            if newline_pos != -1:
-                first_line = decoded[:newline_pos]
-                leftover = decoded[newline_pos + 1 :]
-                _buffer_leftover(pipe_path, leftover)
-                return first_line
-            # Allow EOF marker to terminate a single line that has no trailing
-            # newline.
-            stripped = decoded.rstrip("\n")
-            if stripped.endswith(eof_marker):
-                return _strip_eof_marker(decoded, eof_marker)
-            return None
 
         while True:
-            readers: list[int] = []
-            if not pipe_eof:
-                readers.append(pipe_fd)
-            if stdin_fd is not None and not stdin_eof:
-                readers.append(stdin_fd)
-
-            if not readers:
-                break
-
             remaining = None
             if deadline is not None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     _clear_leftover_buffer(pipe_path)
                     raise TimeoutError(
-                        f"No data received from pipe or terminal within {timeout} seconds"
+                        f"No data received from pipe within {timeout} seconds"
                     )
                 remaining = max(remaining, 0.0)
 
+            fds = [pipe_fd]
+            if helper_read_fd is not None:
+                fds.append(helper_read_fd)
+
             try:
-                ready, _, _ = select.select(readers, [], [], remaining)
+                ready, _, _ = select.select(fds, [], [], remaining)
             except OSError as exc:  # pragma: no cover - fd closed unexpectedly
                 _clear_leftover_buffer(pipe_path)
                 raise TimeoutError(
-                    f"No data received from pipe or terminal within {timeout} seconds"
+                    f"No data received from pipe within {timeout} seconds"
                 ) from exc
 
-            if not ready:
-                _clear_leftover_buffer(pipe_path)
-                raise TimeoutError(
-                    f"No data received from pipe or terminal within {timeout} seconds"
-                )
-
-            for fd in ready:
-                if fd == pipe_fd:
-                    data = _read_available(pipe_fd)
-                    if data:
-                        writer_seen = True
-                        chunks.append(data)
-                        # Echo pipe data to the terminal so the user can see
-                        # what was received even when it came from the FIFO.
-                        try:
-                            sys.stdout.buffer.write(data)
-                            sys.stdout.buffer.flush()
-                        except (AttributeError, OSError, ValueError):
-                            # stdout may not expose a binary buffer or may be
-                            # closed; visibility is best-effort here.
-                            pass
-                    else:
-                        pipe_eof = True
+            # Pipe input has priority.  If data arrived, accumulate it and
+            # return immediately when a complete result is ready.
+            if pipe_fd in ready:
+                data = _read_available(pipe_fd)
+                if data:
+                    chunks.append(data)
+                    result = _process_chunks(chunks)
+                    if result is not None:
+                        return result
+                elif chunks:
+                    # Writer closed after sending data; return what we have.
+                    break
                 else:
-                    # Terminal input: use readline() so that canonical mode,
-                    # readline history and arrow keys remain functional.
-                    try:
-                        line = sys.stdin.readline()
-                    except EOFError:
-                        line = ""
-                    if line:
-                        writer_seen = True
-                        chunks.append(line.encode(encoding))
-                    else:
-                        stdin_eof = True
-                        # EOF on an idle terminal should raise EOFError
-                        # so upper layers can detect Ctrl+D gracefully.
-                        if not writer_seen:
-                            raise EOFError("EOF on terminal stdin")
+                    # No writer connected yet.  Avoid a tight busy-loop while
+                    # waiting for either a writer or terminal input.
+                    time.sleep(0.05)
 
-            try:
-                decoded = b"".join(chunks).decode(encoding)
-            except UnicodeDecodeError:
-                # Partial multi-byte character; keep reading.
-                continue
+            # Terminal input: the helper wrote a completed line.
+            if helper_read_fd in ready:
+                line_bytes = _read_available(helper_read_fd)
+                if line_bytes:
+                    line = line_bytes.decode(encoding).rstrip("\n")
+                    return line
+                # Helper closed its write end without producing a line.
+                # Stop monitoring it and continue waiting for pipe input.
+                try:
+                    os.close(helper_read_fd)
+                except OSError:
+                    pass
+                helper_read_fd = None
 
-            if single_line:
-                result = _maybe_return_single_line(decoded)
-                if result is not None:
-                    return result
-            else:
-                if _has_eof_marker(decoded, eof_marker):
-                    return _strip_eof_marker(decoded, eof_marker)
-
-            # Once we have seen at least one writer and both sources are EOF,
-            # we are done.
-            if writer_seen and pipe_eof and stdin_eof:
-                break
-
-            # If neither source has produced data yet and the pipe returned
-            # EOF without a writer, avoid a tight busy-loop by sleeping briefly
-            # while still respecting the overall timeout.
-            if not writer_seen and pipe_eof:
-                if deadline is not None and time.monotonic() >= deadline:
-                    _clear_leftover_buffer(pipe_path)
-                    raise TimeoutError(
-                        f"No data received from pipe or terminal within {timeout} seconds"
-                    )
-                time.sleep(0.01)
-
+        # Pipe EOF: return whatever we have.
+        result = _process_chunks(chunks)
+        if result is not None:
+            return result
         decoded = b"".join(chunks).decode(encoding)
+        cleaned, eof_seen = _strip_eof_suffix(decoded, eof_marker)
+        if eof_seen and raise_eof_error:
+            raise EOFError(f"EOF marker '{eof_marker}' reached")
         if single_line:
-            result = _maybe_return_single_line(decoded)
+            result = _maybe_return_single_line(cleaned)
             if result is not None:
                 return result
-            return _strip_eof_marker(decoded, eof_marker)
-        return _strip_eof_marker(decoded, eof_marker)
+        return cleaned
     finally:
+        if terminal_helper is not None:
+            try:
+                terminal_helper.terminate()
+                terminal_helper.wait(timeout=1)
+            except Exception:  # pragma: no cover - cleanup best-effort
+                pass
+        if helper_read_fd is not None:
+            try:
+                os.close(helper_read_fd)
+            except OSError:  # pragma: no cover - fd may already be closed
+                pass
         if pipe_fd is not None:
             try:
                 os.close(pipe_fd)

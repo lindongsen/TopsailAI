@@ -323,6 +323,18 @@ class TestInputFromPipe:
         finally:
             writer.join(timeout=2.0)
 
+    def test_bare_eof_marker_is_not_recognized(self, tmp_path):
+        """EOF must appear on its own line; a trailing 'EOF' without a preceding
+        newline is treated as ordinary content."""
+        pipe_path = str(tmp_path / "test.pipe")
+        message = b"line before EOF\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            result = input_tool.input_from_pipe(pipe_path, timeout=2.0)
+            assert result == "line before EOF"
+        finally:
+            writer.join(timeout=2.0)
+
     def test_cleans_up_pipe_after_read(self, tmp_path):
         pipe_path = str(tmp_path / "test.pipe")
         writer = self._write_to_pipe_after_delay(pipe_path, b"cleanup test\n")
@@ -474,7 +486,7 @@ class TestInputFromPipe:
                     slave_in.close()
 
     def test_terminal_input_uses_readline_not_raw_bytes(self, tmp_path):
-        """Terminal input path calls sys.stdin.readline() preserving line editing."""
+        """Terminal input path forwards typed line via the helper process."""
         pipe_path = str(tmp_path / "terminal_readline.pipe")
         old_stdin = sys.stdin
 
@@ -488,14 +500,15 @@ class TestInputFromPipe:
 
             def target():
                 result["value"] = input_tool.input_from_pipe(
-                    pipe_path, timeout=2.0, single_line=True
+                    pipe_path, timeout=5.0, single_line=True, prompt=""
                 )
 
             thread = threading.Thread(target=target)
             thread.start()
-            time.sleep(0.1)
+            # Wait for the helper process to start and call input() on the PTY.
+            time.sleep(0.5)
             os.write(master_fd, b"typed line\n")
-            thread.join(timeout=3.0)
+            thread.join(timeout=6.0)
             assert not thread.is_alive()
             assert result["value"] == "typed line"
         finally:
@@ -505,7 +518,6 @@ class TestInputFromPipe:
                     slave_in.close()
             with suppress(OSError):
                 os.close(master_fd)
-
     def test_buffer_cleared_on_timeout(self, tmp_path):
         """Stale buffer is discarded when a read times out."""
         pipe_path = str(tmp_path / "timeout_clear.pipe")
@@ -518,5 +530,49 @@ class TestInputFromPipe:
             assert value == "line two"
             # After the buffer is consumed it should be empty.
             assert pipe_path not in input_tool._pipe_leftover_buffer
+        finally:
+            writer.join(timeout=2.0)
+    def test_raise_eof_error_on_eof_marker(self, tmp_path):
+        """When raise_eof_error is True, EOF marker raises EOFError."""
+        pipe_path = str(tmp_path / "raise_eof.pipe")
+        message = b"line before\nEOF\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            with pytest.raises(EOFError):
+                input_tool.input_from_pipe(
+                    pipe_path, timeout=2.0, raise_eof_error=True
+                )
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_raise_eof_error_false_returns_content(self, tmp_path):
+        """Default behavior strips EOF marker and returns content."""
+        pipe_path = str(tmp_path / "no_raise_eof.pipe")
+        message = b"line before\nEOF\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            result = input_tool.input_from_pipe(pipe_path, timeout=2.0)
+            assert result == "line before"
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_raise_eof_error_single_line(self, tmp_path):
+        """EOFError is raised in single_line mode when raise_eof_error is True."""
+        pipe_path = str(tmp_path / "raise_eof_single.pipe")
+        message = b"line one\nline two\nEOF\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            first = input_tool.input_from_pipe(
+                pipe_path, timeout=2.0, single_line=True
+            )
+            assert first == "line one"
+            second = input_tool.input_from_pipe(
+                pipe_path, timeout=2.0, single_line=True
+            )
+            assert second == "line two"
+            with pytest.raises(EOFError):
+                input_tool.input_from_pipe(
+                    pipe_path, timeout=2.0, single_line=True, raise_eof_error=True
+                )
         finally:
             writer.join(timeout=2.0)
