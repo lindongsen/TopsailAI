@@ -152,6 +152,7 @@ class TestStoryFile(unittest.TestCase):
         mock_find_files.return_value = []
         result = self.story_file.get_story_file('/workspace', 'nonexistent.md')
         self.assertIsNone(result)
+        mock_find_files.assert_called_once_with('/workspace/story', 'nonexistent.md')
 
     @patch('topsailai.tools.story_tool.lock_tool.FileLock')
     @patch('topsailai.tools.story_tool.os.makedirs')

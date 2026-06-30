@@ -78,42 +78,104 @@ def test_match_file():
 
 
 def test_find_files_by_name():
-    """Test find_files_by_name function."""
+    """Test find_files_by_name function with default fuzzy matching."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         sub_dir = os.path.join(tmp_dir, "subdir")
         os.makedirs(sub_dir)
         target_file = os.path.join(tmp_dir, "target.txt")
         sub_target = os.path.join(sub_dir, "target.txt")
         other_file = os.path.join(tmp_dir, "other.txt")
-        
+
         with open(target_file, 'w') as f:
             f.write("content")
         with open(sub_target, 'w') as f:
             f.write("content")
         with open(other_file, 'w') as f:
             f.write("content")
-        
+
+        # Default fuzzy_match=True: exact name still matches.
         results = find_files_by_name(tmp_dir, "target.txt")
         assert len(results) == 2
         assert target_file in results
         assert sub_target in results
         assert find_files_by_name(tmp_dir, "nonexistent.txt") == []
-    
-    # Test case-sensitive matching
+
+    # Test fuzzy substring matching (default behavior).
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        sub_dir = os.path.join(tmp_dir, "subdir")
+        os.makedirs(sub_dir)
+        config_txt = os.path.join(tmp_dir, "config.txt")
+        config_json = os.path.join(tmp_dir, "config.json")
+        other_file = os.path.join(tmp_dir, "other.txt")
+        sub_config = os.path.join(sub_dir, "my_config.yml")
+
+        for path in (config_txt, config_json, other_file, sub_config):
+            with open(path, 'w') as f:
+                f.write("content")
+
+        results = find_files_by_name(tmp_dir, "config")
+        assert len(results) == 3
+        assert config_txt in results
+        assert config_json in results
+        assert sub_config in results
+        assert other_file not in results
+
+    # Test case-sensitive fuzzy matching.
     with tempfile.TemporaryDirectory() as tmp_dir:
         file1 = os.path.join(tmp_dir, "Test.txt")
         file2 = os.path.join(tmp_dir, "test.txt")
-        
+
         with open(file1, 'w') as f:
             f.write("content1")
         with open(file2, 'w') as f:
             f.write("content2")
-        
-        results = find_files_by_name(tmp_dir, "Test.txt")
+
+        results = find_files_by_name(tmp_dir, "Test")
         assert len(results) == 1
         assert file1 in results
         assert file2 not in results
 
+
+def test_find_files_by_name_exact():
+    """Test find_files_by_name function with fuzzy_match=False (exact matching)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        sub_dir = os.path.join(tmp_dir, "subdir")
+        os.makedirs(sub_dir)
+        target_file = os.path.join(tmp_dir, "target.txt")
+        sub_target = os.path.join(sub_dir, "target.txt")
+        other_file = os.path.join(tmp_dir, "other.txt")
+
+        with open(target_file, 'w') as f:
+            f.write("content")
+        with open(sub_target, 'w') as f:
+            f.write("content")
+        with open(other_file, 'w') as f:
+            f.write("content")
+
+        results = find_files_by_name(tmp_dir, "target.txt", fuzzy_match=False)
+        assert len(results) == 2
+        assert target_file in results
+        assert sub_target in results
+        assert other_file not in results
+
+        # Substring should not match when exact matching is requested.
+        assert find_files_by_name(tmp_dir, "target", fuzzy_match=False) == []
+        assert find_files_by_name(tmp_dir, "nonexistent.txt", fuzzy_match=False) == []
+
+    # Test case-sensitive exact matching.
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        file1 = os.path.join(tmp_dir, "Test.txt")
+        file2 = os.path.join(tmp_dir, "test.txt")
+
+        with open(file1, 'w') as f:
+            f.write("content1")
+        with open(file2, 'w') as f:
+            f.write("content2")
+
+        results = find_files_by_name(tmp_dir, "Test.txt", fuzzy_match=False)
+        assert len(results) == 1
+        assert file1 in results
+        assert file2 not in results
 
 def test_list_files():
     """Test list_files function with various filters."""

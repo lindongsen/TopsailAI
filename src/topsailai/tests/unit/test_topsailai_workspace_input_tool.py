@@ -485,6 +485,7 @@ class TestInputFromPipeSession(unittest.TestCase):
             raise_eof_error=True,
             single_line=False,
             prompt="",
+            cleanup_pipe=False,
         )
 
     @patch("topsailai.workspace.input_tool.utils_input_tool.input_from_pipe")
@@ -503,6 +504,7 @@ class TestInputFromPipeSession(unittest.TestCase):
             raise_eof_error=True,
             single_line=False,
             prompt="",
+            cleanup_pipe=False,
         )
 
     @patch("topsailai.workspace.input_tool.utils_input_tool.input_from_pipe")
@@ -522,6 +524,7 @@ class TestInputFromPipeSession(unittest.TestCase):
             raise_eof_error=True,
             single_line=True,
             prompt="",
+            cleanup_pipe=False,
         )
 
 

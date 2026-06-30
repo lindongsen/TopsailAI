@@ -448,6 +448,7 @@ def input_from_pipe(
     raise_eof_error: bool = False,
     single_line: bool = False,
     prompt: str = "",
+    cleanup_pipe: bool = True,
 ) -> str:
     """Read a message from a named pipe (FIFO).
 
@@ -458,7 +459,10 @@ def input_from_pipe(
     loop monitors both the FIFO and the helper pipe, so pipe input remains
     non-blocking and takes priority over terminal input.
 
-    The FIFO is always removed before returning.
+    By default the FIFO is removed before returning.  Pass
+    *cleanup_pipe=False* when the caller wants to keep the FIFO alive for
+    subsequent reads (for example, session-scoped pipes that receive multiple
+    messages during the process lifetime).
 
     When *single_line* is ``True`` and the pipe delivers more than one line,
     the first line is returned and the remaining lines are buffered under
@@ -489,6 +493,9 @@ def input_from_pipe(
         call with the same *pipe_path*.
     prompt:
         Prompt displayed to the user when terminal input is used.
+    cleanup_pipe:
+        When ``True`` (the default), the FIFO is removed before returning.
+        When ``False``, the caller is responsible for cleanup.
 
     Returns
     -------
@@ -515,7 +522,8 @@ def input_from_pipe(
     _ensure_fifo(pipe_path)
 
     cleanup = functools.partial(_safe_unlink, pipe_path)
-    atexit.register(cleanup)
+    if cleanup_pipe:
+        atexit.register(cleanup)
 
     pipe_fd: int | None = None
     terminal_helper: subprocess.Popen | None = None
@@ -674,5 +682,6 @@ def input_from_pipe(
                 os.close(pipe_fd)
             except OSError:  # pragma: no cover - fd may already be closed
                 pass
-        atexit.unregister(cleanup)
-        cleanup()
+        if cleanup_pipe:
+            atexit.unregister(cleanup)
+            cleanup()

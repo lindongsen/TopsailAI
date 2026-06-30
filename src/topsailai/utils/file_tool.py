@@ -105,15 +105,18 @@ def match_file(
 # Shell
 ##########################################################
 
-def find_files_by_name(folder_path:str, file_name:str) -> list[str]:
-    """Find all files with a specific name within a directory tree.
+def find_files_by_name(folder_path: str, file_name: str, fuzzy_match: bool = True) -> list[str]:
+    """Find all files matching a name within a directory tree.
 
     This function recursively searches through a directory and all its
-    subdirectories to find files with the specified name.
+    subdirectories to find files matching the specified name.
 
     Args:
         folder_path: Root directory path to search in
-        file_name: Exact filename to search for
+        file_name: Filename or substring to search for
+        fuzzy_match: If True (default), match files whose names contain
+            ``file_name`` as a substring (case-sensitive). If False, only
+            return files whose names exactly equal ``file_name``.
 
     Returns:
         list[str]: List of full paths to matching files
@@ -122,14 +125,23 @@ def find_files_by_name(folder_path:str, file_name:str) -> list[str]:
         >>> find_files_by_name("/tmp", "config.txt")
         ["/tmp/config.txt", "/tmp/subdir/config.txt"]
 
+        >>> find_files_by_name("/tmp", "config")
+        ["/tmp/config.txt", "/tmp/subdir/config.json"]
+
         >>> find_files_by_name("/tmp", "nonexistent.txt")
         []  # Empty list if no files found
     """
     results = []
     for root, dirs, files in os.walk(folder_path):
-        if file_name in files:
-            file_path = os.path.join(root, file_name)
-            results.append(file_path)
+        for file in files:
+            if fuzzy_match:
+                if file_name in file:
+                    file_path = os.path.join(root, file)
+                    results.append(file_path)
+            else:
+                if file == file_name:
+                    file_path = os.path.join(root, file)
+                    results.append(file_path)
 
     return results
 

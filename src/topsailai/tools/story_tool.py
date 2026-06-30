@@ -78,7 +78,7 @@ class StoryBase(object):
 
 class StoryFile(StoryBase):
 
-    def get_story_file(self, workspace:str, story_id:str):
+    def get_story_file(self, workspace:str, story_id:str, must_only_one:bool=False):
         """get a file path for the story content.
 
         Args:
@@ -92,6 +92,8 @@ class StoryFile(StoryBase):
         story_folder = os.path.join(workspace, KEY_STORY)
         files = file_tool.find_files_by_name(story_folder, story_id)
         if files:
+            if must_only_one and len(files) > 1:
+                raise Exception(f"found multiple stories: {files}")
             return files[0]
         return None
 
@@ -187,7 +189,7 @@ class StoryFile(StoryBase):
             story_id (str):
         """
         with lock_tool.FileLock(self.name):
-            _filepath = self.get_story_file(workspace, story_id)
+            _filepath = self.get_story_file(workspace, story_id, must_only_one=True)
             if _filepath:
                 file_tool.delete_file(_filepath)
             return True

@@ -35,6 +35,26 @@ SPLIT_LINE = "------------------------------------------------------------------
 INPUT_TIPS = f">>> Your Turn: (pid={os.getpid()}) "
 DESCRIPTION_EXIT_SET = ["exit", "quit", "/exit", "/quit", "q"]
 
+# Session-scoped pipes that must be removed when the process exits.
+# Pipes are kept alive across multiple _input() calls so that multi-line
+# pipe input (and multiple single-line messages) can be read from the same
+# FIFO without recreating it after every line.
+_SESSION_PIPES_TO_CLEANUP: set[str] = set()
+
+
+def _cleanup_session_pipes() -> None:
+    """Remove all session pipes registered for cleanup."""
+    while _SESSION_PIPES_TO_CLEANUP:
+        pipe_path = _SESSION_PIPES_TO_CLEANUP.pop()
+        try:
+            if os.path.exists(pipe_path):
+                os.unlink(pipe_path)
+                logger.info("Removed session pipe file on exit: %s", pipe_path)
+        except OSError as exc:
+            logger.error("Failed to remove session pipe file %s: %s", pipe_path, exc)
+
+
+atexit.register(_cleanup_session_pipes)
 
 def _load_input_history():
     """
@@ -413,8 +433,11 @@ def input_from_pipe_session(
     This is a convenience wrapper around
     :func:`topsailai.utils.input_tool.input_from_pipe` that constructs the
     pipe path from the current session and process ID, then delegates to the
-    utility function. The FIFO is always removed after reading, even on
-    error.
+    utility function.
+
+    The FIFO is kept alive across calls so that multi-line pipe input (and
+    multiple single-line messages sent to the same session) can be read from
+    the same pipe. The pipe is registered for removal when the process exits.
 
     By default *raise_eof_error* is ``True`` so that the EOF marker is
     signaled to the workspace input loop via :class:`EOFError` rather than
@@ -456,22 +479,14 @@ def input_from_pipe_session(
     """
     pipe_path = _build_pipe_path(session_id)
     abs_path = os.path.abspath(pipe_path)
-    try:
-        return utils_input_tool.input_from_pipe(
-            pipe_path,
-            timeout=timeout,
-            encoding=encoding,
-            eof_marker=eof_marker,
-            raise_eof_error=raise_eof_error,
-            single_line=single_line,
-            prompt=prompt,
-        )
-    finally:
-        if os.path.exists(abs_path):
-            try:
-                os.unlink(abs_path)
-                logger.info("Removed session pipe file: %s", abs_path)
-            except OSError as exc:
-                logger.error("Failed to remove session pipe file %s: %s", abs_path, exc)
-        else:
-            logger.info("Session pipe file already removed: %s", abs_path)
+    _SESSION_PIPES_TO_CLEANUP.add(abs_path)
+    return utils_input_tool.input_from_pipe(
+        pipe_path,
+        timeout=timeout,
+        encoding=encoding,
+        eof_marker=eof_marker,
+        raise_eof_error=raise_eof_error,
+        single_line=single_line,
+        prompt=prompt,
+        cleanup_pipe=False,
+    )
