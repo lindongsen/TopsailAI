@@ -106,7 +106,7 @@ class LocalApprovalTransport(ApprovalTransport):
             f"  Tool: {instance.tool_name}\n"
             f"  Args: {instance.tool_args}\n"
             f"  Timeout: {instance.timeout}s\n"
-            "  Type 'approve' or 'deny': "
+            "  Type 'approve'(yes) or 'deny'(no): "
         )
 
         line = input_with_timeout(
@@ -120,6 +120,7 @@ class LocalApprovalTransport(ApprovalTransport):
             return
 
         decision = line.strip().lower()
+        print(f"> {decision}")
         if decision in ("approve", "yes", "y"):
             instance.approve(by="user")
         elif decision in ("deny", "no", "n"):
