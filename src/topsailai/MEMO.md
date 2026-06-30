@@ -624,3 +624,62 @@ logger.info("This goes to the project log file, not stdout.")
 workspace/llm_shell.py: set_thread_name(session_id)
 workspace/agent_shell.py: thread_local_tool.set_thread_name(session_id)
 ```
+
+
+## MEMO: Logging Convention — Chat Chain vs. Independent Modules
+
+**Date:** 2026-06-30
+**Files:**
+- `topsailai/logger/__init__.py`
+- `topsailai/logger/log_chat.py`
+- `topsailai/context/token.py`
+- `topsailai/context/tool_stat.py`
+- `topsailai/ai_base/tool_approval/`
+- `workspace/agent_shell.py`
+- `workspace/llm_shell.py`
+
+### Conclusion
+The project distinguishes between two logging styles based on whether a module is part of the interactive chat chain or an independent service component.
+
+1. **Chat-chain modules** (the `user2agent → agent2llm` flow) must log through the dedicated chat logger:
+   ```python
+   from topsailai.logger import logger
+   ```
+   This writes to `chat.log` and keeps all conversational / agent-execution diagnostics in one place.
+
+2. **Independent modules** that operate as standalone services or statistics trackers should use a standard module-level logger:
+   ```python
+   import logging
+   logger = logging.getLogger(__name__)
+   ```
+   Examples include `token_stat`, `tool_stat`, and `tool_approval`. These modules are not tied to a single chat turn and should not pollute `chat.log`.
+
+### Rationale
+- `chat.log` is optimized for the conversational pipeline (`AgentChat`, `AgentRun`, `LLMChat`, context runtime, etc.). Centralizing these logs makes it easier to trace a single user request across the `User2Agent` and `Agent2LLM` layers.
+- Independent modules such as `token_stat`, `tool_stat`, and `tool_approval` are reused across many different call sites and may run outside of a chat session. Using `logging.getLogger(__name__)` lets them emit logs under their own module namespace while still benefiting from the project's root-logger configuration (`AgentFormatter`, log level, rotating file handler).
+- Mixing the two styles would make `chat.log` noisy and harder to correlate with a specific conversation.
+
+### Practical examples
+
+```python
+# Inside workspace/agent_shell.py, workspace/llm_shell.py, or context runtime:
+from topsailai.logger import logger
+
+logger.info("Agent turn started")
+```
+
+```python
+# Inside context/token.py, context/tool_stat.py, or ai_base/tool_approval/:
+import logging
+
+logger = logging.getLogger(__name__)
+
+logger.info("Token usage updated")
+```
+
+### Note for maintainers
+When adding a new module, decide which category it belongs to before choosing a logger:
+- If the module is directly involved in processing a user message through the agent/LLM pipeline, use `from topsailai.logger import logger`.
+- If the module is a utility, statistic tracker, approval gate, or otherwise has a lifecycle independent of any single chat turn, use `logger = logging.getLogger(__name__)`.
+
+Do not switch an existing module's logger style without updating this MEMO and checking that downstream log consumers (tests, monitoring, debugging scripts) still find the logs they expect.
