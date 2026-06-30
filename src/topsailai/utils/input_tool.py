@@ -229,6 +229,46 @@ def _has_eof_marker(decoded: str, eof_marker: str) -> bool:
     return f"\n{eof_marker}\n" in decoded or decoded.endswith(f"\n{eof_marker}")
 
 
+# Buffer for leftover content read from a pipe when single_line=True.
+# Keyed by pipe path so that multiple _input() calls in Strategy A can
+# return one line at a time from a multi-line pipe message.
+_pipe_leftover_buffer: dict[str, list[str]] = {}
+
+
+def _get_buffered_line(pipe_path: str, eof_marker: str = "EOF") -> str | None:
+    """Return and consume the next buffered line for *pipe_path*.
+
+    The EOF marker line is consumed and returned as an empty string to
+    signal end of input.
+
+    Returns ``None`` when no buffered lines remain.
+    """
+    lines = _pipe_leftover_buffer.get(pipe_path)
+    if not lines:
+        return None
+    line = lines.pop(0)
+    if not lines:
+        del _pipe_leftover_buffer[pipe_path]
+    if line == eof_marker:
+        return ""
+    return line
+
+
+def _buffer_leftover(pipe_path: str, text: str) -> None:
+    """Store leftover lines from *text* for later single-line reads."""
+    if not text:
+        return
+    lines = text.splitlines()
+    if not lines:
+        return
+    _pipe_leftover_buffer[pipe_path] = lines
+
+
+def _clear_leftover_buffer(pipe_path: str) -> None:
+    """Discard any buffered lines for *pipe_path*."""
+    _pipe_leftover_buffer.pop(pipe_path, None)
+
+
 def _set_nonblocking(fd: int) -> int:
     """Set *fd* to non-blocking mode and return the original flags.
 
@@ -269,7 +309,6 @@ def _read_available(fd: int) -> bytes:
             return b""
         raise
 
-
 def input_from_pipe(
     pipe_path: str,
     *,
@@ -284,6 +323,16 @@ def input_from_pipe(
     or ``sys.stdin`` using ``select.select``. This lets users feed data
     through the pipe or type directly in the terminal. The FIFO is always
     removed before returning.
+
+    Terminal input uses normal blocking line reads (``sys.stdin.readline()``)
+    so that the terminal's line editing, readline history and arrow keys keep
+    working. Pipe input uses non-blocking reads so that both sources can be
+    multiplexed.
+
+    When *single_line* is ``True`` and the pipe delivers more than one line,
+    the first line is returned and the remaining lines are buffered under
+    *pipe_path* for subsequent calls. This makes Strategy A multi-line input
+    work when a sender writes several lines to the pipe at once.
 
     Parameters
     ----------
@@ -301,7 +350,8 @@ def input_from_pipe(
         is present in the input.
     single_line:
         When ``True``, return the first line of input (everything before
-        the first ``\\n``). Any remaining content is discarded.
+        the first ``\\n``). Any remaining content is buffered for the next
+        call with the same *pipe_path*.
 
     Returns
     -------
@@ -316,6 +366,10 @@ def input_from_pipe(
     """
     if getattr(os, "mkfifo", None) is None:
         raise NotImplementedError("Named pipes are not supported on this platform")
+    # Serve any leftover lines from a previous single-line read first.
+    buffered = _get_buffered_line(pipe_path, eof_marker)
+    if buffered is not None:
+        return buffered
 
     _ensure_fifo(pipe_path)
 
@@ -324,7 +378,6 @@ def input_from_pipe(
 
     pipe_fd = None
     stdin_fd: int | None = None
-    stdin_flags = -1
     try:
         # Open the FIFO non-blocking so select can multiplex it with stdin.
         pipe_fd = os.open(pipe_path, os.O_RDONLY | os.O_NONBLOCK)
@@ -336,16 +389,26 @@ def input_from_pipe(
         except (AttributeError, OSError, ValueError, io.UnsupportedOperation):
             stdin_fd = None
 
-        if stdin_fd is not None and stdin_fd >= 0:
-            stdin_flags = _set_nonblocking(stdin_fd)
-            if stdin_flags < 0:
-                stdin_fd = None
-
         chunks: list[bytes] = []
         deadline = None if timeout is None else time.monotonic() + float(timeout)
         pipe_eof = False
         stdin_eof = False
         writer_seen = False
+
+        def _maybe_return_single_line(decoded: str) -> str | None:
+            """Return the first line and buffer the rest when applicable."""
+            newline_pos = decoded.find("\n")
+            if newline_pos != -1:
+                first_line = decoded[:newline_pos]
+                leftover = decoded[newline_pos + 1 :]
+                _buffer_leftover(pipe_path, leftover)
+                return first_line
+            # Allow EOF marker to terminate a single line that has no trailing
+            # newline.
+            stripped = decoded.rstrip("\n")
+            if stripped.endswith(eof_marker):
+                return _strip_eof_marker(decoded, eof_marker)
+            return None
 
         while True:
             readers: list[int] = []
@@ -361,45 +424,64 @@ def input_from_pipe(
             if deadline is not None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    _clear_leftover_buffer(pipe_path)
                     raise TimeoutError(
                         f"No data received from pipe or terminal within {timeout} seconds"
                     )
                 remaining = max(remaining, 0.0)
 
-            ready, _, _ = select.select(readers, [], [], remaining)
+            try:
+                ready, _, _ = select.select(readers, [], [], remaining)
+            except OSError as exc:  # pragma: no cover - fd closed unexpectedly
+                _clear_leftover_buffer(pipe_path)
+                raise TimeoutError(
+                    f"No data received from pipe or terminal within {timeout} seconds"
+                ) from exc
+
             if not ready:
+                _clear_leftover_buffer(pipe_path)
                 raise TimeoutError(
                     f"No data received from pipe or terminal within {timeout} seconds"
                 )
 
             for fd in ready:
-                data = _read_available(fd)
-                if data:
-                    writer_seen = True
-                    chunks.append(data)
-                    try:
-                        decoded = b"".join(chunks).decode(encoding)
-                    except UnicodeDecodeError:
-                        # Partial multi-byte character; keep reading.
-                        continue
-
-                    if single_line:
-                        newline_pos = decoded.find("\n")
-                        if newline_pos != -1:
-                            return decoded[:newline_pos]
-                        # Allow EOF marker to terminate a single line that has
-                        # no trailing newline.
-                        stripped = decoded.rstrip("\n")
-                        if stripped.endswith(eof_marker):
-                            return _strip_eof_marker(decoded, eof_marker)
+                if fd == pipe_fd:
+                    data = _read_available(pipe_fd)
+                    if data:
+                        writer_seen = True
+                        chunks.append(data)
                     else:
-                        if _has_eof_marker(decoded, eof_marker):
-                            return _strip_eof_marker(decoded, eof_marker)
-                else:
-                    if fd == pipe_fd:
                         pipe_eof = True
+                else:
+                    # Terminal input: use readline() so that canonical mode,
+                    # readline history and arrow keys remain functional.
+                    try:
+                        line = sys.stdin.readline()
+                    except EOFError:
+                        line = ""
+                    if line:
+                        writer_seen = True
+                        chunks.append(line.encode(encoding))
                     else:
                         stdin_eof = True
+                        # EOF on an idle terminal should return an empty
+                        # string immediately rather than waiting for the pipe.
+                        if not writer_seen:
+                            return ""
+
+            try:
+                decoded = b"".join(chunks).decode(encoding)
+            except UnicodeDecodeError:
+                # Partial multi-byte character; keep reading.
+                continue
+
+            if single_line:
+                result = _maybe_return_single_line(decoded)
+                if result is not None:
+                    return result
+            else:
+                if _has_eof_marker(decoded, eof_marker):
+                    return _strip_eof_marker(decoded, eof_marker)
 
             # Once we have seen at least one writer and both sources are EOF,
             # we are done.
@@ -411,6 +493,7 @@ def input_from_pipe(
             # while still respecting the overall timeout.
             if not writer_seen and pipe_eof:
                 if deadline is not None and time.monotonic() >= deadline:
+                    _clear_leftover_buffer(pipe_path)
                     raise TimeoutError(
                         f"No data received from pipe or terminal within {timeout} seconds"
                     )
@@ -418,17 +501,16 @@ def input_from_pipe(
 
         decoded = b"".join(chunks).decode(encoding)
         if single_line:
-            newline_pos = decoded.find("\n")
-            if newline_pos != -1:
-                return decoded[:newline_pos]
+            result = _maybe_return_single_line(decoded)
+            if result is not None:
+                return result
             return _strip_eof_marker(decoded, eof_marker)
         return _strip_eof_marker(decoded, eof_marker)
     finally:
         if pipe_fd is not None:
             try:
                 os.close(pipe_fd)
-            except OSError:
+            except OSError:  # pragma: no cover - fd may already be closed
                 pass
-        _restore_fd_flags(stdin_fd, stdin_flags)
         atexit.unregister(cleanup)
-        _safe_unlink(pipe_path)
+        cleanup()

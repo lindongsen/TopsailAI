@@ -345,7 +345,7 @@ TOPSAILAI_ENABLED_TOOLS=""
 # a JSON array. Rules are read at call time, so updates take effect immediately.
 # If unset, defaults to ${TOPSAILAI_WORK_FOLDER}/tool_approval.json.
 # Example: '[{"match":"cmd_tool-exec_cmd","mode":"require","params":[{"param":"cmd","op":"contains","value":"git reset"}]}]'
-TOPSAILAI_TOOL_APPROVAL_RULES=""
+# TOPSAILAI_TOOL_APPROVAL_RULES=
 
 # Extra Tools
 # Additional external tools to include in the agent's toolset
@@ -420,8 +420,9 @@ TOPSAILAI_TOOL_APPROVAL_ENABLED=0
 
 # JSON approval rules. Either a JSON array literal or a path to a file containing
 # a JSON array. Rules are read at call time, so updates take effect immediately.
+# If unset, defaults to ${TOPSAILAI_WORK_FOLDER}/tool_approval.json.
 # Example: '[{"match":"cmd_tool-exec_cmd","mode":"require","params":[{"param":"cmd","op":"contains","value":"git reset"}]}]'
-TOPSAILAI_TOOL_APPROVAL_RULES=""
+# TOPSAILAI_TOOL_APPROVAL_RULES=
 
 # Default timeout in seconds when a rule does not specify one.
 TOPSAILAI_TOOL_APPROVAL_DEFAULT_TIMEOUT=60

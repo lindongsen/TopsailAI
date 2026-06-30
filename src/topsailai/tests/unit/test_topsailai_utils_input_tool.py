@@ -393,3 +393,130 @@ class TestInputFromPipe:
             assert not os.path.exists(pipe_path)
         finally:
             writer.join(timeout=2.0)
+
+    def test_single_line_buffers_leftover_lines_for_next_call(self, tmp_path):
+        """Leftover lines from a single-line pipe read are returned later."""
+        pipe_path = str(tmp_path / "buffer.pipe")
+        message = b"line one\nline two\nline three\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            first = input_tool.input_from_pipe(
+                pipe_path, timeout=2.0, single_line=True
+            )
+            assert first == "line one"
+            # The pipe was removed; a new call with the same path should serve
+            # the buffered lines without recreating the pipe.
+            second = input_tool.input_from_pipe(
+                pipe_path, timeout=0.1, single_line=True
+            )
+            assert second == "line two"
+            third = input_tool.input_from_pipe(
+                pipe_path, timeout=0.1, single_line=True
+            )
+            assert third == "line three"
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_single_line_eof_marker_is_buffered_as_terminator(self, tmp_path):
+        """EOF marker terminates buffered single-line reads."""
+        pipe_path = str(tmp_path / "buffer_eof.pipe")
+        message = b"line one\nline two\nEOF\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            first = input_tool.input_from_pipe(
+                pipe_path, timeout=2.0, single_line=True
+            )
+            assert first == "line one"
+            second = input_tool.input_from_pipe(
+                pipe_path, timeout=0.1, single_line=True
+            )
+            assert second == "line two"
+            third = input_tool.input_from_pipe(
+                pipe_path, timeout=0.1, single_line=True
+            )
+            assert third == ""
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_terminal_eof_returns_empty_string(self, tmp_path):
+        """Ctrl+D / EOF on terminal input returns an empty string."""
+        pipe_path = str(tmp_path / "terminal_eof.pipe")
+        old_stdin = sys.stdin
+
+        master_fd, slave_fd = pty.openpty()
+        slave_in = None
+        try:
+            slave_in = os.fdopen(slave_fd, "r", buffering=1)
+            sys.stdin = slave_in
+
+            result = {"value": None}
+
+            def target():
+                try:
+                    result["value"] = input_tool.input_from_pipe(
+                        pipe_path, timeout=2.0, single_line=True
+                    )
+                except EOFError:
+                    result["value"] = ""
+
+            thread = threading.Thread(target=target)
+            thread.start()
+            time.sleep(0.1)
+            # Send EOF (Ctrl+D) on the PTY master side.
+            os.close(master_fd)
+            thread.join(timeout=3.0)
+            assert not thread.is_alive()
+            assert result["value"] == ""
+        finally:
+            sys.stdin = old_stdin
+            if slave_in is not None:
+                with suppress(Exception):
+                    slave_in.close()
+
+    def test_terminal_input_uses_readline_not_raw_bytes(self, tmp_path):
+        """Terminal input path calls sys.stdin.readline() preserving line editing."""
+        pipe_path = str(tmp_path / "terminal_readline.pipe")
+        old_stdin = sys.stdin
+
+        master_fd, slave_fd = pty.openpty()
+        slave_in = None
+        try:
+            slave_in = os.fdopen(slave_fd, "r", buffering=1)
+            sys.stdin = slave_in
+
+            result = {"value": None}
+
+            def target():
+                result["value"] = input_tool.input_from_pipe(
+                    pipe_path, timeout=2.0, single_line=True
+                )
+
+            thread = threading.Thread(target=target)
+            thread.start()
+            time.sleep(0.1)
+            os.write(master_fd, b"typed line\n")
+            thread.join(timeout=3.0)
+            assert not thread.is_alive()
+            assert result["value"] == "typed line"
+        finally:
+            sys.stdin = old_stdin
+            if slave_in is not None:
+                with suppress(Exception):
+                    slave_in.close()
+            with suppress(OSError):
+                os.close(master_fd)
+
+    def test_buffer_cleared_on_timeout(self, tmp_path):
+        """Stale buffer is discarded when a read times out."""
+        pipe_path = str(tmp_path / "timeout_clear.pipe")
+        message = b"line one\nline two\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            input_tool.input_from_pipe(pipe_path, timeout=2.0, single_line=True)
+            # The second call should consume the buffered leftover line.
+            value = input_tool.input_from_pipe(pipe_path, timeout=0.05, single_line=True)
+            assert value == "line two"
+            # After the buffer is consumed it should be empty.
+            assert pipe_path not in input_tool._pipe_leftover_buffer
+        finally:
+            writer.join(timeout=2.0)

@@ -36,7 +36,7 @@ Configuration is read at call time so rules can be updated without restarting th
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOPSAILAI_TOOL_APPROVAL_ENABLED` | `0` | Master switch. `1` enables the approval mechanism, `0` disables it. |
-| `TOPSAILAI_TOOL_APPROVAL_RULES` | `""` | JSON approval rules. Either a JSON array literal or a path to a file containing a JSON array. |
+| `TOPSAILAI_TOOL_APPROVAL_RULES` | `${TOPSAILAI_WORK_FOLDER}/tool_approval.json` | JSON approval rules. Either a JSON array literal or a path to a file containing a JSON array. |
 | `TOPSAILAI_TOOL_APPROVAL_DEFAULT_TIMEOUT` | `60` | Default timeout in seconds when a rule does not specify one. |
 | `TOPSAILAI_TOOL_APPROVAL_DEFAULT_POLICY` | `deny` | Default timeout policy when a rule does not specify one. Must be one of `deny`, `allow`, `ask_again`. |
 
@@ -130,7 +130,7 @@ The approval mechanism must fail safely. The recommended default behavior is:
 | Error Condition | Behavior |
 |-----------------|----------|
 | `TOPSAILAI_TOOL_APPROVAL_ENABLED=0` | Approval is disabled; all tool calls execute normally. |
-| `TOPSAILAI_TOOL_APPROVAL_RULES` is empty/unset | Approval is effectively disabled; all tool calls execute normally. |
+| `TOPSAILAI_TOOL_APPROVAL_RULES` points to a non-existent file or is empty/unset | Approval is effectively disabled; all tool calls execute normally. |
 | JSON parsing fails | Log an error, disable approval for the current process, and allow tool calls to execute normally. |
 | File path does not exist or is unreadable | Log an error, disable approval for the current process, and allow tool calls to execute normally. |
 | Rule schema is invalid | Log a warning, skip the invalid rule, and continue evaluating remaining rules. |
