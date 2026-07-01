@@ -892,6 +892,7 @@ def input_from_pipe(
         # Pipe EOF: return whatever we have.
         result = _process_chunks(chunks)
         if result is not None:
+            print(result)
             return result
         decoded = b"".join(chunks).decode(encoding)
         cleaned, eof_seen = _strip_eof_suffix(decoded, eof_marker)
@@ -900,7 +901,10 @@ def input_from_pipe(
         if single_line:
             result = _maybe_return_single_line(cleaned)
             if result is not None:
+                print(result)
                 return result
+        if cleaned:
+            print(cleaned)
         return cleaned
     finally:
         if terminal_helper is not None:

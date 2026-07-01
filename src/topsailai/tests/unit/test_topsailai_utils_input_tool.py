@@ -313,6 +313,37 @@ class TestInputFromPipe:
         finally:
             writer.join(timeout=2.0)
 
+    def test_pipe_message_is_echoed_to_stdout(self, tmp_path, capsys):
+        """Pipe messages must be printed to stdout so the user can see them.
+
+        Scenario: an external process (e.g. the CLI ``/send`` command or a
+        team-agent coordinator) writes a user message into the session pipe.
+        The local ``input_from_pipe`` call reads that message and returns it
+        to the agent loop. If the message is not also printed to the terminal,
+        the user only sees the agent prompt and the eventual reply, but never
+        the incoming message itself. This makes interactive pipe-based
+        workflows confusing and hard to follow.
+
+        The ``print(result)`` inside ``input_from_pipe`` is therefore not a
+        debug statement; it is the mechanism that echoes incoming pipe
+        messages to the terminal. Removing it breaks the user experience for
+        any feature that injects messages through a named pipe.
+
+        This test guards against accidental removal of that print call.
+        """
+        pipe_path = str(tmp_path / "echo.pipe")
+        message = b"message from another process\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            result = input_tool.input_from_pipe(pipe_path, timeout=2.0)
+            assert result == "message from another process"
+        finally:
+            writer.join(timeout=2.0)
+
+        captured = capsys.readouterr()
+        assert "message from another process" in captured.out
+
+
     def test_eof_marker_terminates_input(self, tmp_path):
         pipe_path = str(tmp_path / "test.pipe")
         message = b"line before\nEOF\n"
