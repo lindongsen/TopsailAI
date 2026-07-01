@@ -96,9 +96,11 @@ def get_all_memories() -> dict:
             pass
     return mem_map
 
-def get_all_memories_markdown() -> str:
+def get_all_memories_markdown(all_memories:dict=None) -> str:
     result = ""
-    for _title, _content in get_all_memories().items():
+    if not all_memories:
+        all_memories = get_all_memories()
+    for _title, _content in all_memories.items():
         result += f"\n## {_title}\n" + _content + "\n"
     return result
 
@@ -117,16 +119,25 @@ if not WORKSPACE:
 
 def get_prompt_memory():
     """ refer to context/prompt_env.py """
+    all_memories = get_all_memories()
     return \
 f"""
 # Current Memories
-{get_all_memories_markdown()}
-""" + _PROMPT_NEW_MEMORY
+
+Titles:
+
+{"\n".join([f"- {mem_title}" for mem_title in all_memories.keys()])}
+
+{get_all_memories_markdown(all_memories)}
+
+# Memory Requirements
+{_PROMPT_NEW_MEMORY}
+"""
 
 PROMPT = """
 # About story_memory_tool (MemoryTool)
 
-Memory content MUST be English.
+Memory content MUST be English, concise and NO NEED TITLE.
 
 Whenever the user explicitly asks you to remember something (e.g., using phrases like "remember that...", "please save this:", "don't forget...", "make a note of...", "store this information: [information]"),
 you must use the `MemoryTool` to store the specified information.
