@@ -44,7 +44,6 @@ for _dir in "/root/ai/TopsailAI" "/林生的奇思妙想/TopsailAI"; do
 done
 
 [ -n "${WORK_DIR}" ] || error_quit "no found work_dir"
-
 cd "${WORK_DIR}" || error_quit "enter work_dir failed: ${WORK_DIR}"
 
 # debug, default is 0
@@ -61,6 +60,10 @@ if [ "$1" == "-" ]; then
   task=$(cat "$1")
   [ "$2" != "" ] && task_ex=$(echo -e "\n----\n$*")
 fi
+
+# fallback SESSION_ID to TOPSAILAI_SESSION_ID when not set
+[ -n "${SESSION_ID}" ] || SESSION_ID="${TOPSAILAI_SESSION_ID}"
+export SESSION_ID
 
 # print histroy messages
 [ -n "${SESSION_ID}" ] && [ ${DEBUG} -ne 0 ] && {

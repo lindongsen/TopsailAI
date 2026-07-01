@@ -62,6 +62,10 @@ if [ "$1" == "-" ]; then
   [ "$2" != "" ] && task_ex=$(echo -e "\n----\n$*")
 fi
 
+# fallback SESSION_ID to TOPSAILAI_SESSION_ID when not set
+[ -n "${SESSION_ID}" ] || SESSION_ID="${TOPSAILAI_SESSION_ID}"
+export SESSION_ID
+
 # print histroy messages
 # if [ "${TOPSAILAI_INTERACTIVE_MODE}" == "1" ] || [ "${DEBUG}" != "0" ]; then
 #   [ -n "${SESSION_ID}" ] && {
