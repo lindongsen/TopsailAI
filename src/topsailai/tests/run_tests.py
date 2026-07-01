@@ -20,6 +20,7 @@ print(f"Results will save to {OUTPUT_FILE}")
 DEFAULT_TIMEOUT = 120
 DEFAULT_SLOW_THRESHOLD = 10.0
 DEFAULT_WORKERS = 20
+DEFAULT_RETRIES = 1
 
 
 def get_test_files(selected=None):
@@ -39,43 +40,53 @@ def get_test_files(selected=None):
     return [f for f in all_files if f in selected_set]
 
 
-def run_test(test_file, timeout):
-    """Run a single test file and return (status, details, elapsed_seconds)."""
+def run_test(test_file, timeout, retries=0):
+    """Run a single test file with optional retries and return (status, details, elapsed_seconds)."""
     test_path = TEST_DIR / test_file
-    start = time.perf_counter()
+    last_status = None
+    last_details = None
 
-    try:
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pytest",
-                str(test_path),
-                "-v",
-                "--tb=short",
-                "--color=no",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=TEST_DIR,
-        )
-        elapsed = time.perf_counter() - start
+    for attempt in range(retries + 1):
+        start = time.perf_counter()
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    str(test_path),
+                    "-v",
+                    "--tb=short",
+                    "--color=no",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=TEST_DIR,
+            )
+            elapsed = time.perf_counter() - start
 
-        if result.returncode == 0:
-            return "PASS", "All tests passed", elapsed
+            if result.returncode == 0:
+                details = "All tests passed"
+                if attempt > 0:
+                    details = f"All tests passed after {attempt} retry(s)"
+                return "PASS", details, elapsed
 
-        output = result.stdout + result.stderr
-        lines = output.split("\n")
-        error_lines = lines[-50:] if len(lines) > 50 else lines
-        error_summary = "\n".join(error_lines)
-        return "FAIL", error_summary, elapsed
-    except subprocess.TimeoutExpired:
-        elapsed = time.perf_counter() - start
-        return "TIMEOUT", f"Test timed out after {timeout} seconds", elapsed
-    except Exception as e:
-        elapsed = time.perf_counter() - start
-        return "ERROR", str(e), elapsed
+            output = result.stdout + result.stderr
+            lines = output.split("\n")
+            error_lines = lines[-50:] if len(lines) > 50 else lines
+            last_details = "\n".join(error_lines)
+            last_status = "FAIL"
+        except subprocess.TimeoutExpired:
+            elapsed = time.perf_counter() - start
+            last_status = "TIMEOUT"
+            last_details = f"Test timed out after {timeout} seconds"
+        except Exception as e:
+            elapsed = time.perf_counter() - start
+            last_status = "ERROR"
+            last_details = str(e)
+
+    return last_status, last_details, elapsed
 
 
 def parse_args(argv=None):
@@ -109,6 +120,13 @@ def parse_args(argv=None):
         help=f"Maximum number of concurrent test workers (default: {DEFAULT_WORKERS}).",
     )
     parser.add_argument(
+        "-r",
+        "--retries",
+        type=int,
+        default=DEFAULT_RETRIES,
+        help=f"Number of retries for failed tests (default: {DEFAULT_RETRIES}).",
+    )
+    parser.add_argument(
         "--sequential",
         action="store_true",
         help="Run tests one by one sequentially instead of concurrently.",
@@ -123,12 +141,12 @@ def _print_result(index, total, test_file, status, elapsed, threshold, print_loc
         print(f"  [{index}/{total}] {test_file}: {status} ({elapsed:.3f}s){slow_marker}")
 
 
-def execute_sequentially(test_files, timeout, threshold, print_lock):
+def execute_sequentially(test_files, timeout, threshold, print_lock, retries=0):
     """Run test files one by one and return ordered results."""
     results = []
     total = len(test_files)
     for idx, test_file in enumerate(test_files, 1):
-        status, details, elapsed = run_test(test_file, timeout)
+        status, details, elapsed = run_test(test_file, timeout, retries)
         _print_result(idx, total, test_file, status, elapsed, threshold, print_lock)
         results.append({
             "file": test_file,
@@ -139,7 +157,7 @@ def execute_sequentially(test_files, timeout, threshold, print_lock):
     return results
 
 
-def execute_concurrently(test_files, workers, timeout, threshold, print_lock):
+def execute_concurrently(test_files, workers, timeout, threshold, print_lock, retries=0):
     """Run test files concurrently and return ordered results."""
     results = [None] * len(test_files)
     file_to_index = {name: idx for idx, name in enumerate(test_files)}
@@ -149,7 +167,7 @@ def execute_concurrently(test_files, workers, timeout, threshold, print_lock):
 
     def run_and_report(test_file):
         nonlocal completed_count
-        status, details, elapsed = run_test(test_file, timeout)
+        status, details, elapsed = run_test(test_file, timeout, retries)
         with count_lock:
             completed_count += 1
             current_index = completed_count
@@ -209,6 +227,7 @@ def main():
     print(f"  timeout:    {args.timeout} seconds    # max execution time per test")
     print(f"  threshold:  {args.threshold} seconds  # SLOW warning threshold")
     print(f"  workers:    {args.workers}            # max concurrent workers")
+    print(f"  retries:    {args.retries}            # retries for failed tests")
     print(f"  sequential: {args.sequential}         # run tests one by one")
     print(f"  output:     {OUTPUT_FILE}             # result file path")
     print(f"  test files: {total}                   # number of tests to run")
@@ -225,9 +244,9 @@ def main():
     print_lock = threading.Lock()
     overall_start = time.perf_counter()
     if args.sequential:
-        results = execute_sequentially(test_files, args.timeout, args.threshold, print_lock)
+        results = execute_sequentially(test_files, args.timeout, args.threshold, print_lock, args.retries)
     else:
-        results = execute_concurrently(test_files, args.workers, args.timeout, args.threshold, print_lock)
+        results = execute_concurrently(test_files, args.workers, args.timeout, args.threshold, print_lock, args.retries)
 
     passed = 0
     failed = 0
