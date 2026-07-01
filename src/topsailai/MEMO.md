@@ -683,3 +683,33 @@ When adding a new module, decide which category it belongs to before choosing a 
 - If the module is a utility, statistic tracker, approval gate, or otherwise has a lifecycle independent of any single chat turn, use `logger = logging.getLogger(__name__)`.
 
 Do not switch an existing module's logger style without updating this MEMO and checking that downstream log consumers (tests, monitoring, debugging scripts) still find the logs they expect.
+
+
+## MEMO: Instruction / HookInstruction
+
+**Date:** 2026-06-30
+**Files:**
+- `/TopsailAI/src/topsailai/utils/instruction_tool.py`
+- `/TopsailAI/src/topsailai/workspace/hook_instruction.py`
+
+### Conclusion
+`instruction` is the `/` command hook system. It intercepts user input starting with `/`, routes it to registered handlers, and provides TAB completion for interactive terminals.
+
+### Core classes
+
+| Module | Role |
+|--------|------|
+| `utils/instruction_tool.py` | Generic `HookInstruction` base class. |
+| `workspace/hook_instruction.py` | Workspace-specific subclass that injects `FILE_INPUT_COMPLETIONS` and the built-in `INSTRUCTIONS` registry. |
+
+### What it does
+- **Register / delete / execute hooks** via `add_hook()`, `del_hook()`, `call_hook()`.
+- **Generate TAB completions** via `generate_input_completions()` and `refresh_input_completions()`, persisted to a JSON file for readline.
+- **Support plugin `/` commands** via `INSTRUCTIONS` and `TOPSAILAI_PLUGIN_INSTRUCTIONS`.
+
+### Recent fix
+`del_hook()` now deletes the key from `hook_map` when the last function is removed, preventing stale commands from remaining in generated completions.
+
+### Note for maintainers
+- Keep the base logic in `utils/instruction_tool.py` workspace-agnostic; workspace-specific defaults belong in `workspace/hook_instruction.py`.
+- When adding or removing hooks, always call `refresh_input_completions()` so the completion file stays in sync.
