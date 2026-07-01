@@ -27,7 +27,17 @@ Each agent's tool-call tracker maintains a consecutive duplicate counter:
 
 The counter increments by one for each consecutive duplicate and resets to zero as soon as a non-duplicate call is recorded.
 
-## 4. Placement and Scope
+## 4. Summarization Trigger
+
+When the agent gets stuck in a duplicate-tool-call loop, the Agent2LLM context can be summarized early to try to break the loop. The environment variable `TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD` controls this behavior.
+
+| Variable | Default | Description |
+|---|---|---|
+| `TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD` | `3` | Trigger Agent2LLM summarization when `consecutive_duplicate_count` exceeds this value. Set to `0` or negative to disable. The default means summarization triggers at count `4` or higher (strictly greater than). |
+
+This check is performed inside `ContextRuntimeAgent2LLM.is_need_summarize_for_processing()` as an additional OR condition alongside the existing quantity and token thresholds. It does not replace them.
+
+## 5. Placement and Scope
 
 Duplicate detection is applied at the single atomic entry point for all tool executions. The detector wraps the tool execution function and inspects the most recent records after the call completes.
 
@@ -43,13 +53,13 @@ The duplicate detector is placed as the outermost decorator so that it runs afte
 
 This ordering guarantees that detection operates on the final, approved, truncated result.
 
-## 5. Per-Agent Isolation
+## 6. Per-Agent Isolation
 
 Duplicate detection history is scoped to the current agent instance. Each agent gets its own tool-call tracker, so calls from one agent do not interfere with another. When the agent is released, its history is released with it.
 
 If no agent is active, a module-level fallback tracker is used.
 
-## 6. Notice and Result Wrapping
+## 7. Notice and Result Wrapping
 
 ### Enable Switch
 
@@ -68,7 +78,7 @@ The notice template supports the placeholders `{tool_name}` and `{consecutive_co
 
 When the notice template is empty or unset, duplicate detection still logs a warning internally, but the original result is returned unchanged. This keeps the feature safe to enable by default without surprising downstream consumers with a return-type change.
 
-## 7. Environment Variables
+## 8. Environment Variables
 
 All configuration variables share the prefix `TOPSAILAI_DUP_TOOL_CALL_`.
 
@@ -77,7 +87,7 @@ All configuration variables share the prefix `TOPSAILAI_DUP_TOOL_CALL_`.
 | `TOPSAILAI_DUP_TOOL_CALL_ENABLED` | `1` | Master switch. `1` enables duplicate detection, `0` disables it. |
 | `TOPSAILAI_DUP_TOOL_CALL_NOTICE` | `""` | Optional English notice template. Supports `{tool_name}` and `{consecutive_count}`. When non-empty, duplicate results are wrapped with the notice dictionary. |
 
-## 8. Relationship with Existing Mechanisms
+## 9. Relationship with Existing Mechanisms
 
 | Mechanism | Relationship |
 |---|---|
@@ -85,7 +95,7 @@ All configuration variables share the prefix `TOPSAILAI_DUP_TOOL_CALL_`.
 | `TOPSAILAI_REFUSE_SEVERE_REPETITION` | Independent. That variable operates on LLM response text, not on tool calls. |
 | `TOPSAILAI_TOOL_CALL_MAXIMUM_RETURN` | Result truncation happens before duplicate detection, so the detector compares and wraps the already-truncated result. |
 
-## 9. Open Decisions
+## 10. Open Decisions
 
 1. Should there be a rate-limit or consecutive-count threshold before wrapping (e.g. warn on first duplicate, escalate on third)?
 2. Should non-string argument types be normalized further (e.g. path canonicalization)?

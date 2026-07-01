@@ -26,6 +26,9 @@ from topsailai.utils import (
     json_tool,
     env_tool,
 )
+from topsailai.context.tool_stat import (
+    get_agent_tool_stat,
+)
 from topsailai.workspace.context.base import (
     ContextRuntimeBase,
 )
@@ -246,11 +249,14 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
     def is_need_summarize_for_processing(self) -> bool:
         """
-        Check if messages need to be summarized based on quantity or token threshold.
+        Check if messages need to be summarized based on quantity, token, or
+        consecutive duplicate tool call threshold.
 
         Determines whether the current message count exceeds the configured quantity
-        threshold, or whether the current Agent2LLM token usage exceeds the configured
-        token threshold, and requires summarization for efficient processing.
+        threshold, whether the current Agent2LLM token usage exceeds the configured
+        token threshold, or whether the agent's consecutive duplicate tool call count
+        exceeds the configured duplicate threshold, and requires summarization for
+        efficient processing.
 
         Returns:
             bool: True if summarization is needed, False otherwise.
@@ -295,4 +301,42 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 )
                 return True
 
+        dup_threshold = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD",
+            default=3,
+            formatter=int,
+        ) or 0
+
+        if dup_threshold > 0:
+            consecutive_count = self._get_consecutive_duplicate_count()
+            if consecutive_count > dup_threshold:
+                print_info(
+                    f"!!! [Agent2LLM] [Summarization] consecutive duplicate tool calls exceeded: "
+                    f"threshold=[{dup_threshold}], current_count=[{consecutive_count}]"
+                )
+                return True
+
         return False
+
+    def _get_consecutive_duplicate_count(self) -> int:
+        """
+        Get the current consecutive duplicate tool call count from the agent.
+
+        Resolves the agent's ToolStat instance, preferring the one attached to
+        ``ai_agent.llm_model.tool_stat`` and falling back to ``ai_agent._tool_stat``.
+        If no agent or ToolStat is available, returns ``0``.
+
+        Returns:
+            int: The current consecutive duplicate count, or ``0`` if unavailable.
+        """
+        if not self.ai_agent:
+            return 0
+
+        tool_stat = get_agent_tool_stat(self.ai_agent)
+        if tool_stat is None:
+            return 0
+
+        try:
+            return int(tool_stat.get_consecutive_duplicate_count())
+        except Exception:
+            return 0

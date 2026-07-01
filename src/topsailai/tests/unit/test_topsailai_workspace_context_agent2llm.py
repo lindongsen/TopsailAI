@@ -788,6 +788,59 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 10)
             self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "fallback-msg-0")
 
+    def test_duplicate_count_disabled_returns_false(self):
+        """Test duplicate count check disabled when threshold is 0."""
+        self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
+        self.test_instance._ai_agent.llm_model.tokenStat.current_tokens = 0
+        self.test_instance._ai_agent.llm_model.tool_stat.get_consecutive_duplicate_count.return_value = 5
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD": "0",
+        }):
+            result = self.test_instance.is_need_summarize_for_processing()
+            self.assertFalse(result)
+
+    def test_duplicate_count_equal_threshold_returns_false(self):
+        """Test count equal to threshold returns False (strict >)."""
+        self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
+        self.test_instance._ai_agent.llm_model.tokenStat.current_tokens = 0
+        self.test_instance._ai_agent.llm_model.tool_stat.get_consecutive_duplicate_count.return_value = 3
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD": "3",
+        }):
+            result = self.test_instance.is_need_summarize_for_processing()
+            self.assertFalse(result)
+
+    def test_duplicate_count_above_threshold_returns_true(self):
+        """Test count above threshold returns True."""
+        self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
+        self.test_instance._ai_agent.llm_model.tokenStat.current_tokens = 0
+        self.test_instance._ai_agent.llm_model.tool_stat.get_consecutive_duplicate_count.return_value = 4
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD": "3",
+        }):
+            result = self.test_instance.is_need_summarize_for_processing()
+            self.assertTrue(result)
+
+    def test_duplicate_count_missing_tool_stat_returns_false(self):
+        """Test missing tool_stat falls back to 0 and returns False."""
+        self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
+        self.test_instance._ai_agent.llm_model.tokenStat.current_tokens = 0
+        self.test_instance._ai_agent.llm_model.tool_stat = None
+        self.test_instance._ai_agent._tool_stat = None
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD": "3",
+        }):
+            result = self.test_instance.is_need_summarize_for_processing()
+            self.assertFalse(result)
+
+    def test_duplicate_count_default_threshold(self):
+        """Test default threshold 3 triggers at count 4."""
+        self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
+        self.test_instance._ai_agent.llm_model.tokenStat.current_tokens = 0
+        self.test_instance._ai_agent.llm_model.tool_stat.get_consecutive_duplicate_count.return_value = 4
+        result = self.test_instance.is_need_summarize_for_processing()
+        self.assertTrue(result)
+
 
 if __name__ == '__main__':
     unittest.main()
