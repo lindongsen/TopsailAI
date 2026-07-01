@@ -25,6 +25,9 @@ from topsailai.utils import (
     thread_tool,
     qos_tool,
 )
+from topsailai.utils.thread_local_tool import (
+    get_agent_runtime_input,
+)
 
 from .constants import (
     ROLE_ASSISTANT,
@@ -326,7 +329,10 @@ class LLMModel(LLMModelBase):
                 return result
             except KeyboardInterrupt:
                 # The LLM service has been stuck for a long time, we can proactively retry
-                yn = input(">>> LLM Retry [yes/no] ")
+                input_func = get_agent_runtime_input()
+                if input_func is None:
+                    input_func = input
+                yn = input_func(">>> LLM Retry [yes/no] ")
                 if yn.strip().lower() == "yes":
                     continue
                 raise KeyboardInterrupt()
@@ -422,7 +428,10 @@ class LLMModel(LLMModelBase):
                 if thread_tool.is_main_thread():
                     print_error(f"Some errors have occurred: [{e}]")
                     logger.exception("some errors have occurred: %s", e)
-                    yn = input(">>> LLM Retry [yes/no] ")
+                    input_func = get_agent_runtime_input()
+                    if input_func is None:
+                        input_func = input
+                    yn = input_func(">>> LLM Retry [yes/no] ")
                     if yn.strip().lower() == "yes":
                         continue
                 raise e

@@ -190,6 +190,14 @@ class TestHooksConstant:
         matching_keys = [k for k in HOOKS.keys() if k.startswith("post_final_answer")]
         assert len(matching_keys) > 0, "Expected post_final_answer hooks to be discovered"
 
+    def test_hooks_contains_pre_run(self):
+        """Test HOOKS contains pre_run hooks."""
+        from topsailai.workspace.agent.hooks.base.init import HOOKS
+
+        # The pre_run module should be discovered
+        matching_keys = [k for k in HOOKS.keys() if k.startswith("pre_run")]
+        assert len(matching_keys) > 0, "Expected pre_run hooks to be discovered"
+
     def test_hooks_not_empty(self):
         """Test HOOKS is not empty (hooks were discovered)."""
         from topsailai.workspace.agent.hooks.base.init import HOOKS
@@ -205,6 +213,16 @@ class TestGetHooksIntegration:
         from topsailai.workspace.agent.hooks.base.init import get_hooks, HOOKS
 
         result = get_hooks("post_final_answer")
+        assert len(result) > 0
+        # Verify returned functions are from HOOKS
+        for func in result:
+            assert func in HOOKS.values()
+
+    def test_get_hooks_with_real_pre_run(self):
+        """Test get_hooks finds pre_run hooks."""
+        from topsailai.workspace.agent.hooks.base.init import get_hooks, HOOKS
+
+        result = get_hooks("pre_run")
         assert len(result) > 0
         # Verify returned functions are from HOOKS
         for func in result:

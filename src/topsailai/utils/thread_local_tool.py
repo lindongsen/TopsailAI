@@ -16,6 +16,7 @@ KEY_AGENT_NAME = "agent_name"
 KEY_SESSION_ID = "session_id"
 KEY_AGENT_OBJECT = "agent_object"
 KEY_THREAD_NAME = ""
+KEY_AGENT_RUNTIME_INPUT = "agent_runtime_input"
 
 # Define a thread-local storage object
 g_thr_local = threading.local()
@@ -212,3 +213,28 @@ def get_agent_object():
         object: Current agent object, or None if not set
     """
     return get_thread_var(KEY_AGENT_OBJECT)
+
+def set_agent_runtime_input(input_func):
+    """Set the agent-runtime input function in thread-local storage.
+
+    This function is used by the agent workspace to register a custom input
+    handler (typically ``input_one_line`` with hook interception) so that
+    lower-level modules such as ``ai_base`` can use the same input path during
+    an agent run.
+
+    Args:
+        input_func: Callable that accepts a prompt string and returns user input.
+
+    Returns:
+        None
+    """
+    set_thread_var(KEY_AGENT_RUNTIME_INPUT, input_func)
+    return
+
+def get_agent_runtime_input():
+    """Get the agent-runtime input function from thread-local storage.
+
+    Returns:
+        callable|None: The registered input function, or None if unset.
+    """
+    return get_thread_var(KEY_AGENT_RUNTIME_INPUT)

@@ -21,6 +21,7 @@ from topsailai.utils.thread_tool import (
 )
 from topsailai.utils.thread_local_tool import (
     get_agent_name,
+    get_agent_runtime_input,
 )
 from topsailai.utils import (
     print_tool,
@@ -259,7 +260,10 @@ class StepCallTool(StepCallBase):
             return _auto_msg
 
         while True:
-            user_input = input(f"\n[{get_agent_name()}] >>> Your input: ")
+            input_func = get_agent_runtime_input()
+            if input_func is None:
+                input_func = input
+            user_input = input_func(f"\n[{get_agent_name()}] >>> Your input: ")
             if not user_input.strip():
                 continue
             return user_input

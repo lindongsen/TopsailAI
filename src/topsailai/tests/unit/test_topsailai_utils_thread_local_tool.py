@@ -5,7 +5,8 @@ from topsailai.utils.thread_local_tool import (
     set_thread_var, get_thread_var, unset_thread_var, rid_all_thread_vars,
     incr_agent_deep, decr_agent_deep, ctxm_give_agent_name, get_agent_name,
     get_session_id, ctxm_set_agent, get_agent_object, KEY_AGENT_NAME,
-    KEY_SESSION_ID, KEY_AGENT_OBJECT, KEY_AGENT_DEEP, MAX_AGENT_DEEP
+    KEY_SESSION_ID, KEY_AGENT_OBJECT, KEY_AGENT_DEEP, MAX_AGENT_DEEP,
+    set_agent_runtime_input, get_agent_runtime_input, KEY_AGENT_RUNTIME_INPUT
 )
 
 
@@ -176,6 +177,68 @@ class TestThreadLocalTool(unittest.TestCase):
         self.assertEqual(results[0], "value_0")
         self.assertEqual(results[1], "value_1")
         self.assertEqual(results[2], "value_2")
+
+
+class TestAgentRuntimeInput(unittest.TestCase):
+    """Test cases for agent-runtime input thread-local helpers."""
+
+    def setUp(self):
+        """Clear agent-runtime input before each test."""
+        unset_thread_var(KEY_AGENT_RUNTIME_INPUT)
+
+    def tearDown(self):
+        """Clear agent-runtime input after each test."""
+        unset_thread_var(KEY_AGENT_RUNTIME_INPUT)
+
+    def test_get_agent_runtime_input_default_none(self):
+        """Test get_agent_runtime_input returns None when unset."""
+        self.assertIsNone(get_agent_runtime_input())
+
+    def test_set_and_get_agent_runtime_input(self):
+        """Test set_agent_runtime_input stores a callable."""
+        def sample_input(prompt: str) -> str:
+            return "user reply"
+
+        set_agent_runtime_input(sample_input)
+        self.assertEqual(get_agent_runtime_input(), sample_input)
+
+    def test_set_agent_runtime_input_overwrites_previous(self):
+        """Test setting a new input function overwrites the previous one."""
+        def first_input(prompt: str) -> str:
+            return "first"
+
+        def second_input(prompt: str) -> str:
+            return "second"
+
+        set_agent_runtime_input(first_input)
+        self.assertEqual(get_agent_runtime_input()(""), "first")
+
+        set_agent_runtime_input(second_input)
+        self.assertEqual(get_agent_runtime_input()(""), "second")
+
+    def test_agent_runtime_input_thread_isolation(self):
+        """Test agent-runtime input is isolated between threads."""
+        results = {}
+
+        def thread_input(thread_id):
+            def input_func(prompt: str) -> str:
+                return f"reply_{thread_id}"
+            set_agent_runtime_input(input_func)
+            results[thread_id] = get_agent_runtime_input()("prompt")
+
+        threads = []
+        for i in range(3):
+            thread = threading.Thread(target=thread_input, args=(i,))
+            threads.append(thread)
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(results[0], "reply_0")
+        self.assertEqual(results[1], "reply_1")
+        self.assertEqual(results[2], "reply_2")
+        self.assertIsNone(get_agent_runtime_input())
 
 
 if __name__ == "__main__":
