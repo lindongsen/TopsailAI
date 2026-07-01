@@ -290,6 +290,16 @@ def get_skill_markdown(skill_folders=None) -> str:
         ] + (
             EnvReaderInstance.get_list_str("TOPSAILAI_PLUGIN_SKILLS", separator="") or []
         )
+        for env_key in [
+            "TOPSAILAI_PROJECT_WORKSPACE",
+            "TOPSAILAI_PWD",
+        ]:
+            env_dir = EnvReaderInstance.get(env_key)
+            if not env_dir:
+                continue
+            env_dir_skill = os.path.join(env_dir, ".topsailai/skills")
+            if os.path.exists(env_dir_skill) and env_dir_skill not in skill_folders:
+                skill_folders.append(env_dir_skill)
 
     max_recursion_depth = EnvReaderInstance.get("TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH", default=3, formatter=int) or 3
     for skill_folder in to_list(skill_folders):
