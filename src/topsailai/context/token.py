@@ -211,9 +211,9 @@ class TokenStat(threading.Thread):
                 current_tokens=self.current_count,
                 cached_tokens=-1,
                 msg_count=self.msg_count,
-                total_tokens=self.total_count,
-                total_text_len=self.total_text_len,
                 current_text_len=self.current_text_len,
+                total_text_len=self.total_text_len,
+                total_tokens=self.total_count,
             )
             if usage:
                 self.current_cached_tokens = usage.prompt_tokens_details.cached_tokens
