@@ -360,6 +360,11 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         # Log message count and token usage after summarization
         _token_count_after = self._get_current_tokens(realtime=True)
         logger.info("[summarize_processed] after: messages=%s, tokens=%s", len(self.messages), _token_count_after)
+        self._check_summarize_token_reduction(
+            "summarize_messages_for_processed",
+            _token_count_before,
+            _token_count_after,
+        )
         return answer
 
 

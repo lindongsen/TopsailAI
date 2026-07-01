@@ -404,11 +404,82 @@ class TestSummarizeMessagesForProcessing:
                 result = mock_agent2llm.summarize_messages_for_processing()
                 assert result is None
 
+    @patch('topsailai.workspace.context.base.logger')
+    @patch('topsailai.workspace.context.agent2llm.env_tool.EnvReaderInstance')
+    def test_token_reduction_critical_log_when_not_decreased(self, mock_env_reader, mock_logger, mock_agent2llm):
+        """Test critical log is emitted when token count does not decrease."""
+        mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
+        mock_agent2llm.ai_agent.messages = [
+            '{"role": "user", "content": "msg1"}',
+            '{"role": "assistant", "content": "msg2"}',
+            '{"role": "user", "content": "msg3"}',
+        ]
+        mock_agent2llm.session_id = "test_session"
+        mock_env_reader.check_bool.return_value = False
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+            mock_llm_chat = MagicMock()
+            mock_prompt_ctl = MagicMock()
+            mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
+            mock_llm_chat.prompt_ctl = mock_prompt_ctl
+            with patch.object(mock_agent2llm, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
+                with patch.object(mock_agent2llm, '_get_current_tokens', side_effect=[100, 100]):
+                    result = mock_agent2llm.summarize_messages_for_processing()
+                    assert result == "summarized answer"
+                    mock_logger.critical.assert_called_once()
+                    call_args = mock_logger.critical.call_args[0]
+                    assert "summarize_messages_for_processing" in call_args[0]
+                    assert "before_tokens=100" in call_args[0]
+                    assert "after_tokens=100" in call_args[0]
+                    assert "test_session" in call_args[0]
+
+    @patch('topsailai.workspace.context.base.logger')
+    @patch('topsailai.workspace.context.agent2llm.env_tool.EnvReaderInstance')
+    def test_token_reduction_no_critical_log_when_decreased(self, mock_env_reader, mock_logger, mock_agent2llm):
+        """Test critical log is not emitted when token count decreases."""
+        mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
+        mock_agent2llm.ai_agent.messages = [
+            '{"role": "user", "content": "msg1"}',
+            '{"role": "assistant", "content": "msg2"}',
+            '{"role": "user", "content": "msg3"}',
+        ]
+        mock_env_reader.check_bool.return_value = False
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+            mock_llm_chat = MagicMock()
+            mock_prompt_ctl = MagicMock()
+            mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
+            mock_llm_chat.prompt_ctl = mock_prompt_ctl
+            with patch.object(mock_agent2llm, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
+                with patch.object(mock_agent2llm, '_get_current_tokens', side_effect=[100, 50]):
+                    result = mock_agent2llm.summarize_messages_for_processing()
+                    assert result == "summarized answer"
+                    mock_logger.critical.assert_not_called()
+
+    @patch('topsailai.workspace.context.base.logger')
+    @patch('topsailai.workspace.context.agent2llm.env_tool.EnvReaderInstance')
+    def test_token_reduction_critical_log_when_increased(self, mock_env_reader, mock_logger, mock_agent2llm):
+        """Test critical log is emitted when token count increases."""
+        mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
+        mock_agent2llm.ai_agent.messages = [
+            '{"role": "user", "content": "msg1"}',
+            '{"role": "assistant", "content": "msg2"}',
+            '{"role": "user", "content": "msg3"}',
+        ]
+        mock_env_reader.check_bool.return_value = False
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+            mock_llm_chat = MagicMock()
+            mock_prompt_ctl = MagicMock()
+            mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
+            mock_llm_chat.prompt_ctl = mock_prompt_ctl
+            with patch.object(mock_agent2llm, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
+                with patch.object(mock_agent2llm, '_get_current_tokens', side_effect=[100, 150]):
+                    result = mock_agent2llm.summarize_messages_for_processing()
+                    assert result == "summarized answer"
+                    mock_logger.critical.assert_called_once()
+
 
 # =============================================================================
 # Group E: Edge Cases Tests
 # =============================================================================
-
 class TestEdgeCases:
     """Test edge cases for agent2llm module."""
 

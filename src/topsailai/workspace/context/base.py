@@ -7,6 +7,7 @@ Purpose: Context runtime base module for managing chat sessions and message hand
 
 import random
 
+from topsailai.logger import logger
 from topsailai.ai_base.constants import (
     ROLE_USER,
     STEP_NAME_TASK,
@@ -530,6 +531,39 @@ class ContextRuntimeBase(object):
         except Exception:
             pass
         return None
+
+    def _check_summarize_token_reduction(
+            self,
+            method_name: str,
+            before_tokens: int | None,
+            after_tokens: int | None,
+        ) -> None:
+        """
+        Emit a critical log if summarization did not reduce token count.
+
+        This helper is called immediately after a summarization method rebuilds
+        the runtime message list. If the post-summarization token count is not
+        strictly lower than the pre-summarization count, something went wrong
+        (e.g. the summary was longer than the original context or token
+        accounting is inconsistent) and operators should be alerted.
+
+        Args:
+            method_name (str): Name of the summarization method being checked.
+            before_tokens (int | None): Token count before summarization.
+            after_tokens (int | None): Token count after summarization.
+
+        Returns:
+            None
+        """
+        if before_tokens is None or after_tokens is None:
+            return
+        if after_tokens >= before_tokens:
+            logger.critical(
+                f"[{method_name}] token count did not decrease after summarization: "
+                f"before_tokens={before_tokens}, after_tokens={after_tokens}, "
+                f"session_id={self.session_id or ''}"
+            )
+        return
 
     ###############################################################
     # Summary

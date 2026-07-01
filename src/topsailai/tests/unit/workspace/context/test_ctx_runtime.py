@@ -598,6 +598,138 @@ class TestContextRuntimeDataSessionMessages:
 
 
 # ==============================================================================
+# Group D1: Summarize Token Reduction Tests
+# ==============================================================================
+
+class TestSummarizeTokenReduction:
+    """Test critical log when summarization does not reduce token count."""
+
+    def _env_reader_side_effect(self, key, **kwargs):
+        """Return sensible defaults for env keys touched during summarization."""
+        if key == "TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD":
+            return kwargs.get("default", 0)
+        if key == "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD":
+            return kwargs.get("default")
+        if key == "TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP":
+            return kwargs.get("default", 0)
+        if key == "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES":
+            return kwargs.get("default", True)
+        if key == "TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO":
+            return kwargs.get("default", 0.5)
+        if key == "TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES":
+            return kwargs.get("default", 17)
+        if key == "TOPSAILAI_CONTEXT_SUMMARY_MODE":
+            return kwargs.get("default", "runtime")
+        return kwargs.get("default")
+
+    @patch('topsailai.workspace.context.base.logger')
+    @patch('topsailai.workspace.context.ctx_runtime.env_tool.EnvReaderInstance')
+    @patch('topsailai.workspace.context.base.ctx_manager')
+    def test_processed_token_reduction_critical_log_when_not_decreased(
+        self, mock_ctx_manager, mock_env_reader, mock_logger
+    ):
+        """Test critical log is emitted when processed token count does not decrease."""
+        from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
+
+        mock_env_reader.get.side_effect = self._env_reader_side_effect
+        mock_env_reader.check_bool.return_value = False
+
+        runtime = ContextRuntimeData()
+        runtime.session_id = ""
+        runtime.messages = [
+            '{"role": "user", "content": "msg1"}',
+            '{"role": "assistant", "content": "msg2"}',
+            '{"role": "user", "content": "msg3"}',
+        ]
+
+        mock_llm_chat = MagicMock()
+        mock_prompt_ctl = MagicMock()
+        mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
+        mock_llm_chat.prompt_ctl = mock_prompt_ctl
+
+        with patch.object(runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+            with patch.object(runtime, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
+                with patch.object(runtime, '_get_current_tokens', side_effect=[100, 100]):
+                    result = runtime.summarize_messages_for_processed()
+                    assert result == "summarized answer"
+                    mock_logger.critical.assert_called_once()
+                    call_args = mock_logger.critical.call_args[0]
+                    assert "summarize_messages_for_processed" in call_args[0]
+                    assert "before_tokens=100" in call_args[0]
+                    assert "after_tokens=100" in call_args[0]
+
+    @patch('topsailai.workspace.context.base.logger')
+    @patch('topsailai.workspace.context.ctx_runtime.env_tool.EnvReaderInstance')
+    @patch('topsailai.workspace.context.base.ctx_manager')
+    def test_processed_token_reduction_no_critical_log_when_decreased(
+        self, mock_ctx_manager, mock_env_reader, mock_logger
+    ):
+        """Test critical log is not emitted when processed token count decreases."""
+        from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
+
+        mock_env_reader.get.side_effect = self._env_reader_side_effect
+        mock_env_reader.check_bool.return_value = False
+
+        runtime = ContextRuntimeData()
+        runtime.session_id = ""
+        runtime.messages = [
+            '{"role": "user", "content": "msg1"}',
+            '{"role": "assistant", "content": "msg2"}',
+            '{"role": "user", "content": "msg3"}',
+        ]
+
+        mock_llm_chat = MagicMock()
+        mock_prompt_ctl = MagicMock()
+        mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
+        mock_llm_chat.prompt_ctl = mock_prompt_ctl
+
+        with patch.object(runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+            with patch.object(runtime, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
+                with patch.object(runtime, '_get_current_tokens', side_effect=[100, 50]):
+                    result = runtime.summarize_messages_for_processed()
+                    assert result == "summarized answer"
+                    mock_logger.critical.assert_not_called()
+
+    @patch('topsailai.workspace.context.base.logger')
+    @patch('topsailai.workspace.context.ctx_runtime.env_tool.EnvReaderInstance')
+    @patch('topsailai.workspace.context.base.ctx_manager')
+    def test_processed_token_reduction_critical_log_when_increased(
+        self, mock_ctx_manager, mock_env_reader, mock_logger
+    ):
+        """Test critical log is emitted when processed token count increases."""
+        from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
+
+        mock_env_reader.get.side_effect = self._env_reader_side_effect
+        mock_env_reader.check_bool.return_value = False
+
+        session_messages = [
+            '{"role": "user", "content": "msg1"}',
+            '{"role": "assistant", "content": "msg2"}',
+            '{"role": "user", "content": "msg3"}',
+        ]
+        mock_ctx_manager.get_messages_by_session.return_value = session_messages
+
+        runtime = ContextRuntimeData()
+        runtime.session_id = "processed_session"
+        runtime.messages = list(session_messages)
+
+        mock_llm_chat = MagicMock()
+        mock_prompt_ctl = MagicMock()
+        mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
+        mock_llm_chat.prompt_ctl = mock_prompt_ctl
+
+        with patch.object(runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+            with patch.object(runtime, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
+                with patch.object(runtime, '_get_current_tokens', side_effect=[100, 150]):
+                    with patch.object(runtime, 'is_need_summarize_for_processed', return_value=True):
+                        result = runtime.summarize_messages_for_processed()
+                        assert result == "summarized answer"
+                        mock_logger.critical.assert_called_once()
+                        call_args = mock_logger.critical.call_args[0]
+                        assert "processed_session" in call_args[0]
+
+
+# ==============================================================================
 # Group E: Edge Case Tests
 # ==============================================================================
 
