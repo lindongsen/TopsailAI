@@ -259,9 +259,9 @@ def input_message(tips: str = "", hook: HookInstruction = None) -> str:
         if env_tool.is_chat_multi_line():
             return input_multi_line(tips, hook)
         return input_one_line(tips, hook)
-    except KeyboardInterrupt as e:
+    except KeyboardInterrupt:
         if input_yes("Quit Your Turn? [yes/no] "):
-            raise e
+            raise Exception("User Quit!")
     return ""
 
 def call_hook_get_message_for_task_from_file():
@@ -358,7 +358,7 @@ def input_yes(tips: str = "Continue [yes/no] ") -> bool:
         >>> print(should_continue)
         True
     """
-    yn = _input(tips)
+    yn = input_one_line(tips)
     return yn.strip().lower() == "yes"
 
 
