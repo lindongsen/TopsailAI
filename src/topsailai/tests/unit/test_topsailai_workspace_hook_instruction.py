@@ -1,8 +1,8 @@
 """
 Unit tests for workspace/hook_instruction module.
 
-This module tests the HookFunc and HookInstruction classes which provide
-a flexible hook system for managing and executing instruction-based hooks.
+This module tests the workspace-specific HookInstruction subclass and its
+integration with the base implementation in utils/instruction_tool.py.
 
 Author: AI
 """
@@ -13,17 +13,18 @@ import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
-from topsailai.workspace.hook_instruction import (
+from topsailai.utils.instruction_tool import (
     HookFunc,
     HookBaseUtils,
-    HookInstruction,
     TRIGGER_CHARS,
     SPLIT_LINE,
+)
+from topsailai.workspace.hook_instruction import (
+    HookInstruction,
 )
 
 
 class TestHookFunc(unittest.TestCase):
-    """Test cases for HookFunc class."""
 
     def test_init_with_description(self):
         """Test HookFunc initialization with description."""
@@ -198,14 +199,14 @@ class TestHookInstruction(unittest.TestCase):
                 hook_inst.add_hook('/test', "not callable")
 
     def test_del_hook_removes_function(self):
-        """Test del_hook removes hook function."""
+        """Test del_hook removes hook function and its key when empty."""
         with patch.object(HookInstruction, '__init__', lambda x: None):
             hook_inst = HookInstruction()
             hook_inst.hook_map = {'/test': []}
             hook_func = HookFunc("test", MagicMock())
             hook_inst.hook_map['/test'].append(hook_func)
             hook_inst.del_hook('/test', hook_func)
-            self.assertEqual(len(hook_inst.hook_map['/test']), 0)
+            self.assertNotIn('/test', hook_inst.hook_map)
 
     def test_del_hook_nonexistent_hook(self):
         """Test del_hook handles nonexistent hook gracefully."""
@@ -271,8 +272,8 @@ class TestHookInstruction(unittest.TestCase):
             hook_inst.hook_map = {}
             self.assertFalse(hook_inst.exist_hook('/nonexistent'))
 
-    @patch('topsailai.workspace.hook_instruction.json_tool')
-    @patch('topsailai.workspace.hook_instruction.format_tool')
+    @patch('topsailai.utils.instruction_tool.json_tool')
+    @patch('topsailai.utils.instruction_tool.format_tool')
     def test_call_hook_with_help_string(self, mock_format, mock_json):
         """Test call_hook shows help for help strings."""
         with patch.object(HookInstruction, '__init__', lambda x: None):
@@ -282,8 +283,8 @@ class TestHookInstruction(unittest.TestCase):
                 hook_inst.call_hook('/test', 'help')
                 mock_help.assert_called_once_with('/test')
 
-    @patch('topsailai.workspace.hook_instruction.json_tool')
-    @patch('topsailai.workspace.hook_instruction.format_tool')
+    @patch('topsailai.utils.instruction_tool.json_tool')
+    @patch('topsailai.utils.instruction_tool.format_tool')
     def test_call_hook_with_json_kwargs(self, mock_format, mock_json):
         """Test call_hook parses JSON kwargs."""
         with patch.object(HookInstruction, '__init__', lambda x: None):
@@ -294,8 +295,8 @@ class TestHookInstruction(unittest.TestCase):
             hook_inst.call_hook('/test', '{"key": "value"}')
             mock_func.assert_called_once()
 
-    @patch('topsailai.workspace.hook_instruction.json_tool')
-    @patch('topsailai.workspace.hook_instruction.format_tool')
+    @patch('topsailai.utils.instruction_tool.json_tool')
+    @patch('topsailai.utils.instruction_tool.format_tool')
     def test_call_hook_with_key_value_kwargs(self, mock_format, mock_json):
         """Test call_hook parses key=value kwargs."""
         with patch.object(HookInstruction, '__init__', lambda x: None):
@@ -306,8 +307,8 @@ class TestHookInstruction(unittest.TestCase):
             hook_inst.call_hook('/test', 'key=value')
             mock_func.assert_called_once()
 
-    @patch('topsailai.workspace.hook_instruction.json_tool')
-    @patch('topsailai.workspace.hook_instruction.format_tool')
+    @patch('topsailai.utils.instruction_tool.json_tool')
+    @patch('topsailai.utils.instruction_tool.format_tool')
     def test_call_hook_with_space_separated_args(self, mock_format, mock_json):
         """Test call_hook parses space-separated args."""
         with patch.object(HookInstruction, '__init__', lambda x: None):
@@ -318,8 +319,8 @@ class TestHookInstruction(unittest.TestCase):
             hook_inst.call_hook('/test', 'arg1 arg2')
             mock_func.assert_called_once()
 
-    @patch('topsailai.workspace.hook_instruction.json_tool')
-    @patch('topsailai.workspace.hook_instruction.format_tool')
+    @patch('topsailai.utils.instruction_tool.json_tool')
+    @patch('topsailai.utils.instruction_tool.format_tool')
     def test_call_hook_nonexistent_shows_help(self, mock_format, mock_json):
         """Test call_hook shows help for nonexistent hook."""
         with patch.object(HookInstruction, '__init__', lambda x: None):
@@ -329,8 +330,8 @@ class TestHookInstruction(unittest.TestCase):
                 hook_inst.call_hook('/nonexistent')
                 mock_help.assert_called_once_with('/nonexistent')
 
-    @patch('topsailai.workspace.hook_instruction.json_tool')
-    @patch('topsailai.workspace.hook_instruction.format_tool')
+    @patch('topsailai.utils.instruction_tool.json_tool')
+    @patch('topsailai.utils.instruction_tool.format_tool')
     def test_call_hook_empty_hook_name(self, mock_format, mock_json):
         """Test call_hook handles empty hook name."""
         with patch.object(HookInstruction, '__init__', lambda x: None):
@@ -339,8 +340,8 @@ class TestHookInstruction(unittest.TestCase):
             # Should not raise
             hook_inst.call_hook('')
 
-    @patch('topsailai.workspace.hook_instruction.json_tool')
-    @patch('topsailai.workspace.hook_instruction.format_tool')
+    @patch('topsailai.utils.instruction_tool.json_tool')
+    @patch('topsailai.utils.instruction_tool.format_tool')
     def test_call_hook_exception_handling(self, mock_format, mock_json):
         """Test call_hook handles exceptions in hook functions."""
         with patch.object(HookInstruction, '__init__', lambda x: None):
@@ -350,8 +351,8 @@ class TestHookInstruction(unittest.TestCase):
             # Should not raise
             hook_inst.call_hook('/test')
 
-    @patch('topsailai.workspace.hook_instruction.json_tool')
-    @patch('topsailai.workspace.hook_instruction.format_tool')
+    @patch('topsailai.utils.instruction_tool.json_tool')
+    @patch('topsailai.utils.instruction_tool.format_tool')
     def test_call_hook_with_return_value(self, mock_format, mock_json):
         """Test call_hook prints return value if truthy."""
         with patch.object(HookInstruction, '__init__', lambda x: None):
@@ -362,10 +363,12 @@ class TestHookInstruction(unittest.TestCase):
                 hook_inst.call_hook('/test')
                 mock_print.assert_called_with("result value")
 
-    def _make_hook_instruction(self):
+    def _make_hook_instruction(self, completions_file=None):
         """Helper to create a HookInstruction with __init__ bypassed."""
         with patch.object(HookInstruction, '__init__', lambda x: None):
             hook_inst = HookInstruction()
+        hook_inst.hook_map = {}
+        hook_inst.file_input_completions = completions_file or ""
         return hook_inst
 
     def _write_completions_file(self, path, entries):
@@ -376,54 +379,49 @@ class TestHookInstruction(unittest.TestCase):
 
     def test_load_existing_completions_file_exists(self):
         """Test _load_existing_completions loads aliases from valid JSON file."""
-        hook_inst = self._make_hook_instruction()
         with tempfile.TemporaryDirectory() as tmpdir:
             completions_file = os.path.join(tmpdir, ".input_completions.json")
             self._write_completions_file(completions_file, [
                 {"text": "/help", "aliases": ["/h"], "doc": "help doc"},
                 {"text": "/stale", "aliases": ["/s"], "doc": "stale doc"},
             ])
-            with patch("topsailai.workspace.hook_instruction.FILE_INPUT_COMPLETIONS", completions_file):
-                aliases = hook_inst._load_existing_completions()
+            hook_inst = self._make_hook_instruction(completions_file=completions_file)
+            aliases = hook_inst._load_existing_completions()
             self.assertEqual(aliases, {"/help": ["/h"], "/stale": ["/s"]})
 
     def test_load_existing_completions_file_not_exists(self):
         """Test _load_existing_completions returns empty dict when file missing."""
-        hook_inst = self._make_hook_instruction()
         with tempfile.TemporaryDirectory() as tmpdir:
             completions_file = os.path.join(tmpdir, ".input_completions.json")
-            with patch("topsailai.workspace.hook_instruction.FILE_INPUT_COMPLETIONS", completions_file):
-                aliases = hook_inst._load_existing_completions()
+            hook_inst = self._make_hook_instruction(completions_file=completions_file)
+            aliases = hook_inst._load_existing_completions()
             self.assertEqual(aliases, {})
 
     def test_load_existing_completions_malformed(self):
         """Test _load_existing_completions returns empty dict for malformed JSON."""
-        hook_inst = self._make_hook_instruction()
         with tempfile.TemporaryDirectory() as tmpdir:
             completions_file = os.path.join(tmpdir, ".input_completions.json")
             with open(completions_file, "w", encoding="utf-8") as fd:
                 fd.write("not valid json")
-            with patch("topsailai.workspace.hook_instruction.FILE_INPUT_COMPLETIONS", completions_file):
-                aliases = hook_inst._load_existing_completions()
+            hook_inst = self._make_hook_instruction(completions_file=completions_file)
+            aliases = hook_inst._load_existing_completions()
             self.assertEqual(aliases, {})
 
     def test_generate_input_completions_removes_stale_commands(self):
         """Test generate_input_completions drops commands not in hook_map."""
-        hook_inst = self._make_hook_instruction()
-
         def help_func():
             """Show help."""
             pass
 
-        hook_inst.hook_map = {"/help": [HookFunc("help", help_func)]}
         with tempfile.TemporaryDirectory() as tmpdir:
             completions_file = os.path.join(tmpdir, ".input_completions.json")
             self._write_completions_file(completions_file, [
                 {"text": "/help", "aliases": ["/h"], "doc": "help doc"},
                 {"text": "/stale", "aliases": ["/s"], "doc": "stale doc"},
             ])
-            with patch("topsailai.workspace.hook_instruction.FILE_INPUT_COMPLETIONS", completions_file):
-                hook_inst.generate_input_completions()
+            hook_inst = self._make_hook_instruction(completions_file=completions_file)
+            hook_inst.hook_map = {"/help": [HookFunc("help", help_func)]}
+            hook_inst.generate_input_completions()
             with open(completions_file, "r", encoding="utf-8") as fd:
                 result = json.load(fd)
             texts = {entry["text"] for entry in result["completions"]}
@@ -432,20 +430,36 @@ class TestHookInstruction(unittest.TestCase):
 
     def test_generate_input_completions_preserves_existing_aliases(self):
         """Test generate_input_completions keeps aliases for still-registered hooks."""
-        hook_inst = self._make_hook_instruction()
-
         def help_func():
             """Show help."""
             pass
 
-        hook_inst.hook_map = {"/help": [HookFunc("help", help_func)]}
         with tempfile.TemporaryDirectory() as tmpdir:
             completions_file = os.path.join(tmpdir, ".input_completions.json")
             self._write_completions_file(completions_file, [
                 {"text": "/help", "aliases": ["/h", "/?"], "doc": "help doc"},
             ])
-            with patch("topsailai.workspace.hook_instruction.FILE_INPUT_COMPLETIONS", completions_file):
-                hook_inst.generate_input_completions()
+            hook_inst = self._make_hook_instruction(completions_file=completions_file)
+            hook_inst.hook_map = {"/help": [HookFunc("help", help_func)]}
+            hook_inst.generate_input_completions()
+            with open(completions_file, "r", encoding="utf-8") as fd:
+                result = json.load(fd)
+            help_entry = next(entry for entry in result["completions"] if entry["text"] == "/help")
+            self.assertIn("/h", help_entry["aliases"])
+            self.assertIn("/?", help_entry["aliases"])
+
+    def test_generate_input_completions_includes_func_aliases(self):
+        """Test generate_input_completions includes aliases from function attribute."""
+        def help_func():
+            """Show help."""
+            pass
+        help_func.aliases = ["/h", "/?"]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            completions_file = os.path.join(tmpdir, ".input_completions.json")
+            hook_inst = self._make_hook_instruction(completions_file=completions_file)
+            hook_inst.hook_map = {"/help": [HookFunc("help", help_func)]}
+            hook_inst.generate_input_completions()
             with open(completions_file, "r", encoding="utf-8") as fd:
                 result = json.load(fd)
             help_entry = next(entry for entry in result["completions"] if entry["text"] == "/help")
