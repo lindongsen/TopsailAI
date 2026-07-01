@@ -60,6 +60,7 @@ class ToolStat:
         self._lock = threading.RLock()
         self._start_time = datetime.now()
         self._call_sequence = 0  # Unique sequence number for each call
+        self.consecutive_duplicate_count = 0
 
     @staticmethod
     def _normalize(value: Any) -> str:
@@ -106,6 +107,21 @@ class ToolStat:
                 return False
             return True
 
+    def get_consecutive_duplicate_count(self) -> int:
+        """
+        Return the current consecutive duplicate count.
+
+        The count is maintained as instance state by :meth:`record`: it is
+        incremented when the last recorded call duplicates the one before it,
+        and reset to ``0`` otherwise.
+
+        Returns:
+            The number of consecutive duplicate calls immediately preceding the
+            most recent call. Returns ``0`` when the last call is not a duplicate
+            of the previous one or when fewer than two records exist.
+        """
+        with self._lock:
+            return self.consecutive_duplicate_count
     @property
     def tool_calls(self) -> List[Dict[str, Any]]:
         """Return a copy of the tool call records (thread-safe)."""
@@ -239,6 +255,14 @@ class ToolStat:
                 record["metadata"] = metadata
 
             self._tool_calls.append(record)
+
+            # Maintain the consecutive duplicate counter as instance state.
+            # Increment when the last call duplicates the previous one; otherwise reset.
+            if self.is_last_call_duplicate():
+                self.consecutive_duplicate_count += 1
+            else:
+                self.consecutive_duplicate_count = 0
+            record.setdefault("metadata", {})["consecutive_duplicate_count"] = self.consecutive_duplicate_count
 
             # Prune old records if limit exceeded
             if len(self._tool_calls) > self._max_records:
@@ -406,6 +430,7 @@ class ToolStat:
             if tool_call is None:
                 self._tool_calls.clear()
                 self._call_sequence = 0
+                self.consecutive_duplicate_count = 0
             else:
                 self._tool_calls = [
                     c for c in self._tool_calls if c["tool_call"] != tool_call
@@ -417,7 +442,7 @@ class ToolStat:
             self._tool_calls.clear()
             self._call_sequence = 0
             self._start_time = datetime.now()
-
+            self.consecutive_duplicate_count = 0
     def export(self) -> Dict[str, Any]:
         """
         Export all statistics and records to a dictionary.
@@ -631,9 +656,12 @@ def detect_duplicate_tool_call(func: Callable) -> Callable:
 
     When ``TOPSAILAI_DUP_TOOL_CALL_ENABLED`` is true and the last recorded call
     is a duplicate of the one before it, the original result is wrapped in a
-    dictionary containing a notice and a reason. If the notice template is
-    empty, the original result is returned unchanged (a warning is still
-    logged).
+    dictionary containing a notice, a reason, and the
+    ``consecutive_duplicate_count``. If the notice template is empty, the
+    original result is returned unchanged (a warning is still logged).
+
+    The notice template may include the placeholders ``{tool_name}`` and
+    ``{consecutive_count}``.
 
     Args:
         func: The tool execution function to wrap.
@@ -656,8 +684,10 @@ def detect_duplicate_tool_call(func: Callable) -> Callable:
 
         stat = get_agent_tool_stat()
         if stat.is_last_call_duplicate():
+            consecutive_count = stat.get_consecutive_duplicate_count()
             logger.warning(
-                "Duplicate tool call detected: tool=%s args=%s", tool_name, args
+                "Duplicate tool call detected: tool=%s args=%s consecutive_count=%d",
+                tool_name, args, consecutive_count
             )
 
             notice_template = env_tool.EnvReaderInstance.get(
@@ -665,6 +695,7 @@ def detect_duplicate_tool_call(func: Callable) -> Callable:
             )
             if notice_template:
                 notice = notice_template.replace("{tool_name}", tool_name)
+                notice = notice.replace("{consecutive_count}", str(consecutive_count))
                 reason = (
                     "Duplicate tool call detected: same tool_name, same arguments, "
                     "and same result as the previous call in this agent session."
@@ -673,6 +704,7 @@ def detect_duplicate_tool_call(func: Callable) -> Callable:
                     "original_result": result,
                     "notice": notice,
                     "reason": reason,
+                    "consecutive_duplicate_count": consecutive_count,
                 }
 
         return result

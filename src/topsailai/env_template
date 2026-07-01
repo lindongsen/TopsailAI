@@ -18,9 +18,11 @@ TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES=17
 TOPSAILAI_DUP_TOOL_CALL_ENABLED=1
 
 # Custom notice template for duplicate tool calls. Must be English.
-# Only the {tool_name} placeholder is supported.
+# Supports the {tool_name} and {consecutive_count} placeholders.
+# {consecutive_count} is the number of consecutive duplicate calls immediately
+# preceding the current call (0 when the current call is not a duplicate).
 # When non-empty, duplicate results are wrapped in a dictionary with keys:
-#   original_result, notice, reason
+#   original_result, notice, reason, consecutive_duplicate_count
 # When empty or unset, detection still logs a warning but returns the original
 # result unchanged.
 # Example:
@@ -29,6 +31,7 @@ TOPSAILAI_DUP_TOOL_CALL_ENABLED=1
 # ⚠️ SYSTEM NOTICE: Duplicate tool call detected.
 #
 # You have already called tool `{tool_name}` with the same arguments, and it returned the same result.
+# This is consecutive duplicate #{consecutive_count}.
 # Calling it again is unlikely to yield new information.
 #
 # Recommended actions:

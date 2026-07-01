@@ -169,7 +169,7 @@ For team agents, the effective offset is resolved in this order:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOPSAILAI_DUP_TOOL_CALL_ENABLED` | `1` | Master switch for duplicate tool call detection. `1` = enabled, `0` = disabled. |
-| `TOPSAILAI_DUP_TOOL_CALL_NOTICE` | `"Duplicate tool call detected: `{tool_name}` was already called with the same arguments and returned the same result. Please analyze the existing result instead of repeating the call."` | Custom notice template for duplicate tool calls. Must be English. Supports only the `{tool_name}` placeholder. When non-empty, duplicate results are wrapped in a dictionary with keys `original_result`, `notice`, and `reason`. When empty or unset, detection still logs a warning but the original result is returned unchanged. |
+| `TOPSAILAI_DUP_TOOL_CALL_NOTICE` | `"Duplicate tool call detected: `{tool_name}` was already called with the same arguments and returned the same result. Please analyze the existing result instead of repeating the call."` | Custom notice template for duplicate tool calls. Must be English. Supports the `{tool_name}` placeholder and the `{consecutive_count}` placeholder. When non-empty, duplicate results are wrapped in a dictionary with keys `original_result`, `notice`, `reason`, and `consecutive_duplicate_count`. When empty or unset, detection still logs a warning but the original result is returned unchanged. |
 
 ## Tool Configuration
 

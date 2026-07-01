@@ -133,6 +133,90 @@ class TestToolStatIsLastCallDuplicate(TestCase):
         self.stat.clear()
         self.assertFalse(self.stat.is_last_call_duplicate())
 
+class TestToolStatConsecutiveDuplicateCount(TestCase):
+    """Test ToolStat.consecutive_duplicate_count state tracking."""
+
+    def setUp(self):
+        self.stat = ToolStat()
+
+    def test_initial_count_is_zero(self):
+        """A fresh ToolStat has consecutive_duplicate_count == 0."""
+        self.assertEqual(self.stat.consecutive_duplicate_count, 0)
+        self.assertEqual(self.stat.get_consecutive_duplicate_count(), 0)
+
+    def test_s1_s2_s3_s4_pattern(self):
+        """S1=0, S2 duplicate=1, S3 duplicate=2, S4 not duplicate=0."""
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.assertEqual(self.stat.consecutive_duplicate_count, 0)
+
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.assertEqual(self.stat.consecutive_duplicate_count, 1)
+
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.assertEqual(self.stat.consecutive_duplicate_count, 2)
+
+        self.stat.record("tool_a", {"x": 2}, result="ok")
+        self.assertEqual(self.stat.consecutive_duplicate_count, 0)
+
+    def test_count_stored_in_metadata(self):
+        """Each record stores consecutive_duplicate_count in metadata."""
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.stat.record("tool_a", {"x": 2}, result="ok")
+
+        calls = self.stat.tool_calls
+        self.assertEqual(calls[0]["metadata"]["consecutive_duplicate_count"], 0)
+        self.assertEqual(calls[1]["metadata"]["consecutive_duplicate_count"], 1)
+        self.assertEqual(calls[2]["metadata"]["consecutive_duplicate_count"], 2)
+        self.assertEqual(calls[3]["metadata"]["consecutive_duplicate_count"], 0)
+
+    def test_different_args_resets_count(self):
+        """Different arguments reset the consecutive duplicate count."""
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.assertEqual(self.stat.consecutive_duplicate_count, 1)
+
+        self.stat.record("tool_a", {"x": 2}, result="ok")
+        self.assertEqual(self.stat.consecutive_duplicate_count, 0)
+
+    def test_different_result_resets_count(self):
+        """Different result resets the consecutive duplicate count."""
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.assertEqual(self.stat.consecutive_duplicate_count, 1)
+
+        self.stat.record("tool_a", {"x": 1}, result="not ok")
+        self.assertEqual(self.stat.consecutive_duplicate_count, 0)
+
+    def test_different_tool_resets_count(self):
+        """Different tool name resets the consecutive duplicate count."""
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.assertEqual(self.stat.consecutive_duplicate_count, 1)
+
+        self.stat.record("tool_b", {"x": 1}, result="ok")
+        self.assertEqual(self.stat.consecutive_duplicate_count, 0)
+
+    def test_clear_resets_count(self):
+        """clear() resets the consecutive duplicate count."""
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.assertEqual(self.stat.consecutive_duplicate_count, 1)
+
+        self.stat.clear()
+        self.assertEqual(self.stat.consecutive_duplicate_count, 0)
+
+    def test_reset_resets_count(self):
+        """reset() resets the consecutive duplicate count."""
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.stat.record("tool_a", {"x": 1}, result="ok")
+        self.assertEqual(self.stat.consecutive_duplicate_count, 1)
+
+        self.stat.reset()
+        self.assertEqual(self.stat.consecutive_duplicate_count, 0)
+
+
 
 class TestGetAgentToolStat(TestCase):
     """Test get_agent_tool_stat per-agent isolation and fallback."""
@@ -296,6 +380,32 @@ class TestDetectDuplicateToolCallDecorator(TestCase):
         self.assertEqual(result1, "ok")
         self.assertEqual(result2, "ok")
 
+
+    @patch.dict(os.environ, {
+        "TOPSAILAI_ENABLE_TOOL_STAT": "1",
+        "TOPSAILAI_DUP_TOOL_CALL_ENABLED": "1",
+        "TOPSAILAI_DUP_TOOL_CALL_NOTICE": "Duplicate call to {tool_name} (#{consecutive_count})",
+    })
+    def test_consecutive_count_in_wrapped_result_and_notice(self):
+        """Consecutive count increments and is rendered in notice/result."""
+        wrapped, _ = self._make_wrapped()
+
+        with patch("topsailai.utils.thread_local_tool.get_agent_object", return_value=None):
+            wrapped(None, {"x": 1}, tool_name="tool_a")          # count = 0
+            result1 = wrapped(None, {"x": 1}, tool_name="tool_a")  # count = 1
+            result2 = wrapped(None, {"x": 1}, tool_name="tool_a")  # count = 2
+            result3 = wrapped(None, {"x": 2}, tool_name="tool_a")  # not duplicate
+
+        self.assertIsInstance(result1, dict)
+        self.assertEqual(result1["consecutive_duplicate_count"], 1)
+        self.assertEqual(result1["notice"], "Duplicate call to tool_a (#1)")
+
+        self.assertIsInstance(result2, dict)
+        self.assertEqual(result2["consecutive_duplicate_count"], 2)
+        self.assertEqual(result2["notice"], "Duplicate call to tool_a (#2)")
+
+        self.assertEqual(result3, "ok")
+
     @patch.dict(os.environ, {
         "TOPSAILAI_ENABLE_TOOL_STAT": "1",
         "TOPSAILAI_DUP_TOOL_CALL_ENABLED": "1",
@@ -313,6 +423,7 @@ class TestDetectDuplicateToolCallDecorator(TestCase):
         self.assertEqual(result["original_result"], "ok")
         self.assertEqual(result["notice"], "Duplicate call to tool_a")
         self.assertIn("Duplicate tool call detected", result["reason"])
+        self.assertEqual(result["consecutive_duplicate_count"], 1)
 
     @patch.dict(os.environ, {
         "TOPSAILAI_ENABLE_TOOL_STAT": "1",
