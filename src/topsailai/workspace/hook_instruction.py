@@ -11,6 +11,9 @@ Created: 2025-12-25
 Purpose: Provide a hook-based instruction system for command processing
 '''
 
+import json
+import logging
+import os
 import readline
 
 from topsailai.utils import (
@@ -18,9 +21,12 @@ from topsailai.utils import (
     print_tool,
     format_tool,
 )
+from topsailai.workspace.folder_constants import FILE_INPUT_COMPLETIONS
 from topsailai.workspace.plugin_instruction.base.init import (
     INSTRUCTIONS,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Characters that trigger hook processing when found at the beginning of a message
@@ -120,8 +126,138 @@ class HookInstruction(HookBaseUtils):
         # add plugin hooks
         self.load_instructions(INSTRUCTIONS)
 
+        # generate input completions for terminal TAB completion
+        self.generate_input_completions()
+
         # tab completion
         self.setup_readline_completion()
+        return
+
+    def _extract_completion_doc(self, func) -> str:
+        """Return the first non-empty line of *func*'s docstring, if any."""
+        doc = getattr(func, "__doc__", None) or ""
+        doc = doc.strip()
+        if not doc:
+            return ""
+        for line in doc.splitlines():
+            line = line.strip()
+            if line:
+                return line
+        return ""
+
+    def _load_existing_completions(self) -> dict[str, list[str]]:
+        """Load alias mappings from the existing completions file.
+
+        Returns a dict mapping command text (e.g. "/help") to its list of
+        aliases.  This preserves manually-curated aliases across
+        regenerations.
+        """
+        if not os.path.exists(FILE_INPUT_COMPLETIONS):
+            return {}
+        try:
+            with open(FILE_INPUT_COMPLETIONS, "r", encoding="utf-8") as fd:
+                data = json.load(fd)
+        except Exception as exc:
+            logger.debug(
+                "Could not load existing input completions %s: %s",
+                FILE_INPUT_COMPLETIONS,
+                exc,
+            )
+            return {}
+
+        aliases: dict[str, list[str]] = {}
+        if isinstance(data, dict) and isinstance(data.get("completions"), list):
+            for entry in data.get("completions", []):
+                if not isinstance(entry, dict):
+                    continue
+                text = entry.get("text")
+                if not isinstance(text, str):
+                    continue
+                aliases[text] = [
+                    a for a in entry.get("aliases", [])
+                    if isinstance(a, str)
+                ]
+        return aliases
+
+    def generate_input_completions(self) -> None:
+        """Write all registered hook commands to FILE_INPUT_COMPLETIONS.
+
+        The generated JSON follows the format expected by the terminal helper
+        in utils/input_tool.py:
+
+            {"completions": [
+                {"text": "/help", "aliases": ["/h"], "doc": "..."},
+                ...
+            ]}
+
+        Aliases are preserved from the existing completions file and may also
+        be declared via a function-level ``aliases`` attribute on the hook
+        function.  Completion entries whose ``text`` is no longer present in
+        ``self.hook_map`` are removed so stale commands do not persist.
+        """
+        existing_aliases = self._load_existing_completions()
+        # Drop aliases for commands that are no longer registered.
+        stale = set(existing_aliases.keys()) - set(self.hook_map.keys())
+        for key in stale:
+            del existing_aliases[key]
+
+        completions: list[dict] = []
+
+        for hook_name in sorted(self.hook_map.keys()):
+            hook_funcs = self.hook_map[hook_name]
+            hook_func = hook_funcs[0] if hook_funcs else None
+
+            doc = ""
+            func_aliases: list[str] = []
+            if hook_func is not None:
+                doc = self._extract_completion_doc(hook_func.func)
+                raw_aliases = getattr(hook_func.func, "aliases", None)
+                if isinstance(raw_aliases, (list, tuple)):
+                    func_aliases = [a for a in raw_aliases if isinstance(a, str)]
+
+            aliases = list(existing_aliases.get(hook_name, []))
+            for alias in func_aliases:
+                if alias not in aliases:
+                    aliases.append(alias)
+
+            completions.append({
+                "text": hook_name,
+                "aliases": aliases,
+                "doc": doc,
+            })
+
+        data = {"completions": completions}
+        try:
+            parent = os.path.dirname(FILE_INPUT_COMPLETIONS)
+            if parent and not os.path.exists(parent):
+                os.makedirs(parent, exist_ok=True)
+            with open(FILE_INPUT_COMPLETIONS, "w", encoding="utf-8") as fd:
+                json.dump(data, fd, ensure_ascii=False, indent=2)
+                fd.write("\n")
+        except OSError as exc:
+            logger.debug(
+                "Could not write input completions %s: %s",
+                FILE_INPUT_COMPLETIONS,
+                exc,
+            )
+        return
+
+    def refresh_input_completions(self) -> None:
+        """Regenerate and re-apply input completions safely.
+
+        This method is the single entry point for refreshing completions after
+        any change to ``self.hook_map``.  All exceptions are caught and logged
+        internally so callers never need to handle refresh failures.
+        """
+        try:
+            self.generate_input_completions()
+            self.setup_readline_completion()
+        except Exception as exc:
+            logger.debug(
+                "Failed to refresh input completions: %s",
+                exc,
+                exc_info=True,
+            )
         return
 
     def load_instructions(self, instructions:dict):
@@ -239,6 +375,7 @@ class HookInstruction(HookBaseUtils):
             )
 
         self.hook_map[hook_name].append(hook_func)
+        self.refresh_input_completions()
         return
 
     def del_hook(self, hook_name, hook_func: HookFunc):
@@ -258,6 +395,7 @@ class HookInstruction(HookBaseUtils):
         if hook_name in self.hook_map:
             if hook_func in self.hook_map[hook_name]:
                 self.hook_map[hook_name].remove(hook_func)
+        self.refresh_input_completions()
         return
 
     def __is_help(self, s) -> bool:
