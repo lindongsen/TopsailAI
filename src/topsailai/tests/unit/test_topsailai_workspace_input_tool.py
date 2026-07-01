@@ -471,7 +471,7 @@ class TestInputFromPipeSession(unittest.TestCase):
     @patch("topsailai.workspace.input_tool._build_pipe_path")
     def test_delegates_to_utils_function(self, mock_build_path, mock_input_from_pipe):
         """Test that wrapper builds path and delegates to utils function."""
-        from topsailai.workspace.input_tool import input_from_pipe_session, FILE_INPUT_HISTORY_JSONL
+        from topsailai.workspace.input_tool import input_from_pipe_session, FILE_INPUT_HISTORY_JSONL, FILE_INPUT_COMPLETIONS
         mock_build_path.return_value = "/tmp/test.pipe"
         mock_input_from_pipe.return_value = "message from pipe"
         result = input_from_pipe_session(timeout=5.0, encoding="utf-8")
@@ -487,13 +487,14 @@ class TestInputFromPipeSession(unittest.TestCase):
             prompt="",
             cleanup_pipe=False,
             history_file=FILE_INPUT_HISTORY_JSONL,
+            completion_file=FILE_INPUT_COMPLETIONS,
         )
 
     @patch("topsailai.workspace.input_tool.utils_input_tool.input_from_pipe")
     @patch("topsailai.workspace.input_tool._build_pipe_path")
     def test_passes_custom_eof_marker(self, mock_build_path, mock_input_from_pipe):
         """Test that custom eof_marker is forwarded."""
-        from topsailai.workspace.input_tool import input_from_pipe_session, FILE_INPUT_HISTORY_JSONL
+        from topsailai.workspace.input_tool import input_from_pipe_session, FILE_INPUT_HISTORY_JSONL, FILE_INPUT_COMPLETIONS
         mock_build_path.return_value = "/tmp/test.pipe"
         mock_input_from_pipe.return_value = ""
         input_from_pipe_session(eof_marker="END")
@@ -507,13 +508,14 @@ class TestInputFromPipeSession(unittest.TestCase):
             prompt="",
             cleanup_pipe=False,
             history_file=FILE_INPUT_HISTORY_JSONL,
+            completion_file=FILE_INPUT_COMPLETIONS,
         )
 
     @patch("topsailai.workspace.input_tool.utils_input_tool.input_from_pipe")
     @patch("topsailai.workspace.input_tool._build_pipe_path")
     def test_passes_single_line_flag(self, mock_build_path, mock_input_from_pipe):
         """Test that single_line=True is forwarded to utils function."""
-        from topsailai.workspace.input_tool import input_from_pipe_session, FILE_INPUT_HISTORY_JSONL
+        from topsailai.workspace.input_tool import input_from_pipe_session, FILE_INPUT_HISTORY_JSONL, FILE_INPUT_COMPLETIONS
         mock_build_path.return_value = "/tmp/test.pipe"
         mock_input_from_pipe.return_value = "first line"
         result = input_from_pipe_session(single_line=True)
@@ -528,6 +530,7 @@ class TestInputFromPipeSession(unittest.TestCase):
             prompt="",
             cleanup_pipe=False,
             history_file=FILE_INPUT_HISTORY_JSONL,
+            completion_file=FILE_INPUT_COMPLETIONS,
         )
 
 
@@ -553,7 +556,7 @@ class TestPrivateInput(unittest.TestCase):
     @patch("topsailai.workspace.input_tool.input_from_pipe_session")
     def test_uses_pipe_when_enabled(self, mock_input_from_pipe_session):
         """Test _input reads from pipe when pipe mode is enabled."""
-        from topsailai.workspace.input_tool import _input, FILE_INPUT_HISTORY_JSONL
+        from topsailai.workspace.input_tool import _input, FILE_INPUT_HISTORY_JSONL, FILE_INPUT_COMPLETIONS
         os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
         mock_input_from_pipe_session.return_value = "piped line"
         result = _input("prompt> ")
@@ -563,12 +566,13 @@ class TestPrivateInput(unittest.TestCase):
             single_line=True,
             prompt="prompt> ",
             history_file=FILE_INPUT_HISTORY_JSONL,
+            completion_file=FILE_INPUT_COMPLETIONS,
         )
 
     @patch("topsailai.workspace.input_tool.input_from_pipe_session")
     def test_forwards_timeout_to_pipe(self, mock_input_from_pipe_session):
         """Test _input forwards TOPSAILAI_INPUT_PIPE_TIMEOUT to the pipe reader."""
-        from topsailai.workspace.input_tool import _input, FILE_INPUT_HISTORY_JSONL
+        from topsailai.workspace.input_tool import _input, FILE_INPUT_HISTORY_JSONL, FILE_INPUT_COMPLETIONS
         os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
         os.environ["TOPSAILAI_INPUT_PIPE_TIMEOUT"] = "7.5"
         mock_input_from_pipe_session.return_value = "timed piped line"
@@ -579,6 +583,7 @@ class TestPrivateInput(unittest.TestCase):
             single_line=True,
             prompt="",
             history_file=FILE_INPUT_HISTORY_JSONL,
+            completion_file=FILE_INPUT_COMPLETIONS,
         )
 
 class TestInputOneLinePipeMode(unittest.TestCase):
@@ -593,7 +598,7 @@ class TestInputOneLinePipeMode(unittest.TestCase):
     @patch("topsailai.workspace.input_tool.input_from_pipe_session")
     def test_returns_piped_input(self, mock_input_from_pipe_session):
         """Test input_one_line returns data read from the pipe."""
-        from topsailai.workspace.input_tool import input_one_line, FILE_INPUT_HISTORY_JSONL
+        from topsailai.workspace.input_tool import input_one_line, FILE_INPUT_HISTORY_JSONL, FILE_INPUT_COMPLETIONS
         os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
         mock_input_from_pipe_session.return_value = "hello from pipe"
         result = input_one_line(">>> ")
@@ -603,12 +608,13 @@ class TestInputOneLinePipeMode(unittest.TestCase):
             single_line=True,
             prompt=">>> ",
             history_file=FILE_INPUT_HISTORY_JSONL,
+            completion_file=FILE_INPUT_COMPLETIONS,
         )
 
     @patch("topsailai.workspace.input_tool.input_from_pipe_session")
     def test_skips_empty_piped_input(self, mock_input_from_pipe_session):
         """Test empty piped input continues the loop."""
-        from topsailai.workspace.input_tool import input_one_line, FILE_INPUT_HISTORY_JSONL
+        from topsailai.workspace.input_tool import input_one_line, FILE_INPUT_HISTORY_JSONL, FILE_INPUT_COMPLETIONS
         os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
         mock_input_from_pipe_session.side_effect = ["", "valid"]
         result = input_one_line(">>> ")
@@ -619,6 +625,7 @@ class TestInputOneLinePipeMode(unittest.TestCase):
             single_line=True,
             prompt=">>> ",
             history_file=FILE_INPUT_HISTORY_JSONL,
+            completion_file=FILE_INPUT_COMPLETIONS,
         )
 
 
@@ -634,7 +641,7 @@ class TestInputMultiLinePipeMode(unittest.TestCase):
     @patch("topsailai.workspace.input_tool.input_from_pipe_session")
     def test_combines_multiple_piped_lines(self, mock_input_from_pipe_session):
         """Test multiple pipe lines are combined with newlines."""
-        from topsailai.workspace.input_tool import input_multi_line, FILE_INPUT_HISTORY_JSONL
+        from topsailai.workspace.input_tool import input_multi_line, FILE_INPUT_HISTORY_JSONL, FILE_INPUT_COMPLETIONS
         os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
         mock_input_from_pipe_session.side_effect = ["line1", "line2", "EOF"]
         result = input_multi_line(">>> ")
@@ -645,12 +652,13 @@ class TestInputMultiLinePipeMode(unittest.TestCase):
             single_line=True,
             prompt="",
             history_file=FILE_INPUT_HISTORY_JSONL,
+            completion_file=FILE_INPUT_COMPLETIONS,
         )
 
     @patch("topsailai.workspace.input_tool.input_from_pipe_session")
     def test_eof_terminates_piped_input(self, mock_input_from_pipe_session):
         """Test EOF terminates multi-line pipe input."""
-        from topsailai.workspace.input_tool import input_multi_line, FILE_INPUT_HISTORY_JSONL
+        from topsailai.workspace.input_tool import input_multi_line, FILE_INPUT_HISTORY_JSONL, FILE_INPUT_COMPLETIONS
         os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
         mock_input_from_pipe_session.side_effect = ["only line", "EOF"]
         result = input_multi_line(">>> ")
@@ -659,7 +667,7 @@ class TestInputMultiLinePipeMode(unittest.TestCase):
     @patch("topsailai.workspace.input_tool.input_from_pipe_session")
     def test_noop_returns_empty_string(self, mock_input_from_pipe_session):
         """Test /noop returns empty string in pipe mode."""
-        from topsailai.workspace.input_tool import input_multi_line, FILE_INPUT_HISTORY_JSONL
+        from topsailai.workspace.input_tool import input_multi_line, FILE_INPUT_HISTORY_JSONL, FILE_INPUT_COMPLETIONS
         os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
         mock_input_from_pipe_session.side_effect = ["/noop", "EOF"]
         result = input_multi_line(">>> ")

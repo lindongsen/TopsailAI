@@ -19,6 +19,7 @@ from topsailai.utils import (
     thread_local_tool,
 )
 from topsailai.workspace.folder_constants import (
+    FILE_INPUT_COMPLETIONS,
     FILE_INPUT_HISTORY_JSONL,
     FOLDER_WORKSPACE_TASK,
 )
@@ -161,6 +162,7 @@ def _input(tips: str = "") -> str:
             single_line=True,
             prompt=tips,
             history_file=FILE_INPUT_HISTORY_JSONL,
+            completion_file=FILE_INPUT_COMPLETIONS,
         )
     return input(tips)
 
@@ -433,6 +435,7 @@ def input_from_pipe_session(
     single_line: bool = False,
     prompt: str = "",
     history_file: str = FILE_INPUT_HISTORY_JSONL,
+    completion_file: str = FILE_INPUT_COMPLETIONS,
 ) -> str:
     """Read a message from a session-scoped named pipe.
 
@@ -472,6 +475,9 @@ def input_from_pipe_session(
     history_file:
         Optional JSONL history file path used to preload readline history
         in the terminal helper subprocess.
+    completion_file:
+        Optional JSON file path used to configure TAB completion
+        candidates in the terminal helper subprocess.
 
     Returns
     -------
@@ -499,4 +505,5 @@ def input_from_pipe_session(
         prompt=prompt,
         cleanup_pipe=False,
         history_file=history_file,
+        completion_file=completion_file,
     )

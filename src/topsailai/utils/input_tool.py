@@ -256,6 +256,71 @@ def append_input_history_jsonl(
         logger.debug("Could not append JSONL history %s: %s", history_file, exc)
 
 
+
+def _flatten_completion_data(data: typing.Any) -> list[str]:
+    """Flatten completion definitions into a sorted string list.
+
+    Supports:
+    - A flat list of strings
+    - A dict with a ``completions`` key containing a list of completion
+      entries.  Each entry may be a plain string or a dict with at least a
+      ``text`` key.  Dict entries may also provide ``aliases`` (a list of
+      alternative strings that expand to ``text``).
+    - A flat dict whose values are completion entry dicts.
+    """
+    items: set[str] = set()
+
+    def _collect_entry(entry: typing.Any) -> None:
+        if isinstance(entry, str):
+            items.add(entry)
+        elif isinstance(entry, dict):
+            text = entry.get("text")
+            if isinstance(text, str):
+                items.add(text)
+            for alias in entry.get("aliases", []):
+                if isinstance(alias, str):
+                    items.add(alias)
+
+    def _collect(value: typing.Any) -> None:
+        if isinstance(value, list):
+            for item in value:
+                _collect_entry(item)
+        elif isinstance(value, dict):
+            if "completions" in value:
+                _collect(value["completions"])
+            else:
+                for item in value.values():
+                    _collect_entry(item)
+
+    if isinstance(data, dict) and "completions" in data:
+        _collect(data["completions"])
+    elif isinstance(data, dict):
+        _collect(data)
+    elif isinstance(data, list):
+        _collect(data)
+    return sorted(items)
+
+
+def load_input_completions(completion_file: str | None) -> list[str]:
+    """Load TAB completion items from a JSON file.
+
+    The JSON file may define completions as either a flat list of strings or
+    an object with a ``completions`` key containing entry dicts.  Each entry
+    dict has a ``text`` field and optionally ``aliases``.  Missing or
+    malformed files are ignored.
+    """
+    completions: list[str] = []
+    if not completion_file or not os.path.exists(completion_file):
+        return completions
+    try:
+        with open(completion_file, "r", encoding="utf-8") as fd:
+            data = json.load(fd)
+        completions = _flatten_completion_data(data)
+    except Exception as exc:
+        logger.debug("Could not load input completions %s: %s", completion_file, exc)
+    return completions
+
+
 def _ensure_fifo(pipe_path: str) -> None:
     """Create a FIFO at *pipe_path*, ensuring the parent directory exists."""
     parent = os.path.dirname(pipe_path)
@@ -386,6 +451,7 @@ def _spawn_terminal_input_subprocess(
     timeout: float | None = None,
     stdin_fd: int | None = None,
     history_file: str | None = None,
+    completion_file: str | None = None,
 ) -> tuple[subprocess.Popen | None, int | None]:
     """Spawn a helper process that reads a terminal line and forwards it.
 
@@ -400,6 +466,11 @@ def _spawn_terminal_input_subprocess(
     values are loaded into readline history so the user can navigate previous
     messages with the UP/DOWN arrow keys.
 
+    If *completion_file* is provided, it is treated as a JSON file containing
+    completion entries.  Each entry may be a plain string or an object with
+    ``text`` and optional ``aliases``.  Aliases expand to ``text`` when
+    completed.
+
     Parameters
     ----------
     prompt:
@@ -412,6 +483,8 @@ def _spawn_terminal_input_subprocess(
         helper inherits the parent's fd 0.
     history_file:
         Optional path to a JSONL history file to preload into readline.
+    completion_file:
+        Optional path to a JSON file containing TAB completion candidates.
 
     Returns
     -------
@@ -424,88 +497,139 @@ def _spawn_terminal_input_subprocess(
     read_fd, write_fd = os.pipe()
 
     helper = textwrap.dedent(
-        f'''
-        import json
-        import os
-        import readline
-        import signal
-        import sys
-        import termios
+        f'''import json
+import os
+import readline
+import signal
+import sys
+import termios
 
-        write_fd = {write_fd}
-        prompt = {prompt!r}
-        timeout = {timeout!r}
-        history_file = {history_file!r}
+write_fd = {write_fd}
+prompt = {prompt!r}
+timeout = {timeout!r}
+history_file = {history_file!r}
+completion_file = {completion_file!r}
 
-        def _restore_termios():
-            try:
-                termios.tcsetattr(0, termios.TCSADRAIN, old_termios)
-            except Exception:
-                pass
+def _restore_termios():
+    try:
+        termios.tcsetattr(0, termios.TCSADRAIN, old_termios)
+    except Exception:
+        pass
 
-        def _alarm_handler(signum, frame):
-            _restore_termios()
-            sys.exit(0)
+def _alarm_handler(signum, frame):
+    _restore_termios()
+    sys.exit(0)
 
-        def _term_handler(signum, frame):
-            _restore_termios()
-            sys.exit(0)
+def _term_handler(signum, frame):
+    _restore_termios()
+    sys.exit(0)
 
-        old_termios = None
-        try:
-            old_termios = termios.tcgetattr(0)
-        except Exception:
-            pass
+old_termios = None
+try:
+    old_termios = termios.tcgetattr(0)
+except Exception:
+    pass
 
-        signal.signal(signal.SIGALRM, _alarm_handler)
-        signal.signal(signal.SIGTERM, _term_handler)
+signal.signal(signal.SIGALRM, _alarm_handler)
+signal.signal(signal.SIGTERM, _term_handler)
 
-        # Preload JSONL history so UP/DOWN arrow keys recall previous messages.
-        if history_file:
-            try:
-                with open(history_file, "r", encoding="utf-8") as fd:
-                    for line in fd:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            entry = json.loads(line)
-                            text = entry.get("text", "")
-                            if text:
-                                readline.add_history(text)
-                        except Exception:
-                            continue
-            except Exception:
-                pass
+# Preload JSONL history so UP/DOWN arrow keys recall previous messages.
+if history_file:
+    try:
+        with open(history_file, "r", encoding="utf-8") as fd:
+            for line in fd:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    text = entry.get("text", "")
+                    if text:
+                        readline.add_history(text)
+                except Exception:
+                    continue
+    except Exception:
+        pass
 
-        line = ""
-        eof_or_interrupt = False
-        try:
-            if timeout is not None:
-                signal.setitimer(
-                    signal.ITIMER_REAL, max(float(timeout), 0.001)
-                )
-            try:
-                line = input(prompt)
-            except (TimeoutError, EOFError, KeyboardInterrupt, OSError):
-                eof_or_interrupt = True
-        finally:
-            signal.alarm(0)
-            _restore_termios()
+# Load TAB completion candidates from JSON.  Aliases expand to text.
+_completion_map = {{}}
 
-        if eof_or_interrupt:
-            # Signal EOF/interrupt by closing the write end without writing.
-            try:
-                os.close(write_fd)
-            except Exception:
-                pass
+def _register(entry):
+    if isinstance(entry, str):
+        _completion_map[entry] = entry
+    elif isinstance(entry, dict):
+        text = entry.get("text")
+        if isinstance(text, str):
+            _completion_map[text] = text
+            for alias in entry.get("aliases", []):
+                if isinstance(alias, str):
+                    _completion_map[alias] = text
+
+def _load_completions(value):
+    if isinstance(value, list):
+        for item in value:
+            _register(item)
+    elif isinstance(value, dict):
+        if "completions" in value:
+            _load_completions(value["completions"])
         else:
-            try:
-                with os.fdopen(write_fd, "w", closefd=True) as fifo:
-                    fifo.write(line + "\\n")
-            except Exception:
-                pass
-        '''
+            for item in value.values():
+                _register(item)
+
+if completion_file:
+    try:
+        with open(completion_file, "r", encoding="utf-8") as fd:
+            data = json.load(fd)
+        if data is not None:
+            _load_completions(data)
+    except Exception:
+        pass
+
+_candidates = sorted(set(_completion_map.keys()))
+
+def _completer(text, state):
+    matches = [_completion_map[c] for c in _candidates if c.startswith(text)]
+    matches = sorted(set(matches))
+    if state < len(matches):
+        return matches[state]
+    return None
+
+if _candidates:
+    readline.set_completer(_completer)
+    readline.parse_and_bind("tab: complete")
+    # Keep leading '/' as part of the completion word so slash
+    # commands like /help can be completed from "/h".
+    readline.set_completer_delims(
+        readline.get_completer_delims().replace("/", "")
+    )
+
+eof_or_interrupt = False
+try:
+    if timeout is not None:
+        signal.setitimer(
+            signal.ITIMER_REAL, max(float(timeout), 0.001)
+        )
+    try:
+        line = input(prompt)
+    except (TimeoutError, EOFError, KeyboardInterrupt, OSError):
+        eof_or_interrupt = True
+finally:
+    signal.alarm(0)
+    _restore_termios()
+
+if eof_or_interrupt:
+    # Signal EOF/interrupt by closing the write end without writing.
+    try:
+        os.close(write_fd)
+    except Exception:
+        pass
+else:
+    try:
+        with os.fdopen(write_fd, "w", closefd=True) as fifo:
+            fifo.write(line + chr(10))
+    except Exception:
+        pass
+'''
     )
     try:
         popen_kwargs: dict[str, typing.Any] = {
@@ -537,6 +661,7 @@ def input_from_pipe(
     prompt: str = "",
     cleanup_pipe: bool = True,
     history_file: str | None = None,
+    completion_file: str | None = None,
 ) -> str:
     """Read a message from a named pipe (FIFO).
 
@@ -561,6 +686,11 @@ def input_from_pipe(
     line is ``{"ts": ..., "session_id": ..., "text": ...}``.  The ``text``
     values are loaded into the helper's readline history so the user can
     navigate previous messages with the UP/DOWN arrow keys.
+
+    If *completion_file* is provided, it is treated as a JSON file containing
+    completion entries.  Each entry may be a plain string or an object with
+    ``text`` and optional ``aliases``.  These strings are registered as TAB
+    completion candidates in the helper's readline completer.
 
     Parameters
     ----------
@@ -592,6 +722,8 @@ def input_from_pipe(
     history_file:
         Optional path to a JSONL history file to preload into the terminal
         helper's readline history.
+    completion_file:
+        Optional path to a JSON file containing TAB completion candidates.
 
     Returns
     -------
@@ -687,6 +819,7 @@ def input_from_pipe(
                     timeout=timeout,
                     stdin_fd=stdin_fd,
                     history_file=history_file,
+                    completion_file=completion_file,
                 )
         except (AttributeError, OSError, ValueError, io.UnsupportedOperation):
             pass
