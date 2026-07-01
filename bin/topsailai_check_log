@@ -94,7 +94,7 @@ main() {
         echo ""
         echo ">>> Searching for keyword: [${keyword}]"
         echo "----------------------------------------"
-        if grep --color=yes "${keyword}" "${LOG_FILE}"; then
+        if grep -v "unit-test" "${LOG_FILE}" | grep --color=yes "${keyword}"; then
             echo ""
         else
             echo "No matches found for [${keyword}]"
