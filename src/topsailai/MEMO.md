@@ -713,3 +713,79 @@ Do not switch an existing module's logger style without updating this MEMO and c
 ### Note for maintainers
 - Keep the base logic in `utils/instruction_tool.py` workspace-agnostic; workspace-specific defaults belong in `workspace/hook_instruction.py`.
 - When adding or removing hooks, always call `refresh_input_completions()` so the completion file stays in sync.
+
+
+## MEMO: Agent-Runtime Input Injection via Thread-Local
+
+**Date:** 2026-07-01
+**Files:**
+- `/TopsailAI/src/topsailai/utils/thread_local_tool.py`
+- `/TopsailAI/src/topsailai/workspace/agent/hooks/pre_run_input.py`
+- `/TopsailAI/src/topsailai/workspace/agent/hooks/base/init.py`
+- `/TopsailAI/src/topsailai/workspace/agent/agent_shell_base.py`
+- `/TopsailAI/src/topsailai/workspace/input_tool.py`
+- `/TopsailAI/src/topsailai/workspace/hook_instruction.py`
+- `/TopsailAI/src/topsailai/ai_base/agent_types/tool.py`
+- `/TopsailAI/src/topsailai/ai_base/llm_base.py`
+
+### Conclusion
+Agent-runtime interactive input is provided through a thread-local injection point (`agent_runtime_input`) rather than by wiring `workspace/` input utilities directly into `ai_base/`. A pre-run hook registers a wrapper around `workspace/input_tool.input_one_line()`, and lower-level code in `ai_base/` retrieves it at runtime with a fallback to the builtin `input()`.
+
+### Problem
+`ai_base/` sits below `workspace/` in the dependency graph and should remain workspace-agnostic. However, a few code paths still need to prompt the human user:
+
+- `ai_base/agent_types/tool.py` — `StepCallTool.execute_step_interactive()` asks for input when the agent is in interactive mode.
+- `ai_base/llm_base.py` — `LLMModel.chat()` asks whether to retry after a `KeyboardInterrupt` or an unexpected internal error.
+
+Hard-coding `workspace/input_tool.py` imports into `ai_base/` would invert the layer relationship and make unit testing difficult.
+
+### Solution
+Introduce a thread-local variable `agent_runtime_input` (key `KEY_AGENT_RUNTIME_INPUT`) with getter/setter helpers in `utils/thread_local_tool.py`:
+
+- `set_agent_runtime_input(input_func)` — registers the runtime input function.
+- `get_agent_runtime_input()` — returns the registered function or `None` if unset.
+
+`ai_base/` code follows this pattern:
+
+```python
+input_func = get_agent_runtime_input()
+if input_func is None:
+    input_func = input
+... = input_func(prompt)
+```
+
+This keeps `ai_base/` free of workspace imports while still allowing the workspace to override input behavior during an agent run.
+
+### Call Chain / Lifecycle
+
+```
+AgentChat.run()
+    └── call_hooks_pre_run()
+            └── workspace/agent/hooks/base/init.py discovers HOOKS
+                    └── pre_run_set_agent_runtime_input(self)
+                            └── builds input_on_agent_runtime(tips, hook=self.hook_instruction)
+                                    └── input_one_line(tips=tips, hook=hook)
+                            └── set_agent_runtime_input(input_on_agent_runtime)
+
+During agent execution:
+    ai_base/agent_types/tool.py  -> get_agent_runtime_input() -> input_one_line() or builtin input()
+    ai_base/llm_base.py          -> get_agent_runtime_input() -> input_one_line() or builtin input()
+```
+
+1. **Hook discovery** — `workspace/agent/hooks/base/init.py` scans the hooks package and collects functions exported via the `HOOKS` dict in each module.
+2. **Hook execution** — `AgentChat._run()` calls `self.call_hooks_pre_run()` before entering the conversation loop.
+3. **Wrapper creation** — `pre_run_set_agent_runtime_input()` captures the agent's `hook_instruction` instance in a closure and registers `input_on_agent_runtime`, which delegates to `input_one_line()` with the same `hook`.
+4. **Runtime usage** — When `ai_base/` needs user input, it reads the thread-local function. If no hook has run (e.g., standalone scripts or tests), it falls back to the builtin `input()`.
+
+### Why It Matters
+
+- **Layer hygiene**: `ai_base/` does not import `workspace/input_tool.py` or `workspace/hook_instruction.py`.
+- **Consistent UX**: The same `HookInstruction` instance used by the rest of the agent chat loop handles `/` commands, TAB completions, and history during retry or interactive tool prompts.
+- **Testability**: Tests can inject a stub input function via `set_agent_runtime_input()` without spinning up the full workspace.
+
+### Note for maintainers
+
+- Do not import `workspace/` input modules directly from `ai_base/`; always use `get_agent_runtime_input()` with a fallback to `input()`.
+- If you add a new pre-run hook module, export its hook(s) through a `HOOKS` dict so `workspace/agent/hooks/base/init.py` can discover it.
+- The wrapper signature must remain compatible with `input_one_line(tips: str = "", hook: HookInstruction = None) -> str`.
+- When testing `ai_base/` paths that call `get_agent_runtime_input()`, remember to clean up the thread-local value afterward to avoid leaking state between tests.
