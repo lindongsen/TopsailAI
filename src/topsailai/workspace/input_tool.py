@@ -18,6 +18,9 @@ from topsailai.utils import (
     input_tool as utils_input_tool,
     thread_local_tool,
 )
+from topsailai.utils.instruction_tool import (
+    hook_message,
+)
 from topsailai.workspace.folder_constants import (
     FILE_INPUT_COMPLETIONS,
     FILE_INPUT_HISTORY_JSONL,
@@ -25,14 +28,12 @@ from topsailai.workspace.folder_constants import (
 )
 from topsailai.workspace.hook_instruction import (
     HookInstruction,
-    TRIGGER_CHARS,
 )
 
 logger = logging.getLogger(__name__)
 
 SPLIT_LINE = "--------------------------------------------------------------------------------"
 INPUT_TIPS = f">>> Your Turn: (pid={os.getpid()}) "
-DESCRIPTION_EXIT_SET = ["exit", "quit", "/exit", "/quit", "q"]
 
 # Session-scoped pipes that must be removed when the process exits.
 # Pipes are kept alive across multiple _input() calls so that multi-line
@@ -98,48 +99,6 @@ def _append_input_history_jsonl(message: str) -> None:
 
 # Load JSONL history into readline on module import.
 _load_input_history_jsonl()
-
-
-def hook_message(message: str, hook: HookInstruction) -> bool:
-    """
-    Process a message through hook instructions if applicable.
-
-    Checks if the message matches any registered hook instructions and executes
-    them if found. Also handles exit commands.
-
-    Args:
-        message (str): The input message to process
-        hook (HookInstruction): Hook instruction manager instance
-
-    Returns:
-        bool: True if a hook was called, False otherwise
-
-    Example:
-        >>> hook = HookInstruction()
-        >>> hook_message("/help", hook)
-        True  # If /help hook exists
-        >>> hook_message("hello", hook)
-        False
-    """
-    message = message.strip()
-    if not message:
-        return False
-
-    if message in DESCRIPTION_EXIT_SET:
-        sys.exit(0)
-
-    if hook is None:
-        return False
-
-    if hook.exist_hook(message):
-        hook.call_hook(message)
-        return True
-    elif message[0] in TRIGGER_CHARS:
-        if message.lower() == "/noop":
-            return False
-        hook.call_hook("/help " + message)
-        return True
-    return False
 
 
 def _input(tips: str = "") -> str:
@@ -399,7 +358,7 @@ def input_yes(tips: str = "Continue [yes/no] ") -> bool:
         >>> print(should_continue)
         True
     """
-    yn = input(tips)
+    yn = _input(tips)
     return yn.strip().lower() == "yes"
 
 

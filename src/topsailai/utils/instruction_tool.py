@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import readline
+import sys
 
 from topsailai.utils import (
     json_tool,
@@ -25,6 +26,8 @@ from topsailai.utils import (
 
 logger = logging.getLogger(__name__)
 
+
+DESCRIPTION_EXIT_SET = ["exit", "quit", "/exit", "/quit", "q"]
 
 # Characters that trigger hook processing when found at the beginning of a message
 TRIGGER_CHARS = "/"
@@ -500,3 +503,44 @@ class HookInstruction(HookBaseUtils):
                 return True
 
         return False
+
+def hook_message(message: str, hook: HookInstruction) -> bool:
+    """
+    Process a message through hook instructions if applicable.
+
+    Checks if the message matches any registered hook instructions and executes
+    them if found. Also handles exit commands.
+
+    Args:
+        message (str): The input message to process
+        hook (HookInstruction): Hook instruction manager instance
+
+    Returns:
+        bool: True if a hook was called, False otherwise
+
+    Example:
+        >>> hook = HookInstruction()
+        >>> hook_message("/help", hook)
+        True  # If /help hook exists
+        >>> hook_message("hello", hook)
+        False
+    """
+    message = message.strip()
+    if not message:
+        return False
+
+    if message in DESCRIPTION_EXIT_SET:
+        sys.exit(0)
+
+    if hook is None:
+        return False
+
+    if hook.exist_hook(message):
+        hook.call_hook(message)
+        return True
+    elif message[0] in TRIGGER_CHARS:
+        if message.lower() == "/noop":
+            return False
+        hook.call_hook("/help " + message)
+        return True
+    return False
