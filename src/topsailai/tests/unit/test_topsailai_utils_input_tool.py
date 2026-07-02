@@ -381,6 +381,63 @@ class TestInputFromPipe:
             input_tool.input_from_pipe(pipe_path, timeout=0.1)
         assert not os.path.exists(pipe_path)
 
+    def test_timeout_duration_is_respected(self, tmp_path):
+        """TimeoutError is raised after approximately the requested timeout."""
+        pipe_path = str(tmp_path / "timeout_duration.pipe")
+        timeout = 0.5
+        start = time.monotonic()
+        with pytest.raises(TimeoutError):
+            input_tool.input_from_pipe(pipe_path, timeout=timeout)
+        elapsed = time.monotonic() - start
+        # Allow scheduling jitter; the call must not return instantly and
+        # must not wait dramatically longer than requested.
+        assert elapsed >= timeout * 0.7, f"returned too early ({elapsed:.3f}s)"
+        assert elapsed <= timeout + 0.5, f"returned too late ({elapsed:.3f}s)"
+        assert not os.path.exists(pipe_path)
+
+    def test_timeout_none_waits_until_data_arrives(self, tmp_path):
+        """When timeout is None, input_from_pipe blocks until data is written."""
+        pipe_path = str(tmp_path / "timeout_none.pipe")
+        message = b"delayed message\n"
+        writer_delay = 0.3
+
+        def writer():
+            time.sleep(writer_delay)
+            with open(pipe_path, "wb") as fifo:
+                fifo.write(message)
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        try:
+            start = time.monotonic()
+            result = input_tool.input_from_pipe(pipe_path, timeout=None)
+            elapsed = time.monotonic() - start
+            assert result == "delayed message"
+            assert elapsed >= writer_delay * 0.7, f"returned before writer ({elapsed:.3f}s)"
+        finally:
+            thread.join(timeout=2.0)
+
+    def test_data_arrives_before_short_timeout(self, tmp_path):
+        """Data written before the timeout is returned without waiting for timeout."""
+        pipe_path = str(tmp_path / "before_timeout.pipe")
+        message = b"early message\n"
+
+        def writer():
+            time.sleep(0.05)
+            with open(pipe_path, "wb") as fifo:
+                fifo.write(message)
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        try:
+            start = time.monotonic()
+            result = input_tool.input_from_pipe(pipe_path, timeout=5.0)
+            elapsed = time.monotonic() - start
+            assert result == "early message"
+            assert elapsed < 1.0, f"took too long to return early data ({elapsed:.3f}s)"
+        finally:
+            thread.join(timeout=2.0)
+
     def test_empty_message_returns_empty_string(self, tmp_path):
         pipe_path = str(tmp_path / "test.pipe")
         writer = self._write_to_pipe_after_delay(pipe_path, b"\n")

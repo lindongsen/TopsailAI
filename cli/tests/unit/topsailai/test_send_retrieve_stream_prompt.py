@@ -94,6 +94,12 @@ class TestDisplaySessionId(unittest.TestCase):
     def test_none_session(self):
         self.assertEqual(cli._display_session_id(None), "-")
 
+    def test_task_session(self):
+        self.assertEqual(cli._display_session_id("session-1", is_task=True), "session-1 (task)")
+
+    def test_temp_task_session(self):
+        self.assertEqual(cli._display_session_id("topsailai", is_task=True), "(temp) (task)")
+
 
 class TestFormatPipePayload(unittest.TestCase):
     def test_format_payload(self):

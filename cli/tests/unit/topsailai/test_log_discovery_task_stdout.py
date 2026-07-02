@@ -98,6 +98,7 @@ class TestDiscoverTaskStdoutFiles(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["filename"], "20260702T091956.topsailai.1782990987.5236263.task.stdout")
         self.assertEqual(result[0]["session_id"], "20260702T091956")
+        self.assertTrue(result[0]["is_task"])
         self.assertEqual(result[0]["pid"], 5236263)
         self.assertEqual(result[0]["size"], len("task log"))
 
@@ -114,7 +115,9 @@ class TestDiscoverTaskStdoutFiles(unittest.TestCase):
         result = cli.discover_log_files(self.tmpdir)
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["filename"], os.path.basename(task_path))
+        self.assertTrue(result[0]["is_task"])
         self.assertEqual(result[1]["filename"], os.path.basename(session_path))
+        self.assertFalse(result[1]["is_task"])
 
     def test_ignores_non_stdout_files(self):
         """Ignore files without .stdout extension."""

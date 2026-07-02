@@ -911,11 +911,15 @@ def _is_temp_session(session_id: Optional[str]) -> bool:
     return session_id == "topsailai"
 
 
-def _display_session_id(session_id: Optional[str]) -> str:
+def _display_session_id(session_id: Optional[str], is_task: bool = False) -> str:
     """Return the user-facing label for a session id."""
     if _is_temp_session(session_id):
-        return "(temp)"
-    return session_id or "-"
+        label = "(temp)"
+    else:
+        label = session_id or "-"
+    if is_task:
+        label = f"{label} (task)"
+    return label
 
 
 def discover_log_files(task_dir: str) -> List[dict]:
@@ -936,8 +940,10 @@ def discover_log_files(task_dir: str) -> List[dict]:
 
         session_id = None
         pid = None
+        is_task = False
         if entry.endswith(".session.stdout") or entry.endswith(".task.stdout"):
             session_id, pid = _parse_stdout_filename(entry)
+            is_task = entry.endswith(".task.stdout")
             # Temp sessions have no real session id; expose a user-facing label.
             if session_id is None and pid is not None and entry.startswith("topsailai."):
                 session_id = "(temp)"
@@ -947,6 +953,7 @@ def discover_log_files(task_dir: str) -> List[dict]:
             "filename": entry,
             "path": full_path,
             "session_id": session_id,
+            "is_task": is_task,
             "pid": pid,
             "size": stat_info.st_size,
             "mtime": stat_info.st_mtime,
@@ -1092,7 +1099,7 @@ def print_table(files: List[dict]):
         if len(name) > w_name:
             name = name[:w_name - 3] + "..."
 
-        session = _display_session_id(f["session_id"])
+        session = _display_session_id(f["session_id"], f.get("is_task", False))
         if len(session) > w_session:
             session = session[:w_session - 3] + "..."
 
