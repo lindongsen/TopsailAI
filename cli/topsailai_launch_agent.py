@@ -373,16 +373,15 @@ def main():
         exit_code = result.returncode
     else:
         # Default: os.system mode - set environment variables via os.environ,
-        # then build a minimal shell command string (cd + command).
+        # then launch the driver directly without changing directory.
         for key, val in merged_env.items():
             os.environ[key] = str(val)
 
         cmd_str = ' '.join(shlex.quote(c) for c in cmd)
-        full_cmd = f"cd {shlex.quote(workspace)} && {cmd_str}"
 
         print("[TopsailAI-Launcher] Default os.system mode")
-        print(f"[TopsailAI-Launcher] Shell command: {full_cmd}")
-        ret = os.system(full_cmd)
+        print(f"[TopsailAI-Launcher] Shell command: {cmd_str}")
+        ret = os.system(cmd_str)
         # Convert wait-status to exit code (Python 3.9+)
         if hasattr(os, 'waitstatus_to_exitcode'):
             exit_code = os.waitstatus_to_exitcode(ret)
