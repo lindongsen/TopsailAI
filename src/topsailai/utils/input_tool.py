@@ -767,7 +767,12 @@ def input_from_pipe(
     def _maybe_return_single_line(
         decoded: str, eof_seen: bool = False
     ) -> str | None:
-        """Return the first line and buffer the rest when applicable."""
+        """Return the first line and buffer the rest when applicable.
+
+        When *eof_seen* is True and *decoded* contains no newline, the entire
+        decoded content is treated as a single line terminated by the EOF
+        marker and is returned as-is.
+        """
         newline_pos = decoded.find("\n")
         if newline_pos != -1:
             first_line = decoded[:newline_pos]
@@ -778,7 +783,10 @@ def input_from_pipe(
                 leftover = leftover + "\n" + eof_marker
             _buffer_leftover(pipe_path, leftover)
             return first_line
-        # No newline in the payload: single-line mode returns the whole chunk.
+        # No newline in the payload.
+        if eof_seen:
+            # The whole decoded content is the only line; return it.
+            return decoded
         return None
 
     def _process_chunks(chunks: list[bytes]) -> str | None:

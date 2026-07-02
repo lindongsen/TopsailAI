@@ -607,3 +607,22 @@ class TestInputFromPipe:
                 )
         finally:
             writer.join(timeout=2.0)
+
+    def test_raise_eof_error_single_line_only_content_line(self, tmp_path):
+        """Single content line followed by EOF is returned, not lost.
+
+        Regression test for the bug where sending exactly one content line
+        followed by the EOF marker in single_line mode caused the line to be
+        discarded because the EOF marker was processed before the content
+        could be returned.
+        """
+        pipe_path = str(tmp_path / "raise_eof_single_only_line.pipe")
+        message = b"line1\nEOF\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            result = input_tool.input_from_pipe(
+                pipe_path, timeout=2.0, single_line=True, raise_eof_error=True
+            )
+            assert result == "line1"
+        finally:
+            writer.join(timeout=2.0)
