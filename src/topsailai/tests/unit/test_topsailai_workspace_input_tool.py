@@ -671,6 +671,21 @@ class TestInputMultiLinePipeMode(unittest.TestCase):
         self.assertEqual(result, "only line")
 
     @patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_single_line_eof_terminates_via_exception(self, mock_input_from_pipe_session):
+        """Single-line pipe payload with EOF terminates via EOFError on next read.
+
+        Regression test for the bug where a single content line followed by
+        the EOF marker returned the line but did not preserve the EOF marker.
+        The next read would hang waiting for the pipe instead of raising
+        EOFError, so multi-line input loops never terminated.
+        """
+        from topsailai.workspace.input_tool import input_multi_line
+        os.environ["TOPSAILAI_INPUT_PIPE_ENABLED"] = "1"
+        mock_input_from_pipe_session.side_effect = ["only line", EOFError]
+        result = input_multi_line(">>> ")
+        self.assertEqual(result, "only line")
+
+    @patch("topsailai.workspace.input_tool.input_from_pipe_session")
     def test_noop_returns_empty_string(self, mock_input_from_pipe_session):
         """Test /noop returns empty string in pipe mode."""
         from topsailai.workspace.input_tool import input_multi_line, FILE_INPUT_HISTORY_JSONL, FILE_INPUT_COMPLETIONS

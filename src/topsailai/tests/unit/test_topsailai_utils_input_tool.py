@@ -666,12 +666,12 @@ class TestInputFromPipe:
             writer.join(timeout=2.0)
 
     def test_raise_eof_error_single_line_only_content_line(self, tmp_path):
-        """Single content line followed by EOF is returned, not lost.
+        """Single content line followed by EOF is returned, and EOF is respected.
 
         Regression test for the bug where sending exactly one content line
-        followed by the EOF marker in single_line mode caused the line to be
-        discarded because the EOF marker was processed before the content
-        could be returned.
+        followed by the EOF marker in single_line mode returned the line but
+        did not preserve the EOF marker. The next read would therefore hang
+        waiting for the pipe instead of signaling end-of-input.
         """
         pipe_path = str(tmp_path / "raise_eof_single_only_line.pipe")
         message = b"line1\nEOF\n"
@@ -681,5 +681,11 @@ class TestInputFromPipe:
                 pipe_path, timeout=2.0, single_line=True, raise_eof_error=True
             )
             assert result == "line1"
+            # The EOF marker must be preserved so the next single-line read
+            # signals end-of-input instead of blocking on the pipe.
+            with pytest.raises(EOFError):
+                input_tool.input_from_pipe(
+                    pipe_path, timeout=0.1, single_line=True, raise_eof_error=True
+                )
         finally:
             writer.join(timeout=2.0)

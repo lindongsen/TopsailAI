@@ -771,7 +771,8 @@ def input_from_pipe(
 
         When *eof_seen* is True and *decoded* contains no newline, the entire
         decoded content is treated as a single line terminated by the EOF
-        marker and is returned as-is.
+        marker and is returned as-is. The EOF marker itself is buffered so
+        that the next single-line read can detect end-of-input.
         """
         newline_pos = decoded.find("\n")
         if newline_pos != -1:
@@ -785,7 +786,9 @@ def input_from_pipe(
             return first_line
         # No newline in the payload.
         if eof_seen:
-            # The whole decoded content is the only line; return it.
+            # The whole decoded content is the only line. Buffer the EOF
+            # marker so the next single-line read signals end-of-input.
+            _buffer_leftover(pipe_path, eof_marker)
             return decoded
         return None
 
