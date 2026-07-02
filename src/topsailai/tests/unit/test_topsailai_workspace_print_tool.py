@@ -563,7 +563,7 @@ class TestDecoratorTeeOutputBySession(unittest.TestCase):
             self.assertEqual(result, "result")
 
             # Verify file contains the printed output with default filename
-            expected_file = os.path.join('/tmp', 'session.stdout')
+            expected_file = os.path.join('/tmp', f'{os.getpid()}.session.stdout')
             with open(expected_file, 'r') as f:
                 content = f.read()
             self.assertIn("Hello from session function", content)
@@ -589,7 +589,7 @@ class TestDecoratorTeeOutputBySession(unittest.TestCase):
             self.assertEqual(result, "result")
 
             # Verify file contains the printed output with session ID in filename
-            expected_file = os.path.join('/tmp', f'{session_id}.session.stdout')
+            expected_file = os.path.join('/tmp', f'{session_id}.{os.getpid()}.session.stdout')
             with open(expected_file, 'r') as f:
                 content = f.read()
             self.assertIn("Hello from session function", content)
@@ -610,7 +610,7 @@ class TestDecoratorTeeOutputBySession(unittest.TestCase):
 
             my_function()
 
-            expected_file = os.path.join('/tmp', 'test-123.session.stdout')
+            expected_file = os.path.join('/tmp', f'test-123.{os.getpid()}.session.stdout')
             with open(expected_file, 'r') as f:
                 content = f.read()
             self.assertIn("Line 1", content)
@@ -637,7 +637,7 @@ class TestDecoratorTeeOutputBySession(unittest.TestCase):
             self.assertEqual(sys.stdout, original_stdout)
 
             # Clean up
-            expected_file = os.path.join('/tmp', 'test-456.session.stdout')
+            expected_file = os.path.join('/tmp', f'test-456.{os.getpid()}.session.stdout')
             if os.path.exists(expected_file):
                 os.remove(expected_file)
 

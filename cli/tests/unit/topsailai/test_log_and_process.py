@@ -45,19 +45,20 @@ class TestDiscoverLogFiles(unittest.TestCase):
 
     def test_single_stdout_file(self):
         """Discover a single .stdout file."""
-        path = os.path.join(self.tmpdir, "test.session.stdout")
+        path = os.path.join(self.tmpdir, "1234.session.stdout")
         with open(path, "w") as f:
             f.write("log content")
         result = cli.discover_log_files(self.tmpdir)
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["filename"], "test.session.stdout")
-        self.assertEqual(result[0]["session_id"], "test")
+        self.assertEqual(result[0]["filename"], "1234.session.stdout")
+        self.assertEqual(result[0]["session_id"], "(temp)")
+        self.assertEqual(result[0]["pid"], 1234)
         self.assertEqual(result[0]["size"], len("log content"))
         self.assertTrue(os.path.isfile(result[0]["path"]))
 
     def test_session_stdout(self):
-        """Handle session.stdout as temp session."""
-        path = os.path.join(self.tmpdir, "session.stdout")
+        """Handle {pid}.session.stdout as temp session."""
+        path = os.path.join(self.tmpdir, "1234.session.stdout")
         with open(path, "w") as f:
             f.write("temp log")
         result = cli.discover_log_files(self.tmpdir)
@@ -66,8 +67,8 @@ class TestDiscoverLogFiles(unittest.TestCase):
 
     def test_multiple_files_sorted_by_mtime(self):
         """Files are sorted by mtime descending."""
-        path1 = os.path.join(self.tmpdir, "a.session.stdout")
-        path2 = os.path.join(self.tmpdir, "b.session.stdout")
+        path1 = os.path.join(self.tmpdir, "a.1234.session.stdout")
+        path2 = os.path.join(self.tmpdir, "b.5678.session.stdout")
         with open(path1, "w") as f:
             f.write("a")
         time.sleep(0.05)
@@ -75,9 +76,12 @@ class TestDiscoverLogFiles(unittest.TestCase):
             f.write("b")
         result = cli.discover_log_files(self.tmpdir)
         self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]["filename"], "b.session.stdout")
-        self.assertEqual(result[1]["filename"], "a.session.stdout")
-
+        self.assertEqual(result[0]["filename"], "b.5678.session.stdout")
+        self.assertEqual(result[0]["session_id"], "b")
+        self.assertEqual(result[0]["pid"], 5678)
+        self.assertEqual(result[1]["filename"], "a.1234.session.stdout")
+        self.assertEqual(result[1]["session_id"], "a")
+        self.assertEqual(result[1]["pid"], 1234)
     def test_nonexistent_dir(self):
         """Return empty list for nonexistent directory."""
         result = cli.discover_log_files("/nonexistent/path/12345")

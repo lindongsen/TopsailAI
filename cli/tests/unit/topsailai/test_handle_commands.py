@@ -56,8 +56,8 @@ class TestHandleYamlCommand(unittest.TestCase):
     def test_cd_with_numeric_index(self, mock_print, mock_discover):
         """Enter session scope with /cd using numeric index."""
         mock_discover.return_value = [
-            {"filename": "a.session.stdout", "session_id": "session-abc"},
-            {"filename": "b.session.stdout", "session_id": "session-xyz"},
+            {"filename": "session-abc.1234.session.stdout", "session_id": "session-abc"},
+            {"filename": "session-xyz.5678.session.stdout", "session_id": "session-xyz"},
         ]
         instruction = {"cmd": "/cd {session_id}", "shell": ""}
         variables = {"session_id": "2", "task_dir": "/tmp/tasks"}
@@ -71,7 +71,7 @@ class TestHandleYamlCommand(unittest.TestCase):
     def test_cd_with_numeric_index_out_of_range(self, mock_print, mock_discover):
         """Show error for out-of-range numeric index."""
         mock_discover.return_value = [
-            {"filename": "a.session.stdout", "session_id": "session-abc"},
+            {"filename": "session-abc.1234.session.stdout", "session_id": "session-abc"},
         ]
         instruction = {"cmd": "/cd {session_id}", "shell": ""}
         variables = {"session_id": "5", "task_dir": "/tmp/tasks"}
@@ -86,7 +86,7 @@ class TestHandleYamlCommand(unittest.TestCase):
     def test_cd_with_numeric_index_temp_session(self, mock_print, mock_discover):
         """Show error when numeric index points to temp session."""
         mock_discover.return_value = [
-            {"filename": "session.stdout", "session_id": "(temp)"},
+            {"filename": "1234.session.stdout", "session_id": "(temp)"},
         ]
         instruction = {"cmd": "/cd {session_id}", "shell": ""}
         variables = {"session_id": "1", "task_dir": "/tmp/tasks"}
@@ -95,7 +95,6 @@ class TestHandleYamlCommand(unittest.TestCase):
         self.assertEqual(cli.current_scope, "workspace")
         printed = [str(args[0]) for args, kwargs in mock_print.call_args_list]
         self.assertTrue(any("No session ID available" in p for p in printed))
-
     @patch("builtins.print")
     def test_cd_with_session_id_string(self, mock_print):
         """Enter session scope with /cd using session_id string."""

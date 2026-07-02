@@ -835,6 +835,42 @@ def get_topsailai_home() -> str:
 # Log File Discovery
 # =============================================================================
 
+def _parse_stdout_filename(filename: str) -> Tuple[Optional[str], Optional[int]]:
+    """
+    Parse a session stdout filename.
+
+    New formats:
+      - {pid}.session.stdout                -> (None, pid)   (temp session)
+      - {session_id}.{pid}.session.stdout   -> (session_id, pid)
+
+    Returns:
+        Tuple of (session_id, pid). session_id is None for temp sessions;
+        pid is None if the filename does not match the expected format.
+    """
+    if not filename.endswith(".session.stdout"):
+        return None, None
+
+    base = filename[:-len(".session.stdout")]
+    if not base:
+        return None, None
+
+    parts = base.split(".")
+    if len(parts) == 1:
+        # {pid}.session.stdout
+        try:
+            return None, int(parts[0])
+        except ValueError:
+            return None, None
+
+    # {session_id}.{pid}.session.stdout (pid is the last dot-separated part)
+    try:
+        pid = int(parts[-1])
+    except ValueError:
+        return None, None
+    session_id = ".".join(parts[:-1])
+    return session_id, pid
+
+
 def discover_log_files(task_dir: str) -> List[dict]:
     """
     Discover all .stdout log files in the task directory.
@@ -851,16 +887,18 @@ def discover_log_files(task_dir: str) -> List[dict]:
             continue
 
         session_id = None
-        if entry == "session.stdout":
-            session_id = "(temp)"
-        elif entry.endswith(".session.stdout"):
-            session_id = entry.replace(".session.stdout", "")
+        pid = None
+        if entry.endswith(".session.stdout"):
+            session_id, pid = _parse_stdout_filename(entry)
+            if session_id is None and pid is not None:
+                session_id = "(temp)"
 
         stat_info = os.stat(full_path)
         log_files.append({
             "filename": entry,
             "path": full_path,
             "session_id": session_id,
+            "pid": pid,
             "size": stat_info.st_size,
             "mtime": stat_info.st_mtime,
         })
@@ -1531,9 +1569,37 @@ def retrieve_session(session_id: str):
 # Pipe-Based Message Sending
 # =============================================================================
 
-def _build_session_stdout_path(task_dir: str, session_id: str) -> str:
-    """Build the stdout file path for a session."""
-    return os.path.join(task_dir, f"{session_id}.session.stdout")
+def _find_session_stdout_file(task_dir: str, session_id: str) -> Optional[str]:
+    """
+    Find the most recent stdout file for a session.
+
+    With the new naming convention the stdout file includes the process id:
+      {session_id}.{pid}.session.stdout
+    This helper discovers the file by scanning the task directory.
+    """
+    if not os.path.isdir(task_dir):
+        return None
+
+    candidates = []
+    for entry in os.listdir(task_dir):
+        if not entry.endswith(".session.stdout"):
+            continue
+        full_path = os.path.join(task_dir, entry)
+        if not os.path.isfile(full_path):
+            continue
+        sid, _pid = _parse_stdout_filename(entry)
+        if sid == session_id:
+            try:
+                mtime = os.path.getmtime(full_path)
+            except OSError:
+                continue
+            candidates.append((full_path, mtime))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    return candidates[0][0]
 
 
 def _build_pipe_path(task_dir: str, session_id: str, pid: int) -> str:
@@ -1610,7 +1676,13 @@ def send_message_to_session(
     sender locates the receiver process via the session stdout file, then
     writes the formatted payload to the FIFO.
     """
-    stdout_path = _build_session_stdout_path(task_dir, session_id)
+    stdout_path = _find_session_stdout_file(task_dir, session_id)
+    if stdout_path is None:
+        print(
+            f"{Colors.RED}[ERROR] No stdout file found for session '{session_id}'.{Colors.RESET}"
+        )
+        return False
+
     pid = get_file_pid(stdout_path)
     if pid is None:
         print(
