@@ -878,18 +878,5 @@ The filename formats are:
 
 For example, a process with PID `12345` and no session writes stdout to `topsailai.12345.session.stdout` and reads input from `topsailai.12345.session.pipe`; with session ID `abc-001` the files are `abc-001.12345.session.stdout` and `abc-001.12345.session.pipe`.
 
-### What changed
-
-1. **`workspace/print_tool.py`**
-   - `decorator_tee_output_by_session()` now builds the stdout path as `topsailai.{pid}.session.stdout` by default.
-   - When `get_session_id()` returns a non-empty value, the path becomes `{session_id}.{pid}.session.stdout`.
-2. **`workspace/input_tool.py`**
-   - `_build_pipe_path()` now builds the pipe path as `topsailai.{pid}.session.pipe` by default.
-   - When `get_session_id()` returns a non-empty value, the path becomes `{session_id}.{pid}.session.pipe`.
-3. **`cli/topsailai.py`**
-   - Added `_parse_stdout_filename()` to parse both filename formats and extract `(session_id, pid)`.
-   - Updated `discover_log_files()` to use the parser for `.session.stdout` files.
-   - Replaced the old `_build_session_stdout_path()` with `_find_session_stdout_file()`, which scans the task directory for the most recent matching `{session_id}.{pid}.session.stdout` file.
-
 ### Note for maintainers
 When adding new consumers of the session stdout tee file or input pipe, always parse the filename rather than constructing it from a fixed pattern. The PID component is required to disambiguate concurrent processes, and the session-id component is optional for temporary sessions.
