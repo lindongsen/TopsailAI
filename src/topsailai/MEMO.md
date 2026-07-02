@@ -826,3 +826,34 @@ During agent execution:
 - If you add a new pre-run hook module, export its hook(s) through a `HOOKS` dict so `workspace/agent/hooks/base/init.py` can discover it.
 - The wrapper signature must remain compatible with `input_one_line(tips: str = "", hook: HookInstruction = None) -> str`.
 - When testing `ai_base/` paths that call `get_agent_runtime_input()`, remember to clean up the thread-local value afterward to avoid leaking state between tests.
+
+## MEMO: Print Usage Restriction
+
+**Date:** 2026-07-02
+**File:** `/TopsailAI/src/topsailai/workspace/agent/agent_shell_base.py` (and similar agent/workspace modules)
+
+### Rule
+`print()` may only be used when the process is in **interactive mode** or **debug mode**:
+
+```python
+if env_tool.is_interactive_mode() or env_tool.is_debug_mode():
+    print(...)
+```
+
+In all other modes, `print()` output must be avoided so that non-interactive runs stay clean and machine-readable.
+
+### Example from `agent_shell_base.py`
+
+```python
+if not env_tool.is_debug_mode() or not env_tool.is_interactive_mode():
+    print(answer)
+
+if env_tool.is_interactive_mode() or env_tool.is_debug_mode():
+    print()
+    print(SPLIT_LINE)
+    print(f"[{self.agent_name}] have scheduled tasks [{curr_count}] times")
+    ...
+```
+
+### Note for maintainers
+When adding console output to workspace/agent code, always gate it behind `env_tool.is_interactive_mode() or env_tool.is_debug_mode()`. Prefer the project's logger (`from topsailai.logger import logger` or `logging.getLogger(__name__)`) for diagnostics that should be emitted regardless of mode.
