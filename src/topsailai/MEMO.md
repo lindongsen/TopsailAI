@@ -522,6 +522,43 @@ Do not change `last_user_message` to scan `self.ai_agent.messages`. If a future 
 ### Note for maintainers
 Do not change `_get_token_calculation_messages()` to return `self.messages` for User2Agent calls. If a future use case genuinely needs to count only the User2Agent session messages, add a new layer-specific helper instead of modifying this shared accessor.
 
+## MEMO: Context Summarization Message Ordering Convention
+
+**Date:** 2026-07-02
+**Files:**
+- `/TopsailAI/src/topsailai/workspace/context/base.py`
+- `/TopsailAI/src/topsailai/workspace/context/ctx_runtime.py`
+- `/TopsailAI/src/topsailai/workspace/context/agent2llm.py`
+
+### Convention
+After context summarization, the rebuilt message list must follow this order:
+
+```
+head_portion + head_offset + tail_offset + [summary_answer] + [last_user_message]
+```
+
+In plain terms: **preserve the original head and tail messages first, then add the summary answer, then the last user message**. Duplicates must be skipped.
+
+### Terminology
+- `head_portion` — messages from the beginning up to and including the first `role=user, step_name=task` message.
+- `head_offset` — the first `head_offset_to_keep` messages kept verbatim (read from `TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP`).
+- `tail_offset` — the last `tail_offset_to_keep` messages kept verbatim (read from `TOPSAILAI_CONTEXT_MESSAGES_TAIL_OFFSET_TO_KEEP`).
+- `summary_answer` — exactly one assistant message produced by the LLM summarizer.
+- `last_user_message` — exactly one final user message kept at the tail.
+
+> **Note:** `head_portion` and `head_offset` are often spoken of together as "head"; the same applies to `tail_portion` and `tail_offset` as "tail". The principle is simply `[head + tail] + [summary] + [last_user_message]`.
+
+### No Duplicates
+When merging preserved head/tail messages with the summary and last user message, always check `if msg not in new_messages` before appending. This prevents the same message from appearing twice when, for example, the last user message is also part of the head portion or tail offset.
+
+### Applies To
+Both summarization paths must follow this convention:
+- **User2Agent** — `ContextRuntimeData.summarize_messages_for_processed()` in `workspace/context/ctx_runtime.py`.
+- **Agent2LLM** — `ContextRuntimeAgent2LLM.summarize_messages_for_processing()` in `workspace/context/agent2llm.py`.
+
+### Note for maintainers
+When modifying summarization logic, keep this ordering invariant intact. If a future use case needs a different ordering, add a new method or configuration path rather than silently changing the shared convention.
+
 ## MEMO: Strict Prompt Construction Order Requirement
 
 **Date:** 2026-06-27

@@ -91,12 +91,20 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         """
         Summarize messages into a single text for processing.
 
-        Final message structure after summarization:
-            head_portion + [summary_answer] + [last_user_message]
+        Final message structure after summarization (no duplicates):
+            head_portion + head_offset + tail_offset + [summary_answer] + [last_user_message]
+
+        In plain terms: preserve the original head and tail messages first,
+        then add the summary answer, then the last user message. Duplicates
+        are skipped. ``head_portion`` and ``head_offset`` are often spoken of
+        together as "head"; the same applies to ``tail_portion`` and
+        ``tail_offset`` as "tail".
 
         - head_portion: messages from the beginning up to and including the
           first role=user, step_name=task message. It is held in the local
           variable `keeping_messages` (formerly `task_messages`).
+        - head_offset: the first `head_offset_to_keep` messages kept verbatim.
+        - tail_offset: the last `tail_offset_to_keep` messages kept verbatim.
         - summary_answer: exactly one assistant message produced by the LLM.
         - last_user_message: exactly one final user message kept at the tail.
 
@@ -193,6 +201,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         # head_offset_to_keep
         head_offset_to_keep = self._get_head_offset_to_keep_in_summary(head_offset_to_keep)
+        tail_offset_to_keep = self._get_tail_offset_to_keep_in_summary()
 
         # keep last user message
         # IMPORTANT DESIGN NOTE:
@@ -205,12 +214,12 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         # user prompt for the next LLM call.
         last_user_msg = self.last_user_message
 
-        print_step(f"!!! [Agent2LLM] [Summarization] head_offset_to_keep={head_offset_to_keep}, last_user_message_to_keep=1", need_format=False, need_log=True)
+        print_step(f"!!! [Agent2LLM] [Summarization] head_offset_to_keep={head_offset_to_keep}, tail_offset_to_keep={tail_offset_to_keep}, last_user_message_to_keep=1", need_format=False, need_log=True)
 
         # new messages: start with head_offset, then add session messages
-        # if configured, then add summary answer, then append last_user_message.
-        # The final structure is completed by merging keeping_messages
-        # (head_portion) back in below.
+        # if configured, then add tail_offset, then add summary answer, then
+        # append last_user_message. The final structure is completed by merging
+        # keeping_messages (head_portion) back in below.
         new_messages = messages[:head_offset_to_keep]
 
         # add session messages
@@ -225,17 +234,24 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                         continue
                     new_messages.append(msg)
 
+        # add tail_offset messages
+        tail_messages = messages[-tail_offset_to_keep:] if tail_offset_to_keep > 0 else []
+        for msg in tail_messages:
+            if msg not in new_messages:
+                new_messages.append(msg)
+
         # add answer(summary) to messages
         new_messages.append(llm_chat.prompt_ctl.messages[-1])
+
+        # Re-insert the head_portion in chronological order so the final
+        # list follows head_portion + tail_portion + [summary_answer] + [last_user_message].
+        if keeping_messages:
+            new_messages = self._merge_task_messages(original_messages, new_messages, keeping_messages)
 
         if last_user_msg:
             if last_user_msg not in new_messages:
                 new_messages.append(last_user_msg)
 
-        # Re-insert the head_portion in chronological order so the final
-        # list follows head_portion + [summary_answer] + [last_user_message].
-        if keeping_messages:
-            new_messages = self._merge_task_messages(original_messages, new_messages, keeping_messages)
         self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
 
         self.ai_agent.llm_model.tokenStat.add_msgs(self.ai_agent.messages)

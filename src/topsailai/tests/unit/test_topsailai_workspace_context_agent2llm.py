@@ -180,6 +180,7 @@ class TestGetCurrentTokens(TestContextRuntimeAgent2LLM):
                 result = self.test_instance._get_current_tokens(messages=custom_messages)
                 self.assertEqual(result, 7)
                 mock_count.assert_called_once_with(str(custom_messages))
+
 class TestIsNeedSummarizeForProcessing(TestContextRuntimeAgent2LLM):
     """Test suite for is_need_summarize_for_processing method."""
 
@@ -703,6 +704,121 @@ class TestEdgeCases(TestContextRuntimeAgent2LLM):
 
 
 
+    def test_summarize_tail_offset_preserved(self):
+        """Test that tail offset preserves the most recent Agent2LLM messages."""
+        task_msg = {"role": "user", "content": {"step_name": "task", "raw_text": "Task tail"}}
+        self.test_instance._ai_agent.messages = [
+            task_msg,
+            {"role": "assistant", "content": "msg0"},
+            {"role": "user", "content": "msg1"},
+            {"role": "assistant", "content": "msg2"},
+            {"role": "user", "content": "msg3"},
+            {"role": "assistant", "content": "msg4"},
+        ]
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary with tail"}
+        ]
+
+        with patch.dict(os.environ, {"TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES": "0"}):
+            with patch.object(self.test_instance, '_summarize_messages', return_value=(mock_llm_chat, "Summary with tail")):
+                with patch.object(self.test_instance, '_get_head_offset_to_keep_in_summary', return_value=0):
+                    with patch.object(self.test_instance, '_get_tail_offset_to_keep_in_summary', return_value=2):
+                        self.test_instance.summarize_messages_for_processing()
+
+        final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
+        # The head-portion task message and the two tail messages survive.
+        self.assertIn({"step_name": "task", "raw_text": "Task tail"}, final_contents)
+        self.assertIn("Summary with tail", final_contents)
+        self.assertIn("msg3", final_contents)
+        self.assertIn("msg4", final_contents)
+        # msg0, msg1 and msg2 are in the summarized range.
+        self.assertNotIn("msg0", final_contents)
+        self.assertNotIn("msg1", final_contents)
+        self.assertNotIn("msg2", final_contents)
+
+        # Verify required order: head_portion + tail_portion + summary + last_user_message.
+        idx_task = final_contents.index({"step_name": "task", "raw_text": "Task tail"})
+        idx_msg3 = final_contents.index("msg3")
+        idx_msg4 = final_contents.index("msg4")
+        idx_summary = final_contents.index("Summary with tail")
+        self.assertLess(idx_task, idx_msg3)
+        self.assertLess(idx_task, idx_msg4)
+        self.assertLess(idx_msg3, idx_summary)
+        self.assertLess(idx_msg4, idx_summary)
+
+    def test_summarize_tail_offset_zero_preserves_only_last_user_message(self):
+        """Test that tail offset 0 preserves only head-portion and last user message."""
+        task_msg = {"role": "user", "content": {"step_name": "task", "raw_text": "Task tail zero"}}
+        self.test_instance._ai_agent.messages = [
+            task_msg,
+            {"role": "assistant", "content": "msg0"},
+            {"role": "user", "content": "msg1"},
+            {"role": "assistant", "content": "msg2"},
+        ]
+        # Provide a User2Agent session message so last_user_message resolves to msg1.
+        self.test_instance._messages = [{"role": "user", "content": "msg1"}]
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary"}
+        ]
+
+        with patch.dict(os.environ, {"TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES": "0"}):
+            with patch.object(self.test_instance, '_summarize_messages', return_value=(mock_llm_chat, "Summary")):
+                with patch.object(self.test_instance, '_get_head_offset_to_keep_in_summary', return_value=0):
+                    with patch.object(self.test_instance, '_get_tail_offset_to_keep_in_summary', return_value=0):
+                        self.test_instance.summarize_messages_for_processing()
+
+        final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
+        # The head-portion task message and the real last user message survive.
+        self.assertIn({"step_name": "task", "raw_text": "Task tail zero"}, final_contents)
+        self.assertIn("Summary", final_contents)
+        self.assertIn("msg1", final_contents)
+        self.assertNotIn("msg0", final_contents)
+        self.assertNotIn("msg2", final_contents)
+
+    def test_summarize_tail_offset_larger_than_messages_keeps_all(self):
+        """Test that tail offset larger than message count keeps all messages."""
+        task_msg = {"role": "user", "content": {"step_name": "task", "raw_text": "Task tail big"}}
+        self.test_instance._ai_agent.messages = [
+            task_msg,
+            {"role": "assistant", "content": "msg0"},
+            {"role": "user", "content": "msg1"},
+            {"role": "assistant", "content": "msg2"},
+        ]
+        self.test_instance._messages = [{"role": "user", "content": "msg1"}]
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary"}
+        ]
+
+        with patch.dict(os.environ, {"TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES": "0"}):
+            with patch.object(self.test_instance, '_summarize_messages', return_value=(mock_llm_chat, "Summary")):
+                with patch.object(self.test_instance, '_get_head_offset_to_keep_in_summary', return_value=0):
+                    with patch.object(self.test_instance, '_get_tail_offset_to_keep_in_summary', return_value=100):
+                        self.test_instance.summarize_messages_for_processing()
+
+        final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
+        # All original messages plus summary should be present.
+        self.assertIn({"step_name": "task", "raw_text": "Task tail big"}, final_contents)
+        self.assertIn("msg0", final_contents)
+        self.assertIn("msg1", final_contents)
+        self.assertIn("msg2", final_contents)
+        self.assertIn("Summary", final_contents)
+
+        # Verify required order: head_portion + tail_portion + summary + last_user_message.
+        # msg1 is also the User2Agent session message, so it is preserved in the head/session
+        # portion and appears before the summary; tail_offset here covers the remaining messages.
+        idx_task = final_contents.index({"step_name": "task", "raw_text": "Task tail big"})
+        idx_summary = final_contents.index("Summary")
+        self.assertLess(idx_task, idx_summary)
+        idx_msg1 = final_contents.index("msg1")
+        self.assertLess(idx_msg1, idx_summary)
+
+
 class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
     """Test runtime-mode summarization source selection for Agent2LLM."""
 
@@ -768,7 +884,6 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             # When ai_agent.messages is longer than fallback, the runtime store is used.
             self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 5)
             self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "agent-msg-0")
-
     @patch('topsailai.workspace.context.base.get_llm_chat')
     def test_runtime_summary_fallback_when_agent_messages_empty(self, mock_get_llm_chat):
         """Agent2LLM summary falls back to caller messages when agent store is empty."""
@@ -787,7 +902,6 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             # Should fall back to caller-provided messages
             self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 10)
             self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "fallback-msg-0")
-
     def test_duplicate_count_disabled_returns_false(self):
         """Test duplicate count check disabled when threshold is 0."""
         self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
@@ -800,7 +914,7 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.assertFalse(result)
 
     def test_duplicate_count_equal_threshold_returns_false(self):
-        """Test count equal to threshold returns False (strict >)."""
+        """Test count equal to threshold returns False (strictly greater)."""
         self.test_instance._get_quantity_threshold = MagicMock(return_value=0)
         self.test_instance._ai_agent.llm_model.tokenStat.current_tokens = 0
         self.test_instance._ai_agent.llm_model.tool_stat.get_consecutive_duplicate_count.return_value = 3

@@ -37,6 +37,3 @@ LLM service errors
 
 Task execution time is too long
 
-### LOG_ATTENTION: "[0-9]\- \[summarize_"
-
-Summarization info

@@ -451,6 +451,62 @@ class TestGetHeadOffsetToKeep(unittest.TestCase):
 
         self.assertEqual(result, 10)
 
+class TestGetTailOffsetToKeep(unittest.TestCase):
+    """Test suite for _get_tail_offset_to_keep_in_summary method."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.mock_agent = MagicMock()
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    def test_get_tail_offset_from_env(self, mock_env_tool, mock_agent_base):
+        """Test getting tail offset from environment variable."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.get.return_value = 5
+
+        runtime = ContextRuntimeBase()
+        result = runtime._get_tail_offset_to_keep_in_summary()
+
+        self.assertEqual(result, 5)
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    def test_get_tail_offset_negative_converted_to_zero(self, mock_env_tool, mock_agent_base):
+        """Test that negative tail offset is converted to 0."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.get.return_value = -5
+
+        runtime = ContextRuntimeBase()
+        result = runtime._get_tail_offset_to_keep_in_summary()
+
+        self.assertEqual(result, 0)
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    def test_get_tail_offset_explicit_value(self, mock_agent_base):
+        """Test using explicit tail_offset_to_keep value."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        runtime = ContextRuntimeBase()
+        result = runtime._get_tail_offset_to_keep_in_summary(tail_offset_to_keep=10)
+
+        self.assertEqual(result, 10)
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.env_tool')
+    def test_get_tail_offset_default_zero(self, mock_env_tool, mock_agent_base):
+        """Test default tail offset is 0 when env var is unset."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.get.return_value = None
+
+        runtime = ContextRuntimeBase()
+        result = runtime._get_tail_offset_to_keep_in_summary()
+
+        self.assertEqual(result, 0)
+
 
 class TestSummarizeMessages(unittest.TestCase):
     """Test suite for _summarize_messages method."""

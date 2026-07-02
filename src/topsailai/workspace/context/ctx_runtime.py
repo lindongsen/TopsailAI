@@ -201,19 +201,22 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         """
         Summarize the processed conversation messages into a single text.
 
-        Final message structure after summarization:
-            head_portion + [summary_answer] + [last_user_message]
+        Final message structure after summarization (no duplicates):
+            head_portion + head_offset + tail_offset + [summary_answer] + [last_user_message]
+
+        In plain terms: preserve the original head and tail messages first,
+        then add the summary answer, then the last user message. Duplicates
+        are skipped. ``head_portion`` and ``head_offset`` are often spoken of
+        together as "head"; the same applies to ``tail_portion`` and
+        ``tail_offset`` as "tail".
 
         - head_portion: messages from the beginning up to and including the
           first role=user, step_name=task message. It is held in the local
           variable `keeping_messages` (formerly `task_messages`).
+        - head_offset: the first `head_offset_to_keep` messages kept verbatim.
+        - tail_offset: the last `tail_offset_to_keep` messages kept verbatim.
         - summary_answer: exactly one assistant message produced by the LLM.
         - last_user_message: exactly one final user message kept at the tail.
-
-        The summarizer receives the current runtime messages. In the default
-        "runtime" summary mode the LLM is fed from self.messages, so the
-        wrapper argument is the runtime messages while the actual summary
-        context is the full User2Agent history.
 
         Args:
             messages (list, optional): List of messages to summarize.
@@ -300,7 +303,10 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         if head_offset_to_keep and len(self.messages) <= head_offset_to_keep:
             head_offset_to_keep = 1
 
-        print_step(f"!!! [User2Agent] [Summarization] head_offset_to_keep={head_offset_to_keep}, last_user_message_to_keep=1", need_format=False, need_log=True)
+        # tail_offset_to_keep
+        tail_offset_to_keep = self._get_tail_offset_to_keep_in_summary()
+
+        print_step(f"!!! [User2Agent] [Summarization] head_offset_to_keep={head_offset_to_keep}, tail_offset_to_keep={tail_offset_to_keep}, last_user_message_to_keep=1", need_format=False, need_log=True)
 
         if self.session_id:
             raw_messages_from_session = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
@@ -328,7 +334,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
 
             # delete history messages
             if raw_messages_from_session:
-                for raw_msg in raw_messages_from_session[head_offset_to_keep:]:
+                for raw_msg in raw_messages_from_session[head_offset_to_keep:max(len(raw_messages_from_session)-tail_offset_to_keep, head_offset_to_keep)]:
                     if last_user_raw_msg and raw_msg.msg_id == last_user_raw_msg.msg_id:
                         continue
                     if raw_msg_ids_to_keep and raw_msg.msg_id in raw_msg_ids_to_keep:
@@ -343,18 +349,30 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             # keep last user message
             last_user_msg = self.last_user_message
 
-            # new messages: start with head_offset, then add summary answer,
-            # then append last_user_message. The final structure is completed
-            # by merging keeping_messages (head_portion) back in below.
+            # new messages: start with head_offset, then add tail_offset,
+            # then add summary answer. The final structure is completed by
+            # merging keeping_messages (head_portion) back in below and then
+            # appending last_user_message.
             new_messages = messages[:head_offset_to_keep]
-            new_messages.append(llm_chat.prompt_ctl.messages[-1]) # add answer(summary) to messages
-            if last_user_msg:
-                new_messages.append(last_user_msg)
+
+            # add tail_offset messages
+            tail_messages = messages[-tail_offset_to_keep:] if tail_offset_to_keep > 0 else []
+            for msg in tail_messages:
+                if msg not in new_messages:
+                    new_messages.append(msg)
+
+            # add answer(summary) to messages
+            new_messages.append(llm_chat.prompt_ctl.messages[-1])
 
             # Re-insert the head_portion in chronological order so the final
-            # list follows head_portion + [summary_answer] + [last_user_message].
+            # list follows head_portion + tail_portion + [summary_answer] + [last_user_message].
             if keeping_messages:
                 new_messages = self._merge_task_messages(original_messages, new_messages, keeping_messages)
+
+            if last_user_msg:
+                if last_user_msg not in new_messages:
+                    new_messages.append(last_user_msg)
+
             self.set_messages(new_messages)
 
         # Log message count and token usage after summarization

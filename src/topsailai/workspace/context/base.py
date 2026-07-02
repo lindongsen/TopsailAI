@@ -400,6 +400,59 @@ class ContextRuntimeBase(object):
     # Env
     ###############################################################
 
+    def _get_head_offset_to_keep_in_summary(
+            self,
+            head_offset_to_keep: int = None,
+        ) -> int:
+        """
+        Get the head offset to keep in summary.
+
+        Args:
+            head_offset_to_keep (int, optional): If provided, use this value directly.
+                If None, retrieve from environment variable.
+
+        Returns:
+            int: The head offset value to keep in summary. Always returns non-negative value.
+        """
+        if head_offset_to_keep is None:
+            head_offset_to_keep = env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP",
+                default=0,
+                formatter=int
+            ) or 0
+
+        if head_offset_to_keep < 0:
+            head_offset_to_keep = 0
+
+        return head_offset_to_keep
+
+    def _get_tail_offset_to_keep_in_summary(
+            self,
+            tail_offset_to_keep: int = None,
+        ) -> int:
+        """
+        Get the tail offset to keep in summary.
+
+        Args:
+            tail_offset_to_keep (int, optional): If provided, use this value directly.
+                If None, retrieve from environment variable.
+
+        Returns:
+            int: The tail offset value to keep in summary. Always returns non-negative value.
+        """
+        if tail_offset_to_keep is None:
+            tail_offset_to_keep = env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_CONTEXT_MESSAGES_TAIL_OFFSET_TO_KEEP",
+                default=0,
+                formatter=int
+            ) or 0
+
+        if tail_offset_to_keep < 0:
+            tail_offset_to_keep = 0
+
+        return tail_offset_to_keep
+
+
     def _get_quantity_threshold(
             self,
             env_key: str = "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD",
@@ -440,32 +493,6 @@ class ContextRuntimeBase(object):
         quantity_threshold = max(random.choice(number_list), env_quantity_threshold)
         return quantity_threshold
 
-    def _get_head_offset_to_keep_in_summary(
-            self,
-            head_offset_to_keep: int = None,
-        ) -> int:
-        """
-        Get the head offset to keep in summary.
-
-        Args:
-            head_offset_to_keep (int, optional): If provided, use this value directly.
-                If None, retrieve from environment variable.
-
-        Returns:
-            int: The head offset value to keep in summary. Always returns non-negative value.
-        """
-        if head_offset_to_keep is None:
-            head_offset_to_keep = env_tool.EnvReaderInstance.get(
-                "TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP",
-                default=0,
-                formatter=int
-            ) or 0
-
-        if head_offset_to_keep < 0:
-            head_offset_to_keep = 0
-
-        return head_offset_to_keep
-
     def _get_token_calculation_messages(self):
         """
         Get the messages used for real-time token calculation.
@@ -493,6 +520,7 @@ class ContextRuntimeBase(object):
         if self.messages is None:
             return None
         return self.messages[:]
+
     def _get_current_tokens(self, messages=None, realtime=False) -> int | None:
         """
         Get the current token count.

@@ -247,6 +247,9 @@ CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS=27000
 # This is the shared fallback/default. Layer-specific thresholds below take precedence when set.
 TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD=97
 TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP=0
+# Number of tail messages to retain after summarization. The most recent
+# messages are preserved in addition to the head offset and the last user message.
+TOPSAILAI_CONTEXT_MESSAGES_TAIL_OFFSET_TO_KEEP=0
 
 # Layer-specific message-count thresholds (optional).
 # If a layer-specific threshold is set, it takes precedence over TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD.

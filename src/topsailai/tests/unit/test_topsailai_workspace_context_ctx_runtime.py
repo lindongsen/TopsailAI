@@ -742,6 +742,143 @@ class TestSummarizeMessages(TestContextRuntimeData):
 
 
 
+    def test_summarize_tail_offset_preserved_without_session(self):
+        """Test that tail offset preserves the most recent messages without session."""
+        self.runtime.session_id = None
+        self.mock_json_tool.json_load.side_effect = lambda x: x
+        task_msg = {"role": "user", "content": {"step_name": "task", "raw_text": "Task tail"}}
+        self.runtime.messages = [
+            task_msg,
+            {"role": "assistant", "content": "msg0"},
+            {"role": "user", "content": "msg1"},
+            {"role": "assistant", "content": "msg2"},
+            {"role": "user", "content": "msg3"},
+            {"role": "assistant", "content": "msg4"},
+        ]
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary with tail"}
+        ]
+
+        with patch.object(self.runtime, 'is_need_summarize_for_processed', return_value=True):
+            with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "Summary with tail")):
+                with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+                    with patch.object(self.runtime, '_get_tail_offset_to_keep_in_summary', return_value=2):
+                        with patch.object(self.runtime, 'set_messages') as mock_set:
+                            self.runtime.summarize_messages_for_processed()
+
+        call_args = mock_set.call_args[0][0]
+        contents = [m.get("content") for m in call_args]
+        # The head-portion task message and the two tail messages survive.
+        self.assertIn({"step_name": "task", "raw_text": "Task tail"}, contents)
+        self.assertIn("Summary with tail", contents)
+        self.assertIn("msg3", contents)
+        self.assertIn("msg4", contents)
+        # msg0, msg1 and msg2 are in the summarized range.
+        self.assertNotIn("msg0", contents)
+        self.assertNotIn("msg1", contents)
+        self.assertNotIn("msg2", contents)
+
+        # Verify required order: head_portion + tail_portion + summary + last_user_message.
+        idx_task = contents.index({"step_name": "task", "raw_text": "Task tail"})
+        idx_msg3 = contents.index("msg3")
+        idx_msg4 = contents.index("msg4")
+        idx_summary = contents.index("Summary with tail")
+        self.assertLess(idx_task, idx_msg3)
+        self.assertLess(idx_task, idx_msg4)
+        self.assertLess(idx_msg3, idx_summary)
+        self.assertLess(idx_msg4, idx_summary)
+
+    def test_summarize_tail_offset_preserved_with_session(self):
+        """Test that tail offset prevents deletion of recent raw session messages."""
+        self.runtime.session_id = "tail_session"
+        self.mock_json_tool.json_load.side_effect = lambda x: x
+        task_msg = {"role": "user", "content": {"step_name": "task", "raw_text": "Task tail session"}}
+        self.runtime.messages = [
+            task_msg,
+        ] + [
+            {"role": "assistant" if i % 2 else "user", "content": f"msg{i}"}
+            for i in range(9)
+        ]
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary"}
+        ]
+
+        mock_raw_msgs = []
+        raw_task = MagicMock()
+        raw_task.msg_id = "task_id"
+        raw_task.message = task_msg
+        mock_raw_msgs.append(raw_task)
+        for i in range(9):
+            raw = MagicMock()
+            raw.msg_id = f"id{i}"
+            raw.message = {"role": "assistant" if i % 2 else "user", "content": f"msg{i}"}
+            mock_raw_msgs.append(raw)
+
+        self.mock_ctx_manager.get_messages_by_session.return_value = mock_raw_msgs
+
+        with patch.object(self.runtime, 'is_need_summarize_for_processed', return_value=True):
+            with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "Summary with tail")):
+                with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+                    with patch.object(self.runtime, '_get_tail_offset_to_keep_in_summary', return_value=2):
+                        with patch.object(self.runtime, 'reset_messages'):
+                            self.runtime.summarize_messages_for_processed()
+
+        deleted_calls = self.mock_ctx_manager.del_session_messages.call_args_list
+        deleted_ids = []
+        for call_args in deleted_calls:
+            deleted_ids.extend(call_args[0][1])
+
+        # The head-portion task message and the two tail raw messages survive.
+        self.assertNotIn("task_id", deleted_ids)
+        self.assertNotIn("id7", deleted_ids)
+        self.assertNotIn("id8", deleted_ids)
+        # id0-id6 are in the summarized range and should be deleted.
+        for i in range(7):
+            self.assertIn(f"id{i}", deleted_ids)
+
+    def test_summarize_tail_offset_zero_preserves_only_last_user_message(self):
+        """Test that tail offset 0 preserves only head-portion and last user message."""
+        self.runtime.session_id = None
+        self.mock_json_tool.json_load.side_effect = lambda x: x
+        task_msg = {"role": "user", "content": {"step_name": "task", "raw_text": "Task tail zero"}}
+        self.runtime.messages = [
+            task_msg,
+            {"role": "assistant", "content": "msg0"},
+            {"role": "user", "content": "msg1"},
+            {"role": "assistant", "content": "msg2"},
+        ]
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary"}
+        ]
+
+        with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "Summary")):
+            with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+                with patch.object(self.runtime, '_get_tail_offset_to_keep_in_summary', return_value=0):
+                    with patch.object(self.runtime, 'set_messages') as mock_set:
+                        self.runtime.summarize_messages_for_processed()
+
+        call_args = mock_set.call_args[0][0]
+        contents = [m.get("content") for m in call_args]
+        # The head-portion task message and the real last user message survive.
+        self.assertIn({"step_name": "task", "raw_text": "Task tail zero"}, contents)
+        self.assertIn("Summary", contents)
+        self.assertIn("msg1", contents)
+        self.assertNotIn("msg0", contents)
+        self.assertNotIn("msg2", contents)
+
+        # Verify required order: head_portion + summary + last_user_message.
+        idx_task = contents.index({"step_name": "task", "raw_text": "Task tail zero"})
+        idx_summary = contents.index("Summary")
+        idx_msg1 = contents.index("msg1")
+        self.assertLess(idx_task, idx_summary)
+        self.assertLess(idx_summary, idx_msg1)
+
 class TestSummarizeRuntimeMessagesForProcessed(TestContextRuntimeData):
     """Test runtime-mode summarization source selection for User2Agent."""
 

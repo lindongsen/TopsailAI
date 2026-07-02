@@ -99,6 +99,7 @@ These variables control when the agent archives or summarizes message history to
 | `CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS` | `27000` | Token budget used as the denominator for the uncached-token ratio threshold check. |
 | `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD` | `97` | Shared fallback message-count threshold. Used by both layers when their layer-specific threshold is not configured. |
 | `TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP` | `0` | Number of head messages to retain after summarization. |
+| `TOPSAILAI_CONTEXT_MESSAGES_TAIL_OFFSET_TO_KEEP` | `0` | Number of tail messages to retain after summarization. The most recent messages are preserved in addition to the head offset and the last user message. |
 | `TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD` | `97` | Layer-specific message-count threshold for Agent2LLM. Takes precedence over `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD`. |
 | `TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD` | `17` | Layer-specific message-count threshold for User2Agent. Takes precedence over `TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD`. |
 | `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` | `128000` | Token threshold for triggering Agent2LLM context summarization. Set to `0` to disable. |
