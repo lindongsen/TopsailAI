@@ -10,6 +10,18 @@ Email: lin_dongsen@126.com
 Created: 2026-03-23
 """
 
+from topsailai.ai_base.constants import (
+    ROLE_USER,
+    ROLE_ASSISTANT,
+    ROLE_SYSTEM,
+    ROLE_TOOL,
+    STEP_NAME_OBSERVATION,
+    MSG_KEY_STEP_NAME,
+    MSG_KEY_RAW_TEXT,
+)
+from topsailai.utils import (
+    json_tool,
+)
 from topsailai.context import ctx_manager
 from topsailai.tools.agent_tool import (
     subprocess_agent_memory_as_story,
@@ -54,6 +66,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             "ctx.del_msg_ids": self.ctx_runtime_data.del_session_message_by_ids,
             "ctx.summarize": self.ctx_summarize,
             "ctx.search": self.ctx_search,
+            "ctx.add_agent2llm": self.ctx_add_agent2llm_message,
         }
 
         # total
@@ -173,6 +186,50 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             print_raw_messages(raw_msgs)
         return
 
+    def ctx_add_agent2llm_message(self, content: str, role: str = ROLE_USER):
+        """
+        Add a message to the Agent2LLM ephemeral message context.
+
+        This instruction injects a message directly into the agent's internal
+        ReAct conversation context (``self.ai_agent.messages``). The content is
+        wrapped as an observation string so it is treated like a runtime
+        observation payload by downstream consumers.
+
+        Args:
+            content (str): Raw message content. This becomes the ``raw_text``
+                of an observation content block.
+            role (str, optional): Message role. Must be one of "system", "user",
+                "assistant", or "tool". Defaults to "user".
+
+        Returns:
+            str: A concise confirmation message.
+        """
+        valid_roles = {ROLE_SYSTEM, ROLE_USER, ROLE_ASSISTANT, ROLE_TOOL}
+        role = (role or "").strip().lower()
+        if role not in valid_roles:
+            return f"invalid role [{role}], must be one of {sorted(valid_roles)}"
+
+        if not self.ai_agent:
+            return "no active agent, cannot add Agent2LLM message"
+
+        if self.ai_agent.messages is None:
+            self.ai_agent.messages = []
+
+        observation_content = {
+            MSG_KEY_STEP_NAME: STEP_NAME_OBSERVATION,
+            MSG_KEY_RAW_TEXT: content,
+        }
+        message = {
+            "role": role,
+            "content": json_tool.json_dump(observation_content),
+        }
+        # Append via the controlled mutator convention for the Agent2LLM layer:
+        # use ``+=`` on the existing list rather than replacing the reference.
+        # The message itself is a dict (not a JSON string), consistent with
+        # PromptBase message conventions.
+        self.ai_agent.messages += [message]
+        return f"added 1 {role} message to Agent2LLM context (total={len(self.ai_agent.messages)})"
+
     def ctx_delete_message(self, index:int):
         """
         Delete a single message by its index.
@@ -183,7 +240,6 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         Args:
             index (int): Sequence number of the message to delete,
                          starting from 1.
-
         Raises:
             AssertionError: If index is out of valid range.
 

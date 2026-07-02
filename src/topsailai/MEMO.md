@@ -958,3 +958,30 @@ EOF
 - Always use the stdout filename to resolve the PID rather than guessing it; multiple sessions may share the same session ID but have different PIDs.
 - When writing directly to the pipe, include the `EOF` terminator; otherwise the receiver will keep waiting.
 - The receiver's `input_from_pipe` logic strips the first standalone `EOF` marker and everything after it, so do not place meaningful content after `EOF`.
+
+## MEMO: `/ctx.add_agent2llm` Instruction
+
+**Date:** 2026-07-03
+**File:** `/TopsailAI/src/topsailai/workspace/context/instruction.py`
+
+### Conclusion
+`/ctx.add_agent2llm` injects a message into the Agent2LLM ephemeral context at runtime.
+
+### Usage
+```
+/ctx.add_agent2llm <content> [role]
+```
+- `content` — required, the message payload. Accepts `list[dict]` or `dict`.
+- `role` — optional, defaults to `user`; supports `system`, `user`, `assistant`, `tool`.
+
+### Implementation
+- Method: `ctx_add_agent2llm_message(self, content, role: str = ROLE_USER)`.
+- Appended message format:
+  ```python
+  {"role": role, "content": {"step_name": "observation", "raw_text": content}}
+  ```
+- Uses constants `STEP_NAME_OBSERVATION`, `MSG_KEY_STEP_NAME`, `MSG_KEY_RAW_TEXT` from `ai_base/constants.py`.
+- Appended via `self.ai_agent.messages += [...]`; direct assignment is avoided.
+
+### Note for maintainers
+When adding similar runtime-injection instructions, keep message construction as a plain dict and append through the context-runtime mutator convention.

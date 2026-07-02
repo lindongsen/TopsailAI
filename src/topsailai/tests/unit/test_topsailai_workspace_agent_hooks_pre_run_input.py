@@ -1,153 +1,326 @@
+"""
+Unit tests for workspace/agent/hooks/pre_run_input module.
+
+Test coverage:
+- pre_run_set_agent_runtime_input function
+- input_on_agent_runtime wrapper
+- input_on_agent_runtime_with_timeout wrapper
+- HookInstruction integration
+
+Author: mm-m25
+"""
+
+import os
+import tempfile
+import threading
+import time
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch, MagicMock
 
-from topsailai.utils.thread_local_tool import (
-    get_agent_runtime_input,
-    get_agent_runtime_input_with_timeout,
-    rid_all_thread_vars,
-)
-from topsailai.workspace.agent.hooks.pre_run_input import (
-    HOOKS,
-    pre_run_set_agent_runtime_input,
-)
+import pytest
 
 
-class TestPreRunInputHook(unittest.TestCase):
-    """Test cases for the pre_run_input hook."""
+class TestPreRunSetAgentRuntimeInput(unittest.TestCase):
+    """Test cases for pre_run_set_agent_runtime_input function."""
 
     def setUp(self):
-        """Clear thread-local storage before each test."""
+        """Clear thread-local input state before each test."""
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
         rid_all_thread_vars()
 
     def tearDown(self):
-        """Clear thread-local storage after each test."""
+        """Clear thread-local input state after each test."""
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
         rid_all_thread_vars()
 
-    def test_hook_is_exported_with_pre_run_prefix(self):
-        """The hook must be discoverable by get_hooks('pre_run')."""
-        self.assertIn("pre_run_set_agent_runtime_input", HOOKS)
-        self.assertIs(HOOKS["pre_run_set_agent_runtime_input"], pre_run_set_agent_runtime_input)
-
-    def test_hook_registers_agent_runtime_input(self):
-        """Calling the hook should register the agent-runtime input function."""
-        self.assertIsNone(get_agent_runtime_input())
-
-        mock_agent = MagicMock()
-        pre_run_set_agent_runtime_input(mock_agent)
-
-        input_func = get_agent_runtime_input()
-        self.assertIsNotNone(input_func)
-        self.assertEqual(input_func.__name__, "input_on_agent_runtime")
-
-    @patch("topsailai.workspace.agent.hooks.pre_run_input.input_one_line")
-    def test_wrapper_forwards_to_input_one_line_with_hook(self, mock_input_one_line):
-        """The wrapper should pass through to input_one_line with the instruction hook."""
-        mock_input_one_line.return_value = "user reply"
-        mock_instruction = MagicMock()
-
-        mock_agent = MagicMock()
-        mock_agent.hook_instruction = mock_instruction
-        pre_run_set_agent_runtime_input(mock_agent)
-
-        input_func = get_agent_runtime_input()
-        result = input_func("prompt text")
-
-        self.assertEqual(result, "user reply")
-        mock_input_one_line.assert_called_once_with(tips="prompt text", hook=mock_instruction)
-
-    @patch("topsailai.workspace.agent.hooks.pre_run_input.input_one_line")
-    def test_wrapper_uses_default_hook_when_none_provided(self, mock_input_one_line):
-        """The wrapper should use the captured instruction when hook is not provided."""
-        mock_input_one_line.return_value = "reply"
-        mock_instruction = MagicMock()
-
-        mock_agent = MagicMock()
-        mock_agent.hook_instruction = mock_instruction
-        pre_run_set_agent_runtime_input(mock_agent)
-
-        input_func = get_agent_runtime_input()
-        result = input_func(tips="enter value")
-
-        self.assertEqual(result, "reply")
-        mock_input_one_line.assert_called_once_with(tips="enter value", hook=mock_instruction)
-
-    @patch("topsailai.workspace.agent.hooks.pre_run_input.input_one_line")
-    def test_wrapper_preserves_explicit_hook(self, mock_input_one_line):
-        """The wrapper should not override an explicitly provided hook."""
-        mock_input_one_line.return_value = "reply"
-        mock_instruction = MagicMock()
-        other_hook = MagicMock()
-
-        mock_agent = MagicMock()
-        mock_agent.hook_instruction = mock_instruction
-        pre_run_set_agent_runtime_input(mock_agent)
-
-        input_func = get_agent_runtime_input()
-        result = input_func("prompt", hook=other_hook)
-
-        self.assertEqual(result, "reply")
-        mock_input_one_line.assert_called_once_with(tips="prompt", hook=other_hook)
-
-    def test_hook_registers_agent_runtime_input_with_timeout(self):
-        """Calling the hook should register the timeout-aware input function."""
-        self.assertIsNone(get_agent_runtime_input_with_timeout())
-
-        mock_agent = MagicMock()
-        pre_run_set_agent_runtime_input(mock_agent)
-
-        input_func = get_agent_runtime_input_with_timeout()
-        self.assertIsNotNone(input_func)
-        self.assertEqual(input_func.__name__, "input_on_agent_runtime_with_timeout")
-
-    @patch("topsailai.workspace.agent.hooks.pre_run_input.input_from_pipe_session")
-    @patch("topsailai.workspace.agent.hooks.pre_run_input.env_tool.get_session_id")
-    def test_timeout_wrapper_forwards_to_input_from_pipe_session(
-        self, mock_get_session_id, mock_input_from_pipe_session
-    ):
-        """The timeout wrapper should call input_from_pipe_session with the right args."""
-        mock_get_session_id.return_value = "test-session"
-        mock_input_from_pipe_session.return_value = "pipe reply"
-        mock_instruction = MagicMock()
-
-        mock_agent = MagicMock()
-        mock_agent.hook_instruction = mock_instruction
-        pre_run_set_agent_runtime_input(mock_agent)
-
-        input_func = get_agent_runtime_input_with_timeout()
-        result = input_func("prompt text", timeout=5.0)
-
-        self.assertEqual(result, "pipe reply")
-        mock_input_from_pipe_session.assert_called_once_with(
-            session_id="test-session",
-            single_line=True,
-            timeout=5.0,
-            prompt="prompt text",
+    def test_registers_input_on_agent_runtime(self):
+        """Test pre_run hook registers input_on_agent_runtime in thread-local."""
+        from topsailai.workspace.agent.hooks.pre_run_input import (
+            pre_run_set_agent_runtime_input,
+        )
+        from topsailai.utils.thread_local_tool import (
+            get_agent_runtime_input,
+            get_agent_runtime_input_with_timeout,
         )
 
-    @patch("topsailai.workspace.agent.hooks.pre_run_input.input_from_pipe_session")
-    @patch("topsailai.workspace.agent.hooks.pre_run_input.env_tool.get_session_id")
-    def test_timeout_wrapper_uses_none_timeout_by_default(
-        self, mock_get_session_id, mock_input_from_pipe_session
-    ):
-        """The timeout wrapper should default to None timeout."""
-        mock_get_session_id.return_value = "test-session"
-        mock_input_from_pipe_session.return_value = "pipe reply"
-        mock_instruction = MagicMock()
-
         mock_agent = MagicMock()
-        mock_agent.hook_instruction = mock_instruction
+        mock_agent.hook_instruction = None
+
         pre_run_set_agent_runtime_input(mock_agent)
 
-        input_func = get_agent_runtime_input_with_timeout()
-        result = input_func(tips="enter value")
+        self.assertIsNotNone(get_agent_runtime_input())
+        self.assertIsNotNone(get_agent_runtime_input_with_timeout())
 
-        self.assertEqual(result, "pipe reply")
-        mock_input_from_pipe_session.assert_called_once_with(
-            session_id="test-session",
-            single_line=True,
-            timeout=None,
-            prompt="enter value",
+    def test_plain_wrapper_forwards_tips(self):
+        """Test input_on_agent_runtime forwards tips to input_one_line."""
+        from topsailai.workspace.agent.hooks.pre_run_input import (
+            pre_run_set_agent_runtime_input,
         )
+        from topsailai.utils.thread_local_tool import get_agent_runtime_input
+
+        mock_agent = MagicMock()
+        mock_agent.hook_instruction = MagicMock()
+
+        with patch(
+            "topsailai.workspace.agent.hooks.pre_run_input.input_one_line"
+        ) as mock_input_one_line:
+            mock_input_one_line.return_value = "user input"
+            pre_run_set_agent_runtime_input(mock_agent)
+
+            input_func = get_agent_runtime_input()
+            result = input_func("Enter something: ")
+
+            self.assertEqual(result, "user input")
+            mock_input_one_line.assert_called_once_with(
+                tips="Enter something: ", hook=mock_agent.hook_instruction
+            )
+
+    def test_timeout_wrapper_forwards_tips_and_timeout(self):
+        """Test input_on_agent_runtime_with_timeout forwards tips and timeout."""
+        from topsailai.workspace.agent.hooks.pre_run_input import (
+            pre_run_set_agent_runtime_input,
+        )
+        from topsailai.utils.thread_local_tool import (
+            get_agent_runtime_input_with_timeout,
+        )
+
+        mock_agent = MagicMock()
+        mock_agent.hook_instruction = MagicMock()
+
+        with patch(
+            "topsailai.workspace.agent.hooks.pre_run_input.input_from_pipe_session"
+        ) as mock_input_from_pipe_session:
+            mock_input_from_pipe_session.return_value = "user input"
+            pre_run_set_agent_runtime_input(mock_agent)
+
+            input_func = get_agent_runtime_input_with_timeout()
+            result = input_func("Enter something: ", timeout=5.0)
+
+            self.assertEqual(result, "user input")
+            mock_input_from_pipe_session.assert_called_once_with(
+                session_id=None,
+                single_line=True,
+                timeout=5.0,
+                prompt="Enter something: ",
+            )
+
+    def test_timeout_wrapper_uses_default_timeout(self):
+        """Test input_on_agent_runtime_with_timeout uses default timeout."""
+        from topsailai.workspace.agent.hooks.pre_run_input import (
+            pre_run_set_agent_runtime_input,
+        )
+        from topsailai.utils.thread_local_tool import (
+            get_agent_runtime_input_with_timeout,
+        )
+
+        mock_agent = MagicMock()
+        mock_agent.hook_instruction = MagicMock()
+
+        with patch(
+            "topsailai.workspace.agent.hooks.pre_run_input.input_from_pipe_session"
+        ) as mock_input_from_pipe_session:
+            mock_input_from_pipe_session.return_value = "user input"
+            pre_run_set_agent_runtime_input(mock_agent)
+
+            input_func = get_agent_runtime_input_with_timeout()
+            result = input_func("Enter something: ")
+
+            self.assertEqual(result, "user input")
+            mock_input_from_pipe_session.assert_called_once_with(
+                session_id=None,
+                single_line=True,
+                timeout=None,
+                prompt="Enter something: ",
+            )
+
+
+class TestPreRunInputToolApprovalTransport(unittest.TestCase):
+    """Tests demonstrating that the timeout-aware wrapper is consumed by the
+    tool-approval local transport, but not by the agent interactive step or
+    LLM retry paths.
+    """
+
+    def setUp(self):
+        """Clear thread-local input state."""
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
+        rid_all_thread_vars()
+
+    def tearDown(self):
+        """Clear thread-local input state."""
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
+        rid_all_thread_vars()
+
+    @patch(
+        "topsailai.workspace.agent.hooks.pre_run_input.input_from_pipe_session"
+    )
+    def test_tool_approval_transport_uses_timeout_wrapper(self, mock_input_from_pipe):
+        """LocalApprovalTransport._read_stdin_input uses the timeout-aware
+        agent-runtime input function registered by the pre_run hook.
+        """
+        from topsailai.workspace.agent.hooks.pre_run_input import (
+            pre_run_set_agent_runtime_input,
+        )
+        from topsailai.ai_base.tool_approval.transport import LocalApprovalTransport
+        from topsailai.ai_base.tool_approval.instance import ToolApprovalInstance
+
+        mock_agent = MagicMock()
+        mock_agent.hook_instruction = MagicMock()
+        mock_input_from_pipe.return_value = "approve"
+
+        pre_run_set_agent_runtime_input(mock_agent)
+
+        transport = LocalApprovalTransport()
+        instance = ToolApprovalInstance(
+            tool_name="cmd_tool-exec_cmd",
+            tool_args={"cmd": "echo hello"},
+            transport=transport,
+        )
+        instance.timeout = 7.0
+
+        transport._read_stdin_input(instance)
+
+        self.assertEqual(instance.status, instance.STATUS_APPROVED)
+        mock_input_from_pipe.assert_called_once_with(
+            session_id=None,
+            single_line=True,
+            timeout=7.0,
+            prompt=unittest.mock.ANY,
+        )
+
+    def test_tool_approval_transport_falls_back_to_input_with_timeout(self):
+        """When the timeout-aware function is not registered,
+        LocalApprovalTransport falls back to input_with_timeout.
+        """
+        from topsailai.ai_base.tool_approval.transport import LocalApprovalTransport
+        from topsailai.ai_base.tool_approval.instance import ToolApprovalInstance
+
+        transport = LocalApprovalTransport()
+        instance = ToolApprovalInstance(
+            tool_name="cmd_tool-exec_cmd",
+            tool_args={"cmd": "echo hello"},
+            transport=transport,
+        )
+        instance.timeout = 3.0
+
+        with patch(
+            "topsailai.utils.input_tool.input_with_timeout",
+            return_value="deny",
+        ) as mock_input_with_timeout:
+            transport._read_stdin_input(instance)
+
+        self.assertEqual(instance.status, instance.STATUS_DENIED)
+        mock_input_with_timeout.assert_called_once()
+        call_kwargs = mock_input_with_timeout.call_args.kwargs
+        self.assertIn("timeout", call_kwargs)
+        self.assertEqual(call_kwargs["timeout"], 3.0)
+
+
+class TestPreRunTimeoutWrapperRealPipe(unittest.TestCase):
+    """Real FIFO tests for input_on_agent_runtime_with_timeout."""
+
+    def setUp(self):
+        """Clear thread-local input state before each test."""
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
+        rid_all_thread_vars()
+
+    def tearDown(self):
+        """Clear thread-local input state after each test."""
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
+        rid_all_thread_vars()
+
+    def _write_to_pipe(self, pipe_path: str, payload: str, delay: float = 0.02):
+        """Start a daemon thread that writes *payload* to *pipe_path*."""
+        import errno
+
+        def writer():
+            time.sleep(delay)
+            fd = None
+            for _ in range(100):
+                try:
+                    fd = os.open(pipe_path, os.O_WRONLY | os.O_NONBLOCK)
+                    break
+                except FileNotFoundError:
+                    time.sleep(0.01)
+                except OSError as exc:
+                    if exc.errno == errno.ENXIO:
+                        time.sleep(0.01)
+                    else:
+                        raise
+            if fd is None:
+                return
+            try:
+                os.write(fd, payload.encode("utf-8"))
+            finally:
+                os.close(fd)
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        return thread
+
+    def test_timeout_wrapper_times_out_on_real_pipe(self):
+        """The wrapper actually raises TimeoutError when no data arrives."""
+        from topsailai.workspace.agent.hooks.pre_run_input import (
+            pre_run_set_agent_runtime_input,
+        )
+        from topsailai.utils.thread_local_tool import (
+            get_agent_runtime_input_with_timeout,
+        )
+        from topsailai.utils import env_tool
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("topsailai.workspace.input_tool.FOLDER_WORKSPACE_TASK", tmpdir):
+                mock_agent = MagicMock()
+                mock_agent.hook_instruction = MagicMock()
+                pre_run_set_agent_runtime_input(mock_agent)
+
+                input_func = get_agent_runtime_input_with_timeout()
+                start = time.monotonic()
+                with pytest.raises(TimeoutError):
+                    input_func("prompt", timeout=0.1)
+                elapsed = time.monotonic() - start
+
+                self.assertGreaterEqual(elapsed, 0.08)
+                self.assertLess(elapsed, 0.3)
+
+    def test_timeout_wrapper_returns_data_before_timeout(self):
+        """The wrapper returns pipe data when it arrives before timeout."""
+        from topsailai.workspace.agent.hooks.pre_run_input import (
+            pre_run_set_agent_runtime_input,
+        )
+        from topsailai.utils.thread_local_tool import (
+            get_agent_runtime_input_with_timeout,
+        )
+        from topsailai.utils import env_tool
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("topsailai.workspace.input_tool.FOLDER_WORKSPACE_TASK", tmpdir):
+                mock_agent = MagicMock()
+                mock_agent.hook_instruction = MagicMock()
+                pre_run_set_agent_runtime_input(mock_agent)
+
+                input_func = get_agent_runtime_input_with_timeout()
+                session_id = env_tool.get_session_id() or "topsailai"
+                pipe_path = os.path.join(
+                    tmpdir, f"{session_id}.{os.getpid()}.session.pipe"
+                )
+
+                writer_thread = self._write_to_pipe(
+                    pipe_path, "approve\nEOF\n", delay=0.02
+                )
+
+                start = time.monotonic()
+                result = input_func("prompt", timeout=1.0)
+                elapsed = time.monotonic() - start
+
+                self.assertEqual(result, "approve")
+                self.assertLess(elapsed, 0.3)
+                writer_thread.join(timeout=0.5)
+
+
+if __name__ == "__main__":
+    unittest.main()
+        self.assertIn("timeout", call_kwargs)
+        self.assertEqual(call_kwargs["timeout"], 3.0)
 
 
 if __name__ == "__main__":

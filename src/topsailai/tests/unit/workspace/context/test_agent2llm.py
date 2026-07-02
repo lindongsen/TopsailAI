@@ -10,6 +10,7 @@ Created: 2026-04-19
 
 import pytest
 from unittest.mock import MagicMock, patch
+import json
 
 
 # =============================================================================
@@ -609,3 +610,118 @@ class TestModuleSummary:
         """Test that class has a docstring."""
         from topsailai.workspace.context.agent2llm import ContextRuntimeAgent2LLM
         assert ContextRuntimeAgent2LLM.__doc__ is not None
+
+
+# =============================================================================
+# Group H: ctx.add_agent2llm instruction Tests
+# =============================================================================
+
+class TestCtxAddAgent2LLMMessage:
+    """Test the /ctx.add_agent2llm instruction handler."""
+
+    @pytest.fixture
+    def runtime_instructions(self):
+        """Create a ContextRuntimeInstructions instance with a mock ai_agent."""
+        from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
+        from topsailai.workspace.context.instruction import ContextRuntimeInstructions
+
+        ctx_runtime_data = ContextRuntimeData()
+        ctx_runtime_data.ai_agent = MagicMock()
+        ctx_runtime_data.ai_agent.messages = []
+        instructions = ContextRuntimeInstructions(ctx_runtime_data)
+        return instructions
+
+    def test_instruction_is_registered(self, runtime_instructions):
+        """Test that ctx.add_agent2llm is registered in instructions."""
+        assert "ctx.add_agent2llm" in runtime_instructions.instructions
+
+    def test_add_user_message_default_role(self, runtime_instructions):
+        """Test adding a message with default user role."""
+        result = runtime_instructions.ctx_add_agent2llm_message("hello world")
+        assert "added 1 user message" in result
+        assert len(runtime_instructions.ai_agent.messages) == 1
+
+        msg_dict = runtime_instructions.ai_agent.messages[0]
+        assert isinstance(msg_dict, dict)
+        assert msg_dict["role"] == "user"
+        assert isinstance(msg_dict["content"], str)
+        content_dict = json.loads(msg_dict["content"])
+        assert content_dict["step_name"] == "observation"
+        assert content_dict["raw_text"] == "hello world"
+
+    def test_add_system_message_explicit_role(self, runtime_instructions):
+        """Test adding a message with explicit system role."""
+        result = runtime_instructions.ctx_add_agent2llm_message("system prompt", "system")
+        assert "added 1 system message" in result
+
+        msg_dict = runtime_instructions.ai_agent.messages[0]
+        assert isinstance(msg_dict, dict)
+        assert msg_dict["role"] == "system"
+        content_dict = json.loads(msg_dict["content"])
+        assert content_dict["raw_text"] == "system prompt"
+
+    def test_add_assistant_message(self, runtime_instructions):
+        """Test adding an assistant message."""
+        result = runtime_instructions.ctx_add_agent2llm_message("assistant reply", "assistant")
+        assert "added 1 assistant message" in result
+
+        msg_dict = runtime_instructions.ai_agent.messages[0]
+        assert isinstance(msg_dict, dict)
+        assert msg_dict["role"] == "assistant"
+
+    def test_add_tool_message(self, runtime_instructions):
+        """Test adding a tool message."""
+        result = runtime_instructions.ctx_add_agent2llm_message("tool result", "tool")
+        assert "added 1 tool message" in result
+
+        msg_dict = runtime_instructions.ai_agent.messages[0]
+        assert isinstance(msg_dict, dict)
+        assert msg_dict["role"] == "tool"
+
+    def test_invalid_role_returns_error(self, runtime_instructions):
+        """Test that invalid role returns an error message."""
+        result = runtime_instructions.ctx_add_agent2llm_message("content", "invalid_role")
+        assert "invalid role" in result
+        assert len(runtime_instructions.ai_agent.messages) == 0
+
+    def test_no_active_agent_returns_error(self, runtime_instructions):
+        """Test that missing ai_agent returns an error message."""
+        runtime_instructions.ctx_runtime_data.ai_agent = None
+        result = runtime_instructions.ctx_add_agent2llm_message("content")
+        assert "no active agent" in result
+
+    def test_messages_initialized_when_none(self, runtime_instructions):
+        """Test that ai_agent.messages is initialized if None."""
+        runtime_instructions.ai_agent.messages = None
+        result = runtime_instructions.ctx_add_agent2llm_message("hello")
+        assert runtime_instructions.ai_agent.messages is not None
+        assert len(runtime_instructions.ai_agent.messages) == 1
+        assert "added 1 user message" in result
+
+    def test_message_is_dict_not_json_string(self, runtime_instructions):
+        """Test that the appended message is a dict, not a JSON string."""
+        runtime_instructions.ctx_add_agent2llm_message("some content")
+
+        msg = runtime_instructions.ai_agent.messages[0]
+        assert isinstance(msg, dict)
+        assert msg["role"] == "user"
+        assert isinstance(msg["content"], str)
+        content_dict = json.loads(msg["content"])
+        assert content_dict["step_name"] == "observation"
+        assert content_dict["raw_text"] == "some content"
+
+    def test_list_identity_preserved(self, runtime_instructions):
+        """Test that the message list reference is preserved (uses +=)."""
+        original_list = runtime_instructions.ai_agent.messages
+        runtime_instructions.ctx_add_agent2llm_message("hello")
+        assert runtime_instructions.ai_agent.messages is original_list
+
+    def test_multiple_messages_increase_count(self, runtime_instructions):
+        """Test that multiple calls append messages and update count."""
+        runtime_instructions.ctx_add_agent2llm_message("first")
+        runtime_instructions.ctx_add_agent2llm_message("second", "assistant")
+        runtime_instructions.ctx_add_agent2llm_message("third", "system")
+
+        assert len(runtime_instructions.ai_agent.messages) == 3
+        roles = [m["role"] for m in runtime_instructions.ai_agent.messages]
+        assert roles == ["user", "assistant", "system"]

@@ -2,14 +2,16 @@
 Unit tests for the tool approval transport layer.
 """
 
+import errno
 import fcntl
 import io
 import os
 import pty
 import sys
+import tempfile
 import threading
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -248,3 +250,134 @@ class TestApprovalTransportInterface:
 
         transport = MinimalTransport()
         assert transport.supports_external_resolution() is False
+
+
+class TestLocalApprovalTransportTimeoutWrapper:
+    """Tests verifying the timeout-aware agent-runtime input wrapper is used."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_thread_local(self):
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
+        rid_all_thread_vars()
+        yield
+        rid_all_thread_vars()
+
+    def _write_to_pipe(self, pipe_path, payload, delay=0.02):
+        """Start a daemon thread that writes payload to a FIFO after delay."""
+
+        def writer():
+            time.sleep(delay)
+            fd = None
+            for _ in range(200):
+                try:
+                    fd = os.open(pipe_path, os.O_WRONLY | os.O_NONBLOCK)
+                    break
+                except FileNotFoundError:
+                    time.sleep(0.01)
+                except OSError as exc:
+                    if exc.errno == errno.ENXIO:
+                        time.sleep(0.01)
+                    else:
+                        raise
+            if fd is None:
+                return
+            try:
+                os.write(fd, payload.encode())
+            finally:
+                os.close(fd)
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        return thread
+
+    def test_read_stdin_input_uses_timeout_wrapper(self, monkeypatch):
+        """_read_stdin_input applies the registered timeout wrapper."""
+        from topsailai.workspace.agent.hooks.pre_run_input import (
+            pre_run_set_agent_runtime_input,
+        )
+        from topsailai.utils import env_tool
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            monkeypatch.setattr(
+                "topsailai.workspace.input_tool.FOLDER_WORKSPACE_TASK", tmpdir
+            )
+
+            mock_agent = MagicMock()
+            mock_agent.hook_instruction = MagicMock()
+            pre_run_set_agent_runtime_input(mock_agent)
+
+            session_id = env_tool.get_session_id() or "topsailai"
+            pipe_path = os.path.join(
+                tmpdir, f"{session_id}.{os.getpid()}.session.pipe"
+            )
+
+            writer_thread = self._write_to_pipe(
+                pipe_path, "approve\nEOF\n", delay=0.02
+            )
+
+            transport = LocalApprovalTransport()
+            instance = ToolApprovalInstance(
+                "cmd_tool-exec_cmd", {}, transport=transport
+            )
+            instance.timeout = 1.0
+
+            start = time.monotonic()
+            transport._read_stdin_input(instance)
+            elapsed = time.monotonic() - start
+
+            assert instance.status == instance.STATUS_APPROVED
+            assert elapsed < 0.5
+            writer_thread.join(timeout=0.5)
+
+    def test_read_stdin_input_timeout_wrapper_times_out(self, monkeypatch):
+        """_read_stdin_input raises TimeoutError when no data arrives."""
+        from topsailai.workspace.agent.hooks.pre_run_input import (
+            pre_run_set_agent_runtime_input,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            monkeypatch.setattr(
+                "topsailai.workspace.input_tool.FOLDER_WORKSPACE_TASK", tmpdir
+            )
+
+            mock_agent = MagicMock()
+            mock_agent.hook_instruction = MagicMock()
+            pre_run_set_agent_runtime_input(mock_agent)
+
+            transport = LocalApprovalTransport()
+            instance = ToolApprovalInstance(
+                "cmd_tool-exec_cmd", {}, transport=transport
+            )
+            instance.timeout = 0.1
+
+            start = time.monotonic()
+            with pytest.raises(TimeoutError):
+                transport._read_stdin_input(instance)
+            elapsed = time.monotonic() - start
+
+            assert instance.status == instance.STATUS_PENDING
+            assert 0.08 <= elapsed <= 0.3
+
+    def test_send_request_non_tty_does_not_invoke_timeout_wrapper(
+        self, monkeypatch
+    ):
+        """In non-tty environments the timeout wrapper is never called."""
+        from topsailai.utils.thread_local_tool import (
+            set_agent_runtime_input_with_timeout,
+        )
+
+        mock_wrapper = MagicMock(return_value="approve")
+        set_agent_runtime_input_with_timeout(mock_wrapper)
+
+        transport = LocalApprovalTransport()
+        instance = ToolApprovalInstance(
+            "cmd_tool-exec_cmd", {}, transport=transport
+        )
+        instance.timeout = 0.1
+
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+        transport.send_request(instance)
+        status = transport.wait_response(instance, timeout=0.2)
+
+        assert status == instance.STATUS_TIMEOUT
+        mock_wrapper.assert_not_called()

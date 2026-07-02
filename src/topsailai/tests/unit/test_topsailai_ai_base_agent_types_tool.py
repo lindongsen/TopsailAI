@@ -258,5 +258,81 @@ class TestStepCallTool(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestStepCallToolInteractiveInputTimeout(unittest.TestCase):
+    """Tests demonstrating that execute_step_interactive ignores the
+    timeout-aware agent-runtime input function.
+
+    The pre_run hook registers both ``input_on_agent_runtime`` (plain) and
+    ``input_on_agent_runtime_with_timeout`` (timeout-aware) in thread-local
+    storage. However, ``execute_step_interactive`` only calls
+    ``get_agent_runtime_input()`` and never consults
+    ``get_agent_runtime_input_with_timeout()``. As a result, the timeout
+    wrapper has no effect on agent interactive prompts.
+    """
+
+    def setUp(self):
+        """Clear thread-local input state."""
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
+        rid_all_thread_vars()
+
+    def tearDown(self):
+        """Clear thread-local input state."""
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
+        rid_all_thread_vars()
+
+    @patch("topsailai.ai_base.agent_types.tool.is_main_thread")
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_runtime_input")
+    @patch("topsailai.utils.thread_local_tool.get_agent_runtime_input_with_timeout")
+    def test_execute_step_interactive_uses_plain_input_not_timeout_variant(
+        self, mock_get_with_timeout, mock_get_input, mock_is_main_thread
+    ):
+        """execute_step_interactive must use get_agent_runtime_input(), not the
+        timeout-aware variant.
+        """
+        from topsailai.ai_base.agent_types.tool import StepCallTool
+
+        mock_is_main_thread.return_value = True
+        plain_input = MagicMock(return_value="user reply")
+        timeout_input = MagicMock(return_value="timeout reply")
+        mock_get_input.return_value = plain_input
+        mock_get_with_timeout.return_value = timeout_input
+
+        instance = StepCallTool()
+        instance.flag_interactive = True
+        result = instance.execute_step_interactive()
+
+        self.assertEqual(result, "user reply")
+        mock_get_input.assert_called_once()
+        mock_get_with_timeout.assert_not_called()
+        plain_input.assert_called_once()
+        timeout_input.assert_not_called()
+
+    @patch("topsailai.ai_base.agent_types.tool.is_main_thread")
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_runtime_input")
+    @patch("topsailai.utils.thread_local_tool.get_agent_runtime_input_with_timeout")
+    def test_execute_step_interactive_falls_back_to_builtin_input(
+        self, mock_get_with_timeout, mock_get_input, mock_is_main_thread
+    ):
+        """When no agent-runtime input is registered, execute_step_interactive
+        falls back to the builtin input() function.
+        """
+        from topsailai.ai_base.agent_types.tool import StepCallTool
+
+        mock_is_main_thread.return_value = True
+        mock_get_input.return_value = None
+        mock_get_with_timeout.return_value = None
+
+        instance = StepCallTool()
+        instance.flag_interactive = True
+
+        with patch("builtins.input", return_value="builtin reply") as mock_builtin:
+            result = instance.execute_step_interactive()
+
+        self.assertEqual(result, "builtin reply")
+        mock_get_input.assert_called_once()
+        mock_get_with_timeout.assert_not_called()
+        mock_builtin.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
