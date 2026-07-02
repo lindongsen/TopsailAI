@@ -591,3 +591,124 @@ class TestLLMModelErrorHandling(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLLMModelChatAgentRuntimeInput(unittest.TestCase):
+    """Tests demonstrating that LLMModel.chat() uses only the plain
+    agent-runtime input function, ignoring the timeout-aware variant.
+
+    The pre_run hook registers both ``input_on_agent_runtime`` (plain) and
+    ``input_on_agent_runtime_with_timeout`` (timeout-aware) in thread-local
+    storage. However, ``LLMModel.chat()`` only calls
+    ``get_agent_runtime_input()`` and never consults
+    ``get_agent_runtime_input_with_timeout()``. As a result, the timeout
+    wrapper has no effect on LLM retry prompts.
+    """
+
+    def setUp(self):
+        """Clear thread-local input state."""
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
+        rid_all_thread_vars()
+
+    def tearDown(self):
+        """Clear thread-local input state."""
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
+        rid_all_thread_vars()
+
+    def _create_mock_model(self):
+        """Create a mock LLMModel with all required attributes."""
+        from topsailai.ai_base.llm_base import LLMModel
+        model = LLMModel()
+        model.models = []
+        model.model = MagicMock()
+        model.tokenStat = MagicMock()
+        model.model_config = {"api_key": "test-key"}
+        model.model_name = "test-model"
+        model.temperature = 0.7
+        model.max_tokens = 4096
+        model.top_p = 1.0
+        model.frequency_penalty = 0.0
+        model.content_senders = []
+        model.hooks = {}
+        return model
+
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread")
+    @patch("topsailai.ai_base.llm_base.get_agent_runtime_input")
+    @patch("topsailai.utils.thread_local_tool.get_agent_runtime_input_with_timeout")
+    def test_chat_keyboard_interrupt_uses_plain_input_not_timeout_variant(
+        self, mock_get_with_timeout, mock_get_input, mock_is_main_thread
+    ):
+        """LLMModel.chat() must use get_agent_runtime_input(), not the
+        timeout-aware variant, when handling KeyboardInterrupt.
+        """
+        from topsailai.ai_base.llm_base import LLMModel
+
+        mock_is_main_thread.return_value = True
+        plain_input = MagicMock(return_value="no")
+        timeout_input = MagicMock(return_value="no")
+        mock_get_input.return_value = plain_input
+        mock_get_with_timeout.return_value = timeout_input
+
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(side_effect=KeyboardInterrupt("interrupted"))
+
+        with self.assertRaises(KeyboardInterrupt):
+            model.chat([{"role": "user", "content": "test"}])
+
+        mock_get_input.assert_called_once()
+        mock_get_with_timeout.assert_not_called()
+        plain_input.assert_called_once_with(">>> LLM Retry [yes/no] ")
+        timeout_input.assert_not_called()
+
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread")
+    @patch("topsailai.ai_base.llm_base.get_agent_runtime_input")
+    @patch("topsailai.utils.thread_local_tool.get_agent_runtime_input_with_timeout")
+    def test_chat_internal_exception_uses_plain_input_not_timeout_variant(
+        self, mock_get_with_timeout, mock_get_input, mock_is_main_thread
+    ):
+        """LLMModel.chat() must use get_agent_runtime_input(), not the
+        timeout-aware variant, when handling an internal exception in the
+        main thread.
+        """
+        from topsailai.ai_base.llm_base import LLMModel
+
+        mock_is_main_thread.return_value = True
+        plain_input = MagicMock(return_value="no")
+        timeout_input = MagicMock(return_value="no")
+        mock_get_input.return_value = plain_input
+        mock_get_with_timeout.return_value = timeout_input
+
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(side_effect=ValueError("internal error"))
+
+        with self.assertRaises(ValueError):
+            model.chat([{"role": "user", "content": "test"}])
+
+        mock_get_input.assert_called_once()
+        mock_get_with_timeout.assert_not_called()
+        plain_input.assert_called_once_with(">>> LLM Retry [yes/no] ")
+        timeout_input.assert_not_called()
+
+    @patch("topsailai.ai_base.llm_base.get_agent_runtime_input")
+    @patch("topsailai.utils.thread_local_tool.get_agent_runtime_input_with_timeout")
+    def test_chat_falls_back_to_builtin_input(
+        self, mock_get_with_timeout, mock_get_input
+    ):
+        """When no agent-runtime input is registered, LLMModel.chat() falls
+        back to the builtin input() function.
+        """
+        from topsailai.ai_base.llm_base import LLMModel
+
+        mock_get_input.return_value = None
+        mock_get_with_timeout.return_value = None
+
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(side_effect=KeyboardInterrupt("interrupted"))
+
+        with patch("builtins.input", return_value="no") as mock_builtin:
+            with self.assertRaises(KeyboardInterrupt):
+                model.chat([{"role": "user", "content": "test"}])
+
+        mock_get_input.assert_called_once()
+        mock_get_with_timeout.assert_not_called()
+        mock_builtin.assert_called_once_with(">>> LLM Retry [yes/no] ")

@@ -319,9 +319,3 @@ class TestPreRunTimeoutWrapperRealPipe(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-        self.assertIn("timeout", call_kwargs)
-        self.assertEqual(call_kwargs["timeout"], 3.0)
-
-
-if __name__ == "__main__":
-    unittest.main()
