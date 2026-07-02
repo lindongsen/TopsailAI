@@ -4,7 +4,6 @@
   Created: 2025-12-19
   Purpose: Input handling utilities for TopsailAI system
 '''
-import atexit
 import json
 import logging
 import os
@@ -29,32 +28,16 @@ from topsailai.workspace.folder_constants import (
 from topsailai.workspace.hook_instruction import (
     HookInstruction,
 )
+from topsailai.workspace.task.cleanup import (
+    register_cleanup_file,
+    unregister_cleanup_file,
+)
 
 logger = logging.getLogger(__name__)
 
 SPLIT_LINE = "--------------------------------------------------------------------------------"
 INPUT_TIPS = f">>> Your Turn: (pid={os.getpid()}) "
 
-# Session-scoped pipes that must be removed when the process exits.
-# Pipes are kept alive across multiple _input() calls so that multi-line
-# pipe input (and multiple single-line messages) can be read from the same
-# FIFO without recreating it after every line.
-_SESSION_PIPES_TO_CLEANUP: set[str] = set()
-
-
-def _cleanup_session_pipes() -> None:
-    """Remove all session pipes registered for cleanup."""
-    while _SESSION_PIPES_TO_CLEANUP:
-        pipe_path = _SESSION_PIPES_TO_CLEANUP.pop()
-        try:
-            if os.path.exists(pipe_path):
-                os.unlink(pipe_path)
-                logger.info("Removed session pipe file on exit: %s", pipe_path)
-        except OSError as exc:
-            logger.error("Failed to remove session pipe file %s: %s", pipe_path, exc)
-
-
-atexit.register(_cleanup_session_pipes)
 
 def _load_input_history_jsonl() -> None:
     """Load previous input history from the JSONL file into readline.
@@ -453,16 +436,19 @@ def input_from_pipe_session(
     """
     pipe_path = _build_pipe_path(session_id)
     abs_path = os.path.abspath(pipe_path)
-    _SESSION_PIPES_TO_CLEANUP.add(abs_path)
-    return utils_input_tool.input_from_pipe(
-        pipe_path,
-        timeout=timeout,
-        encoding=encoding,
-        eof_marker=eof_marker,
-        raise_eof_error=raise_eof_error,
-        single_line=single_line,
-        prompt=prompt,
-        cleanup_pipe=False,
-        history_file=history_file,
-        completion_file=completion_file,
-    )
+    register_cleanup_file(abs_path)
+    try:
+        return utils_input_tool.input_from_pipe(
+            pipe_path,
+            timeout=timeout,
+            encoding=encoding,
+            eof_marker=eof_marker,
+            raise_eof_error=raise_eof_error,
+            single_line=single_line,
+            prompt=prompt,
+            cleanup_pipe=False,
+            history_file=history_file,
+            completion_file=completion_file,
+        )
+    finally:
+        unregister_cleanup_file(abs_path)

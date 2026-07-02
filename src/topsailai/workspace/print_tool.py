@@ -22,6 +22,10 @@ from topsailai.context.chat_history_manager.__base import (
     ChatHistoryMessageData,
 )
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
+from topsailai.workspace.task.cleanup import (
+    register_cleanup_file,
+    unregister_cleanup_file,
+)
 
 
 class TeeOutput:
@@ -163,12 +167,16 @@ def decorator_tee_output_by_session(
             session_id = get_session_id()
             if session_id:
                 file_path = os.path.join(FOLDER_WORKSPACE_TASK, f"{session_id}.session.stdout")
-            with TeeOutput(
-                file_path, mode, encoding, logrotate_max_file_bytes,
-                need_delete_log_files=need_delete_log_files,
-                ):
-                result = func(*args, **kwargs)
-            return result
+            register_cleanup_file(file_path)
+            try:
+                with TeeOutput(
+                    file_path, mode, encoding, logrotate_max_file_bytes,
+                    need_delete_log_files=need_delete_log_files,
+                    ):
+                    result = func(*args, **kwargs)
+                return result
+            finally:
+                unregister_cleanup_file(file_path)
         return wrapper
     return decorator
 

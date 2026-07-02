@@ -22,6 +22,10 @@ from topsailai.workspace.folder_constants import (
     FOLDER_WORKSPACE_TASK,
 )
 from topsailai.workspace.print_tool import TeeOutput
+from topsailai.workspace.task.cleanup import (
+    register_cleanup_file,
+    unregister_cleanup_file,
+)
 
 
 def generate_task_id() -> str:
@@ -265,12 +269,16 @@ def ctxm_process_task(task:TaskUtil):
         task.post_lock(fp)
 
         stdout_file = task.task_file + ".stdout"
-        with TeeOutput(stdout_file):
-            try:
+        register_cleanup_file(task.task_file)
+        register_cleanup_file(stdout_file)
+        try:
+            with TeeOutput(stdout_file):
                 yield fp
-            finally:
-                delete_file(stdout_file)
+        finally:
+            delete_file(stdout_file)
+            unregister_cleanup_file(stdout_file)
 
         task.pre_unlock(fp)
     task.post_unlock()
+    unregister_cleanup_file(task.task_file)
     return
