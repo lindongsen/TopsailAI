@@ -45,20 +45,20 @@ class TestDiscoverLogFiles(unittest.TestCase):
 
     def test_single_stdout_file(self):
         """Discover a single .stdout file."""
-        path = os.path.join(self.tmpdir, "1234.session.stdout")
+        path = os.path.join(self.tmpdir, "topsailai.1234.session.stdout")
         with open(path, "w") as f:
             f.write("log content")
         result = cli.discover_log_files(self.tmpdir)
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["filename"], "1234.session.stdout")
+        self.assertEqual(result[0]["filename"], "topsailai.1234.session.stdout")
         self.assertEqual(result[0]["session_id"], "(temp)")
         self.assertEqual(result[0]["pid"], 1234)
         self.assertEqual(result[0]["size"], len("log content"))
         self.assertTrue(os.path.isfile(result[0]["path"]))
 
     def test_session_stdout(self):
-        """Handle {pid}.session.stdout as temp session."""
-        path = os.path.join(self.tmpdir, "1234.session.stdout")
+        """Handle topsailai.{pid}.session.stdout as temp session."""
+        path = os.path.join(self.tmpdir, "topsailai.1234.session.stdout")
         with open(path, "w") as f:
             f.write("temp log")
         result = cli.discover_log_files(self.tmpdir)

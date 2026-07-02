@@ -840,8 +840,8 @@ def _parse_stdout_filename(filename: str) -> Tuple[Optional[str], Optional[int]]
     Parse a session stdout filename.
 
     New formats:
-      - {pid}.session.stdout                -> (None, pid)   (temp session)
-      - {session_id}.{pid}.session.stdout   -> (session_id, pid)
+      - topsailai.{pid}.session.stdout       -> (None, pid)   (temp session)
+      - {session_id}.{pid}.session.stdout    -> (session_id, pid)
 
     Returns:
         Tuple of (session_id, pid). session_id is None for temp sessions;
@@ -855,10 +855,10 @@ def _parse_stdout_filename(filename: str) -> Tuple[Optional[str], Optional[int]]
         return None, None
 
     parts = base.split(".")
-    if len(parts) == 1:
-        # {pid}.session.stdout
+    if len(parts) == 2 and parts[0] == "topsailai":
+        # topsailai.{pid}.session.stdout
         try:
-            return None, int(parts[0])
+            return None, int(parts[1])
         except ValueError:
             return None, None
 

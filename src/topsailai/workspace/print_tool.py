@@ -164,7 +164,7 @@ def decorator_tee_output_by_session(
                 return func(*args, **kwargs)
 
             pid = os.getpid()
-            file_path = os.path.join(FOLDER_WORKSPACE_TASK, f"{pid}.session.stdout")
+            file_path = os.path.join(FOLDER_WORKSPACE_TASK, f"topsailai.{pid}.session.stdout")
             session_id = get_session_id()
             if session_id:
                 file_path = os.path.join(FOLDER_WORKSPACE_TASK, f"{session_id}.{pid}.session.stdout")

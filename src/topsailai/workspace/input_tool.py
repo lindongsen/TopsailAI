@@ -349,18 +349,20 @@ def _build_pipe_path(session_id: str | None = None) -> str:
     """Build the pipe path for the current session.
 
     The path follows the convention:
-    ``FOLDER_WORKSPACE_TASK/{session_id}.{pid}.session.pipe``.
+    ``FOLDER_WORKSPACE_TASK/{session_id}.{pid}.session.pipe``.  When no
+    session identifier is provided, the prefix ``topsailai`` is used so the
+    filename becomes ``topsailai.{pid}.session.pipe``.
 
     Args:
         session_id: Optional session identifier. When omitted,
             ``env_tool.get_session_id()`` is used, falling back to
-            ``"default"`` when no session is configured.
+            ``"topsailai"`` when no session is configured.
 
     Returns:
         Absolute path to the session pipe.
     """
     if session_id is None:
-        session_id = env_tool.get_session_id() or "default"
+        session_id = env_tool.get_session_id() or "topsailai"
     return os.path.join(
         FOLDER_WORKSPACE_TASK,
         f"{session_id}.{os.getpid()}.session.pipe",

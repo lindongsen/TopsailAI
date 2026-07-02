@@ -563,7 +563,7 @@ class TestDecoratorTeeOutputBySession(unittest.TestCase):
             self.assertEqual(result, "result")
 
             # Verify file contains the printed output with default filename
-            expected_file = os.path.join('/tmp', f'{os.getpid()}.session.stdout')
+            expected_file = os.path.join('/tmp', f'topsailai.{os.getpid()}.session.stdout')
             with open(expected_file, 'r') as f:
                 content = f.read()
             self.assertIn("Hello from session function", content)

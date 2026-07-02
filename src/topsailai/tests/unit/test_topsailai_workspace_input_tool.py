@@ -447,13 +447,13 @@ class TestBuildPipePath(unittest.TestCase):
 
     @patch("topsailai.workspace.input_tool.os.getpid")
     @patch("topsailai.workspace.input_tool.env_tool.get_session_id")
-    def test_defaults_to_default_session(self, mock_get_session_id, mock_getpid):
-        """Test fallback to 'default' when no session id is configured."""
+    def test_defaults_to_topsailai_session(self, mock_get_session_id, mock_getpid):
+        """Test fallback to 'topsailai' when no session id is configured."""
         from topsailai.workspace.input_tool import _build_pipe_path
         mock_get_session_id.return_value = None
         mock_getpid.return_value = 12345
         result = _build_pipe_path()
-        self.assertIn("default.12345.session.pipe", result)
+        self.assertIn("topsailai.12345.session.pipe", result)
 
     @patch("topsailai.workspace.input_tool.os.getpid")
     def test_uses_provided_session_id(self, mock_getpid):
