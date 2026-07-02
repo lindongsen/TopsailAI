@@ -64,6 +64,12 @@ yaml_commands: List[Dict[str, Any]] = []
 # Command history manager
 history_manager: Optional["HistoryManager"] = None
 
+# Internal identifier used for temporary sessions.
+_TEMP_SESSION_ID = "topsailai"
+
+# Marker displayed in the file list for temporary sessions.
+_TEMP_SESSION_MARKER = "(temp)"
+
 
 # =============================================================================
 # Command History
@@ -709,11 +715,16 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
                         idx = int(session_id) - 1
                         if 0 <= idx < len(log_files):
                             resolved = log_files[idx].get("session_id")
-                            if resolved and resolved != "(temp)":
+                            if resolved:
+                                if resolved == "(temp)":
+                                    print(
+                                        f"{Colors.RED}[ERROR] No session ID available for entry {idx + 1}.{Colors.RESET}"
+                                    )
+                                    return "yaml_handled"
                                 session_id = resolved
                             else:
                                 print(
-                                    f"{Colors.RED}[ERROR] No session ID available for entry {idx + 1}.{Colors.RESET}"
+                                    f"{Colors.RED}[ERROR] Entry {idx + 1} has no session ID.{Colors.RESET}"
                                 )
                                 return "yaml_handled"
                         else:
@@ -721,10 +732,12 @@ def handle_yaml_command(instruction: Dict[str, Any], variables: Dict[str, str]) 
                                 f"{Colors.RED}[ERROR] Invalid number. Please enter 1-{len(log_files)}.{Colors.RESET}"
                             )
                             return "yaml_handled"
+                else:
+                    session_id = _resolve_literal_session_id(session_id)
                 current_scope = "session"
                 current_session_id = session_id
                 print(
-                    f"{Colors.GREEN}[INFO] Entered session scope: {session_id}{Colors.RESET}"
+                    f"{Colors.GREEN}[INFO] Entered session scope: {_display_session_id(session_id)}{Colors.RESET}"
                 )
             else:
                 current_scope = "workspace"
@@ -837,16 +850,39 @@ def get_topsailai_home() -> str:
 
 def _parse_stdout_filename(filename: str) -> Tuple[Optional[str], Optional[int]]:
     """
-    Parse a session stdout filename.
+    Parse a session/task stdout filename.
 
-    New formats:
+    Supported formats:
       - topsailai.{pid}.session.stdout       -> (None, pid)   (temp session)
       - {session_id}.{pid}.session.stdout    -> (session_id, pid)
+      - topsailai.{timestamp}.{pid}.task.stdout -> (None, pid)   (temp session)
+      - {session_id}.topsailai.{timestamp}.{pid}.task.stdout -> (session_id, pid)
 
     Returns:
         Tuple of (session_id, pid). session_id is None for temp sessions;
         pid is None if the filename does not match the expected format.
     """
+    if filename.endswith(".task.stdout"):
+        base = filename[:-len(".task.stdout")]
+        if not base:
+            return None, None
+        parts = base.split(".")
+        # Expected: {session_id}.topsailai.{timestamp}.{pid}
+        if len(parts) >= 4 and parts[-3] == "topsailai":
+            try:
+                pid = int(parts[-1])
+            except ValueError:
+                return None, None
+            session_id = ".".join(parts[:-3])
+            return session_id, pid
+        # Temp session: topsailai.{timestamp}.{pid}
+        if len(parts) == 3 and parts[0] == "topsailai":
+            try:
+                return None, int(parts[-1])
+            except ValueError:
+                return None, None
+        return None, None
+
     if not filename.endswith(".session.stdout"):
         return None, None
 
@@ -870,10 +906,22 @@ def _parse_stdout_filename(filename: str) -> Tuple[Optional[str], Optional[int]]
     session_id = ".".join(parts[:-1])
     return session_id, pid
 
+def _is_temp_session(session_id: Optional[str]) -> bool:
+    """Return True if the session_id represents a temporary session."""
+    return session_id == "topsailai"
+
+
+def _display_session_id(session_id: Optional[str]) -> str:
+    """Return the user-facing label for a session id."""
+    if _is_temp_session(session_id):
+        return "(temp)"
+    return session_id or "-"
+
 
 def discover_log_files(task_dir: str) -> List[dict]:
     """
     Discover all .stdout log files in the task directory.
+    Supports both .session.stdout and .task.stdout naming conventions.
     """
     log_files = []
     if not os.path.isdir(task_dir):
@@ -888,9 +936,10 @@ def discover_log_files(task_dir: str) -> List[dict]:
 
         session_id = None
         pid = None
-        if entry.endswith(".session.stdout"):
+        if entry.endswith(".session.stdout") or entry.endswith(".task.stdout"):
             session_id, pid = _parse_stdout_filename(entry)
-            if session_id is None and pid is not None:
+            # Temp sessions have no real session id; expose a user-facing label.
+            if session_id is None and pid is not None and entry.startswith("topsailai."):
                 session_id = "(temp)"
 
         stat_info = os.stat(full_path)
@@ -905,7 +954,6 @@ def discover_log_files(task_dir: str) -> List[dict]:
 
     log_files.sort(key=lambda x: x["mtime"], reverse=True)
     return log_files
-
 
 # =============================================================================
 # Process Detection
@@ -1044,7 +1092,7 @@ def print_table(files: List[dict]):
         if len(name) > w_name:
             name = name[:w_name - 3] + "..."
 
-        session = f["session_id"] or "-"
+        session = _display_session_id(f["session_id"])
         if len(session) > w_session:
             session = session[:w_session - 3] + "..."
 
@@ -1573,8 +1621,9 @@ def _find_session_stdout_file(task_dir: str, session_id: str) -> Optional[str]:
     """
     Find the most recent stdout file for a session.
 
-    With the new naming convention the stdout file includes the process id:
-      {session_id}.{pid}.session.stdout
+    Supports both naming conventions:
+      - {session_id}.{pid}.session.stdout
+      - {session_id}.topsailai.{timestamp}.{pid}.task.stdout
     This helper discovers the file by scanning the task directory.
     """
     if not os.path.isdir(task_dir):
@@ -1582,13 +1631,13 @@ def _find_session_stdout_file(task_dir: str, session_id: str) -> Optional[str]:
 
     candidates = []
     for entry in os.listdir(task_dir):
-        if not entry.endswith(".session.stdout"):
+        if not (entry.endswith(".session.stdout") or entry.endswith(".task.stdout")):
             continue
         full_path = os.path.join(task_dir, entry)
         if not os.path.isfile(full_path):
             continue
         sid, _pid = _parse_stdout_filename(entry)
-        if sid == session_id:
+        if sid == session_id or (sid is None and session_id == _TEMP_SESSION_ID):
             try:
                 mtime = os.path.getmtime(full_path)
             except OSError:
@@ -1604,29 +1653,77 @@ def _find_session_stdout_file(task_dir: str, session_id: str) -> Optional[str]:
 
 def _build_pipe_path(task_dir: str, session_id: str, pid: int) -> str:
     """Build the named-pipe path for a session and process."""
+    if session_id == _TEMP_SESSION_MARKER:
+        session_id = _TEMP_SESSION_ID
     return os.path.join(task_dir, f"{session_id}.{pid}.session.pipe")
 
 
+def _resolve_literal_session_id(arg: str) -> str:
+    """Map user-facing '(temp)' back to the internal temporary session ID."""
+    if arg == _TEMP_SESSION_MARKER:
+        return _TEMP_SESSION_ID
+    return arg
+
+
 def _resolve_session_id_from_arg(
-    arg: str, task_dir: str, log_files: List[dict]
+    arg: str, task_dir: str, log_files: List[dict], allow_temp: bool = False
 ) -> Optional[str]:
     """
     Resolve a session identifier from a command argument.
 
     Numeric arguments are mapped to the corresponding 1-based entry in the
-    file list. Literal session IDs are returned as-is.
+    file list. Literal session IDs are returned as-is, with '(temp)' mapped
+    to the internal temporary session ID.
+
+    By default, temporary sessions are excluded when resolving by numeric
+    index to avoid accidentally targeting a transient session. Callers that
+    explicitly want to allow this (e.g. /send) can pass allow_temp=True.
     """
     arg = arg.strip()
     if not arg:
         return None
     if arg.isdigit():
         idx = int(arg) - 1
-        if 0 <= idx < len(log_files):
-            resolved = log_files[idx].get("session_id")
-            if resolved and resolved != "(temp)":
-                return resolved
+        if idx < 0 or idx >= len(log_files):
+            return None
+        entry = log_files[idx]
+        session_id = entry.get("session_id", "")
+        if session_id == _TEMP_SESSION_MARKER:
+            if not allow_temp:
+                return None
+            session_id = _TEMP_SESSION_ID
+        return session_id
+
+    session_id = _resolve_literal_session_id(arg)
+    return session_id if session_id else None
+
+
+def _resolve_send_target_from_arg(
+    arg: str, log_files: List[dict]
+) -> Optional[Tuple[str, Optional[str]]]:
+    """
+    Resolve a /send argument to a concrete session target.
+
+    Returns a tuple of (session_id, stdout_path). For numeric selections the
+    exact stdout file path is returned so temporary sessions are not confused
+    with each other. For named session IDs the stdout path is left None and
+    resolved later.
+    """
+    arg = arg.strip()
+    if not arg:
         return None
-    return arg
+    if arg.isdigit():
+        idx = int(arg) - 1
+        if idx < 0 or idx >= len(log_files):
+            return None
+        entry = log_files[idx]
+        session_id = entry.get("session_id", "")
+        if session_id == _TEMP_SESSION_MARKER:
+            session_id = _TEMP_SESSION_ID
+        return session_id, entry.get("path")
+
+    session_id = _resolve_session_id_from_arg(arg, "", log_files, allow_temp=True)
+    return (session_id, None) if session_id else None
 
 
 def _read_multiline_input_for_send() -> Optional[str]:
@@ -1660,14 +1757,19 @@ def _format_pipe_payload(message: str) -> bytes:
     Ensures the message body ends with a newline, then appends the EOF
     marker on its own line.
     """
-    message = message.strip()
-    if not message.endswith("EOF"):
-        message += "\nEOF\n"
+    if not message.endswith("\n"):
+        message += "\n"
+    if not message.endswith("EOF\n"):
+        message += "EOF\n"
     return message.encode("utf-8")
 
 
 def send_message_to_session(
-    session_id: str, message: str, task_dir: str, timeout: float = 5.0
+    session_id: str,
+    message: str,
+    task_dir: str,
+    timeout: float = 5.0,
+    stdout_path: Optional[str] = None,
 ) -> bool:
     """
     Send a message to a running session through its named pipe.
@@ -1675,11 +1777,21 @@ def send_message_to_session(
     The receiver must be waiting for input with pipe input enabled. The
     sender locates the receiver process via the session stdout file, then
     writes the formatted payload to the FIFO.
+
+    When stdout_path is provided (e.g. from a numeric selection), it is used
+    directly so that temporary sessions are targeted precisely instead of
+    resolving to the most recent temp session file.
     """
-    stdout_path = _find_session_stdout_file(task_dir, session_id)
     if stdout_path is None:
+        stdout_path = _find_session_stdout_file(task_dir, session_id)
+        if stdout_path is None:
+            print(
+                f"{Colors.RED}[ERROR] No stdout file found for session '{session_id}'.{Colors.RESET}"
+            )
+            return False
+    elif not os.path.isfile(stdout_path):
         print(
-            f"{Colors.RED}[ERROR] No stdout file found for session '{session_id}'.{Colors.RESET}"
+            f"{Colors.RED}[ERROR] Stdout file not found: {stdout_path}.{Colors.RESET}"
         )
         return False
 
@@ -1726,8 +1838,8 @@ def send_message_to_session(
                 raise
         os.write(fd, payload)
         print(
-            f"{Colors.GREEN}[INFO] Message sent to session '{session_id}' "
-            f"({len(payload)} bytes).{Colors.RESET}"
+            f"{Colors.GREEN}[INFO] Message sent to session '{session_id}' via "
+            f"{pipe_path} ({len(payload)} bytes).{Colors.RESET}"
         )
         return True
     except OSError as exc:
@@ -1756,6 +1868,7 @@ def handle_send_command(
     """
     global current_scope, current_session_id
 
+    stdout_path: Optional[str] = None
     parts = user_input.split(None, 1)
     if len(parts) < 2:
         if current_scope == "session" and current_session_id:
@@ -1774,15 +1887,14 @@ def handle_send_command(
             message = arg
         else:
             sub_parts = arg.split(None, 1)
-            session_id = _resolve_session_id_from_arg(
-                sub_parts[0], task_dir, log_files
-            )
-            if session_id is None:
+            target = _resolve_send_target_from_arg(sub_parts[0], log_files)
+            if target is None:
                 print(
                     f"{Colors.RED}[ERROR] Could not resolve session from "
                     f"'{sub_parts[0]}'.{Colors.RESET}"
                 )
                 return
+            session_id, stdout_path = target
             message = sub_parts[1] if len(sub_parts) > 1 else None
 
     if message is None:
@@ -1790,8 +1902,10 @@ def handle_send_command(
         if message is None:
             return
 
-    send_message_to_session(session_id, message, task_dir)
-
+    if stdout_path is not None:
+        send_message_to_session(session_id, message, task_dir, stdout_path=stdout_path)
+    else:
+        send_message_to_session(session_id, message, task_dir)
 
 # =============================================================================
 # Interactive Selection
@@ -1857,7 +1971,7 @@ def prompt_selection(files: List[dict], task_dir: str) -> Tuple[str, Optional[in
                 action = handle_yaml_command(instruction, variables)
                 return (action, None)
 
-            if lower_input.startswith("/session ") or lower_input.startswith("session "):
+            if lower_input in ("/session", "session") or lower_input.startswith("/session ") or lower_input.startswith("session "):
                 parts = user_input.split(None, 1)
                 if len(parts) < 2:
                     print(

@@ -9,13 +9,19 @@ Test coverage:
 - call_hook_get_message_for_task_from_file: Env var setting for file-based messages
 - get_message: Message from argv, stdin, or interactive input
 - input_yes: Yes/no confirmation
+- input_from_pipe: Embedded EOF marker handling
 """
 
 import os
 import sys
+import threading
+import time
 import unittest
 from unittest.mock import patch, MagicMock, mock_open
 
+import pytest
+
+from topsailai.utils import input_tool as utils_input_tool
 
 class TestHookMessage(unittest.TestCase):
     """Test cases for hook_message function."""
@@ -673,6 +679,89 @@ class TestInputMultiLinePipeMode(unittest.TestCase):
         result = input_multi_line(">>> ")
         self.assertEqual(result, "")
 
+
+
+class TestInputFromPipeEmbeddedEOF:
+    """Tests for embedded EOF marker handling in utils.input_tool.input_from_pipe."""
+
+    @staticmethod
+    def _write_to_pipe_after_delay(pipe_path: str, content: bytes, delay: float = 0.05):
+        """Write *content* to *pipe_path* after a short delay in a daemon thread."""
+
+        def writer():
+            time.sleep(delay)
+            with open(pipe_path, "wb") as fifo:
+                fifo.write(content)
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        return thread
+
+    def test_embedded_eof_strips_marker_and_after(self, tmp_path):
+        """Data containing \\nEOF\\n stops at the marker and discards the rest."""
+        pipe_path = str(tmp_path / "embedded_eof.pipe")
+        message = b"msg1\nmsg2\nEOF\nmsg3\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            result = utils_input_tool.input_from_pipe(pipe_path, timeout=2.0)
+            assert result == "msg1\nmsg2"
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_trailing_eof_strips_marker(self, tmp_path):
+        """Data ending with \\nEOF strips the marker."""
+        pipe_path = str(tmp_path / "trailing_eof.pipe")
+        message = b"msg1\nmsg2\nEOF"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            result = utils_input_tool.input_from_pipe(pipe_path, timeout=2.0)
+            assert result == "msg1\nmsg2"
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_normal_multiline_without_eof(self, tmp_path):
+        """Multi-line input without an EOF marker is returned unchanged."""
+        pipe_path = str(tmp_path / "normal.pipe")
+        message = b"msg1\nmsg2\nmsg3\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            result = utils_input_tool.input_from_pipe(pipe_path, timeout=2.0)
+            assert result == "msg1\nmsg2\nmsg3"
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_single_line_embedded_eof_returns_first_line(self, tmp_path):
+        """Single-line mode returns only the first line when EOF is embedded."""
+        pipe_path = str(tmp_path / "single_embedded.pipe")
+        message = b"msg1\nmsg2\nEOF\nmsg3\n"
+        writer = self._write_to_pipe_after_delay(pipe_path, message)
+        try:
+            result = utils_input_tool.input_from_pipe(
+                pipe_path, timeout=2.0, single_line=True
+            )
+            assert result == "msg1"
+        finally:
+            writer.join(timeout=2.0)
+
+    def test_partial_reads_with_embedded_eof(self, tmp_path):
+        """Partial reads that eventually receive EOF are assembled correctly."""
+        pipe_path = str(tmp_path / "partial_eof.pipe")
+
+        def writer():
+            time.sleep(0.05)
+            with open(pipe_path, "wb") as fifo:
+                fifo.write(b"msg1\n")
+                fifo.flush()
+                time.sleep(0.2)
+                fifo.write(b"msg2\nEOF\nmsg3\n")
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        try:
+            result = utils_input_tool.input_from_pipe(pipe_path, timeout=2.0)
+            assert result == "msg1\nmsg2"
+        finally:
+            thread.join(timeout=2.0)
 
 if __name__ == "__main__":
     unittest.main()

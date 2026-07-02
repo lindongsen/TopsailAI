@@ -376,18 +376,25 @@ def _get_buffered_line(pipe_path: str, eof_marker: str = "EOF") -> str | None:
 
 
 def _strip_eof_suffix(text: str, eof_marker: str) -> tuple[str, bool]:
-    """Strip a trailing EOF marker and report whether it was present.
+    """Strip the first standalone EOF marker and everything after it.
 
-    The marker is recognized only when the text ends with ``\\n{eof_marker}``
-    and ``{eof_marker}`` appears on its own line.  After stripping, the
-    result is also ``str.strip()``-ed so callers receive clean input.
+    The marker is recognized when:
+    - the text contains ``\\n{eof_marker}\\n`` (marker on its own line
+      followed by more content), or
+    - the text ends with ``\\n{eof_marker}`` (marker as the final line).
+
+    After stripping, the result is ``str.strip()``-ed so callers receive
+    clean input.
     """
-    stripped = text.strip()
-    suffix = "\n" + eof_marker
-    eof_seen = stripped.endswith(suffix)
+    marker_prefix = "\n" + eof_marker
+    embedded = marker_prefix + "\n"
+    idx = text.find(embedded)
+    if idx != -1:
+        return text[:idx].strip(), True
+    eof_seen = text.endswith(marker_prefix)
     if eof_seen:
-        stripped = stripped[: -len(suffix)]
-    return stripped.strip(), eof_seen
+        text = text[: -len(marker_prefix)]
+    return text.strip(), eof_seen
 
 
 def _buffer_leftover(pipe_path: str, text: str) -> None:
@@ -704,13 +711,13 @@ def input_from_pipe(
     eof_marker:
         Optional marker that terminates input when seen on its own line.
         The marker line and anything after it is stripped from the result.
-        The marker is recognized only when it is preceded by a newline
-        (``\\n{eof_marker}``), i.e. when it appears as a standalone line.
+        The marker is recognized when it appears as a standalone line
+        preceded by a newline (``\\n{eof_marker}``), either at the end of
+        the input or followed by another newline (``\\n{eof_marker}\\n``).
     raise_eof_error:
         When ``True`` and the EOF marker is detected, raise :class:`EOFError`
         instead of returning the stripped content. Defaults to ``False`` for
         backward compatibility.
-    single_line:
         When ``True``, return the first line of input (everything before
         the first ``\\n``). Any remaining content is buffered for the next
         call with the same *pipe_path*.
@@ -798,9 +805,6 @@ def input_from_pipe(
             result = _maybe_return_single_line(decoded)
             if result is not None:
                 return result
-        else:
-            if _has_eof_marker(decoded, eof_marker):
-                return _strip_eof_marker(decoded, eof_marker)
 
         return None
 

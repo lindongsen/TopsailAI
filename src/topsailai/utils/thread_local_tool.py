@@ -15,6 +15,7 @@ from topsailai.logger import logger
 KEY_AGENT_NAME = "agent_name"
 KEY_SESSION_ID = "session_id"
 KEY_AGENT_OBJECT = "agent_object"
+KEY_AGENT_RUNTIME_INPUT_WITH_TIMEOUT = "agent_runtime_input_with_timeout"
 KEY_THREAD_NAME = ""
 KEY_AGENT_RUNTIME_INPUT = "agent_runtime_input"
 
@@ -238,3 +239,28 @@ def get_agent_runtime_input():
         callable|None: The registered input function, or None if unset.
     """
     return get_thread_var(KEY_AGENT_RUNTIME_INPUT)
+
+def set_agent_runtime_input_with_timeout(input_func):
+    """Set the agent-runtime input-with-timeout function in thread-local storage.
+
+    This function registers a custom input handler that accepts both a prompt
+    and a timeout. It is used by the agent workspace to read input from the
+    session pipe with a configurable timeout.
+
+    Args:
+        input_func: Callable that accepts ``(tips: str, timeout: float | None)``
+            and returns user input.
+
+    Returns:
+        None
+    """
+    set_thread_var(KEY_AGENT_RUNTIME_INPUT_WITH_TIMEOUT, input_func)
+    return
+
+def get_agent_runtime_input_with_timeout():
+    """Get the agent-runtime input-with-timeout function from thread-local storage.
+
+    Returns:
+        callable|None: The registered input function, or None if unset.
+    """
+    return get_thread_var(KEY_AGENT_RUNTIME_INPUT_WITH_TIMEOUT)

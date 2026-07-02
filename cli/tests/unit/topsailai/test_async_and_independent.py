@@ -385,3 +385,158 @@ class TestHandleYamlCommandOsSystem(unittest.TestCase):
         self.assertEqual(result, "yaml_handled")
         args = mock_run.call_args
         self.assertFalse(args.kwargs.get("use_os_system") or args.args[4])
+
+
+class TestLaunchIndependentProcess(unittest.TestCase):
+    """Tests for launch_independent_process."""
+
+    def tearDown(self):
+        cli._child_processes.clear()
+
+    @patch("topsailai.subprocess.Popen")
+    def test_linux_uses_start_new_session(self, mock_popen):
+        """Linux/macOS path uses start_new_session."""
+        mock_proc = MagicMock()
+        mock_popen.return_value = mock_proc
+
+        with patch.object(cli.sys, "platform", "linux"):
+            result = cli.launch_independent_process(["sleep", "1"])
+
+        self.assertEqual(result, mock_proc)
+        kwargs = mock_popen.call_args.kwargs
+        self.assertTrue(kwargs.get("start_new_session"))
+        self.assertNotIn("creationflags", kwargs)
+
+    @patch("topsailai.subprocess.Popen")
+    def test_windows_uses_detached_process(self, mock_popen):
+        """Windows path uses DETACHED_PROCESS creation flag."""
+        mock_proc = MagicMock()
+        mock_popen.return_value = mock_proc
+
+        with patch.object(cli.sys, "platform", "win32"):
+            with patch.object(cli.subprocess, "DETACHED_PROCESS", 0x00000008, create=True):
+                result = cli.launch_independent_process(["sleep", "1"])
+
+        self.assertEqual(result, mock_proc)
+        kwargs = mock_popen.call_args.kwargs
+        self.assertEqual(kwargs.get("creationflags"), 0x00000008)
+        self.assertNotIn("start_new_session", kwargs)
+
+
+class TestRunExternalCommandIndependent(unittest.TestCase):
+    """Tests for run_external_command with independent=True."""
+
+    def tearDown(self):
+        cli._child_processes.clear()
+
+    @patch("topsailai.subprocess.Popen")
+    @patch("builtins.print")
+    def test_independent_runs_synchronously(self, mock_print, mock_popen):
+        """Independent command runs synchronously and prints output."""
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("independent output\n", "")
+        mock_proc.poll.return_value = 0
+        mock_popen.return_value = mock_proc
+
+        cli.run_external_command(
+            ["echo", "hello"],
+            {},
+            independent=True,
+        )
+
+        mock_proc.communicate.assert_called_once()
+        printed = [str(args[0]) for args, kwargs in mock_print.call_args_list]
+        self.assertTrue(any("Execution completed" in p for p in printed))
+
+    @patch("topsailai.subprocess.Popen")
+    @patch("builtins.print")
+    def test_independent_kills_survivor(self, mock_print, mock_popen):
+        """Independent command kills process still running after communicate."""
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("", "")
+        mock_proc.poll.side_effect = [None, 0]
+        mock_popen.return_value = mock_proc
+
+        cli.run_external_command(
+            ["sleep", "10"],
+            {},
+            independent=True,
+        )
+
+        mock_proc.kill.assert_called_once()
+        mock_proc.wait.assert_called_once_with(timeout=1)
+
+    @patch("topsailai.subprocess.Popen")
+    @patch("builtins.print")
+    def test_independent_wait_exception_swallowed(self, mock_print, mock_popen):
+        """Independent command swallows wait exception after kill."""
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("", "")
+        mock_proc.poll.side_effect = [None, None]
+        mock_proc.wait.side_effect = cli.subprocess.TimeoutExpired("cmd", 1)
+        mock_popen.return_value = mock_proc
+
+        cli.run_external_command(
+            ["sleep", "10"],
+            {},
+            independent=True,
+        )
+
+        mock_proc.kill.assert_called_once()
+
+    @patch("topsailai.subprocess.Popen")
+    @patch("builtins.print")
+    def test_non_independent_kills_survivor(self, mock_print, mock_popen):
+        """Non-independent command kills process still running after communicate."""
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("", "")
+        mock_proc.poll.side_effect = [None, 0]
+        mock_popen.return_value = mock_proc
+
+        cli.run_external_command(
+            ["sleep", "10"],
+            {},
+            independent=False,
+        )
+
+        mock_proc.kill.assert_called_once()
+        mock_proc.wait.assert_called_once_with(timeout=1)
+
+    @patch("topsailai.subprocess.Popen")
+    @patch("builtins.print")
+    def test_non_independent_wait_exception_swallowed(self, mock_print, mock_popen):
+        """Non-independent command swallows wait exception after kill."""
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("", "")
+        mock_proc.poll.side_effect = [None, None]
+        mock_proc.wait.side_effect = cli.subprocess.TimeoutExpired("cmd", 1)
+        mock_popen.return_value = mock_proc
+
+        cli.run_external_command(
+            ["sleep", "10"],
+            {},
+            independent=False,
+        )
+
+        mock_proc.kill.assert_called_once()
+
+    @patch("topsailai.os.system")
+    @patch("builtins.print")
+    def test_os_system_restores_existing_env(self, mock_print, mock_system):
+        """use_os_system restores pre-existing environment variable value."""
+        mock_system.return_value = 0
+        original_value = os.environ.get("TEST_RESTORE_VAR")
+        os.environ["TEST_RESTORE_VAR"] = "original"
+        try:
+            cli.run_external_command(
+                ["echo", "hello"],
+                {"TEST_RESTORE_VAR": "new_value"},
+                independent=False,
+                use_os_system=True,
+            )
+            self.assertEqual(os.environ.get("TEST_RESTORE_VAR"), "original")
+        finally:
+            if original_value is None:
+                os.environ.pop("TEST_RESTORE_VAR", None)
+            else:
+                os.environ["TEST_RESTORE_VAR"] = original_value

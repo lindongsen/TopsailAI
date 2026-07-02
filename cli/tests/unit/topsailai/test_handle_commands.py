@@ -96,6 +96,21 @@ class TestHandleYamlCommand(unittest.TestCase):
         printed = [str(args[0]) for args, kwargs in mock_print.call_args_list]
         self.assertTrue(any("No session ID available" in p for p in printed))
 
+    @patch("topsailai.discover_log_files")
+    @patch("builtins.print")
+    def test_cd_with_numeric_index_missing_session_id(self, mock_print, mock_discover):
+        """Show error when numeric index points to entry with no session_id."""
+        mock_discover.return_value = [
+            {"filename": "topsailai.1234.session.stdout", "session_id": ""},
+        ]
+        instruction = {"cmd": "/cd {session_id}", "shell": ""}
+        variables = {"session_id": "1", "task_dir": "/tmp/tasks"}
+        result = cli.handle_yaml_command(instruction, variables)
+        self.assertEqual(result, "yaml_handled")
+        self.assertEqual(cli.current_scope, "workspace")
+        printed = [str(args[0]) for args, kwargs in mock_print.call_args_list]
+        self.assertTrue(any("has no session ID" in p for p in printed))
+
     @patch("builtins.print")
     def test_cd_with_session_id_string(self, mock_print):
         """Enter session scope with /cd using session_id string."""

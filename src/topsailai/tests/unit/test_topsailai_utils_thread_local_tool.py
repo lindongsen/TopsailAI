@@ -6,7 +6,9 @@ from topsailai.utils.thread_local_tool import (
     incr_agent_deep, decr_agent_deep, ctxm_give_agent_name, get_agent_name,
     get_session_id, ctxm_set_agent, get_agent_object, KEY_AGENT_NAME,
     KEY_SESSION_ID, KEY_AGENT_OBJECT, KEY_AGENT_DEEP, MAX_AGENT_DEEP,
-    set_agent_runtime_input, get_agent_runtime_input, KEY_AGENT_RUNTIME_INPUT
+    set_agent_runtime_input, get_agent_runtime_input, KEY_AGENT_RUNTIME_INPUT,
+    set_agent_runtime_input_with_timeout, get_agent_runtime_input_with_timeout,
+    KEY_AGENT_RUNTIME_INPUT_WITH_TIMEOUT,
 )
 
 
@@ -239,6 +241,68 @@ class TestAgentRuntimeInput(unittest.TestCase):
         self.assertEqual(results[1], "reply_1")
         self.assertEqual(results[2], "reply_2")
         self.assertIsNone(get_agent_runtime_input())
+
+
+class TestAgentRuntimeInputWithTimeout(unittest.TestCase):
+    """Test cases for agent-runtime input-with-timeout thread-local helpers."""
+
+    def setUp(self):
+        """Clear agent-runtime input-with-timeout before each test."""
+        unset_thread_var(KEY_AGENT_RUNTIME_INPUT_WITH_TIMEOUT)
+
+    def tearDown(self):
+        """Clear agent-runtime input-with-timeout after each test."""
+        unset_thread_var(KEY_AGENT_RUNTIME_INPUT_WITH_TIMEOUT)
+
+    def test_get_agent_runtime_input_with_timeout_default_none(self):
+        """Test get_agent_runtime_input_with_timeout returns None when unset."""
+        self.assertIsNone(get_agent_runtime_input_with_timeout())
+
+    def test_set_and_get_agent_runtime_input_with_timeout(self):
+        """Test set_agent_runtime_input_with_timeout stores a callable."""
+        def sample_input(tips: str, timeout: float | None) -> str:
+            return f"{tips}:{timeout}"
+
+        set_agent_runtime_input_with_timeout(sample_input)
+        self.assertEqual(get_agent_runtime_input_with_timeout(), sample_input)
+
+    def test_set_agent_runtime_input_with_timeout_overwrites_previous(self):
+        """Test setting a new input function overwrites the previous one."""
+        def first_input(tips: str, timeout: float | None) -> str:
+            return "first"
+
+        def second_input(tips: str, timeout: float | None) -> str:
+            return "second"
+
+        set_agent_runtime_input_with_timeout(first_input)
+        self.assertEqual(get_agent_runtime_input_with_timeout()("", None), "first")
+
+        set_agent_runtime_input_with_timeout(second_input)
+        self.assertEqual(get_agent_runtime_input_with_timeout()("", None), "second")
+
+    def test_agent_runtime_input_with_timeout_thread_isolation(self):
+        """Test agent-runtime input-with-timeout is isolated between threads."""
+        results = {}
+
+        def thread_input(thread_id):
+            def input_func(tips: str, timeout: float | None) -> str:
+                return f"reply_{thread_id}"
+            set_agent_runtime_input_with_timeout(input_func)
+            results[thread_id] = get_agent_runtime_input_with_timeout()("prompt", 1.0)
+
+        threads = []
+        for i in range(3):
+            thread = threading.Thread(target=thread_input, args=(i,))
+            threads.append(thread)
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(results[0], "reply_0")
+        self.assertEqual(results[1], "reply_1")
+        self.assertEqual(results[2], "reply_2")
+        self.assertIsNone(get_agent_runtime_input_with_timeout())
 
 
 if __name__ == "__main__":

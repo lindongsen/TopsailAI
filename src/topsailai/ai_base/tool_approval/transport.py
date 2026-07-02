@@ -95,11 +95,14 @@ class LocalApprovalTransport(ApprovalTransport):
         """
         Background worker that reads one line from stdin and resolves the instance.
 
-        This delegates to :func:`topsailai.utils.input_tool.input_with_timeout`
-        so the terminal is configured for visible echo and the read can time
-        out without blocking forever.
+        This delegates to the agent-runtime input-with-timeout function when one
+        is registered in thread-local storage; otherwise it falls back to
+        :func:`topsailai.utils.input_tool.input_with_timeout` so the terminal is
+        configured for visible echo and the read can time out without blocking
+        forever.
         """
         from topsailai.utils.input_tool import input_with_timeout
+        from topsailai.utils.thread_local_tool import get_agent_runtime_input_with_timeout
 
         prompt = (
             f"\n[APPROVAL REQUEST] {instance.id}\n"
@@ -109,12 +112,16 @@ class LocalApprovalTransport(ApprovalTransport):
             "  Type 'approve'(yes) or 'deny'(no): "
         )
 
-        line = input_with_timeout(
-            prompt=prompt,
-            timeout=instance.timeout,
-            stream=sys.stdin,
-            output=sys.stdout,
-        )
+        input_func = get_agent_runtime_input_with_timeout()
+        if input_func is not None:
+            line = input_func(prompt, instance.timeout)
+        else:
+            line = input_with_timeout(
+                prompt=prompt,
+                timeout=instance.timeout,
+                stream=sys.stdin,
+                output=sys.stdout,
+            )
 
         if line is None:
             return

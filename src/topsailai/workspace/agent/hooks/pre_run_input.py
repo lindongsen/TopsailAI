@@ -6,8 +6,12 @@ storage so that ``ai_base`` code can fall back to the workspace input tool
 instead of the builtin ``input()``.
 """
 
-from topsailai.utils.thread_local_tool import set_agent_runtime_input
-from topsailai.workspace.input_tool import input_one_line
+from topsailai.utils import env_tool
+from topsailai.utils.thread_local_tool import (
+    set_agent_runtime_input,
+    set_agent_runtime_input_with_timeout,
+)
+from topsailai.workspace.input_tool import input_from_pipe_session, input_one_line
 
 
 def pre_run_set_agent_runtime_input(self):
@@ -33,7 +37,28 @@ def pre_run_set_agent_runtime_input(self):
         """
         return input_one_line(tips=tips, hook=hook)
 
+    def input_on_agent_runtime_with_timeout(
+        tips: str = "", timeout: float | None = None, hook=hook
+    ):
+        """Agent-runtime input wrapper that reads from the session pipe.
+
+        Args:
+            tips: Optional prompt text displayed while waiting for input.
+            timeout: Maximum time in seconds to wait for pipe input.
+            hook: ``HookInstruction`` instance captured from the agent chat.
+
+        Returns:
+            The string returned by ``input_from_pipe_session``.
+        """
+        return input_from_pipe_session(
+            session_id=env_tool.get_session_id(),
+            single_line=True,
+            timeout=timeout,
+            prompt=tips,
+        )
+
     set_agent_runtime_input(input_on_agent_runtime)
+    set_agent_runtime_input_with_timeout(input_on_agent_runtime_with_timeout)
 
 
 HOOKS = dict(

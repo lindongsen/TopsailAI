@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from topsailai.utils.thread_local_tool import (
     get_agent_runtime_input,
+    get_agent_runtime_input_with_timeout,
     rid_all_thread_vars,
 )
 from topsailai.workspace.agent.hooks.pre_run_input import (
@@ -86,6 +87,67 @@ class TestPreRunInputHook(unittest.TestCase):
 
         self.assertEqual(result, "reply")
         mock_input_one_line.assert_called_once_with(tips="prompt", hook=other_hook)
+
+    def test_hook_registers_agent_runtime_input_with_timeout(self):
+        """Calling the hook should register the timeout-aware input function."""
+        self.assertIsNone(get_agent_runtime_input_with_timeout())
+
+        mock_agent = MagicMock()
+        pre_run_set_agent_runtime_input(mock_agent)
+
+        input_func = get_agent_runtime_input_with_timeout()
+        self.assertIsNotNone(input_func)
+        self.assertEqual(input_func.__name__, "input_on_agent_runtime_with_timeout")
+
+    @patch("topsailai.workspace.agent.hooks.pre_run_input.input_from_pipe_session")
+    @patch("topsailai.workspace.agent.hooks.pre_run_input.env_tool.get_session_id")
+    def test_timeout_wrapper_forwards_to_input_from_pipe_session(
+        self, mock_get_session_id, mock_input_from_pipe_session
+    ):
+        """The timeout wrapper should call input_from_pipe_session with the right args."""
+        mock_get_session_id.return_value = "test-session"
+        mock_input_from_pipe_session.return_value = "pipe reply"
+        mock_instruction = MagicMock()
+
+        mock_agent = MagicMock()
+        mock_agent.hook_instruction = mock_instruction
+        pre_run_set_agent_runtime_input(mock_agent)
+
+        input_func = get_agent_runtime_input_with_timeout()
+        result = input_func("prompt text", timeout=5.0)
+
+        self.assertEqual(result, "pipe reply")
+        mock_input_from_pipe_session.assert_called_once_with(
+            session_id="test-session",
+            single_line=True,
+            timeout=5.0,
+            prompt="prompt text",
+        )
+
+    @patch("topsailai.workspace.agent.hooks.pre_run_input.input_from_pipe_session")
+    @patch("topsailai.workspace.agent.hooks.pre_run_input.env_tool.get_session_id")
+    def test_timeout_wrapper_uses_none_timeout_by_default(
+        self, mock_get_session_id, mock_input_from_pipe_session
+    ):
+        """The timeout wrapper should default to None timeout."""
+        mock_get_session_id.return_value = "test-session"
+        mock_input_from_pipe_session.return_value = "pipe reply"
+        mock_instruction = MagicMock()
+
+        mock_agent = MagicMock()
+        mock_agent.hook_instruction = mock_instruction
+        pre_run_set_agent_runtime_input(mock_agent)
+
+        input_func = get_agent_runtime_input_with_timeout()
+        result = input_func(tips="enter value")
+
+        self.assertEqual(result, "pipe reply")
+        mock_input_from_pipe_session.assert_called_once_with(
+            session_id="test-session",
+            single_line=True,
+            timeout=None,
+            prompt="enter value",
+        )
 
 
 if __name__ == "__main__":
