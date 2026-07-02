@@ -10,10 +10,13 @@ and launch the subprocess via os.system (default) or subprocess.run (with --subp
 """
 
 import argparse
+import atexit
 import os
 import shlex
+import signal
 import subprocess
 import sys
+import time
 
 # DONOT REMOVE THIS
 import readline
@@ -22,6 +25,44 @@ import readline
 PWD = os.getenv("TOPSAILAI_PWD")
 if PWD:
     os.chdir(PWD)
+
+# Global reference to the temporary context message file, used for cleanup on exit.
+_CONTEXT_MESSAGE_FILE = None
+
+
+def _cleanup_context_file():
+    """Remove the temporary context message file if it exists."""
+    global _CONTEXT_MESSAGE_FILE
+    path = _CONTEXT_MESSAGE_FILE
+    if path and os.path.isfile(path):
+        try:
+            os.remove(path)
+            print(
+                f"[TopsailAI-Launcher] Removed temporary context file: {path}"
+            )
+        except OSError as exc:
+            print(
+                f"[TopsailAI-Launcher] Warning: Failed to remove temporary context file '{path}': {exc}",
+                file=sys.stderr,
+            )
+    _CONTEXT_MESSAGE_FILE = None
+
+
+def _signal_handler(signum, frame):
+    """Handle SIGINT/SIGTERM by cleaning up the temporary file and exiting."""
+    print(
+        f"\n[TopsailAI-Launcher] Received signal {signum}, cleaning up and exiting...",
+        file=sys.stderr,
+    )
+    _cleanup_context_file()
+    sys.exit(128 + signum)
+
+
+# Register cleanup hooks so the temporary file is removed on normal exit,
+# uncaught exceptions, and common termination signals.
+atexit.register(_cleanup_context_file)
+signal.signal(signal.SIGINT, _signal_handler)
+signal.signal(signal.SIGTERM, _signal_handler)
 
 
 CONFIG_TEMPLATE = """# AI Agent TopsailAI-Launcher Configuration Template
@@ -326,16 +367,30 @@ def main():
 
     if original_user_message:
         if message_parts:
-            merged_env["TOPSAILAI_CONTEXT_USER_MESSAGE"] = (
+            context_message = (
                 f"{original_user_message}\n\n---\n\n"
                 + "\n\n---\n\n".join(message_parts)
             )
         else:
-            merged_env["TOPSAILAI_CONTEXT_USER_MESSAGE"] = original_user_message
+            context_message = original_user_message
     else:
-        merged_env["TOPSAILAI_CONTEXT_USER_MESSAGE"] = "\n\n---\n\n".join(
-            message_parts
+        context_message = "\n\n---\n\n".join(message_parts)
+
+    # Write large context message to a file to avoid exceeding environment variable size limits.
+    global _CONTEXT_MESSAGE_FILE
+    _CONTEXT_MESSAGE_FILE = None
+    if context_message:
+        tmp_dir = os.path.join(workspace, ".tmp")
+        os.makedirs(tmp_dir, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d%H%M%S", time.localtime())
+        _CONTEXT_MESSAGE_FILE = os.path.join(
+            tmp_dir, f"TOPSAILAI_CONTEXT_USER_MESSAGE.{timestamp}.data"
         )
+        with open(_CONTEXT_MESSAGE_FILE, "w", encoding="utf-8") as f:
+            f.write(context_message)
+        merged_env["TOPSAILAI_CONTEXT_USER_MESSAGE"] = _CONTEXT_MESSAGE_FILE
+    else:
+        merged_env["TOPSAILAI_CONTEXT_USER_MESSAGE"] = ""
 
     # 4. Assemble command line: ai_agent_driver only (context is passed via env)
     driver_parts = shlex.split(ai_agent_driver)
@@ -359,41 +414,45 @@ def main():
             print(f"  {key}={merged_env.get(key, '')}")
         sys.exit(0)
 
-    if args.use_subprocess:
-        # Optional: subprocess.run mode (inherit stdin/stdout/stderr for interactive and real-time output)
-        print("[TopsailAI-Launcher] Subprocess mode (--subprocess)")
-        result = subprocess.run(
-            cmd,
-            env=merged_env,
-            stdin=sys.stdin,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-            cwd=workspace,
-        )
-        exit_code = result.returncode
-    else:
-        # Default: os.system mode - set environment variables via os.environ,
-        # then launch the driver directly without changing directory.
-        for key, val in merged_env.items():
-            os.environ[key] = str(val)
-
-        cmd_str = ' '.join(shlex.quote(c) for c in cmd)
-
-        print("[TopsailAI-Launcher] Default os.system mode")
-        print(f"[TopsailAI-Launcher] Shell command: {cmd_str}")
-        ret = os.system(cmd_str)
-        # Convert wait-status to exit code (Python 3.9+)
-        if hasattr(os, 'waitstatus_to_exitcode'):
-            exit_code = os.waitstatus_to_exitcode(ret)
-        elif os.name == 'posix':
-            exit_code = os.WEXITSTATUS(ret) if os.WIFEXITED(ret) else 1
+    try:
+        if args.use_subprocess:
+            # Optional: subprocess.run mode (inherit stdin/stdout/stderr for interactive and real-time output)
+            print("[TopsailAI-Launcher] Subprocess mode (--subprocess)")
+            result = subprocess.run(
+                cmd,
+                env=merged_env,
+                stdin=sys.stdin,
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+                cwd=workspace,
+            )
+            exit_code = result.returncode
         else:
-            exit_code = ret
+            # Default: os.system mode - set environment variables via os.environ,
+            # then launch the driver directly without changing directory.
+            for key, val in merged_env.items():
+                os.environ[key] = str(val)
 
-    if exit_code == 0:
-        print(f"[TopsailAI-Launcher] Task completed successfully, exit code: {exit_code}")
-    else:
-        print(f"[TopsailAI-Launcher] Task failed, exit code: {exit_code}")
+            cmd_str = ' '.join(shlex.quote(c) for c in cmd)
+
+            print("[TopsailAI-Launcher] Default os.system mode")
+            print(f"[TopsailAI-Launcher] Shell command: {cmd_str}")
+            ret = os.system(cmd_str)
+            # Convert wait-status to exit code (Python 3.9+)
+            if hasattr(os, 'waitstatus_to_exitcode'):
+                exit_code = os.waitstatus_to_exitcode(ret)
+            elif os.name == 'posix':
+                exit_code = os.WEXITSTATUS(ret) if os.WIFEXITED(ret) else 1
+            else:
+                exit_code = ret
+
+        if exit_code == 0:
+            print(f"[TopsailAI-Launcher] Task completed successfully, exit code: {exit_code}")
+        else:
+            print(f"[TopsailAI-Launcher] Task failed, exit code: {exit_code}")
+    finally:
+        # Clean up the temporary context message file after the driver exits.
+        _cleanup_context_file()
 
     sys.exit(exit_code)
 
