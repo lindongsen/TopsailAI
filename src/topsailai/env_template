@@ -109,6 +109,14 @@ DEBUG_PRINT_TRUNCATE_LENGTH=3000
 # Interactive Mode, 1 for enabled, 0 for disabled
 TOPSAILAI_INTERACTIVE_MODE=1
 
+# Maximum size in bytes of the project history JSONL file before rotation.
+# Default is 1048576 (1 MiB). Values below 0 disable rotation.
+TOPSAILAI_PROJECT_HISTORY_MAX_SIZE=1048576
+
+# Maximum number of project history backup files to keep. Default is 1.
+# Values below 0 are treated as 0 (no backups kept).
+TOPSAILAI_PROJECT_HISTORY_MAX_BACKUP=1
+
 # Print tool prompt content
 TOPSAILAI_PRINT_TOOL_PROMPT=0
 

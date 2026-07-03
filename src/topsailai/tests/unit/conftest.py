@@ -284,3 +284,18 @@ def set_test_logger_identity(clean_thread_local):
     from topsailai.utils.thread_local_tool import ctxm_give_agent_name
     with ctxm_give_agent_name("unit-test"):
         yield
+
+
+@pytest.fixture
+def temp_history_path(tmp_path):
+    """
+    Provide a temporary path for project-history JSONL files.
+
+    Yields:
+        Path: A temporary file path that will be cleaned up automatically.
+    """
+    from topsailai.workspace.project_history import history
+
+    history_file = tmp_path / ".project_history.jsonl"
+    with patch.object(history, "FILE_PROJECT_HISTORY", str(history_file)):
+        yield history_file

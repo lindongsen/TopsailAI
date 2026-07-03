@@ -16,6 +16,7 @@ import os
 from topsailai.ai_base.llm_base import LLMModel
 from topsailai.ai_base.llm_control.base_class import ContentStdout
 from topsailai.ai_base.prompt_base import PromptBase
+from topsailai.workspace.project_history import record_project_history
 from topsailai.ai_base.llm_control.base_class import LLMModelBase
 from topsailai.utils.thread_local_tool import (
     set_thread_var,
@@ -201,5 +202,8 @@ def get_llm_chat(
     )
     if message:
         llm_chat.first_message = message
+
+    # record project workspace used for this startup
+    record_project_history(session_id)
 
     return llm_chat

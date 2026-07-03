@@ -42,6 +42,8 @@ These variables define the agent's working environment and project access scope.
 | `TOPSAILAI_AGENT_NAME` | `"TopsailAI"` | Default agent name. |
 | `TOPSAILAI_HUMAN_NAME` | `"Topsail"` | Human name used in interactions. |
 | `TOPSAILAI_ENABLE_SESSION_TEE_OUT` | `1` | Tee output to log file. `1` = enabled. |
+| `TOPSAILAI_PROJECT_HISTORY_MAX_SIZE` | `1048576` | Maximum size in bytes of the project history JSONL file (`.project_history.jsonl`) before rotation. Default is `1048576` (1 MiB). Values of `0` or below disable size-based rotation. |
+| `TOPSAILAI_PROJECT_HISTORY_MAX_BACKUP` | `1` | Maximum number of project history backup files to keep. Default is `1`. Values below `0` are treated as `0` (no backups kept). |
 | `TOPSAILAI_DISABLE_ROOT_LOGGER_CONFIG` | `"0"` | When set to `1`, importing `topsailai.logger` will not automatically configure the Python root logger. Useful when integrating with external frameworks that manage their own root logger. |
 
 ## OpenAI Configuration
