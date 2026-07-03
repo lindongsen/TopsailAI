@@ -18,6 +18,7 @@ KEY_AGENT_OBJECT = "agent_object"
 KEY_AGENT_RUNTIME_INPUT_WITH_TIMEOUT = "agent_runtime_input_with_timeout"
 KEY_THREAD_NAME = ""
 KEY_AGENT_RUNTIME_INPUT = "agent_runtime_input"
+KEY_AGENT2LLM_MESSAGE_SOURCE = "agent2llm_message_source"
 
 # Define a thread-local storage object
 g_thr_local = threading.local()
@@ -264,3 +265,35 @@ def get_agent_runtime_input_with_timeout():
         callable|None: The registered input function, or None if unset.
     """
     return get_thread_var(KEY_AGENT_RUNTIME_INPUT_WITH_TIMEOUT)
+
+
+def set_agent2llm_message_source(source):
+    """Set the Agent2LLM runtime message source in thread-local storage.
+
+    Args:
+        source: An ``Agent2LLMMessageSource`` instance, or ``None`` to clear.
+
+    Returns:
+        None
+    """
+    set_thread_var(KEY_AGENT2LLM_MESSAGE_SOURCE, source)
+    return
+
+
+def get_agent2llm_message_source():
+    """Get the Agent2LLM runtime message source from thread-local storage.
+
+    Returns:
+        Agent2LLMMessageSource|None: The registered source, or None if unset.
+    """
+    return get_thread_var(KEY_AGENT2LLM_MESSAGE_SOURCE)
+
+
+def unset_agent2llm_message_source():
+    """Remove the Agent2LLM runtime message source from thread-local storage.
+
+    Returns:
+        None
+    """
+    unset_thread_var(KEY_AGENT2LLM_MESSAGE_SOURCE)
+    return

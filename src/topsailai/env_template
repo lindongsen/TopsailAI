@@ -11,6 +11,21 @@ TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO=0.5
 TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES=17
 
 # =============================================================================
+# Agent2LLM Runtime Message Injection
+# =============================================================================
+
+# Master switch. Set to 1 to enable runtime message injection into Agent2LLM.
+TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_ENABLED=0
+
+# Source type. Currently only "file" is implemented.
+TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_SOURCE=file
+
+# Path to the JSONL file consumed by the file source. When empty, defaults to
+# {FOLDER_WORKSPACE_TASK}/{session_id}.{pid}.session.agent2llm_inject_messages.jsonl,
+# where session_id falls back to env_tool.get_session_id() or "topsailai".
+TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_FILE=
+
+# =============================================================================
 # Duplicate Tool Call Detection
 # =============================================================================
 

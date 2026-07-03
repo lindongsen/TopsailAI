@@ -253,6 +253,25 @@ These variables configure the optional tool-call approval gate. When enabled, ea
 | `TOPSAILAI_HOOK_BEFORE_LLM_CHAT` | `""` | Module paths separated by `;`. Hook function signature: `hook_func(content:list[dict]) -> list[dict]`. |
 | `TOPSAILAI_HOOK_SCRIPTS_POST_FINAL_ANSWER` | `""` | Scripts to run after the final answer. Format: `"{script_file} {cmd_options};"`. |
 
+
+## Agent2LLM Runtime Message Injection
+
+These variables configure the optional runtime message source that injects messages into the Agent2LLM context before each LLM call. The source is registered via a pre-run hook and consumed from thread-local storage by `ai_base`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_ENABLED` | `"0"` | Master switch. `1` enables runtime message injection, `0` disables it. |
+| `TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_SOURCE` | `"file"` | Source type. Currently only `file` is implemented. Future sources (e.g. `redis`, `http`) can be added without changing `ai_base`. |
+| `TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_FILE` | `""` | Path to the JSONL file consumed by the `file` source. When empty, defaults to `{FOLDER_WORKSPACE_TASK}/{session_id}.{pid}.session.agent2llm_inject_messages.jsonl`, where `session_id` falls back to `env_tool.get_session_id()` or `"topsailai"`. Each line must be a JSON object with at least `content`; `role` is optional and defaults to `user`. |
+
+### Details
+
+- The file source reads the entire file, parses each line as JSON, and clears the file only after all lines are parsed successfully. If clearing fails, the messages are not injected so they cannot be read again on the next iteration.
+- Invalid JSON lines are skipped with a warning; valid lines are still injected.
+- Messages are appended at the tail of `agent.messages` as `user` role messages with `step_name=observation`.
+- The source is consumed from thread-local storage, so it is scoped to the current agent execution thread.
+- The default filename follows the session-scoped convention used by the session stdout tee file and input pipe (`{session_id}.{pid}.session.*`) so concurrent processes do not collide.
+
 ## Team Configuration
 
 | Variable | Default | Description |

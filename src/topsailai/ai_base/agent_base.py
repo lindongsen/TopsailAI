@@ -18,6 +18,10 @@ from topsailai.utils import (
     env_tool,
 )
 
+from topsailai.ai_base.agent2llm_message_source import (
+    apply_agent2llm_message_source,
+    unset_agent2llm_message_source,
+)
 from topsailai.ai_base.constants import (
     STEP_NAME_TASK,
     STEP_NAME_OBSERVATION,
@@ -116,6 +120,7 @@ class AgentBase(AgentTool):
             finally:
                 if self.flag_dump_messages:
                     self.dump_messages()
+                unset_agent2llm_message_source()
 
     def _run(self, step_call:StepCallBase, user_input:str):
         """
@@ -168,6 +173,9 @@ class AgentRun(AgentBase):
         self.new_session(user_message)
 
         while True:
+            # Inject runtime messages before each LLM call
+            self._inject_runtime_messages()
+
             rsp_obj, response = self.llm_model.chat(
                 self.messages, for_response=True,
                 for_stream=env_tool.EnvReaderInstance.check_bool("LLM_RESPONSE_STREAM"),
@@ -247,3 +255,13 @@ class AgentRun(AgentBase):
             self.update_message_for_env()
 
         # raise RuntimeError("Unreachable code reached")
+
+    def _inject_runtime_messages(self):
+        """Inject runtime messages from the registered source before LLM chat.
+
+        This method is called at the top of each Agent2LLM iteration. It
+        delegates to ``apply_agent2llm_message_source`` which reads from the
+        thread-local source (if any) and appends messages at the tail of
+        ``self.messages``.
+        """
+        apply_agent2llm_message_source(self)

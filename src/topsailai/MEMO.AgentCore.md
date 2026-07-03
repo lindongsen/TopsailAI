@@ -511,6 +511,44 @@ Both summarization paths must follow this convention:
 ### Note for maintainers
 When modifying summarization logic, keep this ordering invariant intact. If a future use case needs a different ordering, add a new method or configuration path rather than silently changing the shared convention.
 
+## MEMO: Agent2LLM Runtime Message Injection
+
+**Date:** 2026-07-03
+**Files:**
+- `/TopsailAI/src/topsailai/ai_base/agent2llm_message_source.py`
+- `/TopsailAI/src/topsailai/ai_base/agent_base.py`
+- `/TopsailAI/src/topsailai/workspace/agent/runtime_message_sources/file.py`
+- `/TopsailAI/src/topsailai/workspace/agent/hooks/pre_run_agent2llm_source.py`
+
+### Conclusion
+The agent can inject runtime messages into the Agent2LLM context before each LLM call. The mechanism uses an abstract `Agent2LLMMessageSource` registered in thread-local storage by a pre-run hook and consumed by `AgentRun._run()`.
+
+### Components
+
+1. **Abstract interface** — `ai_base/agent2llm_message_source.py` defines `Agent2LLMMessageSource` with `consume_messages()`. It also provides thread-local helpers and `apply_agent2llm_message_source(agent)`, which appends consumed messages at the tail of `agent.messages` as `user` role `observation` content dicts.
+2. **Source implementations** — `workspace/agent/runtime_message_sources/` contains concrete sources. The `file` source reads JSONL from a configured file, parses valid lines, clears the file only after successful parsing, and skips invalid lines with warnings.
+3. **Pre-run hook** — `workspace/agent/hooks/pre_run_agent2llm_source.py` creates the configured source and registers it in thread-local storage during `AgentChat.run()`.
+4. **Trigger point** — `AgentRun._run()` calls `self._inject_runtime_messages()` at the top of each ReAct loop iteration, immediately before `self.llm_model.chat(...)`.
+
+### Environment Variables
+
+- `TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_ENABLED` — master switch (`0`/`1`).
+- `TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_SOURCE` — source type (`file` by default).
+- `TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_FILE` — JSONL file path for the `file` source. When empty, defaults to `{FOLDER_WORKSPACE_TASK}/{session_id}.{pid}.session.agent2llm_inject_messages.jsonl`, where `session_id` falls back to `env_tool.get_session_id()` or `"topsailai"`.
+
+### Key Design Points
+
+- `ai_base` does not import any `workspace/` modules; it only reads the source from thread-local storage.
+- The file source clears the file only after parsing succeeds. If clearing fails, the messages are not injected, preventing duplicate reads on the next iteration.
+- A defensive `_last_digest` check prevents duplicate injection if the file cannot be cleared.
+- Messages are appended at the tail of `agent.messages` via `agent.add_user_message(..., need_print=False)`, reusing existing content formatting and context-archiving hooks.
+- The source is unset in `AgentBase.run()`'s `finally` block to avoid leaking across thread reuse.
+- The default file path follows the session-scoped pipe/stdout filename convention: `{session_id}.{pid}.session.agent2llm_inject_messages.jsonl` under `FOLDER_WORKSPACE_TASK`, so concurrent processes do not collide.
+
+### Note for maintainers
+
+When adding a new source type, implement `Agent2LLMMessageSource`, register it in `workspace/agent/runtime_message_sources/__init__.py`, and update `pre_run_agent2llm_source.py` if the source requires additional configuration. Do not change `ai_base/agent_base.py` unless the trigger semantics change.
+
 ## MEMO: Strict Prompt Construction Order Requirement
 
 **Date:** 2026-06-27

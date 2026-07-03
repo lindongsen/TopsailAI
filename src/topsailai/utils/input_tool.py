@@ -970,7 +970,7 @@ def input_from_pipe(
                 else:
                     # No writer connected yet.  Avoid a tight busy-loop while
                     # waiting for either a writer or terminal input.
-                    time.sleep(0.05)
+                    time.sleep(0.01)
 
             # Terminal input: the helper wrote a completed line.
             if helper_read_fd in ready:

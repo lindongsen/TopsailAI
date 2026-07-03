@@ -216,6 +216,37 @@ class TestAgentBaseRun(unittest.TestCase):
 
         agent.dump_messages.assert_called_once()
 
+    def test_run_unsets_agent2llm_message_source_in_finally(self):
+        """Test run unsets the thread-local source even when _run raises."""
+        from topsailai.ai_base.agent_base import AgentBase
+        from topsailai.ai_base.agent2llm_message_source import (
+            set_agent2llm_message_source,
+            get_agent2llm_message_source,
+            Agent2LLMMessageSource,
+        )
+
+        class DummySource(Agent2LLMMessageSource):
+            def consume_messages(self):
+                return []
+            def produce_message(self, content, role="user", step_name="observation"):
+                return True
+
+        set_agent2llm_message_source(DummySource())
+        self.assertIsNotNone(get_agent2llm_message_source())
+
+        agent = AgentBase(
+            system_prompt="You are a helpful assistant",
+            tools={"tool1": MagicMock()},
+            agent_name="TestAgent"
+        )
+        agent._run = MagicMock(side_effect=Exception("boom"))
+        agent.flag_dump_messages = False
+
+        with self.assertRaises(Exception):
+            agent.run(self.step_call_mock, "test input")
+
+        self.assertIsNone(get_agent2llm_message_source())
+
 
 class TestAgentRunRunEdgeCases(unittest.TestCase):
     """Test AgentRun._run edge cases with proper setup."""
@@ -284,6 +315,30 @@ class TestAgentRunRunEdgeCases(unittest.TestCase):
         result = agent._run(self.step_call_mock, "test input")
 
         self.assertIsNone(result)
+
+    def test_run_injects_runtime_messages_before_llm_chat(self):
+        """Test _run calls _inject_runtime_messages before llm_model.chat."""
+        from topsailai.ai_base.agent_base import AgentRun
+
+        agent = AgentRun(
+            system_prompt="You are a helpful assistant",
+            tools={},
+            agent_name="TestAgent"
+        )
+        agent.available_tools = {}
+        agent.messages = []
+        agent.new_session = MagicMock()
+
+        call_order = []
+        agent._inject_runtime_messages = MagicMock(side_effect=lambda: call_order.append("inject"))
+        agent.llm_model.chat = MagicMock(
+            return_value=(None, None),
+            side_effect=lambda *args, **kwargs: (call_order.append("chat") or (None, None)),
+        )
+
+        agent._run(self.step_call_mock, "test input")
+
+        self.assertEqual(call_order, ["inject", "chat"])
 
 
 if __name__ == '__main__':
