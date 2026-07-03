@@ -985,3 +985,72 @@ EOF
 
 ### Note for maintainers
 When adding similar runtime-injection instructions, keep message construction as a plain dict and append through the context-runtime mutator convention.
+
+## MEMO: SKILL.md Configuration Items
+
+**Date:** 2026-07-03
+**File:** `/TopsailAI/src/topsailai/skill_hub/skill_tool.py`
+
+`SKILL.md` uses YAML frontmatter between `---` delimiters. The following fields are recognized by the skill hub:
+
+### Core Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Skill identifier used in the skill registry prompt. |
+| `description` | string | Short summary shown in the skill registry prompt. |
+
+### Special Configuration Items
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `preload_docs` | list[string] | Documents or directories to load automatically when `overview_skill` is called. Each entry is a relative path inside the skill folder. If it points to a directory, all `.md` files are collected recursively and sorted. |
+| `flag_overview` | int/bool | When set to a non-empty truthy value, the skill registry prompt includes the full overview content for this skill (instead of only the description). Also respects `TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS`. |
+
+### Example
+
+```yaml
+---
+name: my-skill
+description: Demonstrates skill configuration items.
+preload_docs:
+  - references/
+  - docs/guide.md
+flag_overview: 1
+---
+```
+
+### Notes
+
+- `preload_docs` is processed by `_expand_preload_doc_entry()` and loaded in `overview_skill_native()`.
+- `flag_overview` is parsed in `parse_skill_folder()` and checked in `SkillInfo.markdown`.
+- Any additional frontmatter fields are stored in `skill_info.all` but are not interpreted by the built-in skill hub unless custom code reads them.
+
+
+## MEMO: Skill Hub Environment Variables
+
+**Date:** 2026-07-03
+**Files:** `/TopsailAI/src/topsailai/skill_hub/skill_tool.py`, `/TopsailAI/src/topsailai/skill_hub/skill_repo.py`, `/TopsailAI/src/topsailai/skill_hub/skill_hook.py`
+
+The skill hub is controlled by several environment variables. They are documented in `docs/Environment_Variables.md` and used in the skill hub implementation:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_PLUGIN_SKILLS` | `""` | Plugin skill directories separated by `;`. Supports searching folders up to `TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH`. |
+| `TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH` | `3` | Maximum recursion depth when searching for plugin skills. Also used by `skill_repo.list_skills()` when scanning `FOLDER_SKILL`. |
+| `TOPSAILAI_DISABLED_SKILLS` | `""` | Skills to disable. |
+| `TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS` | `""` | Skills whose overview should be loaded into the prompt. Can be a `;`-separated list of skill names or `*` for all. |
+| `TOPSAILAI_SESSION_LOCK_ON_SKILLS` | `""` | Lock session before calling these skills. |
+| `TOPSAILAI_SESSION_REFRESH_ON_SKILLS` | `""` | Refresh session after calling these skills. |
+| `TOPSAILAI_CALL_SKILL_TIMEOUT_MAP` | `"ai-community=86400"` | Skill call timeout map. Format: `skill_folder=timeout` separated by `;`. |
+| `TOPSAILAI_HOOK_MODULE_SKILLS` | `""` | Skill hook module directory paths separated by `;`. |
+
+### Notes
+
+- `TOPSAILAI_PLUGIN_SKILLS` is read by `skill_tool.load_skills()` to discover additional skill folders outside `FOLDER_SKILL`.
+- `TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH` controls how many directory levels are scanned when looking for `SKILL.md` / `skill.md` files.
+- `TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS` interacts with the per-skill `flag_overview` frontmatter field: a skill is loaded into the prompt if either its own `flag_overview` is truthy or its name matches this environment variable.
+- `TOPSAILAI_CALL_SKILL_TIMEOUT_MAP` lets callers override the default timeout for individual skills when invoking them through `skill_tool.call_skill()`.
+- `TOPSAILAI_SESSION_LOCK_ON_SKILLS` and `TOPSAILAI_SESSION_REFRESH_ON_SKILLS` are used by `skill_hook.py` to coordinate session state around skill calls.
+- `TOPSAILAI_HOOK_MODULE_SKILLS` registers external hook modules that can intercept skill lifecycle events.
+

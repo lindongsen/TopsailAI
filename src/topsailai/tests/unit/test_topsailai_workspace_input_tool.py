@@ -109,6 +109,49 @@ class TestHookMessage(unittest.TestCase):
         result = hook_message("hello world", self.mock_hook)
         self.assertFalse(result)
 
+    @patch("topsailai.workspace.input_tool._append_input_history_jsonl")
+    def test_existing_hook_records_history(self, mock_append_history):
+        """Test that an existing hook command is recorded to input history."""
+        from topsailai.workspace.input_tool import hook_message
+        self.mock_hook.exist_hook.return_value = True
+        result = hook_message("/custom", self.mock_hook)
+        self.assertTrue(result)
+        mock_append_history.assert_called_once_with("/custom")
+
+    @patch("topsailai.workspace.input_tool._append_input_history_jsonl")
+    def test_trigger_char_records_history(self, mock_append_history):
+        """Test that an unknown slash command is recorded to input history."""
+        from topsailai.workspace.input_tool import hook_message
+        self.mock_hook.exist_hook.return_value = False
+        result = hook_message("/test", self.mock_hook)
+        self.assertTrue(result)
+        mock_append_history.assert_called_once_with("/test")
+
+    @patch("topsailai.workspace.input_tool._append_input_history_jsonl")
+    def test_regular_message_does_not_record_history(self, mock_append_history):
+        """Test that normal text is not recorded by hook_message (caller does it)."""
+        from topsailai.workspace.input_tool import hook_message
+        self.mock_hook.exist_hook.return_value = False
+        result = hook_message("hello world", self.mock_hook)
+        self.assertFalse(result)
+        mock_append_history.assert_not_called()
+
+    @patch("topsailai.workspace.input_tool._append_input_history_jsonl")
+    def test_empty_message_does_not_record_history(self, mock_append_history):
+        """Test that empty input is not recorded to input history."""
+        from topsailai.workspace.input_tool import hook_message
+        result = hook_message("", self.mock_hook)
+        self.assertFalse(result)
+        mock_append_history.assert_not_called()
+
+    @patch("topsailai.workspace.input_tool._append_input_history_jsonl")
+    def test_none_hook_does_not_record_history(self, mock_append_history):
+        """Test that a message with no hook manager is not recorded."""
+        from topsailai.workspace.input_tool import hook_message
+        result = hook_message("hello", None)
+        self.assertFalse(result)
+        mock_append_history.assert_not_called()
+
 
 class TestInputOneLine(unittest.TestCase):
     """Test cases for input_one_line function."""

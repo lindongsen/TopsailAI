@@ -303,12 +303,32 @@ def main():
 
     settings = load_yaml(settings_path)
 
-    ai_agent_driver = args.driver if args.driver else settings.get("ai_agent_driver", "")
+    env_map = settings.get("environment", {})
+
+    # Resolve driver with the following priority:
+    # 1. --driver CLI argument
+    # 2. TOPSAILAI_AGENT_DRIVER from settings.environment (item-specific or _default)
+    # 3. ai_agent_driver from settings.yaml
+    # 4. TOPSAILAI_AGENT_DRIVER from the OS environment
+    default_env = env_map.get("_default", {})
+    item_env = env_map.get(args.item, {}) if args.item != "_default" else {}
+    settings_env_driver = item_env.get(
+        "TOPSAILAI_AGENT_DRIVER"
+    ) or default_env.get("TOPSAILAI_AGENT_DRIVER")
+
+    ai_agent_driver = (
+        args.driver
+        if args.driver
+        else (
+            settings_env_driver
+            or settings.get("ai_agent_driver", "")
+            or os.getenv("TOPSAILAI_AGENT_DRIVER", "")
+        )
+    )
     workspace = settings.get("workspace", os.getcwd()) or "."
     if workspace[0] != "/":
         workspace = os.path.abspath(workspace)
     context_map = settings.get("context", {})
-    env_map = settings.get("environment", {})
 
     if not ai_agent_driver:
         print("Error: 'ai_agent_driver' is not defined in settings.yaml", file=sys.stderr)

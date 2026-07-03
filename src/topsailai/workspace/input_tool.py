@@ -18,7 +18,7 @@ from topsailai.utils import (
     thread_local_tool,
 )
 from topsailai.utils.instruction_tool import (
-    hook_message,
+    hook_message as _hook_message,
 )
 from topsailai.workspace.folder_constants import (
     FILE_INPUT_COMPLETIONS,
@@ -82,6 +82,33 @@ def _append_input_history_jsonl(message: str) -> None:
 
 # Load JSONL history into readline on module import.
 _load_input_history_jsonl()
+
+
+def hook_message(message: str, hook: HookInstruction) -> bool:
+    """Process a message through workspace hook instructions.
+
+    This is a thin wrapper around
+    :func:`topsailai.utils.instruction_tool.hook_message` that additionally
+    persists hook-triggered messages to the JSONL input history. Normal text
+    messages are intentionally *not* recorded here; callers such as
+    :func:`input_one_line` and :func:`input_multi_line` append those
+    themselves after ``hook_message`` returns ``False``, which avoids
+    duplicate history entries.
+
+    Args:
+        message: The input message to process.
+        hook: Hook instruction manager instance.
+
+    Returns:
+        ``True`` if a hook was triggered and the message was recorded to
+        history, ``False`` otherwise.
+    """
+    result = _hook_message(message=message, hook=hook)
+    if result:
+        # Record only hook-triggered messages here. Callers record normal
+        # text themselves, so skipping the False case prevents duplicates.
+        _append_input_history_jsonl(message)
+    return result
 
 
 def _input(tips: str = "") -> str:

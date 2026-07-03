@@ -23,3 +23,14 @@ context:
 
   approval:
     - features/91-tool_approval.md
+
+  memo: []
+
+# Environment variable configuration: each item can define its own environment variables
+# _default is the base environment variables shared by all items
+environment:
+  _default:
+    TOPSAILAI_INTERACTIVE_MODE: "1"
+
+  memo:
+    TOPSAILAI_AGENT_DRIVER: "topsailai_agent_chats"
