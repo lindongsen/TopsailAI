@@ -19,12 +19,14 @@ description: bbb
 ---
 '''
 
+import hashlib
+import logging
 import os
 import re
 
 import yaml
 
-from topsailai.logger import logger
+import topsailai.logger  # configures root logger
 from topsailai.utils.format_tool import to_list, to_int
 from topsailai.utils.env_tool import EnvReaderInstance
 from topsailai.utils import (
@@ -34,7 +36,7 @@ from topsailai.utils import (
 from topsailai.prompt_hub import prompt_tool
 from topsailai.workspace.folder_constants import FOLDER_SKILL
 
-
+logger = logging.getLogger(__name__)
 g_skills = {} # key is folder, value is SkillInfo
 
 PROMPT_SKILL_FORMAT = """
@@ -125,6 +127,7 @@ class SkillInfo(object):
         self.folder = ""
         self.name = ""
         self.description = ""
+        self.skill_md_hash = ""
 
         # flags
         self.flag_overview = None
@@ -237,6 +240,35 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
         with open(skill_file, encoding="utf-8") as fd:
             content = fd.read()
     except Exception:
+        return skill_info
+
+    skill_info.skill_md_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    # Block duplicate skill folder basenames. A skill whose folder basename
+    # matches an already-loaded skill from a different path is handled based on
+    # the content of its SKILL.md: identical content is treated as a harmless
+    # duplicate and skipped; differing content is a conflict and is rejected.
+    normalized_folder = os.path.normpath(folder_path)
+    skill_basename = os.path.basename(normalized_folder)
+    for existing_folder, existing_info in list(g_skills.items()):
+        if os.path.normpath(existing_folder) == normalized_folder:
+            continue
+        if os.path.basename(os.path.normpath(existing_folder)) != skill_basename:
+            continue
+        if existing_info.skill_md_hash == skill_info.skill_md_hash:
+            logger.info(
+                "Duplicate skill folder name detected with identical SKILL.md: "
+                "basename '%s' of '%s' matches already loaded skill '%s'. "
+                "Skipping '%s'.",
+                skill_basename, folder_path, existing_folder, folder_path
+            )
+        else:
+            logger.error(
+                "Conflicting skill folder name detected: basename '%s' of '%s' "
+                "matches already loaded skill '%s' but SKILL.md content differs. "
+                "Rejecting '%s'.",
+                skill_basename, folder_path, existing_folder, folder_path
+            )
         return skill_info
 
     # Parse YAML frontmatter (--- delimited)

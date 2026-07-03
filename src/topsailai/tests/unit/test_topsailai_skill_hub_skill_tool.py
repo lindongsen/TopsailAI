@@ -320,6 +320,95 @@ description: A cached skill
             self.assertIn(tmpdir, g_skills)
             self.assertEqual(g_skills[tmpdir].name, "CachedSkill")
 
+class TestDuplicateSkillFolderBlocking(unittest.TestCase):
+    """Test duplicate skill folder basename handling with SKILL.md comparison."""
+
+    def setUp(self):
+        """Clear global skills cache before each test."""
+        g_skills.clear()
+
+    def _write_skill_md(self, folder, content):
+        skill_file = os.path.join(folder, "SKILL.md")
+        with open(skill_file, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    def test_duplicate_basename_identical_skill_md_is_skipped(self):
+        """Same basename and identical SKILL.md should be skipped without error."""
+        content = "---\nname: hello\ndescription: same\n---\n"
+        with tempfile.TemporaryDirectory() as parent:
+            folder1 = os.path.join(parent, "a", "hello")
+            folder2 = os.path.join(parent, "b", "hello")
+            os.makedirs(folder1)
+            os.makedirs(folder2)
+            self._write_skill_md(folder1, content)
+            self._write_skill_md(folder2, content)
+
+            with self.assertLogs("topsailai.skill_hub.skill_tool", level="INFO") as cm:
+                result1 = parse_skill_folder(folder1)
+                result2 = parse_skill_folder(folder2)
+
+            self.assertEqual(result1.name, "hello")
+            self.assertEqual(result2.name, "")
+            self.assertIn(folder1, g_skills)
+            self.assertNotIn(folder2, g_skills)
+            self.assertTrue(
+                any("identical SKILL.md" in msg for msg in cm.output)
+            )
+
+    def test_duplicate_basename_different_skill_md_is_rejected(self):
+        """Same basename but different SKILL.md should be rejected with error log."""
+        content1 = "---\nname: hello\ndescription: first\n---\n"
+        content2 = "---\nname: hello\ndescription: second\n---\n"
+        with tempfile.TemporaryDirectory() as parent:
+            folder1 = os.path.join(parent, "a", "hello")
+            folder2 = os.path.join(parent, "b", "hello")
+            os.makedirs(folder1)
+            os.makedirs(folder2)
+            self._write_skill_md(folder1, content1)
+            self._write_skill_md(folder2, content2)
+
+            with self.assertLogs("topsailai.skill_hub.skill_tool", level="ERROR") as cm:
+                result1 = parse_skill_folder(folder1)
+                result2 = parse_skill_folder(folder2)
+
+            self.assertEqual(result1.name, "hello")
+            self.assertEqual(result2.name, "")
+            self.assertIn(folder1, g_skills)
+            self.assertNotIn(folder2, g_skills)
+            self.assertTrue(
+                any("SKILL.md content differs" in msg for msg in cm.output)
+            )
+
+    def test_different_basenames_load_normally(self):
+        """Different basenames should not interfere with each other."""
+        with tempfile.TemporaryDirectory() as parent:
+            folder1 = os.path.join(parent, "hello")
+            folder2 = os.path.join(parent, "world")
+            os.makedirs(folder1)
+            os.makedirs(folder2)
+            self._write_skill_md(folder1, "---\nname: hello\n---\n")
+            self._write_skill_md(folder2, "---\nname: world\n---\n")
+
+            result1 = parse_skill_folder(folder1)
+            result2 = parse_skill_folder(folder2)
+
+            self.assertEqual(result1.name, "hello")
+            self.assertEqual(result2.name, "world")
+            self.assertIn(folder1, g_skills)
+            self.assertIn(folder2, g_skills)
+
+    def test_same_path_reload_allowed(self):
+        """Reloading the exact same path should be allowed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_skill_md(tmpdir, "---\nname: hello\n---\n")
+
+            result1 = parse_skill_folder(tmpdir)
+            result2 = parse_skill_folder(tmpdir)
+
+            self.assertEqual(result1.name, "hello")
+            self.assertEqual(result2.name, "hello")
+            self.assertIn(tmpdir, g_skills)
+
 
 class TestSkillCache(unittest.TestCase):
     """Test cases for skill cache functions."""
@@ -618,6 +707,115 @@ preload_docs:
             self.assertIn("ref content", result)
             self.assertIn("extra content", result)
 
+
+
+class TestDuplicateSkillFolderBlocking(unittest.TestCase):
+    """Test cases for duplicate skill folder basename blocking."""
+
+    def setUp(self):
+        """Clear global skills cache before each test."""
+        g_skills.clear()
+
+    def tearDown(self):
+        """Clear global skills cache after each test."""
+        g_skills.clear()
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_duplicate_basename_identical_skill_md_is_skipped(self, mock_env):
+        """Same basename and identical SKILL.md should be skipped without error."""
+        mock_env.get_list_str.return_value = []
+
+        with tempfile.TemporaryDirectory() as parent_dir:
+            first_dir = os.path.join(parent_dir, "hello")
+            second_dir = os.path.join(parent_dir, "other", "hello")
+            os.makedirs(second_dir)
+            os.makedirs(first_dir)
+
+            content = "---\nname: HelloSkill\ndescription: A skill\n---\n"
+            for skill_dir in (first_dir, second_dir):
+                with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+                    f.write(content)
+
+            with patch('topsailai.skill_hub.skill_tool.logger') as mock_logger:
+                first_info = parse_skill_folder(first_dir)
+                self.assertEqual(first_info.name, "HelloSkill")
+                self.assertIn(first_dir, g_skills)
+
+                second_info = parse_skill_folder(second_dir)
+                self.assertEqual(second_info.name, "")
+                self.assertNotIn(second_dir, g_skills)
+                mock_logger.info.assert_called_once()
+                logged_message = mock_logger.info.call_args[0][0]
+                self.assertIn("identical SKILL.md", logged_message)
+                mock_logger.error.assert_not_called()
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_duplicate_basename_different_skill_md_is_rejected(self, mock_env):
+        """Same basename but different SKILL.md should be rejected with error log."""
+        mock_env.get_list_str.return_value = []
+
+        with tempfile.TemporaryDirectory() as parent_dir:
+            first_dir = os.path.join(parent_dir, "hello")
+            second_dir = os.path.join(parent_dir, "other", "hello")
+            os.makedirs(second_dir)
+            os.makedirs(first_dir)
+
+            with open(os.path.join(first_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: HelloSkill\ndescription: First skill\n---\n")
+            with open(os.path.join(second_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: HelloSkill\ndescription: Second skill\n---\n")
+
+            with patch('topsailai.skill_hub.skill_tool.logger') as mock_logger:
+                first_info = parse_skill_folder(first_dir)
+                self.assertEqual(first_info.name, "HelloSkill")
+                self.assertIn(first_dir, g_skills)
+
+                second_info = parse_skill_folder(second_dir)
+                self.assertEqual(second_info.name, "")
+                self.assertNotIn(second_dir, g_skills)
+                mock_logger.error.assert_called_once()
+                logged_message = mock_logger.error.call_args[0][0]
+                self.assertIn("SKILL.md content differs", logged_message)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_different_basenames_load_normally(self, mock_env):
+        """Skill folders with different basenames can both be loaded."""
+        mock_env.get_list_str.return_value = []
+
+        with tempfile.TemporaryDirectory() as parent_dir:
+            first_dir = os.path.join(parent_dir, "hello")
+            second_dir = os.path.join(parent_dir, "world")
+            os.makedirs(first_dir)
+            os.makedirs(second_dir)
+
+            with open(os.path.join(first_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: HelloSkill\ndescription: A skill\n---\n")
+            with open(os.path.join(second_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: WorldSkill\ndescription: A skill\n---\n")
+
+            first_info = parse_skill_folder(first_dir)
+            second_info = parse_skill_folder(second_dir)
+
+            self.assertEqual(first_info.name, "HelloSkill")
+            self.assertEqual(second_info.name, "WorldSkill")
+            self.assertIn(first_dir, g_skills)
+            self.assertIn(second_dir, g_skills)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_reloading_same_path_is_allowed(self, mock_env):
+        """Loading the exact same folder path again is not treated as a duplicate."""
+        mock_env.get_list_str.return_value = []
+
+        with tempfile.TemporaryDirectory() as skill_dir:
+            with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: HelloSkill\ndescription: A skill\n---\n")
+
+            first_info = parse_skill_folder(skill_dir)
+            second_info = parse_skill_folder(skill_dir)
+
+            self.assertEqual(first_info.name, "HelloSkill")
+            self.assertEqual(second_info.name, "HelloSkill")
+            self.assertEqual(len(g_skills), 1)
 
 if __name__ == '__main__':
     unittest.main()
