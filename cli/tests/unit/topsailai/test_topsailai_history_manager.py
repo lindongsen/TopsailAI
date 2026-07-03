@@ -253,79 +253,83 @@ class TestHistoryManagerRotation(unittest.TestCase):
 
 
 class TestHistoryManagerTimestamp(unittest.TestCase):
-    """Tests for millisecond timestamp format and legacy compatibility."""
+    """Tests for local ISO 8601 timestamp format and legacy compatibility."""
 
-    def test_append_writes_millisecond_timestamp(self):
-        """New entries are written with an integer millisecond timestamp."""
+    def test_append_writes_iso_timestamp(self):
+        """New entries are written with a local ISO 8601 timestamp string."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "history.jsonl")
             manager = HistoryManager(path)
-            before_ms = int(time.time() * 1000)
+            before = datetime.now().astimezone()
             manager.add("hello")
-            after_ms = int(time.time() * 1000)
+            after = datetime.now().astimezone()
 
             with open(path, "r", encoding="utf-8") as f:
                 entry = json.loads(f.readline())
 
             ts = entry["ts"]
-            self.assertIsInstance(ts, int)
-            self.assertGreaterEqual(ts, 1_000_000_000_000)
-            self.assertGreaterEqual(ts, before_ms)
-            self.assertLessEqual(ts, after_ms)
+            self.assertIsInstance(ts, str)
+            parsed = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S%z")
+            parsed = parsed.replace(tzinfo=before.tzinfo)
+            self.assertGreaterEqual(parsed, before.replace(microsecond=0))
+            self.assertLessEqual(parsed, after.replace(microsecond=0))
 
     def test_load_normalizes_second_timestamp(self):
-        """Integer second timestamps are converted to milliseconds on load."""
+        """Integer second timestamps are converted to local ISO 8601 on load."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "history.jsonl")
             with open(path, "w", encoding="utf-8") as f:
                 f.write('{"text": "cmd", "scope": "workspace", "ts": 1700000000}\n')
             manager = HistoryManager(path)
             manager.load_all()
-            self.assertEqual(manager.entries[0]["ts"], 1700000000000)
+            expected = datetime.fromtimestamp(1700000000).strftime("%Y-%m-%dT%H:%M:%S%z")
+            self.assertEqual(manager.entries[0]["ts"], expected)
 
     def test_load_normalizes_float_timestamp(self):
-        """Float second timestamps are converted to milliseconds on load."""
+        """Float second timestamps are converted to local ISO 8601 on load."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "history.jsonl")
             with open(path, "w", encoding="utf-8") as f:
                 f.write('{"text": "cmd", "scope": "workspace", "ts": 1700000000.5}\n')
             manager = HistoryManager(path)
             manager.load_all()
-            self.assertEqual(manager.entries[0]["ts"], 1700000000500)
+            expected = datetime.fromtimestamp(1700000000.5).strftime("%Y-%m-%dT%H:%M:%S%z")
+            self.assertEqual(manager.entries[0]["ts"], expected)
 
     def test_load_normalizes_string_timestamp(self):
-        """Numeric string timestamps are converted to milliseconds on load."""
+        """Numeric string timestamps are converted to local ISO 8601 on load."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "history.jsonl")
             with open(path, "w", encoding="utf-8") as f:
                 f.write('{"text": "cmd", "scope": "workspace", "ts": "1700000000"}\n')
             manager = HistoryManager(path)
             manager.load_all()
-            self.assertEqual(manager.entries[0]["ts"], 1700000000000)
+            expected = datetime.fromtimestamp(1700000000).strftime("%Y-%m-%dT%H:%M:%S%z")
+            self.assertEqual(manager.entries[0]["ts"], expected)
 
     def test_load_normalizes_iso_timestamp(self):
-        """ISO 8601 string timestamps are converted to milliseconds on load."""
+        """ISO 8601 string timestamps are converted to local time on load."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "history.jsonl")
             dt = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-            expected_ms = int(dt.timestamp() * 1000)
-            entry = {"text": "cmd", "scope": "workspace", "ts": dt.isoformat()}
+            entry = {"text": "cmd", "scope": "workspace", "ts": dt.strftime("%Y-%m-%dT%H:%M:%S+0000")}
             with open(path, "w", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
             manager = HistoryManager(path)
             manager.load_all()
-            self.assertEqual(manager.entries[0]["ts"], expected_ms)
+            expected = dt.astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+            self.assertEqual(manager.entries[0]["ts"], expected)
 
     def test_load_keeps_millisecond_timestamp(self):
-        """Timestamps already in milliseconds are left unchanged on load."""
+        """Timestamps already in milliseconds are converted to local ISO 8601 on load."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "history.jsonl")
             with open(path, "w", encoding="utf-8") as f:
                 f.write('{"text": "cmd", "scope": "workspace", "ts": 1700000000000}\n')
             manager = HistoryManager(path)
             manager.load_all()
-            self.assertEqual(manager.entries[0]["ts"], 1700000000000)
-
+            expected = datetime.fromtimestamp(1700000000).strftime("%Y-%m-%dT%H:%M:%S%z")
+            self.assertEqual(manager.entries[0]["ts"], expected)
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -110,17 +109,19 @@ class HistoryManager:
         except OSError as exc:
             print(f"[WARN] Failed to rotate history file {self.filepath}: {exc}")
 
-    def _normalize_timestamp(self, ts: Any) -> Optional[int]:
-        """Convert legacy timestamp formats to milliseconds since epoch."""
+    def _normalize_timestamp(self, ts: Any) -> Optional[str]:
+        """Convert legacy timestamp formats to local ISO 8601 string with offset."""
         if ts is None:
             return None
         if isinstance(ts, bool):
             # bool is a subclass of int; treat it as invalid.
             return None
-        if isinstance(ts, int):
-            return ts if ts >= 1_000_000_000_000 else ts * 1000
-        if isinstance(ts, float):
-            return int(ts) if ts >= 1_000_000_000_000.0 else int(ts * 1000)
+        if isinstance(ts, (int, float)):
+            if isinstance(ts, bool):
+                return None
+            seconds = ts if ts >= 1_000_000_000_000 else ts * 1000
+            dt = datetime.fromtimestamp(seconds / 1000.0)
+            return dt.strftime("%Y-%m-%dT%H:%M:%S%z")
         if isinstance(ts, str):
             ts = ts.strip()
             if not ts:
@@ -134,9 +135,9 @@ class HistoryManager:
             # Fall back to ISO 8601 parsing.
             try:
                 dt = datetime.fromisoformat(ts)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                return int(dt.timestamp() * 1000)
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone()
+                return dt.strftime("%Y-%m-%dT%H:%M:%S%z")
             except (ValueError, TypeError, OverflowError):
                 return None
         return None
@@ -204,6 +205,10 @@ class HistoryManager:
         except OSError:
             return []
 
+    def _current_timestamp(self) -> str:
+        """Return the current local time as an ISO 8601 string with offset."""
+        return datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+
     def load_all(self) -> None:
         """Load the most recent history entries up to the configured limit."""
         if not os.path.isfile(self.filepath):
@@ -232,7 +237,7 @@ class HistoryManager:
         entry = {
             "scope": scope,
             "session_id": session_id,
-            "ts": int(time.time() * 1000),
+            "ts": self._current_timestamp(),
             "text": text,
         }
         self.entries.append(entry)
