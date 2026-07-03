@@ -232,7 +232,7 @@ class TestHandleStreamCommand(unittest.TestCase):
     @patch("topsailai.send_message_to_session")
     def test_stream_send_with_message(self, mock_send):
         cli._handle_stream_command(
-            "/send hello world",
+            "/send 1 hello world",
             self.task_dir,
             self.log_files,
             "session-a",
@@ -296,7 +296,10 @@ class TestHandleStreamCommand(unittest.TestCase):
                 "session-a",
                 "/task/session-a.session.stdout",
             )
-        mock_send.assert_not_called()
+        mock_send.assert_called_once_with(
+            "session-a", "99 hello", self.task_dir,
+            stdout_path="/task/session-a.session.stdout",
+        )
 
     def test_stream_help(self):
         with patch("builtins.print") as mock_print:
@@ -466,7 +469,7 @@ class TestStreamFile(unittest.TestCase):
             cli.stream_file(path)
         finally:
             os.remove(path)
-        mock_run.assert_called_once_with(["tail", "-n", "20", path], check=False)
+        mock_run.assert_called_once_with(["tail", "-n", "100", path], check=False)
 
     @patch("topsailai.subprocess.run")
     def test_stream_file_not_found(self, mock_run):
@@ -475,7 +478,7 @@ class TestStreamFile(unittest.TestCase):
         missing_path = "/tmp/this_file_definitely_does_not_exist_12345.stdout"
         with patch("builtins.print") as mock_print:
             cli.stream_file(missing_path)
-        mock_run.assert_called_once_with(["tail", "-n", "20", missing_path], check=False)
+        mock_run.assert_called_once_with(["tail", "-n", "100", missing_path], check=False)
         printed = [call[0][0] for call in mock_print.call_args_list]
         self.assertTrue(any("not found" in str(p) for p in printed))
 
