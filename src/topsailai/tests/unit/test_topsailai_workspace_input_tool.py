@@ -511,6 +511,21 @@ class TestBuildPipePath(unittest.TestCase):
         mock_getpid.return_value = 12345
         result = _build_pipe_path("custom-session")
         self.assertIn("custom-session.12345.session.pipe", result)
+    @patch("topsailai.workspace.input_tool.os.getpid")
+    def test_empty_string_session_id_falls_back(self, mock_getpid):
+        """Test that empty string session_id falls back to 'topsailai'."""
+        from topsailai.workspace.input_tool import _build_pipe_path
+        mock_getpid.return_value = 12345
+        result = _build_pipe_path("")
+        self.assertIn("topsailai.12345.session.pipe", result)
+
+    @patch("topsailai.workspace.input_tool.os.getpid")
+    def test_none_session_id_falls_back(self, mock_getpid):
+        """Test that None session_id falls back to 'topsailai'."""
+        from topsailai.workspace.input_tool import _build_pipe_path
+        mock_getpid.return_value = 12345
+        result = _build_pipe_path(None)
+        self.assertIn("topsailai.12345.session.pipe", result)
 
 
 class TestInputFromPipeSession(unittest.TestCase):
