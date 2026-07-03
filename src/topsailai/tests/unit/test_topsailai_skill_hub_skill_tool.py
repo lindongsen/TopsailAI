@@ -30,17 +30,16 @@ from topsailai.skill_hub.skill_tool import (
     overview_skill_native,
     get_skill_file,
     get_skill_file_content,
+    _expand_preload_doc_entry,
     g_skills,
 )
 
 
 class TestIsMatchedSkill(unittest.TestCase):
     def test_with_none_keys(self):
-        """Test with None keys - to_list returns [None] so startswith fails."""
-        # The to_list function returns [None] for None input, which causes TypeError
-        # This test documents the actual behavior
-        with self.assertRaises(TypeError):
-            is_matched_skill("any_folder", None)
+        """Test with None keys returns False."""
+        result = is_matched_skill("any_folder", None)
+        self.assertFalse(result)
 
     def test_with_asterisk_wildcard(self):
         """Test that asterisk wildcard matches any skill."""
@@ -72,7 +71,7 @@ class TestIsMatchedSkill(unittest.TestCase):
         result = is_matched_skill("any_folder", [])
         self.assertFalse(result)
 
-    def test_with_none_keys(self):
+    def test_with_none_keys_second(self):
         """Test with None keys."""
         # to_list converts None to []
         result = is_matched_skill("any_folder", None)
@@ -184,6 +183,7 @@ class TestSkillInfo(unittest.TestCase):
              patch('topsailai.skill_hub.skill_tool.overview_skill_native', return_value="overview content"):
             result = str(skill_info)
             self.assertIn("TestSkill", result)
+
 
 class TestGetFileSkillMd(unittest.TestCase):
     """Test cases for get_file_skill_md function."""
@@ -389,7 +389,6 @@ description: A loaded skill
                 f.write(yaml_content)
             
             result = load_skill(tmpdir)
-            
             self.assertEqual(result.name, "LoadedSkill")
             self.assertIn(tmpdir, g_skills)
 
@@ -453,6 +452,171 @@ description: Test skill
             
         self.assertIn("# Skill Registry", result)
         self.assertIn("PromptTest", result)
+
+
+class TestExpandPreloadDocEntry(unittest.TestCase):
+    """Test cases for _expand_preload_doc_entry helper."""
+
+    def test_file_entry_returns_single_tuple(self):
+        """A file entry returns a single (relative_path, absolute_path) tuple."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            doc_path = os.path.join(tmpdir, "references", "doc1.md")
+            os.makedirs(os.path.dirname(doc_path))
+            with open(doc_path, "w", encoding="utf-8") as f:
+                f.write("doc1 content")
+
+            result = _expand_preload_doc_entry(tmpdir, "references/doc1.md")
+
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0][0], "references/doc1.md")
+            self.assertEqual(result[0][1], doc_path)
+
+    def test_file_entry_with_leading_dot_slash(self):
+        """A file entry with ./ prefix is normalized."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            doc_path = os.path.join(tmpdir, "doc1.md")
+            with open(doc_path, "w", encoding="utf-8") as f:
+                f.write("doc1 content")
+
+            result = _expand_preload_doc_entry(tmpdir, "./doc1.md")
+
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0][0], "doc1.md")
+            self.assertEqual(result[0][1], doc_path)
+
+    def test_folder_entry_returns_md_files_sorted(self):
+        """A folder entry returns all .md/.MD files sorted by relative path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            refs_dir = os.path.join(tmpdir, "references")
+            os.makedirs(refs_dir)
+            with open(os.path.join(refs_dir, "beta.md"), "w", encoding="utf-8") as f:
+                f.write("beta")
+            with open(os.path.join(refs_dir, "alpha.MD"), "w", encoding="utf-8") as f:
+                f.write("alpha")
+            with open(os.path.join(refs_dir, "ignore.txt"), "w", encoding="utf-8") as f:
+                f.write("ignored")
+
+            result = _expand_preload_doc_entry(tmpdir, "references")
+
+            self.assertEqual(len(result), 2)
+            self.assertEqual(result[0][0], os.path.join("references", "alpha.MD"))
+            self.assertEqual(result[1][0], os.path.join("references", "beta.md"))
+
+    def test_folder_entry_recurses_into_subdirectories(self):
+        """A folder entry recursively collects .md files from subdirectories."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sub_dir = os.path.join(tmpdir, "references", "sub")
+            os.makedirs(sub_dir)
+            with open(os.path.join(sub_dir, "nested.md"), "w", encoding="utf-8") as f:
+                f.write("nested")
+
+            result = _expand_preload_doc_entry(tmpdir, "references")
+
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0][0], os.path.join("references", "sub", "nested.md"))
+
+    def test_empty_folder_returns_empty_list(self):
+        """An empty folder returns an empty list."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            refs_dir = os.path.join(tmpdir, "references")
+            os.makedirs(refs_dir)
+
+            result = _expand_preload_doc_entry(tmpdir, "references")
+
+            self.assertEqual(result, [])
+
+
+class TestOverviewSkillNativePreloadDocs(unittest.TestCase):
+    """Test cases for overview_skill_native preload_docs behavior."""
+
+    def setUp(self):
+        g_skills.clear()
+
+    def tearDown(self):
+        g_skills.clear()
+
+    def test_overview_with_file_preload_doc(self):
+        """overview_skill_native keeps existing behavior for file preload_docs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            with open(skill_md, "w", encoding="utf-8") as f:
+                f.write("""---
+name: test_skill
+description: "A test skill"
+preload_docs:
+  - "references/doc1.md"
+---
+# Test Skill
+""")
+            doc_dir = os.path.join(tmpdir, "references")
+            os.makedirs(doc_dir)
+            with open(os.path.join(doc_dir, "doc1.md"), "w", encoding="utf-8") as f:
+                f.write("doc1 content")
+
+            parse_skill_folder(tmpdir)
+            result = overview_skill_native(tmpdir)
+
+            self.assertIn("### file:" + os.path.join("references", "doc1.md"), result)
+            self.assertIn("doc1 content", result)
+
+    def test_overview_with_folder_preload_doc(self):
+        """overview_skill_native loads all .md files when preload_doc is a folder."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            with open(skill_md, "w", encoding="utf-8") as f:
+                f.write("""---
+name: test_skill
+description: "A test skill"
+preload_docs:
+  - "references"
+---
+# Test Skill
+""")
+            refs_dir = os.path.join(tmpdir, "references")
+            os.makedirs(refs_dir)
+            with open(os.path.join(refs_dir, "alpha.md"), "w", encoding="utf-8") as f:
+                f.write("alpha content")
+            with open(os.path.join(refs_dir, "beta.MD"), "w", encoding="utf-8") as f:
+                f.write("beta content")
+            with open(os.path.join(refs_dir, "ignore.txt"), "w", encoding="utf-8") as f:
+                f.write("ignored")
+
+            parse_skill_folder(tmpdir)
+            result = overview_skill_native(tmpdir)
+
+            self.assertIn("### file:" + os.path.join("references", "alpha.md"), result)
+            self.assertIn("### file:" + os.path.join("references", "beta.MD"), result)
+            self.assertIn("alpha content", result)
+            self.assertIn("beta content", result)
+            self.assertNotIn("### file:" + os.path.join("references", "ignore.txt"), result)
+            self.assertNotIn("ignored", result)
+
+    def test_overview_with_mixed_preload_docs(self):
+        """overview_skill_native handles both file and folder preload_docs entries."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            with open(skill_md, "w", encoding="utf-8") as f:
+                f.write("""---
+name: test_skill
+description: "A test skill"
+preload_docs:
+  - "references"
+  - "extra.md"
+---
+# Test Skill
+""")
+            refs_dir = os.path.join(tmpdir, "references")
+            os.makedirs(refs_dir)
+            with open(os.path.join(refs_dir, "ref.md"), "w", encoding="utf-8") as f:
+                f.write("ref content")
+            with open(os.path.join(tmpdir, "extra.md"), "w", encoding="utf-8") as f:
+                f.write("extra content")
+
+            parse_skill_folder(tmpdir)
+            result = overview_skill_native(tmpdir)
+
+            self.assertIn("ref content", result)
+            self.assertIn("extra content", result)
 
 
 if __name__ == '__main__':

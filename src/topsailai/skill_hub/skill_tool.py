@@ -385,6 +385,42 @@ def exists_skill(folder_path:str) -> bool:
     """
     return folder_path in g_skills
 
+def _expand_preload_doc_entry(skill_folder: str, doc_entry: str) -> list[tuple[str, str]]:
+    """Expand a preload_docs entry into a list of (relative_path, absolute_path) tuples.
+
+    If ``doc_entry`` points to a directory, all files ending with ``.md`` or
+    ``.MD`` are collected recursively and returned in sorted order. If it
+    points to a file, the single file is returned.
+
+    Args:
+        skill_folder: Root folder of the skill.
+        doc_entry: A preload_docs entry from SKILL.md.
+
+    Returns:
+        List of tuples ``(relative_path, absolute_path)`` for each document.
+    """
+    relative_entry = doc_entry
+    for _ in range(2):
+        if relative_entry and relative_entry[0] in "./":
+            relative_entry = relative_entry[1:]
+        else:
+            break
+
+    abs_path = os.path.join(skill_folder, relative_entry)
+    if os.path.isdir(abs_path):
+        md_files = []
+        for root, _dirs, files in os.walk(abs_path):
+            for filename in files:
+                if filename.lower().endswith(".md"):
+                    full_path = os.path.join(root, filename)
+                    rel_path = os.path.relpath(full_path, skill_folder)
+                    md_files.append((rel_path, full_path))
+        md_files.sort(key=lambda item: item[0])
+        return md_files
+
+    return [(relative_entry, abs_path)]
+
+
 def overview_skill_native(folder_path:str) -> str:
     """ Every time you want to use a skill you MUST call `overview_skill` for entire details.
     Args:
@@ -438,17 +474,18 @@ def overview_skill_native(folder_path:str) -> str:
             preload_docs = to_list(preload_docs)
         else:
             preload_docs = []
-        for doc_file in preload_docs:
+        for doc_entry in preload_docs:
             try:
-                doc_content = get_skill_file_content(folder_path, doc_file)
-                if doc_content:
-                    result += f"""
+                for doc_file, _ in _expand_preload_doc_entry(folder_path, doc_entry):
+                    doc_content = get_skill_file_content(folder_path, doc_file)
+                    if doc_content:
+                        result += f"""
 ### file:{doc_file}
 {doc_content}
 
 """
             except Exception as e:
-                print_tool.print_critical(f"failed to load doc: [{doc_file}] [{e}]")
+                print_tool.print_critical(f"failed to load doc: [{doc_entry}] [{e}]")
 
     return f"\n>>> [SKILL_OVERVIEW_START:{folder_path}]\n" + result + f"\n<<< [SKILL_OVERVIEW_END:{folder_path}]\n"
 
