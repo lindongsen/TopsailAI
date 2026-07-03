@@ -16,8 +16,11 @@ Files are cleaned up via two mechanisms:
    scanned for files matching the current PID and removed.
 
 Normal exits are handled through :mod:`atexit`.  Abnormal exits are handled
-by installing signal handlers for ``SIGINT`` and ``SIGTERM`` that run the
-cleanup and then chain to the original handler.
+by installing signal handlers for ``SIGINT`` and ``SIGTERM`` that chain to
+the original handler.  Cleanup is only performed directly when the default
+signal action would terminate the process; otherwise cleanup is deferred to
+:mod:`atexit` so that a transient ``Ctrl+C`` which is caught by the
+application does not remove task files while the process continues running.
 """
 
 from __future__ import annotations
@@ -119,30 +122,43 @@ def _raise_signal(signum: int) -> None:
 
 
 def _signal_handler(signum: int, frame) -> None:
-    """Run cleanup and chain to the original signal handler."""
-    logger.info("Received signal %s, cleaning up task folder files", signum)
-    try:
-        cleanup_task_folder()
-    except Exception as exc:
-        logger.error("Error during signal cleanup: %s", exc)
+    """Chain to the original signal handler.
 
+    Cleanup is only performed directly when the default action will
+    terminate the process.  For custom handlers (e.g. Python's default
+    ``SIGINT`` handler that raises ``KeyboardInterrupt``), cleanup is
+    deferred to :mod:`atexit` so that a caught ``Ctrl+C`` does not remove
+    task files while the process continues running.
+    """
     original = _ORIGINAL_SIGNAL_HANDLERS.get(signum)
     if original is not None:
         if original == signal.SIG_DFL:
+            # Default action terminates the process; run cleanup before dying.
             signal.signal(signum, signal.SIG_DFL)
+            try:
+                cleanup_task_folder()
+            except Exception as exc:
+                logger.error("Error during signal cleanup: %s", exc)
             _raise_signal(signum)
             return
         if original == signal.SIG_IGN:
             signal.signal(signum, signal.SIG_IGN)
             return
         if callable(original):
+            # Let the custom handler decide. If it exits the process,
+            # atexit will run cleanup. If it returns, files stay intact.
             try:
                 original(signum, frame)
             except Exception:
                 pass
             return
 
+    # No original handler recorded; treat as default.
     signal.signal(signum, signal.SIG_DFL)
+    try:
+        cleanup_task_folder()
+    except Exception as exc:
+        logger.error("Error during signal cleanup: %s", exc)
     _raise_signal(signum)
 
 
@@ -151,7 +167,7 @@ def _ensure_signal_handlers_installed() -> None:
 
     The function is idempotent.  It installs handlers for ``SIGINT`` and
     ``SIGTERM`` when supported by the platform, saving the original handlers
-    so they can be chained after cleanup.
+    so they can be chained.
     """
     global _SIGNALS_INSTALLED
     with _INSTALL_LOCK:

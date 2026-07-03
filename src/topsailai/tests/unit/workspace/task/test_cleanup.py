@@ -135,7 +135,7 @@ def test_signal_handlers_installed_and_preserve_originals(restore_signal_handler
     assert current is cleanup_module._signal_handler
 
 
-def test_signal_handler_calls_cleanup_and_chains_to_original(restore_signal_handlers, isolated_cleanup_state):
+def test_signal_handler_chains_to_custom_handler_without_cleanup(restore_signal_handlers, isolated_cleanup_state):
     tmpdir = isolated_cleanup_state
     cleanup_module._SIGNALS_INSTALLED = False
     cleanup_module._ORIGINAL_SIGNAL_HANDLERS.clear()
@@ -154,8 +154,27 @@ def test_signal_handler_calls_cleanup_and_chains_to_original(restore_signal_hand
     handler = signal.getsignal(signal.SIGINT)
     handler(signal.SIGINT, None)
 
-    assert not os.path.exists(file1)
+    # Custom handler returned without exiting, so files must be preserved.
+    assert os.path.exists(file1)
     assert ("original", signal.SIGINT) in calls
+
+
+def test_signal_handler_ignores_signal_when_original_is_sig_ign(restore_signal_handlers, isolated_cleanup_state):
+    tmpdir = isolated_cleanup_state
+    cleanup_module._SIGNALS_INSTALLED = False
+    cleanup_module._ORIGINAL_SIGNAL_HANDLERS.clear()
+
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    cleanup_module._ensure_signal_handlers_installed()
+
+    file1 = _make_file(os.path.join(tmpdir, "ignored.task"))
+    register_cleanup_file(file1)
+
+    handler = signal.getsignal(signal.SIGINT)
+    handler(signal.SIGINT, None)
+
+    # Signal is ignored; files must be preserved.
+    assert os.path.exists(file1)
 
 
 def test_signal_handler_restores_default_for_uncaught_signal(restore_signal_handlers, isolated_cleanup_state):
