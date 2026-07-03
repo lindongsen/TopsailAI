@@ -205,6 +205,88 @@ def _safe_unlink(path: str) -> None:
         logger.error("Failed to remove pipe file %s: %s", abs_path, exc)
 
 
+def _get_input_history_max_backup() -> int:
+    """Return the maximum number of JSONL history backup files to keep.
+
+    Reads ``TOPSAILAI_INPUT_HISTORY_MAX_BACKUP``. Defaults to ``1``.
+    Values below ``0`` are treated as ``0`` (no backups kept).
+    """
+    value = os.getenv("TOPSAILAI_INPUT_HISTORY_MAX_BACKUP", "1")
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        count = 1
+    return max(count, 0)
+
+
+def _get_input_history_max_size() -> int:
+    """Return the maximum JSONL history file size in bytes before rotation.
+
+    Reads ``TOPSAILAI_INPUT_HISTORY_MAX_SIZE``. Defaults to ``1048576``
+    (1 MiB). Values below ``0`` disable size-based rotation.
+    """
+    value = os.getenv("TOPSAILAI_INPUT_HISTORY_MAX_SIZE", "1048576")
+    try:
+        size = int(value)
+    except (TypeError, ValueError):
+        size = 1048576
+    return max(size, 0)
+
+
+def _rotate_input_history_jsonl(history_file: str) -> None:
+    """Rotate *history_file* when it exceeds the configured size limit.
+
+    Existing backups are shifted by one index (``.1`` -> ``.2``, ...) and
+    backups beyond ``TOPSAILAI_INPUT_HISTORY_MAX_BACKUP`` are removed.
+    If rotation fails, the error is logged and the caller continues with
+    the original file.
+    """
+    if not history_file or not os.path.exists(history_file):
+        return
+
+    max_size = _get_input_history_max_size()
+    if max_size <= 0:
+        return
+
+    try:
+        current_size = os.path.getsize(history_file)
+    except OSError as exc:
+        logger.debug("Could not stat JSONL history %s: %s", history_file, exc)
+        return
+
+    if current_size <= max_size:
+        return
+
+    max_backup = _get_input_history_max_backup()
+    base, ext = os.path.splitext(history_file)
+
+    try:
+        # Remove the oldest backup if it exists.
+        oldest = f"{base}.{max_backup}{ext}"
+        if max_backup > 0 and os.path.exists(oldest):
+            os.remove(oldest)
+            logger.info("Removed oldest JSONL history backup: %s", oldest)
+
+        # Shift existing backups upward.
+        for i in range(max_backup - 1, 0, -1):
+            src = f"{base}.{i}{ext}"
+            dst = f"{base}.{i + 1}{ext}"
+            if os.path.exists(src):
+                os.replace(src, dst)
+                logger.info("Rotated JSONL history backup: %s -> %s", src, dst)
+
+        # Move the current file to .1 (only if we keep at least one backup).
+        if max_backup > 0:
+            dst = f"{base}.1{ext}"
+            os.replace(history_file, dst)
+            logger.info("Rotated JSONL history: %s -> %s", history_file, dst)
+        else:
+            os.remove(history_file)
+            logger.info("Removed oversized JSONL history: %s", history_file)
+    except OSError as exc:
+        logger.error("Failed to rotate JSONL history %s: %s", history_file, exc)
+
+
 def load_input_history_jsonl(history_file: str) -> list[dict]:
     """Load JSONL input history from *history_file*.
 
@@ -237,7 +319,10 @@ def append_input_history_jsonl(
     """Append a single message to the JSONL history file.
 
     The entry is written as ``{"ts": <ISO8601>, "session_id": ..., "text": ...}``.
-    The parent directory is created if it does not exist.
+    The parent directory is created if it does not exist. When the file
+    exceeds ``TOPSAILAI_INPUT_HISTORY_MAX_SIZE`` bytes, it is rotated and
+    the oldest backup beyond ``TOPSAILAI_INPUT_HISTORY_MAX_BACKUP`` is
+    removed.
     """
     if not history_file or not text:
         return
@@ -245,6 +330,7 @@ def append_input_history_jsonl(
         parent = os.path.dirname(history_file)
         if parent and not os.path.exists(parent):
             os.makedirs(parent, exist_ok=True)
+        _rotate_input_history_jsonl(history_file)
         entry = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
             "session_id": session_id or "",

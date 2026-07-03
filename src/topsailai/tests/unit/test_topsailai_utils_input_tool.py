@@ -689,3 +689,129 @@ class TestInputFromPipe:
                 )
         finally:
             writer.join(timeout=2.0)
+
+
+class TestInputHistoryJsonlRotation:
+    """Tests for JSONL input history rotation."""
+
+    @staticmethod
+    def _backup_path(history_file: str, index: int) -> str:
+        """Return the expected rotated backup path for *history_file*.
+
+        The implementation uses ``os.path.splitext()`` to insert the backup
+        index before the file extension, so ``history.jsonl`` becomes
+        ``history.1.jsonl`` rather than ``history.jsonl.1``.
+        """
+        base, ext = os.path.splitext(history_file)
+        return f"{base}.{index}{ext}"
+
+    def test_no_rotation_when_under_threshold(self, tmp_path, monkeypatch):
+        """Appending to a small history file does not rotate it."""
+        history_file = str(tmp_path / "history.jsonl")
+        monkeypatch.setenv("TOPSAILAI_INPUT_HISTORY_MAX_SIZE", "1024")
+        monkeypatch.setenv("TOPSAILAI_INPUT_HISTORY_MAX_BACKUP", "1")
+
+        input_tool.append_input_history_jsonl(history_file, "s1", "hello")
+        assert os.path.exists(history_file)
+        assert not os.path.exists(self._backup_path(history_file, 1))
+        entries = input_tool.load_input_history_jsonl(history_file)
+        assert len(entries) == 1
+        assert entries[0]["text"] == "hello"
+
+    def test_rotation_when_exceeds_threshold(self, tmp_path, monkeypatch):
+        """When the history file exceeds the size limit it is rotated to .1."""
+        history_file = str(tmp_path / "history.jsonl")
+        monkeypatch.setenv("TOPSAILAI_INPUT_HISTORY_MAX_SIZE", "10")
+        monkeypatch.setenv("TOPSAILAI_INPUT_HISTORY_MAX_BACKUP", "1")
+
+        # Pre-fill the file so it is already over the 10-byte limit.
+        with open(history_file, "w", encoding="utf-8") as fd:
+            fd.write('{"ts":"2025-01-01T00:00:00+0000","session_id":"s1","text":"initial long content"}\n')
+
+        input_tool.append_input_history_jsonl(history_file, "s2", "next")
+        assert os.path.exists(history_file)
+        backup = self._backup_path(history_file, 1)
+        assert os.path.exists(backup)
+        # The new entry is written to the fresh file.
+        entries = input_tool.load_input_history_jsonl(history_file)
+        assert len(entries) == 1
+        assert entries[0]["text"] == "next"
+        # The old oversized content moved to the backup.
+        backup_entries = input_tool.load_input_history_jsonl(backup)
+        assert len(backup_entries) == 1
+        assert backup_entries[0]["text"] == "initial long content"
+
+    def test_backups_shift_and_oldest_is_removed(self, tmp_path, monkeypatch):
+        """Existing backups are shifted and the oldest beyond max_backup is deleted."""
+        history_file = str(tmp_path / "history.jsonl")
+        monkeypatch.setenv("TOPSAILAI_INPUT_HISTORY_MAX_SIZE", "10")
+        monkeypatch.setenv("TOPSAILAI_INPUT_HISTORY_MAX_BACKUP", "2")
+
+        # Create current file and one existing backup.
+        with open(history_file, "w", encoding="utf-8") as fd:
+            fd.write('{"ts":"2025-01-03T00:00:00+0000","session_id":"s1","text":"current"}\n')
+        with open(self._backup_path(history_file, 1), "w", encoding="utf-8") as fd:
+            fd.write('{"ts":"2025-01-02T00:00:00+0000","session_id":"s1","text":"backup1"}\n')
+
+        input_tool.append_input_history_jsonl(history_file, "s2", "next")
+        assert os.path.exists(history_file)
+        assert os.path.exists(self._backup_path(history_file, 1))
+        assert os.path.exists(self._backup_path(history_file, 2))
+        assert not os.path.exists(self._backup_path(history_file, 3))
+
+        assert input_tool.load_input_history_jsonl(history_file)[0]["text"] == "next"
+        assert input_tool.load_input_history_jsonl(self._backup_path(history_file, 1))[0]["text"] == "current"
+        assert input_tool.load_input_history_jsonl(self._backup_path(history_file, 2))[0]["text"] == "backup1"
+
+    def test_max_backup_zero_removes_oversized_file(self, tmp_path, monkeypatch):
+        """When max_backup is 0 the oversized file is removed without backup."""
+        history_file = str(tmp_path / "history.jsonl")
+        monkeypatch.setenv("TOPSAILAI_INPUT_HISTORY_MAX_SIZE", "10")
+        monkeypatch.setenv("TOPSAILAI_INPUT_HISTORY_MAX_BACKUP", "0")
+
+        with open(history_file, "w", encoding="utf-8") as fd:
+            fd.write('{"ts":"2025-01-01T00:00:00+0000","session_id":"s1","text":"initial long content"}\n')
+
+        input_tool.append_input_history_jsonl(history_file, "s2", "next")
+        assert os.path.exists(history_file)
+        assert not os.path.exists(self._backup_path(history_file, 1))
+        entries = input_tool.load_input_history_jsonl(history_file)
+        assert len(entries) == 1
+        assert entries[0]["text"] == "next"
+
+    def test_negative_max_size_disables_rotation(self, tmp_path, monkeypatch):
+        """A negative max size disables size-based rotation."""
+        history_file = str(tmp_path / "history.jsonl")
+        monkeypatch.setenv("TOPSAILAI_INPUT_HISTORY_MAX_SIZE", "-1")
+        monkeypatch.setenv("TOPSAILAI_INPUT_HISTORY_MAX_BACKUP", "1")
+
+        with open(history_file, "w", encoding="utf-8") as fd:
+            fd.write('{"ts":"2025-01-01T00:00:00+0000","session_id":"s1","text":"initial long content"}\n')
+
+        input_tool.append_input_history_jsonl(history_file, "s2", "next")
+        assert os.path.exists(history_file)
+        assert not os.path.exists(self._backup_path(history_file, 1))
+        entries = input_tool.load_input_history_jsonl(history_file)
+        assert len(entries) == 2
+
+    def test_invalid_env_values_fall_back_to_defaults(self, tmp_path, monkeypatch):
+        """Non-integer env values fall back to the default size and backup count."""
+        history_file = str(tmp_path / "history.jsonl")
+        monkeypatch.setenv("TOPSAILAI_INPUT_HISTORY_MAX_SIZE", "not-a-number")
+        monkeypatch.setenv("TOPSAILAI_INPUT_HISTORY_MAX_BACKUP", "also-not-a-number")
+
+        # Default size is 1 MiB, so a small file should not rotate.
+        input_tool.append_input_history_jsonl(history_file, "s1", "hello")
+        assert os.path.exists(history_file)
+        assert not os.path.exists(self._backup_path(history_file, 1))
+
+    def test_rotation_creates_parent_directory(self, tmp_path, monkeypatch):
+        """Appending still creates the parent directory after rotation."""
+        history_file = str(tmp_path / "nested" / "dir" / "history.jsonl")
+        monkeypatch.setenv("TOPSAILAI_INPUT_HISTORY_MAX_SIZE", "10")
+        monkeypatch.setenv("TOPSAILAI_INPUT_HISTORY_MAX_BACKUP", "1")
+
+        input_tool.append_input_history_jsonl(history_file, "s1", "hello world")
+        assert os.path.exists(history_file)
+        entries = input_tool.load_input_history_jsonl(history_file)
+        assert len(entries) == 1

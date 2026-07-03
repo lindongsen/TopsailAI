@@ -124,6 +124,14 @@ TOPSAILAI_INPUT_PIPE_ENABLED=0
 # indefinitely. Positive float values are treated as seconds.
 # TOPSAILAI_INPUT_PIPE_TIMEOUT=""
 
+# Maximum size in bytes of the JSONL input history file before rotation.
+# Default is 1048576 (1 MiB). Values below 0 disable rotation.
+TOPSAILAI_INPUT_HISTORY_MAX_SIZE=1048576
+
+# Maximum number of JSONL input history backup files to keep. Default is 1.
+# Values below 0 are treated as 0 (no backups kept).
+TOPSAILAI_INPUT_HISTORY_MAX_BACKUP=1
+
 # Agent Type, default is react
 TOPSAILAI_AGENT_TYPE=""
 

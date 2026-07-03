@@ -25,3 +25,15 @@ Key logic:
 - `detect_duplicate_tool_call()` decorator is defined and ready to wrap `exec_tool_func()` in `ai_base/agent_types/tool.py`, but is intentionally not applied yet pending human approval.
 
 System impact: Existing behavior is unchanged because the decorator is not wired in. Once applied, duplicate calls will be detectable at execution time, enabling future mitigation such as returning a cached result, emitting a warning, or aborting the loop.
+
+## Input History Rotation
+
+Added size-based rotation for the JSONL input history file (`input_history.jsonl`) so it no longer grows without bound.
+
+Key logic:
+- Two new environment variables control rotation: `TOPSAILAI_INPUT_HISTORY_MAX_SIZE` (default 1048576 bytes, i.e. 1 MiB) and `TOPSAILAI_INPUT_HISTORY_MAX_BACKUP` (default 1 backup).
+- `append_input_history_jsonl()` checks the current history file size before appending. If the size exceeds the configured maximum, it rotates existing backups and renames the current file to the first backup slot.
+- Values below 0 for either variable disable rotation or backup retention respectively.
+- Rotation is performed before writing the new entry, so the active history file always stays near or below the configured size.
+
+System impact: Prevents long-running sessions from producing an unbounded `input_history.jsonl`. Existing history is preserved as `.1.jsonl` (and higher indexes up to the backup limit) before truncation.
