@@ -8,9 +8,12 @@ workspace: /TopsailAI/src/topsailai
 context:
   _default:
     - project.yaml
-    - MEMO.md
     - workspace/readme.md
     - docs/Environment_Variables.md # env_template
+    - MEMO.md
+    - MEMO.CommonUtils.md
+    - MEMO.AgentCore.md
+    - MEMO.AgentWorkers.md
 
   default: []
 
