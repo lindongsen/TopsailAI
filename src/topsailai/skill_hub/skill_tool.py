@@ -29,6 +29,7 @@ from topsailai.utils.format_tool import to_list, to_int
 from topsailai.utils.env_tool import EnvReaderInstance
 from topsailai.utils import (
     file_tool,
+    print_tool,
 )
 from topsailai.prompt_hub import prompt_tool
 from topsailai.workspace.folder_constants import FOLDER_SKILL
@@ -446,8 +447,8 @@ def overview_skill_native(folder_path:str) -> str:
 {doc_content}
 
 """
-            except Exception:
-                pass
+            except Exception as e:
+                print_tool.print_critical(f"failed to load doc: [{doc_file}] [{e}]")
 
     return f"\n>>> [SKILL_OVERVIEW_START:{folder_path}]\n" + result + f"\n<<< [SKILL_OVERVIEW_END:{folder_path}]\n"
 
