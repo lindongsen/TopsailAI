@@ -532,19 +532,38 @@ The agent can inject runtime messages into the Agent2LLM context before each LLM
 
 ### Environment Variables
 
-- `TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_ENABLED` — master switch (`0`/`1`).
+- `TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_ENABLED` — master switch (`0`/`1`). **Default is `1` (enabled).**
 - `TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_SOURCE` — source type (`file` by default).
 - `TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_FILE` — JSONL file path for the `file` source. When empty, defaults to `{FOLDER_WORKSPACE_TASK}/{session_id}.{pid}.session.agent2llm_inject_messages.jsonl`, where `session_id` falls back to `env_tool.get_session_id()` or `"topsailai"`.
+
+### JSONL Message Format
+
+The `file` source reads one message per line. Each line must be a JSON object with at least a `role` and a `content` field. Two content forms are supported:
+
+1. **Simple format** — plain text content:
+   ```json
+   {"role": "user", "content": "plain text"}
+   ```
+   This is wrapped internally as a structured `observation` message before injection.
+
+2. **Structured format** — already formatted as an internal content dict:
+   ```json
+   {"role": "user", "content": {"step_name": "observation", "raw_text": "..."}}
+   ```
+   Lines that already contain `step_name` and `raw_text` are passed through unchanged.
+
+3. **Optional `ts` field** — creation timestamp for representation/logging:
+   ```json
+   {"role": "user", "content": "...", "ts": "2026-07-04T12:34:56.789012+00:00"}
+   ```
+   The `ts` field is produced automatically when messages are written via `write_message()` / `produce_message()`. It is **stripped before injection** into the Agent2LLM context and never reaches `agent.add_user_message`.
 
 ### Key Design Points
 
 - `ai_base` does not import any `workspace/` modules; it only reads the source from thread-local storage.
-- The file source clears the file only after parsing succeeds. If clearing fails, the messages are not injected, preventing duplicate reads on the next iteration.
-- A defensive `_last_digest` check prevents duplicate injection if the file cannot be cleared.
-- Messages are appended at the tail of `agent.messages` via `agent.add_user_message(..., need_print=False)`, reusing existing content formatting and context-archiving hooks.
-- The source is unset in `AgentBase.run()`'s `finally` block to avoid leaking across thread reuse.
 - The default file path follows the session-scoped pipe/stdout filename convention: `{session_id}.{pid}.session.agent2llm_inject_messages.jsonl` under `FOLDER_WORKSPACE_TASK`, so concurrent processes do not collide.
-
+- The `ts` field is representation-only and is removed by `apply_agent2llm_message_source()` before the message is processed.
+- The file source registers an `atexit` handler that deletes the inject file when the process exits, preventing stale JSONL files from accumulating.
 ### Note for maintainers
 
 When adding a new source type, implement `Agent2LLMMessageSource`, register it in `workspace/agent/runtime_message_sources/__init__.py`, and update `pre_run_agent2llm_source.py` if the source requires additional configuration. Do not change `ai_base/agent_base.py` unless the trigger semantics change.

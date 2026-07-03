@@ -260,7 +260,7 @@ These variables configure the optional runtime message source that injects messa
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_ENABLED` | `"0"` | Master switch. `1` enables runtime message injection, `0` disables it. |
+| `TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_ENABLED` | `"1"` | Master switch. `1` enables runtime message injection (default), `0` disables it. |
 | `TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_SOURCE` | `"file"` | Source type. Currently only `file` is implemented. Future sources (e.g. `redis`, `http`) can be added without changing `ai_base`. |
 | `TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_FILE` | `""` | Path to the JSONL file consumed by the `file` source. When empty, defaults to `{FOLDER_WORKSPACE_TASK}/{session_id}.{pid}.session.agent2llm_inject_messages.jsonl`, where `session_id` falls back to `env_tool.get_session_id()` or `"topsailai"`. Each line must be a JSON object with at least `content`; `role` is optional and defaults to `user`. |
 
@@ -271,7 +271,7 @@ These variables configure the optional runtime message source that injects messa
 - Messages are appended at the tail of `agent.messages` as `user` role messages with `step_name=observation`.
 - The source is consumed from thread-local storage, so it is scoped to the current agent execution thread.
 - The default filename follows the session-scoped convention used by the session stdout tee file and input pipe (`{session_id}.{pid}.session.*`) so concurrent processes do not collide.
-
+- Each JSONL line may include a `ts` field containing an ISO 8601 UTC creation timestamp. This field is for representation/logging only and is stripped before the message is injected into the Agent2LLM context.
 ## Team Configuration
 
 | Variable | Default | Description |

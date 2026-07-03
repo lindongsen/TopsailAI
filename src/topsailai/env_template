@@ -14,8 +14,9 @@ TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES=17
 # Agent2LLM Runtime Message Injection
 # =============================================================================
 
-# Master switch. Set to 1 to enable runtime message injection into Agent2LLM.
-TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_ENABLED=0
+# Master switch. Runtime message injection into Agent2LLM is enabled by default.
+# Set to 0 to disable.
+TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_ENABLED=1
 
 # Source type. Currently only "file" is implemented.
 TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_SOURCE=file

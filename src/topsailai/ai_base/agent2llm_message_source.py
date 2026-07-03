@@ -174,6 +174,12 @@ def apply_agent2llm_message_source(agent) -> int:
             logger.warning("skip non-dict runtime message from source: %s", type(msg))
             continue
 
+        # The ``ts`` field is a representation-only creation timestamp produced
+        # by the message source. It must never be injected into the Agent2LLM
+        # context, so strip it before processing the message.
+        msg = msg.copy()
+        msg.pop("ts", None)
+
         role = msg.get("role", ROLE_USER)
         content = msg.get("content", "")
 

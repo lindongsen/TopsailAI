@@ -30,7 +30,7 @@ def pre_run_set_agent2llm_message_source(self):
             signature consistency).
     """
     enabled = env_tool.EnvReaderInstance.check_bool(
-        "TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_ENABLED", default=False
+        "TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_ENABLED", default=True
     )
     if not enabled:
         return

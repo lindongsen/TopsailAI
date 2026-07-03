@@ -1,7 +1,9 @@
+import atexit
 import hashlib
 import json
 import logging
 import os
+from datetime import datetime, timezone
 
 from topsailai.ai_base.agent2llm_message_source import Agent2LLMMessageSource
 from topsailai.ai_base.constants import ROLE_USER, STEP_NAME_OBSERVATION
@@ -9,6 +11,11 @@ from topsailai.utils import env_tool
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
 
 logger = logging.getLogger(__name__)
+
+
+def _now_iso_ts() -> str:
+    """Return the current UTC time as an ISO 8601 timestamp string."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def get_default_inject_message_file_path(session_id: str | None = None) -> str:
@@ -48,6 +55,11 @@ def write_message(
     * If ``content`` is a dict, it is written as-is, allowing callers to
       inject pre-structured messages.
 
+    A top-level ``ts`` field containing an ISO 8601 UTC creation timestamp is
+    added to every JSONL line. This field is for representation/logging only
+    and is stripped by the consumer before the message is injected into the
+    Agent2LLM context.
+
     Args:
         file_path: Path to the JSONL file.
         content: Message payload (string or dict).
@@ -64,6 +76,8 @@ def write_message(
         msg = Agent2LLMMessageSource.build_message(
             content, role=role, step_name=step_name
         )
+
+    msg["ts"] = _now_iso_ts()
 
     parent_dir = os.path.dirname(file_path)
     if parent_dir and not os.path.exists(parent_dir):
@@ -102,6 +116,22 @@ class FileAgent2LLMMessageSource(Agent2LLMMessageSource):
     def __init__(self, file_path: str):
         self.file_path = file_path
         self._last_digest = None
+        # Register cleanup so the inject file is removed when the process
+        # exits. This avoids leaving stale JSONL files behind after each run.
+        atexit.register(self._delete_file_on_exit)
+
+    def _delete_file_on_exit(self):
+        """Delete the inject file if it exists. Called via atexit."""
+        if self.file_path and os.path.exists(self.file_path):
+            try:
+                os.remove(self.file_path)
+                logger.debug("removed inject message file on exit [%s]", self.file_path)
+            except Exception as e:
+                logger.warning(
+                    "failed to remove inject message file on exit [%s]: %s",
+                    self.file_path,
+                    e,
+                )
 
     def produce_message(
         self,

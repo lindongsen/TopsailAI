@@ -131,5 +131,28 @@ class TestPreRunAgent2LLMMessageSource(unittest.TestCase):
         self.assertIsNone(get_agent2llm_message_source())
 
 
+    def test_hook_default_enabled_when_env_var_unset(self):
+        """When TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_ENABLED is unset, the hook
+        should default to enabled and register the file source."""
+        # Ensure the variable is not set in the environment.
+        env = {
+            "TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_SOURCE": "file",
+            "TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_FILE": "",
+        }
+        with patch.dict(
+            os.environ,
+            env,
+            clear=True,
+        ), patch("topsailai.utils.env_tool.get_session_id", return_value=None):
+            pre_run_set_agent2llm_message_source(None)
+
+        source = get_agent2llm_message_source()
+        self.assertIsNotNone(source)
+        self.assertTrue(
+            source.file_path.endswith(".session.agent2llm_inject_messages.jsonl"),
+            f"expected session-scoped filename suffix, got {source.file_path}",
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

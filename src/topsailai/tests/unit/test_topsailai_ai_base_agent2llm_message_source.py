@@ -254,5 +254,45 @@ class TestApplyAgent2LLMMessageSource(unittest.TestCase):
         self.agent.add_user_message.assert_not_called()
 
 
+    def test_ts_field_is_stripped_before_injection(self):
+        """The ts creation timestamp must be removed before the message is
+        passed to agent.add_user_message."""
+        structured = {
+            MSG_KEY_STEP_NAME: STEP_NAME_OBSERVATION,
+            MSG_KEY_RAW_TEXT: "structured content",
+        }
+        source = DummySource([{
+            "role": ROLE_USER,
+            "content": structured,
+            "ts": "2026-07-04T12:34:56.789012+00:00",
+        }])
+        set_agent2llm_message_source(source)
+
+        count = apply_agent2llm_message_source(self.agent)
+
+        self.assertEqual(count, 1)
+        self.agent.add_user_message.assert_called_once()
+        content = self.agent.add_user_message.call_args.args[0]
+        self.assertEqual(content, structured)
+        self.assertNotIn("ts", content)
+
+    def test_ts_field_stripped_for_simple_content(self):
+        """ts must be stripped even for simple string content that gets
+        wrapped into the structured format."""
+        source = DummySource([{
+            "role": ROLE_USER,
+            "content": "plain text",
+            "ts": "2026-07-04T12:34:56.789012+00:00",
+        }])
+        set_agent2llm_message_source(source)
+
+        count = apply_agent2llm_message_source(self.agent)
+
+        self.assertEqual(count, 1)
+        content = self.agent.add_user_message.call_args.args[0]
+        self.assertEqual(content[MSG_KEY_STEP_NAME], STEP_NAME_OBSERVATION)
+        self.assertEqual(content[MSG_KEY_RAW_TEXT], "plain text")
+        self.assertNotIn("ts", content)
+
 if __name__ == '__main__':
     unittest.main()

@@ -131,6 +131,31 @@ class TestWriteMessage(unittest.TestCase):
             result = write_message(self.file_path, "hello")
         self.assertFalse(result)
 
+    def test_write_message_includes_ts_field(self):
+        result = write_message(self.file_path, "hello")
+        self.assertTrue(result)
+
+        with open(self.file_path, "r", encoding="utf-8") as fd:
+            parsed = json.loads(fd.readline())
+
+        self.assertIn("ts", parsed)
+        self.assertIsInstance(parsed["ts"], str)
+        self.assertTrue(parsed["ts"].endswith("+00:00"))
+
+    def test_write_message_ts_is_iso_8601_utc(self):
+        from datetime import datetime, timezone
+
+        before = datetime.now(timezone.utc)
+        write_message(self.file_path, "hello")
+        after = datetime.now(timezone.utc)
+
+        with open(self.file_path, "r", encoding="utf-8") as fd:
+            parsed = json.loads(fd.readline())
+
+        ts = datetime.fromisoformat(parsed["ts"])
+        self.assertTrue(before <= ts <= after)
+        self.assertEqual(ts.tzinfo, timezone.utc)
+
 
 class TestFileAgent2LLMMessageSource(unittest.TestCase):
     """Test file-based runtime message source."""
@@ -348,6 +373,110 @@ class TestFileAgent2LLMMessageSourceProduceMessage(unittest.TestCase):
         source = FileAgent2LLMMessageSource(self.file_path)
         self.assertTrue(callable(getattr(source, "produce_message", None)))
 
+
+
+class TestFileAgent2LLMMessageSourceTsStripping(unittest.TestCase):
+    """Test that the ts field is stripped before injection into Agent2LLM."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.file_path = os.path.join(self.tmpdir, "inject_messages.jsonl")
+
+    def tearDown(self):
+        if os.path.exists(self.tmpdir):
+            shutil.rmtree(self.tmpdir)
+
+    def _write_lines(self, lines):
+        with open(self.file_path, "w", encoding="utf-8") as fd:
+            for line in lines:
+                fd.write(line + "\n")
+
+    def test_ts_field_stripped_by_apply_agent2llm_message_source(self):
+        from unittest.mock import MagicMock
+        from topsailai.ai_base.agent2llm_message_source import (
+            set_agent2llm_message_source,
+            unset_agent2llm_message_source,
+        )
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
+
+        rid_all_thread_vars()
+        try:
+            self._write_lines([
+                json.dumps({
+                    "role": ROLE_USER,
+                    "content": "hello",
+                    "ts": "2026-07-04T12:34:56.789012+00:00",
+                }),
+            ])
+            source = FileAgent2LLMMessageSource(self.file_path)
+            set_agent2llm_message_source(source)
+
+            agent = MagicMock()
+            agent.messages = []
+
+            count = apply_agent2llm_message_source(agent)
+
+            self.assertEqual(count, 1)
+            agent.add_user_message.assert_called_once()
+            content = agent.add_user_message.call_args.args[0]
+            self.assertEqual(content[MSG_KEY_STEP_NAME], STEP_NAME_OBSERVATION)
+            self.assertEqual(content[MSG_KEY_RAW_TEXT], "hello")
+            self.assertNotIn("ts", content)
+        finally:
+            unset_agent2llm_message_source()
+
+    def test_produce_message_includes_ts_field(self):
+        source = FileAgent2LLMMessageSource(self.file_path)
+        result = source.produce_message("hello")
+        self.assertTrue(result)
+
+        with open(self.file_path, "r", encoding="utf-8") as fd:
+            parsed = json.loads(fd.readline())
+
+        self.assertIn("ts", parsed)
+        self.assertIsInstance(parsed["ts"], str)
+
+    def test_consume_messages_preserves_ts_for_consumer(self):
+        """consume_messages yields the raw line including ts; stripping happens
+        later in apply_agent2llm_message_source."""
+        self._write_lines([
+            json.dumps({
+                "role": ROLE_USER,
+                "content": "hello",
+                "ts": "2026-07-04T12:34:56.789012+00:00",
+            }),
+        ])
+        source = FileAgent2LLMMessageSource(self.file_path)
+        messages = list(source.consume_messages())
+
+        self.assertEqual(len(messages), 1)
+        self.assertIn("ts", messages[0])
+        self.assertEqual(messages[0]["ts"], "2026-07-04T12:34:56.789012+00:00")
+
+    def test_file_deleted_on_process_exit(self):
+        """The inject file should be removed when the source is cleaned up at
+        process exit."""
+        source = FileAgent2LLMMessageSource(self.file_path)
+        source.produce_message("hello")
+        self.assertTrue(os.path.exists(self.file_path))
+
+        source._delete_file_on_exit()
+
+        self.assertFalse(os.path.exists(self.file_path))
+
+    def test_atexit_handler_registered(self):
+        """Creating a source should register an atexit cleanup handler."""
+        from unittest.mock import patch
+
+        with patch("atexit.register") as mock_register:
+            source = FileAgent2LLMMessageSource(self.file_path)
+
+        mock_register.assert_called_once()
+        self.assertEqual(mock_register.call_args.args[0], source._delete_file_on_exit)
+
+
+if __name__ == '__main__':
+    unittest.main()
 
 if __name__ == '__main__':
     unittest.main()
