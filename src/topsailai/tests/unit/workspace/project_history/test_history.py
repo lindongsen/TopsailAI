@@ -251,5 +251,61 @@ class TestRotation:
         assert json.loads(lines[1])["session_id"] == "record-2"
 
 
+
+
+class TestLoadProjectHistory:
+    """Test loading project history with the most-recent-N limit."""
+
+    def test_load_returns_most_recent_100_by_default(self, temp_history_path):
+        total = 150
+        with temp_history_path.open("w", encoding="utf-8") as f:
+            for i in range(total):
+                f.write(json.dumps({"session_id": f"session-{i:03d}"}) + "\n")
+
+        records = history.load_project_history()
+        assert len(records) == 100
+        assert records[0]["session_id"] == "session-050"
+        assert records[-1]["session_id"] == "session-149"
+
+    def test_load_returns_all_records_when_below_limit(self, temp_history_path):
+        total = 10
+        with temp_history_path.open("w", encoding="utf-8") as f:
+            for i in range(total):
+                f.write(json.dumps({"session_id": f"session-{i:03d}"}) + "\n")
+
+        records = history.load_project_history()
+        assert len(records) == total
+        assert records[0]["session_id"] == "session-000"
+        assert records[-1]["session_id"] == "session-009"
+
+    def test_load_returns_empty_list_when_file_missing(self, temp_history_path):
+        # Ensure the file does not exist.
+        if temp_history_path.exists():
+            temp_history_path.unlink()
+
+        records = history.load_project_history()
+        assert records == []
+
+    def test_load_respects_custom_max_entries(self, temp_history_path):
+        total = 50
+        with temp_history_path.open("w", encoding="utf-8") as f:
+            for i in range(total):
+                f.write(json.dumps({"session_id": f"session-{i:03d}"}) + "\n")
+
+        records = history.load_project_history(max_entries=20)
+        assert len(records) == 20
+        assert records[0]["session_id"] == "session-030"
+        assert records[-1]["session_id"] == "session-049"
+
+    def test_load_skips_malformed_lines(self, temp_history_path):
+        with temp_history_path.open("w", encoding="utf-8") as f:
+            for i in range(105):
+                f.write(json.dumps({"session_id": f"session-{i:03d}"}) + "\n")
+            f.write("this is not json\n")
+
+        records = history.load_project_history()
+        assert len(records) == 100
+        assert records[-1]["session_id"] == "session-104"
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

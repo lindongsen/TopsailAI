@@ -39,31 +39,29 @@ SPLIT_LINE = "------------------------------------------------------------------
 INPUT_TIPS = f">>> Your Turn: (pid={os.getpid()}) "
 
 
-def _load_input_history_jsonl() -> None:
+def _load_input_history_jsonl(history_file: str | None = None) -> None:
     """Load previous input history from the JSONL file into readline.
 
     Each line in the history file is expected to be a JSON object with a
     ``text`` field.  The ``text`` values are added to the in-process readline
     history so the user can recall previous messages with the UP/DOWN arrow
     keys in direct terminal input mode.
+
+    Only the most recent ``TOPSAILAI_HISTORY_LOAD_MAX_ENTRIES`` records are
+    loaded (default 100).  Older records are kept on disk but are not added to
+    the in-memory readline history.
+
+    Args:
+        history_file: Path to the JSONL history file. Defaults to
+            ``FILE_INPUT_HISTORY_JSONL``.
     """
-    if not os.path.exists(FILE_INPUT_HISTORY_JSONL):
-        return
-    try:
-        with open(FILE_INPUT_HISTORY_JSONL, "r", encoding="utf-8") as fd:
-            for line in fd:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                    text = entry.get("text", "")
-                    if text:
-                        readline.add_history(text)
-                except json.JSONDecodeError:
-                    continue
-    except Exception:
-        pass
+    if history_file is None:
+        history_file = FILE_INPUT_HISTORY_JSONL
+    entries = utils_input_tool.load_input_history_jsonl(history_file)
+    for entry in entries:
+        text = entry.get("text", "")
+        if text:
+            readline.add_history(text)
 
 
 def _append_input_history_jsonl(message: str) -> None:

@@ -38,6 +38,7 @@ These variables define the agent's working environment and project access scope.
 | `TOPSAILAI_INPUT_PIPE_TIMEOUT` | `""` | Timeout in seconds for pipe-based input. Empty, unset, or invalid means wait indefinitely. Positive float values are treated as seconds. Also used by the `/send` command when opening the pipe for writing. |
 | `TOPSAILAI_INPUT_HISTORY_MAX_SIZE` | `1048576` | Maximum size in bytes of the JSONL input history file (`.input_history.jsonl`) before rotation. Default is `1048576` (1 MiB). Values below `0` disable size-based rotation. |
 | `TOPSAILAI_INPUT_HISTORY_MAX_BACKUP` | `1` | Maximum number of JSONL input history backup files to keep. Default is `1`. Values below `0` are treated as `0` (no backups kept). |
+| `TOPSAILAI_HISTORY_LOAD_MAX_ENTRIES` | `100` | Maximum number of recent records to load into memory from `.input_history.jsonl` and `.project_history.jsonl`. Older records remain on disk but are not loaded. Values that are unset, empty, zero, negative, or non-numeric fall back to `100`. |
 | `TOPSAILAI_AGENT_TYPE` | `""` | Agent type, default is `react`. |
 | `TOPSAILAI_AGENT_NAME` | `"TopsailAI"` | Default agent name. |
 | `TOPSAILAI_HUMAN_NAME` | `"Topsail"` | Human name used in interactions. |
@@ -47,7 +48,6 @@ These variables define the agent's working environment and project access scope.
 | `TOPSAILAI_DISABLE_ROOT_LOGGER_CONFIG` | `"0"` | When set to `1`, importing `topsailai.logger` will not automatically configure the Python root logger. Useful when integrating with external frameworks that manage their own root logger. |
 
 ## OpenAI Configuration
-
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OPENAI_MODEL` | `"Kimi-K2.5"` | Default model used for LLM interactions. |

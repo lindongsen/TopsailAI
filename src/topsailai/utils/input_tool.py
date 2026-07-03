@@ -16,13 +16,15 @@ import json
 import logging
 import os
 import readline
-import select
 import subprocess
+import select
 import sys
 import termios
 import textwrap
 import time
 import typing
+
+from topsailai.utils.env_tool import get_history_load_max_entries
 
 logger = logging.getLogger(__name__)
 
@@ -287,12 +289,20 @@ def _rotate_input_history_jsonl(history_file: str) -> None:
         logger.error("Failed to rotate JSONL history %s: %s", history_file, exc)
 
 
-def load_input_history_jsonl(history_file: str) -> list[dict]:
+def load_input_history_jsonl(
+    history_file: str, *, max_entries: int | None = None
+) -> list[dict]:
     """Load JSONL input history from *history_file*.
 
     Each line must be a JSON object. Lines that cannot be parsed are skipped.
+    Only the most recent ``max_entries`` records are returned. When
+    ``max_entries`` is not provided, the value from
+    ``get_history_load_max_entries()`` is used.
+
     Returns a list of history entries ordered from oldest to newest.
     """
+    if max_entries is None:
+        max_entries = get_history_load_max_entries()
     entries: list[dict] = []
     if not history_file or not os.path.exists(history_file):
         return entries
@@ -310,6 +320,8 @@ def load_input_history_jsonl(history_file: str) -> list[dict]:
                     continue
     except OSError as exc:
         logger.debug("Could not load JSONL history %s: %s", history_file, exc)
+    if max_entries > 0 and len(entries) > max_entries:
+        entries = entries[-max_entries:]
     return entries
 
 
@@ -540,12 +552,14 @@ def _read_available(fd: int) -> bytes:
 
 
 def _spawn_terminal_input_subprocess(
-    prompt: str = "",
+    prompt: str,
+    *,
     timeout: float | None = None,
     stdin_fd: int | None = None,
     history_file: str | None = None,
     completion_file: str | None = None,
-) -> tuple[subprocess.Popen | None, int | None]:
+    max_entries: int | None = None,
+) -> tuple[subprocess.Popen | None, int]:
     """Spawn a helper process that reads a terminal line and forwards it.
 
     The helper reads from the caller's terminal *stdin_fd* (which must be a
@@ -557,7 +571,9 @@ def _spawn_terminal_input_subprocess(
     If *history_file* is provided, it is treated as a JSONL file where each
     line is ``{"ts": ..., "session_id": ..., "text": ...}``.  The ``text``
     values are loaded into readline history so the user can navigate previous
-    messages with the UP/DOWN arrow keys.
+    messages with the UP/DOWN arrow keys. Only the most recent
+    *max_entries* history items are loaded; when ``None`` the value from
+    ``get_history_load_max_entries()`` is used.
 
     If *completion_file* is provided, it is treated as a JSON file containing
     completion entries.  Each entry may be a plain string or an object with
@@ -578,6 +594,9 @@ def _spawn_terminal_input_subprocess(
         Optional path to a JSONL history file to preload into readline.
     completion_file:
         Optional path to a JSON file containing TAB completion candidates.
+    max_entries:
+        Maximum number of recent history entries to load. ``None`` uses the
+        configured default.
 
     Returns
     -------
@@ -586,6 +605,9 @@ def _spawn_terminal_input_subprocess(
     """
     if sys.platform == "win32" or not hasattr(os, "mkfifo"):
         return None, None
+
+    if max_entries is None:
+        max_entries = get_history_load_max_entries()
 
     read_fd, write_fd = os.pipe()
 
@@ -602,6 +624,7 @@ prompt = {prompt!r}
 timeout = {timeout!r}
 history_file = {history_file!r}
 completion_file = {completion_file!r}
+max_entries = {max_entries!r}
 
 def _restore_termios():
     try:
@@ -629,6 +652,7 @@ signal.signal(signal.SIGTERM, _term_handler)
 # Preload JSONL history so UP/DOWN arrow keys recall previous messages.
 if history_file:
     try:
+        history_entries = []
         with open(history_file, "r", encoding="utf-8") as fd:
             for line in fd:
                 line = line.strip()
@@ -638,12 +662,15 @@ if history_file:
                     entry = json.loads(line)
                     text = entry.get("text", "")
                     if text:
-                        readline.add_history(text)
+                        history_entries.append(text)
                 except Exception:
                     continue
+        if max_entries > 0 and len(history_entries) > max_entries:
+            history_entries = history_entries[-max_entries:]
+        for text in history_entries:
+            readline.add_history(text)
     except Exception:
         pass
-
 # Load TAB completion candidates from JSON.  Aliases expand to text.
 _completion_map = {{}}
 

@@ -120,6 +120,33 @@ def is_use_tool_calls() -> bool:
         return True
     return False
 
+def get_history_load_max_entries(default: int = 100) -> int:
+    """Return the maximum number of history entries to load into memory.
+
+    Reads ``TOPSAILAI_HISTORY_LOAD_MAX_ENTRIES``. Values that are unset,
+    empty, or cannot be parsed as a positive integer fall back to *default*.
+    Negative or zero values are clamped to *default* so that history loading
+    always has a sensible limit.
+
+    Args:
+        default: Number of entries to use when the variable is not set or
+            invalid. Defaults to 100.
+
+    Returns:
+        int: Maximum number of history entries to load.
+    """
+    value = os.getenv("TOPSAILAI_HISTORY_LOAD_MAX_ENTRIES")
+    if not value:
+        return default
+    try:
+        max_entries = int(value)
+    except (TypeError, ValueError):
+        return default
+    if max_entries <= 0:
+        return default
+    return max_entries
+
+
 def is_chat_multi_line() -> bool:
     """Check if multi-line chat mode is enabled.
 

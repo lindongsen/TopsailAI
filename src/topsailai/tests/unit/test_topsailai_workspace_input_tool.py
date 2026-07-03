@@ -12,8 +12,11 @@ Test coverage:
 - input_from_pipe: Embedded EOF marker handling
 """
 
+import json
 import os
+import shutil
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -835,6 +838,69 @@ class TestInputFromPipeEmbeddedEOF:
             assert result == "msg1\nmsg2"
         finally:
             thread.join(timeout=2.0)
+
+
+class TestLoadInputHistoryJsonl(unittest.TestCase):
+    """Tests for _load_input_history_jsonl limiting loaded records."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.history_file = os.path.join(self.temp_dir, ".input_history.jsonl")
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    @patch("topsailai.workspace.input_tool.readline")
+    def test_loads_only_recent_100_records(self, mock_readline):
+        """Only the most recent 100 entries should be added to readline."""
+        from topsailai.workspace.input_tool import _load_input_history_jsonl
+        added = []
+        mock_readline.add_history.side_effect = added.append
+
+        with open(self.history_file, "w", encoding="utf-8") as f:
+            for i in range(150):
+                f.write(json.dumps({"ts": i, "session_id": "s", "text": f"msg{i:04d}"}) + "\n")
+
+        _load_input_history_jsonl(self.history_file)
+
+        self.assertEqual(len(added), 100)
+        self.assertEqual(added[0], "msg0050")
+        self.assertEqual(added[-1], "msg0149")
+
+    @patch("topsailai.workspace.input_tool.readline")
+    def test_loads_all_records_when_fewer_than_100(self, mock_readline):
+        """All entries are loaded when the file has fewer than 100 records."""
+        from topsailai.workspace.input_tool import _load_input_history_jsonl
+        added = []
+        mock_readline.add_history.side_effect = added.append
+
+        with open(self.history_file, "w", encoding="utf-8") as f:
+            for i in range(10):
+                f.write(json.dumps({"ts": i, "session_id": "s", "text": f"msg{i}"}) + "\n")
+
+        _load_input_history_jsonl(self.history_file)
+
+        self.assertEqual(len(added), 10)
+        self.assertEqual(added[0], "msg0")
+        self.assertEqual(added[-1], "msg9")
+
+    @patch("topsailai.workspace.input_tool.readline")
+    def test_ignores_invalid_lines(self, mock_readline):
+        """Malformed JSON lines are skipped while valid lines still count."""
+        from topsailai.workspace.input_tool import _load_input_history_jsonl
+        added = []
+        mock_readline.add_history.side_effect = added.append
+
+        with open(self.history_file, "w", encoding="utf-8") as f:
+            for i in range(105):
+                f.write(json.dumps({"ts": i, "session_id": "s", "text": f"msg{i:04d}"}) + "\n")
+            f.write("not valid json\n")
+
+        _load_input_history_jsonl(self.history_file)
+
+        self.assertEqual(len(added), 100)
+        self.assertEqual(added[0], "msg0005")
+        self.assertEqual(added[-1], "msg0104")
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ Created: 2026-07-03
 """
 
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,8 @@ from topsailai.workspace.folder_constants import FILE_PROJECT_HISTORY
 
 DEFAULT_MAX_SIZE = 1024 * 1024  # 1 MiB
 DEFAULT_MAX_BACKUP = 1
+
+logger = logging.getLogger(__name__)
 
 
 def _get_max_size() -> int:
@@ -143,3 +146,56 @@ def record_project_history(session_id: str | None = None) -> bool:
         return True
     except OSError:
         return False
+
+
+def load_project_history(
+    history_path: str | None = None, *, max_entries: int | None = None
+) -> list[dict]:
+    """Load project history entries from the JSONL file.
+
+    Each line must be a JSON object. Lines that cannot be parsed are skipped
+    with a warning. Only the most recent ``max_entries`` records are returned.
+    When ``max_entries`` is not provided, the value from
+    ``env_tool.get_history_load_max_entries()`` is used (default 100).
+
+    Args:
+        history_path: Path to the JSONL history file. Defaults to
+            ``FILE_PROJECT_HISTORY``.
+        max_entries: Maximum number of recent entries to return. ``None``
+            uses the configured default.
+
+    Returns:
+        A list of history entries ordered from oldest to newest.
+    """
+    if history_path is None:
+        history_path = FILE_PROJECT_HISTORY
+    if max_entries is None:
+        max_entries = env_tool.get_history_load_max_entries()
+
+    entries: list[dict] = []
+    if not history_path or not os.path.exists(history_path):
+        return entries
+
+    try:
+        with open(history_path, "r", encoding="utf-8") as fd:
+            for line in fd:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if isinstance(entry, dict):
+                        entries.append(entry)
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "Skipping malformed project history line in %s: %s",
+                        history_path,
+                        exc,
+                    )
+    except OSError as exc:
+        logger.debug("Could not load project history %s: %s", history_path, exc)
+        return entries
+
+    if max_entries > 0 and len(entries) > max_entries:
+        entries = entries[-max_entries:]
+    return entries
