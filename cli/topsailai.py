@@ -1165,8 +1165,8 @@ def print_help():
         },
         {
             "cmd": "/send [session_id_or_index] [message...]",
-            "desc": "Send a message to a running session through its named pipe. In session scope, omit the session id. If no message is provided, enter multi-line input mode (finish with EOF).",
-            "example": "Example: /send 1 hello  or  /send my-session hello",
+            "desc": "Send a message to a running session through its named pipe. In session scope, omit the session id. If no message is provided, enter multi-line input mode (finish with EOF). While streaming a log, /send defaults to the watched session.",
+            "example": "Example: /send 1 hello  or  /send my-session hello  or  while streaming: /send hello",
         },
         {
             "cmd": "/help  or  help",
@@ -1505,28 +1505,35 @@ def clean_by_numbers(task_dir: str, files: List[dict], indices: List[int]) -> in
 # File Streaming
 # =============================================================================
 
-def stream_file(filepath: str):
+def stream_file(
+    filepath: str,
+    task_dir: str = "",
+    log_files: Optional[List[dict]] = None,
+    default_session_id: Optional[str] = None,
+    default_stdout_path: Optional[str] = None,
+):
     """
     Stream a log file in real-time, similar to `tail -f`.
-
     Strategy:
-    1. Show the last 20 lines via `tail -n 20` (one-shot subprocess).
+    1. Show the last 100 lines via `tail -n 100` (one-shot subprocess).
     2. Open the file directly in binary mode, seek to end, and read new data
        in a tight loop. This avoids pipe buffering issues from `tail -f`.
-    3. Use select() with a short timeout (0.05s) to check for 'q' keypress.
+    3. Use select() with a short timeout (0.05s) to check for user input.
 
-    Supports 'q' to quit, or Ctrl+C for graceful exit.
+    Supports 'q' to quit, '/send [message]' to send a message to the watched
+    session without leaving the stream, or Ctrl+C for graceful exit.
     """
     global running
     filename = os.path.basename(filepath)
     print_header(f"Streaming: {filename}")
     print(
-        f"{Colors.YELLOW}[INFO] Press 'q' to quit, or Ctrl+C to exit.{Colors.RESET}\n"
+        f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
+        f"type '/send [message]' then Enter to send a message, or Ctrl+C to exit.{Colors.RESET}\n"
     )
 
-    # Step 1: Show last 20 lines using a one-shot tail command.
+    # Step 1: Show last 100 lines using a one-shot tail command.
     try:
-        subprocess.run(["tail", "-n", "20", filepath], check=False)
+        subprocess.run(["tail", "-n", "100", filepath], check=False)
     except Exception:
         pass
 
@@ -1545,16 +1552,35 @@ def stream_file(filepath: str):
                         print(chunk.decode("utf-8", errors="replace"), end="")
                         sys.stdout.flush()
                 else:
-                    # No new data; check for 'q' key with a short timeout.
+                    # No new data; check for user input with a short timeout.
                     if sys.stdin.isatty():
                         readable, _, _ = select.select([sys.stdin], [], [], 0.05)
                         if readable:
-                            char = sys.stdin.read(1)
-                            if char and char.lower() == 'q':
+                            try:
+                                cmd_line = input().strip()
+                            except (EOFError, KeyboardInterrupt):
+                                break
+                            if not cmd_line:
+                                continue
+                            lower = cmd_line.lower()
+                            if lower in ("q", "quit"):
                                 print(
                                     f"\n{Colors.YELLOW}[INFO] Quit requested.{Colors.RESET}"
                                 )
                                 break
+                            if lower.startswith("/"):
+                                _handle_stream_command(
+                                    cmd_line,
+                                    task_dir,
+                                    log_files or [],
+                                    default_session_id,
+                                    default_stdout_path,
+                                )
+                                continue
+                            print(
+                                f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
+                                f"Use '/send [message]', '/help', or 'q'.{Colors.RESET}"
+                            )
                     else:
                         time.sleep(0.05)
     except FileNotFoundError:
@@ -1571,8 +1597,94 @@ def stream_file(filepath: str):
     print(f"\n{Colors.CYAN}[INFO] Streaming stopped.{Colors.RESET}")
 
 
-# =============================================================================
-# Session Retrieval
+def _handle_stream_command(
+    cmd_line: str,
+    task_dir: str,
+    log_files: List[dict],
+    default_session_id: Optional[str],
+    default_stdout_path: Optional[str],
+) -> None:
+    """
+    Execute a command entered while streaming a log file.
+
+    Currently supports /send (defaulting to the watched session) and /help.
+    Unknown commands are reported without interrupting the stream.
+    """
+    if not cmd_line:
+        return
+
+    parts = cmd_line.split(None, 1)
+    cmd = parts[0].lower()
+    if cmd == "/send":
+        _handle_stream_send(
+            cmd_line,
+            task_dir,
+            log_files,
+            default_session_id,
+            default_stdout_path,
+        )
+        return
+
+    if cmd == "/help":
+        print(
+            f"\n{Colors.CYAN}[INFO] Streaming commands: "
+            f"'q' then Enter to quit, '/send [message]' send to watched session, "
+            f"'/help' show this help.{Colors.RESET}"
+        )
+        return
+
+    print(
+        f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
+        f"Use '/send [message]', '/help', or 'q'.{Colors.RESET}"
+    )
+
+def _handle_stream_send(
+    cmd_line: str,
+    task_dir: str,
+    log_files: List[dict],
+    default_session_id: Optional[str],
+    default_stdout_path: Optional[str],
+) -> None:
+    """
+    Handle /send while streaming, defaulting to the watched session.
+
+    If the first argument is a known session target (number or session id),
+    it is treated as an explicit override and the remainder is the message.
+    Otherwise the entire argument is sent to the session being watched.
+    """
+    if default_session_id is None:
+        print(
+            f"{Colors.RED}[ERROR] No session associated with this log file.{Colors.RESET}"
+        )
+        return
+
+    rest = cmd_line[len("/send"):].strip()
+
+    message: Optional[str] = None
+    stdout_path = default_stdout_path
+    session_id = default_session_id
+
+    if rest:
+        sub_parts = rest.split(None, 1)
+        first = sub_parts[0]
+        target = _resolve_send_target_from_arg(first, log_files)
+        if target is not None:
+            session_id, stdout_path = target
+            if len(sub_parts) > 1:
+                message = sub_parts[1]
+        else:
+            message = rest
+
+    if message is None:
+        message = _read_multiline_input_for_send()
+        if message is None:
+            return
+
+    send_message_to_session(
+        session_id, message, task_dir, stdout_path=stdout_path
+    )
+
+
 # =============================================================================
 
 def retrieve_session(session_id: str):
@@ -2108,7 +2220,17 @@ def main():
 
             if action == "watch":
                 selected_file = log_files[value]
-                stream_file(selected_file["path"])
+                session_id = selected_file.get("session_id")
+                stdout_path = selected_file.get("path")
+                if session_id == _TEMP_SESSION_MARKER:
+                    session_id = _TEMP_SESSION_ID
+                stream_file(
+                    selected_file["path"],
+                    task_dir=task_dir,
+                    log_files=log_files,
+                    default_session_id=session_id,
+                    default_stdout_path=stdout_path,
+                )
                 print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
                 log_files = discover_log_files(task_dir)
                 print_table(log_files)

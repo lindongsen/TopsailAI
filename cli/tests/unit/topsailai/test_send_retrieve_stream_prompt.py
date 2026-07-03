@@ -219,6 +219,134 @@ class TestSendMessageToSession(unittest.TestCase):
         )
         self.assertFalse(result)
 
+class TestHandleStreamCommand(unittest.TestCase):
+    def setUp(self):
+        self.task_dir = "/task"
+        self.log_files = [
+            {
+                "session_id": "session-a",
+                "path": "/task/session-a.session.stdout",
+            }
+        ]
+
+    @patch("topsailai.send_message_to_session")
+    def test_stream_send_with_message(self, mock_send):
+        cli._handle_stream_command(
+            "/send hello world",
+            self.task_dir,
+            self.log_files,
+            "session-a",
+            "/task/session-a.session.stdout",
+        )
+        mock_send.assert_called_once_with(
+            "session-a", "hello world", self.task_dir,
+            stdout_path="/task/session-a.session.stdout",
+        )
+
+    @patch("topsailai.send_message_to_session")
+    @patch("builtins.input", side_effect=["line1", "EOF"])
+    def test_stream_send_multiline(self, mock_input, mock_send):
+        cli._handle_stream_command(
+            "/send",
+            self.task_dir,
+            self.log_files,
+            "session-a",
+            "/task/session-a.session.stdout",
+        )
+        mock_send.assert_called_once_with(
+            "session-a", "line1", self.task_dir,
+            stdout_path="/task/session-a.session.stdout",
+        )
+
+    @patch("topsailai.send_message_to_session")
+    def test_stream_send_no_session(self, mock_send):
+        with patch("builtins.print") as mock_print:
+            cli._handle_stream_command(
+                "/send hello",
+                self.task_dir,
+                self.log_files,
+                None,
+                None,
+            )
+        mock_send.assert_not_called()
+        printed = [call[0][0] for call in mock_print.call_args_list]
+        self.assertTrue(any("No session" in str(p) for p in printed))
+
+    @patch("topsailai.send_message_to_session")
+    def test_stream_send_by_index(self, mock_send):
+        cli._handle_stream_command(
+            "/send 1 hello",
+            self.task_dir,
+            self.log_files,
+            "session-a",
+            "/task/session-a.session.stdout",
+        )
+        mock_send.assert_called_once_with(
+            "session-a", "hello", self.task_dir,
+            stdout_path="/task/session-a.session.stdout",
+        )
+
+    @patch("topsailai.send_message_to_session")
+    def test_stream_send_unknown_target(self, mock_send):
+        with patch("builtins.print"):
+            cli._handle_stream_command(
+                "/send 99 hello",
+                self.task_dir,
+                self.log_files,
+                "session-a",
+                "/task/session-a.session.stdout",
+            )
+        mock_send.assert_not_called()
+
+    def test_stream_help(self):
+        with patch("builtins.print") as mock_print:
+            cli._handle_stream_command(
+                "/help",
+                self.task_dir,
+                self.log_files,
+                "session-a",
+                "/task/session-a.session.stdout",
+            )
+        printed = [call[0][0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Streaming commands" in str(p) for p in printed))
+
+    def test_stream_unknown_command(self):
+        with patch("builtins.print") as mock_print:
+            cli._handle_stream_command(
+                "/unknown",
+                self.task_dir,
+                self.log_files,
+                "session-a",
+                "/task/session-a.session.stdout",
+            )
+        printed = [call[0][0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Unknown streaming command" in str(p) for p in printed))
+
+    def test_stream_send_prefix_not_matched(self):
+        """/sendfoo should be treated as unknown, not as /send."""
+        with patch("builtins.print") as mock_print:
+            cli._handle_stream_command(
+                "/sendfoo",
+                self.task_dir,
+                self.log_files,
+                "session-a",
+                "/task/session-a.session.stdout",
+            )
+        printed = [call[0][0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Unknown streaming command" in str(p) for p in printed))
+
+    def test_stream_empty_command(self):
+        with patch("builtins.print") as mock_print:
+            cli._handle_stream_command(
+                "",
+                self.task_dir,
+                self.log_files,
+                "session-a",
+                "/task/session-a.session.stdout",
+            )
+        mock_print.assert_not_called()
+
+
 class TestHandleSendCommand(unittest.TestCase):
     def setUp(self):
         self.task_dir = "/task"
@@ -568,7 +696,22 @@ class TestMain(unittest.TestCase):
         mock_history_cls.return_value = mock_history
         with patch("builtins.print"):
             cli.main()
-        mock_stream.assert_called_once_with("/task/a.session.stdout")
+        mock_stream.assert_called_once_with(
+            "/task/a.session.stdout",
+            task_dir="/home/workspace/task",
+            log_files=[
+                {
+                    "filename": "a.session.stdout",
+                    "path": "/task/a.session.stdout",
+                    "session_id": "session-a",
+                    "pid": 1234,
+                    "size": 100,
+                    "mtime": 1234567890,
+                }
+            ],
+            default_session_id="session-a",
+            default_stdout_path="/task/a.session.stdout",
+        )
 
     @patch("topsailai.signal.signal")
     @patch("topsailai.load_yaml_commands", return_value=[])
