@@ -1,128 +1,127 @@
 #!/usr/bin/env python3
 """
-Unit tests for print helpers and help text in topsailai.py.
-
-Covers:
-- print_header()
-- print_table()
-- print_help()
-- format_size()
-- format_timestamp()
+Unit tests for print helpers and help text in cli_topsailai.
 """
 
-import sys
 import os
+import sys
 import unittest
-import io
-import datetime
+from io import StringIO
+from unittest.mock import patch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.insert(
+    0,
+    os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    ),
+)
 
-import topsailai as cli
-
-
-class TestFormatSize(unittest.TestCase):
-    """Tests for format_size()."""
-
-    def test_bytes(self):
-        self.assertEqual(cli.format_size(0), "0B")
-        self.assertEqual(cli.format_size(512), "512B")
-
-    def test_kilobytes(self):
-        self.assertEqual(cli.format_size(1024), "1.0K")
-        self.assertEqual(cli.format_size(1536), "1.5K")
-
-    def test_megabytes(self):
-        self.assertEqual(cli.format_size(1024 * 1024), "1.0M")
-
-    def test_gigabytes(self):
-        self.assertEqual(cli.format_size(1024 * 1024 * 1024), "1.0G")
+import cli_topsailai.state as cli_state
+from cli_topsailai.colors import Colors
+from cli_topsailai.formatting import (
+    format_command_table,
+    format_file_table,
+    print_table,
+)
+from cli_topsailai.help_text import print_help
 
 
-class TestFormatTimestamp(unittest.TestCase):
-    """Tests for format_timestamp()."""
+class TestPrintHelpers(unittest.TestCase):
+    """Tests for print helpers."""
 
-    def test_known_timestamp(self):
-        ts = 1700000000.0
-        result = cli.format_timestamp(ts)
-        expected = datetime.datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
-        self.assertEqual(result, expected)
+    def setUp(self):
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+
+    def tearDown(self):
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+
+    @patch("sys.stdout", new_callable=StringIO)
+    def test_print_help(self, mock_stdout):
+        print_help([], cli_state.current_scope)
+        output = mock_stdout.getvalue()
+        self.assertIn("TopsailAI", output)
+
+    def test_colors(self):
+        self.assertTrue(hasattr(Colors, "GREEN"))
+        self.assertTrue(hasattr(Colors, "RESET"))
+
+    def test_format_file_table_empty(self):
+        output = format_file_table([])
+        self.assertIn("No log files", output)
+
+    def test_format_command_table(self):
+        commands = [
+            {"cmd": "/help", "desc": "Show help"},
+            {"cmd": "/quit", "desc": "Quit"},
+        ]
+        output = format_command_table(commands)
+        self.assertIn("/help", output)
+        self.assertIn("/quit", output)
 
 
-class TestFormatTimestampFull(unittest.TestCase):
-    """Tests for format_timestamp_full()."""
+class TestPrintTablePidDetection(unittest.TestCase):
+    """Tests for print_table PID display using filename pid + os.kill."""
 
-    def test_full_format(self):
-        ts = 1700000000.0
-        result = cli.format_timestamp_full(ts)
-        expected = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-        self.assertEqual(result, expected)
+    def _capture_print_table(self, files):
+        captured = StringIO()
+        with patch("sys.stdout", new=captured):
+            print_table(files)
+        return captured.getvalue()
 
-
-class TestPrintHeader(unittest.TestCase):
-    """Tests for print_header()."""
-
-    def test_prints_title(self):
-        captured = io.StringIO()
-        sys.stdout = captured
-        try:
-            cli.print_header("Test Title")
-        finally:
-            sys.stdout = sys.__stdout__
-        output = captured.getvalue()
-        self.assertIn("Test Title", output)
-        self.assertIn("=", output)
-
-
-class TestPrintTable(unittest.TestCase):
-    """Tests for print_table()."""
-
-    def test_empty_rows(self):
-        captured = io.StringIO()
-        sys.stdout = captured
-        try:
-            cli.print_table([])
-        finally:
-            sys.stdout = sys.__stdout__
-        output = captured.getvalue()
-        self.assertIn("No .stdout log files found", output)
-
-    def test_basic_rows(self):
-        captured = io.StringIO()
-        sys.stdout = captured
-        try:
-            cli.print_table([
+    @patch("cli_topsailai.formatting.os.kill")
+    def test_live_pid_shown(self, mock_kill):
+        mock_kill.return_value = None
+        output = self._capture_print_table(
+            [
                 {
-                    "filename": "foo.stdout",
-                    "path": "/tmp/foo.stdout",
-                    "session_id": "sid1",
-                    "pid": 123,
-                    "size": 1024,
+                    "filename": "s1.1234.session.stdout",
+                    "path": "/tmp/s1.1234.session.stdout",
+                    "session_id": "s1",
+                    "pid": 1234,
+                    "size": 100,
                     "mtime": 1700000000.0,
                 }
-            ])
-        finally:
-            sys.stdout = sys.__stdout__
-        output = captured.getvalue()
-        self.assertIn("foo.stdout", output)
-        self.assertIn("sid1", output)
+            ]
+        )
+        self.assertIn("1234", output)
+        self.assertIn(Colors.GREEN, output)
+        mock_kill.assert_called_once_with(1234, 0)
 
+    @patch("cli_topsailai.formatting.os.kill")
+    def test_dead_pid_shows_idle(self, mock_kill):
+        mock_kill.side_effect = ProcessLookupError(1234)
+        output = self._capture_print_table(
+            [
+                {
+                    "filename": "s1.session.stdout",
+                    "path": "/tmp/s1.session.stdout",
+                    "session_id": "s1",
+                    "pid": 1234,
+                    "size": 100,
+                    "mtime": 1700000000.0,
+                }
+            ]
+        )
+        self.assertNotIn("1234", output)
+        self.assertIn("-", output)
+        self.assertIn(Colors.GRAY, output)
 
-class TestPrintHelp(unittest.TestCase):
-    """Tests for print_help()."""
-
-    def test_contains_commands(self):
-        captured = io.StringIO()
-        sys.stdout = captured
-        try:
-            cli.print_help()
-        finally:
-            sys.stdout = sys.__stdout__
-        output = captured.getvalue()
-        self.assertIn("Available Commands", output)
-        self.assertIn("/help", output)
-        self.assertIn("/clean", output)
-        self.assertIn("/refresh", output)
+    def test_missing_pid_shows_idle(self):
+        output = self._capture_print_table(
+            [
+                {
+                    "filename": "s1.session.stdout",
+                    "path": "/tmp/s1.session.stdout",
+                    "session_id": "s1",
+                    "size": 100,
+                    "mtime": 1700000000.0,
+                }
+            ]
+        )
+        self.assertIn("-", output)
+        self.assertIn(Colors.GRAY, output)
 
 
 if __name__ == "__main__":

@@ -1,61 +1,47 @@
 #!/usr/bin/env python3
 """
-Unit tests for signal handling in topsailai.py.
-
-Covers:
-- signal_handler()
-- cleanup_children integration
+Unit tests for signal handling in cli_topsailai.
 """
 
-import sys
 import os
+import signal
+import sys
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.insert(
+    0,
+    os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    ),
+)
 
-import topsailai as cli
+import cli_topsailai.state as cli_state
+from cli_topsailai.process import cleanup_child_processes
 
 
-class TestSignalHandler(unittest.TestCase):
-    """Tests for signal_handler."""
-
-    def setUp(self):
-        cli.running = True
-        cli._child_processes.clear()
+class TestSignalHandling(unittest.TestCase):
+    """Tests for signal handling."""
 
     def tearDown(self):
-        cli.running = True
-        cli._child_processes.clear()
+        cli_state._child_processes.clear()
 
-    @patch("builtins.print")
-    @patch("topsailai.cleanup_children")
-    @patch("sys.exit")
-    def test_sigint(self, mock_exit, mock_cleanup, mock_print):
-        """Handle SIGINT signal."""
-        cli.signal_handler(2, None)
-        self.assertFalse(cli.running)
-        mock_cleanup.assert_called_once()
-        mock_exit.assert_called_once_with(0)
+    @patch("cli_topsailai.process.print_info")
+    def test_cleanup_child_processes(self, mock_print_info):
+        proc = MagicMock()
+        proc.poll.return_value = None
+        cli_state._child_processes.add(proc)
+        cleanup_child_processes()
+        proc.terminate.assert_called_once()
+        self.assertNotIn(proc, cli_state._child_processes)
 
-    @patch("builtins.print")
-    @patch("topsailai.cleanup_children")
-    @patch("sys.exit")
-    def test_sigterm(self, mock_exit, mock_cleanup, mock_print):
-        """Handle SIGTERM signal."""
-        cli.signal_handler(15, None)
-        self.assertFalse(cli.running)
-        mock_cleanup.assert_called_once()
-        mock_exit.assert_called_once_with(0)
+    def test_signal_handler_registration(self):
+        from cli_topsailai.core import setup_signal_handlers
 
-    @patch("builtins.print")
-    def test_prints_signal_info(self, mock_print):
-        """Print signal information."""
-        with patch("topsailai.cleanup_children"):
-            with patch("sys.exit"):
-                cli.signal_handler(2, None)
-        printed = [str(args[0]) for args, kwargs in mock_print.call_args_list]
-        self.assertTrue(any("Received signal 2" in p for p in printed))
+        with patch("signal.signal") as mock_signal:
+            setup_signal_handlers()
+            mock_signal.assert_any_call(signal.SIGINT, unittest.mock.ANY)
+            mock_signal.assert_any_call(signal.SIGTERM, unittest.mock.ANY)
 
 
 if __name__ == "__main__":

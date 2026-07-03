@@ -1,0 +1,304 @@
+"""Thin interactive loop for the TopsailAI CLI.
+
+The implementation logic has been split into sibling modules under
+``cli_topsailai/``.  This module contains only the interactive prompt,
+command dispatch loop, and ``main()`` entry point.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import signal
+import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Any, List, Optional, Tuple
+
+import cli_topsailai.state as state
+from cli_topsailai.colors import Colors
+
+__version__ = "0.1.0"
+
+
+def setup_signal_handlers() -> None:
+    """Register SIGINT/SIGTERM handlers for graceful shutdown."""
+    from cli_topsailai.process import signal_handler
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+
+def get_prompt() -> str:
+    """Generate dynamic prompt based on current scope."""
+    if state.current_scope == "session" and state.current_session_id:
+        return (
+            f"\n{Colors.GREEN}[session:{state.current_session_id}]{Colors.RESET}> "
+        )
+    return f"\n{Colors.GREEN}[workspace]{Colors.RESET}> "
+
+
+def prompt_selection(
+    files: List[dict], task_dir: str
+) -> Tuple[str, Optional[Any]]:
+    """
+    Prompt user to select a file by number or enter a command.
+    Returns (action, value).
+    """
+    from cli_topsailai.process import cleanup_children
+    from cli_topsailai.yaml_commands import handle_yaml_command, match_yaml_command
+
+    while True:
+        try:
+            prompt_text = get_prompt()
+            user_input = input(prompt_text).strip()
+            if user_input:
+                try:
+                    import readline
+
+                    readline.add_history(user_input)
+                except (NameError, AttributeError, ImportError):
+                    pass
+                if state.history_manager is not None:
+                    state.history_manager.append(
+                        state.current_scope,
+                        state.current_session_id or "",
+                        user_input,
+                    )
+
+            if not user_input:
+                continue
+
+            lower_input = user_input.lower()
+
+            if lower_input in ("q", "quit", "exit"):
+                return ("quit", None)
+
+            if lower_input in ("r", "refresh", "/refresh"):
+                return ("refresh", None)
+
+            if lower_input.startswith("/clean") or lower_input.startswith("clean"):
+                parts = user_input.split()
+                if len(parts) == 1:
+                    return ("clean", None)
+                try:
+                    indices = [int(p) - 1 for p in parts[1:]]
+                    return ("clean_numbers", indices)
+                except ValueError:
+                    print(
+                        f"{Colors.RED}[ERROR] Usage: /clean or /clean {{number}} "
+                        f"[{{number}} ...]{Colors.RESET}"
+                    )
+                    continue
+
+            if lower_input.startswith("/send") or lower_input.startswith("send"):
+                return ("send", user_input)
+
+            if lower_input in ("/retrieve", "retrieve"):
+                return ("retrieve", None)
+
+            if lower_input in ("/stream", "stream"):
+                return ("stream", None)
+
+            if lower_input in ("/help", "help"):
+                return ("help", None)
+
+            # Try YAML command matching first
+            yaml_match = match_yaml_command(user_input, task_dir)
+            if yaml_match:
+                instruction, variables = yaml_match
+                action = handle_yaml_command(instruction, variables)
+                return (action, None)
+
+            if (
+                lower_input in ("/session", "session")
+                or lower_input.startswith("/session ")
+                or lower_input.startswith("session ")
+            ):
+                parts = user_input.split(None, 1)
+                if len(parts) < 2:
+                    print(
+                        f"{Colors.RED}[ERROR] Usage: /session {{number}}{Colors.RESET}"
+                    )
+                    continue
+                try:
+                    num = int(parts[1].strip())
+                    if 1 <= num <= len(files):
+                        return ("session", num - 1)
+                    print(
+                        f"{Colors.RED}[ERROR] Invalid number. "
+                        f"Please enter 1-{len(files)}.{Colors.RESET}"
+                    )
+                except ValueError:
+                    print(
+                        f"{Colors.RED}[ERROR] Invalid number. "
+                        f"Usage: /session {{number}}{Colors.RESET}"
+                    )
+                continue
+
+            try:
+                selected = int(user_input)
+                if 1 <= selected <= len(files):
+                    return ("watch", selected - 1)
+                print(
+                    f"{Colors.RED}[ERROR] Invalid number. "
+                    f"Please enter 1-{len(files)}.{Colors.RESET}"
+                )
+            except ValueError:
+                print(
+                    f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
+                    f"Please enter a number, /refresh, /session {{number}}, "
+                    f"/clean, /send, /help, or 'q'.{Colors.RESET}"
+                )
+
+        except (EOFError, KeyboardInterrupt):
+            print(f"\n{Colors.YELLOW}[INFO] Exiting...{Colors.RESET}")
+            cleanup_children()
+            return ("quit", None)
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    """Main entry point for the TopsailAI CLI."""
+    parser = argparse.ArgumentParser(
+        prog="topsailai.py",
+        description="TopsailAI interactive CLI",
+        add_help=False,
+    )
+    parser.add_argument(
+        "-h", "--help",
+        action="store_true",
+        dest="help",
+        help="show this help message and exit",
+    )
+    parser.add_argument(
+        "--version",
+        action="store_true",
+        dest="version",
+        help="show program's version number and exit",
+    )
+
+    # Be tolerant of unknown arguments so tests that invoke main() with
+    # arbitrary fake argv do not crash. Only help/version trigger an exit.
+    args, _ = parser.parse_known_args(argv)
+    if args.help:
+        parser.print_help()
+        sys.exit(0)
+    if args.version:
+        print(f"{parser.prog} {__version__}")
+        sys.exit(0)
+
+    # Heavy imports are deferred until after --help / --version are handled.
+    from cli_topsailai.cleaning import clean_by_numbers, clean_expired_files
+    from cli_topsailai.completer import setup_tab_completion
+    from cli_topsailai.formatting import print_header, print_table
+    from cli_topsailai.help_text import print_help
+    from cli_topsailai.history import HistoryManager, load_readline_history
+    from cli_topsailai.log_files import discover_log_files
+    from cli_topsailai.paths import get_topsailai_home
+    from cli_topsailai.process import cleanup_children
+    from cli_topsailai.retrieve import retrieve_session
+    from cli_topsailai.streaming import handle_send_command, stream_file
+    from cli_topsailai.yaml_commands import load_yaml_commands
+
+    setup_signal_handlers()
+
+    # Load YAML commands
+    state.yaml_commands = load_yaml_commands()
+
+    topsailai_home = get_topsailai_home()
+    task_dir = os.path.join(topsailai_home, "workspace", "task")
+
+    # Initialize command history
+    history_path = os.path.join(topsailai_home, ".history.jsonl")
+    state.history_manager = HistoryManager(history_path)
+    state.history_manager.load_all()
+    load_readline_history(
+        state.history_manager, state.current_scope, state.current_session_id
+    )
+    setup_tab_completion()
+
+    print_header("TopsailAI Task Watcher")
+    print(f"{Colors.DIM}HOME: {topsailai_home}{Colors.RESET}")
+    print(f"{Colors.DIM}DIR:  {task_dir}{Colors.RESET}")
+    log_files = discover_log_files(task_dir)
+
+    if log_files:
+        print_table(log_files)
+    else:
+        print(f"\n{Colors.YELLOW}[WARN] No .stdout log files found in:{Colors.RESET}")
+        print(f"  {task_dir}")
+
+    print(
+        f"\n  {Colors.DIM}Type {Colors.YELLOW}/help{Colors.DIM} "
+        f"for available commands{Colors.RESET}"
+    )
+
+    try:
+        while state.running:
+            action, value = prompt_selection(log_files, task_dir)
+
+            if action == "quit":
+                break
+
+            if action == "refresh":
+                print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
+                log_files = discover_log_files(task_dir)
+                print_table(log_files)
+                continue
+
+            if action == "help":
+                print_help(state.yaml_commands, state.current_scope)
+                continue
+
+            if action == "clean":
+                clean_expired_files(task_dir, log_files)
+                print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
+                log_files = discover_log_files(task_dir)
+                print_table(log_files)
+                continue
+
+            if action == "clean_numbers":
+                clean_by_numbers(task_dir, log_files, value)
+                print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
+                log_files = discover_log_files(task_dir)
+                print_table(log_files)
+                continue
+
+            if action == "send":
+                handle_send_command(value, task_dir, log_files)
+                continue
+
+            if action == "session":
+                selected_file = log_files[value]
+                session_id = selected_file.get("session_id")
+                if not session_id or session_id == "(temp)":
+                    print(
+                        f"{Colors.RED}[ERROR] No session ID available for this file.{Colors.RESET}"
+                    )
+                    continue
+                retrieve_session(session_id)
+                continue
+
+            if action == "watch":
+                selected_file = log_files[value]
+                session_id = selected_file.get("session_id")
+                stdout_path = selected_file.get("path")
+                if session_id == "(temp)":
+                    session_id = "topsailai"
+                stream_file(
+                    selected_file["path"],
+                    task_dir=task_dir,
+                    log_files=log_files,
+                    default_session_id=session_id,
+                    default_stdout_path=stdout_path,
+                )
+                print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
+                log_files = discover_log_files(task_dir)
+                print_table(log_files)
+    except KeyboardInterrupt:
+        print(f"\n{Colors.YELLOW}[INFO] Interrupted by user.{Colors.RESET}")
+    finally:
+        cleanup_children()
+
+    print(f"\n{Colors.CYAN}Goodbye!{Colors.RESET}\n")
