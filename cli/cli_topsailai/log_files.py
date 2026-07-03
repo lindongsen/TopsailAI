@@ -143,6 +143,7 @@ def discover_log_files(task_dir: str) -> List[dict]:
             "pid": pid,
             "size": stat_info.st_size,
             "mtime": stat_info.st_mtime,
+            "ctime": stat_info.st_ctime,
         })
 
     log_files.sort(key=lambda x: x["mtime"], reverse=True)

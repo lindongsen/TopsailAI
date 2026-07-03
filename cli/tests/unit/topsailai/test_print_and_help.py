@@ -82,6 +82,7 @@ class TestPrintTablePidDetection(unittest.TestCase):
                     "pid": 1234,
                     "size": 100,
                     "mtime": 1700000000.0,
+                    "ctime": 1700000000.0,
                 }
             ]
         )
@@ -101,6 +102,7 @@ class TestPrintTablePidDetection(unittest.TestCase):
                     "pid": 1234,
                     "size": 100,
                     "mtime": 1700000000.0,
+                    "ctime": 1700000000.0,
                 }
             ]
         )
@@ -117,6 +119,7 @@ class TestPrintTablePidDetection(unittest.TestCase):
                     "session_id": "s1",
                     "size": 100,
                     "mtime": 1700000000.0,
+                    "ctime": 1700000000.0,
                 }
             ]
         )

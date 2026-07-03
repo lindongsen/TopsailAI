@@ -46,30 +46,30 @@ def print_table(files: List[dict]) -> None:
         return
 
     w_no = 4
-    w_name = 28
     w_session = 22
     w_pid = 8
     w_size = 10
-    w_time = 14
+    w_modified = 14
+    w_created = 14
 
     header = (
         f"{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE}"
         f" {'No':^{w_no}} |"
-        f" {'Filename':^{w_name}} |"
         f" {'Session ID':^{w_session}} |"
         f" {'PID':^{w_pid}} |"
         f" {'Size':^{w_size}} |"
-        f" {'Modified':^{w_time}} "
+        f" {'Modified':^{w_modified}} |"
+        f" {'Created':^{w_created}} "
         f"{Colors.RESET}"
     )
     sep = (
         f"{Colors.CYAN}"
         f"{'-' * (w_no + 1)}+"
-        f"{'-' * (w_name + 2)}+"
         f"{'-' * (w_session + 2)}+"
         f"{'-' * (w_pid + 2)}+"
         f"{'-' * (w_size + 2)}+"
-        f"{'-' * (w_time + 1)}"
+        f"{'-' * (w_modified + 2)}+"
+        f"{'-' * (w_created + 1)}"
         f"{Colors.RESET}"
     )
 
@@ -85,27 +85,24 @@ def print_table(files: List[dict]) -> None:
                 pid = None
         f["pid"] = pid
 
-        name = f["filename"]
-        if len(name) > w_name:
-            name = name[:w_name - 3] + "..."
-
         session = _display_session_id(f["session_id"], f.get("is_task", False))
         if len(session) > w_session:
             session = session[:w_session - 3] + "..."
 
         pid_str = str(pid) if pid else "-"
         size_str = format_size(f["size"])
-        time_str = format_timestamp(f["mtime"])
+        modified_str = format_timestamp(f["mtime"])
+        created_str = format_timestamp(f["ctime"])
         color = Colors.GREEN if pid else Colors.GRAY
 
         row = (
             f"{color}"
             f" {idx:^{w_no}} |"
-            f" {name:<{w_name}} |"
             f" {session:<{w_session}} |"
             f" {pid_str:^{w_pid}} |"
             f" {size_str:>{w_size}} |"
-            f" {time_str:^{w_time}} "
+            f" {modified_str:^{w_modified}} |"
+            f" {created_str:^{w_created}} "
             f"{Colors.RESET}"
         )
         print(row)

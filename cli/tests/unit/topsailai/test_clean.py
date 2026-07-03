@@ -30,6 +30,7 @@ def _make_file_record(path: str) -> dict:
         "pid": None,
         "size": stat_info.st_size,
         "mtime": stat_info.st_mtime,
+        "ctime": stat_info.st_ctime,
     }
 
 

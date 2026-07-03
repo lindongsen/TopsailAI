@@ -424,28 +424,6 @@ class TestGetFilePidCleanup(unittest.TestCase):
 class TestPrintTableTruncation(unittest.TestCase):
     """Tests for print_table truncation paths."""
 
-    def test_long_filename_truncated(self):
-        """Long filename is truncated."""
-        captured = io.StringIO()
-        sys.stdout = captured
-        try:
-            print_table(
-                [
-                    {
-                        "filename": "a" * 50 + ".session.stdout",
-                        "path": "/tmp/a.session.stdout",
-                        "session_id": "sid",
-                        "pid": 123,
-                        "size": 100,
-                        "mtime": 1700000000.0,
-                    }
-                ]
-            )
-        finally:
-            sys.stdout = sys.__stdout__
-        output = captured.getvalue()
-        self.assertIn("...", output)
-
     def test_long_session_truncated(self):
         """Long session id is truncated."""
         captured = io.StringIO()
@@ -460,6 +438,7 @@ class TestPrintTableTruncation(unittest.TestCase):
                         "pid": 123,
                         "size": 100,
                         "mtime": 1700000000.0,
+                        "ctime": 1700000000.0,
                     }
                 ]
             )
