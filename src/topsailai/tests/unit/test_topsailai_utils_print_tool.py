@@ -251,6 +251,15 @@ class TestPrintTool(unittest.TestCase):
         mock_print_with_time.assert_called_once_with('Error: error message', need_format=False)
 
     @patch('topsailai.utils.print_tool.print_with_time')
+    def test_print_warning(self, mock_print_with_time):
+        """Test print_warning function."""
+        print_tool.print_warning('warning message')
+
+        # Verify print_with_time was called with warning prefix
+        mock_print_with_time.assert_called_once_with('Warning: warning message', need_format=False)
+
+
+    @patch('topsailai.utils.print_tool.print_with_time')
     def test_print_critical(self, mock_print_with_time):
         """Test print_critical function."""
         print_tool.print_critical('critical message')

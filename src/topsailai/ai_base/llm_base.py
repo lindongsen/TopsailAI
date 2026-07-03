@@ -19,6 +19,7 @@ from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 from topsailai.logger.log_chat import logger
 from topsailai.utils.print_tool import (
     print_error,
+    print_warning,
 )
 from topsailai.utils import (
     env_tool,
@@ -136,6 +137,43 @@ class LLMModel(LLMModelBase):
 
         return (response, full_content)
 
+    def iter_stream_with_first_byte_timeout(self, stream, first_byte_timeout=180, raise_on_timeout=False):
+        """Wrap a stream iterator to log or raise on slow first-byte responses.
+
+        Args:
+            stream: The stream iterator to wrap.
+            first_byte_timeout (float): Threshold in seconds for the first chunk.
+            raise_on_timeout (bool): If True, raise openai.APITimeoutError when
+                the first chunk exceeds the threshold so the caller can retry.
+
+        Yields:
+            Chunks from the wrapped stream.
+
+        Raises:
+            openai.APITimeoutError: If raise_on_timeout is True and the first
+                chunk takes longer than first_byte_timeout seconds.
+        """
+        start_time = time.monotonic()
+        try:
+            first_chunk = next(stream)
+        except StopIteration:
+            return
+        elapsed = time.monotonic() - start_time
+        if elapsed > first_byte_timeout:
+            print_warning(
+                f"LLM first byte took {elapsed:.1f}s, exceeding threshold {first_byte_timeout}s"
+            )
+            if raise_on_timeout:
+                # Close the underlying stream to avoid leaking the connection.
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+                raise openai.APITimeoutError(request=None)
+        yield first_chunk
+        for chunk in stream:
+            yield chunk
+
     def call_llm_model_by_stream(self, messages, tools=None, tool_choice="auto"):
         """
         Call the LLM model with streaming response.
@@ -158,13 +196,28 @@ class LLMModel(LLMModelBase):
             )
         )
 
+        first_byte_timeout = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT",
+            default=180,
+            formatter=int,
+        ) or 180
+
+        raise_on_first_byte_timeout = env_tool.EnvReaderInstance.check_bool(
+            "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE",
+            default=False,
+        )
+
         full_content = ""
         full_tool_calls_dict = {}
         usage = CompletionUsage(
             completion_tokens=0, prompt_tokens=0, total_tokens=0,
             prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=0),
         )
-        for chunk in response:
+        for chunk in self.iter_stream_with_first_byte_timeout(
+            response,
+            first_byte_timeout,
+            raise_on_timeout=raise_on_first_byte_timeout,
+        ):
             delta_obj = None
             if len(chunk.choices):
                 delta_obj = chunk.choices[0].delta

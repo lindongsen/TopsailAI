@@ -277,6 +277,8 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
     def test_call_llm_model_by_stream_debug_mode(self, mock_base_init, mock_logger, mock_env_tool):
         """Test streaming respects debug mode setting."""
         mock_env_tool.is_debug_mode.return_value = True
+        mock_env_tool.EnvReaderInstance.get.return_value = 180
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = False
         
         mock_chunk = MagicMock()
         mock_chunk.choices = [MagicMock()]
@@ -333,6 +335,84 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         
         self.assertIsInstance(result, tuple)
 
+    @patch("topsailai.ai_base.llm_base.print_warning")
+    @patch("topsailai.ai_base.llm_base.time.monotonic")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_iter_stream_with_first_byte_timeout_logs_warning_on_slow_first_byte(
+        self, mock_base_init, mock_monotonic, mock_print_warning
+    ):
+        """Test that a slow first byte logs a warning but still yields chunks."""
+        mock_monotonic.side_effect = [0.0, 200.0, 201.0]
+
+        mock_chunk = MagicMock()
+        mock_chunk.choices = [MagicMock()]
+        mock_chunk.choices[0].delta.content = "Hello"
+        mock_chunk.choices[0].delta.tool_calls = None
+
+        model = self._create_mock_model()
+        result = list(model.iter_stream_with_first_byte_timeout(iter([mock_chunk]), 180))
+
+        self.assertEqual(result, [mock_chunk])
+        mock_print_warning.assert_called_once()
+        warning_msg = mock_print_warning.call_args[0][0]
+        self.assertIn("200.0s", warning_msg)
+        self.assertIn("180s", warning_msg)
+
+    @patch("topsailai.ai_base.llm_base.print_warning")
+    @patch("topsailai.ai_base.llm_base.time.monotonic")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_iter_stream_with_first_byte_timeout_no_warning_on_fast_first_byte(
+        self, mock_base_init, mock_monotonic, mock_print_warning
+    ):
+        """Test that a fast first byte does not log a warning."""
+        mock_monotonic.side_effect = [0.0, 1.0]
+
+        mock_chunk = MagicMock()
+        mock_chunk.choices = [MagicMock()]
+        mock_chunk.choices[0].delta.content = "Hello"
+        mock_chunk.choices[0].delta.tool_calls = None
+
+        model = self._create_mock_model()
+        result = list(model.iter_stream_with_first_byte_timeout(iter([mock_chunk]), 180))
+
+        self.assertEqual(result, [mock_chunk])
+        mock_print_warning.assert_not_called()
+
+    @patch("topsailai.ai_base.llm_base.print_warning")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_iter_stream_with_first_byte_timeout_empty_stream(
+        self, mock_base_init, mock_print_warning
+    ):
+        """Test that an empty stream does not log a warning."""
+        model = self._create_mock_model()
+        result = list(model.iter_stream_with_first_byte_timeout(iter([]), 180))
+
+        self.assertEqual(result, [])
+        mock_print_warning.assert_not_called()
+
+    @patch("topsailai.ai_base.llm_base.print_warning")
+    @patch("topsailai.ai_base.llm_base.time.monotonic")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_iter_stream_with_first_byte_timeout_raises_when_configured(
+        self, mock_base_init, mock_monotonic, mock_print_warning
+    ):
+        """Test that a slow first byte raises APITimeoutError when enabled."""
+        import openai
+
+        mock_monotonic.side_effect = [0.0, 200.0]
+
+        mock_chunk = MagicMock()
+        mock_stream = MagicMock()
+        mock_stream.__iter__ = MagicMock(return_value=iter([mock_chunk]))
+        mock_stream.__next__ = MagicMock(return_value=mock_chunk)
+        mock_stream.close = MagicMock()
+
+        model = self._create_mock_model()
+        with self.assertRaises(openai.APITimeoutError):
+            list(model.iter_stream_with_first_byte_timeout(mock_stream, 180, raise_on_timeout=True))
+
+        mock_print_warning.assert_called_once()
+        mock_stream.close.assert_called_once()
 
 class TestLLMModelChat(unittest.TestCase):
     """Test cases for LLMModel.chat method."""

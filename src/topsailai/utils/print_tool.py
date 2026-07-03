@@ -191,14 +191,27 @@ def print_error(msg, exception=False):
     print_with_time(f"Error: {msg}", need_format=False)
     return
 
-def print_critical(msg):
-    """Print an error message to both logger and console.
+def print_warning(msg):
+    """Print a warning message to both logger and console.
 
-    This function logs the error using the application's logger
+    This function logs the warning using the application's logger
     and also prints it to the console with a timestamp.
 
     Args:
-        msg: Error message to log and print
+        msg: Warning message to log and print
+    """
+    logger.warning(msg)
+    print_with_time(f"Warning: {msg}", need_format=False)
+    return
+
+def print_critical(msg):
+    """Print a critical message to both logger and console.
+
+    This function logs the critical message using the application's logger
+    and also prints it to the console with a timestamp.
+
+    Args:
+        msg: Critical message to log and print
     """
     logger.critical(msg)
     print_with_time(f"Critical: {msg}", need_format=False)
