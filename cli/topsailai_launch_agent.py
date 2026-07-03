@@ -66,20 +66,41 @@ signal.signal(signal.SIGTERM, _signal_handler)
 
 
 CONFIG_TEMPLATE = """# AI Agent TopsailAI-Launcher Configuration Template
-# Save this file as .topsailai/settings.yaml in your project root
+# Save this file as .topsailai/settings.yaml in your project root.
+# This file tells topsailai_launch_agent.py which driver to run, which files
+# to inject into the agent context, and which environment variables to set.
 
-# AI Agent driver path or command
+# AI Agent driver path or command.
+# This is the executable that will be launched. It can be an absolute path,
+# a command available in PATH, or a command with arguments (e.g. "python3 ai_driver.py").
+# Resolution order (first match wins):
+#   1. --driver CLI argument
+#   2. TOPSAILAI_AGENT_DRIVER environment variable from this file (item-specific or _default)
+#   3. ai_agent_driver field below
+#   4. TOPSAILAI_AGENT_DRIVER from the OS environment
 ai_agent_driver: "ai-team-flow-dev"
 
-# Working directory (relative paths will be resolved based on the current directory)
+# Working directory for the launched driver.
+# Relative paths are resolved against the current directory when the script runs.
+# The driver will be executed with this directory as its cwd.
 workspace: "."
 
-# Context configuration: each item corresponds to a set of context files
-# _default is the base context shared by all items
+# Context configuration: each item corresponds to a set of context files.
+# These files are read and appended to TOPSAILAI_CONTEXT_USER_MESSAGE so the
+# agent receives project documentation, feature specs, test plans, etc.
+# _default is the base context shared by all items; item-specific files are
+# appended after _default files.
+# Paths are relative to `workspace` unless they start with `/`.
+#
+# Common items:
+#   default - base context used when no --item is specified
+#   memo    - context for memo-style agent sessions (often empty list)
 context:
   _default:
     - "project.yaml"
     - "docs/Environment_Variables.md"
+  default: []
+  memo: []
   all_test:
     - "features/00features.md"
     - "test_all.md"
@@ -87,17 +108,25 @@ context:
     - "features/00features.md"
     - "test_unit.md"
 
-# Environment variable configuration: each item can define its own environment variables
-# _default is the base environment variables shared by all items
+# Environment variable configuration: each item can define its own variables.
+# _default variables are applied first, then item-specific variables override
+# them. System environment variables are inherited and can be overridden here.
+#
+# Common items:
+#   default - base environment used when no --item is specified
+#   memo    - memo agent environment, typically sets TOPSAILAI_AGENT_DRIVER
+#             to "topsailai_agent_chats" so memo sessions use the chat driver
 environment:
   _default:
     TOPSAILAI_INTERACTIVE_MODE: "1"
+  default: {}
+  memo:
+    TOPSAILAI_AGENT_DRIVER: "topsailai_agent_chats"
   all_test:
     TEST_SCOPE: "all"
   unit_test:
     TEST_SCOPE: "unit"
 """
-
 
 def load_yaml(path):
     """Load a YAML file, and provide a friendly hint if PyYAML is not installed."""
