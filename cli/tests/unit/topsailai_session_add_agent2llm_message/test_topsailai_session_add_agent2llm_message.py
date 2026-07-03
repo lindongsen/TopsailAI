@@ -82,7 +82,8 @@ class TestDiscoverJsonlFiles:
             pid=None,
             jsonl_suffix=JSONL_SUFFIX,
         )
-        assert result == []
+        assert len(result) == 1
+        assert result[0].endswith("abc.123.session.agent2llm_inject_messages.jsonl")
 
 
 class TestWriteMessage:

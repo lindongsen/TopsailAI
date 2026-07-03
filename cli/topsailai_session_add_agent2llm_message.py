@@ -113,8 +113,6 @@ def discover_jsonl_files(
             task_folder,
             f"{sid}.{spid}{jsonl_suffix}",
         )
-        if not os.path.exists(inject_path):
-            continue
 
         try:
             mtime = os.path.getmtime(stdout_path)
