@@ -7,11 +7,16 @@ instead of the builtin ``input()``.
 """
 
 from topsailai.utils import env_tool
+from topsailai.utils.input_tool import _clear_leftover_buffer
 from topsailai.utils.thread_local_tool import (
     set_agent_runtime_input,
     set_agent_runtime_input_with_timeout,
 )
-from topsailai.workspace.input_tool import input_from_pipe_session, input_one_line
+from topsailai.workspace.input_tool import (
+    _build_pipe_path,
+    input_from_pipe_session,
+    input_one_line,
+)
 
 
 def pre_run_set_agent_runtime_input(self):
@@ -50,11 +55,17 @@ def pre_run_set_agent_runtime_input(self):
         Returns:
             The string returned by ``input_from_pipe_session``.
         """
+        # Clear any leftover EOF marker buffered by previous pipe reads so
+        # that approval input starts fresh and does not return an empty
+        # string from a stale EOF marker.
+        pipe_path = _build_pipe_path(env_tool.get_session_id())
+        _clear_leftover_buffer(pipe_path)
         return input_from_pipe_session(
             session_id=env_tool.get_session_id(),
             single_line=True,
             timeout=timeout,
             prompt=tips,
+            raise_eof_error=False,
         )
 
     set_agent_runtime_input(input_on_agent_runtime)

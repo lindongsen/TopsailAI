@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 
 import pytest
 
@@ -102,6 +102,7 @@ class TestPreRunSetAgentRuntimeInput(unittest.TestCase):
                 single_line=True,
                 timeout=5.0,
                 prompt="Enter something: ",
+                raise_eof_error=False,
             )
 
     def test_timeout_wrapper_uses_default_timeout(self):
@@ -131,6 +132,7 @@ class TestPreRunSetAgentRuntimeInput(unittest.TestCase):
                 single_line=True,
                 timeout=None,
                 prompt="Enter something: ",
+                raise_eof_error=False,
             )
 
 
@@ -184,7 +186,8 @@ class TestPreRunInputToolApprovalTransport(unittest.TestCase):
             session_id=None,
             single_line=True,
             timeout=7.0,
-            prompt=unittest.mock.ANY,
+            prompt=ANY,
+            raise_eof_error=False,
         )
 
     def test_tool_approval_transport_falls_back_to_input_with_timeout(self):
@@ -265,7 +268,6 @@ class TestPreRunTimeoutWrapperRealPipe(unittest.TestCase):
         from topsailai.utils.thread_local_tool import (
             get_agent_runtime_input_with_timeout,
         )
-        from topsailai.utils import env_tool
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch("topsailai.workspace.input_tool.FOLDER_WORKSPACE_TASK", tmpdir):

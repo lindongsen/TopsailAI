@@ -135,7 +135,7 @@ class CurrentProject(_Base):
         Project info, working folder
         """
         return (
-            f'''ProjectFolder={os.environ.get("TOPSAILAI_PROJECT_WORKSPACE", "")}\n'''
+            f'''ProjectWorkspace={os.environ.get("TOPSAILAI_PROJECT_WORKSPACE", "")}\n'''
             f'''PWD={os.environ.get("TOPSAILAI_PWD", "")}\n'''
         )
 

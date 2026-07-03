@@ -388,7 +388,7 @@ def _build_pipe_path(session_id: str | None = None) -> str:
     Returns:
         Absolute path to the session pipe.
     """
-    if session_id is None:
+    if not session_id:
         session_id = env_tool.get_session_id() or "topsailai"
     return os.path.join(
         FOLDER_WORKSPACE_TASK,

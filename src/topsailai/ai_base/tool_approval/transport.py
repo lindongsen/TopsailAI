@@ -16,8 +16,9 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from topsailai.ai_base.tool_approval.instance import ToolApprovalInstance
+    from collections.abc import Callable
 
+    from topsailai.ai_base.tool_approval.instance import ToolApprovalInstance
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +64,14 @@ class LocalApprovalTransport(ApprovalTransport):
     starts a short-lived background thread that reads a line from stdin and
     resolves the instance as ``approved`` or ``denied``. This makes the local
     transport usable for real CLI approval without requiring an external
-    decision maker. In non-interactive environments the stdin thread is not
-    started and the transport behaves as a pure queue.
+    decision maker.
+
+    When a custom agent-runtime input-with-timeout function is registered in
+    thread-local storage (for example, the workspace pipe reader installed by
+    ``pre_run_set_agent_runtime_input``), ``send_request()`` uses that function
+    even in non-TTY environments. This ensures approval prompts can be answered
+    through the same session pipe or other input mechanism that the agent chat
+    loop uses.
     """
 
     _instance: "LocalApprovalTransport | None" = None
@@ -91,15 +98,26 @@ class LocalApprovalTransport(ApprovalTransport):
         with cls._lock:
             cls._instance = None
 
-    def _read_stdin_input(self, instance: "ToolApprovalInstance") -> None:
+    def _read_stdin_input(
+        self,
+        instance: "ToolApprovalInstance",
+        *,
+        input_func: "Callable[[str, float | None], str] | None" = None,
+    ) -> None:
         """
-        Background worker that reads one line from stdin and resolves the instance.
+        Background worker that reads one line of input and resolves the instance.
 
         This delegates to the agent-runtime input-with-timeout function when one
         is registered in thread-local storage; otherwise it falls back to
         :func:`topsailai.utils.input_tool.input_with_timeout` so the terminal is
         configured for visible echo and the read can time out without blocking
         forever.
+
+        Args:
+            instance: The approval instance to resolve.
+            input_func: Optional input callable to use. When omitted, the
+                thread-local ``agent_runtime_input_with_timeout`` function is
+                used if available, otherwise ``input_with_timeout`` is used.
         """
         from topsailai.utils.input_tool import input_with_timeout
         from topsailai.utils.thread_local_tool import get_agent_runtime_input_with_timeout
@@ -112,16 +130,29 @@ class LocalApprovalTransport(ApprovalTransport):
             "  Type 'approve'(yes) or 'deny'(no): "
         )
 
-        input_func = get_agent_runtime_input_with_timeout()
-        if input_func is not None:
-            line = input_func(prompt, instance.timeout)
-        else:
-            line = input_with_timeout(
-                prompt=prompt,
-                timeout=instance.timeout,
-                stream=sys.stdin,
-                output=sys.stdout,
-            )
+        if input_func is None:
+            input_func = get_agent_runtime_input_with_timeout()
+
+        try:
+            if input_func is not None:
+                line = input_func(prompt, instance.timeout)
+            else:
+                line = input_with_timeout(
+                    prompt=prompt,
+                    timeout=instance.timeout,
+                    stream=sys.stdin,
+                    output=sys.stdout,
+                )
+        except EOFError:
+            # Pipe closed or EOF marker reached without usable input; exit the
+            # reader so the instance remains unresolved and wait_response()
+            # can apply the configured timeout policy.
+            return
+        except TimeoutError:
+            # Propagate the timeout so callers can detect it. The transport's
+            # wait_response() will also expire and mark the instance as timed
+            # out, but tests and custom callers may rely on the exception.
+            raise
 
         if line is None:
             return
@@ -137,16 +168,25 @@ class LocalApprovalTransport(ApprovalTransport):
             instance.deny(by="user")
 
     def send_request(self, instance: "ToolApprovalInstance") -> None:
-        """Enqueue the instance for the decision maker and optionally prompt stdin."""
+        """Enqueue the instance for the decision maker and optionally prompt for input."""
+        from topsailai.utils.thread_local_tool import get_agent_runtime_input_with_timeout
+
         event = threading.Event()
         with self._events_lock:
             self._response_events[instance.id] = event
         self._request_queue.put(instance)
 
-        if sys.stdin.isatty():
+        # Start an input reader when either:
+        #   1. stdin is a TTY (classic interactive CLI approval), or
+        #   2. a custom agent-runtime input-with-timeout function is registered
+        #      (e.g. the workspace pipe reader). This is the path used by the
+        #      agent chat loop when TOPSAILAI_INPUT_PIPE_ENABLED is active.
+        input_func = get_agent_runtime_input_with_timeout()
+        if sys.stdin.isatty() or input_func is not None:
             thread = threading.Thread(
                 target=self._read_stdin_input,
                 args=(instance,),
+                kwargs={"input_func": input_func},
                 daemon=True,
                 name=f"approval-stdin-{instance.id}",
             )
