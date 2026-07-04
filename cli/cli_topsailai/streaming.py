@@ -21,6 +21,8 @@ from cli_topsailai.formatting import print_header
 from cli_topsailai.log_files import (
     _build_pipe_path,
     _find_session_stdout_file,
+    _get_pid_from_stdout_path,
+    _parse_stdout_filename,
     _resolve_send_target_from_arg,
     get_file_pid,
 )
@@ -278,13 +280,14 @@ def _handle_stream_send(
     message: Optional[str] = None
     stdout_path = default_stdout_path
     session_id = default_session_id
+    pid: Optional[int] = None
 
     if rest:
         sub_parts = rest.split(None, 1)
         first = sub_parts[0]
         target = _resolve_send_target_from_arg(first, log_files)
         if target is not None:
-            session_id, stdout_path = target
+            session_id, stdout_path, pid = target
             if len(sub_parts) > 1:
                 message = sub_parts[1]
         else:
@@ -296,7 +299,7 @@ def _handle_stream_send(
             return
 
     send_message_to_session(
-        session_id, message, task_dir, stdout_path=stdout_path
+        session_id, message, task_dir, stdout_path=stdout_path, pid=pid
     )
 
 
@@ -344,9 +347,25 @@ def send_message_to_session(
     task_dir: str,
     timeout: float = 5.0,
     stdout_path: Optional[str] = None,
+    pid: Optional[int] = None,
 ) -> bool:
     """
     Send a message to a running session through its named pipe.
+
+    Session and task stdout files follow the conventions documented in
+    README.md:
+      - Session stdout: ``{session_id}.{pid}.session.stdout``
+      - Task stdout: ``{session_id}.{pid}[.{other}].task.stdout``
+      - ``topsailai`` as ``{session_id}`` means the session id is undefined
+        and is displayed as ``(temp)``.
+
+    PID resolution priority:
+      1. ``pid`` argument when provided (e.g. the PID recorded in the task
+         list entry selected by the user).
+      2. PID parsed from the stdout filename (session stdout files contain
+         the session PID; task stdout files contain the task child PID).
+      3. PID discovered by scanning processes that currently have the stdout
+         file open (``lsof`` / ``fuser``).
 
     Args:
         session_id: Target session identifier.
@@ -355,6 +374,8 @@ def send_message_to_session(
         timeout: Maximum seconds to wait for the receiver to open the pipe.
         stdout_path: Exact stdout file path when known (e.g. from numeric
             selection), used to target temporary sessions precisely.
+        pid: Optional process PID known to own the session. When provided,
+            this takes precedence over filename parsing and process scanning.
 
     Returns:
         ``True`` if the message was sent, ``False`` otherwise.
@@ -366,25 +387,58 @@ def send_message_to_session(
                 f"{Colors.RED}[ERROR] No stdout file found for session '{session_id}'.{Colors.RESET}"
             )
             return False
+    elif stdout_path.endswith(".task.stdout"):
+        # Task stdout files use the child task PID in the filename
+        # ({session_id}.{pid}[.{other}].task.stdout), not the session PID.
+        # Resolve the canonical session stdout file for the same session so
+        # the named pipe path uses the session process PID.
+        task_session_id, _ = _parse_stdout_filename(os.path.basename(stdout_path))
+        resolved_session_id = (
+            task_session_id if task_session_id is not None else session_id
+        )
+        resolved_stdout = _find_session_stdout_file(task_dir, resolved_session_id)
+        if resolved_stdout is None:
+            print(
+                f"{Colors.RED}[ERROR] No session stdout file found for session "
+                f"'{resolved_session_id}'.{Colors.RESET}"
+            )
+            return False
+        stdout_path = resolved_stdout
     elif not os.path.isfile(stdout_path):
         print(
             f"{Colors.RED}[ERROR] Stdout file not found: {stdout_path}.{Colors.RESET}"
         )
         return False
 
-    pid = get_file_pid(stdout_path)
-    if pid is None:
+    # Resolve the session PID using the documented priority:
+    #   1. Caller-supplied pid (e.g. from the task list entry).
+    #   2. PID embedded in the stdout filename.
+    #   3. PID from scanning open files (lsof / fuser).
+    pipe_path: Optional[str] = None
+
+    if pid is not None:
+        candidate_pipe = _build_pipe_path(task_dir, session_id, pid)
+        if os.path.exists(candidate_pipe):
+            pipe_path = candidate_pipe
+
+    if pipe_path is None:
+        pid = _get_pid_from_stdout_path(stdout_path)
+        if pid is not None:
+            candidate_pipe = _build_pipe_path(task_dir, session_id, pid)
+            if os.path.exists(candidate_pipe):
+                pipe_path = candidate_pipe
+
+    if pipe_path is None:
+        pid = get_file_pid(stdout_path)
+        if pid is not None:
+            candidate_pipe = _build_pipe_path(task_dir, session_id, pid)
+            if os.path.exists(candidate_pipe):
+                pipe_path = candidate_pipe
+
+    if pipe_path is None:
         print(
             f"{Colors.RED}[ERROR] Session '{session_id}' does not appear to be running "
             f"(no process owns its stdout file).{Colors.RESET}"
-        )
-        return False
-
-    pipe_path = _build_pipe_path(task_dir, session_id, pid)
-    if not os.path.exists(pipe_path):
-        print(
-            f"{Colors.RED}[ERROR] Pipe not found: {pipe_path}. "
-            f"Is the session waiting for input with TOPSAILAI_INPUT_PIPE_ENABLED=1?{Colors.RESET}"
         )
         return False
 
@@ -431,7 +485,6 @@ def send_message_to_session(
             except OSError:
                 pass
 
-
 def handle_send_command(
     user_input: str, task_dir: str, log_files: List[dict]
 ) -> None:
@@ -443,6 +496,7 @@ def handle_send_command(
     message.  When no message is provided, interactive multi-line input is used.
     """
     stdout_path: Optional[str] = None
+    pid: Optional[int] = None
     parts = user_input.split(None, 1)
     if len(parts) < 2:
         if state.current_scope == "session" and state.current_session_id:
@@ -468,7 +522,7 @@ def handle_send_command(
                     f"'{sub_parts[0]}'.{Colors.RESET}"
                 )
                 return
-            session_id, stdout_path = target
+            session_id, stdout_path, pid = target
             message = sub_parts[1] if len(sub_parts) > 1 else None
 
     if message is None:
@@ -477,6 +531,8 @@ def handle_send_command(
             return
 
     if stdout_path is not None:
-        send_message_to_session(session_id, message, task_dir, stdout_path=stdout_path)
+        send_message_to_session(
+            session_id, message, task_dir, stdout_path=stdout_path, pid=pid
+        )
     else:
-        send_message_to_session(session_id, message, task_dir)
+        send_message_to_session(session_id, message, task_dir, pid=pid)

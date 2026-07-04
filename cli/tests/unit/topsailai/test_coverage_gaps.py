@@ -41,6 +41,7 @@ from cli_topsailai.help_text import print_help
 from cli_topsailai.history import HistoryManager, load_readline_history
 from cli_topsailai.log_files import (
     _find_session_stdout_file,
+    _get_pid_from_stdout_path,
     _parse_stdout_filename,
     discover_log_files,
     get_file_pid,
@@ -833,6 +834,29 @@ class TestFindSessionStdoutFile(unittest.TestCase):
                 result = _find_session_stdout_file(tmpdir, "s1")
         self.assertIsNone(result)
 
+    def test_prefers_session_stdout_over_task_stdout(self):
+        """Session stdout files are preferred over task stdout files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session_path = os.path.join(tmpdir, "s1.1000.session.stdout")
+            task_path = os.path.join(tmpdir, "s1.topsailai.1234567890.2000.task.stdout")
+            with open(session_path, "w") as f:
+                f.write("session log")
+            with open(task_path, "w") as f:
+                f.write("task log")
+            # Make the task stdout newer so the old behavior would pick it.
+            os.utime(task_path, (1234567890, 1234567890))
+            result = _find_session_stdout_file(tmpdir, "s1")
+        self.assertEqual(result, session_path)
+
+    def test_ignores_task_stdout_when_no_session_stdout(self):
+        """Task stdout files alone are not treated as session stdout."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = os.path.join(tmpdir, "s1.topsailai.1234567890.2000.task.stdout")
+            with open(task_path, "w") as f:
+                f.write("task log")
+            result = _find_session_stdout_file(tmpdir, "s1")
+        self.assertIsNone(result)
+
 
 class TestSendMessageErrors(unittest.TestCase):
     """Tests for send_message_to_session error paths."""
@@ -1351,12 +1375,20 @@ class TestSendMessageCloseError(unittest.TestCase):
     @patch("os.stat")
     @patch("os.path.exists", return_value=True)
     @patch("cli_topsailai.streaming.get_file_pid", return_value=1234)
-    @patch("cli_topsailai.streaming._find_session_stdout_file", return_value="/tmp/s1.session.stdout")
+    @patch(
+        "cli_topsailai.streaming._get_pid_from_stdout_path",
+        return_value=None,
+    )
+    @patch(
+        "cli_topsailai.streaming._find_session_stdout_file",
+        return_value="/tmp/s1.session.stdout",
+    )
     @patch("builtins.print")
     def test_close_fd_error_ignored(
         self,
         mock_print,
         mock_find,
+        mock_getpid_from_path,
         mock_getpid,
         mock_exists,
         mock_stat,
@@ -1374,6 +1406,25 @@ class TestSendMessageCloseError(unittest.TestCase):
         finally:
             shutil.rmtree(task_dir, ignore_errors=True)
 
+
+class TestGetPidFromStdoutPath(unittest.TestCase):
+    """Tests for _get_pid_from_stdout_path."""
+
+    def test_returns_pid_from_valid_filename(self):
+        path = "/tmp/task/20260704T053911.4004128.session.stdout"
+        self.assertEqual(_get_pid_from_stdout_path(path), 4004128)
+
+    def test_returns_none_for_missing_pid(self):
+        path = "/tmp/task/s1.session.stdout"
+        self.assertIsNone(_get_pid_from_stdout_path(path))
+
+    def test_returns_none_for_non_digit_pid(self):
+        path = "/tmp/task/20260704T053911.abc.session.stdout"
+        self.assertIsNone(_get_pid_from_stdout_path(path))
+
+    def test_returns_none_for_unexpected_extension(self):
+        path = "/tmp/task/20260704T053911.4004128.session.stderr"
+        self.assertIsNone(_get_pid_from_stdout_path(path))
 
 class TestHandleSendCancel(unittest.TestCase):
     """Tests for handle_send_command cancellation."""

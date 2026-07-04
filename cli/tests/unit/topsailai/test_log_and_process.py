@@ -93,12 +93,15 @@ class TestResolveSendTargetFromArg(unittest.TestCase):
                 "filename": "s1.1234.session.stdout",
                 "session_id": "s1",
                 "path": "/tmp/s1.1234.session.stdout",
+                "pid": 1234,
             },
         ]
         result = _resolve_send_target_from_arg("1", files)
         self.assertIsNotNone(result)
-        session_id, path = result
+        session_id, path, pid = result
         self.assertEqual(session_id, "s1")
+        self.assertEqual(path, "/tmp/s1.1234.session.stdout")
+        self.assertEqual(pid, 1234)
 
     def test_literal(self):
         files = [
@@ -106,14 +109,15 @@ class TestResolveSendTargetFromArg(unittest.TestCase):
                 "filename": "s1.1234.session.stdout",
                 "session_id": "s1",
                 "path": "/tmp/s1.1234.session.stdout",
+                "pid": 1234,
             },
         ]
         result = _resolve_send_target_from_arg("s1", files)
         self.assertIsNotNone(result)
-        session_id, path = result
+        session_id, path, pid = result
         self.assertEqual(session_id, "s1")
         self.assertIsNone(path)
-
+        self.assertIsNone(pid)
 
 class TestProcessManagement(unittest.TestCase):
     """Tests for process management functions."""

@@ -24,7 +24,7 @@ from topsailai.workspace.agent.runtime_message_sources.file import write_message
 
 
 class TestParseStdoutFilename:
-    def test_valid(self):
+    def test_valid_session(self):
         assert parse_stdout_filename("abc-001.12345.session.stdout") == (
             "abc-001",
             "12345",
@@ -36,6 +36,30 @@ class TestParseStdoutFilename:
             "12345",
         )
 
+    def test_valid_task(self):
+        assert parse_stdout_filename("abc-001.12345.step-1.task.stdout") == (
+            "abc-001",
+            "12345",
+        )
+
+    def test_task_without_extra_identifier(self):
+        assert parse_stdout_filename("abc-001.12345.task.stdout") == (
+            "abc-001",
+            "12345",
+        )
+
+    def test_temp_task(self):
+        assert parse_stdout_filename("topsailai.12345.step-1.task.stdout") == (
+            "topsailai",
+            "12345",
+        )
+
+    def test_invalid_task_pid(self):
+        assert parse_stdout_filename("abc-001.notapid.step-1.task.stdout") == (
+            None,
+            None,
+        )
+
     def test_invalid(self):
         assert parse_stdout_filename("something.else.txt") == (None, None)
 
@@ -44,7 +68,6 @@ class TestBuildInjectPath:
     def test_build(self):
         path = build_inject_path("abc", "123")
         assert path.endswith("abc.123.session.agent2llm_inject_messages.jsonl")
-
 
 class TestDiscoverJsonlFiles:
     def test_specific_session_and_pid(self, tmp_path):
@@ -85,6 +108,45 @@ class TestDiscoverJsonlFiles:
         assert len(result) == 1
         assert result[0].endswith("abc.123.session.agent2llm_inject_messages.jsonl")
 
+    def test_specific_task(self, tmp_path):
+        (tmp_path / "abc.123.step-1.task.stdout").write_text("")
+        jsonl = tmp_path / "abc.123.session.agent2llm_inject_messages.jsonl"
+        jsonl.write_text("")
+
+        result = discover_jsonl_files(
+            str(tmp_path),
+            session_id="abc",
+            pid="123",
+            jsonl_suffix=JSONL_SUFFIX,
+        )
+        assert result == [str(jsonl)]
+
+    def test_session_and_task_together(self, tmp_path):
+        (tmp_path / "abc.123.session.stdout").write_text("")
+        (tmp_path / "abc.124.step-1.task.stdout").write_text("")
+
+        result = discover_jsonl_files(
+            str(tmp_path),
+            session_id="abc",
+            pid=None,
+            jsonl_suffix=JSONL_SUFFIX,
+        )
+        assert len(result) == 2
+        assert any(path.endswith("abc.123.session.agent2llm_inject_messages.jsonl") for path in result)
+        assert any(path.endswith("abc.124.session.agent2llm_inject_messages.jsonl") for path in result)
+
+    def test_task_with_extra_identifier_filtered_by_pid(self, tmp_path):
+        (tmp_path / "abc.123.step-1.task.stdout").write_text("")
+        (tmp_path / "abc.456.step-2.task.stdout").write_text("")
+
+        result = discover_jsonl_files(
+            str(tmp_path),
+            session_id=None,
+            pid="123",
+            jsonl_suffix=JSONL_SUFFIX,
+        )
+        assert len(result) == 1
+        assert result[0].endswith("abc.123.session.agent2llm_inject_messages.jsonl")
 
 class TestWriteMessage:
     def test_appends_simple_message(self, tmp_path):

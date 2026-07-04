@@ -18,12 +18,18 @@ def _parse_stdout_filename(filename: str) -> Tuple[Optional[str], Optional[int]]
     """
     Parse a session/task stdout filename.
 
-    Supported formats:
-      - topsailai.{pid}.session.stdout       -> (None, pid)   (temp session)
-      - {session_id}.{pid}.session.stdout    -> (session_id, pid)
-      - topsailai.{timestamp}.{pid}.task.stdout -> (None, pid)   (temp session)
-      - {session_id}.topsailai.{timestamp}.{pid}.task.stdout -> (session_id, pid)
-      - {name}.{pid}.stdout                  -> (None, pid)   (generic temp)
+    Filename conventions:
+      - Session stdout: ``{session_id}.{pid}.session.stdout``
+        The ``{pid}`` is the session process PID.  When ``{session_id}`` is
+        ``topsailai`` the session id is undefined and is displayed as ``(temp)``.
+      - Task stdout: ``{session_id}.{pid}[.{other}].task.stdout``
+        The ``{pid}`` is the task (child) process PID.  ``{other}`` is an
+        optional extra identifier.  ``topsailai`` as ``{session_id}`` means the
+        same as for session stdout.
+
+    Backward-compatible legacy formats are also accepted:
+      - ``topsailai.{pid}.session.stdout`` / ``topsailai.{pid}.task.stdout``
+      - ``{name}.{pid}.stdout`` / ``{name}.{pid}.stderr`` (generic)
 
     Returns:
         Tuple of (session_id, pid). session_id is None for temp sessions;
@@ -34,21 +40,16 @@ def _parse_stdout_filename(filename: str) -> Tuple[Optional[str], Optional[int]]
         if not base:
             return None, None
         parts = base.split(".")
-        # Expected: {session_id}.topsailai.{timestamp}.{pid}
-        if len(parts) >= 4 and parts[-3] == "topsailai":
+
+        # Standard format: {session_id}.{pid}[.{other...}]
+        # or topsailai.{pid}[.{other...}] for temp sessions.
+        if len(parts) >= 2:
             try:
-                pid = int(parts[-1])
+                pid = int(parts[1])
             except ValueError:
                 return None, None
-            session_id = ".".join(parts[:-3])
+            session_id = None if parts[0] == "topsailai" else parts[0]
             return session_id, pid
-        # Temp session: topsailai.{timestamp}.{pid}
-        if len(parts) == 3 and parts[0] == "topsailai":
-            try:
-                return None, int(parts[-1])
-            except ValueError:
-                return None, None
-        return None, None
 
     if filename.endswith(".session.stdout"):
         base = filename[: -len(".session.stdout")]
@@ -84,6 +85,30 @@ def _parse_stdout_filename(filename: str) -> Tuple[Optional[str], Optional[int]]
         return None, pid
 
     return None, None
+
+
+def _get_pid_from_stdout_path(stdout_path: str) -> Optional[int]:
+    """
+    Extract the session process PID from a stdout file path.
+
+    The stdout filename is created by the session process using its own PID
+    (e.g. ``{session_id}.{pid}.session.stdout``).  This is more reliable than
+    scanning for processes that currently have the file open, because other
+    tools such as ``tail -f`` or stream watchers may also hold the file open
+    and appear first in ``lsof`` output.
+
+    Args:
+        stdout_path: Absolute path to the session stdout file.
+
+    Returns:
+        The PID embedded in the filename, or ``None`` if the filename does
+        not follow the expected convention.
+    """
+    if not stdout_path:
+        return None
+    filename = os.path.basename(stdout_path)
+    _session_id, pid = _parse_stdout_filename(filename)
+    return pid
 
 
 def _is_temp_session(session_id: Optional[str]) -> bool:
@@ -128,8 +153,11 @@ def discover_log_files(task_dir: str) -> List[dict]:
         if entry.endswith(".session.stdout") or entry.endswith(".task.stdout"):
             session_id, pid = _parse_stdout_filename(entry)
             is_task = entry.endswith(".task.stdout")
+            # Skip files that do not match the expected naming convention.
+            if pid is None:
+                continue
             # Temp sessions have no real session id; expose a user-facing label.
-            if session_id is None and pid is not None and entry.startswith("topsailai."):
+            if session_id is None and entry.startswith("topsailai."):
                 session_id = "(temp)"
         elif entry.endswith(".stdout") or entry.endswith(".stderr"):
             session_id, pid = _parse_stdout_filename(entry)
@@ -152,11 +180,24 @@ def discover_log_files(task_dir: str) -> List[dict]:
 
 def get_file_pid(filepath: str) -> Optional[int]:
     """
-    Check if a file is currently being used by any process.
-    Uses lsof first, then falls back to fuser.
+    Extract the PID associated with a stdout/stderr log file.
+
+    First tries to parse the PID from the filename itself (e.g.
+    ``{session_id}.{pid}.task.stdout``).  If the filename does not contain a
+    parseable PID, falls back to scanning for processes that currently have
+    the file open using ``lsof`` and then ``fuser``.
+
     All spawned subprocesses are tracked and cleaned up on exit.
     """
-    # Try lsof
+    if not filepath:
+        return None
+
+    filename = os.path.basename(filepath)
+    _session_id, pid = _parse_stdout_filename(filename)
+    if pid is not None:
+        return pid
+
+    # Fallback to lsof
     try:
         proc = subprocess.Popen(
             ["lsof", "-t", filepath],
@@ -209,19 +250,19 @@ def get_file_pid(filepath: str) -> Optional[int]:
 
 def _find_session_stdout_file(task_dir: str, session_id: str) -> Optional[str]:
     """
-    Find the most recent stdout file for a session.
+    Find the most recent session stdout file for a session.
 
-    Supports both naming conventions:
-      - {session_id}.{pid}.session.stdout
-      - {session_id}.topsailai.{timestamp}.{pid}.task.stdout
-    This helper discovers the file by scanning the task directory.
+    Only ``*.session.stdout`` files are considered because they are created
+    by the session process using its own PID.  Task stdout files
+    (``*.task.stdout``) belong to child task processes and must not be used
+    to resolve the session's named pipe.
     """
     if not os.path.isdir(task_dir):
         return None
 
     candidates = []
     for entry in os.listdir(task_dir):
-        if not (entry.endswith(".session.stdout") or entry.endswith(".task.stdout")):
+        if not entry.endswith(".session.stdout"):
             continue
         full_path = os.path.join(task_dir, entry)
         if not os.path.isfile(full_path):
@@ -290,14 +331,15 @@ def _resolve_session_id_from_arg(
 
 def _resolve_send_target_from_arg(
     arg: str, log_files: List[dict]
-) -> Optional[Tuple[str, Optional[str]]]:
+) -> Optional[Tuple[str, Optional[str], Optional[int]]]:
     """
     Resolve a /send argument to a concrete session target.
 
-    Returns a tuple of (session_id, stdout_path). For numeric selections the
-    exact stdout file path is returned so that temporary sessions are not
-    confused with each other. For named session IDs the stdout path is left
-    None and resolved later.
+    Returns a tuple of (session_id, stdout_path, pid). For numeric selections
+    the exact stdout file path and the PID recorded in the task list entry are
+    returned so that temporary sessions are not confused with each other and
+    the caller can prefer the list-recorded PID. For named session IDs the
+    stdout path and pid are left None and resolved later.
     """
     arg = arg.strip()
     if not arg:
@@ -310,7 +352,7 @@ def _resolve_send_target_from_arg(
         session_id = entry.get("session_id", "")
         if session_id == _TEMP_SESSION_MARKER:
             session_id = _TEMP_SESSION_ID
-        return session_id, entry.get("path")
+        return session_id, entry.get("path"), entry.get("pid")
 
     session_id = _resolve_session_id_from_arg(arg, "", log_files, allow_temp=True)
-    return (session_id, None) if session_id else None
+    return (session_id, None, None) if session_id else None

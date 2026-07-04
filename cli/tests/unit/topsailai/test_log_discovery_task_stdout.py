@@ -39,6 +39,44 @@ class TestLogDiscoveryTaskStdout(unittest.TestCase):
             files = discover_log_files(tmpdir)
             self.assertEqual(files, [])
 
+    def test_temp_task_stdout_with_extra_identifier(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            open(os.path.join(tmpdir, "topsailai.1234.step-1.task.stdout"), "w").close()
+            files = discover_log_files(tmpdir)
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0]["session_id"], "(temp)")
+            self.assertEqual(files[0]["pid"], 1234)
+            self.assertTrue(files[0]["is_task"])
+
+    def test_named_session_task_stdout_with_extra_identifier(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            open(os.path.join(tmpdir, "my-session.1234.step-1.task.stdout"), "w").close()
+            files = discover_log_files(tmpdir)
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0]["session_id"], "my-session")
+            self.assertEqual(files[0]["pid"], 1234)
+            self.assertTrue(files[0]["is_task"])
+
+    def test_temp_task_stdout_with_numeric_extra(self):
+        """Extra identifier may be a plain number."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            open(os.path.join(tmpdir, "topsailai.1234.5678.task.stdout"), "w").close()
+            files = discover_log_files(tmpdir)
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0]["session_id"], "(temp)")
+            self.assertEqual(files[0]["pid"], 1234)
+            self.assertTrue(files[0]["is_task"])
+
+    def test_temp_task_stdout_with_dotted_extra(self):
+        """Extra identifier may contain dots."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            open(os.path.join(tmpdir, "topsailai.1234.abc.123.task.stdout"), "w").close()
+            files = discover_log_files(tmpdir)
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0]["session_id"], "(temp)")
+            self.assertEqual(files[0]["pid"], 1234)
+            self.assertTrue(files[0]["is_task"])
+
 
 if __name__ == "__main__":
     unittest.main()

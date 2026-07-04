@@ -6,6 +6,9 @@ This directory contains the command-line interface (CLI) tools for the project.
 
 ```
 .
+├── cli_topsailai/         # Shared package used by CLI scripts
+│   ├── __init__.py
+│   └── ...
 ├── <cli-name>.py          # CLI entry point
 ├── tests/
 │   └── unit/
@@ -13,6 +16,7 @@ This directory contains the command-line interface (CLI) tools for the project.
 │           └── test_*.py
 ```
 
+The `cli_topsailai` package is a common library that can be imported by any CLI script under this directory.
 ## Testing
 
 Unit tests for each CLI tool are organized under `tests/unit/{cli-name}/`.
@@ -35,7 +39,38 @@ For example:
 - `topsailai_launch_agent.py`
 - `topsailai_session_status.py`
 
-When adding a new CLI tool, prefix its entry-point script with `topsailai` (e.g. `topsailai_<feature>.py`).
+When adding a new CLI tool, prefix its entry-point script with `topsailai` (e.g., `topsailai_<feature>.py`).
+
+## Session Output Files
+
+The `topsailai.py` stream watcher discovers session and task stdout/stderr files in the task directory.
+
+- **Session stdout** is produced by a session's main process.
+  - Filename format: `{session_id}.{pid}.session.stdout`
+  - `{pid}` is the session (parent) process PID.
+  - Example: `my-session.1234.session.stdout`
+
+- **Task stdout** is produced by task processes or threads launched by the session.
+  - Filename format: `{session_id}.{pid}.{extra}.task.stdout`
+  - `{pid}` is the task (child) process PID.
+  - `{extra}` is an optional extra identifier (task name, timestamp, etc.) and may itself contain dots, e.g., `abc.123`.
+  - Example: `my-session.1235.step-1.task.stdout`
+
+- **Temporary sessions**: when `{session_id}` is `topsailai`, the session id is undefined and is displayed as `(temp)` in the UI.
+  - Example: `topsailai.1234.session.stdout` → displayed as `(temp)`.
+
+Legacy filename formats are still accepted for backward compatibility:
+
+- Generic `{name}.{pid}.stdout` / `{name}.{pid}.stderr`
+### Sending messages to a running session
+
+When you use `/send` in the stream watcher, the target session PID is resolved in this order:
+
+1. **Task-list PID** — if the selected entry in the discovered file list already records a session PID, use it directly.
+2. **Filename PID** — parse the PID from the stdout filename (works for `session.stdout`; for `task.stdout` the filename PID is the task child PID, so it is only used when it already points to a valid session pipe).
+3. **`lsof` / `fuser` fallback** — scan the filesystem to find the process currently holding the stdout file and derive the session PID from there.
+
+This prioritizes the authoritative PID recorded by the watcher and only falls back to heuristic methods when necessary.
 
 ## Available CLI Tools
 
