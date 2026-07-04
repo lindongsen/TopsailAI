@@ -12,15 +12,9 @@ Created: 2026-03-23
 
 from topsailai.ai_base.constants import (
     ROLE_USER,
-    ROLE_ASSISTANT,
-    ROLE_SYSTEM,
-    ROLE_TOOL,
     STEP_NAME_OBSERVATION,
     MSG_KEY_STEP_NAME,
     MSG_KEY_RAW_TEXT,
-)
-from topsailai.utils import (
-    json_tool,
 )
 from topsailai.context import ctx_manager
 from topsailai.tools.agent_tool import (
@@ -66,7 +60,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             "ctx.del_msg_ids": self.ctx_runtime_data.del_session_message_by_ids,
             "ctx.summarize": self.ctx_summarize,
             "ctx.search": self.ctx_search,
-            "ctx.add_agent2llm": self.ctx_add_agent2llm_message,
+            "ctx.btw": self.ctx_btw,
         }
 
         # total
@@ -186,28 +180,29 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             print_raw_messages(raw_msgs)
         return
 
-    def ctx_add_agent2llm_message(self, content: str, role: str = ROLE_USER):
+    def ctx_btw(self, *args):
         """
-        Add a message to the Agent2LLM ephemeral message context.
+        Add a "by the way" message to the Agent2LLM ephemeral message context.
 
         This instruction injects a message directly into the agent's internal
-        ReAct conversation context (``self.ai_agent.messages``). The content is
-        wrapped as an observation string so it is treated like a runtime
-        observation payload by downstream consumers.
+        ReAct conversation context (``self.ai_agent.messages``). Positional
+        arguments are joined with a single space to form the content, which is
+        wrapped as an observation payload so downstream consumers treat it like
+        a runtime observation.
+
+        Usage::
+
+            /ctx.btw hello world
+            /ctx.btw this is a multi word message
 
         Args:
-            content (str): Raw message content. This becomes the ``raw_text``
-                of an observation content block.
-            role (str, optional): Message role. Must be one of "system", "user",
-                "assistant", or "tool". Defaults to "user".
+            *args: Positional words/phrases that are assembled into the message
+                content.
 
         Returns:
             str: A concise confirmation message.
         """
-        valid_roles = {ROLE_SYSTEM, ROLE_USER, ROLE_ASSISTANT, ROLE_TOOL}
-        role = (role or "").strip().lower()
-        if role not in valid_roles:
-            return f"invalid role [{role}], must be one of {sorted(valid_roles)}"
+        content = " ".join(str(arg) for arg in args)
 
         if not self.ai_agent:
             return "no active agent, cannot add Agent2LLM message"
@@ -220,15 +215,13 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
             MSG_KEY_RAW_TEXT: content,
         }
         message = {
-            "role": role,
-            "content": json_tool.json_dump(observation_content),
+            "role": ROLE_USER,
+            "content": observation_content,
         }
         # Append via the controlled mutator convention for the Agent2LLM layer:
         # use ``+=`` on the existing list rather than replacing the reference.
-        # The message itself is a dict (not a JSON string), consistent with
-        # PromptBase message conventions.
         self.ai_agent.messages += [message]
-        return f"added 1 {role} message to Agent2LLM context (total={len(self.ai_agent.messages)})"
+        return f"added 1 user message to Agent2LLM context (total={len(self.ai_agent.messages)})"
 
     def ctx_delete_message(self, index:int):
         """

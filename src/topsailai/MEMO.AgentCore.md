@@ -628,26 +628,26 @@ See `docs/Environment_Variables.md` for full details:
 ### Note for maintainers
 When modifying how environment context is injected into the system prompt, keep `prompt_env.py` in sync with the variables documented in `docs/Environment_Variables.md`. Any new environment fields added here should also be documented there.
 
-## MEMO: `/ctx.add_agent2llm` Instruction
+## MEMO: `/ctx.btw` Instruction
 
-**Date:** 2026-07-03
+**Date:** 2026-07-04
 **File:** `/TopsailAI/src/topsailai/workspace/context/instruction.py`
 
 ### Conclusion
-`/ctx.add_agent2llm` injects a message into the Agent2LLM ephemeral context at runtime.
+`/ctx.btw` injects a "by the way" message into the Agent2LLM ephemeral context at runtime.
 
 ### Usage
 ```
-/ctx.add_agent2llm <content> [role]
+/ctx.btw <word> [<word> ...]
 ```
-- `content` — required, the message payload. Accepts `list[dict]` or `dict`.
-- `role` — optional, defaults to `user`; supports `system`, `user`, `assistant`, `tool`.
+- Positional arguments are joined with a single space to form the message content.
+- The role is always `user`; no `role` argument is accepted.
 
 ### Implementation
-- Method: `ctx_add_agent2llm_message(self, content, role: str = ROLE_USER)`.
+- Method: `ctx_btw(self, *args)`.
 - Appended message format:
   ```python
-  {"role": role, "content": {"step_name": "observation", "raw_text": content}}
+  {"role": "user", "content": {"step_name": "observation", "raw_text": assembled_content}}
   ```
 - Uses constants `STEP_NAME_OBSERVATION`, `MSG_KEY_STEP_NAME`, `MSG_KEY_RAW_TEXT` from `ai_base/constants.py`.
 - Appended via `self.ai_agent.messages += [...]`; direct assignment is avoided.
