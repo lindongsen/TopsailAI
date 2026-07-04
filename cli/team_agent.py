@@ -35,6 +35,8 @@ os.chdir(project_root)
 
 # Env
 os.environ["TOPSAILAI_COLLABORATION_MODE"] = "1"
+os.environ["TOPSAILAI_PROJECT_WORKSPACE_LOCK_ENABLED"] = "0"
+os.environ["TOPSAILAI_ENABLE_SESSION_LOCK"] = "0"
 
 from topsailai.ai_team.role import (
     get_member_name,

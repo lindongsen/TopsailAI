@@ -10,6 +10,8 @@ Email: lin_dongsen@126.com
 Created: 2026-03-23
 """
 
+import json
+
 from topsailai.ai_base.constants import (
     ROLE_USER,
     STEP_NAME_OBSERVATION,
@@ -216,7 +218,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         }
         message = {
             "role": ROLE_USER,
-            "content": observation_content,
+            "content": json.dumps(observation_content),
         }
         # Append via the controlled mutator convention for the Agent2LLM layer:
         # use ``+=`` on the existing list rather than replacing the reference.

@@ -647,13 +647,14 @@ When modifying how environment context is injected into the system prompt, keep 
 - Method: `ctx_btw(self, *args)`.
 - Appended message format:
   ```python
-  {"role": "user", "content": {"step_name": "observation", "raw_text": assembled_content}}
+  {"role": "user", "content": '{"step_name": "observation", "raw_text": "<assembled_content>"}'}
   ```
+  The `content` field is a JSON string produced by `json.dumps(observation_content)`, where `observation_content` contains `step_name` and `raw_text` keys. This keeps the injected observation consistent with other serialized message payloads.
 - Uses constants `STEP_NAME_OBSERVATION`, `MSG_KEY_STEP_NAME`, `MSG_KEY_RAW_TEXT` from `ai_base/constants.py`.
 - Appended via `self.ai_agent.messages += [...]`; direct assignment is avoided.
 
 ### Note for maintainers
-When adding similar runtime-injection instructions, keep message construction as a plain dict and append through the context-runtime mutator convention.
+When adding similar runtime-injection instructions, keep message construction as a plain dict, serialize the content to a JSON string, and append through the context-runtime mutator convention.
 
 ## MEMO: SKILL.md Configuration Items
 
