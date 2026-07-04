@@ -722,3 +722,49 @@ The skill hub is controlled by several environment variables. They are documente
 - `TOPSAILAI_CALL_SKILL_TIMEOUT_MAP` lets callers override the default timeout for individual skills when invoking them through `skill_tool.call_skill()`.
 - `TOPSAILAI_SESSION_LOCK_ON_SKILLS` and `TOPSAILAI_SESSION_REFRESH_ON_SKILLS` are used by `skill_hook.py` to coordinate session state around skill calls.
 - `TOPSAILAI_HOOK_MODULE_SKILLS` registers external hook modules that can intercept skill lifecycle events.
+
+## MEMO: LLM-Related Logging
+
+**Date:** 2026-07-04
+**File:** `/TopsailAI/src/topsailai/ai_base/constants.py`
+
+### Conclusion
+Logs emitted by LLM-related functionality should be prefixed with the keywords defined in `ai_base/constants.py` so that LLM mistakes and service issues can be quickly identified and filtered. Prefer the `print_*` helpers in `utils/print_tool.py` for these logs because they write to both the project logger and the console consistently.
+
+### Defined Keywords
+
+```python
+# LLM mistake keyword
+LLM_KEYWORD_MISTAKE = "LLM Mistake"
+# LLM service keyword
+LLM_KEYWORD_SERVICE = "LLM Service"
+```
+
+| Constant | Value | Usage |
+|----------|-------|-------|
+| `LLM_KEYWORD_MISTAKE` | `"LLM Mistake"` | Prefix logs that record incorrect, malformed, or otherwise problematic LLM outputs (e.g., bad tool-call formats, missing arguments, unexpected final answers). |
+| `LLM_KEYWORD_SERVICE` | `"LLM Service"` | Prefix logs that record LLM service-level events (e.g., API errors, retries, timeouts, first-byte latency warnings). |
+
+### Preferred Print Helpers
+
+Use the helpers in `utils/print_tool.py` for LLM-related diagnostics:
+
+| Helper | Level | Behavior |
+|--------|-------|----------|
+| `print_info(msg)` | info | Logs and prints an info message. |
+| `print_warning(msg)` | warning | Logs and prints a warning message. |
+| `print_error(msg, exception=False)` | error | Logs and prints an error message; pass `exception=True` to include the current exception traceback. |
+| `print_critical(msg)` | critical | Logs and prints a critical message. |
+
+### Example
+
+```python
+from topsailai.ai_base.constants import LLM_KEYWORD_MISTAKE, LLM_KEYWORD_SERVICE
+from topsailai.utils.print_tool import print_warning, print_error
+
+print_warning(f"{LLM_KEYWORD_SERVICE}: first byte timeout after {timeout}s")
+print_error(f"{LLM_KEYWORD_MISTAKE}: tool call missing required arguments")
+```
+
+### Note for maintainers
+When adding new logging around LLM behavior, prefer these constants over ad-hoc strings and use `utils/print_tool.print_*` over raw `logger.*` calls. Keeping the keyword set small and the output path consistent makes log aggregation, alerting, and interactive debugging easier.
