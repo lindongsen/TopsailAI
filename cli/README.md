@@ -102,7 +102,10 @@ Launch an AI agent driver based on a local `.topsailai/settings.yaml` configurat
 3. `ai_agent_driver` field in `settings.yaml`
 4. `TOPSAILAI_AGENT_DRIVER` from the OS environment
 
-If `.topsailai/settings.yaml` is missing, the script prints a configuration template and exits.
+If `.topsailai/settings.yaml` is missing:
+
+- In an interactive terminal, the script launches a guided setup that asks for the driver command, workspace, default context files, and environment variables, then writes the configuration and continues launching.
+- In a non-interactive terminal, the script writes a default configuration file, prints the template, and exits so you can fill in `context._default` before the next run.
 
 ### `topsailai_session_add_message` vs `topsailai_session_add_agent2llm_message`
 
