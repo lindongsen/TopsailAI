@@ -1,21 +1,102 @@
 """Help text rendering for the TopsailAI CLI."""
 
+from typing import Any, Dict, List, Optional
+
 from cli_topsailai.colors import Colors, colored, cprint
 
 
-def print_help(yaml_commands, current_scope: str) -> None:
-    """Display all available commands with descriptions and examples.
+def _command_matches(item: Dict[str, Any], keyword_lower: str) -> bool:
+    """Check whether a command definition matches a keyword."""
+    texts = [str(item.get("cmd", ""))]
+
+    desc = item.get("desc", "")
+    if isinstance(desc, str):
+        texts.append(desc)
+
+    example = item.get("example", "")
+    if isinstance(example, str):
+        texts.append(example)
+
+    aliases = item.get("alias", [])
+    if isinstance(aliases, str):
+        aliases = [aliases]
+    for alias in aliases:
+        texts.append(str(alias))
+
+    return any(keyword_lower in t.lower() for t in texts)
+
+
+def _render_command(item: Dict[str, Any], is_yaml: bool = False) -> None:
+    """Render a single command definition to the terminal."""
+    cmd = item.get("cmd", "")
+    desc = item.get("desc", "")
+    example = item.get("example", "")
+
+    alias_str = ""
+    if is_yaml:
+        aliases = item.get("alias", [])
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        if aliases:
+            alias_str = (
+                " "
+                + colored(
+                    "(alias: " + ", ".join(str(a) for a in aliases) + ")",
+                    Colors.WHITE,
+                    dim=True,
+                )
+            )
+
+    print(f"\n  {colored(cmd, Colors.YELLOW, bold=True)}{alias_str}")
+    print(f"      {colored(desc, Colors.WHITE)}")
+    if example:
+        print(f"      {colored(example, Colors.WHITE, dim=True)}")
+
+
+def print_instruction_help(instruction: Dict[str, Any]) -> None:
+    """Display detailed help for a single YAML instruction.
+
+    Args:
+        instruction: YAML instruction dictionary.
+    """
+    width = 80
+    cprint("=" * width, color=Colors.CYAN, bold=True)
+    cprint("  TopsailAI - Command Help", color=Colors.CYAN, bold=True)
+    cprint("=" * width, color=Colors.CYAN, bold=True)
+
+    _render_command(instruction, is_yaml=True)
+
+    cprint("=" * width, color=Colors.CYAN)
+    print()
+
+
+def print_help(
+    yaml_commands: Optional[List[Dict[str, Any]]],
+    current_scope: str,
+    keyword: Optional[str] = None,
+) -> None:
+    """Display available commands with descriptions and examples.
 
     Includes built-in commands and YAML-loaded commands for the current scope.
+    When ``keyword`` is provided, only commands whose cmd/alias/desc/example
+    contain the keyword (case-insensitive) are shown.
 
     Args:
         yaml_commands: List of loaded YAML command definitions.
         current_scope: The current command scope (e.g. ``"global"`` or
             ``"session"``).
+        keyword: Optional search keyword for fuzzy filtering.
     """
     width = 80
     cprint("=" * width, color=Colors.CYAN, bold=True)
-    cprint("  TopsailAI - Available Commands", color=Colors.CYAN, bold=True)
+    if keyword:
+        cprint(
+            f"  TopsailAI - Commands matching '{keyword}'",
+            color=Colors.CYAN,
+            bold=True,
+        )
+    else:
+        cprint("  TopsailAI - Available Commands", color=Colors.CYAN, bold=True)
     cprint("=" * width, color=Colors.CYAN, bold=True)
 
     commands = [
@@ -45,9 +126,9 @@ def print_help(yaml_commands, current_scope: str) -> None:
             "example": "Example: /send 1 hello  or  /send my-session hello  or  while streaming: /send hello",
         },
         {
-            "cmd": "/help  or  help",
-            "desc": "Display this help message with all available commands.",
-            "example": "",
+            "cmd": "/help [<keyword>]",
+            "desc": "Display this help message with all available commands. Use /help <keyword> to search commands by name, alias, or description.",
+            "example": "Example: /help ctx",
         },
         {
             "cmd": "q  or  quit",
@@ -61,39 +142,40 @@ def print_help(yaml_commands, current_scope: str) -> None:
         },
     ]
 
-    for item in commands:
-        cmd = item["cmd"]
-        desc = item["desc"]
-        example = item.get("example", "")
+    keyword_lower = keyword.lower() if keyword else None
+    if keyword_lower:
+        builtin_matches = [c for c in commands if _command_matches(c, keyword_lower)]
+    else:
+        builtin_matches = commands
 
-        print(f"\n  {colored(cmd, Colors.YELLOW, bold=True)}")
-        print(f"      {colored(desc, Colors.WHITE)}")
-        if example:
-            print(f"      {colored(example, Colors.WHITE, dim=True)}")
+    for item in builtin_matches:
+        _render_command(item)
 
-    # Print YAML commands for current scope
+    yaml_matches: List[Dict[str, Any]] = []
     if yaml_commands:
+        # When searching, look across all scopes so users can discover
+        # commands that are not available in the current scope.
         scope_cmds = [
-            inst for inst in yaml_commands if current_scope in inst.get("scopes", [])
+            inst
+            for inst in yaml_commands
+            if keyword_lower or current_scope in inst.get("scopes", [])
         ]
-        if scope_cmds:
+        if keyword_lower:
+            yaml_matches = [
+                inst for inst in scope_cmds if _command_matches(inst, keyword_lower)
+            ]
+        else:
+            yaml_matches = scope_cmds
+
+        if yaml_matches and not keyword:
             print(f"\n  {colored('--- YAML Commands ---', Colors.CYAN, bold=True)}")
-            for inst in scope_cmds:
-                cmd = inst.get("cmd", "")
-                aliases = inst.get("alias", [])
-                if isinstance(aliases, str):
-                    aliases = [aliases]
-                desc = inst.get("desc", "")
-                example = inst.get("example", "")
 
-                alias_str = ""
-                if aliases:
-                    alias_str = f" {colored('(alias: ' + ', '.join(aliases) + ')', Colors.WHITE, dim=True)}"
+        for inst in yaml_matches:
+            _render_command(inst, is_yaml=True)
 
-                print(f"\n  {colored(cmd, Colors.YELLOW, bold=True)}{alias_str}")
-                print(f"      {colored(desc, Colors.WHITE)}")
-                if example:
-                    print(f"      {colored(example, Colors.WHITE, dim=True)}")
+    if keyword_lower and not builtin_matches and not yaml_matches:
+        message = f"No commands found matching '{keyword}'."
+        print(f"\n  {colored(message, Colors.YELLOW)}")
 
     cprint("-" * width, color=Colors.CYAN)
     print(

@@ -130,6 +130,46 @@ def get_all_command_names(instruction: Dict[str, Any]) -> List[str]:
     return names
 
 
+def find_yaml_command_for_help(user_input: str) -> Optional[Dict[str, Any]]:
+    """
+    Find a YAML command definition by name or alias without scope filtering.
+
+    This is used for ``-h``/``--help`` lookups so that users can request help
+    for a command even when they are not currently in one of its allowed
+    scopes.
+
+    Args:
+        user_input: Raw command string entered by the user (may include a
+            leading ``/`` and may contain variable placeholders).
+
+    Returns:
+        The matching instruction dictionary, or ``None``.
+    """
+    target = user_input.lstrip("/").strip()
+    if not target:
+        return None
+
+    # Remove variable placeholders so ``/cd {session_id}`` can be looked up
+    # by the static prefix ``cd``.
+    target_base = re.split(r"\s+\{", target, maxsplit=1)[0]
+
+    for instruction in state.yaml_commands:
+        cmd = instruction.get("cmd", "").lstrip("/").strip()
+        cmd_base = re.split(r"\s+\{", cmd, maxsplit=1)[0]
+        if cmd_base == target_base:
+            return instruction
+
+        aliases = instruction.get("alias", [])
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        for alias in aliases:
+            alias_base = re.split(r"\s+\{", alias.lstrip("/").strip(), maxsplit=1)[0]
+            if alias_base == target_base:
+                return instruction
+
+    return None
+
+
 def match_yaml_command(
     user_input: str, task_dir: str = ""
 ) -> Optional[Tuple[Dict[str, Any], Dict[str, str]]]:

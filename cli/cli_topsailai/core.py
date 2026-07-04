@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import signal
 import sys
 from typing import TYPE_CHECKING
@@ -47,7 +48,12 @@ def prompt_selection(
     Returns (action, value).
     """
     from cli_topsailai.process import cleanup_children
-    from cli_topsailai.yaml_commands import handle_yaml_command, match_yaml_command
+    from cli_topsailai.yaml_commands import (
+        find_yaml_command_for_help,
+        handle_yaml_command,
+        match_yaml_command,
+    )
+    from cli_topsailai.help_text import print_instruction_help
 
     while True:
         try:
@@ -103,6 +109,26 @@ def prompt_selection(
 
             if lower_input in ("/help", "help"):
                 return ("help", None)
+
+            if lower_input.startswith("/help "):
+                keyword = user_input[6:].strip()
+                return ("help", keyword)
+
+            if lower_input.startswith("help "):
+                keyword = user_input[5:].strip()
+                return ("help", keyword)
+
+            # Per-command help: /cmd -h or /cmd --help
+            help_match = re.match(r"^(.*?)\s+(-h|--help)$", user_input)
+            if help_match:
+                base_cmd = help_match.group(1).strip()
+                instruction = find_yaml_command_for_help(base_cmd)
+                if instruction:
+                    # Only treat as help when the command does not consume
+                    # arbitrary args, otherwise --help may be intended for the
+                    # underlying external command.
+                    if "{args}" not in instruction.get("cmd", ""):
+                        return ("help_cmd", instruction)
 
             # Try YAML command matching first
             yaml_match = match_yaml_command(user_input, task_dir)
@@ -192,7 +218,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     from cli_topsailai.cleaning import clean_by_numbers, clean_expired_files
     from cli_topsailai.completer import setup_tab_completion
     from cli_topsailai.formatting import print_header, print_table
-    from cli_topsailai.help_text import print_help
+    from cli_topsailai.help_text import print_help, print_instruction_help
     from cli_topsailai.history import HistoryManager, load_readline_history
     from cli_topsailai.log_files import discover_log_files
     from cli_topsailai.paths import get_topsailai_home
@@ -248,7 +274,11 @@ def main(argv: Optional[List[str]] = None) -> None:
                 continue
 
             if action == "help":
-                print_help(state.yaml_commands, state.current_scope)
+                print_help(state.yaml_commands, state.current_scope, keyword=value)
+                continue
+
+            if action == "help_cmd":
+                print_instruction_help(value)
                 continue
 
             if action == "clean":
