@@ -3,10 +3,13 @@
 """
 AI Agent TopsailAI-Launcher Script
 
-Parse .topsailai/settings.yaml in the current working directory,
-assemble environment variables based on --item argument,
-read configured context files into TOPSAILAI_CONTEXT_USER_MESSAGE,
-and launch the subprocess via os.system (default) or subprocess.run (with --subprocess).
+Parse .topsailai/settings.yaml in the current working directory. If the file
+is missing, create it from a default configuration template, prompt the user
+to fill context._default, and continue launching.
+
+Assemble environment variables based on --item argument, read configured
+context files into TOPSAILAI_CONTEXT_USER_MESSAGE, and launch the subprocess
+via os.system (default) or subprocess.run (with --subprocess).
 """
 
 import argparse
@@ -65,14 +68,31 @@ signal.signal(signal.SIGINT, _signal_handler)
 signal.signal(signal.SIGTERM, _signal_handler)
 
 
-CONFIG_TEMPLATE = """# AI Agent TopsailAI-Launcher Configuration Template
-# Save this file as .topsailai/settings.yaml in your project root.
+DEFAULT_CONFIG = {
+    "ai_agent_driver": "ai-team-flow-dev",
+    "workspace": ".",
+    "context": {
+        "_default": [],
+        "default": [],
+        "memo": [],
+    },
+    "environment": {
+        "_default": {
+            "TOPSAILAI_INTERACTIVE_MODE": "1",
+        },
+        "default": {},
+        "memo": {
+            "TOPSAILAI_AGENT_DRIVER": "topsailai_agent_chats",
+        },
+    },
+}
+
+
+CONFIG_TEMPLATE = """# AI Agent TopsailAI-Launcher Configuration
 # This file tells topsailai_launch_agent.py which driver to run, which files
 # to inject into the agent context, and which environment variables to set.
 
 # AI Agent driver path or command.
-# This is the executable that will be launched. It can be an absolute path,
-# a command available in PATH, or a command with arguments (e.g. "python3 ai_driver.py").
 # Resolution order (first match wins):
 #   1. --driver CLI argument
 #   2. TOPSAILAI_AGENT_DRIVER environment variable from this file (item-specific or _default)
@@ -81,52 +101,39 @@ CONFIG_TEMPLATE = """# AI Agent TopsailAI-Launcher Configuration Template
 ai_agent_driver: "ai-team-flow-dev"
 
 # Working directory for the launched driver.
-# Relative paths are resolved against the current directory when the script runs.
-# The driver will be executed with this directory as its cwd.
 workspace: "."
 
 # Context configuration: each item corresponds to a set of context files.
-# These files are read and appended to TOPSAILAI_CONTEXT_USER_MESSAGE so the
-# agent receives project documentation, feature specs, test plans, etc.
 # _default is the base context shared by all items; item-specific files are
-# appended after _default files.
-# Paths are relative to `workspace` unless they start with `/`.
+# appended after _default files. Paths are relative to `workspace` unless
+# they start with `/`.
 #
-# Common items:
-#   default - base context used when no --item is specified
-#   memo    - context for memo-style agent sessions (often empty list)
+# IMPORTANT: `context._default` is currently empty. Fill it with the files
+# you want every agent run to receive (e.g. project.yaml, docs, features).
 context:
-  _default:
-    - "project.yaml"
-    - "docs/Environment_Variables.md"
+  _default: []
   default: []
   memo: []
-  all_test:
-    - "features/00features.md"
-    - "test_all.md"
-  unit_test:
-    - "features/00features.md"
-    - "test_unit.md"
 
 # Environment variable configuration: each item can define its own variables.
 # _default variables are applied first, then item-specific variables override
 # them. System environment variables are inherited and can be overridden here.
-#
-# Common items:
-#   default - base environment used when no --item is specified
-#   memo    - memo agent environment, typically sets TOPSAILAI_AGENT_DRIVER
-#             to "topsailai_agent_chats" so memo sessions use the chat driver
 environment:
   _default:
     TOPSAILAI_INTERACTIVE_MODE: "1"
   default: {}
   memo:
     TOPSAILAI_AGENT_DRIVER: "topsailai_agent_chats"
-  all_test:
-    TEST_SCOPE: "all"
-  unit_test:
-    TEST_SCOPE: "unit"
 """
+
+
+def _write_default_settings(path):
+    """Write the default configuration to .topsailai/settings.yaml."""
+    import yaml
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(DEFAULT_CONFIG, f, sort_keys=False, allow_unicode=True)
 
 def load_yaml(path):
     """Load a YAML file, and provide a friendly hint if PyYAML is not installed."""
@@ -324,11 +331,26 @@ def main():
     # 1. Locate and parse .topsailai/settings.yaml in the current working directory
     settings_path = os.path.join(os.getcwd(), ".topsailai", "settings.yaml")
     if not os.path.isfile(settings_path):
-        print(f"Error: Settings file not found: {settings_path}", file=sys.stderr)
-        print("\nPlease create the configuration file first.", file=sys.stderr)
-        print("\n--- Configuration Template ---\n", file=sys.stderr)
+        print(
+            f"[TopsailAI-Launcher] Settings file not found: {settings_path}",
+            file=sys.stderr,
+        )
+        print(
+            "[TopsailAI-Launcher] Creating a default configuration file for you.",
+            file=sys.stderr,
+        )
+        _write_default_settings(settings_path)
+        print(
+            "\nIMPORTANT: `context._default` is currently empty. "
+            "Fill it with the files you want every agent run to receive "
+            "(e.g. project.yaml, docs, features).",
+            file=sys.stderr,
+        )
+        print(
+            "\n--- Generated Configuration Template ---\n",
+            file=sys.stderr,
+        )
         print(CONFIG_TEMPLATE, file=sys.stderr)
-        sys.exit(1)
 
     settings = load_yaml(settings_path)
 
