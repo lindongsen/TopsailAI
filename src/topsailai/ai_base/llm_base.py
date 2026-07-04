@@ -7,6 +7,7 @@
 
 import os
 import time
+import threading
 import httpx
 import httpcore
 import openai
@@ -138,11 +139,16 @@ class LLMModel(LLMModelBase):
         return (response, full_content)
 
     def iter_stream_with_first_byte_timeout(self, stream, first_byte_timeout=180, raise_on_timeout=False):
-        """Wrap a stream iterator to log or raise on slow first-byte responses.
+        """Wrap a stream iterator to enforce a first-byte timeout.
+
+        The timeout is applied only to the first chunk. Subsequent chunks are
+        yielded without additional timeout logic. When the timeout is disabled
+        (``first_byte_timeout <= 0``), the stream is passed through unchanged.
 
         Args:
             stream: The stream iterator to wrap.
             first_byte_timeout (float): Threshold in seconds for the first chunk.
+                Values of ``0`` or less disable the timeout.
             raise_on_timeout (bool): If True, raise openai.APITimeoutError when
                 the first chunk exceeds the threshold so the caller can retry.
 
@@ -153,24 +159,65 @@ class LLMModel(LLMModelBase):
             openai.APITimeoutError: If raise_on_timeout is True and the first
                 chunk takes longer than first_byte_timeout seconds.
         """
-        start_time = time.monotonic()
-        try:
-            first_chunk = next(stream)
-        except StopIteration:
+        if first_byte_timeout is None or first_byte_timeout <= 0:
+            yield from stream
             return
+
+        first_chunk = [None]
+        first_exc = [None]
+        got_result = threading.Event()
+
+        def _fetch_first():
+            try:
+                first_chunk[0] = next(stream)
+            except StopIteration:
+                pass
+            except Exception as e:
+                first_exc[0] = e
+            finally:
+                got_result.set()
+
+        start_time = time.monotonic()
+        fetch_thread = threading.Thread(target=_fetch_first, daemon=True)
+        fetch_thread.start()
+
+        timed_out = not got_result.wait(timeout=first_byte_timeout)
         elapsed = time.monotonic() - start_time
+
+        if timed_out:
+            print_warning(
+                f"LLM first byte took {elapsed:.1f}s, exceeding threshold {first_byte_timeout}s"
+            )
+            # Best-effort cleanup of the underlying stream to unblock the
+            # worker thread and avoid leaking the connection.
+            try:
+                if hasattr(stream, "close"):
+                    stream.close()
+            except Exception:
+                pass
+            if raise_on_timeout:
+                exc = openai.APITimeoutError(request=None)
+                exc.message = f"First byte timeout after {first_byte_timeout}s"
+                exc.args = (exc.message,)
+                raise exc
+            # Timeout without raise: stop iteration so the caller does not
+            # block indefinitely waiting for a response that already missed
+            # its deadline.
+            return
+
+        if first_exc[0] is not None:
+            raise first_exc[0]
+
+        if first_chunk[0] is None:
+            # Empty stream or StopIteration before any chunk.
+            return
+
         if elapsed > first_byte_timeout:
             print_warning(
                 f"LLM first byte took {elapsed:.1f}s, exceeding threshold {first_byte_timeout}s"
             )
-            if raise_on_timeout:
-                # Close the underlying stream to avoid leaking the connection.
-                try:
-                    stream.close()
-                except Exception:
-                    pass
-                raise openai.APITimeoutError(request=None)
-        yield first_chunk
+
+        yield first_chunk[0]
         for chunk in stream:
             yield chunk
 
@@ -200,7 +247,7 @@ class LLMModel(LLMModelBase):
             "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT",
             default=180,
             formatter=int,
-        ) or 180
+        )
 
         raise_on_first_byte_timeout = env_tool.EnvReaderInstance.check_bool(
             "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE",
