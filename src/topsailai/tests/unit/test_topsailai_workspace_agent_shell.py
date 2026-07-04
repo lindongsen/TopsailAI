@@ -588,3 +588,150 @@ class TestGetAgentChat(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestGetAgentChatProjectWorkspaceLock(unittest.TestCase):
+    """Test suite for project workspace lock integration in get_agent_chat."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.env_patcher = patch.dict(os.environ, {
+            "TOPSAILAI_TASK": "",
+            "SESSION_ID": "",
+            "TOPSAILAI_SESSION_ID": "",
+        }, clear=False)
+        self.env_patcher.start()
+
+        # Mock env_tool
+        self.env_tool_patcher = patch('topsailai.workspace.agent_shell.env_tool')
+        self.mock_env_tool = self.env_tool_patcher.start()
+        self.mock_env_tool.is_debug_mode.return_value = False
+        self.mock_env_tool.EnvReaderInstance.read_file_or_content.return_value = ""
+        self.mock_env_tool.is_interactive_mode.return_value = True
+        self.mock_env_tool.get_session_id.return_value = "test-session-123"
+
+        # Mock file_tool
+        self.file_tool_patcher = patch('topsailai.workspace.agent_shell.file_tool')
+        self.mock_file_tool = self.file_tool_patcher.start()
+        self.mock_file_tool.get_file_content_fuzzy.return_value = (True, "")
+
+        # Mock thread_local_tool
+        self.thread_local_patcher = patch('topsailai.workspace.agent_shell.thread_local_tool')
+        self.mock_thread_local = self.thread_local_patcher.start()
+
+        # Mock get_agent_type
+        self.agent_type_patcher = patch('topsailai.workspace.agent_shell.get_agent_type')
+        self.mock_get_agent_type = self.agent_type_patcher.start()
+
+        # Mock AgentRun
+        self.agent_run_patcher = patch('topsailai.workspace.agent_shell.AgentRun')
+        self.mock_agent_run = self.agent_run_patcher.start()
+
+        # Mock ContentDots
+        self.content_dots_patcher = patch('topsailai.workspace.agent_shell.ContentDots')
+        self.mock_content_dots = self.content_dots_patcher.start()
+
+        # Mock HookInstruction
+        self.hook_instruction_patcher = patch('topsailai.workspace.agent_shell.HookInstruction')
+        self.mock_hook_instruction = self.hook_instruction_patcher.start()
+
+        # Mock ContextRuntimeData
+        self.ctx_data_patcher = patch('topsailai.workspace.agent_shell.ContextRuntimeData')
+        self.mock_ctx_data = self.ctx_data_patcher.start()
+
+        # Mock ContextRuntimeAIAgent
+        self.ctx_aiagent_patcher = patch('topsailai.workspace.agent_shell.ContextRuntimeAIAgent')
+        self.mock_ctx_aiagent = self.ctx_aiagent_patcher.start()
+
+        # Mock ContextRuntimeInstructions
+        self.ctx_instruction_patcher = patch('topsailai.workspace.agent_shell.ContextRuntimeInstructions')
+        self.mock_ctx_instruction = self.ctx_instruction_patcher.start()
+
+        # Mock get_message
+        self.get_message_patcher = patch('topsailai.workspace.agent_shell.get_message')
+        self.mock_get_message = self.get_message_patcher.start()
+        self.mock_get_message.return_value = ""
+
+        # Mock ctx_manager
+        self.ctx_manager_patcher = patch('topsailai.workspace.agent_shell.ctx_manager')
+        self.mock_ctx_manager = self.ctx_manager_patcher.start()
+        self.mock_ctx_manager.exists_session.return_value = False
+
+        # Mock AgentChat
+        self.agent_chat_patcher = patch('topsailai.workspace.agent_shell.AgentChat')
+        self.mock_agent_chat = self.agent_chat_patcher.start()
+
+        # Mock project history
+        self.record_history_patcher = patch('topsailai.workspace.agent_shell.record_project_history')
+        self.mock_record_history = self.record_history_patcher.start()
+
+        # Setup mock agent_type
+        self.mock_agent_type = MagicMock()
+        self.mock_agent_type.SYSTEM_PROMPT = "You are a helpful assistant."
+        self.mock_agent_type.AGENT_NAME = "ReActAgent"
+        self.mock_get_agent_type.return_value = self.mock_agent_type
+
+        # Setup mock agent instance
+        self.mock_agent_instance = MagicMock()
+        self.mock_agent_instance.llm_model = MagicMock()
+        self.mock_agent_instance.llm_model.content_senders = []
+        self.mock_agent_instance.llm_model.max_tokens = 1000
+        self.mock_agent_instance.llm_model.temperature = 0.5
+        self.mock_agent_instance.flag_dump_messages = False
+        self.mock_agent_run.return_value = self.mock_agent_instance
+
+        # Setup mock context runtime data
+        self.mock_ctx_data_instance = MagicMock()
+        self.mock_ctx_data_instance.messages = []
+        self.mock_ctx_data.return_value = self.mock_ctx_data_instance
+
+        # Setup mock hook instruction
+        self.mock_hook_instruction_instance = MagicMock()
+        self.mock_hook_instruction.return_value = self.mock_hook_instruction_instance
+
+        # Setup mock agent chat
+        self.mock_agent_chat_instance = MagicMock()
+        self.mock_agent_chat.return_value = self.mock_agent_chat_instance
+
+    def tearDown(self):
+        """Clean up test fixtures."""
+        self.env_patcher.stop()
+        self.env_tool_patcher.stop()
+        self.file_tool_patcher.stop()
+        self.thread_local_patcher.stop()
+        self.agent_type_patcher.stop()
+        self.agent_run_patcher.stop()
+        self.content_dots_patcher.stop()
+        self.hook_instruction_patcher.stop()
+        self.ctx_data_patcher.stop()
+        self.ctx_aiagent_patcher.stop()
+        self.ctx_instruction_patcher.stop()
+        self.get_message_patcher.stop()
+        self.ctx_manager_patcher.stop()
+        self.agent_chat_patcher.stop()
+        self.record_history_patcher.stop()
+
+    @patch('topsailai.workspace.agent_shell.ctxm_project_workspace_lock')
+    def test_get_agent_chat_uses_project_workspace_lock(self, mock_lock):
+        """Test that get_agent_chat enters the project workspace lock context."""
+        from topsailai.workspace.agent_shell import get_agent_chat
+
+        mock_lock.return_value.__enter__ = MagicMock(return_value=True)
+        mock_lock.return_value.__exit__ = MagicMock(return_value=False)
+
+        agent_chat = get_agent_chat(session_id="test-session")
+
+        mock_lock.assert_called_once()
+        self.assertEqual(agent_chat, self.mock_agent_chat_instance)
+
+    @patch('topsailai.workspace.agent_shell.ctxm_project_workspace_lock')
+    def test_get_agent_chat_returns_impl_result(self, mock_lock):
+        """Test that get_agent_chat returns the AgentChat even when lock yields False."""
+        from topsailai.workspace.agent_shell import get_agent_chat
+
+        mock_lock.return_value.__enter__ = MagicMock(return_value=False)
+        mock_lock.return_value.__exit__ = MagicMock(return_value=False)
+
+        agent_chat = get_agent_chat(session_id="test-session")
+
+        self.assertEqual(agent_chat, self.mock_agent_chat_instance)

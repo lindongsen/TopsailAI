@@ -37,3 +37,18 @@ Key logic:
 - Rotation is performed before writing the new entry, so the active history file always stays near or below the configured size.
 
 System impact: Prevents long-running sessions from producing an unbounded `input_history.jsonl`. Existing history is preserved as `.1.jsonl` (and higher indexes up to the backup limit) before truncation.
+
+## Project Workspace Lock
+
+Added a startup lock for the project workspace to prevent multiple agent processes from operating on the same project directory concurrently.
+
+Key logic:
+- When `TOPSAILAI_PROJECT_WORKSPACE` is set and `TOPSAILAI_PROJECT_WORKSPACE_LOCK_ENABLED=1` (default), `agent_shell.get_agent_chat()` attempts to acquire a lock at `{TOPSAILAI_PROJECT_WORKSPACE}/.topsailai/project_workspace.lock` during startup.
+- `ctxm_project_workspace_lock()` in `workspace/lock_tool.py` creates the `.topsailai` directory if needed, acquires an exclusive lock via `lockf`, and releases it on context exit.
+- If the lock is already held, the user is prompted via `input_from_pipe_session` with three choices: `exit`, `continue`, or `wait`.
+  - `exit`: terminates the process with status code 1.
+  - `continue`: proceeds without holding the lock.
+  - `wait`: blocks and retries until the lock becomes available.
+- If the prompt times out, the default action is `wait`. The timeout is controlled by `TOPSAILAI_PROJECT_WORKSPACE_LOCK_TIMEOUT` (default 300 seconds).
+
+System impact: Two new environment variables are introduced: `TOPSAILAI_PROJECT_WORKSPACE_LOCK_ENABLED` and `TOPSAILAI_PROJECT_WORKSPACE_LOCK_TIMEOUT`. Existing behavior is preserved when the project workspace is unset or locking is disabled. Concurrent agent sessions targeting the same project workspace are now serialized unless the user explicitly chooses to continue without the lock.

@@ -23,6 +23,8 @@ These variables define the agent's working environment and project access scope.
 | `TOPSAILAI_WORK_FOLDER` | (runtime) | The working directory of the Agent process, including `.env`, `db`, etc. **Cannot be set manually; it is set automatically when the process starts.** See `__init__.py` for the auto-discovery logic. |
 | `TOPSAILAI_PROJECT_WORKSPACE` | `""` | Alias `TOPSAILAI_PROJECT_FOLDER`. The project folder is the permission range that the agent can actively read and write files within. |
 | `TOPSAILAI_PWD` | `""` | Print Working Directory, i.e. the folder at the time of process startup. |
+| `TOPSAILAI_PROJECT_WORKSPACE_LOCK_ENABLED` | `1` | When `1`, `agent_shell` tries to acquire a lock on `{TOPSAILAI_PROJECT_WORKSPACE}/.topsailai/project_workspace.lock` at startup. Set to `0` to disable project workspace locking. |
+| `TOPSAILAI_PROJECT_WORKSPACE_LOCK_TIMEOUT` | `300` | Timeout in seconds for the interactive prompt when acquiring the project workspace lock fails. The user can choose `exit`, `continue`, or `wait`. If the timeout expires or no input is received, the default action is `wait`. |
 
 ## Application Settings
 

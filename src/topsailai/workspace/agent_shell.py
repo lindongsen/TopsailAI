@@ -32,6 +32,7 @@ from topsailai.workspace.context.instruction import (
 )
 from topsailai.workspace.hook_instruction import HookInstruction
 from topsailai.workspace.print_tool import ContentDots
+from topsailai.workspace.lock_tool import ctxm_project_workspace_lock
 #from topsailai.workspace.context.agent_tool import (
 #    ContextRuntimeAgentTools,
 #)
@@ -93,7 +94,8 @@ def get_ai_agent(
 
     return agent
 
-def get_agent_chat(
+
+def _get_agent_chat_impl(
         system_prompt:str="",
         to_dump_messages:bool=False,
         disabled_tools:list[str]=None,
@@ -111,27 +113,7 @@ def get_agent_chat(
         need_input_message:bool=True,
         need_set_agent_name_to_thread_local:bool=True,
     ) -> AgentChat:
-    """Create and return an AgentChat instance with all required components.
-
-    This is the main factory function for creating a complete chat session.
-    It initializes all necessary components including context runtime, AI agent,
-    instructions, and hooks.
-
-    Args:
-        system_prompt: Additional system prompt for the agent.
-        to_dump_messages: Whether to enable message dumping for debugging.
-        disabled_tools: List of tool names to exclude from the agent.
-        agent_type: Type of agent to create.
-        agent_name: Name to assign to the agent.
-        session_id: Session identifier for context tracking.
-        message: Initial message to process.
-        session_head_tail_offset: Number of messages to keep from head/tail.
-        need_print_session: Whether to print session information.
-        need_input_message: Whether to prompt for input when needed.
-
-    Returns:
-        AgentChat: A fully initialized AgentChat instance ready for conversation.
-    """
+    """Internal implementation of get_agent_chat()."""
     if need_print_session is None:
         if env_tool.is_debug_mode():
             need_print_session = False
@@ -253,3 +235,60 @@ def get_agent_chat(
     agent_chat.first_message = message
 
     return agent_chat
+
+
+def get_agent_chat(
+        system_prompt:str="",
+        to_dump_messages:bool=False,
+        disabled_tools:list[str]=None,
+        enabled_tools:list[str]=None,
+        tool_map:dict=None,
+        agent_type:str=None,
+
+        agent_name:str=None,
+        session_id:str=None,
+        message:str=None,
+
+        session_head_tail_offset:int=None, # cut messages
+
+        need_print_session:bool=None,
+        need_input_message:bool=True,
+        need_set_agent_name_to_thread_local:bool=True,
+    ) -> AgentChat:
+    """Create and return an AgentChat instance with all required components.
+
+    This is the main factory function for creating a complete chat session.
+    It initializes all necessary components including context runtime, AI agent,
+    instructions, and hooks.
+
+    Args:
+        system_prompt: Additional system prompt for the agent.
+        to_dump_messages: Whether to enable message dumping for debugging.
+        disabled_tools: List of tool names to exclude from the agent.
+        agent_type: Type of agent to create.
+        agent_name: Name to assign to the agent.
+        session_id: Session identifier for context tracking.
+        message: Initial message to process.
+        session_head_tail_offset: Number of messages to keep from head/tail.
+        need_print_session: Whether to print session information.
+        need_input_message: Whether to prompt for input when needed.
+
+    Returns:
+        AgentChat: A fully initialized AgentChat instance ready for conversation.
+    """
+    with ctxm_project_workspace_lock() as has_lock:
+        return _get_agent_chat_impl(
+            system_prompt=system_prompt,
+            to_dump_messages=to_dump_messages,
+            disabled_tools=disabled_tools,
+            enabled_tools=enabled_tools,
+            tool_map=tool_map,
+            agent_type=agent_type,
+            agent_name=agent_name,
+            session_id=session_id,
+            message=message,
+            session_head_tail_offset=session_head_tail_offset,
+            need_print_session=need_print_session,
+            need_input_message=need_input_message,
+            need_set_agent_name_to_thread_local=need_set_agent_name_to_thread_local,
+        )

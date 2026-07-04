@@ -102,6 +102,131 @@ class LLMModel(LLMModelBase):
         except Exception:
             pass
         return None
+    def _get_first_byte_timeout_config(self):
+        """Read first-byte timeout configuration from environment variables.
+
+        Returns:
+            tuple: (first_byte_timeout, raise_on_timeout)
+                first_byte_timeout (float): threshold in seconds; ``<= 0`` disables.
+                raise_on_timeout (bool): whether to raise ``openai.APITimeoutError``.
+        """
+        first_byte_timeout = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT",
+            default=180,
+            formatter=float,
+        )
+        if first_byte_timeout is None:
+            first_byte_timeout = 180
+
+        raise_on_first_byte_timeout = env_tool.EnvReaderInstance.check_bool(
+            "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE",
+            default=False,
+        )
+        return first_byte_timeout, raise_on_first_byte_timeout
+
+    def _make_first_byte_timeout_error(self, first_byte_timeout):
+        """Construct an ``openai.APITimeoutError`` for first-byte timeout.
+
+        The OpenAI exception constructor only accepts a ``request`` argument,
+        so the message is attached after construction in a defensive way.
+        """
+        message = f"First byte timeout after {first_byte_timeout}s"
+        exc = openai.APITimeoutError(request=None)
+        if hasattr(exc, "message"):
+            exc.message = message
+        if hasattr(exc, "args"):
+            exc.args = (message,)
+        return exc
+
+    def _log_first_byte_timeout(self, elapsed, first_byte_timeout):
+        """Log a first-byte timeout warning using project conventions."""
+        print_warning(
+            f"{LLM_KEYWORD_SERVICE}: first byte took {elapsed:.1f}s, exceeding threshold {first_byte_timeout}s"
+        )
+
+    def _create_with_first_byte_timeout(
+        self,
+        messages,
+        tools=None,
+        tool_choice="auto",
+        stream=False,
+        first_byte_timeout=180,
+        raise_on_timeout=False,
+    ):
+        """Call ``chat_model.create()`` with an optional first-byte timeout.
+
+        For non-streaming requests the timeout covers the blocking period before
+        the response object is returned. For streaming requests it covers the
+        blocking period before the ``Stream`` object is returned; the caller
+        should still wrap the returned iterator with
+        ``iter_stream_with_first_byte_timeout`` to enforce a timeout on the
+        first chunk.
+
+        Args:
+            messages (list): List of message dictionaries.
+            tools (list, optional): List of available tools. Defaults to None.
+            tool_choice (str, optional): Tool choice strategy. Defaults to "auto".
+            stream (bool, optional): Whether to request a streaming response.
+            first_byte_timeout (float): Threshold in seconds. ``<= 0`` disables.
+            raise_on_timeout (bool): If True, raise ``openai.APITimeoutError``
+                when the first byte exceeds the threshold.
+
+        Returns:
+            For ``stream=False``: the response object.
+            For ``stream=True``: tuple ``(response, create_timed_out)`` where
+            ``create_timed_out`` indicates that the create() blocking period
+            already exceeded the threshold.
+        """
+        params = self.build_parameters_for_chat(
+            messages, stream=stream, tools=tools, tool_choice=tool_choice
+        )
+
+        if first_byte_timeout is None or first_byte_timeout <= 0:
+            response = self.chat_model.create(timeout=(5, 300), **params)
+            if stream:
+                return response, False
+            return response
+
+        result = [None]
+        first_exc = [None]
+        got_result = threading.Event()
+
+        def _create():
+            try:
+                result[0] = self.chat_model.create(timeout=(5, 300), **params)
+            except Exception as e:
+                first_exc[0] = e
+            finally:
+                got_result.set()
+
+        start_time = time.monotonic()
+        create_thread = threading.Thread(target=_create, daemon=True)
+        create_thread.start()
+
+        timed_out = not got_result.wait(timeout=first_byte_timeout)
+        elapsed = time.monotonic() - start_time
+
+        if timed_out:
+            self._log_first_byte_timeout(elapsed, first_byte_timeout)
+            if raise_on_timeout:
+                raise self._make_first_byte_timeout_error(first_byte_timeout)
+            # Timeout without raise: wait for the actual result so the caller
+            # still receives a valid response. The timeout acts as a monitoring
+            # signal rather than a hard deadline in this mode.
+            got_result.wait()
+            if first_exc[0] is not None:
+                raise first_exc[0]
+            if stream:
+                return result[0], True
+            return result[0]
+
+        if first_exc[0] is not None:
+            raise first_exc[0]
+
+        if stream:
+            return result[0], False
+        return result[0]
+
 
     def call_llm_model(self, messages, tools=None, tool_choice="auto"):
         """
@@ -117,14 +242,20 @@ class LLMModel(LLMModelBase):
 
         Raises:
             TypeError: If no response or empty response is received
+            openai.APITimeoutError: If TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE is
+                enabled and the first byte exceeds the configured threshold.
         """
         self.tokenStat.add_msgs(messages)
 
-        response = self.chat_model.create(
-            **self.build_parameters_for_chat(
-                messages,
-                tools=tools, tool_choice=tool_choice,
-            )
+        first_byte_timeout, raise_on_first_byte_timeout = self._get_first_byte_timeout_config()
+
+        response = self._create_with_first_byte_timeout(
+            messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            stream=False,
+            first_byte_timeout=first_byte_timeout,
+            raise_on_timeout=raise_on_first_byte_timeout,
         )
 
         self.tokenStat.output_token_stat(self.get_response_usage(response))
@@ -138,7 +269,13 @@ class LLMModel(LLMModelBase):
 
         return (response, full_content)
 
-    def iter_stream_with_first_byte_timeout(self, stream, first_byte_timeout=180, raise_on_timeout=False):
+    def iter_stream_with_first_byte_timeout(
+        self,
+        stream,
+        first_byte_timeout=180,
+        raise_on_timeout=False,
+        create_timed_out=False,
+    ):
         """Wrap a stream iterator to enforce a first-byte timeout.
 
         The timeout is applied only to the first chunk. Subsequent chunks are
@@ -151,6 +288,9 @@ class LLMModel(LLMModelBase):
                 Values of ``0`` or less disable the timeout.
             raise_on_timeout (bool): If True, raise openai.APITimeoutError when
                 the first chunk exceeds the threshold so the caller can retry.
+            create_timed_out (bool): If True, the blocking period before the
+                stream was returned already exceeded the threshold and was
+                logged. This avoids double-warning for the same slow event.
 
         Yields:
             Chunks from the wrapped stream.
@@ -185,21 +325,10 @@ class LLMModel(LLMModelBase):
         elapsed = time.monotonic() - start_time
 
         if timed_out:
-            print_warning(
-                f"LLM first byte took {elapsed:.1f}s, exceeding threshold {first_byte_timeout}s"
-            )
-            # Best-effort cleanup of the underlying stream to unblock the
-            # worker thread and avoid leaking the connection.
-            try:
-                if hasattr(stream, "close"):
-                    stream.close()
-            except Exception:
-                pass
+            if not create_timed_out:
+                self._log_first_byte_timeout(elapsed, first_byte_timeout)
             if raise_on_timeout:
-                exc = openai.APITimeoutError(request=None)
-                exc.message = f"First byte timeout after {first_byte_timeout}s"
-                exc.args = (exc.message,)
-                raise exc
+                raise self._make_first_byte_timeout_error(first_byte_timeout)
             # Timeout without raise: stop iteration so the caller does not
             # block indefinitely waiting for a response that already missed
             # its deadline.
@@ -212,15 +341,12 @@ class LLMModel(LLMModelBase):
             # Empty stream or StopIteration before any chunk.
             return
 
-        if elapsed > first_byte_timeout:
-            print_warning(
-                f"LLM first byte took {elapsed:.1f}s, exceeding threshold {first_byte_timeout}s"
-            )
+        if elapsed > first_byte_timeout and not create_timed_out:
+            self._log_first_byte_timeout(elapsed, first_byte_timeout)
 
         yield first_chunk[0]
         for chunk in stream:
             yield chunk
-
     def call_llm_model_by_stream(self, messages, tools=None, tool_choice="auto"):
         """
         Call the LLM model with streaming response.
@@ -232,26 +358,22 @@ class LLMModel(LLMModelBase):
 
         Returns:
             tuple: (response object, concatenated content string)
+
+        Raises:
+            openai.APITimeoutError: If TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE is
+                enabled and the first byte exceeds the configured threshold.
         """
         self.tokenStat.add_msgs(messages)
 
-        response = self.chat_model.create(
-            timeout=(5, 300),
-            **self.build_parameters_for_chat(
-                messages, stream=True,
-                tools=tools, tool_choice=tool_choice,
-            )
-        )
+        first_byte_timeout, raise_on_first_byte_timeout = self._get_first_byte_timeout_config()
 
-        first_byte_timeout = env_tool.EnvReaderInstance.get(
-            "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT",
-            default=180,
-            formatter=int,
-        )
-
-        raise_on_first_byte_timeout = env_tool.EnvReaderInstance.check_bool(
-            "TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE",
-            default=False,
+        response, create_timed_out = self._create_with_first_byte_timeout(
+            messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            stream=True,
+            first_byte_timeout=first_byte_timeout,
+            raise_on_timeout=raise_on_first_byte_timeout,
         )
 
         full_content = ""
@@ -264,6 +386,7 @@ class LLMModel(LLMModelBase):
             response,
             first_byte_timeout,
             raise_on_timeout=raise_on_first_byte_timeout,
+            create_timed_out=create_timed_out,
         ):
             delta_obj = None
             if len(chunk.choices):

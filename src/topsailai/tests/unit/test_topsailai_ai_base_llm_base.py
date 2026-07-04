@@ -8,6 +8,7 @@ OpenAI-compatible LLM interaction capabilities.
 import unittest
 from unittest.mock import MagicMock, patch, PropertyMock
 
+import openai
 
 class TestLLMModelGetModelName(unittest.TestCase):
     """Test cases for LLMModel.get_model_name method."""
@@ -219,6 +220,39 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         model.content_senders = []
         model.hooks = {}
         return model
+
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.print_warning")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_call_llm_model_by_stream_warns_on_slow_create(
+        self, mock_base_init, mock_print_warning, mock_env_tool
+    ):
+        """Test that a blocking chat_model.create() triggers the first-byte warning."""
+        import time
+
+        mock_env_tool.EnvReaderInstance.get.return_value = 0.1
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = False
+
+        def slow_create(*args, **kwargs):
+            time.sleep(0.2)
+            mock_chunk = MagicMock()
+            mock_chunk.choices = [MagicMock()]
+            mock_chunk.choices[0].delta.content = "Hello"
+            mock_chunk.choices[0].delta.tool_calls = None
+            return iter([mock_chunk])
+
+        model = self._create_mock_model()
+        model.model.create.side_effect = slow_create
+
+        result = model.call_llm_model_by_stream(self.messages)
+
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(result[1], "Hello")
+        mock_print_warning.assert_called_once()
+        warning_msg = mock_print_warning.call_args[0][0]
+        self.assertIn("LLM Service", warning_msg)
+        self.assertIn("first byte took", warning_msg)
+        self.assertIn("0.1s", warning_msg)
 
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -453,6 +487,172 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         self.assertEqual(result, [mock_chunk1, mock_chunk2])
         mock_print_warning.assert_not_called()
 
+
+
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_call_llm_model_by_stream_raises_on_slow_create_when_configured(
+        self, mock_base_init, mock_env_tool
+    ):
+        """Test that a blocking chat_model.create() raises when raise flag is enabled."""
+        import time
+
+        mock_env_tool.EnvReaderInstance.get.return_value = 0.1
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = True
+
+        def slow_create(*args, **kwargs):
+            time.sleep(0.2)
+            mock_chunk = MagicMock()
+            mock_chunk.choices = [MagicMock()]
+            mock_chunk.choices[0].delta.content = "Hello"
+            mock_chunk.choices[0].delta.tool_calls = None
+            return iter([mock_chunk])
+
+        model = self._create_mock_model()
+        model.model.create.side_effect = slow_create
+
+        with self.assertRaises(openai.APITimeoutError) as ctx:
+            model.call_llm_model_by_stream(self.messages)
+
+        self.assertIn("First byte timeout", str(ctx.exception))
+
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.print_warning")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_call_llm_model_warns_on_slow_create(
+        self, mock_base_init, mock_print_warning, mock_env_tool
+    ):
+        """Test that non-streaming call_llm_model warns on slow first byte."""
+        import time
+
+        mock_env_tool.EnvReaderInstance.get.return_value = 0.1
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = False
+
+        def slow_create(*args, **kwargs):
+            time.sleep(0.2)
+            mock_response = MagicMock()
+            mock_response.choices = [MagicMock()]
+            mock_response.choices[0].message.content = "Hello"
+            mock_response.choices[0].message.tool_calls = None
+            return mock_response
+
+        model = self._create_mock_model()
+        model.model.create.side_effect = slow_create
+
+        result = model.call_llm_model(self.messages)
+
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[1], "Hello")
+        mock_print_warning.assert_called_once()
+        warning_msg = mock_print_warning.call_args[0][0]
+        self.assertIn("LLM Service", warning_msg)
+        self.assertIn("first byte took", warning_msg)
+
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_call_llm_model_raises_on_slow_create_when_configured(
+        self, mock_base_init, mock_env_tool
+    ):
+        """Test that non-streaming call_llm_model raises on slow first byte."""
+        import time
+
+        mock_env_tool.EnvReaderInstance.get.return_value = 0.1
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = True
+
+        def slow_create(*args, **kwargs):
+            time.sleep(0.2)
+            mock_response = MagicMock()
+            mock_response.choices = [MagicMock()]
+            mock_response.choices[0].message.content = "Hello"
+            mock_response.choices[0].message.tool_calls = None
+            return mock_response
+
+        model = self._create_mock_model()
+        model.model.create.side_effect = slow_create
+
+        with self.assertRaises(openai.APITimeoutError) as ctx:
+            model.call_llm_model(self.messages)
+
+        self.assertIn("First byte timeout", str(ctx.exception))
+
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.print_warning")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_first_byte_timeout_float_value_parsed(
+        self, mock_base_init, mock_print_warning, mock_env_tool
+    ):
+        """Test that float timeout values are accepted and parsed."""
+        import time
+
+        mock_env_tool.EnvReaderInstance.get.return_value = 0.05
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = False
+
+        def slow_create(*args, **kwargs):
+            time.sleep(0.1)
+            mock_response = MagicMock()
+            mock_response.choices = [MagicMock()]
+            mock_response.choices[0].message.content = "Hello"
+            mock_response.choices[0].message.tool_calls = None
+            return mock_response
+
+        model = self._create_mock_model()
+        model.model.create.side_effect = slow_create
+
+        model.call_llm_model(self.messages)
+
+        mock_print_warning.assert_called_once()
+        warning_msg = mock_print_warning.call_args[0][0]
+        self.assertIn("0.05s", warning_msg)
+
+    @patch("topsailai.ai_base.llm_base.os.getenv")
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.print_warning")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_first_byte_timeout_invalid_value_falls_back_to_default(
+        self, mock_base_init, mock_print_warning, mock_env_tool, mock_getenv
+    ):
+        """Test that invalid env value falls back to default 180."""
+
+        mock_getenv.return_value = "not-a-number"
+        mock_env_tool.EnvReaderInstance.get.side_effect = lambda name, default=None, formatter=None: default
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = False
+
+        model = self._create_mock_model()
+        model.model.create.return_value.choices = [MagicMock()]
+        model.model.create.return_value.choices[0].message.content = "Hello"
+        model.model.create.return_value.choices[0].message.tool_calls = None
+
+        model.call_llm_model(self.messages)
+
+        mock_print_warning.assert_not_called()
+
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.print_warning")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_call_llm_model_by_stream_no_double_warning(
+        self, mock_base_init, mock_print_warning, mock_env_tool
+    ):
+        """Test that a slow create does not warn again when the first chunk arrives."""
+        import time
+
+        mock_env_tool.EnvReaderInstance.get.return_value = 0.05
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = False
+
+        def slow_create(*args, **kwargs):
+            time.sleep(0.1)
+            mock_chunk = MagicMock()
+            mock_chunk.choices = [MagicMock()]
+            mock_chunk.choices[0].delta.content = "Hello"
+            mock_chunk.choices[0].delta.tool_calls = None
+            return iter([mock_chunk])
+
+        model = self._create_mock_model()
+        model.model.create.side_effect = slow_create
+
+        model.call_llm_model_by_stream(self.messages)
+
+        mock_print_warning.assert_called_once()
 
 class TestLLMModelChat(unittest.TestCase):
     """Test cases for LLMModel.chat method."""

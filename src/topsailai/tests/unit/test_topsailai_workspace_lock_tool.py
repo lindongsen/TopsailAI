@@ -318,3 +318,252 @@ class TestInitFunction(TestCase):
 
         # Directory should still exist
         self.assertTrue(os.path.exists(mock_folder_constants.FOLDER_LOCK))
+
+
+import multiprocessing
+import time
+
+from topsailai.workspace.lock_tool import (
+    ctxm_project_workspace_lock,
+    _get_project_workspace_lock_enabled,
+    _get_project_workspace_lock_timeout,
+)
+
+
+def _hold_lock_file(lock_file: str, hold_seconds: float) -> None:
+    """Acquire *lock_file* and hold it for *hold_seconds*, then release."""
+    import fcntl
+    with open(lock_file, "w") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        time.sleep(hold_seconds)
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+class TestCtxmProjectWorkspaceLock(TestCase):
+    """Test suite for ctxm_project_workspace_lock context manager."""
+
+    def setUp(self):
+        """Set up a temporary project workspace."""
+        self.temp_dir = tempfile.mkdtemp(prefix="project_workspace_lock_test_")
+
+    def tearDown(self):
+        """Clean up the temporary project workspace."""
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+
+    def _lock_file_path(self):
+        return os.path.join(self.temp_dir, ".topsailai", "project_workspace.lock")
+
+    def _start_lock_holder(self, hold_seconds=0.5):
+        """Start a subprocess that holds the workspace lock."""
+        lock_file = self._lock_file_path()
+        os.makedirs(os.path.dirname(lock_file), exist_ok=True)
+        proc = multiprocessing.Process(
+            target=_hold_lock_file,
+            args=(lock_file, hold_seconds),
+        )
+        proc.start()
+        # Give the subprocess a moment to acquire the lock.
+        time.sleep(0.1)
+        return proc
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    def test_project_workspace_lock_acquires_successfully(self):
+        """Test that the lock is acquired and cleaned up on success."""
+        os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
+
+        with ctxm_project_workspace_lock() as has_lock:
+            self.assertTrue(has_lock)
+            self.assertTrue(os.path.exists(self._lock_file_path()))
+
+        self.assertFalse(os.path.exists(self._lock_file_path()))
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    def test_project_workspace_lock_no_workspace_yields_false(self):
+        """Test that missing workspace yields False and creates no lock."""
+        with ctxm_project_workspace_lock() as has_lock:
+            self.assertFalse(has_lock)
+
+        self.assertFalse(os.path.exists(self._lock_file_path()))
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    def test_project_workspace_lock_disabled_yields_false(self):
+        """Test that disabling the lock yields False and creates no lock."""
+        os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
+        os.environ["TOPSAILAI_PROJECT_WORKSPACE_LOCK_ENABLED"] = "0"
+
+        with ctxm_project_workspace_lock() as has_lock:
+            self.assertFalse(has_lock)
+
+        self.assertFalse(os.path.exists(self._lock_file_path()))
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    def test_project_workspace_lock_mkdir_failure_yields_false(self):
+        """Test that a non-directory workspace path falls back gracefully."""
+        file_path = os.path.join(self.temp_dir, "not_a_directory")
+        with open(file_path, "w") as f:
+            f.write("x")
+        os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = file_path
+
+        with self.assertLogs("topsailai.workspace.lock_tool", level="WARNING"):
+            with ctxm_project_workspace_lock() as has_lock:
+                self.assertFalse(has_lock)
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    @mock.patch("topsailai.workspace.lock_tool.sys.exit")
+    def test_project_workspace_lock_contested_exit(
+        self, mock_exit, mock_input
+    ):
+        """Test that choosing exit terminates the process."""
+        os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
+        mock_input.return_value = "exit"
+        mock_exit.side_effect = SystemExit(1)
+        proc = self._start_lock_holder(hold_seconds=2.0)
+
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                with ctxm_project_workspace_lock():
+                    self.fail("Should have exited before yielding")
+        finally:
+            proc.join(timeout=3)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=1)
+
+        self.assertEqual(cm.exception.code, 1)
+        mock_exit.assert_called_once_with(1)
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_project_workspace_lock_contested_continue(self, mock_input):
+        """Test that choosing continue yields False."""
+        os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
+        mock_input.return_value = "continue"
+        proc = self._start_lock_holder(hold_seconds=2.0)
+
+        try:
+            with ctxm_project_workspace_lock() as has_lock:
+                self.assertFalse(has_lock)
+        finally:
+            proc.join(timeout=3)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=1)
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_project_workspace_lock_contested_wait_then_acquire(self, mock_input):
+        """Test that choosing wait eventually acquires the lock."""
+        os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
+        mock_input.return_value = "wait"
+        proc = self._start_lock_holder(hold_seconds=0.5)
+
+        try:
+            with ctxm_project_workspace_lock() as has_lock:
+                self.assertTrue(has_lock)
+        finally:
+            proc.join(timeout=3)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=1)
+
+        self.assertFalse(os.path.exists(self._lock_file_path()))
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_project_workspace_lock_prompt_timeout_defaults_wait(self, mock_input):
+        """Test that prompt timeout defaults to wait and acquires the lock."""
+        os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
+        mock_input.side_effect = TimeoutError("timed out")
+        proc = self._start_lock_holder(hold_seconds=0.5)
+
+        try:
+            with ctxm_project_workspace_lock(prompt_timeout=5.0) as has_lock:
+                self.assertTrue(has_lock)
+        finally:
+            proc.join(timeout=3)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=1)
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_project_workspace_lock_prompt_failure_defaults_wait(self, mock_input):
+        """Test that prompt failure defaults to wait and acquires the lock."""
+        os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
+        mock_input.side_effect = RuntimeError("input broken")
+        proc = self._start_lock_holder(hold_seconds=0.5)
+
+        try:
+            with ctxm_project_workspace_lock(prompt_timeout=5.0) as has_lock:
+                self.assertTrue(has_lock)
+        finally:
+            proc.join(timeout=3)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=1)
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_project_workspace_lock_unknown_input_defaults_wait(self, mock_input):
+        """Test that unknown input defaults to wait and acquires the lock."""
+        os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
+        mock_input.return_value = "unknown"
+        proc = self._start_lock_holder(hold_seconds=0.5)
+
+        try:
+            with ctxm_project_workspace_lock(prompt_timeout=5.0) as has_lock:
+                self.assertTrue(has_lock)
+        finally:
+            proc.join(timeout=3)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=1)
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_project_workspace_lock_timeout_from_env(self, mock_input):
+        """Test that the prompt timeout is read from environment."""
+        os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
+        os.environ["TOPSAILAI_PROJECT_WORKSPACE_LOCK_TIMEOUT"] = "10"
+        mock_input.return_value = "wait"
+        proc = self._start_lock_holder(hold_seconds=0.5)
+
+        try:
+            with ctxm_project_workspace_lock() as has_lock:
+                self.assertTrue(has_lock)
+        finally:
+            proc.join(timeout=3)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=1)
+
+        mock_input.assert_called_once()
+        call_kwargs = mock_input.call_args[1]
+        self.assertEqual(call_kwargs.get("timeout"), 10.0)
+
+    def test_project_workspace_lock_timeout_invalid_fallback(self):
+        """Test invalid timeout falls back to default."""
+        with mock.patch.dict(os.environ, {"TOPSAILAI_PROJECT_WORKSPACE_LOCK_TIMEOUT": "invalid"}, clear=True):
+            self.assertEqual(_get_project_workspace_lock_timeout(), 300.0)
+
+    def test_project_workspace_lock_timeout_zero_fallback(self):
+        """Test zero timeout falls back to default."""
+        with mock.patch.dict(os.environ, {"TOPSAILAI_PROJECT_WORKSPACE_LOCK_TIMEOUT": "0"}, clear=True):
+            self.assertEqual(_get_project_workspace_lock_timeout(), 300.0)
+
+    def test_project_workspace_lock_enabled_unset_defaults_true(self):
+        """Test lock enabled defaults to True when unset."""
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(_get_project_workspace_lock_enabled())
+
+    def test_project_workspace_lock_enabled_false(self):
+        """Test lock enabled can be disabled."""
+        with mock.patch.dict(os.environ, {"TOPSAILAI_PROJECT_WORKSPACE_LOCK_ENABLED": "0"}, clear=True):
+            self.assertFalse(_get_project_workspace_lock_enabled())
+
+    def test_project_workspace_lock_enabled_true(self):
+        """Test lock enabled can be explicitly enabled."""
+        with mock.patch.dict(os.environ, {"TOPSAILAI_PROJECT_WORKSPACE_LOCK_ENABLED": "1"}, clear=True):
+            self.assertTrue(_get_project_workspace_lock_enabled())

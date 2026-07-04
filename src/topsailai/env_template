@@ -123,6 +123,17 @@ TOPSAILAI_PROJECT_WORKSPACE=""
 
 # Print Working Directory, Folder at the time of process startup
 TOPSAILAI_PWD=""
+# Project workspace lock. When TOPSAILAI_PROJECT_WORKSPACE is set and this flag
+# is 1, the agent attempts to lock
+# {TOPSAILAI_PROJECT_WORKSPACE}/.topsailai/project_workspace.lock at startup.
+# Set to 0 to disable project workspace locking.
+TOPSAILAI_PROJECT_WORKSPACE_LOCK_ENABLED=1
+
+# Timeout in seconds for the interactive prompt shown when project workspace
+# locking fails. The prompt offers exit/continue/wait choices; if the timeout
+# expires or no input is received, the default choice is wait.
+TOPSAILAI_PROJECT_WORKSPACE_LOCK_TIMEOUT=300
+
 
 # Debug Mode
 # 0 = Production mode (disabled)
