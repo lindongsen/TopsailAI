@@ -410,7 +410,7 @@ class TestCtxmProjectWorkspaceLock(TestCase):
                 self.assertFalse(has_lock)
 
     @mock.patch.dict(os.environ, {}, clear=True)
-    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    @mock.patch("topsailai.utils.input_tool.input_with_timeout")
     @mock.patch("topsailai.workspace.lock_tool.sys.exit")
     def test_project_workspace_lock_contested_exit(
         self, mock_exit, mock_input
@@ -435,7 +435,7 @@ class TestCtxmProjectWorkspaceLock(TestCase):
         mock_exit.assert_called_once_with(1)
 
     @mock.patch.dict(os.environ, {}, clear=True)
-    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    @mock.patch("topsailai.utils.input_tool.input_with_timeout")
     def test_project_workspace_lock_contested_continue(self, mock_input):
         """Test that choosing continue yields False."""
         os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
@@ -452,7 +452,7 @@ class TestCtxmProjectWorkspaceLock(TestCase):
                 proc.join(timeout=1)
 
     @mock.patch.dict(os.environ, {}, clear=True)
-    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    @mock.patch("topsailai.utils.input_tool.input_with_timeout")
     def test_project_workspace_lock_contested_wait_then_acquire(self, mock_input):
         """Test that choosing wait eventually acquires the lock."""
         os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
@@ -471,11 +471,11 @@ class TestCtxmProjectWorkspaceLock(TestCase):
         self.assertFalse(os.path.exists(self._lock_file_path()))
 
     @mock.patch.dict(os.environ, {}, clear=True)
-    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    @mock.patch("topsailai.utils.input_tool.input_with_timeout")
     def test_project_workspace_lock_prompt_timeout_defaults_wait(self, mock_input):
         """Test that prompt timeout defaults to wait and acquires the lock."""
         os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
-        mock_input.side_effect = TimeoutError("timed out")
+        mock_input.return_value = "wait"
         proc = self._start_lock_holder(hold_seconds=0.5)
 
         try:
@@ -488,7 +488,7 @@ class TestCtxmProjectWorkspaceLock(TestCase):
                 proc.join(timeout=1)
 
     @mock.patch.dict(os.environ, {}, clear=True)
-    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    @mock.patch("topsailai.utils.input_tool.input_with_timeout")
     def test_project_workspace_lock_prompt_failure_defaults_wait(self, mock_input):
         """Test that prompt failure defaults to wait and acquires the lock."""
         os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
@@ -505,7 +505,7 @@ class TestCtxmProjectWorkspaceLock(TestCase):
                 proc.join(timeout=1)
 
     @mock.patch.dict(os.environ, {}, clear=True)
-    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    @mock.patch("topsailai.utils.input_tool.input_with_timeout")
     def test_project_workspace_lock_unknown_input_defaults_wait(self, mock_input):
         """Test that unknown input defaults to wait and acquires the lock."""
         os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
@@ -522,7 +522,7 @@ class TestCtxmProjectWorkspaceLock(TestCase):
                 proc.join(timeout=1)
 
     @mock.patch.dict(os.environ, {}, clear=True)
-    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    @mock.patch("topsailai.utils.input_tool.input_with_timeout")
     def test_project_workspace_lock_timeout_from_env(self, mock_input):
         """Test that the prompt timeout is read from environment."""
         os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
@@ -542,6 +542,60 @@ class TestCtxmProjectWorkspaceLock(TestCase):
         mock_input.assert_called_once()
         call_kwargs = mock_input.call_args[1]
         self.assertEqual(call_kwargs.get("timeout"), 10.0)
+        self.assertIn(self._lock_file_path(), call_kwargs.get("prompt", ""))
+
+    @mock.patch.dict(
+        os.environ,
+        {"TOPSAILAI_INPUT_PIPE_ENABLED": "1"},
+        clear=True,
+    )
+    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    def test_project_workspace_lock_pipe_enabled_uses_pipe_input(self, mock_input):
+        """Test that pipe input is used when TOPSAILAI_INPUT_PIPE_ENABLED is set."""
+        os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
+        mock_input.return_value = "wait"
+        proc = self._start_lock_holder(hold_seconds=0.5)
+
+        try:
+            with ctxm_project_workspace_lock(prompt_timeout=5.0) as has_lock:
+                self.assertTrue(has_lock)
+        finally:
+            proc.join(timeout=3)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=1)
+
+        mock_input.assert_called_once()
+        call_kwargs = mock_input.call_args[1]
+        self.assertEqual(call_kwargs.get("timeout"), 5.0)
+        self.assertIn(self._lock_file_path(), call_kwargs.get("prompt", ""))
+
+    @mock.patch.dict(
+        os.environ,
+        {"TOPSAILAI_INPUT_PIPE_ENABLED": "1"},
+        clear=True,
+    )
+    @mock.patch("topsailai.workspace.input_tool.input_from_pipe_session")
+    @mock.patch("topsailai.workspace.lock_tool.sys.exit")
+    def test_project_workspace_lock_pipe_enabled_exit(self, mock_exit, mock_input):
+        """Test that exit works through the pipe input path."""
+        os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = self.temp_dir
+        mock_input.return_value = "exit"
+        mock_exit.side_effect = SystemExit(1)
+        proc = self._start_lock_holder(hold_seconds=2.0)
+
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                with ctxm_project_workspace_lock():
+                    self.fail("Should have exited before yielding")
+        finally:
+            proc.join(timeout=3)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=1)
+
+        self.assertEqual(cm.exception.code, 1)
+        mock_exit.assert_called_once_with(1)
 
     def test_project_workspace_lock_timeout_invalid_fallback(self):
         """Test invalid timeout falls back to default."""

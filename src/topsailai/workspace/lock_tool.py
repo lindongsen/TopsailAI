@@ -178,23 +178,36 @@ def _get_project_workspace_lock_timeout(default: float = 300.0) -> float:
 def _prompt_for_lock_action(lock_file: str, prompt_timeout: float) -> str:
     """Prompt the user to choose an action when the workspace lock is contested.
 
+    Uses pipe-based input when ``TOPSAILAI_INPUT_PIPE_ENABLED`` is set, so
+    the prompt works with the ``/send`` command. Otherwise reads directly from
+    the terminal with a timeout, which is simpler and more reliable for a
+    one-shot startup prompt than always creating a named pipe.
+
     Returns one of "exit", "continue", or "wait". On timeout or empty input,
     returns "wait".
     """
     from topsailai.workspace.input_tool import input_from_pipe_session
+    from topsailai.utils.input_tool import input_with_timeout
 
     prompt = (
         f"Project workspace is locked by another process: {lock_file}\n"
-        f"Choose: [exit / continue / wait] (default: wait, timeout: {int(prompt_timeout)}s)"
+        f"Choose: [exit / continue / wait] (default: wait, timeout: {int(prompt_timeout)}s) "
     )
 
     try:
-        answer = input_from_pipe_session(
-            timeout=prompt_timeout,
-            single_line=True,
-            prompt=prompt,
-            cleanup_pipe=False,
-        )
+        if env_tool.is_input_pipe_enabled():
+            answer = input_from_pipe_session(
+                timeout=prompt_timeout,
+                single_line=True,
+                prompt=prompt,
+                cleanup_pipe=False,
+            )
+        else:
+            answer = input_with_timeout(
+                prompt=prompt,
+                timeout=prompt_timeout,
+                default="wait",
+            )
     except TimeoutError:
         logger.warning("Project workspace lock prompt timed out; defaulting to wait")
         return "wait"
