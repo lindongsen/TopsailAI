@@ -11,10 +11,21 @@ Author: mm-m25
 """
 
 import os
-import sys
 import json
 import unittest
 from unittest.mock import MagicMock, patch, mock_open
+
+
+def _expected_task_id(session_id: str, suffix: str) -> str:
+    """Build expected three-part task_id for tests."""
+    return f"{session_id}.{os.getpid()}.{suffix}"
+
+from topsailai.workspace.task.task_tool import (
+    TaskData,
+    TaskUtil,
+    ctxm_process_task,
+    generate_task_id,
+)
 
 
 class TestImports(unittest.TestCase):
@@ -22,37 +33,26 @@ class TestImports(unittest.TestCase):
 
     def test_import_task_data(self):
         """Test TaskData can be imported."""
-        from topsailai.workspace.task.task_tool import TaskData
         self.assertTrue(callable(TaskData))
 
     def test_import_task_util(self):
         """Test TaskUtil can be imported."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         self.assertTrue(callable(TaskUtil))
 
     def test_import_generate_task_id(self):
         """Test generate_task_id can be imported."""
-        from topsailai.workspace.task.task_tool import generate_task_id
         self.assertTrue(callable(generate_task_id))
 
     def test_import_ctxm_process_task(self):
         """Test ctxm_process_task can be imported."""
-        from topsailai.workspace.task.task_tool import ctxm_process_task
         self.assertTrue(callable(ctxm_process_task))
 
 
 class TestGenerateTaskId(unittest.TestCase):
     """Test cases for generate_task_id function."""
 
-    def setUp(self):
-        """Set up test environment."""
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
-
     def test_generate_task_id_with_session(self):
         """Test generate_task_id returns expected format with session ID."""
-        from topsailai.workspace.task.task_tool import generate_task_id
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = "test_session_123"
@@ -60,13 +60,15 @@ class TestGenerateTaskId(unittest.TestCase):
                 
                 result = generate_task_id()
                 
-                self.assertEqual(result, "test_session_123.2026-04-19")
+                self.assertTrue(result.startswith("test_session_123."))
+                self.assertIn("2026-04-19", result)
+                parts = result.split(".")
+                self.assertEqual(len(parts), 3)
                 mock_env.get_session_id.assert_called_once()
                 mock_time.get_current_date.assert_called_once_with(True)
 
     def test_generate_task_id_without_session(self):
         """Test generate_task_id uses default prefix when no session ID."""
-        from topsailai.workspace.task.task_tool import generate_task_id
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -74,11 +76,13 @@ class TestGenerateTaskId(unittest.TestCase):
                 
                 result = generate_task_id()
                 
-                self.assertEqual(result, "topsailai.2026-04-19")
+                self.assertTrue(result.startswith("topsailai."))
+                self.assertIn("2026-04-19", result)
+                parts = result.split(".")
+                self.assertEqual(len(parts), 3)
 
     def test_generate_task_id_format(self):
         """Test generate_task_id returns string in correct format."""
-        from topsailai.workspace.task.task_tool import generate_task_id
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = "session"
@@ -89,21 +93,39 @@ class TestGenerateTaskId(unittest.TestCase):
                 self.assertIsInstance(result, str)
                 self.assertIn(".", result)
                 parts = result.split(".")
-                self.assertEqual(len(parts), 2)
+                self.assertEqual(len(parts), 3)
 
+    def test_generate_task_id_with_custom_task_id(self):
+        """Test generate_task_id prefixes custom task_id correctly."""
+        with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
+            with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
+                mock_env.get_session_id.return_value = "test_session"
+                mock_time.get_current_date.return_value = "2026-04-19"
+                
+                result = generate_task_id("custom_task")
+                
+                self.assertTrue(result.startswith("test_session."))
+                self.assertTrue(result.endswith(".custom_task"))
+                parts = result.split(".")
+                self.assertEqual(len(parts), 3)
+
+    def test_generate_task_id_idempotent(self):
+        """Test generate_task_id returns already-qualified task_id unchanged."""
+        with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
+            with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
+                mock_env.get_session_id.return_value = "test_session"
+                mock_time.get_current_date.return_value = "2026-04-19"
+                
+                qualified = f"test_session.{os.getpid()}.custom_task"
+                result = generate_task_id(qualified)
+                
+                self.assertEqual(result, qualified)
 
 class TestTaskDataInit(unittest.TestCase):
     """Test cases for TaskData initialization."""
 
-    def setUp(self):
-        """Set up test environment."""
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
-
     def test_init_with_task_id(self):
         """Test TaskData initialization with valid task_id."""
-        from topsailai.workspace.task.task_tool import TaskData
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = "test_session"
@@ -111,8 +133,10 @@ class TestTaskDataInit(unittest.TestCase):
                 
                 task = TaskData("task_001")
                 
-                self.assertEqual(task.task_id, "task_001")
-                self.assertTrue(task.task_file.endswith("/task_001.task"))
+                expected = _expected_task_id("test_session", "task_001")
+                self.assertEqual(task.task_id, expected)
+                self.assertTrue(task.task_file.endswith(f"/{expected}.task"))
+                self.assertIn(task.task_id, task.task_file)
                 self.assertIsNone(task.task_content)
                 self.assertEqual(task.session_id, "test_session")
                 self.assertEqual(task.session_messages, [])
@@ -121,14 +145,12 @@ class TestTaskDataInit(unittest.TestCase):
 
     def test_init_status_constants(self):
         """Test TaskData status constants are defined correctly."""
-        from topsailai.workspace.task.task_tool import TaskData
         self.assertEqual(TaskData.TASK_STATUS_INITING, "initializing")
         self.assertEqual(TaskData.TASK_STATUS_WORKING, "working")
         self.assertEqual(TaskData.TASK_STATUS_DONE, "done")
 
     def test_init_without_session(self):
         """Test TaskData initialization when no session ID is available."""
-        from topsailai.workspace.task.task_tool import TaskData
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -142,15 +164,8 @@ class TestTaskDataInit(unittest.TestCase):
 class TestTaskDataManifest(unittest.TestCase):
     """Test cases for TaskData.manifest property."""
 
-    def setUp(self):
-        """Set up test environment."""
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
-
     def test_manifest_format(self):
         """Test manifest returns valid YAML format."""
-        from topsailai.workspace.task.task_tool import TaskData
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -160,12 +175,11 @@ class TestTaskDataManifest(unittest.TestCase):
                 manifest = task.manifest
                 
                 self.assertIn("---", manifest)
-                self.assertIn("task_id: task_003", manifest)
+                self.assertIn(f"task_id: {task.task_id}", manifest)
                 self.assertIn("status: initializing", manifest)
 
     def test_manifest_updates_with_status(self):
         """Test manifest reflects current status."""
-        from topsailai.workspace.task.task_tool import TaskData
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -181,15 +195,8 @@ class TestTaskDataManifest(unittest.TestCase):
 class TestTaskDataMethods(unittest.TestCase):
     """Test cases for TaskData conversion methods."""
 
-    def setUp(self):
-        """Set up test environment."""
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
-
     def test_to_dict(self):
         """Test to_dict returns correct dictionary structure."""
-        from topsailai.workspace.task.task_tool import TaskData
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = "session_abc"
@@ -201,7 +208,7 @@ class TestTaskDataMethods(unittest.TestCase):
                 
                 result = task.to_dict()
                 
-                self.assertEqual(result["task_id"], "task_005")
+                self.assertEqual(result["task_id"], task.task_id)
                 self.assertEqual(result["task_content"], "Test content")
                 self.assertEqual(result["session_id"], "session_abc")
                 self.assertEqual(result["session_messages"], [{"role": "user", "content": "hello"}])
@@ -209,7 +216,6 @@ class TestTaskDataMethods(unittest.TestCase):
 
     def test_to_json(self):
         """Test to_json returns valid JSON string."""
-        from topsailai.workspace.task.task_tool import TaskData
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = "session_abc"
@@ -222,12 +228,11 @@ class TestTaskDataMethods(unittest.TestCase):
                 
                 self.assertIsInstance(result, str)
                 parsed = json.loads(result)
-                self.assertEqual(parsed["task_id"], "task_006")
+                self.assertEqual(parsed["task_id"], task.task_id)
                 self.assertEqual(parsed["task_content"], "Test content")
 
     def test_to_json_empty_content(self):
         """Test to_json handles None task_content."""
-        from topsailai.workspace.task.task_tool import TaskData
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = "session_abc"
@@ -244,15 +249,8 @@ class TestTaskDataMethods(unittest.TestCase):
 class TestTaskUtilLoad(unittest.TestCase):
     """Test cases for TaskUtil.load method."""
 
-    def setUp(self):
-        """Set up test environment."""
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
-
     def test_load_success(self):
         """Test load successfully loads task data from file."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -286,7 +284,6 @@ class TestTaskUtilLoad(unittest.TestCase):
 
     def test_load_empty_file(self):
         """Test load returns False for empty file."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -302,7 +299,6 @@ class TestTaskUtilLoad(unittest.TestCase):
 
     def test_load_invalid_json(self):
         """Test load returns False for invalid JSON."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -323,15 +319,8 @@ class TestTaskUtilLoad(unittest.TestCase):
 class TestTaskUtilDump(unittest.TestCase):
     """Test cases for TaskUtil.dump method."""
 
-    def setUp(self):
-        """Set up test environment."""
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
-
     def test_dump_with_file_pointer(self):
         """Test dump writes to provided file pointer."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -349,7 +338,6 @@ class TestTaskUtilDump(unittest.TestCase):
 
     def test_dump_creates_new_file(self):
         """Test dump creates new file when no file pointer provided."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -368,7 +356,6 @@ class TestTaskUtilDump(unittest.TestCase):
 
     def test_dump_file_exists_raises(self):
         """Test dump raises assertion when file already exists."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -387,15 +374,8 @@ class TestTaskUtilDump(unittest.TestCase):
 class TestTaskUtilLockMethods(unittest.TestCase):
     """Test cases for TaskUtil lock-related methods."""
 
-    def setUp(self):
-        """Set up test environment."""
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
-
     def test_pre_lock_creates_file(self):
         """Test pre_lock creates file if it doesn't exist."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -412,7 +392,6 @@ class TestTaskUtilLockMethods(unittest.TestCase):
 
     def test_pre_lock_file_exists(self):
         """Test pre_lock does nothing if file already exists."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -429,7 +408,6 @@ class TestTaskUtilLockMethods(unittest.TestCase):
 
     def test_post_lock_with_content(self):
         """Test post_lock dumps content when task_content exists."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -446,7 +424,6 @@ class TestTaskUtilLockMethods(unittest.TestCase):
 
     def test_post_lock_without_content(self):
         """Test post_lock loads data when no task_content."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -463,7 +440,6 @@ class TestTaskUtilLockMethods(unittest.TestCase):
 
     def test_pre_unlock_with_result(self):
         """Test pre_unlock sets status to done when result exists."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -479,7 +455,6 @@ class TestTaskUtilLockMethods(unittest.TestCase):
 
     def test_pre_unlock_without_result(self):
         """Test pre_unlock keeps current status when no result."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -495,7 +470,6 @@ class TestTaskUtilLockMethods(unittest.TestCase):
 
     def test_post_unlock_deletes_file_when_done(self):
         """Test post_unlock deletes file when status is done."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -511,7 +485,6 @@ class TestTaskUtilLockMethods(unittest.TestCase):
 
     def test_post_unlock_keeps_file_when_not_done(self):
         """Test post_unlock does not delete file when status is not done."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -529,15 +502,8 @@ class TestTaskUtilLockMethods(unittest.TestCase):
 class TestCtxmProcessTask(unittest.TestCase):
     """Test cases for ctxm_process_task context manager."""
 
-    def setUp(self):
-        """Set up test environment."""
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
-
     def test_context_manager_with_none_task(self):
         """Test ctxm_process_task handles None task gracefully."""
-        from topsailai.workspace.task.task_tool import ctxm_process_task
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -548,7 +514,6 @@ class TestCtxmProcessTask(unittest.TestCase):
 
     def test_context_manager_lock_failure(self):
         """Test ctxm_process_task handles lock failure."""
-        from topsailai.workspace.task.task_tool import ctxm_process_task, TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -572,40 +537,31 @@ class TestCtxmProcessTask(unittest.TestCase):
 class TestEdgeCases(unittest.TestCase):
     """Edge case tests."""
 
-    def setUp(self):
-        """Set up test environment."""
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
-
     def test_empty_task_id(self):
         """Test TaskData with empty task_id."""
-        from topsailai.workspace.task.task_tool import TaskData
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
                 mock_time.get_current_date.return_value = "2026-04-19T10:00:00"
                 
                 task = TaskData("")
-                
-                self.assertEqual(task.task_id, "")
-                self.assertIn(".task", task.task_file)
+                expected = f"topsailai.{os.getpid()}.2026-04-19T10:00:00"
+                self.assertEqual(task.task_id, expected)
+                self.assertTrue(task.task_file.endswith(f"/{expected}.task"))
 
     def test_special_characters_in_task_id(self):
         """Test TaskData with special characters in task_id."""
-        from topsailai.workspace.task.task_tool import TaskData
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
                 mock_time.get_current_date.return_value = "2026-04-19T10:00:00"
                 
                 task = TaskData("task.with.dots.and_underscores")
-                
-                self.assertEqual(task.task_id, "task.with.dots.and_underscores")
+                expected = f"topsailai.{os.getpid()}.task.with.dots.and_underscores"
+                self.assertEqual(task.task_id, expected)
 
     def test_unicode_content(self):
         """Test TaskData handles unicode content."""
-        from topsailai.workspace.task.task_tool import TaskData
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -619,7 +575,6 @@ class TestEdgeCases(unittest.TestCase):
 
     def test_large_session_messages(self):
         """Test TaskData handles large session messages list."""
-        from topsailai.workspace.task.task_tool import TaskData
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -635,15 +590,8 @@ class TestEdgeCases(unittest.TestCase):
 class TestExceptionHandling(unittest.TestCase):
     """Exception handling tests."""
 
-    def setUp(self):
-        """Set up test environment."""
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
-
     def test_to_json_with_complex_object(self):
         """Test to_json handles complex objects gracefully."""
-        from topsailai.workspace.task.task_tool import TaskData
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -659,7 +607,6 @@ class TestExceptionHandling(unittest.TestCase):
 
     def test_load_with_complete_data(self):
         """Test load handles complete JSON data correctly."""
-        from topsailai.workspace.task.task_tool import TaskUtil
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None

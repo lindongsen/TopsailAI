@@ -1,10 +1,5 @@
 """
-Unit tests for workspace/task/task_tool.py module.
-
-This module tests the TaskData and TaskUtil classes along with their
-task status constants.
-
-Author: mm-m25
+Unit tests for topsailai.workspace.task.task_tool module.
 """
 
 import os
@@ -18,6 +13,11 @@ from topsailai.workspace.task.task_tool import (
     generate_task_id,
     ctxm_process_task,
 )
+
+
+def _expected_task_id(session_id: str, suffix: str) -> str:
+    """Build expected three-part task_id for tests."""
+    return f"{session_id}.{os.getpid()}.{suffix}"
 
 
 class TestTaskDataConstants(TestCase):
@@ -101,8 +101,9 @@ class TestTaskDataInitialization(TestCase):
 
         task = TaskData("test_task_123")
 
-        self.assertEqual(task.task_id, "test_task_123")
-        self.assertEqual(task.task_file, "/tmp/tasks/test_task_123.task")
+        expected_id = _expected_task_id("test_session", "test_task_123")
+        self.assertEqual(task.task_id, expected_id)
+        self.assertEqual(task.task_file, f"/tmp/tasks/{expected_id}.task")
 
     @patch('topsailai.workspace.task.task_tool.env_tool')
     @patch('topsailai.workspace.task.task_tool.time_tool')
@@ -191,7 +192,7 @@ class TestTaskDataMethods(TestCase):
 
         result = task.to_dict()
 
-        self.assertEqual(result['task_id'], "test_task")
+        self.assertEqual(result['task_id'], _expected_task_id('test_session', 'test_task'))
         self.assertEqual(result['task_content'], "test content")
         self.assertEqual(result['session_messages'], ["msg1", "msg2"])
 
@@ -226,7 +227,7 @@ class TestTaskDataMethods(TestCase):
         result = task.manifest
 
         self.assertIsInstance(result, str)
-        self.assertIn('task_id: test_task', result)
+        self.assertIn(f'task_id: {_expected_task_id("test_session", "test_task")}', result)
         self.assertIn('status: working', result)
         self.assertIn('---', result)
 

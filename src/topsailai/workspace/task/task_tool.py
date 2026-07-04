@@ -28,17 +28,29 @@ from topsailai.workspace.task.cleanup import (
 )
 
 
-def generate_task_id() -> str:
+def generate_task_id(task_id: str | None = None) -> str:
     """
     Generate a task id
 
     Returns:
         str:
     """
-    parts = [
+    parts_1 = [
         env_tool.get_session_id() or "topsailai",
-        time_tool.get_current_date(True),
+        str(os.getpid()),
     ]
+
+    parts_1_str = '.'.join(parts_1)
+    if task_id and task_id.startswith(parts_1_str):
+        return task_id
+
+    parts_2 = []
+    if task_id:
+        parts_2.append(task_id)
+    else:
+        parts_2.append(time_tool.get_current_date(True))
+
+    parts = parts_1 + parts_2
     return '.'.join(parts)
 
 class TaskData(object):
@@ -62,15 +74,15 @@ class TaskData(object):
     TASK_STATUS_WORKING = "working"
     TASK_STATUS_DONE = "done"
 
-    def __init__(self, task_id:str):
+    def __init__(self, task_id: str):
         """
         Initialize a TaskData instance.
 
         Args:
             task_id (str): Unique identifier for the task
         """
-        self.task_id = task_id
-        self.task_file = FOLDER_WORKSPACE_TASK + f"/{task_id}.task"
+        self.task_id = generate_task_id(task_id)
+        self.task_file = FOLDER_WORKSPACE_TASK + f"/{self.task_id}.task"
 
         self.task_content = None
         self.create_time = time_tool.get_current_date(with_t=True)
