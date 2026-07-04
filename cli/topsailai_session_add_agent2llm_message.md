@@ -27,13 +27,20 @@ This CLI script is the external writer side of that mechanism: it discovers runn
 
 ### 1. Session Discovery
 
-Active sessions leave a stdout tee file in `{TOPSAILAI_HOME}/workspace/task/` with the naming convention:
+Active sessions leave stdout tee files in `{TOPSAILAI_HOME}/workspace/task/`. The script recognizes two filename conventions:
 
-```
-{session_id}.{pid}.session.stdout
-```
+- Session stdout:
+  ```
+  {session_id}.{pid}.session.stdout
+  ```
+- Task stdout:
+  ```
+  {session_id}.{pid}[.{other}].task.stdout
+  ```
 
-When `--session_id` or `--pid` is omitted, the script scans that directory, matches files against the pattern, and derives one target JSONL file per match:
+The task form includes an optional extra identifier (e.g. the task name) after the PID. In both cases the second dot-separated segment is the target PID.
+
+When `--session_id` or `--pid` is omitted, the script scans that directory, matches files against either pattern, and derives one target JSONL file per match:
 
 ```
 {session_id}.{pid}.session.agent2llm_inject_messages.jsonl
@@ -46,7 +53,6 @@ This mirrors the convention used by the session stdout tee and input pipe (see `
 The actual read/write implementation lives in:
 
 - `/TopsailAI/src/topsailai/workspace/agent/runtime_message_sources/file.py`
-
 Key behaviors:
 
 - `FileAgent2LLMMessageSource` reads from a JSONL file.

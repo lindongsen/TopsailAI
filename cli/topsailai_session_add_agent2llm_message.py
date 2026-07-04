@@ -8,8 +8,9 @@ next LLM call.
 
 When --session_id and/or --pid are omitted, the script scans
 {TOPSAILAI_HOME}/workspace/task/ for files matching
-``{session_id}.{pid}.session.stdout`` and derives the JSONL message source
-path(s) from each match.
+``{session_id}.{pid}.session.stdout`` or
+``{session_id}.{pid}[.{other}].task.stdout`` and derives the JSONL message
+source path(s) from each match.
 """
 
 import argparse
@@ -33,15 +34,35 @@ JSONL_SUFFIX = ".session.agent2llm_inject_messages.jsonl"
 
 
 def parse_stdout_filename(filename: str) -> Tuple[Optional[str], Optional[str]]:
-    """Parse ``{session_id}.{pid}.session.stdout`` into (session_id, pid).
+    """Parse session/task stdout filenames into (session_id, pid).
 
-    Also supports the temporary-session form ``topsailai.{pid}.session.stdout``,
-    which yields ``("topsailai", pid)``.
+    Supported conventions:
+      - Session stdout: ``{session_id}.{pid}.session.stdout``
+      - Task stdout: ``{session_id}.{pid}[.{other}].task.stdout``
+      - Temporary session: ``topsailai.{pid}.session.stdout`` or
+        ``topsailai.{pid}[.{other}].task.stdout``
+
+    For task stdout files the PID is the second dot-separated component,
+    because additional optional identifiers may follow it.
 
     Returns:
         Tuple of (session_id, pid) strings. Either value may be ``None`` if
         the filename does not match the expected format.
     """
+    if filename.endswith(".task.stdout"):
+        suffix = ".task.stdout"
+        base = filename[: -len(suffix)]
+        if not base:
+            return None, None
+        parts = base.split(".")
+        if len(parts) < 2:
+            return None, None
+        pid = parts[1]
+        if not pid.isdigit():
+            return None, None
+        session_id = parts[0]
+        return session_id, pid
+
     suffix = ".session.stdout"
     if not filename.endswith(suffix):
         return None, None
@@ -80,7 +101,7 @@ def discover_jsonl_files(
     """Discover JSONL inject targets from stdout files in the task directory.
 
     Args:
-        task_folder: Directory containing session stdout files.
+        task_folder: Directory containing session/task stdout files.
         session_id: If provided, only match stdout files for this session.
         pid: If provided, only match stdout files for this PID.
         jsonl_suffix: Suffix used to build the JSONL path from a stdout file.
@@ -88,14 +109,14 @@ def discover_jsonl_files(
     Returns:
         Sorted list of JSONL file paths for each matching stdout file. The
         list is sorted by stdout file mtime descending so the most recently
-        active session comes first.
+        active session/task comes first.
     """
     targets = []
     if not os.path.isdir(task_folder):
         return targets
 
     for entry in os.listdir(task_folder):
-        if not entry.endswith(".session.stdout"):
+        if not (entry.endswith(".session.stdout") or entry.endswith(".task.stdout")):
             continue
         stdout_path = os.path.join(task_folder, entry)
         if not os.path.isfile(stdout_path):
@@ -211,7 +232,7 @@ def main() -> int:
 
     if not targets:
         print(
-            f"[ERROR] No matching session stdout file found in {get_task_folder()}.",
+            f"[ERROR] No matching session/task stdout file found in {get_task_folder()}.",
             file=sys.stderr,
         )
         return 1
