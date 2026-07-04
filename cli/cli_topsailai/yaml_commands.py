@@ -178,13 +178,13 @@ def match_yaml_command(
                 )
 
         pattern = f"^/?{pattern}(?:\\s+.*)?$"
-        flags = re.DOTALL if cmd_template.startswith("/ctx.add_msg") else 0
+        flags = re.DOTALL if cmd_template.startswith(("/ctx.add_msg", "/agent2llm.add_msg")) else 0
         match = re.match(pattern, user_input, flags)
         if match:
             variables = match.groupdict()
             variables.setdefault("session_id", state.current_session_id or "")
             variables["task_dir"] = task_dir
-            if cmd_template.startswith("/ctx.add_msg"):
+            if cmd_template.startswith(("/ctx.add_msg", "/agent2llm.add_msg")):
                 msg_match = re.match(
                     rf"^/?{re.escape(cmd_template.lstrip('/'))}(?:\s+(.*))?$/",
                     user_input,
@@ -293,7 +293,7 @@ def handle_yaml_command(
     cmd = instruction.get("cmd", "")
     shell = instruction.get("shell", "")
 
-    if cmd.startswith("/ctx.add_msg"):
+    if cmd.startswith(("/ctx.add_msg", "/agent2llm.add_msg")):
         initial = variables.get("message", "")
         if len(initial) >= 2 and initial[0] in ('"', "'") and initial[-1] == initial[0]:
             initial = initial[1:-1]
