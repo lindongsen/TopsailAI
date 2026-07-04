@@ -200,7 +200,6 @@ def _prompt_for_lock_action(lock_file: str, prompt_timeout: float) -> str:
                 timeout=prompt_timeout,
                 single_line=True,
                 prompt=prompt,
-                cleanup_pipe=False,
             )
         else:
             answer = input_with_timeout(
