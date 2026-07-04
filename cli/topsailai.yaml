@@ -86,6 +86,13 @@ instructions:
     example: ""
     shell: "topsailai_retrieve_messages {session_id}"
 
+
+  - cmd: "/ctx.btw" # Note: Special handling, supports line breaks
+    scopes:
+      - session
+    desc: "Add a by-the-way message to Agent2LLM runtime inject source"
+    example: ""
+    shell: "topsailai_session_add_agent2llm_message -s '{session_id}' -m '{message}'"
   - cmd: "/ctx.add_msg" # Note: Special handling, supports line breaks
     scopes:
       - session

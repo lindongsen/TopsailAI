@@ -103,3 +103,26 @@ Launch an AI agent driver based on a local `.topsailai/settings.yaml` configurat
 4. `TOPSAILAI_AGENT_DRIVER` from the OS environment
 
 If `.topsailai/settings.yaml` is missing, the script prints a configuration template and exits.
+
+### `topsailai_session_add_message` vs `topsailai_session_add_agent2llm_message`
+
+These two commands append messages to a session, but they target different conversation layers and have different lifecycles.
+
+| Command | Conversation layer | When it takes effect | Use case |
+|---|---|---|---|
+| `topsailai_session_add_message` | `user2agent` — user and agent conversation | Only after the agent restarts; not visible to a running agent | Record a user message or context for the next agent run |
+| `topsailai_session_add_agent2llm_message` | `agent2llm` — agent and LLM conversation | Immediately; the running agent reads it on the fly | Leave a "by the way" note for the currently running agent |
+
+In short: use `topsailai_session_add_message` for persistent user-to-agent context, and `topsailai_session_add_agent2llm_message` when you want a running agent to pick up extra instruction right now.
+
+### Interactive message commands in `topsailai.py`
+
+When watching a session in `topsailai.py`, you can inject messages through three different paths. They differ in target layer, delivery mechanism, and when they take effect.
+
+| Command | Target layer | Mechanism | When it takes effect |
+|---|---|---|---|
+| `/send` | Running agent process | Writes to the session's named pipe | Immediately; the running process receives it right now |
+| `/ctx.btw` | `agent2llm` context | Calls `topsailai_session_add_agent2llm_message` to append to `*.session.agent2llm_inject_messages.jsonl` | Immediately; the running agent reads the JSONL before its next LLM call |
+| `/ctx.add_msg` | `user2agent` context | Calls `topsailai_session_add_message` to append to the session message store | Only after the agent restarts; not visible to a running agent |
+
+Use `/send` for urgent process-level messages, `/ctx.btw` for extra instructions you want the current agent to pick up on the fly, and `/ctx.add_msg` for context that should persist until the next agent run.
