@@ -189,3 +189,43 @@ When watching a session in `topsailai.py`, you can inject messages through three
 | `/ctx.add_msg` | `user2agent` context | Calls `topsailai_session_add_message` to append to the session message store | Only after the agent restarts; not visible to a running agent |
 
 Use `/send` for urgent process-level messages, `/ctx.btw` for extra instructions you want the current agent to pick up on the fly, and `/ctx.add_msg` for context that should persist until the next agent run.
+
+### `topsailai_project_history.py`
+
+Display the most recent project/workspace entries recorded in `.project_history.jsonl`.
+
+**What it does:**
+
+- Resolves `TOPSAILAI_HOME` via `cli_topsailai/paths.py`.
+- Reads `.project_history.jsonl` from the TopsailAI home directory.
+- Shows the latest N entries as a formatted table.
+- Highlights running sessions in green.
+
+**Columns:**
+
+| Column | Description |
+|---|---|
+| `No` | Row number (1 is the most recent) |
+| `Timestamp` | Human-readable local timestamp |
+| `Session ID` | Session identifier; `(temp)` for transient sessions |
+| `Status` | `Running` (green) if the session PID is still alive, otherwise `Idle` |
+| `Project Workspace` | Recorded project workspace path |
+| `PWD` | Recorded working directory |
+
+**Usage:**
+
+```bash
+# Show the latest 20 entries (default)
+./topsailai_project_history.py
+
+# Show the latest 10 entries
+./topsailai_project_history.py --limit 10
+./topsailai_project_history.py -n 10
+
+# Use a custom TOPSAILAI_HOME
+./topsailai_project_history.py --home /path/to/home --limit 5
+```
+
+**Running-session detection:**
+
+A session is considered running when a `*.session.stdout` file exists under `{TOPSAILAI_HOME}/workspace/task/` for that session ID and the embedded PID is still alive. If multiple stdout files exist for the same session, the most recently modified file is used.
