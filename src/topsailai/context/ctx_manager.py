@@ -306,11 +306,6 @@ def _async_update_session_name(session_id: str, message: str, session_mgr: Sessi
         if not session_name:
             return
 
-        # Do not overwrite an existing name that may have been set meanwhile.
-        session_data = session_mgr.get_session(session_id)
-        if session_data is None or session_data.session_name:
-            return
-
         session_mgr.update_session_name(session_id, session_name)
         logger.info(f"auto_rename: session_id={session_id}, session_name={session_name}")
     except Exception as e:

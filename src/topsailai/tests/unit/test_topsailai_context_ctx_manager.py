@@ -772,7 +772,6 @@ class TestCreateSessionAutoRename(unittest.TestCase):
         from topsailai.context.ctx_manager import create_session
 
         mock_session_mgr = MagicMock()
-        mock_session_mgr.get_session.return_value = MagicMock(session_name='')
         mock_get_session_mgr.return_value = mock_session_mgr
         mock_generate.return_value = 'Auto Name'
 
@@ -828,7 +827,6 @@ class TestCreateSessionAutoRename(unittest.TestCase):
         from topsailai.context.ctx_manager import create_session
 
         mock_session_mgr = MagicMock()
-        mock_session_mgr.get_session.return_value = MagicMock(session_name='')
         mock_get_session_mgr.return_value = mock_session_mgr
         mock_generate.side_effect = Exception('generation failed')
 
@@ -841,12 +839,11 @@ class TestCreateSessionAutoRename(unittest.TestCase):
 
     @patch('topsailai.context.ctx_manager.get_session_manager')
     @patch('topsailai.context.ctx_manager.generate_session_name')
-    def test_create_session_auto_rename_does_not_overwrite_existing(self, mock_generate, mock_get_session_mgr):
-        """Test auto-rename does not overwrite a name set meanwhile."""
+    def test_create_session_auto_rename_updates_even_if_name_exists(self, mock_generate, mock_get_session_mgr):
+        """Test auto-rename calls update_session_name without checking existing name."""
         from topsailai.context.ctx_manager import create_session
 
         mock_session_mgr = MagicMock()
-        mock_session_mgr.get_session.return_value = MagicMock(session_name='Already Set')
         mock_get_session_mgr.return_value = mock_session_mgr
         mock_generate.return_value = 'Auto Name'
 
@@ -856,6 +853,6 @@ class TestCreateSessionAutoRename(unittest.TestCase):
         import time
         time.sleep(0.1)
         mock_generate.assert_called_with('session-123', 'Help me refactor code.')
-        mock_session_mgr.update_session_name.assert_not_called()
+        mock_session_mgr.update_session_name.assert_called_once_with('session-123', 'Auto Name')
 if __name__ == '__main__':
     unittest.main()
