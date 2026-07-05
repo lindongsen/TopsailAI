@@ -124,6 +124,10 @@ class TokenStat(threading.Thread):
         buffer: Temporary storage for incoming messages
         rlock (threading.RLock): Reentrant lock for thread-safe operations
         flag_running (bool): Control flag for thread execution
+        first_byte_sum_ms (float): Sum of first-byte times for stream responses
+        first_byte_count (int): Number of stream responses with first-byte timing
+        first_byte_max_ms (float|None): Maximum first-byte time observed
+        first_byte_min_ms (float|None): Minimum first-byte time observed
     """
 
     def __init__(self, llm_id: str, lifetime: int = 86400):
@@ -173,6 +177,12 @@ class TokenStat(threading.Thread):
 
         self.flag_running = True    # Control flag for thread execution
 
+        # First-byte timing statistics for stream responses (milliseconds)
+        self.first_byte_sum_ms = 0.0
+        self.first_byte_count = 0
+        self.first_byte_max_ms = None
+        self.first_byte_min_ms = None
+
         # Start the thread automatically
         self.start()
 
@@ -198,6 +208,7 @@ class TokenStat(threading.Thread):
         - Total and current token counts
         - Total and current text lengths
         - Message count
+        - First-byte timing statistics for stream responses
 
         The output is logged both through the print_step utility and the logger
         for visibility in different output streams.
@@ -214,6 +225,12 @@ class TokenStat(threading.Thread):
                 current_text_len=self.current_text_len,
                 total_text_len=self.total_text_len,
                 total_tokens=self.total_count,
+                first_byte_avg_ms=(
+                    self.first_byte_sum_ms / self.first_byte_count
+                    if self.first_byte_count > 0 else None
+                ),
+                first_byte_max_ms=self.first_byte_max_ms,
+                first_byte_min_ms=self.first_byte_min_ms,
             )
             if usage:
                 self.current_cached_tokens = usage.prompt_tokens_details.cached_tokens
@@ -228,6 +245,33 @@ class TokenStat(threading.Thread):
         print_step(msg, need_format=False)      # Output to console/step display
         logger.info(msg)     # Output to log file
         return
+
+    def add_first_byte(self, first_byte_ms: float):
+        """
+        Record first-byte timing for a stream response.
+
+        This method updates the cumulative first-byte timing statistics used
+        to compute average, maximum, and minimum first-byte response times.
+        It is safe to call from any thread.
+
+        Args:
+            first_byte_ms (float): Time from request start to first chunk,
+                                   in milliseconds. Values that are None or
+                                   negative are ignored.
+
+        Returns:
+            None
+        """
+        if first_byte_ms is None or first_byte_ms < 0:
+            return
+
+        with self.rlock:
+            self.first_byte_sum_ms += first_byte_ms
+            self.first_byte_count += 1
+            if self.first_byte_max_ms is None or first_byte_ms > self.first_byte_max_ms:
+                self.first_byte_max_ms = first_byte_ms
+            if self.first_byte_min_ms is None or first_byte_ms < self.first_byte_min_ms:
+                self.first_byte_min_ms = first_byte_ms
 
     def add_msgs(self, msgs):
         """

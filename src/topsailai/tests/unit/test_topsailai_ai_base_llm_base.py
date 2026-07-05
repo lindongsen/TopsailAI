@@ -280,6 +280,36 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
 
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_call_llm_model_by_stream_records_first_byte(
+        self, mock_base_init, mock_logger
+    ):
+        """Test streaming response records first-byte timing in tokenStat."""
+        mock_chunk1 = MagicMock()
+        mock_chunk1.choices = [MagicMock()]
+        mock_chunk1.choices[0].delta.content = "Hello "
+        mock_chunk1.choices[0].delta.tool_calls = None
+
+        mock_chunk2 = MagicMock()
+        mock_chunk2.choices = [MagicMock()]
+        mock_chunk2.choices[0].delta.content = "World"
+        mock_chunk2.choices[0].delta.tool_calls = None
+
+        mock_response = iter([mock_chunk1, mock_chunk2])
+
+        model = self._create_mock_model()
+        model.model.create.return_value = mock_response
+
+        result = model.call_llm_model_by_stream(self.messages)
+
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(result[1], "Hello World")
+        model.tokenStat.add_first_byte.assert_called_once()
+        first_byte_arg = model.tokenStat.add_first_byte.call_args[0][0]
+        self.assertIsInstance(first_byte_arg, float)
+        self.assertGreaterEqual(first_byte_arg, 0.0)
+
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_call_llm_model_by_stream_handles_tool_calls(self, mock_base_init, mock_logger):
         """Test streaming response handles tool calls correctly."""
         mock_function = MagicMock()

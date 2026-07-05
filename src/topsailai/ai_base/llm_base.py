@@ -382,6 +382,10 @@ class LLMModel(LLMModelBase):
             completion_tokens=0, prompt_tokens=0, total_tokens=0,
             prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=0),
         )
+
+        first_byte_ms = None
+        stream_start_time = time.monotonic()
+
         for chunk in self.iter_stream_with_first_byte_timeout(
             response,
             first_byte_timeout,
@@ -399,6 +403,13 @@ class LLMModel(LLMModelBase):
                 pass
             if delta_obj is None:
                 continue
+
+            # Record first-byte timing on the first chunk that carries content
+            # or tool-call data. This measures the time from stream start to the
+            # first useful response byte.
+            if first_byte_ms is None:
+                first_byte_ms = (time.monotonic() - stream_start_time) * 1000
+
             # content
             delta_content = delta_obj.content
             if delta_content:
@@ -433,6 +444,10 @@ class LLMModel(LLMModelBase):
                     if tool_call.function.arguments:
                         curr_tool_call["function"]["arguments"] += tool_call.function.arguments
         # enf for chunk
+
+        # Record first-byte timing for stream responses.
+        if first_byte_ms is not None:
+            self.tokenStat.add_first_byte(first_byte_ms)
 
         # Notify all content senders that the stream has finished so they can
         # emit a final newline or release any in-progress rendering state.

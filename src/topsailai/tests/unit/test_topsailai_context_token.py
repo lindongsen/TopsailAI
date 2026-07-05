@@ -220,6 +220,98 @@ class TestTokenStat(unittest.TestCase):
         stat.flag_running = False
 
 
+class TestTokenStatFirstByte(unittest.TestCase):
+    """Test cases for TokenStat first-byte timing aggregation."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.llm_id = "test_first_byte"
+
+    def tearDown(self):
+        """Clean up after tests."""
+        pass
+
+    def test_first_byte_init(self):
+        """Test first-byte counters are initialized correctly."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        self.assertEqual(stat.first_byte_sum_ms, 0.0)
+        self.assertEqual(stat.first_byte_count, 0)
+        self.assertIsNone(stat.first_byte_max_ms)
+        self.assertIsNone(stat.first_byte_min_ms)
+        stat.flag_running = False
+
+    def test_add_first_byte_updates_counters(self):
+        """Test add_first_byte updates sum, count, max and min."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        stat.add_first_byte(100.0)
+        self.assertEqual(stat.first_byte_sum_ms, 100.0)
+        self.assertEqual(stat.first_byte_count, 1)
+        self.assertEqual(stat.first_byte_max_ms, 100.0)
+        self.assertEqual(stat.first_byte_min_ms, 100.0)
+        stat.flag_running = False
+
+    def test_add_first_byte_multiple_values(self):
+        """Test add_first_byte aggregates multiple values correctly."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        stat.add_first_byte(100.0)
+        stat.add_first_byte(50.0)
+        stat.add_first_byte(200.0)
+        self.assertEqual(stat.first_byte_sum_ms, 350.0)
+        self.assertEqual(stat.first_byte_count, 3)
+        self.assertEqual(stat.first_byte_max_ms, 200.0)
+        self.assertEqual(stat.first_byte_min_ms, 50.0)
+        stat.flag_running = False
+
+    def test_add_first_byte_ignores_none(self):
+        """Test add_first_byte ignores None values."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        stat.add_first_byte(None)
+        self.assertEqual(stat.first_byte_count, 0)
+        self.assertIsNone(stat.first_byte_max_ms)
+        self.assertIsNone(stat.first_byte_min_ms)
+        stat.flag_running = False
+
+    def test_add_first_byte_ignores_negative(self):
+        """Test add_first_byte ignores negative values."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        stat.add_first_byte(-10.0)
+        self.assertEqual(stat.first_byte_count, 0)
+        self.assertIsNone(stat.first_byte_max_ms)
+        self.assertIsNone(stat.first_byte_min_ms)
+        stat.flag_running = False
+
+    def test_output_token_stat_includes_first_byte(self):
+        """Test output_token_stat includes first-byte avg/max/min."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        stat.add_first_byte(100.0)
+        stat.add_first_byte(200.0)
+
+        with patch('topsailai.context.token.print_step') as mock_print, \
+             patch('topsailai.context.token.logger') as mock_logger:
+            stat.output_token_stat()
+
+        self.assertTrue(mock_print.called)
+        logged_msg = mock_print.call_args[0][0]
+        self.assertIn("first_byte_avg_ms", logged_msg)
+        self.assertIn("first_byte_max_ms", logged_msg)
+        self.assertIn("first_byte_min_ms", logged_msg)
+        self.assertIn("150.0", logged_msg)
+        stat.flag_running = False
+
+    def test_output_token_stat_first_byte_none_when_empty(self):
+        """Test output_token_stat reports None first-byte metrics when empty."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+
+        with patch('topsailai.context.token.print_step') as mock_print:
+            stat.output_token_stat()
+
+        logged_msg = mock_print.call_args[0][0]
+        self.assertIn("'first_byte_avg_ms': None", logged_msg)
+        self.assertIn("'first_byte_max_ms': None", logged_msg)
+        self.assertIn("'first_byte_min_ms': None", logged_msg)
+        stat.flag_running = False
+
+
 class TestTokenStatEdgeCases(unittest.TestCase):
     """Test edge cases for TokenStat class."""
 
