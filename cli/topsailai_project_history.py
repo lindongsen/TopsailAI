@@ -215,16 +215,17 @@ def _is_pid_alive(pid: int) -> bool:
         return False
 
 
-def _is_session_running(home: str, session_id: str) -> bool:
-    """Return True if *session_id* has a live session process.
+def _find_session_pid(home: str, session_id: str) -> Optional[int]:
+    """Return the PID from the most recent stdout file for *session_id*.
 
-    A session is considered running when its most recent
-    ``{session_id}.{pid}.session.stdout`` file in ``workspace/task/`` contains
-    a PID that is still alive.
+    Prefers the PID recorded in the history entry when it matches a live
+    process and a corresponding stdout file exists. Otherwise falls back to
+    scanning ``workspace/task/`` for the most recent matching
+    ``{session_id}.{pid}.session.stdout`` file.
     """
     task_dir = os.path.join(home, TASK_SUBDIR)
     if not os.path.isdir(task_dir):
-        return False
+        return None
 
     candidates = []
     for entry in os.listdir(task_dir):
@@ -243,10 +244,29 @@ def _is_session_running(home: str, session_id: str) -> bool:
         candidates.append((mtime, pid))
 
     if not candidates:
-        return False
+        return None
 
     candidates.sort(key=lambda x: x[0], reverse=True)
-    _mtime, pid = candidates[0]
+    return candidates[0][1]
+
+
+def _is_session_running(home: str, session_id: str, recorded_pid: Optional[int] = None) -> bool:
+    """Return True if *session_id* has a live session process.
+
+    When *recorded_pid* is provided and the PID is alive and a matching
+    stdout file exists, it is used directly. Otherwise the most recent
+    ``{session_id}.{pid}.session.stdout`` file in ``workspace/task/`` is
+    used.
+    """
+    if recorded_pid is not None and _is_pid_alive(recorded_pid):
+        task_dir = os.path.join(home, TASK_SUBDIR)
+        expected = f"{session_id}.{recorded_pid}.session.stdout"
+        if os.path.isfile(os.path.join(task_dir, expected)):
+            return True
+
+    pid = _find_session_pid(home, session_id)
+    if pid is None:
+        return False
     return _is_pid_alive(pid)
 
 
@@ -259,14 +279,16 @@ def _print_table(entries: List[Dict[str, Any]], home: str) -> None:
     w_no = 4
     w_ts = 22
     w_session = 22
-    w_project = 32
-    w_pwd = 32
+    w_pid = 10
+    w_project = 28
+    w_pwd = 28
 
     header = (
         f"{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE}"
         f" {'No':^{w_no}} |"
         f" {'Timestamp':^{w_ts}} |"
         f" {'Session ID':^{w_session}} |"
+        f" {'PID':^{w_pid}} |"
         f" {'Project Workspace':^{w_project}} |"
         f" {'PWD':^{w_pwd}} "
         f"{Colors.RESET}"
@@ -276,6 +298,7 @@ def _print_table(entries: List[Dict[str, Any]], home: str) -> None:
         f"{'-' * (w_no + 1)}+"
         f"{'-' * (w_ts + 2)}+"
         f"{'-' * (w_session + 2)}+"
+        f"{'-' * (w_pid + 2)}+"
         f"{'-' * (w_project + 2)}+"
         f"{'-' * (w_pwd + 1)}"
         f"{Colors.RESET}"
@@ -288,12 +311,14 @@ def _print_table(entries: List[Dict[str, Any]], home: str) -> None:
         ts = str(entry.get("ts") or "-")
         raw_session = entry.get("session_id")
         session = _display_session_id(raw_session)
+        recorded_pid = entry.get("pid")
+        pid_text = str(recorded_pid) if isinstance(recorded_pid, int) else "-"
         project = str(entry.get("project_workspace") or "-")
         pwd = str(entry.get("pwd") or "-")
 
         is_running = False
         if raw_session is not None:
-            is_running = _is_session_running(home, str(raw_session))
+            is_running = _is_session_running(home, str(raw_session), recorded_pid)
 
         session_color = Colors.GREEN if is_running else Colors.RESET
 
@@ -302,6 +327,7 @@ def _print_table(entries: List[Dict[str, Any]], home: str) -> None:
             f" {idx:^{w_no}} |"
             f" {_ellipsize(ts, w_ts):^{w_ts}} |"
             f" {session_color}{_ellipsize(session, w_session):^{w_session}}{Colors.RESET} |"
+            f" {session_color}{_ellipsize(pid_text, w_pid):^{w_pid}}{Colors.RESET} |"
             f" {_ellipsize(project, w_project):^{w_project}} |"
             f" {_ellipsize(pwd, w_pwd):^{w_pwd}} "
         )
