@@ -174,7 +174,7 @@ def discover_log_files(task_dir: str) -> List[dict]:
             "ctime": stat_info.st_ctime,
         })
 
-    log_files.sort(key=lambda x: x["mtime"], reverse=True)
+    log_files.sort(key=lambda x: x["ctime"])
     return log_files
 
 
