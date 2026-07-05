@@ -324,3 +324,7 @@ Display the most recent project/workspace entries recorded in `.project_history.
 **Running-session detection:**
 
 A session is considered running when a `*.session.stdout` file exists under `{TOPSAILAI_HOME}/workspace/task/` for that session ID and the embedded PID is still alive. If multiple stdout files exist for the same session, the most recently modified file is used.
+
+## Modification Rule
+
+When a user asks to modify a script but does not explicitly specify which script to change, do not guess. You must ask the user to clarify the exact script before making any edits.
