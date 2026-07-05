@@ -9,11 +9,14 @@ workspace: "."
 context:
   _default:
     - "README.md"
+    - "LEARN.md"
   default: []
+  topsailai: []
 
 # Environment variable configuration: each item can define its own environment variables
 # _default is the base environment variables shared by all items
 environment:
   _default:
     TOPSAILAI_INTERACTIVE_MODE: "1"
-
+  topsailai:
+    TOPSAILAI_AGENT_DRIVER: "ai-team-flow-dev"
