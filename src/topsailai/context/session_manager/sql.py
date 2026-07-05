@@ -254,3 +254,34 @@ class SessionSQLAlchemy(SessionStorageBase):
             raise e
         finally:
             db_session.close()
+
+    def update_session_name(self, session_id: str, session_name: str) -> bool:
+        """
+        Update the name of an existing session.
+
+        Args:
+            session_id (str): The session id to update.
+            session_name (str): The new session name.
+
+        Returns:
+            bool: True if the session name was updated successfully,
+                  False if the session does not exist or the update failed.
+        """
+        db_session = self.SessionLocal()
+        try:
+            session = db_session.query(Session).filter(Session.session_id == session_id).first()
+            if not session:
+                logger.warning(f"update_session_name: session not found: session_id={session_id}")
+                return False
+
+            session.session_name = session_name
+            db_session.commit()
+            logger.info(f"update_session_name: session_id={session_id}, session_name={session_name}")
+            return True
+        except Exception as e:
+            db_session.rollback()
+            logger.error(f"update_session_name failed: session_id={session_id}, {e}")
+            return False
+        finally:
+            db_session.close()
+

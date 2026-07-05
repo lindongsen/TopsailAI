@@ -185,6 +185,30 @@ def get_messages_by_session(
 
     return []
 
+def update_session_name(session_id:str, session_name:str, session_mgr:SessionStorageBase=None) -> bool:
+    """
+    Update the name of an existing session.
+
+    Args:
+        session_id (str): The session identifier to update.
+        session_name (str): The new session name.
+        session_mgr (SessionStorageBase, optional): Session manager instance.
+                                                   If None, a new one is created.
+
+    Returns:
+        bool: True if the session name was updated successfully, False otherwise.
+    """
+    if not session_id:
+        return False
+    if session_name is None:
+        return False
+
+    if session_mgr is None:
+        session_mgr = get_session_manager()
+
+    return session_mgr.update_session_name(session_id, session_name)
+
+
 def exists_session(session_id:str, session_mgr:SessionStorageBase=None) -> bool:
     """ check if exists session """
     if not session_id:

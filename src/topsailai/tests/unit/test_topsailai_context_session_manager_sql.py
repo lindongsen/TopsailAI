@@ -285,3 +285,60 @@ class TestSessionSQLAlchemy:
         # Test with before_seconds=0 (should delete nothing since create_time >= now)
         deleted_count = manager.clean_sessions(before_seconds=0)
         assert deleted_count == 0
+
+    def test_update_session_name_success(self, manager):
+        """Test update_session_name updates the session name."""
+        session_id = "test-update-session"
+        session_name = "Original Name"
+        new_name = "Updated Name"
+
+        # Create session
+        session_data = SessionData(session_id, "Test task")
+        session_data.session_name = session_name
+        manager.create_session(session_data)
+        assert manager.exists_session(session_id)
+
+        # Update session name
+        result = manager.update_session_name(session_id, new_name)
+        assert result is True
+
+        # Verify update via list_sessions
+        sessions = manager.list_sessions()
+        session = next((s for s in sessions if s.session_id == session_id), None)
+        assert session is not None
+        assert session.session_name == new_name
+
+    def test_update_session_name_not_exists(self, manager):
+        """Test update_session_name returns False for non-existent session."""
+        result = manager.update_session_name("non-existent-session", "New Name")
+        assert result is False
+
+    def test_update_session_name_empty_name(self, manager):
+        """Test update_session_name allows empty session name."""
+        session_id = "test-empty-name-session"
+        session_data = SessionData(session_id, "Test task")
+        session_data.session_name = "Original"
+        manager.create_session(session_data)
+
+        result = manager.update_session_name(session_id, "")
+        assert result is True
+
+        sessions = manager.list_sessions()
+        session = next((s for s in sessions if s.session_id == session_id), None)
+        assert session is not None
+        assert session.session_name == ""
+
+    def test_update_session_name_none_name(self, manager):
+        """Test update_session_name allows setting session name to None."""
+        session_id = "test-none-name-session"
+        session_data = SessionData(session_id, "Test task")
+        session_data.session_name = "Original"
+        manager.create_session(session_data)
+
+        result = manager.update_session_name(session_id, None)
+        assert result is True
+
+        sessions = manager.list_sessions()
+        session = next((s for s in sessions if s.session_id == session_id), None)
+        assert session is not None
+        assert session.session_name is None

@@ -95,6 +95,13 @@ class TestSessionStorageBase(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             storage.list_sessions()
 
+    def test_update_session_name_raises_not_implemented(self):
+        """Test that update_session_name raises NotImplementedError."""
+        storage = SessionStorageBase()
+        
+        with self.assertRaises(NotImplementedError):
+            storage.update_session_name("test_session_id", "New Name")
+
     def test_delete_session_raises_not_implemented(self):
         """Test that delete_session raises NotImplementedError."""
         storage = SessionStorageBase()

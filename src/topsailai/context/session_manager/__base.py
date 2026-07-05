@@ -113,6 +113,24 @@ class SessionStorageBase(object):
         """
         raise NotImplementedError
 
+    def update_session_name(self, session_id: str, session_name: str) -> bool:
+        """
+        Update the name of an existing session.
+
+        Args:
+            session_id (str): The session id to update.
+            session_name (str): The new session name.
+
+        Returns:
+            bool: True if the session name was updated successfully,
+                  False if the session does not exist or the update failed.
+
+        Raises:
+            NotImplementedError: This is an abstract method that must be
+                implemented by concrete storage classes.
+        """
+        raise NotImplementedError
+
     def retrieve_messages(self, session_id:str) -> list[dict]:
         """ retrieve messages by chat_history_manager """
         raise NotImplementedError

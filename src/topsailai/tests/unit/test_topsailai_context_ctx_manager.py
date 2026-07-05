@@ -375,6 +375,54 @@ class TestCreateSession(unittest.TestCase):
         mock_get_session_mgr.assert_not_called()
 
 
+class TestUpdateSessionName(unittest.TestCase):
+    """Test cases for update_session_name() function."""
+
+    @patch('topsailai.context.ctx_manager.get_session_manager')
+    def test_update_session_name_success(self, mock_get_session_mgr):
+        """Test update_session_name successfully updates session name."""
+        from topsailai.context.ctx_manager import update_session_name
+
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.update_session_name.return_value = True
+        mock_get_session_mgr.return_value = mock_session_mgr
+
+        # Execute
+        result = update_session_name(session_id='session-123', session_name='New Name')
+
+        # Verify
+        self.assertTrue(result)
+        mock_session_mgr.update_session_name.assert_called_once_with('session-123', 'New Name')
+
+    @patch('topsailai.context.ctx_manager.get_session_manager')
+    def test_update_session_name_with_empty_id(self, mock_get_session_mgr):
+        """Test update_session_name returns False for empty session ID."""
+        from topsailai.context.ctx_manager import update_session_name
+
+        # Execute with empty session_id
+        result = update_session_name(session_id='', session_name='New Name')
+
+        # Verify
+        self.assertFalse(result)
+        mock_get_session_mgr.assert_not_called()
+
+    @patch('topsailai.context.ctx_manager.get_session_manager')
+    def test_update_session_name_with_provided_mgr(self, mock_get_session_mgr):
+        """Test update_session_name uses provided session manager."""
+        from topsailai.context.ctx_manager import update_session_name
+
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.update_session_name.return_value = True
+
+        # Execute with provided manager
+        result = update_session_name(session_id='session-123', session_name='New Name', session_mgr=mock_session_mgr)
+
+        # Verify
+        self.assertTrue(result)
+        mock_get_session_mgr.assert_not_called()
+        mock_session_mgr.update_session_name.assert_called_once_with('session-123', 'New Name')
+
+
 class TestAddSessionMessage(unittest.TestCase):
     """Test cases for add_session_message() function."""
 
