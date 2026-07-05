@@ -1520,13 +1520,22 @@ class TestMainEntryPoint(unittest.TestCase):
         """if __name__ == '__main__' block calls main()."""
         import runpy
 
+        project_root = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        )
+        topsailai_path = os.path.join(project_root, "topsailai.py")
+
         home = mock_home.return_value
         try:
             os.makedirs(os.path.join(home, "workspace", "task"), exist_ok=True)
             cli_state.running = True
             cli_state.yaml_commands = []
             cli_state.history_manager = None
-            runpy.run_module("topsailai", run_name="__main__")
+            # Clear any cached topsailai module so the script is loaded from the
+            # project root rather than a similarly-named package elsewhere on
+            # sys.path (e.g. src/topsailai from the agent codebase).
+            sys.modules.pop("topsailai", None)
+            runpy.run_path(topsailai_path, run_name="__main__")
             mock_signal.assert_called()
         finally:
             shutil.rmtree(home, ignore_errors=True)

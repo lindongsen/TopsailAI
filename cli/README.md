@@ -190,6 +190,54 @@ When watching a session in `topsailai.py`, you can inject messages through three
 
 Use `/send` for urgent process-level messages, `/ctx.btw` for extra instructions you want the current agent to pick up on the fly, and `/ctx.add_msg` for context that should persist until the next agent run.
 
+### Runtime scope (dual-pane UI)
+
+When you choose to watch a session in `topsailai.py`, the CLI enters **runtime scope** and streams the selected log file. If the terminal supports it, a two-pane curses UI is used:
+
+```
+┌─────────────────────────────────────────────┐
+│  Log pane                                   │
+│  - streams the session/task stdout          │
+│  - scrolls automatically to the latest line │
+├─────────────────────────────────────────────┤
+│  [runtime:<session_id>]> /send hello        │
+│  Input pane (fixed at the bottom)           │
+└─────────────────────────────────────────────┘
+```
+
+The top pane shows the streaming log. The bottom pane is a fixed input bar where you can type commands without the log output pushing your input off-screen.
+
+#### Available runtime commands
+
+| Command | Description |
+|---|---|
+| `/send [message]` | Send a message to the running session through its named pipe. If no message is given, the input pane expands for multi-line input. |
+| `/ctx.btw [message]` | Inject a by-the-way message into the `agent2llm` context of the watched session. If no message is given, the input pane expands for multi-line input. |
+| `/help` | Show the list of available streaming commands. |
+| `q` or `quit` | Leave runtime scope and return to the file list. |
+
+#### Multi-line input
+
+When `/send` or `/ctx.btw` is used without a message argument, the input pane temporarily expands to about one third of the terminal height so you can type or paste multiple lines. Finish with `Ctrl+D` (EOF). Cancel with `Esc`.
+
+#### Resizing the terminal
+
+The UI handles terminal resizes automatically. If the terminal becomes too small to render both panes, drawing is skipped until the window is large enough again.
+
+#### Fallback mode
+
+If `curses` is unavailable or stdout is not a TTY (for example in a pipe or CI environment), the CLI automatically falls back to the legacy single-pane mode. In that mode the log and input share the same screen area and you press `q` then `Enter` to quit.
+
+#### Windows support
+
+The dual-pane UI relies on the Python `curses` module. On Windows install the `windows-curses` package to enable it:
+
+```bash
+pip install windows-curses
+```
+
+Without `windows-curses` the CLI still works, but it uses the legacy single-pane fallback.
+
 ### `topsailai_project_history.py`
 
 Display the most recent project/workspace entries recorded in `.project_history.jsonl`.

@@ -7,7 +7,7 @@ import stat
 import subprocess
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from cli_topsailai.colors import (
     Colors,
@@ -129,6 +129,13 @@ def tail_session_log(
         return 0
 
 
+def _can_use_curses() -> bool:
+    """Return True if the two-pane curses UI can be used."""
+    from cli_topsailai.tui import is_curses_available
+
+    return is_curses_available()
+
+
 def stream_file(
     filepath: str,
     task_dir: str = "",
@@ -144,6 +151,11 @@ def stream_file(
     ``/ctx.btw [message]`` to inject an agent2llm message, or Ctrl+C for
     graceful exit.
 
+    When the terminal supports it, a two-pane curses UI is used so that the
+    log scrolls in the top pane while a fixed input bar stays at the bottom.
+    In non-TTY environments or when curses is unavailable, the legacy
+    single-pane mode is used instead.
+
     While streaming, the interactive scope is temporarily set to
     ``"runtime"`` so that scope-aware YAML commands target the watched
     session automatically.
@@ -155,8 +167,6 @@ def stream_file(
         default_session_id: Session ID associated with the watched file.
         default_stdout_path: Exact stdout path for the watched session.
     """
-    from cli_topsailai.state import running
-
     previous_scope = state.current_scope
     previous_session_id = state.current_session_id
     if default_session_id is not None:
@@ -164,75 +174,211 @@ def stream_file(
         state.current_session_id = default_session_id
 
     try:
-        filename = os.path.basename(filepath)
-        print_header(f"Streaming: {filename}")
-        print(
-            f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
-            f"type '/send [message]' to send a message, "
-            f"'/ctx.btw [message]' to inject an agent2llm message, or Ctrl+C to exit.{Colors.RESET}\n"
-        )
-
-        try:
-            subprocess.run(["tail", "-n", "100", filepath], check=False)
-        except Exception:
-            pass
-
-        try:
-            with open(filepath, "rb") as f:
-                f.seek(0, 2)
-                while running:
-                    chunk = f.read(4096)
-                    if chunk:
-                        if hasattr(sys.stdout, "buffer"):
-                            sys.stdout.buffer.write(chunk)
-                            sys.stdout.buffer.flush()
-                        else:
-                            print(chunk.decode("utf-8", errors="replace"), end="")
-                            sys.stdout.flush()
-                    else:
-                        if sys.stdin.isatty():
-                            readable, _, _ = select.select([sys.stdin], [], [], 0.05)
-                            if readable:
-                                try:
-                                    cmd_line = input().strip()
-                                except (EOFError, KeyboardInterrupt):
-                                    break
-                                if not cmd_line:
-                                    continue
-                                lower = cmd_line.lower()
-                                if lower in ("q", "quit"):
-                                    print(
-                                        f"\n{Colors.YELLOW}[INFO] Quit requested.{Colors.RESET}"
-                                    )
-                                    break
-                                if lower.startswith("/"):
-                                    _handle_stream_command(
-                                        cmd_line,
-                                        task_dir,
-                                        log_files or [],
-                                        default_session_id,
-                                        default_stdout_path,
-                                    )
-                                    continue
-                                print(
-                                    f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
-                                    f"Use '/send [message]', '/ctx.btw [message]', '/help', or 'q'.{Colors.RESET}"
-                                )
-                        else:
-                            time.sleep(0.05)
-        except FileNotFoundError:
-            print(f"{Colors.RED}[ERROR] File not found: {filepath}{Colors.RESET}")
-        except PermissionError:
-            print(f"{Colors.RED}[ERROR] Permission denied: {filepath}{Colors.RESET}")
-        except KeyboardInterrupt:
-            print(f"\n{Colors.YELLOW}[INFO] Interrupted by user.{Colors.RESET}")
-        except Exception as e:
-            print(f"{Colors.RED}[ERROR] Failed to stream file: {e}{Colors.RESET}")
-
-        print(f"\n{Colors.CYAN}[INFO] Streaming stopped.{Colors.RESET}")
+        if _can_use_curses():
+            _run_curses_ui(
+                filepath,
+                task_dir,
+                log_files or [],
+                default_session_id,
+                default_stdout_path,
+            )
+        else:
+            _stream_file_legacy(
+                filepath,
+                task_dir,
+                log_files or [],
+                default_session_id,
+                default_stdout_path,
+            )
     finally:
         state.current_scope = previous_scope
         state.current_session_id = previous_session_id
+
+
+def _run_curses_ui(
+    filepath: str,
+    task_dir: str,
+    log_files: List[dict],
+    default_session_id: Optional[str],
+    default_stdout_path: Optional[str],
+) -> None:
+    """Run the two-pane curses UI for streaming."""
+    from cli_topsailai.tui import CursesStreamUI
+
+    ui: Any = None  # type: ignore[assignment]
+    real_handler: Callable[[str], bool] = lambda _: True
+
+    def command_handler(cmd_line: str) -> bool:
+        return real_handler(cmd_line)
+
+    ui = CursesStreamUI(
+        filepath=filepath,
+        task_dir=task_dir,
+        log_files=log_files,
+        default_session_id=default_session_id,
+        default_stdout_path=default_stdout_path,
+        command_handler=command_handler,
+    )
+    real_handler = _build_stream_command_handler(
+        ui,
+        task_dir,
+        log_files,
+        default_session_id,
+        default_stdout_path,
+    )
+    ui.run()
+
+
+class _CursesOutputCapture:
+    """Capture stdout/stderr writes and forward them to a curses UI."""
+
+    def __init__(self, ui: Any) -> None:
+        self.ui = ui
+        self._buffer: List[str] = []
+        self._original_stdout = sys.stdout
+        self._original_stderr = sys.stderr
+
+    def write(self, text: str) -> None:
+        self._buffer.append(text)
+        if "\n" in text:
+            self._flush()
+
+    def flush(self) -> None:
+        self._flush()
+        if hasattr(self._original_stdout, "flush"):
+            self._original_stdout.flush()
+
+    def _flush(self) -> None:
+        if not self._buffer:
+            return
+        data = "".join(self._buffer)
+        self._buffer = []
+        for line in data.splitlines():
+            if line:
+                self.ui.append_status(line)
+
+    def __enter__(self) -> "_CursesOutputCapture":
+        sys.stdout = self  # type: ignore[assignment]
+        sys.stderr = self  # type: ignore[assignment]
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self._flush()
+        sys.stdout = self._original_stdout
+        sys.stderr = self._original_stderr
+
+
+def _build_stream_command_handler(
+    ui: Any,
+    task_dir: str,
+    log_files: List[dict],
+    default_session_id: Optional[str],
+    default_stdout_path: Optional[str],
+) -> Any:
+    """Build the command callback used by the curses UI."""
+
+    def _multi_line_input_provider(prompt: str) -> Optional[str]:
+        return ui.read_multi_line_blocking(prompt)
+
+    def handler(cmd_line: str) -> bool:
+        lower = cmd_line.lower()
+        if lower in ("q", "quit"):
+            return False
+        with _CursesOutputCapture(ui):
+            if lower.startswith("/"):
+                _handle_stream_command(
+                    cmd_line,
+                    task_dir,
+                    log_files,
+                    default_session_id,
+                    default_stdout_path,
+                    input_provider=_multi_line_input_provider,
+                )
+            else:
+                ui.append_status(
+                    f"[ERROR] Unknown streaming command: {cmd_line}. "
+                    f"Use '/send [message]', '/ctx.btw [message]', '/help', or 'q'."
+                )
+        return True
+
+    return handler
+
+def _stream_file_legacy(
+    filepath: str,
+    task_dir: str,
+    log_files: List[dict],
+    default_session_id: Optional[str],
+    default_stdout_path: Optional[str],
+) -> None:
+    """Legacy single-pane stream implementation for non-TTY environments."""
+    from cli_topsailai.state import running
+
+    filename = os.path.basename(filepath)
+    print_header(f"Streaming: {filename}")
+    print(
+        f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
+        f"type '/send [message]' to send a message, "
+        f"'/ctx.btw [message]' to inject an agent2llm message, or Ctrl+C to exit.{Colors.RESET}\n"
+    )
+
+    try:
+        subprocess.run(["tail", "-n", "100", filepath], check=False)
+    except Exception:
+        pass
+
+    try:
+        with open(filepath, "rb") as f:
+            f.seek(0, 2)
+            while running:
+                chunk = f.read(4096)
+                if chunk:
+                    if hasattr(sys.stdout, "buffer"):
+                        sys.stdout.buffer.write(chunk)
+                        sys.stdout.buffer.flush()
+                    else:
+                        print(chunk.decode("utf-8", errors="replace"), end="")
+                        sys.stdout.flush()
+                else:
+                    if sys.stdin.isatty():
+                        readable, _, _ = select.select([sys.stdin], [], [], 0.05)
+                        if readable:
+                            try:
+                                cmd_line = input().strip()
+                            except (EOFError, KeyboardInterrupt):
+                                break
+                            if not cmd_line:
+                                continue
+                            lower = cmd_line.lower()
+                            if lower in ("q", "quit"):
+                                print(
+                                    f"\n{Colors.YELLOW}[INFO] Quit requested.{Colors.RESET}"
+                                )
+                                break
+                            if lower.startswith("/"):
+                                _handle_stream_command(
+                                    cmd_line,
+                                    task_dir,
+                                    log_files,
+                                    default_session_id,
+                                    default_stdout_path,
+                                )
+                                continue
+                            print(
+                                f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
+                                f"Use '/send [message]', '/ctx.btw [message]', '/help', or 'q'.{Colors.RESET}"
+                            )
+                    else:
+                        time.sleep(0.05)
+    except FileNotFoundError:
+        print(f"{Colors.RED}[ERROR] File not found: {filepath}{Colors.RESET}")
+    except PermissionError:
+        print(f"{Colors.RED}[ERROR] Permission denied: {filepath}{Colors.RESET}")
+    except KeyboardInterrupt:
+        print(f"\n{Colors.YELLOW}[INFO] Interrupted by user.{Colors.RESET}")
+    except Exception as e:
+        print(f"{Colors.RED}[ERROR] Failed to stream file: {e}{Colors.RESET}")
+
+    print(f"\n{Colors.CYAN}[INFO] Streaming stopped.{Colors.RESET}")
 
 
 def _handle_stream_command(
@@ -241,12 +387,19 @@ def _handle_stream_command(
     log_files: List[dict],
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
+    input_provider: Optional[Callable[[str], Optional[str]]] = None,
 ) -> None:
     """
     Execute a command entered while streaming a log file.
 
     Supports ``/send`` (defaulting to the watched session), ``/ctx.btw``
     (inject an agent2llm message), and ``/help``.
+
+    Args:
+        input_provider: Optional callable used to collect multi-line input
+            in environments where ``input()`` is not available (e.g. the
+            curses UI).  Receives a prompt string and returns the collected
+            text, or ``None`` if the user cancelled.
     """
     if not cmd_line:
         return
@@ -260,11 +413,12 @@ def _handle_stream_command(
             log_files,
             default_session_id,
             default_stdout_path,
+            input_provider=input_provider,
         )
         return
 
     if cmd == "/ctx.btw":
-        _handle_stream_ctx_btw(cmd_line, task_dir)
+        _handle_stream_ctx_btw(cmd_line, task_dir, input_provider=input_provider)
         return
 
     if cmd == "/help":
@@ -282,7 +436,11 @@ def _handle_stream_command(
     )
 
 
-def _handle_stream_ctx_btw(cmd_line: str, task_dir: str) -> None:
+def _handle_stream_ctx_btw(
+    cmd_line: str,
+    task_dir: str,
+    input_provider: Optional[Callable[[str], Optional[str]]] = None,
+) -> None:
     """
     Handle ``/ctx.btw`` while streaming by delegating to the YAML command.
 
@@ -299,6 +457,27 @@ def _handle_stream_ctx_btw(cmd_line: str, task_dir: str) -> None:
         )
         return
     instruction, variables = matched
+
+    # When no inline message is provided and an external input provider is
+    # available, use it to collect multi-line input without blocking the UI.
+    if (
+        input_provider is not None
+        and not variables.get("message", "").strip()
+        and instruction.get("shell", "")
+    ):
+        message = input_provider(
+            f"{Colors.CYAN}[INFO] Enter /ctx.btw message (Ctrl+D to finish):{Colors.RESET}"
+        )
+        if message is None:
+            print(f"\n{Colors.YELLOW}[INFO] Cancelled.{Colors.RESET}")
+            return
+        message = message.strip()
+        if not message:
+            print(f"{Colors.RED}[ERROR] Message cannot be empty.{Colors.RESET}")
+            return
+        variables = dict(variables)
+        variables["message"] = message
+
     yaml_commands.handle_yaml_command(instruction, variables)
 
 
@@ -308,9 +487,14 @@ def _handle_stream_send(
     log_files: List[dict],
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
+    input_provider: Optional[Callable[[str], Optional[str]]] = None,
 ) -> None:
     """
     Handle ``/send`` while streaming, defaulting to the watched session.
+
+    In runtime scope the watched session is already known, so any text after
+    ``/send`` is treated as the message body.  When no message is provided,
+    multi-line input is collected through the available input provider.
     """
     if default_session_id is None:
         print(
@@ -318,31 +502,20 @@ def _handle_stream_send(
         )
         return
 
-    rest = cmd_line[len("/send"):].strip()
-
-    message: Optional[str] = None
-    stdout_path = default_stdout_path
-    session_id = default_session_id
-    pid: Optional[int] = None
-
-    if rest:
-        sub_parts = rest.split(None, 1)
-        first = sub_parts[0]
-        target = _resolve_send_target_from_arg(first, log_files)
-        if target is not None:
-            session_id, stdout_path, pid = target
-            if len(sub_parts) > 1:
-                message = sub_parts[1]
-        else:
-            message = rest
+    message: Optional[str] = cmd_line[len("/send"):].strip() or None
 
     if message is None:
-        message = _read_multiline_input_for_send()
+        if input_provider is not None:
+            message = input_provider(
+                f"{Colors.CYAN}[INFO] Enter /send message (Ctrl+D to finish):{Colors.RESET}"
+            )
+        else:
+            message = _read_multiline_input_for_send()
         if message is None:
             return
 
     send_message_to_session(
-        session_id, message, task_dir, stdout_path=stdout_path, pid=pid
+        default_session_id, message, task_dir, stdout_path=default_stdout_path
     )
 
 
