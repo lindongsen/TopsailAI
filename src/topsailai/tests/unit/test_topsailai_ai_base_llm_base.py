@@ -604,7 +604,37 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         mock_print_warning.assert_called_once()
         warning_msg = mock_print_warning.call_args[0][0]
         self.assertIn("0.05s", warning_msg)
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.print_warning")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_first_byte_timeout_log_wording_at_threshold(
+        self, mock_base_init, mock_print_warning, mock_env_tool
+    ):
+        """Test warning wording when first byte reaches/exceeds the threshold."""
+        import time
 
+        mock_env_tool.EnvReaderInstance.get.return_value = 0.1
+        mock_env_tool.EnvReaderInstance.check_bool.return_value = False
+
+        def slow_create(*args, **kwargs):
+            time.sleep(0.15)
+            mock_response = MagicMock()
+            mock_response.choices = [MagicMock()]
+            mock_response.choices[0].message.content = "Hello"
+            mock_response.choices[0].message.tool_calls = None
+            return mock_response
+
+        model = self._create_mock_model()
+        model.model.create.side_effect = slow_create
+
+        model.call_llm_model(self.messages)
+
+        mock_print_warning.assert_called_once()
+        warning_msg = mock_print_warning.call_args[0][0]
+        self.assertIn("LLM Service", warning_msg)
+        self.assertIn("first byte took", warning_msg)
+        self.assertIn("reached/exceeded threshold", warning_msg)
+        self.assertIn("0.1s", warning_msg)
     @patch("topsailai.ai_base.llm_base.os.getenv")
     @patch("topsailai.ai_base.llm_base.env_tool")
     @patch("topsailai.ai_base.llm_base.print_warning")
