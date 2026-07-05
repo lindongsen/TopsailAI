@@ -19,10 +19,12 @@ running = True
 _child_processes: Set["subprocess.Popen"] = set()
 
 # YAML command support
-# Current interactive scope: "workspace" or "session".
+# Current interactive scope: "workspace", "session", or "runtime".
+# "runtime" is used while streaming a session log so that scope-aware
+# commands such as /ctx.btw can target the watched session.
 current_scope = "workspace"
 
-# Active session identifier when current_scope == "session".
+# Active session identifier when current_scope is "session" or "runtime".
 current_session_id: Optional[str] = None
 
 # YAML-loaded command instructions from topsailai.yaml.

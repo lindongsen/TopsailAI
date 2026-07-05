@@ -126,6 +126,11 @@ def print_help(
             "example": "Example: /send 1 hello  or  /send my-session hello  or  while streaming: /send hello",
         },
         {
+            "cmd": "/ctx.btw [message...]",
+            "desc": "Inject a by-the-way message into the agent2llm runtime context of the watched session. In session scope, omit the session id. If no message is provided, enter multi-line input mode (finish with EOF). While streaming a log, /ctx.btw defaults to the watched session.",
+            "example": "Example: /ctx.btw remember to check the logs  or  while streaming: /ctx.btw hello",
+        },
+        {
             "cmd": "/help [<keyword>]",
             "desc": "Display this help message with all available commands. Use /help <keyword> to search commands by name, alias, or description.",
             "example": "Example: /help ctx",

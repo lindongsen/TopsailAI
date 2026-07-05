@@ -28,6 +28,7 @@ from cli_topsailai.log_files import (
 )
 from cli_topsailai.paths import get_topsailai_home
 from cli_topsailai.process import register_process, unregister_process
+from cli_topsailai import yaml_commands
 import cli_topsailai.state as state
 
 
@@ -139,8 +140,13 @@ def stream_file(
     Stream a log file in real-time, similar to ``tail -f``.
 
     Shows the last 100 lines, then follows new writes.  Supports ``q`` to
-    quit, ``/send [message]`` to send a message to the watched session, or
-    Ctrl+C for graceful exit.
+    quit, ``/send [message]`` to send a message to the watched session,
+    ``/ctx.btw [message]`` to inject an agent2llm message, or Ctrl+C for
+    graceful exit.
+
+    While streaming, the interactive scope is temporarily set to
+    ``"runtime"`` so that scope-aware YAML commands target the watched
+    session automatically.
 
     Args:
         filepath: Path to the log file to stream.
@@ -151,71 +157,82 @@ def stream_file(
     """
     from cli_topsailai.state import running
 
-    filename = os.path.basename(filepath)
-    print_header(f"Streaming: {filename}")
-    print(
-        f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
-        f"type '/send [message]' then Enter to send a message, or Ctrl+C to exit.{Colors.RESET}\n"
-    )
+    previous_scope = state.current_scope
+    previous_session_id = state.current_session_id
+    if default_session_id is not None:
+        state.current_scope = "runtime"
+        state.current_session_id = default_session_id
 
     try:
-        subprocess.run(["tail", "-n", "100", filepath], check=False)
-    except Exception:
-        pass
+        filename = os.path.basename(filepath)
+        print_header(f"Streaming: {filename}")
+        print(
+            f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
+            f"type '/send [message]' to send a message, "
+            f"'/ctx.btw [message]' to inject an agent2llm message, or Ctrl+C to exit.{Colors.RESET}\n"
+        )
 
-    try:
-        with open(filepath, "rb") as f:
-            f.seek(0, 2)
-            while running:
-                chunk = f.read(4096)
-                if chunk:
-                    if hasattr(sys.stdout, "buffer"):
-                        sys.stdout.buffer.write(chunk)
-                        sys.stdout.buffer.flush()
+        try:
+            subprocess.run(["tail", "-n", "100", filepath], check=False)
+        except Exception:
+            pass
+
+        try:
+            with open(filepath, "rb") as f:
+                f.seek(0, 2)
+                while running:
+                    chunk = f.read(4096)
+                    if chunk:
+                        if hasattr(sys.stdout, "buffer"):
+                            sys.stdout.buffer.write(chunk)
+                            sys.stdout.buffer.flush()
+                        else:
+                            print(chunk.decode("utf-8", errors="replace"), end="")
+                            sys.stdout.flush()
                     else:
-                        print(chunk.decode("utf-8", errors="replace"), end="")
-                        sys.stdout.flush()
-                else:
-                    if sys.stdin.isatty():
-                        readable, _, _ = select.select([sys.stdin], [], [], 0.05)
-                        if readable:
-                            try:
-                                cmd_line = input().strip()
-                            except (EOFError, KeyboardInterrupt):
-                                break
-                            if not cmd_line:
-                                continue
-                            lower = cmd_line.lower()
-                            if lower in ("q", "quit"):
+                        if sys.stdin.isatty():
+                            readable, _, _ = select.select([sys.stdin], [], [], 0.05)
+                            if readable:
+                                try:
+                                    cmd_line = input().strip()
+                                except (EOFError, KeyboardInterrupt):
+                                    break
+                                if not cmd_line:
+                                    continue
+                                lower = cmd_line.lower()
+                                if lower in ("q", "quit"):
+                                    print(
+                                        f"\n{Colors.YELLOW}[INFO] Quit requested.{Colors.RESET}"
+                                    )
+                                    break
+                                if lower.startswith("/"):
+                                    _handle_stream_command(
+                                        cmd_line,
+                                        task_dir,
+                                        log_files or [],
+                                        default_session_id,
+                                        default_stdout_path,
+                                    )
+                                    continue
                                 print(
-                                    f"\n{Colors.YELLOW}[INFO] Quit requested.{Colors.RESET}"
+                                    f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
+                                    f"Use '/send [message]', '/ctx.btw [message]', '/help', or 'q'.{Colors.RESET}"
                                 )
-                                break
-                            if lower.startswith("/"):
-                                _handle_stream_command(
-                                    cmd_line,
-                                    task_dir,
-                                    log_files or [],
-                                    default_session_id,
-                                    default_stdout_path,
-                                )
-                                continue
-                            print(
-                                f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
-                                f"Use '/send [message]', '/help', or 'q'.{Colors.RESET}"
-                            )
-                    else:
-                        time.sleep(0.05)
-    except FileNotFoundError:
-        print(f"{Colors.RED}[ERROR] File not found: {filepath}{Colors.RESET}")
-    except PermissionError:
-        print(f"{Colors.RED}[ERROR] Permission denied: {filepath}{Colors.RESET}")
-    except KeyboardInterrupt:
-        print(f"\n{Colors.YELLOW}[INFO] Interrupted by user.{Colors.RESET}")
-    except Exception as e:
-        print(f"{Colors.RED}[ERROR] Failed to stream file: {e}{Colors.RESET}")
+                        else:
+                            time.sleep(0.05)
+        except FileNotFoundError:
+            print(f"{Colors.RED}[ERROR] File not found: {filepath}{Colors.RESET}")
+        except PermissionError:
+            print(f"{Colors.RED}[ERROR] Permission denied: {filepath}{Colors.RESET}")
+        except KeyboardInterrupt:
+            print(f"\n{Colors.YELLOW}[INFO] Interrupted by user.{Colors.RESET}")
+        except Exception as e:
+            print(f"{Colors.RED}[ERROR] Failed to stream file: {e}{Colors.RESET}")
 
-    print(f"\n{Colors.CYAN}[INFO] Streaming stopped.{Colors.RESET}")
+        print(f"\n{Colors.CYAN}[INFO] Streaming stopped.{Colors.RESET}")
+    finally:
+        state.current_scope = previous_scope
+        state.current_session_id = previous_session_id
 
 
 def _handle_stream_command(
@@ -228,7 +245,8 @@ def _handle_stream_command(
     """
     Execute a command entered while streaming a log file.
 
-    Supports ``/send`` (defaulting to the watched session) and ``/help``.
+    Supports ``/send`` (defaulting to the watched session), ``/ctx.btw``
+    (inject an agent2llm message), and ``/help``.
     """
     if not cmd_line:
         return
@@ -245,18 +263,43 @@ def _handle_stream_command(
         )
         return
 
+    if cmd == "/ctx.btw":
+        _handle_stream_ctx_btw(cmd_line, task_dir)
+        return
+
     if cmd == "/help":
         print(
             f"\n{Colors.CYAN}[INFO] Streaming commands: "
             f"'q' then Enter to quit, '/send [message]' send to watched session, "
+            f"'/ctx.btw [message]' inject agent2llm message, "
             f"'/help' show this help.{Colors.RESET}"
         )
         return
 
     print(
         f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
-        f"Use '/send [message]', '/help', or 'q'.{Colors.RESET}"
+        f"Use '/send [message]', '/ctx.btw [message]', '/help', or 'q'.{Colors.RESET}"
     )
+
+
+def _handle_stream_ctx_btw(cmd_line: str, task_dir: str) -> None:
+    """
+    Handle ``/ctx.btw`` while streaming by delegating to the YAML command.
+
+    The ``runtime`` scope and watched session ID are already set by
+    ``stream_file``, so ``match_yaml_command`` can resolve the target
+    session automatically.  Supports inline arguments as well as
+    interactive multi-line input when no argument is provided.
+    """
+    matched = yaml_commands.match_yaml_command(cmd_line, task_dir)
+    if matched is None:
+        print(
+            f"{Colors.RED}[ERROR] Could not match /ctx.btw command. "
+            f"Is there a session associated with this log file?{Colors.RESET}"
+        )
+        return
+    instruction, variables = matched
+    yaml_commands.handle_yaml_command(instruction, variables)
 
 
 def _handle_stream_send(

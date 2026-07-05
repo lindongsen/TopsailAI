@@ -226,7 +226,7 @@ def match_yaml_command(
             variables["task_dir"] = task_dir
             if cmd_template.startswith(("/ctx.add_msg", "/ctx.btw", "/agent2llm.add_msg")):
                 msg_match = re.match(
-                    rf"^/?{re.escape(cmd_template.lstrip('/'))}(?:\s+(.*))?$/",
+                    rf"^/?{re.escape(cmd_template.lstrip('/'))}(?:\s+(.*))?$",
                     user_input,
                     re.DOTALL,
                 )

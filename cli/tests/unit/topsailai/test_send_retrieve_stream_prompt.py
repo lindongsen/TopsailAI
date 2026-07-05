@@ -18,7 +18,12 @@ sys.path.insert(
 
 import cli_topsailai.state as cli_state
 from cli_topsailai.core import prompt_selection
-from cli_topsailai.streaming import send_message_to_session
+from cli_topsailai.streaming import (
+    _handle_stream_ctx_btw,
+    send_message_to_session,
+    stream_file,
+)
+from cli_topsailai.yaml_commands import handle_yaml_command, match_yaml_command
 
 
 class TestSendRetrieveStreamPrompt(unittest.TestCase):
@@ -254,6 +259,151 @@ class TestSendRetrieveStreamPrompt(unittest.TestCase):
             finally:
                 t.join(timeout=3)
         self.assertTrue(result)
+
+class TestStreamingCtxBtw(unittest.TestCase):
+    """Tests for /ctx.btw in streaming/runtime scope."""
+
+    def setUp(self):
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+
+    def tearDown(self):
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+
+    @patch("cli_topsailai.streaming.print_header")
+    @patch("cli_topsailai.streaming.subprocess.run")
+    @patch("cli_topsailai.state.running", False)
+    def test_stream_file_sets_runtime_scope_while_streaming(
+        self, mock_run, mock_header
+    ):
+        """stream_file should switch to runtime scope while streaming."""
+        captured = {}
+
+        def capture_header(title):
+            captured["scope"] = cli_state.current_scope
+            captured["session_id"] = cli_state.current_session_id
+
+        mock_header.side_effect = capture_header
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("log line\n")
+            path = f.name
+        try:
+            stream_file(path, default_session_id="s1")
+        finally:
+            os.unlink(path)
+
+        self.assertEqual(captured.get("scope"), "runtime")
+        self.assertEqual(captured.get("session_id"), "s1")
+        self.assertEqual(cli_state.current_scope, "workspace")
+        self.assertIsNone(cli_state.current_session_id)
+
+    def test_match_ctx_btw_in_runtime_scope(self):
+        """/ctx.btw should match in runtime scope and extract message."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [
+            {
+                "cmd": "/ctx.btw",
+                "scopes": ["session", "runtime"],
+                "shell": "topsailai_session_add_agent2llm_message -s '{session_id}' -m '{message}'",
+            }
+        ]
+        matched = match_yaml_command("/ctx.btw hello world!", "/tmp/task")
+        self.assertIsNotNone(matched)
+        instruction, variables = matched
+        self.assertEqual(variables.get("session_id"), "s1")
+        self.assertEqual(variables.get("message"), "hello world!")
+
+    def test_match_ctx_btw_without_args_in_runtime_scope(self):
+        """/ctx.btw without args should match with empty message."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [
+            {
+                "cmd": "/ctx.btw",
+                "scopes": ["session", "runtime"],
+                "shell": "topsailai_session_add_agent2llm_message -s '{session_id}' -m '{message}'",
+            }
+        ]
+        matched = match_yaml_command("/ctx.btw", "/tmp/task")
+        self.assertIsNotNone(matched)
+        instruction, variables = matched
+        self.assertEqual(variables.get("session_id"), "s1")
+        self.assertEqual(variables.get("message"), "")
+
+    @patch("cli_topsailai.process.run_external_command")
+    @patch("builtins.input", side_effect=["line one", "line two", "", EOFError])
+    def test_handle_ctx_btw_multiline_in_runtime_scope(
+        self, mock_input, mock_run
+    ):
+        """/ctx.btw without args should read multi-line input until EOF."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = []
+        instruction = {
+            "cmd": "/ctx.btw",
+            "scopes": ["session", "runtime"],
+            "shell": "topsailai_session_add_agent2llm_message -s '{session_id}' -m '{message}'",
+        }
+        variables = {"session_id": "s1", "message": "", "task_dir": "/tmp/task"}
+        handle_yaml_command(instruction, variables)
+
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args
+        cmd_list = call_args[0][0]
+        self.assertIn("topsailai_session_add_agent2llm_message", cmd_list)
+        # The message should be quoted and contain both lines.
+        joined = " ".join(cmd_list)
+        self.assertIn("line one", joined)
+        self.assertIn("line two", joined)
+
+    @patch("cli_topsailai.process.run_external_command")
+    def test_handle_ctx_btw_inline_args_in_runtime_scope(self, mock_run):
+        """/ctx.btw with inline args should pass them as the message."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = []
+        instruction = {
+            "cmd": "/ctx.btw",
+            "scopes": ["session", "runtime"],
+            "shell": "topsailai_session_add_agent2llm_message -s '{session_id}' -m '{message}'",
+        }
+        variables = {
+            "session_id": "s1",
+            "message": "hello world!",
+            "task_dir": "/tmp/task",
+        }
+        handle_yaml_command(instruction, variables)
+
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args
+        cmd_list = call_args[0][0]
+        joined = " ".join(cmd_list)
+        self.assertIn("hello world!", joined)
+
+    @patch("cli_topsailai.process.run_external_command")
+    def test_handle_stream_ctx_btw_delegates_to_yaml_command(self, mock_run):
+        """_handle_stream_ctx_btw should delegate to the YAML command handler."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [
+            {
+                "cmd": "/ctx.btw",
+                "scopes": ["session", "runtime"],
+                "shell": "topsailai_session_add_agent2llm_message -s '{session_id}' -m '{message}'",
+            }
+        ]
+        _handle_stream_ctx_btw("/ctx.btw remember to check logs", "/tmp/task")
+
+        mock_run.assert_called_once()
+        cmd_list = mock_run.call_args[0][0]
+        joined = " ".join(cmd_list)
+        self.assertIn("remember to check logs", joined)
+
 
 if __name__ == "__main__":
     unittest.main()

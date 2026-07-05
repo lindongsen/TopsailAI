@@ -17,6 +17,7 @@ drivers:
 scopes:
   - workspace
   - session
+  - runtime
 
 # Describe the meaning of instruction configuration
 instructions_helper:
@@ -90,6 +91,7 @@ instructions:
   - cmd: "/ctx.btw" # Note: Special handling, supports line breaks
     scopes:
       - session
+      - runtime
     desc: "Add a by-the-way message to Agent2LLM runtime inject source"
     example: ""
     shell: "topsailai_session_add_agent2llm_message -s '{session_id}' -m '{message}'"
