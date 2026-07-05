@@ -136,8 +136,8 @@ def print_help(
             "example": "Example: /help ctx",
         },
         {
-            "cmd": "q  or  quit",
-            "desc": "Exit the log watcher gracefully.",
+            "cmd": "q  or  quit  or  cd",
+            "desc": "Exit the log watcher gracefully and return to the workspace scope.",
             "example": "",
         },
         {

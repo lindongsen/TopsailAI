@@ -301,6 +301,34 @@ class TestStreamingCtxBtw(unittest.TestCase):
         self.assertEqual(cli_state.current_scope, "workspace")
         self.assertIsNone(cli_state.current_session_id)
 
+    @patch("cli_topsailai.streaming._can_use_curses", return_value=False)
+    @patch("cli_topsailai.streaming.subprocess.run")
+    def test_stream_file_cd_restores_workspace_scope(
+        self, mock_run, mock_can_use_curses
+    ):
+        """stream_file with cd input should restore workspace scope."""
+        cli_state.running = True
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("log line\n")
+            path = f.name
+        try:
+            with patch("sys.stdin.isatty", return_value=True):
+                with patch(
+                    "cli_topsailai.streaming.select.select",
+                    return_value=([sys.stdin], [], []),
+                ):
+                    with patch("builtins.input", return_value="cd"):
+                        stream_file(path, default_session_id="s1")
+        finally:
+            os.unlink(path)
+
+        self.assertEqual(cli_state.current_scope, "workspace")
+        self.assertIsNone(cli_state.current_session_id)
+        mock_can_use_curses.assert_called_once_with()
+
     def test_match_ctx_btw_in_runtime_scope(self):
         """/ctx.btw should match in runtime scope and extract message."""
         cli_state.current_scope = "runtime"

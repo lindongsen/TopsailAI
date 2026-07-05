@@ -282,7 +282,7 @@ def _build_stream_command_handler(
 
     def handler(cmd_line: str) -> bool:
         lower = cmd_line.lower()
-        if lower in ("q", "quit"):
+        if lower in ("q", "quit", "cd", "/cd"):
             return False
         with _CursesOutputCapture(ui):
             if lower.startswith("/"):
@@ -297,7 +297,7 @@ def _build_stream_command_handler(
             else:
                 ui.append_status(
                     f"[ERROR] Unknown streaming command: {cmd_line}. "
-                    f"Use '/send [message]', '/ctx.btw [message]', '/help', or 'q'."
+                    f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', or 'cd'."
                 )
         return True
 
@@ -354,6 +354,11 @@ def _stream_file_legacy(
                                     f"\n{Colors.YELLOW}[INFO] Quit requested.{Colors.RESET}"
                                 )
                                 break
+                            if lower in ("cd", "/cd"):
+                                print(
+                                    f"\n{Colors.YELLOW}[INFO] Return to workspace scope requested.{Colors.RESET}"
+                                )
+                                break
                             if lower.startswith("/"):
                                 _handle_stream_command(
                                     cmd_line,
@@ -365,7 +370,7 @@ def _stream_file_legacy(
                                 continue
                             print(
                                 f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
-                                f"Use '/send [message]', '/ctx.btw [message]', '/help', or 'q'.{Colors.RESET}"
+                                f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', or 'cd'.{Colors.RESET}"
                             )
                     else:
                         time.sleep(0.05)
@@ -424,7 +429,7 @@ def _handle_stream_command(
     if cmd == "/help":
         print(
             f"\n{Colors.CYAN}[INFO] Streaming commands: "
-            f"'q' then Enter to quit, '/send [message]' send to watched session, "
+            f"'q' or 'cd' then Enter to quit, '/send [message]' send to watched session, "
             f"'/ctx.btw [message]' inject agent2llm message, "
             f"'/help' show this help.{Colors.RESET}"
         )
@@ -432,7 +437,7 @@ def _handle_stream_command(
 
     print(
         f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
-        f"Use '/send [message]', '/ctx.btw [message]', '/help', or 'q'.{Colors.RESET}"
+        f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', or 'cd'.{Colors.RESET}"
     )
 
 

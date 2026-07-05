@@ -725,6 +725,66 @@ class TestStreamFilePaths(unittest.TestCase):
             os.remove(path)
 
     @patch("cli_topsailai.streaming.subprocess.run")
+    def test_stream_tty_cd_return_to_workspace(self, mock_run):
+        """Pressing cd in TTY mode returns to workspace scope."""
+        cli_state.running = True
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("line\n")
+            path = f.name
+        try:
+            with patch("sys.stdin.isatty", return_value=True):
+                with patch(
+                    "cli_topsailai.streaming.select.select",
+                    return_value=([sys.stdin], [], []),
+                ):
+                    with patch("builtins.input", return_value="cd") as mock_input:
+                        with patch("builtins.print") as mock_print:
+                            stream_file(path, default_session_id="s1")
+                            mock_input.assert_called()
+                            printed = [
+                                call[0][0] for call in mock_print.call_args_list
+                            ]
+                            self.assertTrue(
+                                any("workspace scope" in str(p) for p in printed)
+                            )
+            self.assertEqual(cli_state.current_scope, "workspace")
+            self.assertIsNone(cli_state.current_session_id)
+        finally:
+            os.remove(path)
+
+    @patch("cli_topsailai.streaming.subprocess.run")
+    def test_stream_tty_slash_cd_return_to_workspace(self, mock_run):
+        """Pressing /cd in TTY mode returns to workspace scope."""
+        cli_state.running = True
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("line\n")
+            path = f.name
+        try:
+            with patch("sys.stdin.isatty", return_value=True):
+                with patch(
+                    "cli_topsailai.streaming.select.select",
+                    return_value=([sys.stdin], [], []),
+                ):
+                    with patch("builtins.input", return_value="/cd") as mock_input:
+                        with patch("builtins.print") as mock_print:
+                            stream_file(path, default_session_id="s1")
+                            mock_input.assert_called()
+                            printed = [
+                                call[0][0] for call in mock_print.call_args_list
+                            ]
+                            self.assertTrue(
+                                any("workspace scope" in str(p) for p in printed)
+                            )
+            self.assertEqual(cli_state.current_scope, "workspace")
+            self.assertIsNone(cli_state.current_session_id)
+        finally:
+            os.remove(path)
+
+    @patch("cli_topsailai.streaming.subprocess.run")
     def test_stream_non_tty_sleep(self, mock_run):
         """Non-TTY mode sleeps when no data."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:

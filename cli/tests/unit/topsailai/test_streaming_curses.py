@@ -281,6 +281,14 @@ class TestBuildStreamCommandHandler(unittest.TestCase):
         mock_handle.assert_not_called()
 
     @patch("cli_topsailai.streaming._handle_stream_command")
+    def test_cd_returns_false(self, mock_handle):
+        self.assertFalse(self.handler("cd"))
+        self.assertFalse(self.handler("/cd"))
+        self.assertFalse(self.handler("CD"))
+        self.assertFalse(self.handler("/CD"))
+        mock_handle.assert_not_called()
+
+    @patch("cli_topsailai.streaming._handle_stream_command")
     def test_send_command_delegates(self, mock_handle):
         result = self.handler("/send hello")
         self.assertTrue(result)
