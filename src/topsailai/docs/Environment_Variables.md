@@ -79,6 +79,32 @@ These variables define the agent's working environment and project access scope.
 |----------|---------|-------------|
 | `LLM_RESPONSE_STREAM` | `1` | Use streaming response. `1` = enabled. |
 | `TOPSAILAI_CHAT_INTERACTIVE_MODE` | `0` | Interactive mode in `StepCall`. `0` = auto. |
+| `TOPSAILAI_STREAM_PROGRESS` | `stats` | Controls how LLM streaming output progress is displayed when `LLM_RESPONSE_STREAM` is enabled. See details below. |
+
+### `TOPSAILAI_STREAM_PROGRESS`
+
+Controls how LLM streaming output progress is displayed when `LLM_RESPONSE_STREAM` is enabled.
+
+| Value | Description |
+|-------|-------------|
+| `dots` | Prints one dot (`.`) for each received chunk. This is the legacy behavior and provides minimal visual feedback. |
+| `stats` | **Default.** Overwrites a single line (`\r`) with live statistics: generated characters, estimated tokens, speed (chars/s), and elapsed time. |
+| `bar` | Renders a simple ASCII progress bar alongside generation statistics. |
+
+If the variable is unset or empty, `stats` mode is used.
+
+Example:
+
+```bash
+export TOPSAILAI_STREAM_PROGRESS=stats
+python -m topsailai workspace agent-shell --prompt "hello"
+```
+
+To restore the original dot-based output:
+
+```bash
+export TOPSAILAI_STREAM_PROGRESS=dots
+```
 
 ## System Prompt
 
