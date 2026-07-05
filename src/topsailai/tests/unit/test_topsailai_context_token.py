@@ -295,8 +295,25 @@ class TestTokenStatFirstByte(unittest.TestCase):
         self.assertIn("first_byte_avg_ms", logged_msg)
         self.assertIn("first_byte_max_ms", logged_msg)
         self.assertIn("first_byte_min_ms", logged_msg)
-        self.assertIn("150.0", logged_msg)
         self.assertIn("'first_byte_avg_ms': 150.0", logged_msg)
+        self.assertIn("'first_byte_max_ms': 200.0", logged_msg)
+        self.assertIn("'first_byte_min_ms': 100.0", logged_msg)
+        stat.flag_running = False
+
+    def test_output_token_stat_rounds_to_three_decimals(self):
+        """Test output_token_stat rounds first-byte metrics to 3 decimals."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        stat.add_first_byte(100.1234567)
+        stat.add_first_byte(200.9876543)
+        stat.add_first_byte(50.5555555)
+
+        with patch('topsailai.context.token.print_step') as mock_print, \
+             patch('topsailai.context.token.logger') as mock_logger:
+            stat.output_token_stat()
+        logged_msg = mock_print.call_args[0][0]
+        self.assertIn("'first_byte_avg_ms': 117.222", logged_msg)
+        self.assertIn("'first_byte_max_ms': 200.988", logged_msg)
+        self.assertIn("'first_byte_min_ms': 50.556", logged_msg)
         stat.flag_running = False
 
     def test_output_token_stat_first_byte_none_when_empty(self):

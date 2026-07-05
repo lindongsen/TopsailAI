@@ -229,8 +229,14 @@ class TokenStat(threading.Thread):
                     round(self.first_byte_sum_ms / self.first_byte_count, 3)
                     if self.first_byte_count > 0 else None
                 ),
-                first_byte_max_ms=self.first_byte_max_ms,
-                first_byte_min_ms=self.first_byte_min_ms,
+                first_byte_max_ms=(
+                    round(self.first_byte_max_ms, 3)
+                    if self.first_byte_max_ms is not None else None
+                ),
+                first_byte_min_ms=(
+                    round(self.first_byte_min_ms, 3)
+                    if self.first_byte_min_ms is not None else None
+                ),
             )
             if usage:
                 self.current_cached_tokens = usage.prompt_tokens_details.cached_tokens
