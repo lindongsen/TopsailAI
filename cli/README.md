@@ -41,6 +41,53 @@ For example:
 
 When adding a new CLI tool, prefix its entry-point script with `topsailai` (e.g., `topsailai_<feature>.py`).
 
+
+## Adding a New CLI Tool
+
+When you create a new CLI script under this directory, you must also register it as a command in the parent project's `bin/` folder so it can be invoked directly by name.
+
+### Step 1: Create the CLI script
+
+Add a Python entry point named `topsailai_<feature>.py` in this directory (`/TopsailAI/cli/`). For example:
+
+```bash
+topsailai_session_info.py
+```
+
+### Step 2: Create a matching symlink in `bin/`
+
+Most CLI scripts are dispatched through `/TopsailAI/bin/topsailai.cli`, which resolves the script name from `basename "$0"` and runs `cli/<name>.py`. Therefore, add a symlink pointing to `topsailai.cli`:
+
+```bash
+cd /TopsailAI/bin
+ln -s topsailai.cli topsailai_<feature>
+```
+
+For example, for `topsailai_session_info.py`:
+
+```bash
+cd /TopsailAI/bin
+ln -s topsailai.cli topsailai_session_info
+```
+
+### Step 3: Verify the symlink
+
+```bash
+ls -l /TopsailAI/bin/topsailai_<feature>
+# should show: topsailai_<feature> -> topsailai.cli
+```
+
+Then test the command:
+
+```bash
+topsailai_<feature> --help
+```
+
+### Notes
+
+- The symlink name must match the Python file name without the `.py` extension.
+- Do not forget to add unit tests under `tests/unit/<cli-name>/` as described in the Testing section above.
+
 ## TOPSAILAI_HOME Workspace
 
 The CLI and agent processes share a single workspace root referred to as `TOPSAILAI_HOME`. It is resolved by `cli_topsailai/paths.py` (and mirrored in `src/topsailai/workspace/folder_constants.py`) with the following priority:
