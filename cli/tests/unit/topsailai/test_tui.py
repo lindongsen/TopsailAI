@@ -157,8 +157,8 @@ class TestCursesStreamUI(unittest.TestCase):
         )
 
     def _poll_input_with_key(self, ui, key):
-        """Simulate a single key press by wiring getch and invoking _poll_input."""
-        ui.stdscr.getch.return_value = key
+        """Simulate a single key press by wiring get_wch and invoking _poll_input."""
+        ui.stdscr.get_wch.return_value = key
         ui._poll_input()
 
     @patch.dict("sys.modules", {"curses": FakeCurses()})
@@ -190,7 +190,9 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
-        stdscr.getch.side_effect = [ord("h"), ord("i"), 10]
+        stdscr.get_wch.side_effect = ["h", "i", "\n"]
+
+        stdscr.get_wch.return_value = 27
 
         ui = self._make_ui(fake_curses)
         ui.stdscr = stdscr
@@ -215,11 +217,62 @@ class TestCursesStreamUI(unittest.TestCase):
         self.assertEqual(calls, ["hi"])
 
     @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_poll_input_submits_on_enter(self):
+        fake_curses = sys.modules["curses"]
+        stdscr = MagicMock()
+        stdscr.getmaxyx.return_value = (24, 80)
+        # get_wch() returns Enter as a newline string.
+        stdscr.get_wch.side_effect = ["h", "i", "\n"]
+        stdscr.get_wch.return_value = 27
+
+        ui = self._make_ui(fake_curses)
+        ui.stdscr = stdscr
+        ui._setup_colors = MagicMock()
+        ui._build_windows = MagicMock()
+        ui._tail_initial_lines = MagicMock()
+        ui._draw = MagicMock()
+
+        calls = []
+        ui.command_handler = lambda line: calls.append(line) or True
+
+        ui._poll_input()
+        ui._poll_input()
+        ui._poll_input()
+        self.assertEqual(calls, ["hi"])
+        self.assertEqual(ui._input_buffer, "")
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_poll_input_carriage_return_submits(self):
+        fake_curses = sys.modules["curses"]
+        stdscr = MagicMock()
+        stdscr.getmaxyx.return_value = (24, 80)
+        stdscr.get_wch.side_effect = ["h", "i", "\r"]
+        stdscr.get_wch.return_value = 27
+
+        ui = self._make_ui(fake_curses)
+        ui.stdscr = stdscr
+        ui._setup_colors = MagicMock()
+        ui._build_windows = MagicMock()
+        ui._tail_initial_lines = MagicMock()
+        ui._draw = MagicMock()
+
+        calls = []
+        ui.command_handler = lambda line: calls.append(line) or True
+
+        ui._poll_input()
+        ui._poll_input()
+        ui._poll_input()
+        self.assertEqual(calls, ["hi"])
+        self.assertEqual(ui._input_buffer, "")
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
     def test_poll_input_backspace_removes_last_character(self):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
-        stdscr.getch.side_effect = [ord("a"), ord("b"), 127]
+        stdscr.get_wch.side_effect = ["a", "b", 127]
+
+        stdscr.get_wch.return_value = 27
 
         ui = self._make_ui(fake_curses)
         ui.stdscr = stdscr
@@ -234,7 +287,9 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
-        stdscr.getch.side_effect = [ord("q"), ord("u"), ord("i"), ord("t"), 10]
+        stdscr.get_wch.side_effect = ["q", "u", "i", "t", "\n"]
+
+        stdscr.get_wch.return_value = 27
 
         ui = self._make_ui(fake_curses, command_handler=lambda _: False)
         ui.stdscr = stdscr
@@ -245,10 +300,29 @@ class TestCursesStreamUI(unittest.TestCase):
         self.assertFalse(ui._running)
 
     @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_poll_input_accepts_chinese_characters(self):
+        fake_curses = sys.modules["curses"]
+        stdscr = MagicMock()
+        stdscr.getmaxyx.return_value = (24, 80)
+        # Chinese characters are returned as strings by get_wch().
+        stdscr.get_wch.side_effect = ["中", "文", "\n"]
+
+        stdscr.get_wch.return_value = 27
+
+        ui = self._make_ui(fake_curses)
+        ui.stdscr = stdscr
+
+        ui._poll_input()
+        ui._poll_input()
+        self.assertEqual(ui._input_buffer, "中文")
+        ui._poll_input()
+        self.assertEqual(ui._input_buffer, "")
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
     def test_poll_input_curses_error_is_ignored(self):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
-        stdscr.getch.side_effect = fake_curses.error("boom")
+        stdscr.get_wch.side_effect = fake_curses.error("boom")
 
         ui = self._make_ui(fake_curses)
         ui.stdscr = stdscr
@@ -260,7 +334,9 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (40, 120)
-        stdscr.getch.side_effect = [fake_curses.KEY_RESIZE]
+        stdscr.get_wch.side_effect = [fake_curses.KEY_RESIZE]
+
+        stdscr.get_wch.return_value = 27
 
         ui = self._make_ui(fake_curses)
         ui.stdscr = stdscr
@@ -414,7 +490,9 @@ class TestCursesStreamUI(unittest.TestCase):
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
         # First iteration reads 'q' + Enter, then loop exits.
-        stdscr.getch.side_effect = [ord("q"), 10]
+        stdscr.get_wch.side_effect = ["q", "\n"]
+
+        stdscr.get_wch.return_value = 27
 
         ui = self._make_ui(fake_curses, command_handler=lambda _: False)
         ui._main(stdscr)
@@ -426,7 +504,9 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses._curs_set_error = True
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
-        stdscr.getch.side_effect = [ord("q"), 10]
+        stdscr.get_wch.side_effect = ["q", "\n"]
+
+        stdscr.get_wch.return_value = 27
 
         ui = self._make_ui(fake_curses, command_handler=lambda _: False)
         # Should not raise.
@@ -487,8 +567,8 @@ class TestCursesStreamUI(unittest.TestCase):
         ui = self._make_ui(fake_curses)
         ui.stdscr = stdscr
         ui._multi_line_mode = True
-        ui._handle_multi_line_input(ord("h"))
-        ui._handle_multi_line_input(ord("i"))
+        ui._handle_multi_line_input("h")
+        ui._handle_multi_line_input("i")
         self.assertEqual(ui._input_buffer, "hi")
 
     @patch.dict("sys.modules", {"curses": FakeCurses()})
@@ -525,16 +605,18 @@ class TestCursesStreamUI(unittest.TestCase):
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
         # Simulate typing two lines followed by Ctrl+D (4).
-        stdscr.getch.side_effect = [
-            ord("h"),
-            ord("i"),
-            10,
-            ord("b"),
-            ord("y"),
-            ord("e"),
-            10,
+        stdscr.get_wch.side_effect = [
+            "h",
+            "i",
+            "\n",
+            "b",
+            "y",
+            "e",
+            "\n",
             4,
         ]
+
+        stdscr.get_wch.return_value = 27
 
         ui = self._make_ui(fake_curses)
         ui.stdscr = stdscr
@@ -551,7 +633,9 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
-        stdscr.getch.side_effect = [ord("h"), 27]
+        stdscr.get_wch.side_effect = ["h", 27]
+
+        stdscr.get_wch.return_value = 27
 
         ui = self._make_ui(fake_curses)
         ui.stdscr = stdscr
@@ -568,7 +652,9 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
-        stdscr.getch.side_effect = [4]
+        stdscr.get_wch.side_effect = [4]
+
+        stdscr.get_wch.return_value = 27
 
         ui = self._make_ui(fake_curses)
         ui.stdscr = stdscr
@@ -674,7 +760,9 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
-        stdscr.getch.side_effect = [27]
+        stdscr.get_wch.side_effect = [27]
+
+        stdscr.get_wch.return_value = 27
 
         ui = self._make_ui(fake_curses)
         ui.stdscr = stdscr
@@ -868,7 +956,9 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
-        stdscr.getch.side_effect = [ord("q"), 10]
+        stdscr.get_wch.side_effect = ["q", "\n"]
+
+        stdscr.get_wch.return_value = 27
         fake_curses.wrapper = MagicMock(side_effect=lambda func: func(stdscr))
 
         ui = self._make_ui(fake_curses, command_handler=lambda _: False)
@@ -879,7 +969,7 @@ class TestCursesStreamUI(unittest.TestCase):
     def test_poll_input_no_key_returns_early(self):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
-        stdscr.getch.return_value = -1
+        stdscr.get_wch.return_value = -1
 
         ui = self._make_ui(fake_curses)
         ui.stdscr = stdscr

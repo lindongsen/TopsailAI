@@ -221,7 +221,7 @@ class CursesStreamUI:
         import curses
 
         try:
-            ch = self.stdscr.getch()
+            ch = self.stdscr.get_wch()
         except curses.error:
             return False
 
@@ -235,7 +235,7 @@ class CursesStreamUI:
         if self._multi_line_mode:
             return self._handle_multi_line_input(ch)
 
-        if ch in (curses.KEY_ENTER, 10, 13):
+        if ch in (curses.KEY_ENTER, "\n", "\r"):
             self._execute_input()
             return True
         if ch in (curses.KEY_BACKSPACE, 127, 8):
@@ -252,8 +252,8 @@ class CursesStreamUI:
         if ch == curses.KEY_NPAGE:
             self._scroll_down(self._page_scroll_lines)
             return True
-        if 32 <= ch <= 126:
-            self._input_buffer += chr(ch)
+        if isinstance(ch, str):
+            self._input_buffer += ch
             return True
         return False
 
@@ -287,14 +287,14 @@ class CursesStreamUI:
         self.stdscr.noutrefresh()
         self._needs_redraw = True
 
-    def _handle_multi_line_input(self, ch: int) -> bool:
+    def _handle_multi_line_input(self, ch) -> bool:
         """Handle input while collecting a multi-line message.
 
         Returns True if the screen should be redrawn.
         """
         import curses
 
-        if ch in (curses.KEY_ENTER, 10, 13):
+        if ch in (curses.KEY_ENTER, "\n", "\r"):
             self._multi_line_buffer.append(self._input_buffer)
             self._input_buffer = ""
             return True
@@ -322,8 +322,8 @@ class CursesStreamUI:
             else:
                 self._scroll_down(self._page_scroll_lines)
             return True
-        if 32 <= ch <= 126:
-            self._input_buffer += chr(ch)
+        if isinstance(ch, str):
+            self._input_buffer += ch
             return True
         return False
 
@@ -461,9 +461,14 @@ class CursesStreamUI:
                         self.input_win.addstr(row, 0, line[: width - 1])
                 current_row = 1 + len(display_lines)
                 if current_row < input_height:
+                    visible_input = self._input_buffer[: width - 1]
                     self.input_win.addstr(
-                        current_row, 0, self._input_buffer[: width - 1], curses.A_BOLD
+                        current_row, 0, visible_input, curses.A_BOLD
                     )
+                    try:
+                        self.input_win.move(current_row, len(visible_input))
+                    except curses.error:
+                        pass
             except curses.error:
                 pass
             try:
@@ -515,9 +520,14 @@ class CursesStreamUI:
             try:
                 self.input_win.addstr(1, 0, prompt, curses.color_pair(4))
                 remaining = width - len(prompt) - 1
+                visible_input = ""
                 if remaining > 0:
                     visible_input = self._input_buffer[-remaining:]
                     self.input_win.addstr(1, len(prompt), visible_input)
+                try:
+                    self.input_win.move(1, len(prompt) + len(visible_input))
+                except curses.error:
+                    pass
             except curses.error:
                 pass
             try:
