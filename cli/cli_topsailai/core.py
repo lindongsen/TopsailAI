@@ -224,6 +224,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     from cli_topsailai.paths import get_topsailai_home
     from cli_topsailai.process import cleanup_children
     from cli_topsailai.retrieve import retrieve_session
+    from cli_topsailai.session_info import enrich_files_with_session_names
     from cli_topsailai.streaming import handle_send_command, stream_file
     from cli_topsailai.yaml_commands import load_yaml_commands
 
@@ -248,6 +249,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     print(f"{Colors.DIM}HOME: {topsailai_home}{Colors.RESET}")
     print(f"{Colors.DIM}DIR:  {task_dir}{Colors.RESET}")
     log_files = discover_log_files(task_dir)
+    enrich_files_with_session_names(log_files)
 
     if log_files:
         print_table(log_files)
@@ -270,6 +272,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             if action == "refresh":
                 print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
                 log_files = discover_log_files(task_dir)
+                enrich_files_with_session_names(log_files)
                 print_table(log_files)
                 continue
 
@@ -285,6 +288,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                 clean_expired_files(task_dir, log_files)
                 print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
                 log_files = discover_log_files(task_dir)
+                enrich_files_with_session_names(log_files)
                 print_table(log_files)
                 continue
 
@@ -292,6 +296,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                 clean_by_numbers(task_dir, log_files, value)
                 print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
                 log_files = discover_log_files(task_dir)
+                enrich_files_with_session_names(log_files)
                 print_table(log_files)
                 continue
 
@@ -325,6 +330,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                 )
                 print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
                 log_files = discover_log_files(task_dir)
+                enrich_files_with_session_names(log_files)
                 print_table(log_files)
     except KeyboardInterrupt:
         print(f"\n{Colors.YELLOW}[INFO] Interrupted by user.{Colors.RESET}")

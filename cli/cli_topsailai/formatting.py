@@ -8,6 +8,7 @@ from typing import List
 from cli_topsailai.colors import Colors
 from cli_topsailai.log_files import _display_session_id
 
+
 def format_size(size_bytes: int) -> str:
     """Format a byte count as a human-readable string."""
     if size_bytes < 1024:
@@ -47,6 +48,7 @@ def print_table(files: List[dict]) -> None:
 
     w_no = 4
     w_session = 22
+    w_name = 20
     w_pid = 8
     w_size = 10
     w_modified = 14
@@ -56,6 +58,7 @@ def print_table(files: List[dict]) -> None:
         f"{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE}"
         f" {'No':^{w_no}} |"
         f" {'Session ID':^{w_session}} |"
+        f" {'Session Name':^{w_name}} |"
         f" {'PID':^{w_pid}} |"
         f" {'Size':^{w_size}} |"
         f" {'Modified':^{w_modified}} |"
@@ -66,6 +69,7 @@ def print_table(files: List[dict]) -> None:
         f"{Colors.CYAN}"
         f"{'-' * (w_no + 1)}+"
         f"{'-' * (w_session + 2)}+"
+        f"{'-' * (w_name + 2)}+"
         f"{'-' * (w_pid + 2)}+"
         f"{'-' * (w_size + 2)}+"
         f"{'-' * (w_modified + 2)}+"
@@ -89,6 +93,10 @@ def print_table(files: List[dict]) -> None:
         if len(session) > w_session:
             session = session[:w_session - 3] + "..."
 
+        session_name = f.get("session_name") or "-"
+        if len(session_name) > w_name:
+            session_name = session_name[:w_name - 3] + "..."
+
         pid_str = str(pid) if pid else "-"
         size_str = format_size(f["size"])
         modified_str = format_timestamp(f["mtime"])
@@ -99,6 +107,7 @@ def print_table(files: List[dict]) -> None:
             f"{color}"
             f" {idx:^{w_no}} |"
             f" {session:<{w_session}} |"
+            f" {session_name:<{w_name}} |"
             f" {pid_str:^{w_pid}} |"
             f" {size_str:>{w_size}} |"
             f" {modified_str:^{w_modified}} |"
