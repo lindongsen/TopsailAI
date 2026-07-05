@@ -254,6 +254,14 @@ FREQUENCY_PENALTY=0.0
 
 # Use streaming response
 LLM_RESPONSE_STREAM=1
+# Progress display mode for LLM streaming output.
+# Only effective when LLM_RESPONSE_STREAM=1.
+# Supported values:
+#   dots - print one dot per chunk (legacy behavior)
+#   stats - single-line live stats: chars, estimated tokens, speed, elapsed time (default)
+#   bar - ASCII progress bar with stats
+# Leave empty or unset to use the default "stats".
+TOPSAILAI_STREAM_PROGRESS=stats
 
 # Interactive mode in StepCall, 0 for auto
 TOPSAILAI_CHAT_INTERACTIVE_MODE=0
