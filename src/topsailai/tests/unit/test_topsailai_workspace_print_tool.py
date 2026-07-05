@@ -22,6 +22,7 @@ from io import StringIO
 from topsailai.workspace.print_tool import (
     TeeOutput,
     ContentDots,
+    ContentProgress,
     print_context_messages,
     print_raw_messages,
     decorator_tee_output,
@@ -199,10 +200,8 @@ class TestTeeOutput(unittest.TestCase):
         with open(self.test_file, 'r') as f:
             content = f.read()
         self.assertIn("Inside context", content)
-
-
 class TestContentDots(unittest.TestCase):
-    """Test cases for ContentDots class."""
+    """Test cases for ContentDots class (backward compatible dot sender)."""
 
     def setUp(self):
         """Set up test fixtures."""
@@ -255,6 +254,107 @@ class TestContentDots(unittest.TestCase):
 
         output = self.captured_output.getvalue()
         self.assertEqual(output, "...")
+
+    def test_content_dots_finish_writes_newline(self):
+        """Test ContentDots finish emits a final newline."""
+        dots = ContentDots()
+        dots.send("x")
+        dots.finish()
+
+        output = self.captured_output.getvalue()
+        self.assertIn("\n", output)
+
+
+class TestContentProgress(unittest.TestCase):
+    """Test cases for ContentProgress class."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.captured_output = StringIO()
+        sys.stdout = self.captured_output
+
+    def tearDown(self):
+        """Restore stdout."""
+        sys.stdout = sys.__stdout__
+
+    def test_content_progress_dots_mode_backward_compatible(self):
+        """Test ContentProgress in dots mode behaves like ContentDots."""
+        progress = ContentProgress(mode="dots")
+        progress.send("a")
+        progress.send("b")
+        progress.finish()
+
+        output = self.captured_output.getvalue()
+        self.assertIn("..", output)
+        self.assertIn("\n", output)
+
+    def test_content_progress_stats_mode_outputs_stats(self):
+        """Test ContentProgress in stats mode renders progress stats."""
+        progress = ContentProgress(mode="stats", refresh_interval_ms=0)
+        progress.send("hello world")
+        progress.finish()
+
+        output = self.captured_output.getvalue()
+        self.assertIn("Generating", output)
+        self.assertIn("11 chars", output)
+        self.assertIn("\n", output)
+
+    def test_content_progress_bar_mode_outputs_bar(self):
+        """Test ContentProgress in bar mode renders a progress bar."""
+        progress = ContentProgress(mode="bar", refresh_interval_ms=0)
+        progress.send("hello world")
+        progress.finish()
+
+        output = self.captured_output.getvalue()
+        self.assertIn("[", output)
+        self.assertIn("]", output)
+        self.assertIn("\n", output)
+
+    def test_content_progress_default_mode_is_stats(self):
+        """Test ContentProgress defaults to stats mode."""
+        progress = ContentProgress()
+        self.assertEqual(progress.mode, "stats")
+
+    def test_content_progress_respects_refresh_interval(self):
+        """Test ContentProgress throttles output by refresh interval."""
+        progress = ContentProgress(mode="stats", refresh_interval_ms=100)
+        progress.send("a")
+        progress.send("b")
+        progress.send("c")
+
+        output = self.captured_output.getvalue()
+        # Only the first send within 100ms should have rendered
+        self.assertEqual(output.count("Generating"), 1)
+
+        progress.finish()
+        self.assertIn("\n", self.captured_output.getvalue())
+
+    def test_content_progress_empty_content_ignored(self):
+        """Test ContentProgress ignores empty content."""
+        progress = ContentProgress(mode="stats", refresh_interval_ms=0)
+        progress.send("")
+        progress.send(None)
+        progress.finish()
+
+        output = self.captured_output.getvalue()
+        self.assertIn("Generating", output)
+        self.assertIn("0 chars", output)
+
+    def test_content_progress_finish_idempotent(self):
+        """Test ContentProgress finish can be called multiple times safely."""
+        progress = ContentProgress(mode="stats", refresh_interval_ms=0)
+        progress.send("x")
+        progress.finish()
+        progress.finish()
+
+        output = self.captured_output.getvalue()
+        self.assertEqual(output.count("\n"), 1)
+
+    def test_content_progress_env_mode_override(self):
+        """Test ContentProgress respects TOPSAILAI_STREAM_PROGRESS env var."""
+        with patch.dict(os.environ, {"TOPSAILAI_STREAM_PROGRESS": "bar"}):
+            progress = ContentProgress()
+            self.assertEqual(progress.mode, "bar")
 
 
 class TestPrintContextMessages(unittest.TestCase):

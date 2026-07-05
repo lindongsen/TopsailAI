@@ -434,6 +434,12 @@ class LLMModel(LLMModelBase):
                         curr_tool_call["function"]["arguments"] += tool_call.function.arguments
         # enf for chunk
 
+        # Notify all content senders that the stream has finished so they can
+        # emit a final newline or release any in-progress rendering state.
+        for sender in self.content_senders:
+            if hasattr(sender, "finish"):
+                sender.finish()
+
         # generate tool_calls
         full_tool_calls_list = []
         if full_tool_calls_dict:

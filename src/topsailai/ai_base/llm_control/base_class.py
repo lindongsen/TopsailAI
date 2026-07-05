@@ -58,6 +58,17 @@ class ContentSender(object):
         """
         raise NotImplementedError
 
+    def finish(self):
+        """
+        Called when the content stream has ended.
+
+        Subclasses may override this method to emit a final newline, release
+        resources, or finalize any in-progress rendering. The default
+        implementation is a no-op so existing senders remain backward
+        compatible.
+        """
+        return True
+
 class ContentStdout(ContentSender):
     """
     Content sender implementation that writes content to standard output.

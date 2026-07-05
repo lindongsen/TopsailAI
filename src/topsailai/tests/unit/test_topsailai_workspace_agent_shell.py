@@ -31,10 +31,9 @@ class TestGetAIAgent(unittest.TestCase):
         self.agent_run_patcher = patch('topsailai.workspace.agent_shell.AgentRun')
         self.mock_agent_run = self.agent_run_patcher.start()
         
-        # Mock ContentDots
-        self.content_dots_patcher = patch('topsailai.workspace.agent_shell.ContentDots')
-        self.mock_content_dots = self.content_dots_patcher.start()
-        
+        # Mock ContentProgress
+        self.content_progress_patcher = patch('topsailai.workspace.agent_shell.ContentProgress')
+        self.mock_content_progress = self.content_progress_patcher.start()
         # Setup mock agent_type
         self.mock_agent_type = MagicMock()
         self.mock_agent_type.SYSTEM_PROMPT = "You are a helpful assistant."
@@ -54,10 +53,9 @@ class TestGetAIAgent(unittest.TestCase):
         self.env_tool_patcher.stop()
         self.agent_type_patcher.stop()
         self.agent_run_patcher.stop()
-        self.content_dots_patcher.stop()
+        self.content_progress_patcher.stop()
 
     def test_get_ai_agent_default_parameters(self):
-        """Test get_ai_agent with default parameters."""
         from topsailai.workspace.agent_shell import get_ai_agent
         
         agent = get_ai_agent()
@@ -155,7 +153,7 @@ class TestGetAIAgent(unittest.TestCase):
         self.assertFalse(agent.flag_dump_messages)
 
     def test_get_ai_agent_debug_mode_with_stream(self):
-        """Test get_ai_agent adds ContentDots in debug mode with stream."""
+        """Test get_ai_agent adds ContentProgress in debug mode with stream."""
         from topsailai.workspace.agent_shell import get_ai_agent
         
         self.mock_env_tool.is_debug_mode.return_value = True
@@ -163,10 +161,10 @@ class TestGetAIAgent(unittest.TestCase):
         
         agent = get_ai_agent()
         
-        self.assertIn(self.mock_content_dots.return_value, agent.llm_model.content_senders)
+        self.assertIn(self.mock_content_progress.return_value, agent.llm_model.content_senders)
 
     def test_get_ai_agent_debug_mode_without_stream(self):
-        """Test get_ai_agent does not add ContentDots without stream."""
+        """Test get_ai_agent does not add ContentProgress without stream."""
         from topsailai.workspace.agent_shell import get_ai_agent
         
         self.mock_env_tool.is_debug_mode.return_value = True
@@ -177,14 +175,13 @@ class TestGetAIAgent(unittest.TestCase):
         self.assertEqual(len(agent.llm_model.content_senders), 0)
 
     def test_get_ai_agent_with_custom_agent_type(self):
-        """Test get_ai_agent with custom agent type name."""
+        """Test get_ai_agent with custom agent type."""
         from topsailai.workspace.agent_shell import get_ai_agent
         
         custom_type = "CustomAgent"
         agent = get_ai_agent(agent_type=custom_type)
         
         self.assertEqual(agent.agent_type, custom_type)
-
     def test_get_ai_agent_with_env_agent_name(self):
         """Test get_ai_agent uses environment agent name."""
         from topsailai.workspace.agent_shell import get_ai_agent
@@ -246,10 +243,9 @@ class TestGetAgentChat(unittest.TestCase):
         self.agent_run_patcher = patch('topsailai.workspace.agent_shell.AgentRun')
         self.mock_agent_run = self.agent_run_patcher.start()
         
-        # Mock ContentDots
-        self.content_dots_patcher = patch('topsailai.workspace.agent_shell.ContentDots')
-        self.mock_content_dots = self.content_dots_patcher.start()
-        
+        # Mock ContentProgress
+        self.content_progress_patcher = patch('topsailai.workspace.agent_shell.ContentProgress')
+        self.mock_content_progress = self.content_progress_patcher.start()
         # Mock HookInstruction
         self.hook_instruction_patcher = patch('topsailai.workspace.agent_shell.HookInstruction')
         self.mock_hook_instruction = self.hook_instruction_patcher.start()
@@ -316,7 +312,7 @@ class TestGetAgentChat(unittest.TestCase):
         self.thread_local_patcher.stop()
         self.agent_type_patcher.stop()
         self.agent_run_patcher.stop()
-        self.content_dots_patcher.stop()
+        self.content_progress_patcher.stop()
         self.hook_instruction_patcher.stop()
         self.ctx_data_patcher.stop()
         self.ctx_aiagent_patcher.stop()
@@ -627,9 +623,9 @@ class TestGetAgentChatProjectWorkspaceLock(unittest.TestCase):
         self.agent_run_patcher = patch('topsailai.workspace.agent_shell.AgentRun')
         self.mock_agent_run = self.agent_run_patcher.start()
 
-        # Mock ContentDots
-        self.content_dots_patcher = patch('topsailai.workspace.agent_shell.ContentDots')
-        self.mock_content_dots = self.content_dots_patcher.start()
+        # Mock ContentProgress
+        self.content_progress_patcher = patch('topsailai.workspace.agent_shell.ContentProgress')
+        self.mock_content_progress = self.content_progress_patcher.start()
 
         # Mock HookInstruction
         self.hook_instruction_patcher = patch('topsailai.workspace.agent_shell.HookInstruction')
@@ -701,7 +697,7 @@ class TestGetAgentChatProjectWorkspaceLock(unittest.TestCase):
         self.thread_local_patcher.stop()
         self.agent_type_patcher.stop()
         self.agent_run_patcher.stop()
-        self.content_dots_patcher.stop()
+        self.content_progress_patcher.stop()
         self.hook_instruction_patcher.stop()
         self.ctx_data_patcher.stop()
         self.ctx_aiagent_patcher.stop()

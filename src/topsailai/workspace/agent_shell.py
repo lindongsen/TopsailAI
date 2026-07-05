@@ -31,7 +31,7 @@ from topsailai.workspace.context.instruction import (
     ContextRuntimeInstructions,
 )
 from topsailai.workspace.hook_instruction import HookInstruction
-from topsailai.workspace.print_tool import ContentDots
+from topsailai.workspace.print_tool import ContentProgress
 from topsailai.workspace.lock_tool import ctxm_project_workspace_lock
 #from topsailai.workspace.context.agent_tool import (
 #    ContextRuntimeAgentTools,
@@ -86,7 +86,7 @@ def get_ai_agent(
 
     if env_tool.is_debug_mode():
         if env_tool.EnvReaderInstance.check_bool("LLM_RESPONSE_STREAM"):
-            agent.llm_model.content_senders.append(ContentDots())
+            agent.llm_model.content_senders.append(ContentProgress())
 
     # set flags
     if to_dump_messages:

@@ -7,6 +7,7 @@ Purpose:
 
 import os
 import sys
+import time
 
 from topsailai.ai_base.llm_control.base_class import ContentSender
 from topsailai.utils import (
@@ -172,13 +173,14 @@ def decorator_tee_output_by_session(
         return wrapper
     return decorator
 
-
 class ContentDots(ContentSender):
     """
     A content sender implementation that outputs dots for each content sent.
 
     This class provides a simple visual feedback mechanism by printing dots
     to indicate content transmission progress.
+
+    Kept for backward compatibility; new code should prefer ContentProgress.
     """
 
     def send(self, content):
@@ -192,6 +194,184 @@ class ContentDots(ContentSender):
             bool: Always returns True to indicate successful transmission
         """
         sys.stdout.write(".")
+        sys.stdout.flush()
+        return True
+
+    def finish(self):
+        """
+        Emit a final newline so subsequent output is not overwritten.
+
+        Returns:
+            bool: Always returns True.
+        """
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        return True
+
+
+class ContentProgress(ContentSender):
+    """
+    A content sender that renders streaming LLM progress in a readable way.
+
+    Supported modes (controlled by TOPSAILAI_STREAM_PROGRESS):
+      - "dots":  legacy dot-per-chunk behavior for backward compatibility
+      - "stats": single-line status with chars/tokens/speed (default)
+      - "bar":   compact progress bar with chars/tokens/speed
+
+    The display is refreshed in place with \\r to avoid flooding stdout.
+    A final newline is emitted when the stream ends so later logs are not
+    overwritten.
+    """
+
+    # Default refresh interval in seconds.
+    DEFAULT_REFRESH_INTERVAL = 0.1
+    # Approximate characters per token for token estimation.
+    CHARS_PER_TOKEN = 4.0
+    # Progress bar width in characters.
+    BAR_WIDTH = 20
+
+    def __init__(self, mode=None, refresh_interval=None, refresh_interval_ms=None):
+        """
+        Initialize the progress sender.
+
+        Args:
+            mode: Display mode ("dots", "stats", or "bar"). When None, the
+                value is read from the TOPSAILAI_STREAM_PROGRESS environment
+                variable and defaults to "stats".
+            refresh_interval: Minimum time in seconds between screen refreshes.
+                Defaults to DEFAULT_REFRESH_INTERVAL.
+            refresh_interval_ms: Minimum time in milliseconds between screen
+                refreshes. Takes precedence over refresh_interval when given.
+        """
+        if mode is None:
+            mode = os.environ.get("TOPSAILAI_STREAM_PROGRESS", "stats").strip().lower()
+        if mode not in ("dots", "stats", "bar", ""):
+            mode = "stats"
+        if mode == "":
+            mode = "stats"
+        self.mode = mode
+
+        if refresh_interval_ms is not None:
+            refresh_interval = refresh_interval_ms / 1000.0
+        self.refresh_interval = refresh_interval or self.DEFAULT_REFRESH_INTERVAL
+
+        self._start_time = None
+        self._last_refresh_time = 0.0
+        self._char_count = 0
+        self._token_count = 0
+        self._finished = False
+
+    def _estimate_tokens(self, text):
+        """Estimate token count from text length."""
+        if not text:
+            return 0
+        return max(1, int(len(text) / self.CHARS_PER_TOKEN))
+
+    def _format_duration(self, seconds):
+        """Format elapsed seconds as a compact human-readable string."""
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{minutes}m{secs:02d}s"
+
+    def _format_number(self, value):
+        """Format a number in compact k/M notation."""
+        if value >= 1_000_000:
+            return f"{value / 1_000_000:.1f}M"
+        if value >= 1_000:
+            return f"{value / 1_000:.1f}k"
+        return str(int(value))
+
+    def _should_refresh(self):
+        """Return True if enough time has passed since the last refresh."""
+        now = time.monotonic()
+        return now - self._last_refresh_time >= self.refresh_interval
+
+    def _render_dots(self):
+        """Legacy dot-per-chunk output."""
+        sys.stdout.write(".")
+        sys.stdout.flush()
+
+    def _render_stats(self, elapsed):
+        """Render the stats mode status line."""
+        speed = self._char_count / elapsed if elapsed > 0 else 0.0
+        line = (
+            f"\rGenerating... "
+            f"{self._format_number(self._char_count)} chars, "
+            f"{self._format_number(self._token_count)} tokens, "
+            f"{self._format_number(speed)} chars/s, "
+            f"{self._format_duration(elapsed)}"
+        )
+        # Pad with spaces to clear any previous longer line.
+        sys.stdout.write(line.ljust(80)[:80])
+        sys.stdout.flush()
+
+    def _render_bar(self, elapsed):
+        """Render the bar mode status line."""
+        speed = self._char_count / elapsed if elapsed > 0 else 0.0
+        # Use a rolling pseudo-progress based on chars generated so far.
+        # The bar fills up to a soft target and then wraps visually.
+        target = max(1000, self._token_count * self.CHARS_PER_TOKEN)
+        ratio = min(1.0, self._char_count / target)
+        filled = int(self.BAR_WIDTH * ratio)
+        bar = "█" * filled + "░" * (self.BAR_WIDTH - filled)
+        line = (
+            f"\r[{bar}] Generating "
+            f"{self._format_number(self._char_count)} chars "
+            f"{self._format_number(self._token_count)} tokens "
+            f"{self._format_number(speed)} chars/s "
+            f"{self._format_duration(elapsed)}"
+        )
+        sys.stdout.write(line.ljust(80)[:80])
+        sys.stdout.flush()
+
+    def send(self, content):
+        """
+        Update progress with the latest content chunk.
+
+        Args:
+            content: The content chunk received from the LLM stream.
+
+        Returns:
+            bool: Always returns True to indicate successful handling.
+        """
+        if content is None:
+            content = ""
+        text = content if isinstance(content, str) else str(content)
+
+        if self.mode == "dots":
+            self._render_dots()
+            return True
+
+        now = time.monotonic()
+        if self._start_time is None:
+            self._start_time = now
+
+        self._char_count += len(text)
+        self._token_count += self._estimate_tokens(text)
+
+        if self._should_refresh():
+            self._last_refresh_time = now
+            elapsed = now - self._start_time
+            if self.mode == "bar":
+                self._render_bar(elapsed)
+            else:
+                self._render_stats(elapsed)
+
+        return True
+
+    def finish(self):
+        """
+        Emit a final newline so subsequent output is not overwritten.
+
+        Returns:
+            bool: Always returns True.
+        """
+        if self._finished:
+            return True
+        self._finished = True
+        sys.stdout.write("\n")
         sys.stdout.flush()
         return True
 

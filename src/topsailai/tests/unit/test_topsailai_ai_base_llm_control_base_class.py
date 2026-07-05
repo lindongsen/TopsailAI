@@ -28,6 +28,10 @@ class TestContentSender:
         with pytest.raises(NotImplementedError):
             sender.send("test content")
 
+    def test_finish_returns_true_by_default(self):
+        """Test that finish method has a backward-compatible no-op default."""
+        sender = ContentSender()
+        assert sender.finish() is True
 
 class TestContentStdout:
     """Tests for ContentStdout class."""
