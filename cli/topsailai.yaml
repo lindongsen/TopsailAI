@@ -93,19 +93,13 @@ instructions:
     desc: "Add a by-the-way message to Agent2LLM runtime inject source"
     example: ""
     shell: "topsailai_session_add_agent2llm_message -s '{session_id}' -m '{message}'"
+
   - cmd: "/ctx.add_msg" # Note: Special handling, supports line breaks
     scopes:
       - session
     desc: "Add message to context"
     example: ""
     shell: "topsailai_session_add_message -s '{session_id}' -m '{message}'"
-
-  - cmd: "/agent2llm.add_msg" # Note: Special handling, supports line breaks
-    scopes:
-      - session
-    desc: "Add message to Agent2LLM runtime inject source"
-    example: ""
-    shell: "topsailai_session_add_agent2llm_message -s '{session_id}' -m '{message}'"
 
   - cmd: "/task.run {driver} {args}"
     scopes:

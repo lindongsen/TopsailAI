@@ -535,14 +535,14 @@ class TestCleanExpiredFilesSkipCases(unittest.TestCase):
         self.assertEqual(result, 0)
 
     def test_running_file_skipped(self):
-        """Files with active pid are skipped."""
+        """Files still held open by a process are skipped."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "old.stdout")
             with open(path, "w") as f:
                 f.write("log")
             old_time = 0
             os.utime(path, (old_time, old_time))
-            with patch("cli_topsailai.cleaning.get_file_pid", return_value=1234):
+            with patch("cli_topsailai.cleaning.is_file_in_use", return_value=True):
                 result = clean_expired_files(
                     tmpdir,
                     [

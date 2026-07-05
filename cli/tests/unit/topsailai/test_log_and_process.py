@@ -50,6 +50,38 @@ class TestDiscoverLogFiles(unittest.TestCase):
             self.assertEqual(len(files), 1)
             self.assertEqual(files[0]["session_id"], "s1")
 
+    def test_sorted_by_creation_time_ascending(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            f1 = os.path.join(tmpdir, "s1.1000.session.stdout")
+            f2 = os.path.join(tmpdir, "s2.2000.session.stdout")
+            f3 = os.path.join(tmpdir, "s3.3000.session.stdout")
+            open(f1, "w").close()
+            open(f2, "w").close()
+            open(f3, "w").close()
+
+            def fake_stat(path):
+                m = MagicMock()
+                m.st_size = 0
+                m.st_mtime = 0
+                m.st_ctime = 0
+                if path == tmpdir:
+                    m.st_mode = 0o40755
+                    return m
+                base = os.path.basename(path)
+                times = {
+                    "s1.1000.session.stdout": 3000,
+                    "s2.2000.session.stdout": 1000,
+                    "s3.3000.session.stdout": 2000,
+                }
+                m.st_mtime = times.get(base, 0)
+                m.st_ctime = times.get(base, 0)
+                m.st_mode = 0o100644
+                return m
+
+            with patch("cli_topsailai.log_files.os.stat", side_effect=fake_stat):
+                files = discover_log_files(tmpdir)
+
+            self.assertEqual([f["session_id"] for f in files], ["s2", "s3", "s1"])
 
     @patch("cli_topsailai.log_files.subprocess.Popen")
     def test_from_lsof(self, mock_popen):

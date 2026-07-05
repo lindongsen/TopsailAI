@@ -248,6 +248,40 @@ def get_file_pid(filepath: str) -> Optional[int]:
     return None
 
 
+def is_file_in_use(filepath: str) -> bool:
+    """Return True if any process currently has *filepath* open.
+
+    Checks ``lsof`` first, then falls back to ``fuser``.  If neither tool is
+    available or neither reports a holder, the file is considered not in use.
+    All spawned subprocesses are tracked and cleaned up on exit.
+    """
+    if not filepath or not os.path.exists(filepath):
+        return False
+
+    for cmd in (["lsof", "-t", filepath], ["fuser", filepath]):
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            register_process(proc)
+            try:
+                stdout, _ = proc.communicate(timeout=3)
+                if proc.returncode == 0 and stdout.strip():
+                    return True
+            finally:
+                unregister_process(proc)
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=1)
+        except Exception:
+            pass
+
+    return False
+
+
 def _find_session_stdout_file(task_dir: str, session_id: str) -> Optional[str]:
     """
     Find the most recent session stdout file for a session.

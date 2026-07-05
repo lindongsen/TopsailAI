@@ -6,13 +6,57 @@ from typing import List
 
 from cli_topsailai.colors import Colors, colored, cprint
 from cli_topsailai.formatting import format_size, format_timestamp_full, print_header
-from cli_topsailai.log_files import get_file_pid
+from cli_topsailai.log_files import is_file_in_use
+from cli_topsailai.session_cleanup import find_related_files_for_path
+
+
+def _expand_to_related_files(task_dir: str, selected: List[dict]) -> List[dict]:
+    """Expand a list of selected files to include all related session files.
+
+    Files sharing the same ``{session_id}.{pid}`` prefix (stdout, stderr,
+    pipe, inject JSONL, and task outputs) are grouped and returned as a
+    single deduplicated list. Files that are still held open by a process
+    are skipped.
+
+    Args:
+        task_dir: Directory containing the log files.
+        selected: List of file metadata dictionaries chosen for deletion.
+
+    Returns:
+        Deduplicated list of file metadata dictionaries to delete.
+    """
+    seen: set = set()
+    expanded: List[dict] = []
+
+    for f in selected:
+        related_paths = find_related_files_for_path(task_dir, f["path"])
+        for path in related_paths:
+            if path in seen:
+                continue
+            seen.add(path)
+            if is_file_in_use(path):
+                print(f"[WARN] Skipping in-use related file: {path}")
+                continue
+            try:
+                stat_info = os.stat(path)
+            except OSError:
+                continue
+            expanded.append({
+                "filename": os.path.basename(path),
+                "path": path,
+                "size": stat_info.st_size,
+                "mtime": stat_info.st_mtime,
+            })
+
+    return expanded
 
 
 def clean_expired_files(task_dir: str, files: List[dict]) -> int:
-    """Clean up .stdout log files that are idle and older than 3 days.
+    """Clean up session log files that are idle and older than 3 days.
 
-    Shows a confirmation prompt before deletion.
+    Shows a confirmation prompt before deletion. When a file is deleted,
+    all related session files sharing the same ``{session_id}.{pid}`` prefix
+    are also removed, provided none of them are currently in use.
 
     Args:
         task_dir: Directory containing the log files.
@@ -38,8 +82,8 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
         if age <= threshold_seconds:
             continue
 
-        pid = get_file_pid(f["path"])
-        if pid is not None:
+        if is_file_in_use(f["path"]):
+            print(f"[WARN] Skipping in-use expired file: {f['path']}")
             continue
 
         expired_files.append({
@@ -50,9 +94,11 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
             "age_hours": age / 3600,
         })
 
+    expired_files = _expand_to_related_files(task_dir, expired_files)
+
     if not expired_files:
         cprint(
-            "\n[INFO] No expired .stdout files found. "
+            "\n[INFO] No expired session files found. "
             "(Files must be idle and older than 3 days)",
             color=Colors.GREEN,
         )
@@ -98,9 +144,10 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
         if len(name) > w_name:
             name = name[:w_name - 3] + "..."
 
+        age_hours = (now - ef["mtime"]) / 3600
         size_str = format_size(ef["size"])
         time_str = format_timestamp_full(ef["mtime"])
-        age_str = f"{ef['age_hours']:.1f}h"
+        age_str = f"{age_hours:.1f}h"
 
         row = (
             f"{Colors.GRAY}"
@@ -150,9 +197,11 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
 
 
 def clean_by_numbers(task_dir: str, files: List[dict], indices: List[int]) -> int:
-    """Clean up specific .stdout log files by their list numbers.
+    """Clean up specific session log files by their list numbers.
 
-    Validates each index, shows a confirmation prompt, then deletes the files.
+    Validates each index, shows a confirmation prompt, then deletes the
+    selected files along with all related session files sharing the same
+    ``{session_id}.{pid}`` prefix.
 
     Args:
         task_dir: Directory containing the log files.
@@ -184,6 +233,8 @@ def clean_by_numbers(task_dir: str, files: List[dict], indices: List[int]) -> in
     if not valid_files:
         cprint("[INFO] No valid files to delete.", color=Colors.YELLOW)
         return 0
+
+    valid_files = _expand_to_related_files(task_dir, valid_files)
 
     print_header("Clean Selected Log Files")
     cprint(
