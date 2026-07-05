@@ -36,7 +36,7 @@ class TestSessionSQLAlchemy:
         assert session_mgr.exists_session("test_session_001") is True
 
     def test_create_session_duplicate(self, session_mgr):
-        """Test creating a session with duplicate ID."""
+        """Test creating a session with duplicate ID raises ValueError."""
         session_data = SessionData(
             session_id="test_session_001",
             session_name="Test Session",
@@ -44,8 +44,25 @@ class TestSessionSQLAlchemy:
         )
         session_mgr.create_session(session_data)
 
-        # Creating again should not raise error
-        session_mgr.create_session(session_data)
+        # Creating again should raise ValueError
+        with pytest.raises(ValueError, match="Session test_session_001 already exists"):
+            session_mgr.create_session(session_data)
+
+        sessions = session_mgr.list_sessions()
+        assert len(sessions) == 1
+
+    def test_create_session_duplicate_raises_value_error(self, session_mgr):
+        """Test that creating a session with duplicate ID raises ValueError."""
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Test Session",
+            task="Test task"
+        )
+        first_result = session_mgr.create_session(session_data)
+        assert first_result is True
+
+        with pytest.raises(ValueError, match="Session test_session_001 already exists"):
+            session_mgr.create_session(session_data)
 
         sessions = session_mgr.list_sessions()
         assert len(sessions) == 1

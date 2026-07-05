@@ -89,15 +89,17 @@ class SessionSQLAlchemy(SessionStorageBase):
             session_data (SessionData): The session data to create.
 
         Returns:
-            bool: True if the session was created, False if it already exists.
+            bool: True if the session was created.
+
+        Raises:
+            ValueError: If a session with the same session_id already exists.
         """
         with self._lock:
             db_session = self.SessionLocal()
             try:
                 # Avoid duplicate session_id
                 if db_session.query(Session).filter(Session.session_id == session_data.session_id).first():
-                    logger.warning(f"session already exists: session_id={session_data.session_id}")
-                    return False
+                    raise ValueError(f"Session {session_data.session_id} already exists")
 
                 new_session = Session(
                     session_id=session_data.session_id,
