@@ -21,13 +21,15 @@ class SessionData(object):
     its unique identifier and associated task. Additional metadata like
     session name and creation time can be stored as attributes.
     """
-    def __init__(self, session_id: str, task: str):
+    def __init__(self, session_id: str, task: str = "", session_name: str = None):
         """
         Initialize a SessionData instance.
 
         Args:
             session_id (str): Unique identifier for the session
-            task (str): The task or purpose associated with this session
+            task (str, optional): The task or purpose associated with this session.
+                Defaults to an empty string.
+            session_name (str, optional): Display name for the session
 
         Note:
             Additional attributes like session_name and create_time are
@@ -37,7 +39,7 @@ class SessionData(object):
         self.task = task
 
         # other attributes that can be set later
-        self.session_name = None
+        self.session_name = session_name
         self.create_time = None
 
     def __str__(self):

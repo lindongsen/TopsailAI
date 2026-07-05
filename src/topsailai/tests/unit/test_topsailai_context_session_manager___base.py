@@ -25,6 +25,12 @@ class TestSessionData(unittest.TestCase):
         self.assertEqual(session.session_id, session_id)
         self.assertEqual(session.task, task)
 
+    def test_init_with_session_name(self):
+        """Test SessionData initialization with optional session_name."""
+        session = SessionData(session_id="s1", task="t1", session_name="My Session")
+        
+        self.assertEqual(session.session_name, "My Session")
+
     def test_init_session_name_defaults_to_none(self):
         """Test that session_name defaults to None."""
         session = SessionData(session_id="s1", task="t1")

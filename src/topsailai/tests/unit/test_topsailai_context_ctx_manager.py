@@ -335,13 +335,15 @@ class TestExistsSession(unittest.TestCase):
 class TestCreateSession(unittest.TestCase):
     """Test cases for create_session() function."""
 
+    @patch('topsailai.context.ctx_manager.generate_session_name')
     @patch('topsailai.context.ctx_manager.get_session_manager')
-    def test_create_session_success(self, mock_get_session_mgr):
+    def test_create_session_success(self, mock_get_session_mgr, mock_generate):
         """Test create_session successfully creates a session."""
         from topsailai.context.ctx_manager import create_session
 
         mock_session_mgr = MagicMock()
         mock_get_session_mgr.return_value = mock_session_mgr
+        mock_generate.return_value = ''
 
         # Execute
         result = create_session(session_id='new-session', task='Test task')
@@ -373,7 +375,6 @@ class TestCreateSession(unittest.TestCase):
         # Verify
         self.assertFalse(result)
         mock_get_session_mgr.assert_not_called()
-
 
 class TestUpdateSessionName(unittest.TestCase):
     """Test cases for update_session_name() function."""
@@ -421,6 +422,16 @@ class TestUpdateSessionName(unittest.TestCase):
         self.assertTrue(result)
         mock_get_session_mgr.assert_not_called()
         mock_session_mgr.update_session_name.assert_called_once_with('session-123', 'New Name')
+
+    @patch('topsailai.context.ctx_manager.get_session_manager')
+    def test_update_session_name_with_none_name(self, mock_get_session_mgr):
+        """Test update_session_name returns False when session_name is None."""
+        from topsailai.context.ctx_manager import update_session_name
+
+        result = update_session_name(session_id='session-123', session_name=None)
+
+        self.assertFalse(result)
+        mock_get_session_mgr.assert_not_called()
 
 
 class TestAddSessionMessage(unittest.TestCase):
@@ -615,5 +626,236 @@ class TestModuleIntegration(unittest.TestCase):
         self.assertTrue(callable(cut_messages))
 
 
+
+
+class TestGenerateSessionName(unittest.TestCase):
+    """Test cases for generate_session_name() function."""
+
+    def setUp(self):
+        """Store original environment."""
+        self.original_env = os.environ.copy()
+
+    def tearDown(self):
+        """Restore original environment."""
+        os.environ.clear()
+        os.environ.update(self.original_env)
+
+    @patch('topsailai.workspace.llm_shell.get_llm_chat')
+    def test_generate_session_name_success(self, mock_get_llm_chat):
+        """Test generate_session_name returns cleaned LLM output."""
+        from topsailai.context.ctx_manager import generate_session_name
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = '"  My Session Name  "'
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        result = generate_session_name('session-123', 'Please help me write a Python script.')
+
+        self.assertEqual(result, 'My Session Name')
+        mock_get_llm_chat.assert_called_once()
+        call_kwargs = mock_get_llm_chat.call_args.kwargs
+        self.assertIn('system_prompt', call_kwargs)
+        self.assertIn('message', call_kwargs)
+        self.assertNotEqual(call_kwargs['system_prompt'], call_kwargs['message'])
+        self.assertIn('naming assistant', call_kwargs['system_prompt'].lower())
+        self.assertIn('Python script', call_kwargs['message'])
+
+    @patch('topsailai.workspace.llm_shell.get_llm_chat')
+    def test_generate_session_name_truncates_to_max_length(self, mock_get_llm_chat):
+        """Test generate_session_name truncates result to max length."""
+        from topsailai.context.ctx_manager import generate_session_name
+
+        os.environ['TOPSAILAI_AUTO_SESSION_NAME_MAX_LENGTH'] = '10'
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = 'A very long session name that exceeds limit'
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        result = generate_session_name('session-123', 'Some task')
+
+        self.assertEqual(len(result), 10)
+        self.assertEqual(result, 'A very lon')
+
+    @patch('topsailai.workspace.llm_shell.get_llm_chat')
+    def test_generate_session_name_empty_input(self, mock_get_llm_chat):
+        """Test generate_session_name returns empty for empty inputs."""
+        from topsailai.context.ctx_manager import generate_session_name
+
+        self.assertEqual(generate_session_name('', 'task'), '')
+        self.assertEqual(generate_session_name('session', ''), '')
+        mock_get_llm_chat.assert_not_called()
+
+    @patch('topsailai.workspace.llm_shell.get_llm_chat')
+    def test_generate_session_name_empty_llm_output(self, mock_get_llm_chat):
+        """Test generate_session_name returns empty when LLM returns empty."""
+        from topsailai.context.ctx_manager import generate_session_name
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = '   '
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        result = generate_session_name('session-123', 'Some task')
+
+        self.assertEqual(result, '')
+
+    @patch('topsailai.workspace.llm_shell.get_llm_chat')
+    def test_generate_session_name_none_llm_output(self, mock_get_llm_chat):
+        """Test generate_session_name returns empty when LLM returns None."""
+        from topsailai.context.ctx_manager import generate_session_name
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = None
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        result = generate_session_name('session-123', 'Some task')
+
+        self.assertEqual(result, '')
+
+    @patch('topsailai.workspace.llm_shell.get_llm_chat')
+    def test_generate_session_name_exception_swallowed(self, mock_get_llm_chat):
+        """Test generate_session_name swallows exceptions and returns empty."""
+        from topsailai.context.ctx_manager import generate_session_name
+
+        mock_get_llm_chat.side_effect = Exception('LLM failed')
+
+        result = generate_session_name('session-123', 'Some task')
+
+        self.assertEqual(result, '')
+
+    @patch('topsailai.workspace.llm_shell.get_llm_chat')
+    def test_generate_session_name_invalid_max_length_fallback(self, mock_get_llm_chat):
+        """Test generate_session_name falls back to 30 for invalid max length."""
+        from topsailai.context.ctx_manager import generate_session_name
+
+        os.environ['TOPSAILAI_AUTO_SESSION_NAME_MAX_LENGTH'] = 'not-a-number'
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = 'A' * 40
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        result = generate_session_name('session-123', 'Some task')
+
+        self.assertEqual(len(result), 30)
+
+    @patch('topsailai.workspace.llm_shell.get_llm_chat')
+    def test_generate_session_name_non_positive_max_length_fallback(self, mock_get_llm_chat):
+        """Test generate_session_name falls back to 30 for non-positive max length."""
+        from topsailai.context.ctx_manager import generate_session_name
+
+        os.environ['TOPSAILAI_AUTO_SESSION_NAME_MAX_LENGTH'] = '0'
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = 'A' * 40
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        result = generate_session_name('session-123', 'Some task')
+
+        self.assertEqual(len(result), 30)
+
+
+class TestCreateSessionAutoRename(unittest.TestCase):
+    """Test cases for create_session() auto-rename behavior."""
+
+    def setUp(self):
+        """Store original environment."""
+        self.original_env = os.environ.copy()
+
+    def tearDown(self):
+        """Restore original environment."""
+        os.environ.clear()
+        os.environ.update(self.original_env)
+
+    @patch('topsailai.context.ctx_manager.get_session_manager')
+    @patch('topsailai.context.ctx_manager.generate_session_name')
+    def test_create_session_triggers_auto_rename(self, mock_generate, mock_get_session_mgr):
+        """Test create_session starts auto-rename when session_name is empty."""
+        from topsailai.context.ctx_manager import create_session
+
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.get_session.return_value = MagicMock(session_name='')
+        mock_get_session_mgr.return_value = mock_session_mgr
+        mock_generate.return_value = 'Auto Name'
+
+        result = create_session(session_id='session-123', task='Help me refactor code.')
+
+        self.assertTrue(result)
+        # Wait briefly for daemon thread to finish
+        import time
+        time.sleep(0.1)
+        mock_generate.assert_called_once_with('session-123', 'Help me refactor code.')
+        mock_session_mgr.update_session_name.assert_called_once_with('session-123', 'Auto Name')
+
+    @patch('topsailai.context.ctx_manager.get_session_manager')
+    @patch('topsailai.context.ctx_manager.generate_session_name')
+    def test_create_session_skips_auto_rename_when_name_provided(self, mock_generate, mock_get_session_mgr):
+        """Test create_session skips auto-rename when session_name is provided."""
+        from topsailai.context.ctx_manager import create_session
+
+        mock_session_mgr = MagicMock()
+        mock_get_session_mgr.return_value = mock_session_mgr
+
+        result = create_session(
+            session_id='session-123',
+            task='Help me refactor code.',
+            session_name='Manual Name',
+        )
+
+        self.assertTrue(result)
+        mock_generate.assert_not_called()
+        mock_session_mgr.update_session_name.assert_not_called()
+
+    @patch('topsailai.context.ctx_manager.get_session_manager')
+    @patch('topsailai.context.ctx_manager.generate_session_name')
+    def test_create_session_skips_auto_rename_when_disabled(self, mock_generate, mock_get_session_mgr):
+        """Test create_session skips auto-rename when disabled."""
+        from topsailai.context.ctx_manager import create_session
+
+        os.environ['TOPSAILAI_AUTO_SESSION_NAME_ENABLED'] = '0'
+
+        mock_session_mgr = MagicMock()
+        mock_get_session_mgr.return_value = mock_session_mgr
+
+        result = create_session(session_id='session-123', task='Help me refactor code.')
+
+        self.assertTrue(result)
+        mock_generate.assert_not_called()
+        mock_session_mgr.update_session_name.assert_not_called()
+
+    @patch('topsailai.context.ctx_manager.get_session_manager')
+    @patch('topsailai.context.ctx_manager.generate_session_name')
+    def test_create_session_auto_rename_failure_swallowed(self, mock_generate, mock_get_session_mgr):
+        """Test create_session swallows auto-rename failures."""
+        from topsailai.context.ctx_manager import create_session
+
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.get_session.return_value = MagicMock(session_name='')
+        mock_get_session_mgr.return_value = mock_session_mgr
+        mock_generate.side_effect = Exception('generation failed')
+
+        result = create_session(session_id='session-123', task='Help me refactor code.')
+
+        self.assertTrue(result)
+        import time
+        time.sleep(0.1)
+        mock_session_mgr.update_session_name.assert_not_called()
+
+    @patch('topsailai.context.ctx_manager.get_session_manager')
+    @patch('topsailai.context.ctx_manager.generate_session_name')
+    def test_create_session_auto_rename_does_not_overwrite_existing(self, mock_generate, mock_get_session_mgr):
+        """Test auto-rename does not overwrite a name set meanwhile."""
+        from topsailai.context.ctx_manager import create_session
+
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.get_session.return_value = MagicMock(session_name='Already Set')
+        mock_get_session_mgr.return_value = mock_session_mgr
+        mock_generate.return_value = 'Auto Name'
+
+        result = create_session(session_id='session-123', task='Help me refactor code.')
+
+        self.assertTrue(result)
+        import time
+        time.sleep(0.1)
+        mock_generate.assert_called_with('session-123', 'Help me refactor code.')
+        mock_session_mgr.update_session_name.assert_not_called()
 if __name__ == '__main__':
     unittest.main()

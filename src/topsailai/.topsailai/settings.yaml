@@ -14,6 +14,7 @@ context:
     - MEMO.CommonUtils.md
     - MEMO.AgentCore.md
     - MEMO.AgentWorkers.md
+    - LEARN.md
 
   default: []
 

@@ -6,6 +6,7 @@
 '''
 
 import os
+import threading
 
 from topsailai.logger import logger
 from topsailai.utils.format_tool import to_list
@@ -219,13 +220,111 @@ def exists_session(session_id:str, session_mgr:SessionStorageBase=None) -> bool:
 
     return session_mgr.exists_session(session_id)
 
-def create_session(session_id:str, task:str, session_mgr:SessionStorageBase=None) -> bool:
+
+def _get_auto_session_name_max_length() -> int:
+    """Parse TOPSAILAI_AUTO_SESSION_NAME_MAX_LENGTH with fallback."""
+    max_length_str = os.getenv("TOPSAILAI_AUTO_SESSION_NAME_MAX_LENGTH", "30")
+    try:
+        max_length = int(max_length_str)
+    except ValueError:
+        max_length = 30
+    if max_length <= 0:
+        max_length = 30
+    return max_length
+
+
+def generate_session_name(session_id: str, message: str) -> str:
+    """
+    Generate a concise session name from the given message using the LLM.
+
+    This is a synchronous helper. Callers that need non-blocking behavior
+    should run it in a background thread.
+
+    Args:
+        session_id (str): The session identifier, passed to the LLM chat.
+        message (str): The message or task content to summarize from.
+
+    Returns:
+        str: The generated session name, or an empty string if generation failed.
+    """
+    # Import here to avoid a circular import: workspace.llm_shell depends on
+    # context.ctx_manager via the agent/chat history stack.
+    from topsailai.workspace.llm_shell import get_llm_chat
+
+    if not session_id or not message:
+        return ""
+
+    max_length = _get_auto_session_name_max_length()
+
+    system_prompt = (
+        "You are a naming assistant. Generate a concise session name based on "
+        "the user's content. Return only the session name, without quotes, "
+        "without markdown, and without explanation."
+    )
+    user_message = (
+        f"Generate a concise session name (maximum {max_length} characters) "
+        f"for the following content:\n\n{message}"
+    )
+
+    try:
+        llm_chat = get_llm_chat(
+            session_id="",
+            system_prompt=system_prompt,
+            message=user_message,
+            need_stdout=False,
+            need_input_message=False,
+            need_print_session=False,
+            need_print_message=False,
+        )
+        summary = llm_chat.chat(need_print=False, need_env_message=False)
+        if not summary:
+            return ""
+
+        session_name = summary.strip().strip("\"'").strip()
+        if not session_name:
+            return ""
+
+        return session_name[:max_length].strip()
+    except Exception as e:
+        logger.debug(f"generate_session_name failed for session_id={session_id}: {e}")
+        return ""
+
+def _async_update_session_name(session_id: str, message: str, session_mgr: SessionStorageBase):
+    """
+    Background worker: generate a session name and update storage.
+
+    Failures are swallowed and logged at debug level. The session manager
+    instance is reused; SQLAlchemy is configured to be thread-safe for SQLite.
+
+    Args:
+        session_id (str): The session id to rename.
+        message (str): The message or task content to summarize from.
+        session_mgr (SessionStorageBase): Session manager used to update the name.
+    """
+    try:
+        session_name = generate_session_name(session_id, message)
+        if not session_name:
+            return
+
+        # Do not overwrite an existing name that may have been set meanwhile.
+        session_data = session_mgr.get_session(session_id)
+        if session_data is None or session_data.session_name:
+            return
+
+        session_mgr.update_session_name(session_id, session_name)
+        logger.info(f"auto_rename: session_id={session_id}, session_name={session_name}")
+    except Exception as e:
+        logger.debug(f"auto_rename failed for session_id={session_id}: {e}")
+
+def create_session(session_id:str, task:str, session_name:str=None, session_mgr:SessionStorageBase=None) -> bool:
     """
     Create a new session for a specific task.
 
     Args:
         session_id (str): Unique identifier for the session.
         task (str): Description or name of the task for this session.
+        session_name (str, optional): Display name for the session. If empty
+            or None, an asynchronous LLM-based rename may be triggered.
         session_mgr (SessionStorageBase, optional): Session manager instance.
                                                    If None, a new one is created.
 
@@ -244,8 +343,20 @@ def create_session(session_id:str, task:str, session_mgr:SessionStorageBase=None
 
     # Create the session
     session_mgr.create_session(
-        SessionData(session_id=session_id, task=task)
+        SessionData(session_id=session_id, task=task, session_name=session_name)
     )
+
+    # Trigger asynchronous session name generation if no explicit name was given.
+    if not session_name and task:
+        if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_AUTO_SESSION_NAME_ENABLED", default=True):
+            try:
+                threading.Thread(
+                    target=_async_update_session_name,
+                    args=(session_id, task, session_mgr),
+                    daemon=True,
+                ).start()
+            except Exception as e:
+                logger.debug(f"create_session: failed to start auto_rename thread: {e}")
 
     return True
 

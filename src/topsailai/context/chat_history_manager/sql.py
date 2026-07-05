@@ -35,6 +35,7 @@ Function:
 
 from sqlalchemy import create_engine, Column, String, Text, DateTime, Integer, ForeignKey, PrimaryKeyConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql import func as sql_func
 from datetime import datetime, timedelta
 
@@ -123,8 +124,18 @@ class ChatHistorySQLAlchemy(ChatHistoryBase):
         super(ChatHistorySQLAlchemy, self).__init__()
         self.conn = conn
 
+        # SQLite in-memory databases are created per connection by default.
+        # Use a static pool and disable same-thread checks so the same engine
+        # can be shared across threads.
+        connect_args = {}
+        pool_kwargs = {}
+        if conn.startswith("sqlite://"):
+            connect_args["check_same_thread"] = False
+            if ":memory:" in conn:
+                pool_kwargs["poolclass"] = StaticPool
+
         # Create database engine and session factory
-        self.engine = create_engine(conn)
+        self.engine = create_engine(conn, connect_args=connect_args, **pool_kwargs)
 
         # Create all tables if they don't exist
         Base.metadata.create_all(self.engine)

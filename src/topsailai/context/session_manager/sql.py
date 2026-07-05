@@ -12,8 +12,11 @@
       - create_time, creation time of this record; default is local time;
 '''
 
+import threading
+
 from sqlalchemy import create_engine, Column, String, Text, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql import func as sql_func
 from datetime import datetime, timedelta
 
@@ -53,7 +56,6 @@ class SessionSQLAlchemy(SessionStorageBase):
         engine: SQLAlchemy engine instance.
         SessionLocal: Session factory for database operations.
     """
-
     def __init__(self, conn:str):
         """
         Initialize the SessionSQLAlchemy instance with the given database connection string.
@@ -62,47 +64,68 @@ class SessionSQLAlchemy(SessionStorageBase):
             conn (str): Database connection string.
         """
         super(SessionSQLAlchemy, self).__init__()
-        self.engine = create_engine(conn)
+        # SQLite in-memory databases are created per connection by default.
+        # Use a static pool and disable same-thread checks so the same engine
+        # can be shared across threads.
+        connect_args = {}
+        pool_kwargs = {}
+        if conn.startswith("sqlite://"):
+            connect_args["check_same_thread"] = False
+            if ":memory:" in conn:
+                pool_kwargs["poolclass"] = StaticPool
+        self.engine = create_engine(conn, connect_args=connect_args, **pool_kwargs)
         Base.metadata.create_all(self.engine)
         self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
 
         self.chat_history = ChatHistorySQLAlchemy(conn)
+        self.conn = conn
+        self._lock = threading.Lock()
 
-    def create_session(self, session_data:SessionData):
+    def create_session(self, session_data:SessionData) -> bool:
         """
         Create a new session in the storage and keep only the most recent 100 sessions.
 
         Args:
             session_data (SessionData): The session data to create.
-        """
-        db_session = self.SessionLocal()
-        try:
-            new_session = Session(
-                session_id=session_data.session_id,
-                session_name=session_data.session_name,
-                task=session_data.task,
-                create_time=session_data.create_time or datetime.now()
-            )
-            db_session.add(new_session)
-            db_session.commit()
-            logger.info(f"new session: session_id={session_data.session_id}, task={session_data.task}")
 
-            # Keep only the most recent 100 sessions
-            total_count = db_session.query(Session).count()
-            if total_count > 100:
-                # Delete the oldest sessions to keep only 100
-                sessions_to_delete = db_session.query(Session).order_by(Session.create_time.asc()).limit(total_count - 100).all()
-                for session in sessions_to_delete:
-                    db_session.delete(session)
-                    self.chat_history.del_messages(session_id=session.session_id)
+        Returns:
+            bool: True if the session was created, False if it already exists.
+        """
+        with self._lock:
+            db_session = self.SessionLocal()
+            try:
+                # Avoid duplicate session_id
+                if db_session.query(Session).filter(Session.session_id == session_data.session_id).first():
+                    logger.warning(f"session already exists: session_id={session_data.session_id}")
+                    return False
+
+                new_session = Session(
+                    session_id=session_data.session_id,
+                    session_name=session_data.session_name,
+                    task=session_data.task,
+                    create_time=session_data.create_time or datetime.now()
+                )
+                db_session.add(new_session)
                 db_session.commit()
-                logger.info(f"clear oldest sessions")
-        except Exception as e:
-            db_session.rollback()
-            logger.error(f"create_session failed: {e}")
-            raise e
-        finally:
-            db_session.close()
+                logger.info(f"new session: session_id={session_data.session_id}, task={session_data.task}")
+
+                # Keep only the most recent 100 sessions
+                total_count = db_session.query(Session).count()
+                if total_count and total_count > 100:
+                    # Delete the oldest sessions to keep only 100
+                    sessions_to_delete = db_session.query(Session).order_by(Session.create_time.asc()).limit(total_count - 100).all()
+                    for session in sessions_to_delete:
+                        db_session.delete(session)
+                        self.chat_history.del_messages(session_id=session.session_id)
+                    db_session.commit()
+                    logger.info(f"clear oldest sessions")
+                return True
+            except Exception as e:
+                db_session.rollback()
+                logger.error(f"create_session failed: {e}")
+                raise e
+            finally:
+                db_session.close()
 
     def list_sessions(self, offset: int = None, limit: int = None) -> list[SessionData]:
         """
@@ -146,6 +169,37 @@ class SessionSQLAlchemy(SessionStorageBase):
         finally:
             db_session.close()
 
+    def get_session(self, session_id: str) -> SessionData | None:
+        """
+        Retrieve a single session by its ID.
+
+        Args:
+            session_id (str): The session id to retrieve.
+
+        Returns:
+            SessionData | None: The session data if found, None otherwise.
+        """
+        db_session = self.SessionLocal()
+        try:
+            session = db_session.query(Session).filter(Session.session_id == session_id).first()
+            if not session:
+                return None
+
+            session_data = SessionData(
+                session_id=session.session_id,
+                task=session.task
+            )
+            session_data.session_name = session.session_name
+            session_data.create_time = session.create_time
+            return session_data
+        except Exception as e:
+            db_session.rollback()
+            logger.error(f"get_session failed: session_id={session_id}, {e}")
+            raise e
+        finally:
+            db_session.close()
+
+
     def exists_session(self, session_id) -> bool:
         """
         Check if a session with the given session_id exists.
@@ -175,22 +229,23 @@ class SessionSQLAlchemy(SessionStorageBase):
         """ get messages by chat_history_manager """
         return self.chat_history.get_messages_by_session(session_id)
 
-    def delete_session(self, session_id: str):
+    def delete_session(self, session_id: str) -> bool:
         """
         Delete a session and its associated chat history.
 
         Args:
             session_id (str): The session id to delete.
 
-        Raises:
-            Exception: If the session does not exist or deletion fails.
+        Returns:
+            bool: True if the session was deleted, False if it did not exist.
         """
         db_session = self.SessionLocal()
         try:
             # Check if session exists
             session = db_session.query(Session).filter(Session.session_id == session_id).first()
             if not session:
-                raise Exception(f"Session {session_id} does not exist")
+                logger.warning(f"delete_session: session not found: session_id={session_id}")
+                return False
 
             # Delete the session
             db_session.delete(session)
@@ -200,6 +255,7 @@ class SessionSQLAlchemy(SessionStorageBase):
 
             db_session.commit()
             logger.info(f"Session deleted: session_id={session_id}")
+            return True
 
         except Exception as e:
             db_session.rollback()
@@ -284,4 +340,3 @@ class SessionSQLAlchemy(SessionStorageBase):
             return False
         finally:
             db_session.close()
-

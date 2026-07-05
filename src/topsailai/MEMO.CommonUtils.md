@@ -31,6 +31,31 @@ Examples:
 - `TOPSAILAI_PWD` (alias: `TOPSAILAI_PROJECT_PWD`)
 - `TOPSAILAI_PROJECT_WORKSPACE`
 
+
+## MEMO: Environment-Variable Boolean Check Convention
+
+**Date:** 2026-07-05
+**File:** `/TopsailAI/src/topsailai/utils/env_tool.py`
+
+### Conclusion
+To check whether an environment variable represents a truthy/enabled value, use `env_tool.EnvReaderInstance.check_bool(name, default=None)`.
+
+### What it does
+`EnvironmentReader.check_bool()` reads the named environment variable and returns `True` only when its normalized value is one of: `1`, `true`, `yes`, `on`, `enabled` (case-insensitive). Any other value, including `None`, empty string, or `0`, is treated as `False`.
+
+### Example
+```python
+from topsailai.utils import env_tool
+
+if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_FEATURE_X"):
+    ...
+```
+
+### Note for maintainers
+- Prefer `EnvReaderInstance.check_bool()` over ad-hoc string comparisons such as `os.getenv("X") == "1"` or `os.getenv("X", "0") != "0"`.
+- The underlying truthy set is centralized in `utils/env_tool.py` (`_TRUTHY_VALUES`). If you need to add a new accepted spelling, update it there rather than introducing a one-off check.
+- For non-boolean environment variables, continue using `EnvReaderInstance.get()` or `os.getenv()` as appropriate.
+
 ## MEMO: Logger Identifier Information
 
 **Date:** 2026-06-29

@@ -129,6 +129,32 @@ In `PromptBase.new_session()`, `context_message` and `user_message` are appended
 2. `llm_shell` sets `KEY_SESSION_ID`, but `agent_shell` does NOT set `KEY_SESSION_ID`. `agent_shell` intentionally does **not** set `thread_local KEY_SESSION_ID`, so `PromptBase.new_session()` → `append_message()` → `call_hooks_ctx_history()` is a no-op for persistence in the agent path.
 3. `PromptBase.new_session()` is only for initializing in-memory `messages`; it is unrelated to persistent session storage. There is no "Session-ID timing gap". Persistent storage is handled later by workspace-layer hooks that already have `session_id`.
 
+## MEMO: Database-Management Purity Rule
+
+**Date:** 2026-07-05
+**Files:**
+- `/TopsailAI/src/topsailai/context/chat_history_manager/sql.py`
+- `/TopsailAI/src/topsailai/context/session_manager/sql.py`
+
+### Conclusion
+Methods tightly related to database management must remain pure management layers and must not contain business logic.
+
+### What this means
+- `context/chat_history_manager/sql.py` and `context/session_manager/sql.py` are responsible only for storing, retrieving, and deleting records.
+- They should not make agent-level decisions, interpret message semantics, trigger side effects such as LLM calls, or encode workflow rules.
+- Business logic — including summarization, context pruning, task interpretation, and agent orchestration — belongs in higher layers such as `workspace/context/`, `ai_base/`, or dedicated manager wrappers.
+
+### Examples of concerns to keep out
+- Deciding whether a message should be archived or summarized.
+- Interpreting `step_name` values to drive behavior.
+- Calling hooks, tools, or LLMs.
+- Enforcing application-level invariants that are not required for data integrity.
+
+### Note for maintainers
+- When adding a new method to `ChatHistorySQLAlchemy` or `SessionSQLAlchemy`, ask whether it is purely about data management. If it requires domain knowledge beyond the schema, move it to a higher-level module.
+- Keep SQL managers thin: create, read, update, delete, list, and simple cleanup are acceptable; everything else should be layered above.
+
+
 ### Coding Conventions for Context Runtime
 
 The context runtime classes (`ContextRuntimeData`, `ContextRuntimeAgent2LLM`, and their base `ContextRuntimeBase`) manage two message stores:

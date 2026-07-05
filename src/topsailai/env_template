@@ -27,6 +27,19 @@ TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_SOURCE=file
 TOPSAILAI_AGENT2LLM_INJECT_MESSAGE_FILE=
 
 # =============================================================================
+# Session Auto-Rename
+# =============================================================================
+
+# Master switch for automatically generating a session name when a new session
+# is created without an explicit name. The name is summarized from the initial
+# task/message by an LLM call running in a background thread. Failures are
+# silently ignored. Set to 0 to disable.
+TOPSAILAI_AUTO_SESSION_NAME_ENABLED=1
+
+# Maximum length in characters for auto-generated session names. Default is 30.
+TOPSAILAI_AUTO_SESSION_NAME_MAX_LENGTH=30
+
+# =============================================================================
 # Duplicate Tool Call Detection
 # =============================================================================
 

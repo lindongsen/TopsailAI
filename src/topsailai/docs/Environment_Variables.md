@@ -48,6 +48,8 @@ These variables define the agent's working environment and project access scope.
 | `TOPSAILAI_PROJECT_HISTORY_MAX_SIZE` | `1048576` | Maximum size in bytes of the project history JSONL file (`.project_history.jsonl`) before rotation. Default is `1048576` (1 MiB). Values of `0` or below disable size-based rotation. |
 | `TOPSAILAI_PROJECT_HISTORY_MAX_BACKUP` | `1` | Maximum number of project history backup files to keep. Default is `1`. Values below `0` are treated as `0` (no backups kept). |
 | `TOPSAILAI_DISABLE_ROOT_LOGGER_CONFIG` | `"0"` | When set to `1`, importing `topsailai.logger` will not automatically configure the Python root logger. Useful when integrating with external frameworks that manage their own root logger. |
+| `TOPSAILAI_AUTO_SESSION_NAME_ENABLED` | `1` | When `1`, creating a new session without an explicit `session_name` triggers an asynchronous LLM summarization that generates a session name from the initial task/message. Failures are silently ignored. Set to `0` to disable. |
+| `TOPSAILAI_AUTO_SESSION_NAME_MAX_LENGTH` | `30` | Maximum length in characters for auto-generated session names. |
 
 ## OpenAI Configuration
 | Variable | Default | Description |
@@ -227,7 +229,7 @@ These variables configure the optional tool-call approval gate. When enabled, ea
 | `TOPSAILAI_PLUGIN_SKILLS` | `""` | Plugin skill directories separated by `;`. Supports searching folders up to `TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH`. |
 | `TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH` | `3` | Maximum depth when searching for plugin skills. |
 | `TOPSAILAI_DISABLED_SKILLS` | `""` | Skills to disable. |
-| `TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS` | `""` | Skills whose overview should be loaded into the prompt. |
+| `TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS` | `""` | Skills whose overview should be loaded into the prompt. Can be a `;`-separated list of skill names or `*` for all. |
 | `TOPSAILAI_SESSION_LOCK_ON_SKILLS` | `""` | Lock session before calling these skills. |
 | `TOPSAILAI_SESSION_REFRESH_ON_SKILLS` | `""` | Refresh session after calling these skills. |
 | `TOPSAILAI_CALL_SKILL_TIMEOUT_MAP` | `"ai-community=86400"` | Skill call timeout map. Format: `skill_folder=timeout` separated by `;`. |

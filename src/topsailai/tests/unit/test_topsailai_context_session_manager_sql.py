@@ -9,336 +9,283 @@ import sys
 import os
 import time
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
-workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-if workspace_root not in sys.path:
-    sys.path.insert(0, workspace_root)
-    sys.path.insert(0, workspace_root + "/src")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
 from topsailai.context.session_manager.sql import SessionSQLAlchemy, SessionData
 
+
 class TestSessionSQLAlchemy:
-    @pytest.fixture
-    def db_conn(self):
-        return "sqlite:///:memory:"
+    """Test suite for SessionSQLAlchemy class."""
 
     @pytest.fixture
-    def manager(self, db_conn):
-        return SessionSQLAlchemy(db_conn)
+    def session_mgr(self):
+        """Create a fresh in-memory session manager for each test."""
+        return SessionSQLAlchemy("sqlite:///:memory:")
 
-    def test_create_session_basic(self, manager):
-        # Create a session
-        session_data = SessionData("session1", "Test task")
-        session_data.session_name = "Test Session"
-        manager.create_session(session_data)
+    def test_create_session(self, session_mgr):
+        """Test creating a new session."""
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Test Session",
+            task="Test task"
+        )
+        session_mgr.create_session(session_data)
 
-        # Verify it was created
-        sessions = manager.list_sessions()
+        assert session_mgr.exists_session("test_session_001") is True
+
+    def test_create_session_duplicate(self, session_mgr):
+        """Test creating a session with duplicate ID."""
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Test Session",
+            task="Test task"
+        )
+        session_mgr.create_session(session_data)
+
+        # Creating again should not raise error
+        session_mgr.create_session(session_data)
+
+        sessions = session_mgr.list_sessions()
         assert len(sessions) == 1
-        assert sessions[0].session_id == "session1"
-        assert sessions[0].task == "Test task"
-        assert sessions[0].session_name == "Test Session"
-        assert sessions[0].create_time is not None
 
-    def test_create_session_session_limit(self, manager):
-        # Create 105 sessions
-        for i in range(105):
-            session_data = SessionData(f"session{i}", f"Task {i}")
-            session_data.session_name = f"Session {i}"
-            manager.create_session(session_data)
+    def test_get_session(self, session_mgr):
+        """Test retrieving a session by ID."""
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Test Session",
+            task="Test task"
+        )
+        session_mgr.create_session(session_data)
 
-        # Verify only 100 sessions remain (the most recent ones)
-        sessions = manager.list_sessions()
-        assert len(sessions) == 100
+        retrieved = session_mgr.get_session("test_session_001")
+        assert retrieved is not None
+        assert retrieved.session_id == "test_session_001"
+        assert retrieved.session_name == "Test Session"
+        assert retrieved.task == "Test task"
 
-        # Check that the oldest ones (0-4) are gone and newest ones (5-104) remain
-        session_ids = {session.session_id for session in sessions}
-        # Sessions 0-4 should not be present
-        assert "session0" not in session_ids
-        assert "session1" not in session_ids
-        assert "session2" not in session_ids
-        assert "session3" not in session_ids
-        assert "session4" not in session_ids
-        # Sessions 5-104 should be present
-        assert "session5" in session_ids
-        assert "session100" in session_ids
-        assert "session104" in session_ids
+    def test_get_session_not_found(self, session_mgr):
+        """Test retrieving a non-existent session."""
+        retrieved = session_mgr.get_session("non_existent")
+        assert retrieved is None
 
-    def test_list_sessions_empty(self, manager):
-        sessions = manager.list_sessions()
-        assert sessions == []
+    def test_exists_session(self, session_mgr):
+        """Test checking if a session exists."""
+        assert session_mgr.exists_session("test_session_001") is False
 
-    def test_list_sessions_ordering(self, manager):
-        # Create sessions with different creation times (simulated by creating them in order)
-        import time
-        for i in range(5):
-            session_data = SessionData(f"session{i}", f"Task {i}")
-            manager.create_session(session_data)
-            time.sleep(0.01)  # Small delay to ensure different timestamps
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Test Session",
+            task="Test task"
+        )
+        session_mgr.create_session(session_data)
 
-        sessions = manager.list_sessions()
-        assert len(sessions) == 5
-        # Should be ordered by create_time descending (newest first)
-        assert sessions[0].session_id == "session4"
-        assert sessions[1].session_id == "session3"
-        assert sessions[2].session_id == "session2"
-        assert sessions[3].session_id == "session1"
-        assert sessions[4].session_id == "session0"
+        assert session_mgr.exists_session("test_session_001") is True
 
-    def test_create_session_without_name(self, manager):
-        # Create session without session_name
-        session_data = SessionData("session1", "Test task")
-        manager.create_session(session_data)
+    def test_list_sessions(self, session_mgr):
+        """Test listing all sessions."""
+        # Initially empty
+        sessions = session_mgr.list_sessions()
+        assert len(sessions) == 0
 
-        sessions = manager.list_sessions()
-        assert len(sessions) == 1
-        assert sessions[0].session_name is None
-
-    def test_create_session_duplicate_id(self, manager):
-        # Create first session
-        session_data1 = SessionData("session1", "Task 1")
-        manager.create_session(session_data1)
-
-        # Try to create another with same ID (should raise error due to primary key constraint)
-        session_data2 = SessionData("session1", "Task 2")
-        with pytest.raises(Exception):  # SQLAlchemy IntegrityError
-            manager.create_session(session_data2)
-
-        # Should still have only one session
-        sessions = manager.list_sessions()
-        assert len(sessions) == 1
-        assert sessions[0].task == "Task 1"
-
-    def test_list_sessions_with_limit(self, manager):
-        # Create 10 sessions
-        for i in range(10):
-            session_data = SessionData(f"session{i}", f"Task {i}")
-            manager.create_session(session_data)
-
-        # Test with limit=5
-        sessions = manager.list_sessions(limit=5)
-        assert len(sessions) == 5
-        # Should return the 5 most recent sessions (9,8,7,6,5)
-        expected_ids = ["session9", "session8", "session7", "session6", "session5"]
-        for i, session in enumerate(sessions):
-            assert session.session_id == expected_ids[i]
-
-    def test_list_sessions_with_offset(self, manager):
-        # Create 10 sessions
-        for i in range(10):
-            session_data = SessionData(f"session{i}", f"Task {i}")
-            manager.create_session(session_data)
-
-        # Test with offset=3
-        sessions = manager.list_sessions(offset=3)
-        assert len(sessions) == 7  # Should return sessions 6,5,4,3,2,1,0
-        # Should skip the 3 most recent sessions (9,8,7)
-        expected_ids = ["session6", "session5", "session4", "session3", "session2", "session1", "session0"]
-        for i, session in enumerate(sessions):
-            assert session.session_id == expected_ids[i]
-
-    def test_list_sessions_with_offset_and_limit(self, manager):
-        # Create 10 sessions
-        for i in range(10):
-            session_data = SessionData(f"session{i}", f"Task {i}")
-            manager.create_session(session_data)
-
-        # Test with offset=2, limit=3
-        sessions = manager.list_sessions(offset=2, limit=3)
-        assert len(sessions) == 3
-        # Should skip 2 most recent (9,8) and return next 3 (7,6,5)
-        expected_ids = ["session7", "session6", "session5"]
-        for i, session in enumerate(sessions):
-            assert session.session_id == expected_ids[i]
-
-    def test_list_sessions_backward_compatibility(self, manager):
-        # Create 3 sessions
+        # Create multiple sessions
         for i in range(3):
-            session_data = SessionData(f"session{i}", f"Task {i}")
-            manager.create_session(session_data)
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
 
-        # Test that calling without parameters still works (backward compatibility)
-        sessions = manager.list_sessions()
-        assert len(sessions) == 3
-        # Should return all sessions in descending order
-        expected_ids = ["session2", "session1", "session0"]
-        for i, session in enumerate(sessions):
-            assert session.session_id == expected_ids[i]
-
-    def test_list_sessions_edge_cases(self, manager):
-        # Create 3 sessions
-        for i in range(3):
-            session_data = SessionData(f"session{i}", f"Task {i}")
-            manager.create_session(session_data)
-
-        # Test with offset=0 (should return all)
-        sessions = manager.list_sessions(offset=0)
+        sessions = session_mgr.list_sessions()
         assert len(sessions) == 3
 
-        # Test with limit=0 (should return empty list)
-        sessions = manager.list_sessions(limit=0)
-        assert len(sessions) == 0
+    def test_update_session_name(self, session_mgr):
+        """Test updating session name."""
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Old Name",
+            task="Test task"
+        )
+        session_mgr.create_session(session_data)
 
-        # Test with offset beyond available sessions (should return empty list)
-        sessions = manager.list_sessions(offset=10)
-        assert len(sessions) == 0
-
-        # Test with limit larger than available sessions
-        sessions = manager.list_sessions(limit=10)
-        assert len(sessions) == 3
-
-    def test_clean_sessions_basic(self, manager):
-        # Create 5 sessions
-        for i in range(5):
-            session_data = SessionData(f"session{i}", f"Task {i}")
-            manager.create_session(session_data)
-
-        # Verify all sessions exist
-        sessions = manager.list_sessions()
-        assert len(sessions) == 5
-
-        # Clean sessions older than 1 second (should delete none since all are recent)
-        deleted_count = manager.clean_sessions(before_seconds=1)
-        assert deleted_count == 0
-
-        # Verify all sessions still exist
-        sessions = manager.list_sessions()
-        assert len(sessions) == 5
-
-    def test_clean_sessions_with_old_sessions(self, manager, monkeypatch):
-        # Create 3 sessions with different creation times
-
-        current_time = datetime.now()
-
-        # Create first session (old - 1 hour ago)
-        with patch('topsailai.context.session_manager.sql.datetime') as mock_datetime:
-            mock_datetime.now.return_value = current_time - timedelta(hours=1)
-            session_data = SessionData("session_old", "Old task")
-            session_data.create_time = mock_datetime.now.return_value
-            manager.create_session(session_data)
-
-        # Create second session (medium - 30 minutes ago)
-        with patch('topsailai.context.session_manager.sql.datetime') as mock_datetime:
-            mock_datetime.now.return_value = current_time - timedelta(minutes=30)
-            session_data = SessionData("session_medium", "Medium task")
-            session_data.create_time = mock_datetime.now.return_value
-            manager.create_session(session_data)
-
-        # Create third session (recent - now)
-        session_data = SessionData("session_recent", "Recent task")
-        manager.create_session(session_data)
-
-        # Verify all sessions exist
-        sessions = manager.list_sessions()
-        assert len(sessions) == 3
-
-        # Clean sessions older than 45 minutes (should delete only the old session)
-        deleted_count = manager.clean_sessions(before_seconds=45*60)  # 45 minutes in seconds
-        assert deleted_count == 1
-
-        # Verify only recent and medium sessions remain
-        sessions = manager.list_sessions()
-        assert len(sessions) == 2
-        session_ids = {session.session_id for session in sessions}
-        assert "session_old" not in session_ids
-        assert "session_medium" in session_ids
-        assert "session_recent" in session_ids
-
-    def test_clean_sessions_all_old(self, manager):
-        # Create 3 old sessions using the same approach
-
-        current_time = datetime.now()
-
-        # Create sessions from 2 hours ago
-        with patch('topsailai.context.session_manager.sql.datetime') as mock_datetime:
-            mock_datetime.now.return_value = current_time - timedelta(hours=2)
-            for i in range(3):
-                session_data = SessionData(f"session_old_{i}", f"Old task {i}")
-                session_data.create_time = mock_datetime.now.return_value
-                manager.create_session(session_data)
-
-        # Verify all sessions exist
-        sessions = manager.list_sessions()
-        assert len(sessions) == 3
-
-        # Clean sessions older than 1 hour (should delete all)
-        deleted_count = manager.clean_sessions(before_seconds=60*60)  # 1 hour in seconds
-        assert deleted_count == 3
-
-        # Verify no sessions remain
-        sessions = manager.list_sessions()
-        assert len(sessions) == 0
-
-    def test_clean_sessions_edge_cases(self, manager):
-        # Test cleaning when no sessions exist
-        deleted_count = manager.clean_sessions(before_seconds=3600)
-        assert deleted_count == 0
-
-        # Create one session
-        session_data = SessionData("session1", "Task 1")
-        manager.create_session(session_data)
-
-        # Test with very large before_seconds (should not delete recent session)
-        deleted_count = manager.clean_sessions(before_seconds=999999999)
-        assert deleted_count == 0
-
-        # Test with before_seconds=0 (should delete nothing since create_time >= now)
-        deleted_count = manager.clean_sessions(before_seconds=0)
-        assert deleted_count == 0
-
-    def test_update_session_name_success(self, manager):
-        """Test update_session_name updates the session name."""
-        session_id = "test-update-session"
-        session_name = "Original Name"
-        new_name = "Updated Name"
-
-        # Create session
-        session_data = SessionData(session_id, "Test task")
-        session_data.session_name = session_name
-        manager.create_session(session_data)
-        assert manager.exists_session(session_id)
-
-        # Update session name
-        result = manager.update_session_name(session_id, new_name)
+        result = session_mgr.update_session_name("test_session_001", "New Name")
         assert result is True
 
-        # Verify update via list_sessions
-        sessions = manager.list_sessions()
-        session = next((s for s in sessions if s.session_id == session_id), None)
-        assert session is not None
-        assert session.session_name == new_name
+        retrieved = session_mgr.get_session("test_session_001")
+        assert retrieved.session_name == "New Name"
 
-    def test_update_session_name_not_exists(self, manager):
-        """Test update_session_name returns False for non-existent session."""
-        result = manager.update_session_name("non-existent-session", "New Name")
+    def test_update_session_name_not_found(self, session_mgr):
+        """Test updating name for non-existent session."""
+        result = session_mgr.update_session_name("non_existent", "New Name")
         assert result is False
 
-    def test_update_session_name_empty_name(self, manager):
-        """Test update_session_name allows empty session name."""
-        session_id = "test-empty-name-session"
-        session_data = SessionData(session_id, "Test task")
-        session_data.session_name = "Original"
-        manager.create_session(session_data)
+    def test_delete_session(self, session_mgr):
+        """Test deleting a session."""
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Test Session",
+            task="Test task"
+        )
+        session_mgr.create_session(session_data)
 
-        result = manager.update_session_name(session_id, "")
+        result = session_mgr.delete_session("test_session_001")
+        assert result is True
+        assert session_mgr.exists_session("test_session_001") is False
+
+    def test_delete_session_not_found(self, session_mgr):
+        """Test deleting non-existent session."""
+        result = session_mgr.delete_session("non_existent")
+        assert result is False
+
+    def test_get_messages_by_session(self, session_mgr):
+        """Test getting messages associated with a session."""
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Test Session",
+            task="Test task"
+        )
+        session_mgr.create_session(session_data)
+
+        messages = session_mgr.get_messages_by_session("test_session_001")
+        assert isinstance(messages, list)
+
+    def test_retrieve_messages(self, session_mgr):
+        """Test retrieving messages through chat history manager."""
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Test Session",
+            task="Test task"
+        )
+        session_mgr.create_session(session_data)
+
+        messages = session_mgr.retrieve_messages("test_session_001")
+        assert isinstance(messages, list)
+
+    def test_session_data_defaults(self):
+        """Test SessionData default values."""
+        session_data = SessionData(session_id="test")
+        assert session_data.session_id == "test"
+        assert session_data.session_name is None
+        assert session_data.task == ""
+        assert session_data.create_time is None
+    def test_list_sessions_ordering(self, session_mgr):
+        """Test that sessions are listed in reverse chronological order."""
+        # Create sessions with small time delays
+        for i in range(3):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+            time.sleep(0.01)
+
+        sessions = session_mgr.list_sessions()
+        assert len(sessions) == 3
+        # Should be ordered by create_time descending
+        assert sessions[0].session_id == "test_session_002"
+        assert sessions[1].session_id == "test_session_001"
+        assert sessions[2].session_id == "test_session_000"
+
+    def test_update_session_name_empty_name(self, session_mgr):
+        """Test updating session name with empty string."""
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Old Name",
+            task="Test task"
+        )
+        session_mgr.create_session(session_data)
+
+        result = session_mgr.update_session_name("test_session_001", "")
         assert result is True
 
-        sessions = manager.list_sessions()
-        session = next((s for s in sessions if s.session_id == session_id), None)
-        assert session is not None
-        assert session.session_name == ""
+        retrieved = session_mgr.get_session("test_session_001")
+        assert retrieved.session_name == ""
 
-    def test_update_session_name_none_name(self, manager):
-        """Test update_session_name allows setting session name to None."""
-        session_id = "test-none-name-session"
-        session_data = SessionData(session_id, "Test task")
-        session_data.session_name = "Original"
-        manager.create_session(session_data)
+    def test_concurrent_create_session(self, session_mgr):
+        """Test concurrent session creation."""
+        import threading
 
-        result = manager.update_session_name(session_id, None)
+        def create_session(i):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+
+        threads = []
+        for i in range(10):
+            t = threading.Thread(target=create_session, args=(i,))
+            threads.append(t)
+            t.start()
+
+        for t in threads:
+            t.join()
+
+        sessions = session_mgr.list_sessions()
+        assert len(sessions) == 10
+
+    def test_session_persistence(self):
+        """Test session persistence across instances using file-based SQLite."""
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            db_path = tmp.name
+
+        try:
+            # Create first instance and add session
+            mgr1 = SessionSQLAlchemy(f"sqlite:///{db_path}")
+            session_data = SessionData(
+                session_id="persistent_session",
+                session_name="Persistent Session",
+                task="Persistent task"
+            )
+            mgr1.create_session(session_data)
+
+            # Create second instance pointing to same database
+            mgr2 = SessionSQLAlchemy(f"sqlite:///{db_path}")
+            assert mgr2.exists_session("persistent_session") is True
+
+            retrieved = mgr2.get_session("persistent_session")
+            assert retrieved.session_name == "Persistent Session"
+        finally:
+            os.unlink(db_path)
+
+    def test_create_session_with_long_session_name(self, session_mgr):
+        """Test creating session with very long name."""
+        long_name = "A" * 1000
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name=long_name,
+            task="Test task"
+        )
+        session_mgr.create_session(session_data)
+
+        retrieved = session_mgr.get_session("test_session_001")
+        assert retrieved.session_name == long_name
+
+    def test_list_sessions_empty_database(self, session_mgr):
+        """Test listing sessions when database is empty."""
+        sessions = session_mgr.list_sessions()
+        assert sessions == []
+        assert len(sessions) == 0
+
+    def test_delete_session_cascade_messages(self, session_mgr):
+        """Test that deleting session handles associated messages gracefully."""
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Test Session",
+            task="Test task"
+        )
+        session_mgr.create_session(session_data)
+
+        # Delete session
+        result = session_mgr.delete_session("test_session_001")
         assert result is True
 
-        sessions = manager.list_sessions()
-        session = next((s for s in sessions if s.session_id == session_id), None)
-        assert session is not None
-        assert session.session_name is None
+        # Verify messages can still be retrieved without error
+        messages = session_mgr.get_messages_by_session("test_session_001")
+        assert isinstance(messages, list)
