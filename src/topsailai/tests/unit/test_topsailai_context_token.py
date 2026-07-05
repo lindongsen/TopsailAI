@@ -296,6 +296,7 @@ class TestTokenStatFirstByte(unittest.TestCase):
         self.assertIn("first_byte_max_ms", logged_msg)
         self.assertIn("first_byte_min_ms", logged_msg)
         self.assertIn("150.0", logged_msg)
+        self.assertIn("'first_byte_avg_ms': 150.0", logged_msg)
         stat.flag_running = False
 
     def test_output_token_stat_first_byte_none_when_empty(self):

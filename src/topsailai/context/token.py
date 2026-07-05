@@ -226,7 +226,7 @@ class TokenStat(threading.Thread):
                 total_text_len=self.total_text_len,
                 total_tokens=self.total_count,
                 first_byte_avg_ms=(
-                    self.first_byte_sum_ms / self.first_byte_count
+                    round(self.first_byte_sum_ms / self.first_byte_count, 3)
                     if self.first_byte_count > 0 else None
                 ),
                 first_byte_max_ms=self.first_byte_max_ms,
