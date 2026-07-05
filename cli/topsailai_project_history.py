@@ -2,9 +2,9 @@
 """Display recent project history entries from TOPSAILAI_HOME.
 
 Reads ``.project_history.jsonl`` in the resolved TOPSAILAI_HOME directory
-and prints the latest *N* records as a formatted table. Sessions that are
-still running (their session stdout PID is alive in ``workspace/task/``)
-are highlighted in green.
+and prints the latest *N* records as a formatted table or as JSON. Sessions
+that are still running (their session stdout PID is alive in
+``workspace/task/``) are highlighted in the table view.
 """
 
 from __future__ import annotations
@@ -41,6 +41,11 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         type=str,
         default=None,
         help="Override TOPSAILAI_HOME directory.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output entries as JSON instead of a formatted table.",
     )
     return parser.parse_args(argv)
 
@@ -341,6 +346,21 @@ def _print_table(entries: List[Dict[str, Any]], home: str) -> None:
     )
 
 
+def _print_json(entries: List[Dict[str, Any]], home: str) -> None:
+    """Print project history entries as JSON with running status."""
+    output: List[Dict[str, Any]] = []
+    for entry in entries:
+        record = dict(entry)
+        raw_session = record.get("session_id")
+        recorded_pid = record.get("pid")
+        is_running = False
+        if raw_session is not None:
+            is_running = _is_session_running(home, str(raw_session), recorded_pid)
+        record["is_running"] = is_running
+        output.append(record)
+    print(json.dumps(output, ensure_ascii=False, indent=2))
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """Entry point for ``topsailai_project_history``."""
     args = _parse_args(argv)
@@ -354,7 +374,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         home = get_topsailai_home()
 
     entries = _load_entries(home, args.limit)
-    _print_table(entries, home)
+    if args.json:
+        _print_json(entries, home)
+    else:
+        _print_table(entries, home)
     return 0
 
 

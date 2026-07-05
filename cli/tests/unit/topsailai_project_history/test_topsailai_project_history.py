@@ -22,6 +22,7 @@ class TestParseArgs:
         args = ph._parse_args([])
         assert args.limit == ph.DEFAULT_LIMIT
         assert args.home is None
+        assert args.json is False
 
     def test_custom_limit(self):
         args = ph._parse_args(["--limit", "5"])
@@ -34,6 +35,10 @@ class TestParseArgs:
     def test_custom_home(self):
         args = ph._parse_args(["--home", "/tmp/test-home"])
         assert args.home == "/tmp/test-home"
+
+    def test_json_flag(self):
+        args = ph._parse_args(["--json"])
+        assert args.json is True
 
 
 class TestNormalizeTimestamp:
@@ -306,6 +311,46 @@ class TestPrintTable:
         assert "s1" in captured.out
 
 
+class TestPrintJson:
+    def test_empty_entries(self, capsys):
+        ph._print_json([], str(Path("/tmp")))
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "[]"
+
+    def test_outputs_entries_with_running_status(self, tmp_path: Path, capsys):
+        task_dir = tmp_path / ph.TASK_SUBDIR
+        task_dir.mkdir(parents=True)
+        (task_dir / f"s1.{os.getpid()}.session.stdout").write_text("")
+
+        entries = [
+            {"ts": "2024-03-09T12:00:00+0800", "session_id": "s1", "pid": os.getpid(), "project_workspace": "/w1", "pwd": "/w1/p1"},
+            {"ts": "2024-03-10T12:00:00+0800", "session_id": "s2", "project_workspace": "/w2", "pwd": "/w2/p2"},
+        ]
+        ph._print_json(entries, str(tmp_path))
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert len(data) == 2
+        assert data[0]["session_id"] == "s1"
+        assert data[0]["is_running"] is True
+        assert data[1]["session_id"] == "s2"
+        assert data[1]["is_running"] is False
+
+    def test_temp_session_running_status(self, tmp_path: Path, capsys):
+        task_dir = tmp_path / ph.TASK_SUBDIR
+        task_dir.mkdir(parents=True)
+        (task_dir / f"topsailai.{os.getpid()}.session.stdout").write_text("")
+
+        entries = [
+            {"ts": "2024-03-09T12:00:00+0800", "session_id": "topsailai", "pid": os.getpid(), "project_workspace": "/w1", "pwd": "/w1/p1"},
+        ]
+        ph._print_json(entries, str(tmp_path))
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert len(data) == 1
+        assert data[0]["session_id"] == "topsailai"
+        assert data[0]["is_running"] is True
+
+
 class TestMain:
     def test_main_with_entries(self, tmp_path: Path, capsys):
         filepath = tmp_path / ph.HISTORY_FILENAME
@@ -342,3 +387,22 @@ class TestMain:
         captured = capsys.readouterr()
         assert code == 0
         assert "s1" in captured.out
+
+    def test_main_json_output(self, tmp_path: Path, capsys):
+        filepath = tmp_path / ph.HISTORY_FILENAME
+        entry = {"ts": 1709913600000, "session_id": "s1", "project_workspace": "/w1", "pwd": "/w1/p1"}
+        filepath.write_text(json.dumps(entry) + "\n")
+
+        code = ph.main(["--home", str(tmp_path), "--json", "--limit", "1"])
+        captured = capsys.readouterr()
+        assert code == 0
+        data = json.loads(captured.out)
+        assert len(data) == 1
+        assert data[0]["session_id"] == "s1"
+        assert "is_running" in data[0]
+
+    def test_main_json_empty(self, tmp_path: Path, capsys):
+        code = ph.main(["--home", str(tmp_path), "--json"])
+        captured = capsys.readouterr()
+        assert code == 0
+        assert captured.out.strip() == "[]"
