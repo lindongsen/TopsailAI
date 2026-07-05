@@ -263,6 +263,47 @@ The top pane shows the streaming log. The bottom pane is a fixed input bar where
 | `/help` | Show the list of available streaming commands. |
 | `q` or `quit` | Leave runtime scope and return to the file list. |
 
+## `topsailai.py` Workspace Task List
+
+When `topsailai.py` starts, it prints the **workspace task list**.
+This list is built by scanning `{TOPSAILAI_HOME}/workspace/task/` for `.stdout` and `.stderr` log files produced by running sessions and their tasks.
+
+Each row represents a discovered log file and shows:
+
+| Column | Description |
+|---|---|
+| `No` | Row number used to select the file |
+| `Session` | Session ID, or `(temp)` for temporary sessions |
+| `PID` | Process ID embedded in the filename |
+| `Size` | Current file size |
+| `Modified` | Last modification time |
+| `Created` | Creation time |
+
+From this list you can:
+
+- Type a number and press `Enter` to watch that file.
+- Use `/session <number>` to retrieve the full session context.
+- Use `/refresh` to reload the list.
+- Use `/clean` to remove expired files.
+- Use `/send <number> [message]` to send a message to a running session.
+- Use `q` to quit.
+
+The prompt `[workspace]>` indicates that the CLI is in workspace scope (the task list). Choosing a session switches to `[session:<session_id>]>` scope.
+
+## Workspace Task List Commands
+
+When the CLI is showing the workspace task list (`[workspace]>`), the following commands are available:
+
+| Command | Description |
+|---|---|
+| `<number>` | Watch the selected log file. |
+| `/session <number>` | Retrieve the full session context for the selected entry. |
+| `/refresh` | Reload the workspace task list. |
+| `/clean` | Remove expired files from the task directory. |
+| `/send <number> [message]` | Send a message to the running session associated with the selected entry. |
+| `/help` | Show available commands. |
+| `q` | Quit the CLI. |
+
 #### Multi-line input
 
 When `/send` or `/ctx.btw` is used without a message argument, the input pane temporarily expands to about one third of the terminal height so you can type or paste multiple lines. Finish with `Ctrl+D` (EOF). Cancel with `Esc`.
