@@ -81,5 +81,5 @@ FILE_INPUT_HISTORY_JSONL = FOLDER_ROOT + "/.input_history.jsonl"
 FILE_INPUT_COMPLETIONS = FOLDER_ROOT + "/.input_completions.json"
 
 # Project history file in JSONL format: each line is
-# {"ts", "session_id", "project_workspace", "pwd"}
+# {"ts", "session_id", "project_workspace", "pwd", "pid"}
 FILE_PROJECT_HISTORY = FOLDER_ROOT + "/.project_history.jsonl"

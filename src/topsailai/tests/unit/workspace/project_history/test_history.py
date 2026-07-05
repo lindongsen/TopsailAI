@@ -36,6 +36,8 @@ class TestRecordProjectHistory:
         assert entry["session_id"] == "session-001"
         assert entry["project_workspace"] == "/workspace/my-project"
         assert entry["pwd"] == "/workspace/my-project"
+        assert "pid" in entry
+        assert entry["pid"] == os.getpid()
         assert "ts" in entry
         assert entry["ts"]  # ISO-8601 local timestamp should be non-empty
 
@@ -53,6 +55,7 @@ class TestRecordProjectHistory:
 
         entry = json.loads(Path(temp_history_path).read_text(encoding="utf-8").strip())
         assert entry["session_id"] == "env-session"
+        assert entry["pid"] == os.getpid()
 
     def test_record_appends_multiple_lines(self, temp_history_path):
         with patch.dict(
@@ -69,7 +72,9 @@ class TestRecordProjectHistory:
         lines = Path(temp_history_path).read_text(encoding="utf-8").strip().splitlines()
         assert len(lines) == 2
         assert json.loads(lines[0])["session_id"] == "session-1"
+        assert json.loads(lines[0])["pid"] == os.getpid()
         assert json.loads(lines[1])["session_id"] == "session-2"
+        assert json.loads(lines[1])["pid"] == os.getpid()
 
 
 class TestProjectWorkspaceFallback:
@@ -89,6 +94,7 @@ class TestProjectWorkspaceFallback:
         entry = json.loads(Path(temp_history_path).read_text(encoding="utf-8").strip())
         assert entry["project_workspace"] == "/explicit/workspace"
         assert entry["pwd"] == "/startup/dir"
+        assert entry["pid"] == os.getpid()
 
     def test_falls_back_to_pwd_when_project_workspace_missing(self, temp_history_path):
         with patch.dict(
@@ -101,6 +107,7 @@ class TestProjectWorkspaceFallback:
         entry = json.loads(Path(temp_history_path).read_text(encoding="utf-8").strip())
         assert entry["project_workspace"] == "/fallback/dir"
         assert entry["pwd"] == "/fallback/dir"
+        assert entry["pid"] == os.getpid()
 
     def test_falls_back_to_pwd_when_project_workspace_empty(self, temp_history_path):
         with patch.dict(
@@ -115,6 +122,7 @@ class TestProjectWorkspaceFallback:
 
         entry = json.loads(Path(temp_history_path).read_text(encoding="utf-8").strip())
         assert entry["project_workspace"] == "/fallback/dir"
+        assert entry["pid"] == os.getpid()
 
     def test_empty_strings_when_both_missing(self, temp_history_path):
         with patch.dict(os.environ, {}, clear=True):
@@ -123,6 +131,7 @@ class TestProjectWorkspaceFallback:
         entry = json.loads(Path(temp_history_path).read_text(encoding="utf-8").strip())
         assert entry["project_workspace"] == ""
         assert entry["pwd"] == ""
+        assert entry["pid"] == os.getpid()
 
 
 class TestRotation:
@@ -150,6 +159,7 @@ class TestRotation:
         current_lines = history_path.read_text(encoding="utf-8").strip().splitlines()
         assert len(current_lines) == 1
         assert json.loads(current_lines[0])["session_id"] == "second"
+        assert json.loads(current_lines[0])["pid"] == os.getpid()
 
         # The previous content should have been rotated to .1
         backup_1 = Path(str(temp_history_path) + ".1")
@@ -157,6 +167,7 @@ class TestRotation:
         backup_lines = backup_1.read_text(encoding="utf-8").strip().splitlines()
         assert len(backup_lines) == 1
         assert json.loads(backup_lines[0])["session_id"] == "first"
+        assert json.loads(backup_lines[0])["pid"] == os.getpid()
 
     def test_backup_count_is_enforced(self, temp_history_path):
         with patch.dict(
@@ -179,10 +190,12 @@ class TestRotation:
 
         current = json.loads(history_path.read_text(encoding="utf-8").strip())
         assert current["session_id"] == "record-3"
+        assert current["pid"] == os.getpid()
 
         assert backup_1.exists()
         rotated = json.loads(backup_1.read_text(encoding="utf-8").strip())
         assert rotated["session_id"] == "record-2"
+        assert rotated["pid"] == os.getpid()
 
         # With max_backup=1, the oldest backup (.2) must not exist.
         assert not backup_2.exists()
@@ -206,6 +219,7 @@ class TestRotation:
 
         current = json.loads(history_path.read_text(encoding="utf-8").strip())
         assert current["session_id"] == "record-2"
+        assert current["pid"] == os.getpid()
         assert not backup_1.exists()
 
     def test_invalid_env_vars_use_defaults(self, temp_history_path):
@@ -227,6 +241,7 @@ class TestRotation:
         assert backup_1.exists() is False
         entry = json.loads(history_path.read_text(encoding="utf-8").strip())
         assert entry["session_id"] == "default-size"
+        assert entry["pid"] == os.getpid()
 
     def test_zero_max_size_disables_rotation(self, temp_history_path):
         with patch.dict(
@@ -248,9 +263,9 @@ class TestRotation:
         lines = history_path.read_text(encoding="utf-8").strip().splitlines()
         assert len(lines) == 2
         assert json.loads(lines[0])["session_id"] == "record-1"
+        assert json.loads(lines[0])["pid"] == os.getpid()
         assert json.loads(lines[1])["session_id"] == "record-2"
-
-
+        assert json.loads(lines[1])["pid"] == os.getpid()
 
 
 class TestLoadProjectHistory:
@@ -306,6 +321,19 @@ class TestLoadProjectHistory:
         records = history.load_project_history()
         assert len(records) == 100
         assert records[-1]["session_id"] == "session-104"
+
+    def test_load_keeps_pid_field_when_present(self, temp_history_path):
+        with temp_history_path.open("w", encoding="utf-8") as f:
+            f.write(json.dumps({"session_id": "with-pid", "pid": 12345}) + "\n")
+            f.write(json.dumps({"session_id": "without-pid"}) + "\n")
+
+        records = history.load_project_history()
+        assert len(records) == 2
+        assert records[0]["session_id"] == "with-pid"
+        assert records[0]["pid"] == 12345
+        assert records[1]["session_id"] == "without-pid"
+        assert "pid" not in records[1]
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

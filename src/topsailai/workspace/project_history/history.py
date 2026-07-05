@@ -131,6 +131,7 @@ def record_project_history(session_id: str | None = None) -> bool:
         "session_id": session_id,
         "project_workspace": project_workspace,
         "pwd": pwd,
+        "pid": os.getpid(),
     }
 
     history_path = FILE_PROJECT_HISTORY
@@ -157,6 +158,9 @@ def load_project_history(
     with a warning. Only the most recent ``max_entries`` records are returned.
     When ``max_entries`` is not provided, the value from
     ``env_tool.get_history_load_max_entries()`` is used (default 100).
+
+    Existing records that were written before the ``pid`` field was added are
+    loaded unchanged; the ``pid`` key will be absent for those entries.
 
     Args:
         history_path: Path to the JSONL history file. Defaults to
