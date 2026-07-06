@@ -326,11 +326,13 @@ def _get_session_environment_paths() -> dict[str, Optional[str]]:
     from topsailai.workspace.folder_constants import TOPSAILAI_HOME
 
     def _env(name: str, fallback: Optional[str] = None) -> Optional[str]:
-        value = os.getenv(name, fallback)
-        return value if value else None
+        value = os.getenv(name)
+        if value is None or value == "":
+            return fallback
+        return value
 
     return {
-        "project_workspace": _env("TOPSAILAI_PROJECT_WORKSPACE", os.getenv("TOPSAILAI_PWD")),
+        "project_workspace": _env("TOPSAILAI_PROJECT_WORKSPACE", _env("TOPSAILAI_PWD")),
         "pwd": _env("TOPSAILAI_PWD"),
         "topsailai_home": _env("TOPSAILAI_HOME", TOPSAILAI_HOME),
     }

@@ -443,6 +443,52 @@ class TestCreateSession(unittest.TestCase):
         self.assertIsInstance(session_data, SessionData)
         self.assertEqual(session_data.project_workspace, '/workspace/project/src')
 
+    @patch('topsailai.context.ctx_manager.generate_session_name')
+    @patch('topsailai.context.ctx_manager.get_session_manager')
+    def test_create_session_empty_env_uses_fallback(self, mock_get_session_mgr, mock_generate):
+        """Test create_session treats empty env values as missing and uses fallbacks."""
+        from topsailai.context.ctx_manager import create_session
+        from topsailai.context.session_manager.__base import SessionData
+
+        os.environ['TOPSAILAI_PROJECT_WORKSPACE'] = ''
+        os.environ['TOPSAILAI_PWD'] = ''
+        os.environ['TOPSAILAI_HOME'] = ''
+
+        mock_session_mgr = MagicMock()
+        mock_get_session_mgr.return_value = mock_session_mgr
+        mock_generate.return_value = ''
+
+        with patch('topsailai.workspace.folder_constants.TOPSAILAI_HOME', None):
+            result = create_session(session_id='session-123', task='Test task')
+
+        self.assertTrue(result)
+        session_data = mock_session_mgr.create_session.call_args.args[0]
+        self.assertIsInstance(session_data, SessionData)
+        self.assertIsNone(session_data.project_workspace)
+        self.assertIsNone(session_data.pwd)
+        self.assertIsNone(session_data.topsailai_home)
+
+    @patch('topsailai.context.ctx_manager.generate_session_name')
+    @patch('topsailai.context.ctx_manager.get_session_manager')
+    def test_create_session_empty_workspace_falls_back_to_pwd(self, mock_get_session_mgr, mock_generate):
+        """Test create_session falls back to TOPSAILAI_PWD when workspace is empty."""
+        from topsailai.context.ctx_manager import create_session
+        from topsailai.context.session_manager.__base import SessionData
+
+        os.environ['TOPSAILAI_PROJECT_WORKSPACE'] = ''
+        os.environ['TOPSAILAI_PWD'] = '/workspace/project/src'
+
+        mock_session_mgr = MagicMock()
+        mock_get_session_mgr.return_value = mock_session_mgr
+        mock_generate.return_value = ''
+
+        result = create_session(session_id='session-123', task='Test task')
+
+        self.assertTrue(result)
+        session_data = mock_session_mgr.create_session.call_args.args[0]
+        self.assertIsInstance(session_data, SessionData)
+        self.assertEqual(session_data.project_workspace, '/workspace/project/src')
+
 class TestUpdateSessionName(unittest.TestCase):
     """Test cases for update_session_name() function."""
 
