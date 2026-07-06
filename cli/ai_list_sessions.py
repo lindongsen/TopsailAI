@@ -95,27 +95,29 @@ def _format_session(session, index, total_width, color_enabled):
     created = ""
     relative = ""
     if session.create_time:
-        created = session.create_time.strftime("%Y-%m-%d %H:%M:%S")
+        created = session.create_time.strftime("%Y-%m-%dT%H:%M:%S")
         relative = _relative_time(session.create_time)
 
     task = str(session.task) if session.task else ""
+    project_workspace = str(session.project_workspace) if session.project_workspace else ""
+    pwd = str(session.pwd) if session.pwd else ""
+    topsailai_home = str(session.topsailai_home) if session.topsailai_home else ""
 
     lines = []
     header = f"[{index}] {session_id}"
+    if created:
+        time_value = created
+        if relative:
+            time_value = f"{created} ({_color(relative, green, color_enabled)})"
+        header = f"{header}  {time_value}"
     lines.append(_color(header, cyan, color_enabled))
 
-    label_width = 8
+    label_width = 16
     indent = "  "
     value_prefix = indent + " " * (label_width + 1)
 
     name_label = _color("Name:".ljust(label_width), yellow, color_enabled)
     lines.append(f"{indent}{name_label} {name}")
-
-    time_label = _color("Created:".ljust(label_width), yellow, color_enabled)
-    time_value = created
-    if relative:
-        time_value = f"{created} ({_color(relative, green, color_enabled)})"
-    lines.append(f"{indent}{time_label} {time_value}")
 
     task_label = _color("Task:".ljust(label_width), yellow, color_enabled)
     wrap_width = max(total_width - len(value_prefix), 20)
@@ -128,6 +130,18 @@ def _format_session(session, index, total_width, color_enabled):
                 lines.append(f"{value_prefix}{continuation}")
     else:
         lines.append(f"{indent}{task_label} {_color('(no task)', gray, color_enabled)}")
+
+    if project_workspace:
+        workspace_label = _color("Project:".ljust(label_width), yellow, color_enabled)
+        lines.append(f"{indent}{workspace_label} {project_workspace}")
+
+    if pwd:
+        pwd_label = _color("PWD:".ljust(label_width), yellow, color_enabled)
+        lines.append(f"{indent}{pwd_label} {pwd}")
+
+    if topsailai_home:
+        home_label = _color("Home:".ljust(label_width), yellow, color_enabled)
+        lines.append(f"{indent}{home_label} {topsailai_home}")
 
     return "\n".join(lines)
 
@@ -145,6 +159,9 @@ def format_sessions(sessions):
                         - session_name: Optional name of the session
                         - create_time: datetime object representing creation time
                         - task: Task description string
+                        - project_workspace: Project workspace path
+                        - pwd: Working directory
+                        - topsailai_home: TopsailAI home directory
 
     Returns:
         str: Formatted string containing all sessions in card format.

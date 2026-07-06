@@ -20,14 +20,27 @@ import ai_list_sessions
 from topsailai.context.ctx_manager import get_session_manager
 from topsailai.context.session_manager import SessionData
 
+
 class FakeSession:
     """Minimal session-like object for formatting tests."""
 
-    def __init__(self, session_id, session_name, create_time, task):
+    def __init__(
+        self,
+        session_id,
+        session_name,
+        create_time,
+        task,
+        project_workspace=None,
+        pwd=None,
+        topsailai_home=None,
+    ):
         self.session_id = session_id
         self.session_name = session_name
         self.create_time = create_time
         self.task = task
+        self.project_workspace = project_workspace
+        self.pwd = pwd
+        self.topsailai_home = topsailai_home
 
 
 class TestRelativeTime(unittest.TestCase):
@@ -98,12 +111,10 @@ class TestFormatSessions(unittest.TestCase):
         )
         output = ai_list_sessions.format_sessions([session])
         self.assertIn("Sessions (Total: 1)", output)
-        self.assertIn("[1] abc123", output)
-        self.assertIn("Name:    test-session", output)
-        self.assertIn("Created: 2026-07-05 10:30:15", output)
-        self.assertIn("Task:    Do something useful.", output)
+        self.assertIn("[1] abc123  2026-07-05T10:30:15", output)
+        self.assertIn("Name:            test-session", output)
+        self.assertIn("Task:            Do something useful.", output)
         self.assertIn("Total: 1 session", output)
-
     @mock.patch.object(ai_list_sessions, "_supports_color", return_value=False)
     @mock.patch("shutil.get_terminal_size", return_value=mock.Mock(columns=80))
     def test_unnamed_session(self, _mock_size, _mock_color):
@@ -114,7 +125,7 @@ class TestFormatSessions(unittest.TestCase):
             task="Another task.",
         )
         output = ai_list_sessions.format_sessions([session])
-        self.assertIn("Name:    (unnamed)", output)
+        self.assertIn("Name:            (unnamed)", output)
 
     @mock.patch.object(ai_list_sessions, "_supports_color", return_value=False)
     @mock.patch("shutil.get_terminal_size", return_value=mock.Mock(columns=80))
@@ -138,9 +149,8 @@ class TestFormatSessions(unittest.TestCase):
         lines = output.split("\n")
         separator_count = sum(1 for line in lines if line.startswith("-") and set(line) == {"-"})
         self.assertGreaterEqual(separator_count, 1)
-        self.assertIn("[1] abc123", output)
-        self.assertIn("[2] def456", output)
-
+        self.assertIn("[1] abc123  2026-07-05T10:30:15", output)
+        self.assertIn("[2] def456  2026-07-05T09:15:00", output)
     @mock.patch.object(ai_list_sessions, "_supports_color", return_value=False)
     @mock.patch("shutil.get_terminal_size", return_value=mock.Mock(columns=40))
     def test_long_task_wrapping(self, _mock_size, _mock_color):
@@ -155,6 +165,37 @@ class TestFormatSessions(unittest.TestCase):
         lines = output.split("\n")
         task_lines = [line for line in lines if "Task:" in line or line.strip().startswith("A")]
         self.assertGreaterEqual(len(task_lines), 2)
+
+    @mock.patch.object(ai_list_sessions, "_supports_color", return_value=False)
+    @mock.patch("shutil.get_terminal_size", return_value=mock.Mock(columns=80))
+    def test_extra_fields_displayed(self, _mock_size, _mock_color):
+        session = FakeSession(
+            session_id="extra001",
+            session_name="extra-session",
+            create_time=datetime(2026, 7, 5, 10, 30, 15),
+            task="Extra task.",
+            project_workspace="/workspace/project",
+            pwd="/workspace/project/src",
+            topsailai_home="/home/user/.topsailai",
+        )
+        output = ai_list_sessions.format_sessions([session])
+        self.assertIn("Project:         /workspace/project", output)
+        self.assertIn("PWD:             /workspace/project/src", output)
+        self.assertIn("Home:            /home/user/.topsailai", output)
+
+    @mock.patch.object(ai_list_sessions, "_supports_color", return_value=False)
+    @mock.patch("shutil.get_terminal_size", return_value=mock.Mock(columns=80))
+    def test_extra_fields_omitted_when_empty(self, _mock_size, _mock_color):
+        session = FakeSession(
+            session_id="noextra001",
+            session_name="no-extra-session",
+            create_time=datetime(2026, 7, 5, 10, 30, 15),
+            task="No extra fields.",
+        )
+        output = ai_list_sessions.format_sessions([session])
+        self.assertNotIn("Project:", output)
+        self.assertNotIn("PWD:", output)
+        self.assertNotIn("Home:", output)
 
 
 class TestMainIntegration(unittest.TestCase):
