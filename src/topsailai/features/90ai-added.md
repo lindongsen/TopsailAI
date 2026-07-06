@@ -52,3 +52,21 @@ Key logic:
 - If the prompt times out, the default action is `wait`. The timeout is controlled by `TOPSAILAI_PROJECT_WORKSPACE_LOCK_TIMEOUT` (default 300 seconds).
 
 System impact: Two new environment variables are introduced: `TOPSAILAI_PROJECT_WORKSPACE_LOCK_ENABLED` and `TOPSAILAI_PROJECT_WORKSPACE_LOCK_TIMEOUT`. Existing behavior is preserved when the project workspace is unset or locking is disabled. Concurrent agent sessions targeting the same project workspace are now serialized unless the user explicitly chooses to continue without the lock.
+
+## SSH Agent Tool
+
+Added a new agent tool `ssh_tool` for remote command execution and file transfer over SSH.
+
+Key logic:
+- Single entry point `operate_ssh(action, host, **kwargs)` uses a factory pattern with `_OPERATORS = {"exec": SSHExecOperator, "scp": SSHScpOperator, "rsync": SSHRsyncOperator}` so new SSH operations can be added without changing the public API.
+- `SSHContext` normalizes connection parameters: host, port, username (default `"root"`), private key, SSH options, and timeout.
+- Default SSH options are safe for automation: `StrictHostKeyChecking=no`, `UserKnownHostsFile=/dev/null`, `ConnectTimeout=10`, `ConnectionAttempts=3`, `LogLevel=ERROR`.
+- `SSHExecOperator` executes commands on remote hosts; localhost is detected and runs the command locally without SSH.
+- `SSHScpOperator` and `SSHRsyncOperator` copy files or folders to/from remote hosts and support Dockerfile-style trailing-slash semantics:
+  - target ends with `/`: copy the source directory itself into the target directory.
+  - target does not end with `/`: copy source contents to the target path, preventing nested same-name folders.
+- `rsync` supports an opt-in `delete=True` flag instead of enabling `--delete` by default.
+- Remote commands are built as argument lists and passed to `exec_cmd` with `shell=False` to avoid shell injection; remote paths are quoted with `shlex.quote`.
+- The tool is auto-registered via module discovery in `tools/base/init.py` as `ssh_tool-operate_ssh`.
+
+System impact: Agents can now run commands and transfer files over SSH using a unified, extensible interface.
