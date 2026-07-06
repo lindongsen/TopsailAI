@@ -32,6 +32,12 @@ from cli_topsailai import yaml_commands
 import cli_topsailai.state as state
 
 
+def _extract_session_id_from_path(path: str) -> Optional[str]:
+    """Extract the session_id from a stdout file path, if possible."""
+    session_id, _ = _parse_stdout_filename(os.path.basename(path))
+    return session_id
+
+
 def stream_sessions(
     command: List[str],
     env: Optional[Dict[str, str]] = None,
@@ -142,6 +148,8 @@ def stream_file(
     log_files: Optional[List[dict]] = None,
     default_session_id: Optional[str] = None,
     default_stdout_path: Optional[str] = None,
+    runtime_raw: bool = False,
+    tail_lines: int = 100,
 ) -> None:
     """
     Stream a log file in real-time, similar to ``tail -f``.
@@ -151,10 +159,14 @@ def stream_file(
     ``/ctx.btw [message]`` to inject an agent2llm message, or Ctrl+C for
     graceful exit.
 
-    When the terminal supports it, a two-pane curses UI is used so that the
-    log scrolls in the top pane while a fixed input bar stays at the bottom.
-    In non-TTY environments or when curses is unavailable, the legacy
-    single-pane mode is used instead.
+    When ``runtime_raw`` is True, a simple curses-free raw streaming mode is
+    used instead of the two-pane curses UI or legacy single-pane fallback.
+    The last ``tail_lines`` lines are echoed on startup.
+
+    When the terminal supports it and ``runtime_raw`` is False, a two-pane
+    curses UI is used so that the log scrolls in the top pane while a fixed
+    input bar stays at the bottom.  In non-TTY environments or when curses is
+    unavailable, the legacy single-pane mode is used instead.
 
     While streaming, the interactive scope is temporarily set to
     ``"runtime"`` so that scope-aware YAML commands target the watched
@@ -166,6 +178,8 @@ def stream_file(
         log_files: Current list of discovered log files.
         default_session_id: Session ID associated with the watched file.
         default_stdout_path: Exact stdout path for the watched session.
+        runtime_raw: Use the simple curses-free raw streaming mode.
+        tail_lines: Number of recent log lines to echo on startup.
     """
     previous_scope = state.current_scope
     previous_session_id = state.current_session_id
@@ -174,7 +188,16 @@ def stream_file(
         state.current_session_id = default_session_id
 
     try:
-        if _can_use_curses():
+        if runtime_raw:
+            _stream_file_raw(
+                filepath,
+                task_dir,
+                log_files or [],
+                default_session_id,
+                default_stdout_path,
+                tail_lines=tail_lines,
+            )
+        elif _can_use_curses():
             _run_curses_ui(
                 filepath,
                 task_dir,
@@ -303,6 +326,140 @@ def _build_stream_command_handler(
 
     return handler
 
+
+
+
+def _tail_file(path: str, tail_lines: int) -> None:
+    """Print the most recent ``tail_lines`` lines of ``path`` to stdout."""
+    n = max(0, tail_lines)
+    try:
+        subprocess.run(
+            ["tail", "-n", str(n), path],
+            check=False,
+        )
+        return
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
+    # Fallback pure-Python tail when the system ``tail`` is unavailable.
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            all_lines = fh.readlines()
+        for line in all_lines[-n:]:
+            print(line, end="")
+    except Exception:
+        pass
+
+
+def _read_input_line() -> Optional[str]:
+    """Read a single line from stdin, returning None on EOF/KeyboardInterrupt."""
+    try:
+        return input().strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+
+def _dispatch_input(
+    cmd_line: str,
+    task_dir: str,
+    log_files: List[dict],
+    default_session_id: Optional[str],
+    default_stdout_path: Optional[str],
+) -> bool:
+    """Handle a single raw-mode user command.
+
+    Returns ``False`` when the user wants to leave the stream (q/quit/exit/cd).
+    """
+    lower = cmd_line.lower()
+    if lower in ("q", "quit", "exit"):
+        print(f"\n{Colors.YELLOW}[INFO] Quit requested.{Colors.RESET}")
+        return False
+    if lower in ("cd", "/cd"):
+        print(
+            f"\n{Colors.YELLOW}[INFO] Return to workspace scope requested.{Colors.RESET}"
+        )
+        return False
+    if lower.startswith("/"):
+        _handle_stream_command(
+            cmd_line,
+            task_dir,
+            log_files,
+            default_session_id,
+            default_stdout_path,
+        )
+        return True
+    print(
+        f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
+        f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
+    )
+    return True
+
+
+def _stream_file_raw(
+    filepath: str,
+    task_dir: str,
+    log_files: List[dict],
+    default_session_id: Optional[str],
+    default_stdout_path: Optional[str],
+    tail_lines: int = 100,
+) -> None:
+    """Raw curses-free stream implementation used when ``--runtime-raw`` is set."""
+
+    filename = os.path.basename(filepath)
+    print_header(f"Streaming: {filename}")
+    print(
+        f"{Colors.YELLOW}[INFO] Press 'q' then Enter to quit, "
+        f"type '/send [message]' to send a message, "
+        f"'/ctx.btw [message]' to inject an agent2llm message, or Ctrl+C to exit.{Colors.RESET}\n"
+    )
+
+    _tail_file(filepath, tail_lines)
+
+    try:
+        with open(filepath, "rb") as f:
+            f.seek(0, 2)
+            while state.running:
+                chunk = f.read(4096)
+                if chunk:
+                    if hasattr(sys.stdout, "buffer"):
+                        sys.stdout.buffer.write(chunk)
+                        sys.stdout.buffer.flush()
+                    else:
+                        print(chunk.decode("utf-8", errors="replace"), end="")
+                        sys.stdout.flush()
+                else:
+                    if sys.stdin.isatty():
+                        readable, _, _ = select.select([sys.stdin], [], [], 0.05)
+                        if readable:
+                            cmd_line = _read_input_line()
+                            if cmd_line is None:
+                                break
+                            if not cmd_line:
+                                continue
+                            if not _dispatch_input(
+                                cmd_line,
+                                task_dir,
+                                log_files,
+                                default_session_id,
+                                default_stdout_path,
+                            ):
+                                break
+                    else:
+                        time.sleep(0.05)
+    except FileNotFoundError:
+        print(f"{Colors.RED}[ERROR] File not found: {filepath}{Colors.RESET}")
+    except PermissionError:
+        print(f"{Colors.RED}[ERROR] Permission denied: {filepath}{Colors.RESET}")
+    except KeyboardInterrupt:
+        print(f"\n{Colors.YELLOW}[INFO] Interrupted by user.{Colors.RESET}")
+    except Exception as e:
+        print(f"{Colors.RED}[ERROR] Failed to stream file: {e}{Colors.RESET}")
+
+    print(f"\n{Colors.CYAN}[INFO] Streaming stopped.{Colors.RESET}")
+
+
 def _stream_file_legacy(
     filepath: str,
     task_dir: str,
@@ -311,7 +468,6 @@ def _stream_file_legacy(
     default_stdout_path: Optional[str],
 ) -> None:
     """Legacy single-pane stream implementation for non-TTY environments."""
-    from cli_topsailai.state import running
 
     filename = os.path.basename(filepath)
     print_header(f"Streaming: {filename}")
@@ -329,7 +485,7 @@ def _stream_file_legacy(
     try:
         with open(filepath, "rb") as f:
             f.seek(0, 2)
-            while running:
+            while state.running:
                 chunk = f.read(4096)
                 if chunk:
                     if hasattr(sys.stdout, "buffer"):
@@ -349,7 +505,7 @@ def _stream_file_legacy(
                             if not cmd_line:
                                 continue
                             lower = cmd_line.lower()
-                            if lower in ("q", "quit"):
+                            if lower in ("q", "quit", "exit"):
                                 print(
                                     f"\n{Colors.YELLOW}[INFO] Quit requested.{Colors.RESET}"
                                 )
@@ -370,7 +526,7 @@ def _stream_file_legacy(
                                 continue
                             print(
                                 f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
-                                f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', or 'cd'.{Colors.RESET}"
+                                f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
                             )
                     else:
                         time.sleep(0.05)
@@ -428,62 +584,19 @@ def _handle_stream_command(
 
     if cmd == "/help":
         print(
-            f"\n{Colors.CYAN}[INFO] Streaming commands: "
-            f"'q' or 'cd' then Enter to quit, '/send [message]' send to watched session, "
-            f"'/ctx.btw [message]' inject agent2llm message, "
-            f"'/help' show this help.{Colors.RESET}"
+            "Available commands:\n"
+            "  /send [message]      - Send a message to the watched session\n"
+            "  /ctx.btw [message]   - Inject an agent2llm message\n"
+            "  /help                - Show this help message\n"
+            "  q / quit / exit      - Stop streaming\n"
+            "  cd or /cd            - Return to workspace scope"
         )
         return
 
     print(
         f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
-        f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', or 'cd'.{Colors.RESET}"
+        f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
     )
-
-
-def _handle_stream_ctx_btw(
-    cmd_line: str,
-    task_dir: str,
-    input_provider: Optional[Callable[[str], Optional[str]]] = None,
-) -> None:
-    """
-    Handle ``/ctx.btw`` while streaming by delegating to the YAML command.
-
-    The ``runtime`` scope and watched session ID are already set by
-    ``stream_file``, so ``match_yaml_command`` can resolve the target
-    session automatically.  Supports inline arguments as well as
-    interactive multi-line input when no argument is provided.
-    """
-    matched = yaml_commands.match_yaml_command(cmd_line, task_dir)
-    if matched is None:
-        print(
-            f"{Colors.RED}[ERROR] Could not match /ctx.btw command. "
-            f"Is there a session associated with this log file?{Colors.RESET}"
-        )
-        return
-    instruction, variables = matched
-
-    # When no inline message is provided and an external input provider is
-    # available, use it to collect multi-line input without blocking the UI.
-    if (
-        input_provider is not None
-        and not variables.get("message", "").strip()
-        and instruction.get("shell", "")
-    ):
-        message = input_provider(
-            f"{Colors.CYAN}[INFO] Enter /ctx.btw message (Ctrl+D to finish):{Colors.RESET}"
-        )
-        if message is None:
-            print(f"\n{Colors.YELLOW}[INFO] Cancelled.{Colors.RESET}")
-            return
-        message = message.strip()
-        if not message:
-            print(f"{Colors.RED}[ERROR] Message cannot be empty.{Colors.RESET}")
-            return
-        variables = dict(variables)
-        variables["message"] = message
-
-    yaml_commands.handle_yaml_command(instruction, variables)
 
 
 def _handle_stream_send(
@@ -547,6 +660,50 @@ def _read_multiline_input_for_send() -> Optional[str]:
         lines.append(line)
     return "\n".join(lines)
 
+
+def _handle_stream_ctx_btw(
+    cmd_line: str,
+    task_dir: str,
+    input_provider: Optional[Callable[[str], Optional[str]]] = None,
+) -> None:
+    """
+    Handle ``/ctx.btw`` while streaming by delegating to the YAML command.
+
+    The ``runtime`` scope and watched session ID are already set by
+    ``stream_file``, so ``match_yaml_command`` can resolve the target
+    session automatically.  Supports inline arguments as well as
+    interactive multi-line input when no argument is provided.
+    """
+    matched = yaml_commands.match_yaml_command(cmd_line, task_dir)
+    if matched is None:
+        print(
+            f"{Colors.RED}[ERROR] Could not match /ctx.btw command. "
+            f"Is there a session associated with this log file?{Colors.RESET}"
+        )
+        return
+    instruction, variables = matched
+
+    # When no inline message is provided and an external input provider is
+    # available, use it to collect multi-line input without blocking the UI.
+    if (
+        input_provider is not None
+        and not variables.get("message", "").strip()
+        and instruction.get("shell", "")
+    ):
+        message = input_provider(
+            f"{Colors.CYAN}[INFO] Enter /ctx.btw message (Ctrl+D to finish):{Colors.RESET}"
+        )
+        if message is None:
+            print(f"\n{Colors.YELLOW}[INFO] Cancelled.{Colors.RESET}")
+            return
+        message = message.strip()
+        if not message:
+            print(f"{Colors.RED}[ERROR] Message cannot be empty.{Colors.RESET}")
+            return
+        variables = dict(variables)
+        variables["message"] = message
+
+    yaml_commands.handle_yaml_command(instruction, variables)
 
 def _format_pipe_payload(message: str) -> bytes:
     """
@@ -705,6 +862,7 @@ def send_message_to_session(
                 os.close(fd)
             except OSError:
                 pass
+
 
 def handle_send_command(
     user_input: str, task_dir: str, log_files: List[dict]

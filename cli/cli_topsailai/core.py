@@ -203,6 +203,20 @@ def main(argv: Optional[List[str]] = None) -> None:
         dest="version",
         help="show program's version number and exit",
     )
+    parser.add_argument(
+        "-r", "--runtime-raw",
+        action="store_true",
+        dest="runtime_raw",
+        help="use raw curses-free mode when entering the runtime scope",
+    )
+    parser.add_argument(
+        "--tail-lines",
+        type=int,
+        default=100,
+        dest="tail_lines",
+        metavar="N",
+        help="number of recent log lines to echo on startup in runtime-raw mode (default: 100)",
+    )
 
     # Be tolerant of unknown arguments so tests that invoke main() with
     # arbitrary fake argv do not crash. Only help/version trigger an exit.
@@ -327,6 +341,8 @@ def main(argv: Optional[List[str]] = None) -> None:
                     log_files=log_files,
                     default_session_id=session_id,
                     default_stdout_path=stdout_path,
+                    runtime_raw=args.runtime_raw,
+                    tail_lines=args.tail_lines,
                 )
                 print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
                 log_files = discover_log_files(task_dir)

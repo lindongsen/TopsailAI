@@ -249,5 +249,124 @@ class TestPerCommandHelp(unittest.TestCase):
         self.assertIn("-h", call_args[0][0])
 
 
+class TestRuntimeRawArguments(unittest.TestCase):
+    """Tests for -r / --runtime-raw argument handling."""
+
+    @patch("cli_topsailai.streaming.stream_file")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    def test_runtime_raw_passed_to_stream_file(
+        self,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        mock_stream: MagicMock,
+    ) -> None:
+        """--runtime-raw should be forwarded to stream_file() on watch."""
+        from cli_topsailai.core import main
+
+        log_file = {
+            "filename": "s1.1234.session.stdout",
+            "path": "/task/s1.1234.session.stdout",
+            "session_id": "s1",
+        }
+        mock_discover.return_value = [log_file]
+        mock_prompt.side_effect = [("watch", 0), ("quit", None)]
+
+        main(["--runtime-raw", "--tail-lines", "50"])
+
+        mock_stream.assert_called_once()
+        _, kwargs = mock_stream.call_args
+        self.assertTrue(kwargs["runtime_raw"])
+        self.assertEqual(kwargs["tail_lines"], 50)
+
+    @patch("cli_topsailai.streaming.stream_file")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    def test_runtime_raw_short_flag_defaults(
+        self,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        mock_stream: MagicMock,
+    ) -> None:
+        """-r without --tail-lines should default to 100."""
+        from cli_topsailai.core import main
+
+        log_file = {
+            "filename": "s1.1234.session.stdout",
+            "path": "/task/s1.1234.session.stdout",
+            "session_id": "s1",
+        }
+        mock_discover.return_value = [log_file]
+        mock_prompt.side_effect = [("watch", 0), ("quit", None)]
+
+        main(["-r"])
+
+        _, kwargs = mock_stream.call_args
+        self.assertTrue(kwargs["runtime_raw"])
+        self.assertEqual(kwargs["tail_lines"], 100)
+
+    @patch("cli_topsailai.streaming.stream_file")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    def test_without_runtime_raw_defaults(
+        self,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        mock_stream: MagicMock,
+    ) -> None:
+        """Without --runtime-raw, stream_file() receives False and default tail_lines."""
+        from cli_topsailai.core import main
+
+        log_file = {
+            "filename": "s1.1234.session.stdout",
+            "path": "/task/s1.1234.session.stdout",
+            "session_id": "s1",
+        }
+        mock_discover.return_value = [log_file]
+        mock_prompt.side_effect = [("watch", 0), ("quit", None)]
+
+        main([])
+
+        _, kwargs = mock_stream.call_args
+        self.assertFalse(kwargs["runtime_raw"])
+        self.assertEqual(kwargs["tail_lines"], 100)
+
+
 if __name__ == "__main__":
     unittest.main()
