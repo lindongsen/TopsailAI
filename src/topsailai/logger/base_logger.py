@@ -18,11 +18,12 @@ DEFAULT_LOG_FORMAT = (
 )
 
 # Format used when configuring the Python root logger via configure_root_logger().
-# It mirrors DEFAULT_LOG_FORMAT but inserts the logger name before message_id,
-# as required by the project style: name goes in the second-to-last position.
+# It mirrors DEFAULT_LOG_FORMAT but inserts the logger name and process ID before
+# message_id, as required by the project style: (name:pid) goes in the
+# second-to-last position.
 ROOT_LOG_FORMAT = (
     "%(asctime)s %(levelname)s -%(thread)d- %(message)s "
-    "(%(pathname)s:%(lineno)d) %(name)s %(message_id)s"
+    "(%(pathname)s:%(lineno)d) (%(name)s:%(process)d) %(message_id)s"
 )
 
 # Name of the root log file written by configure_root_logger().
