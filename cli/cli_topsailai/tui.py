@@ -511,6 +511,8 @@ class CursesStreamUI:
             pass
 
         # Draw input pane.
+        cursor_y = 0
+        cursor_x = 0
         if self.input_win is not None:
             try:
                 self.input_win.erase()
@@ -524,8 +526,10 @@ class CursesStreamUI:
                 if remaining > 0:
                     visible_input = self._input_buffer[-remaining:]
                     self.input_win.addstr(1, len(prompt), visible_input)
+                cursor_y = log_height + 1
+                cursor_x = len(prompt) + len(visible_input)
                 try:
-                    self.input_win.move(1, len(prompt) + len(visible_input))
+                    self.input_win.move(1, cursor_x)
                 except curses.error:
                     pass
             except curses.error:
@@ -538,6 +542,15 @@ class CursesStreamUI:
         # Draw log pane.
         if self.log_win is not None:
             self._render_log_pane(log_height, width)
+
+        # The log pane refresh moves the physical cursor to the end of the
+        # last log line. Move it back to the input pane so the cursor appears
+        # right after the prompt.
+        try:
+            self.stdscr.move(cursor_y, cursor_x)
+            self.stdscr.noutrefresh()
+        except curses.error:
+            pass
 
         try:
             curses.doupdate()
