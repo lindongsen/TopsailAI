@@ -21,6 +21,11 @@ class FakeCurses:
     KEY_RESIZE = 410
     KEY_PPAGE = 339
     KEY_NPAGE = 338
+    KEY_LEFT = 260
+    KEY_RIGHT = 261
+    KEY_HOME = 262
+    KEY_END = 360
+    KEY_DC = 330
     COLOR_GREEN = 1
     COLOR_YELLOW = 2
     COLOR_RED = 3
@@ -996,6 +1001,7 @@ class TestCursesStreamUI(unittest.TestCase):
         ui = self._make_ui(fake_curses)
         ui._multi_line_mode = True
         ui._input_buffer = "hi"
+        ui._cursor_pos = len(ui._input_buffer)
         ui._handle_multi_line_input(127)
         self.assertEqual(ui._input_buffer, "h")
 

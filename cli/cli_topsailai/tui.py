@@ -83,6 +83,8 @@ class CursesStreamUI:
 
         self._lines: List[str] = []
         self._input_buffer = ""
+        # Cursor position within _input_buffer (0 = before first character).
+        self._cursor_pos = 0
         self._prompt = self._build_prompt()
         self._running = True
         self._multi_line_mode = False
@@ -239,24 +241,60 @@ class CursesStreamUI:
             self._execute_input()
             return True
         if ch in (curses.KEY_BACKSPACE, 127, 8):
-            if self._input_buffer:
-                self._input_buffer = self._input_buffer[:-1]
+            if self._cursor_pos > 0:
+                self._input_buffer = (
+                    self._input_buffer[: self._cursor_pos - 1]
+                    + self._input_buffer[self._cursor_pos :]
+                )
+                self._cursor_pos -= 1
                 return True
             return False
-        if ch == 27:  # ESC
+        if ch in (curses.KEY_DC, 330):
+            if self._cursor_pos < len(self._input_buffer):
+                self._input_buffer = (
+                    self._input_buffer[: self._cursor_pos]
+                    + self._input_buffer[self._cursor_pos + 1 :]
+                )
+                return True
+            return False
+        if ch == curses.KEY_LEFT or ch == 260:
+            if self._cursor_pos > 0:
+                self._cursor_pos -= 1
+                return True
+            return False
+        if ch == curses.KEY_RIGHT or ch == 261:
+            if self._cursor_pos < len(self._input_buffer):
+                self._cursor_pos += 1
+                return True
+            return False
+        if ch == curses.KEY_HOME or ch == 262:
+            if self._cursor_pos != 0:
+                self._cursor_pos = 0
+                return True
+            return False
+        if ch == curses.KEY_END or ch == 360:
+            if self._cursor_pos != len(self._input_buffer):
+                self._cursor_pos = len(self._input_buffer)
+                return True
+            return False
+        if ch == curses.KEY_PPAGE or ch == curses.KEY_NPAGE:
+            if ch == curses.KEY_PPAGE:
+                self._scroll_up(self._page_scroll_lines)
+            else:
+                self._scroll_down(self._page_scroll_lines)
+            return True
+        if ch == 27:
             self._running = False
             return True
-        if ch == curses.KEY_PPAGE:
-            self._scroll_up(self._page_scroll_lines)
-            return True
-        if ch == curses.KEY_NPAGE:
-            self._scroll_down(self._page_scroll_lines)
-            return True
         if isinstance(ch, str):
-            self._input_buffer += ch
+            self._input_buffer = (
+                self._input_buffer[: self._cursor_pos]
+                + ch
+                + self._input_buffer[self._cursor_pos :]
+            )
+            self._cursor_pos += 1
             return True
         return False
-
     def _scroll_up(self, lines: int) -> None:
         """Scroll the log pane up by *lines* (towards older log lines)."""
         # The viewport shows at most _visible_count lines, so the largest
@@ -297,13 +335,47 @@ class CursesStreamUI:
         if ch in (curses.KEY_ENTER, "\n", "\r"):
             self._multi_line_buffer.append(self._input_buffer)
             self._input_buffer = ""
+            self._cursor_pos = 0
             return True
         if ch in (curses.KEY_BACKSPACE, 127, 8):
-            if self._input_buffer:
-                self._input_buffer = self._input_buffer[:-1]
+            if self._input_buffer and self._cursor_pos > 0:
+                self._input_buffer = (
+                    self._input_buffer[: self._cursor_pos - 1]
+                    + self._input_buffer[self._cursor_pos :]
+                )
+                self._cursor_pos -= 1
                 return True
             if self._multi_line_buffer:
                 self._input_buffer = self._multi_line_buffer.pop()
+                self._cursor_pos = len(self._input_buffer)
+                return True
+            return False
+        if ch in (curses.KEY_DC, 330):
+            if self._input_buffer and self._cursor_pos < len(self._input_buffer):
+                self._input_buffer = (
+                    self._input_buffer[: self._cursor_pos]
+                    + self._input_buffer[self._cursor_pos + 1 :]
+                )
+                return True
+            return False
+        if ch in (curses.KEY_LEFT, 260):
+            if self._cursor_pos > 0:
+                self._cursor_pos -= 1
+                return True
+            return False
+        if ch in (curses.KEY_RIGHT, 261):
+            if self._cursor_pos < len(self._input_buffer):
+                self._cursor_pos += 1
+                return True
+            return False
+        if ch in (curses.KEY_HOME, 262):
+            if self._cursor_pos != 0:
+                self._cursor_pos = 0
+                return True
+            return False
+        if ch in (curses.KEY_END, 360):
+            if self._cursor_pos != len(self._input_buffer):
+                self._cursor_pos = len(self._input_buffer)
                 return True
             return False
         if ch == 4:  # Ctrl+D finishes multi-line input
@@ -323,7 +395,12 @@ class CursesStreamUI:
                 self._scroll_down(self._page_scroll_lines)
             return True
         if isinstance(ch, str):
-            self._input_buffer += ch
+            self._input_buffer = (
+                self._input_buffer[: self._cursor_pos]
+                + ch
+                + self._input_buffer[self._cursor_pos :]
+            )
+            self._cursor_pos += 1
             return True
         return False
 
@@ -331,6 +408,7 @@ class CursesStreamUI:
         """Run the command currently in the input buffer."""
         raw = self._input_buffer.strip()
         self._input_buffer = ""
+        self._cursor_pos = 0
         if not raw:
             return
 
@@ -373,9 +451,9 @@ class CursesStreamUI:
         self._multi_line_finished = False
         self._multi_line_cancelled = False
         self._input_buffer = ""
+        self._cursor_pos = 0
         self._scroll_offset = 0
         self._needs_redraw = True
-
         # Temporarily expand the input pane to give more room for typing.
         try:
             while (
@@ -524,10 +602,15 @@ class CursesStreamUI:
                 remaining = width - len(prompt) - 1
                 visible_input = ""
                 if remaining > 0:
-                    visible_input = self._input_buffer[-remaining:]
+                    # Horizontal scroll so the cursor stays visible.
+                    if self._cursor_pos > remaining:
+                        start = self._cursor_pos - remaining
+                        visible_input = self._input_buffer[start:self._cursor_pos]
+                    else:
+                        visible_input = self._input_buffer[:remaining]
                     self.input_win.addstr(1, len(prompt), visible_input)
                 cursor_y = log_height + 1
-                cursor_x = len(prompt) + len(visible_input)
+                cursor_x = len(prompt) + min(len(visible_input), self._cursor_pos)
                 try:
                     self.input_win.move(1, cursor_x)
                 except curses.error:
