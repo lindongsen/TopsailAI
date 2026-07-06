@@ -160,7 +160,10 @@ def print_step(msg, need_format=True, need_log=False):
         return
     if g_flag_print_step is False:
         return
-    if os.getenv("DEBUG", "0") == "1" or g_flag_print_step:
+    from . import env_tool
+    if os.getenv("DEBUG", "0") == "1" \
+        or g_flag_print_step \
+        or env_tool.is_interactive_mode():
         print_with_time(msg, need_format=need_format)
     return
 
