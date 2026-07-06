@@ -6,6 +6,7 @@
 '''
 
 import os
+import time
 import threading
 from typing import Optional
 
@@ -13,6 +14,7 @@ from topsailai.logger import logger
 from topsailai.utils.format_tool import to_list
 from topsailai.utils import (
     env_tool,
+    thread_local_tool,
 )
 
 from .chat_history_manager import ALL_MANAGERS
@@ -233,6 +235,17 @@ def _get_auto_session_name_max_length() -> int:
         max_length = 30
     return max_length
 
+def wait_agent_ready(need_agent_object=False):
+    logger.info("waiting agent ready ...")
+    while True:
+        time.sleep(1)
+        if os.getenv("TOPSAILAI_CONTEXT_USER_MESSAGE"):
+            continue
+        if need_agent_object and thread_local_tool.get_agent_object() is None:
+            continue
+        break
+    logger.info("agent is ready")
+    return
 
 def generate_session_name(session_id: str, message: str) -> str:
     """
@@ -254,6 +267,8 @@ def generate_session_name(session_id: str, message: str) -> str:
 
     if not session_id or not message:
         return ""
+
+    wait_agent_ready()
 
     max_length = _get_auto_session_name_max_length()
 
@@ -302,6 +317,7 @@ def _async_update_session_name(session_id: str, message: str, session_mgr: Sessi
         message (str): The message or task content to summarize from.
         session_mgr (SessionStorageBase): Session manager used to update the name.
     """
+    thread_local_tool.set_thread_name(session_id)
     try:
         session_name = generate_session_name(session_id, message)
         if not session_name:

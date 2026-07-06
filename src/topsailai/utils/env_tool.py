@@ -348,9 +348,12 @@ class EnvironmentReader(object):
         v = os.getenv(name, default=default)
         if v is not None and formatter and callable(formatter):
             try:
-                v = formatter(v)
+                if formatter in (int, float) and v == "":
+                    v = None
+                else:
+                    v = formatter(v)
             except Exception as e:
-                logger.exception(e)
+                logger.exception("key=%s, value=%s, exception=%s", name, v, e)
                 v = None
         if v is None:
             v = default

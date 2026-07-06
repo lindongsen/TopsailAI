@@ -55,6 +55,50 @@ def my_tool():
 ```
 
 
+## MEMO: Auto Session-Name Thread Must Not Consume `TOPSAILAI_CONTEXT_USER_MESSAGE`
+
+**Date:** 2026-07-06
+**Files:**
+- `/TopsailAI/src/topsailai/context/ctx_manager.py`
+- `/TopsailAI/src/topsailai/workspace/agent_shell.py`
+- `/TopsailAI/src/topsailai/workspace/llm_shell.py`
+- `/TopsailAI/src/topsailai/ai_base/prompt_base.py`
+- `/TopsailAI/src/topsailai/context/prompt_env.py`
+
+### Conclusion
+`TOPSAILAI_CONTEXT_USER_MESSAGE` is a file path or raw text that is prepended as the first `context_user_message` and combined into a single user message at session start. It is intended to be consumed by the **main agent** so the human-provided context is present in the agent's working context.
+
+When `TOPSAILAI_AUTO_SESSION_NAME_ENABLED=1`, the agent starts a background thread that asynchronously generates a session name by calling `llm_shell.get_llm_chat()`. Both `llm_shell.get_llm_chat()` and the main agent's `PromptBase.new_session()` call `_build_context_message()`, which reads `TOPSAILAI_CONTEXT_USER_MESSAGE` via `context.prompt_env.generate_prompt_for_env()` and then **clears the environment variable** so it is only injected once.
+
+Because the session-name thread starts immediately, it could win the race and consume `TOPSAILAI_CONTEXT_USER_MESSAGE` first. The main agent then initialized its context without the intended user message.
+
+### Fix
+`context/ctx_manager.py` now waits until `TOPSAILAI_CONTEXT_USER_MESSAGE` has been cleared before the background thread calls `get_llm_chat()`:
+
+```python
+def wait_agent_ready():
+    while True:
+        time.sleep(1)
+        context_user_message = env_tool.EnvReaderInstance.get("TOPSAILAI_CONTEXT_USER_MESSAGE")
+        if not context_user_message:
+            break
+```
+
+The thread calls `wait_agent_ready()` inside `generate_session_name()` before invoking `llm_shell.get_llm_chat(...)`.
+
+### Why this works
+`PromptBase.new_session()` → `_build_context_message()` reads and clears `TOPSAILAI_CONTEXT_USER_MESSAGE` as part of main-agent startup. Once cleared, the background thread is safe to create its own ephemeral `LLMChat` for summarization; there is no remaining context user message to steal.
+
+### Caveats
+- The current implementation sleeps **before** checking, so session-name generation is delayed by at least 1 second even when `TOPSAILAI_CONTEXT_USER_MESSAGE` is unset. Prefer checking first, then sleeping.
+- If `TOPSAILAI_CONTEXT_USER_MESSAGE` is set but the main agent never calls `new_session()` (e.g., loading an existing session), the daemon thread spins indefinitely. It will not block process exit, but it wastes a thread.
+- A cleaner long-term fix is to make the session-name LLM call skip `context_user_message` consumption entirely (e.g., a flag on `get_llm_chat()` / `PromptBase.new_session()`), removing the need for cross-thread polling.
+
+### Note for maintainers
+- Any code path that creates an `LLMChat` before the main agent has finished startup should be reviewed for similar races against `TOPSAILAI_CONTEXT_USER_MESSAGE`.
+- When modifying `_build_context_message()` or `generate_prompt_for_env()`, keep the read-and-clear semantics in mind and update this MEMO if the synchronization strategy changes.
+
+
 ## Tool Execution Entry Point
 
 **Date:** 2026-06-27
