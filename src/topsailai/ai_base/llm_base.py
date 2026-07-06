@@ -27,6 +27,10 @@ from topsailai.utils import (
     thread_tool,
     qos_tool,
 )
+from topsailai.utils.state_visualizer import (
+    StateVisualizer,
+    VisualizationState,
+)
 from topsailai.utils.thread_local_tool import (
     get_agent_runtime_input,
 )
@@ -47,6 +51,11 @@ from .llm_control.message import (
 from .llm_control.base_class import (
     LLMModelBase,
 )
+
+# Module-level singleton visualizer used by all LLMModel instances.
+_state_visualizer = StateVisualizer()
+_state_visualizer.start()
+
 
 class LLMModel(LLMModelBase):
     """ openai methods """
@@ -228,6 +237,7 @@ class LLMModel(LLMModelBase):
         return result[0]
 
 
+    @_state_visualizer.visualize_state(VisualizationState.THINKING)
     def call_llm_model(self, messages, tools=None, tool_choice="auto"):
         """
         Call the LLM model with the provided messages and tools.
@@ -257,7 +267,6 @@ class LLMModel(LLMModelBase):
             first_byte_timeout=first_byte_timeout,
             raise_on_timeout=raise_on_first_byte_timeout,
         )
-
         self.tokenStat.output_token_stat(self.get_response_usage(response))
 
         full_content = response.choices[0].message.content
@@ -347,6 +356,7 @@ class LLMModel(LLMModelBase):
         yield first_chunk[0]
         for chunk in stream:
             yield chunk
+    @_state_visualizer.visualize_state(VisualizationState.THINKING)
     def call_llm_model_by_stream(self, messages, tools=None, tool_choice="auto"):
         """
         Call the LLM model with streaming response.
@@ -378,6 +388,7 @@ class LLMModel(LLMModelBase):
 
         full_content = ""
         full_tool_calls_dict = {}
+
         usage = CompletionUsage(
             completion_tokens=0, prompt_tokens=0, total_tokens=0,
             prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=0),
