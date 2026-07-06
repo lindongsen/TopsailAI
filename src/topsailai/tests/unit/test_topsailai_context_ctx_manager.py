@@ -376,6 +376,73 @@ class TestCreateSession(unittest.TestCase):
         self.assertFalse(result)
         mock_get_session_mgr.assert_not_called()
 
+    @patch('topsailai.context.ctx_manager.generate_session_name')
+    @patch('topsailai.context.ctx_manager.get_session_manager')
+    def test_create_session_populates_environment_paths(self, mock_get_session_mgr, mock_generate):
+        """Test create_session populates environment path fields from env vars."""
+        from topsailai.context.ctx_manager import create_session
+        from topsailai.context.session_manager.__base import SessionData
+
+        os.environ['TOPSAILAI_PROJECT_WORKSPACE'] = '/workspace/project'
+        os.environ['TOPSAILAI_PWD'] = '/workspace/project/src'
+        os.environ['TOPSAILAI_HOME'] = '/home/user/.topsailai'
+
+        mock_session_mgr = MagicMock()
+        mock_get_session_mgr.return_value = mock_session_mgr
+        mock_generate.return_value = ''
+
+        result = create_session(session_id='session-123', task='Test task')
+
+        self.assertTrue(result)
+        mock_session_mgr.create_session.assert_called_once()
+        session_data = mock_session_mgr.create_session.call_args.args[0]
+        self.assertIsInstance(session_data, SessionData)
+        self.assertEqual(session_data.project_workspace, '/workspace/project')
+        self.assertEqual(session_data.pwd, '/workspace/project/src')
+        self.assertEqual(session_data.topsailai_home, '/home/user/.topsailai')
+
+    @patch('topsailai.context.ctx_manager.generate_session_name')
+    @patch('topsailai.context.ctx_manager.get_session_manager')
+    def test_create_session_environment_paths_optional(self, mock_get_session_mgr, mock_generate):
+        """Test create_session leaves environment path fields None when env vars absent."""
+        from topsailai.context.ctx_manager import create_session
+        from topsailai.context.session_manager.__base import SessionData
+
+        os.environ.pop('TOPSAILAI_PROJECT_WORKSPACE', None)
+        os.environ.pop('TOPSAILAI_PWD', None)
+        os.environ.pop('TOPSAILAI_HOME', None)
+
+        mock_session_mgr = MagicMock()
+        mock_get_session_mgr.return_value = mock_session_mgr
+        mock_generate.return_value = ''
+        with patch('topsailai.workspace.folder_constants.TOPSAILAI_HOME', None):
+            result = create_session(session_id='session-123', task='Test task')
+        self.assertTrue(result)
+        session_data = mock_session_mgr.create_session.call_args.args[0]
+        self.assertIsInstance(session_data, SessionData)
+        self.assertIsNone(session_data.topsailai_home)
+
+    @patch('topsailai.context.ctx_manager.generate_session_name')
+    @patch('topsailai.context.ctx_manager.get_session_manager')
+    def test_create_session_uses_pwd_fallback_for_workspace(self, mock_get_session_mgr, mock_generate):
+        """Test create_session falls back to TOPSAILAI_PWD for project workspace."""
+        from topsailai.context.ctx_manager import create_session
+        from topsailai.context.session_manager.__base import SessionData
+
+        os.environ.pop('TOPSAILAI_PROJECT_WORKSPACE', None)
+        os.environ['TOPSAILAI_PWD'] = '/workspace/project/src'
+
+        mock_session_mgr = MagicMock()
+        mock_get_session_mgr.return_value = mock_session_mgr
+        mock_generate.return_value = ''
+
+        result = create_session(session_id='session-123', task='Test task')
+
+        self.assertTrue(result)
+        session_data = mock_session_mgr.create_session.call_args.args[0]
+        self.assertIsInstance(session_data, SessionData)
+        self.assertEqual(session_data.project_workspace, '/workspace/project/src')
+
 class TestUpdateSessionName(unittest.TestCase):
     """Test cases for update_session_name() function."""
 

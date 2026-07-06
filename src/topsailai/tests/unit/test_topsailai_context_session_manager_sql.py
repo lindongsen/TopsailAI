@@ -306,3 +306,52 @@ class TestSessionSQLAlchemy:
         # Verify messages can still be retrieved without error
         messages = session_mgr.get_messages_by_session("test_session_001")
         assert isinstance(messages, list)
+
+    def test_create_session_with_environment_paths(self, session_mgr):
+        """Test creating session stores project workspace, pwd and topsailai home."""
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Test Session",
+            task="Test task",
+            project_workspace="/workspace/project",
+            pwd="/workspace/project/src",
+            topsailai_home="/home/user/.topsailai"
+        )
+        session_mgr.create_session(session_data)
+
+        retrieved = session_mgr.get_session("test_session_001")
+        assert retrieved.project_workspace == "/workspace/project"
+        assert retrieved.pwd == "/workspace/project/src"
+        assert retrieved.topsailai_home == "/home/user/.topsailai"
+
+    def test_create_session_environment_paths_optional(self, session_mgr):
+        """Test that environment path fields default to None when omitted."""
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Test Session",
+            task="Test task"
+        )
+        session_mgr.create_session(session_data)
+
+        retrieved = session_mgr.get_session("test_session_001")
+        assert retrieved.project_workspace is None
+        assert retrieved.pwd is None
+        assert retrieved.topsailai_home is None
+
+    def test_list_sessions_includes_environment_paths(self, session_mgr):
+        """Test that list_sessions returns environment path fields."""
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Test Session",
+            task="Test task",
+            project_workspace="/workspace/project",
+            pwd="/workspace/project/src",
+            topsailai_home="/home/user/.topsailai"
+        )
+        session_mgr.create_session(session_data)
+
+        sessions = session_mgr.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0].project_workspace == "/workspace/project"
+        assert sessions[0].pwd == "/workspace/project/src"
+        assert sessions[0].topsailai_home == "/home/user/.topsailai"

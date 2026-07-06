@@ -31,6 +31,28 @@ class TestSessionData(unittest.TestCase):
         
         self.assertEqual(session.session_name, "My Session")
 
+    def test_init_environment_paths_defaults_to_none(self):
+        """Test that environment path attributes default to None."""
+        session = SessionData(session_id="s1", task="t1")
+        
+        self.assertIsNone(session.project_workspace)
+        self.assertIsNone(session.pwd)
+        self.assertIsNone(session.topsailai_home)
+
+    def test_init_with_environment_paths(self):
+        """Test SessionData initialization with environment path attributes."""
+        session = SessionData(
+            session_id="s1",
+            task="t1",
+            project_workspace="/workspace",
+            pwd="/workspace",
+            topsailai_home="/home/user/.topsailai",
+        )
+        
+        self.assertEqual(session.project_workspace, "/workspace")
+        self.assertEqual(session.pwd, "/workspace")
+        self.assertEqual(session.topsailai_home, "/home/user/.topsailai")
+
     def test_init_session_name_defaults_to_none(self):
         """Test that session_name defaults to None."""
         session = SessionData(session_id="s1", task="t1")

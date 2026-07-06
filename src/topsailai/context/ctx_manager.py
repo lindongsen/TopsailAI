@@ -7,6 +7,7 @@
 
 import os
 import threading
+from typing import Optional
 
 from topsailai.logger import logger
 from topsailai.utils.format_tool import to_list
@@ -311,6 +312,30 @@ def _async_update_session_name(session_id: str, message: str, session_mgr: Sessi
     except Exception as e:
         logger.debug(f"auto_rename failed for session_id={session_id}: {e}")
 
+
+def _get_session_environment_paths() -> dict[str, Optional[str]]:
+    """
+    Resolve session environment paths from env vars without hardcoding.
+
+    Empty or missing values are returned as ``None`` so callers can treat
+    them uniformly and the database stores ``NULL`` instead of empty strings.
+
+    Returns:
+        dict[str, Optional[str]]: Mapping with project_workspace, pwd, and topsailai_home.
+    """
+    from topsailai.workspace.folder_constants import TOPSAILAI_HOME
+
+    def _env(name: str, fallback: Optional[str] = None) -> Optional[str]:
+        value = os.getenv(name, fallback)
+        return value if value else None
+
+    return {
+        "project_workspace": _env("TOPSAILAI_PROJECT_WORKSPACE", os.getenv("TOPSAILAI_PWD")),
+        "pwd": _env("TOPSAILAI_PWD"),
+        "topsailai_home": _env("TOPSAILAI_HOME", TOPSAILAI_HOME),
+    }
+
+
 def create_session(session_id:str, task:str, session_name:str=None, session_mgr:SessionStorageBase=None) -> bool:
     """
     Create a new session for a specific task.
@@ -336,9 +361,17 @@ def create_session(session_id:str, task:str, session_name:str=None, session_mgr:
     if session_mgr is None:
         session_mgr = get_session_manager()
 
-    # Create the session
+    # Resolve environment paths and create the session
+    env_paths = _get_session_environment_paths()
     session_mgr.create_session(
-        SessionData(session_id=session_id, task=task, session_name=session_name)
+        SessionData(
+            session_id=session_id,
+            task=task,
+            session_name=session_name,
+            project_workspace=env_paths["project_workspace"],
+            pwd=env_paths["pwd"],
+            topsailai_home=env_paths["topsailai_home"],
+        )
     )
 
     # Trigger asynchronous session name generation if no explicit name was given.

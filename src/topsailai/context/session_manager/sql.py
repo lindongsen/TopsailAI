@@ -17,7 +17,7 @@ import threading
 from sqlalchemy import create_engine, Column, String, Text, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import StaticPool
-from sqlalchemy.sql import func as sql_func
+from sqlalchemy.sql import func as sql_func, text
 from datetime import datetime, timedelta
 
 from topsailai.context.chat_history_manager.sql import ChatHistorySQLAlchemy
@@ -37,6 +37,9 @@ class Session(Base):
         session_id (str): Unique identifier for the session (primary key).
         session_name (str): Name of the session.
         task (str): Task information for the session.
+        project_workspace (str): Project workspace path at session creation.
+        pwd (str): Working directory at session creation.
+        topsailai_home (str): TopsailAI home directory at session creation.
         create_time (datetime): Timestamp when the session was created.
     """
     __tablename__ = SessionStorageBase.tb_session
@@ -44,6 +47,9 @@ class Session(Base):
     session_id = Column(String(32), primary_key=True)
     session_name = Column(String, nullable=True)
     task = Column(Text, nullable=False)
+    project_workspace = Column(Text, nullable=True)
+    pwd = Column(Text, nullable=True)
+    topsailai_home = Column(Text, nullable=True)
     create_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
 
 class SessionSQLAlchemy(SessionStorageBase):
@@ -77,9 +83,25 @@ class SessionSQLAlchemy(SessionStorageBase):
         Base.metadata.create_all(self.engine)
         self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
 
+        self._ensure_columns()
+
         self.chat_history = ChatHistorySQLAlchemy(conn)
         self.conn = conn
         self._lock = threading.Lock()
+
+    def _ensure_columns(self):
+        """Add columns introduced after the initial schema release."""
+        with self.engine.connect() as conn:
+            if conn.dialect.name != "sqlite":
+                return
+            for column_name in ("project_workspace", "pwd", "topsailai_home"):
+                result = conn.execute(
+                    text("SELECT 1 FROM pragma_table_info('session') WHERE name = :col"),
+                    {"col": column_name},
+                )
+                if not result.fetchone():
+                    conn.execute(text(f"ALTER TABLE session ADD COLUMN {column_name} TEXT"))
+            conn.commit()
 
     def create_session(self, session_data:SessionData) -> bool:
         """
@@ -105,6 +127,9 @@ class SessionSQLAlchemy(SessionStorageBase):
                     session_id=session_data.session_id,
                     session_name=session_data.session_name,
                     task=session_data.task,
+                    project_workspace=session_data.project_workspace,
+                    pwd=session_data.pwd,
+                    topsailai_home=session_data.topsailai_home,
                     create_time=session_data.create_time or datetime.now()
                 )
                 db_session.add(new_session)
@@ -158,7 +183,10 @@ class SessionSQLAlchemy(SessionStorageBase):
             for session in sessions:
                 session_data = SessionData(
                     session_id=session.session_id,
-                    task=session.task
+                    task=session.task,
+                    project_workspace=session.project_workspace,
+                    pwd=session.pwd,
+                    topsailai_home=session.topsailai_home,
                 )
                 session_data.session_name = session.session_name
                 session_data.create_time = session.create_time
@@ -189,7 +217,10 @@ class SessionSQLAlchemy(SessionStorageBase):
 
             session_data = SessionData(
                 session_id=session.session_id,
-                task=session.task
+                task=session.task,
+                project_workspace=session.project_workspace,
+                pwd=session.pwd,
+                topsailai_home=session.topsailai_home,
             )
             session_data.session_name = session.session_name
             session_data.create_time = session.create_time
