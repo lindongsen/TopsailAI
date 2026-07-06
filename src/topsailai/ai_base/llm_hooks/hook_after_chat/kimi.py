@@ -15,6 +15,9 @@ from topsailai.ai_base.llm_control.exception import (
     ModelServiceError,
 )
 from topsailai.ai_base.constants import LLM_KEYWORD_MISTAKE
+from topsailai.utils import (
+    json_tool,
+)
 
 
 def convert_to_list_dict(content: str) -> list[dict]:
@@ -119,6 +122,25 @@ def remove_unnecessary_labels(content:str) -> list[dict]|None:
 
         try:
             new_content = json.loads(new_content)
+            if new_content:
+                return new_content
+        except Exception as _:
+            pass
+
+        # missing '}' at the end
+        for _miss_closing in (
+            '}',
+        ):
+            try:
+                new_content = json.loads(new_content + _miss_closing)
+                if new_content:
+                    return new_content
+            except Exception as _:
+                pass
+
+        try:
+            new_content = json_tool.to_json_str(new_content)
+            new_content = json_tool.json_load(new_content)
             if new_content:
                 return new_content
         except Exception as _:
