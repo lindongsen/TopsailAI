@@ -312,7 +312,7 @@ class PromptBase(object):
             to_suppress_log (bool, optional): Whether to suppress logging. Defaults to False.
         """
         if not to_suppress_log:
-            logger.info(msg)
+            logger.debug(msg)
 
         # debug
         #if self.messages and msg == self.messages[-1]:
