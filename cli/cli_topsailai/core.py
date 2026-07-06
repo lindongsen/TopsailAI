@@ -207,7 +207,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         "-r", "--runtime-raw",
         action="store_true",
         dest="runtime_raw",
-        help="use raw curses-free mode when entering the runtime scope",
+        help="use raw curses-free mode when entering the runtime scope (default)",
+    )
+    parser.add_argument(
+        "--tui", "--runtime-tui",
+        action="store_true",
+        dest="runtime_tui",
+        help="use the two-pane curses UI when entering the runtime scope",
     )
     parser.add_argument(
         "--tail-lines",
@@ -215,7 +221,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         default=100,
         dest="tail_lines",
         metavar="N",
-        help="number of recent log lines to echo on startup in runtime-raw mode (default: 100)",
+        help="number of recent log lines to echo on startup in runtime mode (default: 100)",
     )
 
     # Be tolerant of unknown arguments so tests that invoke main() with
@@ -335,13 +341,14 @@ def main(argv: Optional[List[str]] = None) -> None:
                 stdout_path = selected_file.get("path")
                 if session_id == "(temp)":
                     session_id = "topsailai"
+                runtime_raw = not args.runtime_tui
                 stream_file(
                     selected_file["path"],
                     task_dir=task_dir,
                     log_files=log_files,
                     default_session_id=session_id,
                     default_stdout_path=stdout_path,
-                    runtime_raw=args.runtime_raw,
+                    runtime_raw=runtime_raw,
                     tail_lines=args.tail_lines,
                 )
                 print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
