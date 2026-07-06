@@ -353,10 +353,10 @@ def _tail_file(path: str, tail_lines: int) -> None:
         pass
 
 
-def _read_input_line() -> Optional[str]:
+def _read_input_line(prompt: str = "") -> Optional[str]:
     """Read a single line from stdin, returning None on EOF/KeyboardInterrupt."""
     try:
-        return input().strip()
+        return input(prompt).strip()
     except (EOFError, KeyboardInterrupt):
         return None
 
@@ -414,6 +414,8 @@ def _stream_file_raw(
         f"type '/send [message]' to send a message, "
         f"'/ctx.btw [message]' to inject an agent2llm message, or Ctrl+C to exit.{Colors.RESET}\n"
     )
+    session_label = default_session_id or "(temp)"
+    prompt = f"[runtime:{session_label}]> "
 
     _tail_file(filepath, tail_lines)
 
@@ -433,7 +435,7 @@ def _stream_file_raw(
                     if sys.stdin.isatty():
                         readable, _, _ = select.select([sys.stdin], [], [], 0.05)
                         if readable:
-                            cmd_line = _read_input_line()
+                            cmd_line = _read_input_line(prompt)
                             if cmd_line is None:
                                 break
                             if not cmd_line:
@@ -477,6 +479,9 @@ def _stream_file_legacy(
         f"'/ctx.btw [message]' to inject an agent2llm message, or Ctrl+C to exit.{Colors.RESET}\n"
     )
 
+    session_label = default_session_id or "(temp)"
+    prompt = f"[runtime:{session_label}]> "
+
     try:
         subprocess.run(["tail", "-n", "100", filepath], check=False)
     except Exception:
@@ -498,9 +503,8 @@ def _stream_file_legacy(
                     if sys.stdin.isatty():
                         readable, _, _ = select.select([sys.stdin], [], [], 0.05)
                         if readable:
-                            try:
-                                cmd_line = input().strip()
-                            except (EOFError, KeyboardInterrupt):
+                            cmd_line = _read_input_line(prompt)
+                            if cmd_line is None:
                                 break
                             if not cmd_line:
                                 continue
