@@ -343,6 +343,36 @@ class TestEnvReaderInstance:
         assert reader1 is reader2
         assert isinstance(reader1, EnvironmentReader)
 
+    def test_get_int_formatter_empty_string_returns_default(self):
+        """Test get with int formatter returns default when value is empty string."""
+        with patch.dict(os.environ, {"TEST_INT": ""}):
+            assert EnvReaderInstance.get("TEST_INT", default=5, formatter=int) == 5
+
+    def test_get_float_formatter_empty_string_returns_default(self):
+        """Test get with float formatter returns default when value is empty string."""
+        with patch.dict(os.environ, {"TEST_FLOAT": ""}):
+            assert EnvReaderInstance.get("TEST_FLOAT", default=3.14, formatter=float) == 3.14
+
+    def test_get_int_formatter_valid_string_parses(self):
+        """Test get with int formatter still parses valid numeric strings."""
+        with patch.dict(os.environ, {"TEST_INT": "42"}):
+            assert EnvReaderInstance.get("TEST_INT", default=5, formatter=int) == 42
+
+    def test_get_float_formatter_valid_string_parses(self):
+        """Test get with float formatter still parses valid numeric strings."""
+        with patch.dict(os.environ, {"TEST_FLOAT": "2.718"}):
+            assert EnvReaderInstance.get("TEST_FLOAT", default=3.14, formatter=float) == 2.718
+
+    def test_get_int_formatter_unset_returns_default(self):
+        """Test get with int formatter returns default when variable is unset."""
+        with patch.dict(os.environ, {}, clear=True):
+            assert EnvReaderInstance.get("TEST_INT", default=5, formatter=int) == 5
+
+    def test_get_str_formatter_empty_string_kept(self):
+        """Test get with str formatter keeps empty string (only int/float skip it)."""
+        with patch.dict(os.environ, {"TEST_STR": ""}):
+            assert EnvReaderInstance.get("TEST_STR", default="fallback", formatter=str) == ""
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

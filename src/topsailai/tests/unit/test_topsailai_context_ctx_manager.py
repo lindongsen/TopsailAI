@@ -967,5 +967,85 @@ class TestCreateSessionAutoRename(unittest.TestCase):
         time.sleep(0.1)
         mock_generate.assert_called_with('session-123', 'Help me refactor code.')
         mock_session_mgr.update_session_name.assert_called_once_with('session-123', 'Auto Name')
-if __name__ == '__main__':
-    unittest.main()
+
+
+class TestWaitAgentReady(unittest.TestCase):
+    """Test cases for wait_agent_ready() function."""
+
+    def setUp(self):
+        """Store original environment."""
+        self.original_env = os.environ.copy()
+
+    def tearDown(self):
+        """Restore original environment."""
+        os.environ.clear()
+        os.environ.update(self.original_env)
+
+    @patch('topsailai.context.ctx_manager.time.sleep')
+    @patch('topsailai.context.ctx_manager.os.getenv')
+    def test_wait_agent_ready_returns_when_context_user_message_empty(self, mock_getenv, mock_sleep):
+        """Test wait_agent_ready returns immediately when env var is empty."""
+        from topsailai.context.ctx_manager import wait_agent_ready
+
+        mock_getenv.return_value = ""
+
+        wait_agent_ready()
+
+        mock_getenv.assert_called_with("TOPSAILAI_CONTEXT_USER_MESSAGE")
+        mock_sleep.assert_called_once_with(1)
+
+    @patch('topsailai.context.ctx_manager.time.sleep')
+    @patch('topsailai.context.ctx_manager.os.getenv')
+    def test_wait_agent_ready_waits_until_context_user_message_cleared(self, mock_getenv, mock_sleep):
+        """Test wait_agent_ready polls until TOPSAILAI_CONTEXT_USER_MESSAGE is cleared."""
+        from topsailai.context.ctx_manager import wait_agent_ready
+
+        mock_getenv.side_effect = ["some context", "some context", ""]
+
+        wait_agent_ready()
+
+        self.assertEqual(mock_getenv.call_count, 3)
+        self.assertEqual(mock_sleep.call_count, 3)
+
+    @patch('topsailai.context.ctx_manager.time.sleep')
+    @patch('topsailai.context.ctx_manager.os.getenv')
+    def test_wait_agent_ready_with_need_agent_object(self, mock_getenv, mock_sleep):
+        """Test wait_agent_ready waits for agent object when requested."""
+        from topsailai.context.ctx_manager import wait_agent_ready
+
+        mock_getenv.return_value = ""
+
+        with patch('topsailai.context.ctx_manager.thread_local_tool.get_agent_object') as mock_get_agent:
+            mock_get_agent.side_effect = [None, "agent_obj"]
+            wait_agent_ready(need_agent_object=True)
+            self.assertEqual(mock_get_agent.call_count, 2)
+
+        self.assertEqual(mock_sleep.call_count, 2)
+
+
+    @patch('topsailai.context.ctx_manager.wait_agent_ready')
+    @patch('topsailai.workspace.llm_shell.get_llm_chat')
+    def test_generate_session_name_calls_wait_agent_ready_before_llm(self, mock_get_llm_chat, mock_wait_ready):
+        """Test generate_session_name waits for agent ready before calling LLM."""
+        from topsailai.context.ctx_manager import generate_session_name
+
+        call_order = []
+
+        def wait_side_effect(*args, **kwargs):
+            call_order.append('wait')
+
+        def llm_side_effect(*args, **kwargs):
+            call_order.append('llm')
+            mock_llm_chat = MagicMock()
+            mock_llm_chat.chat.return_value = 'Generated Name'
+            return mock_llm_chat
+
+        mock_wait_ready.side_effect = wait_side_effect
+        mock_get_llm_chat.side_effect = llm_side_effect
+
+        result = generate_session_name('session-123', 'Some task')
+
+        self.assertEqual(result, 'Generated Name')
+        self.assertEqual(call_order, ['wait', 'llm'])
+        mock_wait_ready.assert_called_once()
+        mock_get_llm_chat.assert_called_once()
