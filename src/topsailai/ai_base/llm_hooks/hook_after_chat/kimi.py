@@ -138,6 +138,19 @@ def remove_unnecessary_labels(content:str) -> list[dict]|None:
             except Exception as _:
                 pass
 
+        # redundant closing
+        for _redundant_closing in (
+            '}',
+        ):
+            if not new_content.endswith(_redundant_closing):
+                continue
+            try:
+                new_content = json.loads(new_content[:-len(_redundant_closing)])
+                if new_content:
+                    return new_content
+            except Exception as _:
+                pass
+
         try:
             new_content = json_tool.to_json_str(new_content)
             new_content = json_tool.json_load(new_content)
