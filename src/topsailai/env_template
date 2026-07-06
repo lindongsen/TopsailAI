@@ -263,7 +263,11 @@ LLM_RESPONSE_STREAM=1
 # Leave empty or unset to use the default "stats".
 TOPSAILAI_STREAM_PROGRESS=stats
 
-# Interactive mode in StepCall, 0 for auto
+# Interactive mode for the Agent2LLM runtime (StepCall).
+# When set to 1 (enabled), the agent pauses during thought/inquiry steps and
+# prompts the user for input via the runtime input hook.
+# When set to 0 (disabled), the step returns an automatic guidance message
+# instead of asking the user.
 TOPSAILAI_CHAT_INTERACTIVE_MODE=0
 
 # =============================================================================
