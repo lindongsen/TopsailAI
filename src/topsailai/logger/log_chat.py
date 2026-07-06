@@ -17,4 +17,4 @@ LOGGER_NAME = "chat"
 # Pre-configured logger instance for chat logging.
 # Writes to chat.log with DEBUG level so that all chat-related messages are
 # captured regardless of the global log-level setting.
-logger = setup_logger(LOGGER_NAME, level=logging.DEBUG)
+logger = setup_logger(LOGGER_NAME)

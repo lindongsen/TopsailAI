@@ -152,10 +152,11 @@ def print_step(msg, need_format=True, need_log=False):
     if need_log:
         logger.info(msg)
 
-    from . import env_tool
+    # thread required, refer to tools/agent_tool.py:
+    # Background story-generation thread disables debug printing
     if thread_local_tool.get_thread_var(
         thread_local_tool.KEY_FLAG_DEBUG
-    ) == 0 and not env_tool.is_interactive_mode():
+    ) == 0:
         return
     if g_flag_print_step is False:
         return
