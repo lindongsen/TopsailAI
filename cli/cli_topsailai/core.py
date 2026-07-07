@@ -22,7 +22,6 @@ from cli_topsailai.colors import Colors
 
 __version__ = "0.1.0"
 
-
 def setup_signal_handlers() -> None:
     """Register SIGINT/SIGTERM handlers for graceful shutdown."""
     from cli_topsailai.process import signal_handler
@@ -33,6 +32,8 @@ def setup_signal_handlers() -> None:
 
 def get_prompt() -> str:
     """Generate dynamic prompt based on current scope."""
+    if state.current_scope == "project":
+        return f"\n{Colors.GREEN}[project]{Colors.RESET}> "
     if state.current_scope == "session" and state.current_session_id:
         return (
             f"\n{Colors.GREEN}[session:{state.current_session_id}]{Colors.RESET}> "
@@ -151,6 +152,15 @@ def prompt_selection(
                 try:
                     num = int(parts[1].strip())
                     if 1 <= num <= len(files):
+                        if state.current_scope == "project":
+                            session_id = files[num - 1].get("session_id")
+                            if not session_id:
+                                print(
+                                    f"{Colors.RED}[ERROR] Selected entry has no "
+                                    f"session ID.{Colors.RESET}"
+                                )
+                                continue
+                            return ("enter_session", session_id)
                         return ("session", num - 1)
                     print(
                         f"{Colors.RED}[ERROR] Invalid number. "
@@ -166,6 +176,15 @@ def prompt_selection(
             try:
                 selected = int(user_input)
                 if 1 <= selected <= len(files):
+                    if state.current_scope == "project":
+                        session_id = files[selected - 1].get("session_id")
+                        if not session_id:
+                            print(
+                                f"{Colors.RED}[ERROR] Selected entry has no "
+                                f"session ID.{Colors.RESET}"
+                            )
+                            continue
+                        return ("enter_session", session_id)
                     return ("watch", selected - 1)
                 print(
                     f"{Colors.RED}[ERROR] Invalid number. "
@@ -243,6 +262,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     from cli_topsailai.log_files import discover_log_files
     from cli_topsailai.paths import get_topsailai_home
     from cli_topsailai.process import cleanup_children
+    from cli_topsailai.project_scope import build_project_list, print_project_table
     from cli_topsailai.retrieve import retrieve_session
     from cli_topsailai.session_info import enrich_files_with_session_names
     from cli_topsailai.streaming import handle_send_command, stream_file
@@ -270,12 +290,32 @@ def main(argv: Optional[List[str]] = None) -> None:
     print(f"{Colors.DIM}DIR:  {task_dir}{Colors.RESET}")
     log_files = discover_log_files(task_dir)
     enrich_files_with_session_names(log_files)
+    project_entries: List[Dict[str, Any]] = []
 
-    if log_files:
+    def _refresh_workspace() -> None:
+        nonlocal log_files
+        log_files = discover_log_files(task_dir)
+        enrich_files_with_session_names(log_files)
         print_table(log_files)
+
+    def _refresh_project() -> None:
+        nonlocal project_entries
+        project_entries = build_project_list(limit=10)
+        if project_entries:
+            print_project_table(project_entries)
+        else:
+            print(
+                f"\n{Colors.YELLOW}[WARN] No sessions with project_workspace found.{Colors.RESET}"
+            )
+
+    if state.current_scope == "project":
+        _refresh_project()
     else:
-        print(f"\n{Colors.YELLOW}[WARN] No .stdout log files found in:{Colors.RESET}")
-        print(f"  {task_dir}")
+        if log_files:
+            print_table(log_files)
+        else:
+            print(f"\n{Colors.YELLOW}[WARN] No .stdout log files found in:{Colors.RESET}")
+            print(f"  {task_dir}")
 
     print(
         f"\n  {Colors.DIM}Type {Colors.YELLOW}/help{Colors.DIM} "
@@ -284,16 +324,29 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     try:
         while state.running:
-            action, value = prompt_selection(log_files, task_dir)
+            active_items = (
+                project_entries if state.current_scope == "project" else log_files
+            )
+            previous_scope = state.current_scope
+            action, value = prompt_selection(active_items, task_dir)
+
+            if action == "yaml_handled":
+                if state.current_scope != previous_scope:
+                    if state.current_scope == "project":
+                        _refresh_project()
+                    elif state.current_scope == "workspace":
+                        _refresh_workspace()
+                continue
 
             if action == "quit":
                 break
 
             if action == "refresh":
-                print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
-                log_files = discover_log_files(task_dir)
-                enrich_files_with_session_names(log_files)
-                print_table(log_files)
+                print(f"\n{Colors.DIM}Refreshing list...{Colors.RESET}")
+                if state.current_scope == "project":
+                    _refresh_project()
+                else:
+                    _refresh_workspace()
                 continue
 
             if action == "help":
@@ -305,22 +358,32 @@ def main(argv: Optional[List[str]] = None) -> None:
                 continue
 
             if action == "clean":
-                clean_expired_files(task_dir, log_files)
-                print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
-                log_files = discover_log_files(task_dir)
-                enrich_files_with_session_names(log_files)
-                print_table(log_files)
+                if state.current_scope == "project":
+                    print(
+                        f"\n{Colors.YELLOW}[INFO] /clean is not available in project scope.{Colors.RESET}"
+                    )
+                else:
+                    clean_expired_files(task_dir, log_files)
+                    print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
+                    _refresh_workspace()
                 continue
 
             if action == "clean_numbers":
-                clean_by_numbers(task_dir, log_files, value)
-                print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
-                log_files = discover_log_files(task_dir)
-                enrich_files_with_session_names(log_files)
-                print_table(log_files)
+                if state.current_scope == "project":
+                    print(
+                        f"\n{Colors.YELLOW}[INFO] /clean is not available in project scope.{Colors.RESET}"
+                    )
+                else:
+                    clean_by_numbers(task_dir, log_files, value)
+                    print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
+                    _refresh_workspace()
                 continue
 
             if action == "send":
+                # /send operates on discovered log files. In project scope refresh
+                # workspace files first so numeric targets resolve correctly.
+                if state.current_scope == "project":
+                    _refresh_workspace()
                 handle_send_command(value, task_dir, log_files)
                 continue
 
@@ -333,6 +396,14 @@ def main(argv: Optional[List[str]] = None) -> None:
                     )
                     continue
                 retrieve_session(session_id)
+                continue
+
+            if action == "enter_session":
+                state.current_scope = "session"
+                state.current_session_id = value
+                print(
+                    f"\n{Colors.GREEN}[INFO] Entered session scope: {value}{Colors.RESET}"
+                )
                 continue
 
             if action == "watch":
@@ -351,10 +422,11 @@ def main(argv: Optional[List[str]] = None) -> None:
                     runtime_raw=runtime_raw,
                     tail_lines=args.tail_lines,
                 )
-                print(f"\n{Colors.DIM}Refreshing file list...{Colors.RESET}")
-                log_files = discover_log_files(task_dir)
-                enrich_files_with_session_names(log_files)
-                print_table(log_files)
+                print(f"\n{Colors.DIM}Refreshing list...{Colors.RESET}")
+                if state.current_scope == "project":
+                    _refresh_project()
+                else:
+                    _refresh_workspace()
     except KeyboardInterrupt:
         print(f"\n{Colors.YELLOW}[INFO] Interrupted by user.{Colors.RESET}")
     finally:

@@ -190,10 +190,47 @@ def match_yaml_command(
     # Special handling for /cd without arguments: available in all scopes
     if user_input in ("/cd", "cd"):
         for instruction in state.yaml_commands:
-            cmd_template = instruction.get("cmd", "")
-            if cmd_template.startswith("/cd"):
+            cmd_template = instruction.get("cmd", "").strip()
+            if cmd_template in ("/cd", "cd"):
                 return instruction, {"session_id": "", "task_dir": task_dir}
 
+    normalized_input = user_input.lstrip("/").strip()
+
+    # First pass: exact command/alias matches (no trailing arguments).
+    # This ensures commands like "cd project" match "/cd project" before
+    # falling back to parameterized patterns such as "/cd {session_id}".
+    for instruction in state.yaml_commands:
+        scopes = instruction.get("scopes", [])
+        if state.current_scope not in scopes:
+            continue
+
+        cmd_template = instruction.get("cmd", "").strip()
+        if cmd_template:
+            cmd_normalized = cmd_template.lstrip("/").strip()
+            if cmd_normalized and cmd_normalized == normalized_input:
+                variables = {
+                    "session_id": state.current_session_id or "",
+                    "task_dir": task_dir,
+                }
+                if cmd_template.startswith(("/ctx.add_msg", "/ctx.btw", "/agent2llm.add_msg")):
+                    variables["message"] = ""
+                return instruction, variables
+
+        aliases = instruction.get("alias", [])
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        for alias in aliases:
+            alias_normalized = alias.lstrip("/").strip()
+            if alias_normalized and alias_normalized == normalized_input:
+                variables = {
+                    "session_id": state.current_session_id or "",
+                    "task_dir": task_dir,
+                }
+                if cmd_template.startswith(("/ctx.add_msg", "/ctx.btw", "/agent2llm.add_msg")):
+                    variables["message"] = ""
+                return instruction, variables
+
+    # Second pass: regex-based matching with variable extraction.
     for instruction in state.yaml_commands:
         scopes = instruction.get("scopes", [])
         if state.current_scope not in scopes:
@@ -377,7 +414,11 @@ def handle_yaml_command(
     if not shell:
         if cmd.startswith("/cd"):
             session_id = variables.get("session_id", "").strip()
-            if session_id:
+            if cmd == "/cd project" or session_id == "project":
+                state.current_scope = "project"
+                state.current_session_id = None
+                print_success("Switched to project scope.")
+            elif session_id:
                 if session_id.isdigit():
                     resolved_task_dir = variables.get("task_dir", "")
                     if resolved_task_dir:

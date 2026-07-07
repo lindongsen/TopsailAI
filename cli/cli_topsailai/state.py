@@ -19,7 +19,8 @@ running = True
 _child_processes: Set["subprocess.Popen"] = set()
 
 # YAML command support
-# Current interactive scope: "workspace", "session", or "runtime".
+# Current interactive scope: "workspace", "project", "session", or "runtime".
+# "project" lists recent sessions that have a non-empty project_workspace.
 # "runtime" is used while streaming a session log so that scope-aware
 # commands such as /ctx.btw can target the watched session.
 current_scope = "workspace"

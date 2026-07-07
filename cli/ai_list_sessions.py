@@ -23,6 +23,7 @@ Email: lin_dongsen@126.com
 """
 
 import argparse
+import json
 import os
 import shutil
 import sys
@@ -199,6 +200,52 @@ def format_sessions(sessions):
     return "\n".join(output)
 
 
+def _session_to_dict(session):
+    """Convert a session object to a plain dictionary for JSON output."""
+    return {
+        "session_id": str(session.session_id) if session.session_id else "",
+        "session_name": str(session.session_name) if session.session_name else "",
+        "create_time": session.create_time.strftime("%Y-%m-%dT%H:%M:%S") if session.create_time else "",
+        "task": str(session.task) if session.task else "",
+        "project_workspace": str(session.project_workspace) if session.project_workspace else "",
+        "pwd": str(session.pwd) if session.pwd else "",
+        "topsailai_home": str(session.topsailai_home) if session.topsailai_home else "",
+    }
+
+
+def format_sessions_json(sessions):
+    """
+    Format session data as a JSON array.
+
+    Args:
+        sessions (list): List of session objects.
+
+    Returns:
+        str: JSON array string containing session dictionaries.
+    """
+    return json.dumps([_session_to_dict(session) for session in sessions], indent=2)
+
+
+def _sort_sessions(sessions, sort_order):
+    """Sort sessions by create_time in ascending or descending order."""
+    reverse = sort_order == "desc"
+    return sorted(sessions, key=lambda session: session.create_time or datetime.min, reverse=reverse)
+
+
+def _filter_sessions(sessions, has_project):
+    """Filter sessions to only those with a non-empty project_workspace when requested."""
+    if not has_project:
+        return sessions
+    return [session for session in sessions if session.project_workspace]
+
+
+def _limit_sessions(sessions, limit):
+    """Limit the number of sessions returned."""
+    if limit is None or limit <= 0:
+        return sessions
+    return sessions[:limit]
+
+
 def main():
     """
     Main entry point for listing sessions.
@@ -232,6 +279,28 @@ def main():
         action="store_true",
         help="Disable colored output",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output sessions as JSON instead of human-readable cards",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Return at most N sessions",
+    )
+    parser.add_argument(
+        "--has-project",
+        action="store_true",
+        help="Only include sessions with a non-empty project_workspace",
+    )
+    parser.add_argument(
+        "--sort",
+        choices=["asc", "desc"],
+        default="asc",
+        help="Sort by create_time (default: asc, oldest first)",
+    )
     args = parser.parse_args()
 
     if args.no_color:
@@ -240,10 +309,15 @@ def main():
     try:
         manager = get_session_manager(args.db_conn)
         sessions = manager.list_sessions()
-        # Display oldest sessions first and newest sessions last.
-        sessions.reverse()
-        formatted_output = format_sessions(sessions)
-        print(formatted_output)
+        sessions = _sort_sessions(sessions, args.sort)
+        sessions = _filter_sessions(sessions, args.has_project)
+        sessions = _limit_sessions(sessions, args.limit)
+
+        if args.json:
+            print(format_sessions_json(sessions))
+        else:
+            formatted_output = format_sessions(sessions)
+            print(formatted_output)
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)

@@ -406,5 +406,61 @@ class TestRuntimeRawArguments(unittest.TestCase):
         self.assertEqual(kwargs["tail_lines"], 100)
 
 
+
+
+class TestProjectScopeCommands(unittest.TestCase):
+    """Tests for project scope command handling."""
+
+    def setUp(self):
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+        cli_state.history_manager = None
+
+    def tearDown(self):
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+        cli_state.history_manager = None
+        cli_state._child_processes.clear()
+
+    @patch("cli_topsailai.core.input")
+    def test_cd_project_switches_scope(self, mock_input):
+        cli_state.yaml_commands = [
+            {
+                "cmd": "/cd project",
+                "scopes": ["workspace"],
+                "shell": "",
+            }
+        ]
+        mock_input.return_value = "cd project"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "yaml_handled")
+
+    @patch("cli_topsailai.core.input")
+    def test_numeric_selection_in_project_enters_session(self, mock_input):
+        cli_state.current_scope = "project"
+        project_entries = [
+            {"session_id": "proj-s1", "project_workspace": "/work/a"},
+            {"session_id": "proj-s2", "project_workspace": "/work/b"},
+        ]
+        mock_input.return_value = "2"
+        action, value = prompt_selection(project_entries, "/task")
+        self.assertEqual(action, "enter_session")
+        self.assertEqual(value, "proj-s2")
+
+    @patch("cli_topsailai.core.input")
+    def test_cd_from_project_returns_to_workspace(self, mock_input):
+        cli_state.current_scope = "project"
+        cli_state.yaml_commands = [
+            {
+                "cmd": "/cd",
+                "scopes": ["project"],
+                "shell": "",
+            }
+        ]
+        mock_input.return_value = "/cd"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "yaml_handled")
 if __name__ == "__main__":
     unittest.main()

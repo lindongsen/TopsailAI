@@ -104,31 +104,37 @@ def print_help(
             "cmd": "<number>",
             "desc": "Select a log file by its number to stream output in real-time.",
             "example": "Example: 3",
+            "scopes": ["workspace", "project"],
         },
         {
             "cmd": "/refresh",
             "desc": "Re-scan the task directory and refresh the file list.",
             "example": "",
+            "scopes": ["workspace", "project"],
         },
         {
             "cmd": "/session <number>",
             "desc": "Retrieve detailed messages for the session ID of the selected file.",
             "example": "Example: /session 3",
+            "scopes": ["workspace"],
         },
         {
             "cmd": "/clean [<number> [<number>...]]",
             "desc": "Clean up .stdout files. Without arguments: deletes idle files older than 3 days. With numbers: deletes the specified files by their list number.",
             "example": "Example: /clean 3 5 7",
+            "scopes": ["workspace"],
         },
         {
             "cmd": "/send [session_id_or_index] [message...]",
             "desc": "Send a message to a running session through its named pipe. In session scope, omit the session id. If no message is provided, enter multi-line input mode (finish with EOF). While streaming a log, /send defaults to the watched session.",
             "example": "Example: /send 1 hello  or  /send my-session hello  or  while streaming: /send hello",
+            "scopes": ["session", "runtime"],
         },
         {
             "cmd": "/ctx.btw [message...]",
             "desc": "Inject a by-the-way message into the agent2llm runtime context of the watched session. In session scope, omit the session id. If no message is provided, enter multi-line input mode (finish with EOF). While streaming a log, /ctx.btw defaults to the watched session.",
             "example": "Example: /ctx.btw remember to check the logs  or  while streaming: /ctx.btw hello",
+            "scopes": ["session", "runtime"],
         },
         {
             "cmd": "/help [<keyword>]",
@@ -136,8 +142,14 @@ def print_help(
             "example": "Example: /help ctx",
         },
         {
+            "cmd": "cd project",
+            "desc": "Enter project scope to list the 10 most recent sessions that have a project workspace.",
+            "example": "",
+            "scopes": ["workspace"],
+        },
+        {
             "cmd": "q  or  quit  or  cd",
-            "desc": "Exit the log watcher gracefully and return to the workspace scope.",
+            "desc": "Exit the current scope. From session, runtime, or project scope, return to workspace scope.",
             "example": "",
         },
         {
@@ -151,7 +163,12 @@ def print_help(
     if keyword_lower:
         builtin_matches = [c for c in commands if _command_matches(c, keyword_lower)]
     else:
-        builtin_matches = commands
+        builtin_matches = [
+            c
+            for c in commands
+            if current_scope
+            in c.get("scopes", ["workspace", "project", "session", "runtime"])
+        ]
 
     for item in builtin_matches:
         _render_command(item)

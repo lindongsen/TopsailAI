@@ -4,6 +4,7 @@
 
 import io
 import os
+import json
 import sys
 import tempfile
 import unittest
@@ -245,6 +246,159 @@ class TestMainIntegration(unittest.TestCase):
                 output = mock_stdout.getvalue()
 
         self.assertIn("No sessions found.", output)
+
+
+class TestJsonAndFilterFlags(unittest.TestCase):
+    """Tests for --json, --has-project, --limit, and --sort flags."""
+
+    def setUp(self):
+        self.db_fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(self.db_fd)
+        self.db_conn = f"sqlite:///{self.db_path}"
+
+    def tearDown(self):
+        try:
+            os.remove(self.db_path)
+        except OSError:
+            pass
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_json_output_format(self, _mock_tty):
+        manager = get_session_manager(self.db_conn)
+        manager.create_session(
+            SessionData(
+                session_id="json-s1",
+                session_name="json session",
+                task="json task",
+                project_workspace="/work/project-json",
+                pwd="/work/project-json",
+                topsailai_home="/home/user/.topsailai",
+            )
+        )
+        with mock.patch(
+            "sys.argv", ["ai_list_sessions.py", self.db_conn, "--json", "--no-color"]
+        ):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                ai_list_sessions.main()
+                output = mock_stdout.getvalue()
+
+        data = json.loads(output)
+        self.assertIsInstance(data, list)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["session_id"], "json-s1")
+        self.assertEqual(data[0]["session_name"], "json session")
+        self.assertEqual(data[0]["task"], "json task")
+        self.assertEqual(data[0]["project_workspace"], "/work/project-json")
+        self.assertEqual(data[0]["pwd"], "/work/project-json")
+        self.assertEqual(data[0]["topsailai_home"], "/home/user/.topsailai")
+        self.assertIn("create_time", data[0])
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_has_project_filter(self, _mock_tty):
+        manager = get_session_manager(self.db_conn)
+        manager.create_session(
+            SessionData(session_id="with-project", task="t1", project_workspace="/work/a")
+        )
+        manager.create_session(
+            SessionData(session_id="without-project", task="t2")
+        )
+        with mock.patch(
+            "sys.argv",
+            ["ai_list_sessions.py", self.db_conn, "--json", "--has-project", "--no-color"],
+        ):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                ai_list_sessions.main()
+                output = mock_stdout.getvalue()
+
+        data = json.loads(output)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["session_id"], "with-project")
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_limit_sessions(self, _mock_tty):
+        manager = get_session_manager(self.db_conn)
+        for i in range(5):
+            manager.create_session(
+                SessionData(session_id=f"limit-{i}", task=f"task {i}")
+            )
+        with mock.patch(
+            "sys.argv",
+            ["ai_list_sessions.py", self.db_conn, "--json", "--limit", "2", "--no-color"],
+        ):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                ai_list_sessions.main()
+                output = mock_stdout.getvalue()
+
+        data = json.loads(output)
+        self.assertEqual(len(data), 2)
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_sort_descending(self, _mock_tty):
+        manager = get_session_manager(self.db_conn)
+        manager.create_session(
+            SessionData(session_id="older", task="older task")
+        )
+        import time
+        time.sleep(0.01)
+        manager.create_session(
+            SessionData(session_id="newer", task="newer task")
+        )
+        with mock.patch(
+            "sys.argv",
+            [
+                "ai_list_sessions.py",
+                self.db_conn,
+                "--json",
+                "--sort",
+                "desc",
+                "--no-color",
+            ],
+        ):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                ai_list_sessions.main()
+                output = mock_stdout.getvalue()
+
+        data = json.loads(output)
+        self.assertEqual(len(data), 2)
+        self.assertEqual(data[0]["session_id"], "newer")
+        self.assertEqual(data[1]["session_id"], "older")
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_combined_flags_project_recent_asc(self, _mock_tty):
+        manager = get_session_manager(self.db_conn)
+        for i in range(5):
+            manager.create_session(
+                SessionData(
+                    session_id=f"proj-{i}",
+                    task=f"task {i}",
+                    project_workspace=f"/work/proj-{i}",
+                )
+            )
+            import time
+            time.sleep(0.005)
+        with mock.patch(
+            "sys.argv",
+            [
+                "ai_list_sessions.py",
+                self.db_conn,
+                "--json",
+                "--has-project",
+                "--limit",
+                "3",
+                "--sort",
+                "asc",
+                "--no-color",
+            ],
+        ):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                ai_list_sessions.main()
+                output = mock_stdout.getvalue()
+
+        data = json.loads(output)
+        self.assertEqual(len(data), 3)
+        # asc order: oldest first, newest last.
+        self.assertEqual(data[0]["session_id"], "proj-0")
+        self.assertEqual(data[2]["session_id"], "proj-2")
 
 
 if __name__ == "__main__":
