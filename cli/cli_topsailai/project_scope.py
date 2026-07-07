@@ -275,3 +275,90 @@ def refresh_project_list(
         Fresh list from :func:`build_project_list`.
     """
     return build_project_list(limit=limit)
+
+
+
+def resolve_agent_folder(arg: str, entries: List[Dict[str, Any]]) -> Optional[str]:
+    """Resolve a `/agent` argument to a folder path.
+
+    If *arg* is a number, it is mapped to the ``project_workspace`` of the
+    corresponding entry in *entries* (1-based index).  Otherwise *arg* is
+    returned as-is so it can be used as a direct folder path.
+
+    Args:
+        arg: User-provided argument, either a list number or a folder path.
+        entries: Current project scope entries.
+
+    Returns:
+        Resolved folder path, or ``None`` when the number is out of range.
+    """
+    arg = arg.strip()
+    if not arg:
+        print(
+            f"{Colors.RED}[ERROR] Usage: /agent <number> or /agent <folder>{Colors.RESET}"
+        )
+        return None
+
+    if arg.isdigit():
+        idx = int(arg) - 1
+        if 0 <= idx < len(entries):
+            folder = entries[idx].get("project_workspace", "")
+            if folder:
+                return folder
+            print(
+                f"{Colors.RED}[ERROR] Selected entry has no project workspace.{Colors.RESET}"
+            )
+            return None
+        print(
+            f"{Colors.RED}[ERROR] Invalid number. Please enter 1-{len(entries)}.{Colors.RESET}"
+        )
+        return None
+
+    return arg
+
+
+def launch_agent_in_folder(folder: str) -> None:
+    """Change to *folder* and launch ``topsailai_launch_agent`` via os.system.
+
+    The launcher reads ``TOPSAILAI_PWD`` at import time and uses it to decide
+    its working directory, so both the process working directory and the
+    ``TOPSAILAI_PWD``/``PWD`` environment variables are set to the target
+    folder before invoking the launcher.  The original working directory and
+    environment values are restored after the launcher returns.
+
+    Args:
+        folder: Target project workspace folder.
+    """
+    original_cwd = os.getcwd()
+    target_folder = os.path.abspath(folder)
+
+    env_keys = ("TOPSAILAI_PWD", "PWD")
+    original_env: Dict[str, Optional[str]] = {
+        key: os.environ.get(key) for key in env_keys
+    }
+
+    try:
+        os.chdir(target_folder)
+        for key in env_keys:
+            os.environ[key] = target_folder
+        print(
+            f"{Colors.GREEN}[INFO] Launching agent in {target_folder} ...{Colors.RESET}"
+        )
+        os.system("topsailai_launch_agent")
+    except OSError as exc:
+        print(
+            f"{Colors.RED}[ERROR] Failed to change to folder '{target_folder}': {exc}{Colors.RESET}"
+        )
+    finally:
+        for key in env_keys:
+            original_value = original_env[key]
+            if original_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = original_value
+        try:
+            os.chdir(original_cwd)
+        except OSError as exc:
+            print(
+                f"{Colors.RED}[ERROR] Failed to restore working directory '{original_cwd}': {exc}{Colors.RESET}"
+            )

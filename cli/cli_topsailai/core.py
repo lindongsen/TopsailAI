@@ -173,6 +173,19 @@ def prompt_selection(
                     )
                 continue
 
+            if (
+                lower_input in ("/agent", "agent")
+                or lower_input.startswith("/agent ")
+                or lower_input.startswith("agent ")
+            ):
+                parts = user_input.split(None, 1)
+                if len(parts) < 2:
+                    print(
+                        f"{Colors.RED}[ERROR] Usage: /agent {{number}} or /agent {{folder}}{Colors.RESET}"
+                    )
+                    continue
+                return ("agent", parts[1].strip())
+
             try:
                 selected = int(user_input)
                 if 1 <= selected <= len(files):
@@ -194,7 +207,7 @@ def prompt_selection(
                 print(
                     f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
                     f"Please enter a number, /refresh, /session {{number}}, "
-                    f"/clean, /send, /help, or 'q'.{Colors.RESET}"
+                    f"/agent {{number|folder}}, /clean, /send, /help, or 'q'.{Colors.RESET}"
                 )
 
         except (EOFError, KeyboardInterrupt):
@@ -262,7 +275,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     from cli_topsailai.log_files import discover_log_files
     from cli_topsailai.paths import get_topsailai_home
     from cli_topsailai.process import cleanup_children
-    from cli_topsailai.project_scope import build_project_list, print_project_table
+    from cli_topsailai.project_scope import (
+        build_project_list,
+        launch_agent_in_folder,
+        print_project_table,
+        resolve_agent_folder,
+    )
     from cli_topsailai.retrieve import retrieve_session
     from cli_topsailai.session_info import enrich_files_with_session_names
     from cli_topsailai.streaming import handle_send_command, stream_file
@@ -399,6 +417,23 @@ def main(argv: Optional[List[str]] = None) -> None:
                     _refresh_workspace()
                 handle_send_command(value, task_dir, log_files)
                 continue
+
+            if action == "agent":
+                if state.current_scope != "project":
+                    print(
+                        f"\n{Colors.YELLOW}[INFO] /agent is only available in project scope.{Colors.RESET}"
+                    )
+                    continue
+                folder = resolve_agent_folder(value, project_entries)
+                if folder is None:
+                    print(
+                        f"{Colors.RED}[ERROR] Invalid project number: '{value}'. "
+                        f"Use /agent {{number}} or /agent {{folder}}.{Colors.RESET}"
+                    )
+                    continue
+                launch_agent_in_folder(folder)
+                continue
+
 
             if action == "session":
                 selected_file = log_files[value]

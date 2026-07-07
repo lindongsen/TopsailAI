@@ -412,3 +412,126 @@ class TestRefreshProjectList(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestResolveAgentFolder(unittest.TestCase):
+    """Tests for resolve_agent_folder."""
+
+    def _make_entries(self):
+        return [
+            {"no": 1, "project_workspace": "/work/project-a"},
+            {"no": 2, "project_workspace": "/work/project-b"},
+        ]
+
+    def test_resolve_numeric_argument(self):
+        entries = self._make_entries()
+        folder = project_scope.resolve_agent_folder("2", entries)
+        self.assertEqual(folder, "/work/project-b")
+
+    def test_resolve_numeric_with_whitespace(self):
+        entries = self._make_entries()
+        folder = project_scope.resolve_agent_folder("  1  ", entries)
+        self.assertEqual(folder, "/work/project-a")
+
+    def test_resolve_direct_folder_path(self):
+        entries = self._make_entries()
+        folder = project_scope.resolve_agent_folder("/custom/folder", entries)
+        self.assertEqual(folder, "/custom/folder")
+
+    def test_resolve_invalid_number_too_large(self):
+        entries = self._make_entries()
+        folder = project_scope.resolve_agent_folder("5", entries)
+        self.assertIsNone(folder)
+
+    def test_resolve_invalid_number_zero(self):
+        entries = self._make_entries()
+        folder = project_scope.resolve_agent_folder("0", entries)
+        self.assertIsNone(folder)
+
+    def test_resolve_empty_entries_numeric(self):
+        folder = project_scope.resolve_agent_folder("1", [])
+        self.assertIsNone(folder)
+
+
+class TestLaunchAgentInFolder(unittest.TestCase):
+    """Tests for launch_agent_in_folder."""
+
+    def _assert_env_during_launch(self, expected_folder):
+        """Return a side-effect function that checks env vars during os.system."""
+        def _side_effect(_cmd):
+            self.assertEqual(
+                os.environ.get("TOPSAILAI_PWD"),
+                expected_folder,
+                "TOPSAILAI_PWD must point to the target folder during launch",
+            )
+            self.assertEqual(
+                os.environ.get("PWD"),
+                expected_folder,
+                "PWD must point to the target folder during launch",
+            )
+        return _side_effect
+
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_launches_agent_with_os_system_and_env(
+        self, mock_getcwd, mock_chdir, mock_system
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_system.side_effect = self._assert_env_during_launch("/work/project-a")
+        project_scope.launch_agent_in_folder("/work/project-a")
+        mock_chdir.assert_any_call("/work/project-a")
+        mock_chdir.assert_any_call("/TopsailAI/cli")
+        mock_system.assert_called_once_with("topsailai_launch_agent")
+
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_restores_cwd_and_env_on_system_failure(
+        self, mock_getcwd, mock_chdir, mock_system
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_system.side_effect = OSError("launch failed")
+        project_scope.launch_agent_in_folder("/work/project-a")
+        mock_chdir.assert_any_call("/work/project-a")
+        mock_chdir.assert_any_call("/TopsailAI/cli")
+
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_command_uses_bare_launcher_name(
+        self, mock_getcwd, mock_chdir, mock_system
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_system.side_effect = self._assert_env_during_launch("/work/weird dir")
+        project_scope.launch_agent_in_folder("/work/weird dir")
+        mock_chdir.assert_any_call("/work/weird dir")
+        mock_chdir.assert_any_call("/TopsailAI/cli")
+        mock_system.assert_called_once_with("topsailai_launch_agent")
+
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_restores_original_env_values_after_launch(
+        self, mock_getcwd, mock_chdir, mock_system
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        original_pwd = os.environ.get("PWD")
+        original_topsailai_pwd = os.environ.get("TOPSAILAI_PWD")
+        project_scope.launch_agent_in_folder("/work/project-a")
+        self.assertEqual(os.environ.get("PWD"), original_pwd)
+        self.assertEqual(os.environ.get("TOPSAILAI_PWD"), original_topsailai_pwd)
+
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_converts_relative_folder_to_absolute(
+        self, mock_getcwd, mock_chdir, mock_system
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_system.side_effect = self._assert_env_during_launch(
+            "/TopsailAI/cli/relative-project"
+        )
+        project_scope.launch_agent_in_folder("relative-project")
+        mock_chdir.assert_any_call("/TopsailAI/cli/relative-project")
+        mock_chdir.assert_any_call("/TopsailAI/cli")

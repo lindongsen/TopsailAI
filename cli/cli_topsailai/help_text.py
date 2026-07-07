@@ -125,6 +125,12 @@ def print_help(
             "scopes": ["workspace"],
         },
         {
+            "cmd": "/agent <number|folder>",
+            "desc": "Change to the selected project workspace folder and launch topsailai_launch_agent. Use a list number or an absolute/relative folder path.",
+            "example": "Example: /agent 3  or  /agent /path/to/project",
+            "scopes": ["project"],
+        },
+        {
             "cmd": "/clean [<number> [<number>...]]",
             "desc": "Clean up .stdout files. Without arguments: deletes idle files older than 3 days. With numbers: deletes the specified files by their list number.",
             "example": "Example: /clean 3 5 7",
