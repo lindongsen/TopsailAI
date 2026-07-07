@@ -202,7 +202,7 @@ def _display_session_id(session_id: Optional[str], is_task: bool = False) -> str
     else:
         label = session_id or "-"
     if is_task:
-        label = f"{label} (task)"
+        label = f"(task) {label}"
     return label
 
 
