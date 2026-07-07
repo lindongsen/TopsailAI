@@ -35,16 +35,9 @@ class TestBuildProjectList(unittest.TestCase):
     """Tests for build_project_list."""
 
     def setUp(self):
+        # ai_list_sessions --sort desc returns newest-first; build_project_list
+        # reverses the list so the oldest entry is displayed at the top.
         self.sample_sessions = [
-            {
-                "session_id": "s1",
-                "session_name": "session one",
-                "create_time": "2026-07-06T10:00:00",
-                "task": "task one",
-                "project_workspace": "/work/project-a",
-                "pwd": "/work/project-a",
-                "topsailai_home": "/home/user/.topsailai",
-            },
             {
                 "session_id": "s2",
                 "session_name": "session two",
@@ -52,6 +45,15 @@ class TestBuildProjectList(unittest.TestCase):
                 "task": "task two",
                 "project_workspace": "/work/project-b",
                 "pwd": "/work/project-b",
+                "topsailai_home": "/home/user/.topsailai",
+            },
+            {
+                "session_id": "s1",
+                "session_name": "session one",
+                "create_time": "2026-07-06T10:00:00",
+                "task": "task one",
+                "project_workspace": "/work/project-a",
+                "pwd": "/work/project-a",
                 "topsailai_home": "/home/user/.topsailai",
             },
         ]
@@ -76,23 +78,14 @@ class TestBuildProjectList(unittest.TestCase):
         self.assertIn("--json", call_args)
         self.assertIn("--has-project", call_args)
         self.assertIn("--sort", call_args)
-        self.assertIn("asc", call_args)
+        self.assertIn("desc", call_args)
         self.assertIn("--limit", call_args)
         self.assertIn("10", call_args)
 
     @patch("cli_topsailai.project_scope.subprocess.run")
     def test_build_project_list_keeps_oldest_first_order(self, mock_run):
-        """If ai_list_sessions returns ascending order, oldest is row 1."""
+        """Database returns newest-first; after reversal oldest is row 1."""
         sessions = [
-            {
-                "session_id": "oldest",
-                "session_name": "oldest session",
-                "create_time": "2026-07-06T09:00:00",
-                "task": "old task",
-                "project_workspace": "/work/old",
-                "pwd": "/work/old",
-                "topsailai_home": "/home/user/.topsailai",
-            },
             {
                 "session_id": "newest",
                 "session_name": "newest session",
@@ -100,6 +93,15 @@ class TestBuildProjectList(unittest.TestCase):
                 "task": "new task",
                 "project_workspace": "/work/new",
                 "pwd": "/work/new",
+                "topsailai_home": "/home/user/.topsailai",
+            },
+            {
+                "session_id": "oldest",
+                "session_name": "oldest session",
+                "create_time": "2026-07-06T09:00:00",
+                "task": "old task",
+                "project_workspace": "/work/old",
+                "pwd": "/work/old",
                 "topsailai_home": "/home/user/.topsailai",
             },
         ]
@@ -111,6 +113,8 @@ class TestBuildProjectList(unittest.TestCase):
         self.assertEqual(entries[1]["session_id"], "newest")
         self.assertEqual(entries[0]["no"], 1)
         self.assertEqual(entries[1]["no"], 2)
+
+
     @patch("cli_topsailai.project_scope.subprocess.run")
     def test_build_project_list_passes_limit(self, mock_run):
         mock_run.return_value = MockCompletedProcess(stdout="[]")
