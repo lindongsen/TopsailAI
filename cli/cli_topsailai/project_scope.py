@@ -198,7 +198,6 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
         return
 
     w_no = 4
-    w_status = 10
     w_session = 20
     w_project = 30
     w_created = 14
@@ -207,7 +206,6 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
     header = (
         f"{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE}"
         f" {'No':^{w_no}} |"
-        f" {'Status':^{w_status}} |"
         f" {'Session ID':^{w_session}} |"
         f" {'Project Workspace':^{w_project}} |"
         f" {'Created':^{w_created}} |"
@@ -217,7 +215,6 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
     sep = (
         f"{Colors.CYAN}"
         f"{'-' * (w_no + 1)}+"
-        f"{'-' * (w_status + 2)}+"
         f"{'-' * (w_session + 2)}+"
         f"{'-' * (w_project + 2)}+"
         f"{'-' * (w_created + 2)}+"
@@ -243,12 +240,11 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
             session_name = session_name[: w_name - 3] + "..."
 
         status = entry.get("status") or "Idle"
-        status_color = Colors.GREEN if status == "Running" else Colors.RESET
+        row_color = Colors.GREEN if status == "Running" else Colors.RESET
 
         row = (
-            f"{Colors.GRAY}"
+            f"{row_color}"
             f" {entry['no']:^{w_no}} |"
-            f" {status_color}{status:^{w_status}}{Colors.RESET} |"
             f" {session_id:<{w_session}} |"
             f" {project:<{w_project}} |"
             f" {created:^{w_created}} |"

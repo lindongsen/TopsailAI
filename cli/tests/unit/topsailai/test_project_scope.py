@@ -19,6 +19,7 @@ sys.path.insert(
 )
 
 from cli_topsailai import project_scope
+from cli_topsailai.colors import Colors
 
 
 class MockCompletedProcess:
@@ -320,8 +321,7 @@ class TestPrintProjectTable(unittest.TestCase):
         ]
         project_scope.print_project_table(entries)
         output = mock_stdout.getvalue()
-        self.assertIn("Status", output)
-        self.assertIn("Running", output)
+        self.assertNotIn("Status", output)
         self.assertIn("Session ID", output)
         self.assertIn("Project Workspace", output)
         self.assertIn("s1", output)
@@ -352,6 +352,48 @@ class TestPrintProjectTable(unittest.TestCase):
         project_scope.print_project_table(entries)
         output = mock_stdout.getvalue()
         self.assertIn("...", output)
+
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_running_row_is_green(self, mock_stdout):
+        entries = [
+            {
+                "no": 1,
+                "session_id": "s-running",
+                "session_name": "running session",
+                "project_workspace": "/work/running",
+                "create_time": "07-06 10:00",
+                "create_time_raw": "2026-07-06T10:00:00",
+                "task": "task",
+                "status": "Running",
+            }
+        ]
+        project_scope.print_project_table(entries)
+        output = mock_stdout.getvalue()
+        self.assertIn(Colors.GREEN, output)
+        self.assertIn(Colors.RESET, output)
+
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_idle_row_is_not_green(self, mock_stdout):
+        entries = [
+            {
+                "no": 1,
+                "session_id": "s-idle",
+                "session_name": "idle session",
+                "project_workspace": "/work/idle",
+                "create_time": "07-06 10:00",
+                "create_time_raw": "2026-07-06T10:00:00",
+                "task": "task",
+                "status": "Idle",
+            }
+        ]
+        project_scope.print_project_table(entries)
+        output = mock_stdout.getvalue()
+        # The header contains no green; the idle row should not contain GREEN.
+        # Split output into header and data portions by the separator line.
+        lines = output.splitlines()
+        data_lines = [line for line in lines if "s-idle" in line]
+        self.assertEqual(len(data_lines), 1)
+        self.assertNotIn(Colors.GREEN, data_lines[0])
 
 
 class TestRefreshProjectList(unittest.TestCase):
