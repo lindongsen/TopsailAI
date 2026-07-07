@@ -248,7 +248,8 @@ class TestSummarizeMessagesForProcessing:
             '{"role": "assistant", "content": "msg2"}',
             '{"role": "user", "content": "msg3"}',
         ]
-        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0), \
+             patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             mock_env_reader.check_bool.return_value = False
             mock_llm_chat = MagicMock()
             mock_prompt_ctl = MagicMock()
@@ -299,7 +300,8 @@ class TestSummarizeMessagesForProcessing:
             return kwargs.get("default")
 
         mock_env_reader.get.side_effect = _get_side_effect
-        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0), \
+             patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             mock_llm_chat = MagicMock()
             mock_prompt_ctl = MagicMock()
             mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
@@ -319,7 +321,8 @@ class TestSummarizeMessagesForProcessing:
         ]
         mock_agent2llm.messages = ['{"role": "user", "content": "session1"}']
         mock_env_reader.check_bool.return_value = False
-        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0), \
+             patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             mock_llm_chat = MagicMock()
             mock_prompt_ctl = MagicMock()
             mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
@@ -340,7 +343,8 @@ class TestSummarizeMessagesForProcessing:
         mock_agent2llm.messages = [f'{{"role": "user", "content": "session{i}"}}' for i in range(60)]
         mock_env_reader.check_bool.return_value = True
         mock_env_reader.get.return_value = 100
-        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0), \
+             patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             mock_llm_chat = MagicMock()
             mock_prompt_ctl = MagicMock()
             mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
@@ -360,7 +364,8 @@ class TestSummarizeMessagesForProcessing:
             '{"role": "assistant", "content": "msg4"}',
         ]
         mock_env_reader.check_bool.return_value = False
-        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=2) as mock_offset:
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=2) as mock_offset, \
+             patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             mock_llm_chat = MagicMock()
             mock_prompt_ctl = MagicMock()
             mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
@@ -381,7 +386,8 @@ class TestSummarizeMessagesForProcessing:
         ]
         mock_agent2llm.messages = ['{"role": "user", "content": "last user msg"}']
         mock_env_reader.check_bool.return_value = False
-        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0), \
+             patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             mock_llm_chat = MagicMock()
             mock_prompt_ctl = MagicMock()
             mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
@@ -400,7 +406,8 @@ class TestSummarizeMessagesForProcessing:
             '{"role": "user", "content": "msg3"}',
         ]
         mock_env_reader.check_bool.return_value = False
-        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0), \
+             patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             with patch.object(mock_agent2llm, '_summarize_messages', return_value=(MagicMock(), None)):
                 result = mock_agent2llm.summarize_messages_for_processing()
                 assert result is None
@@ -417,7 +424,8 @@ class TestSummarizeMessagesForProcessing:
         ]
         mock_agent2llm.session_id = "test_session"
         mock_env_reader.check_bool.return_value = False
-        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0), \
+             patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             mock_llm_chat = MagicMock()
             mock_prompt_ctl = MagicMock()
             mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
@@ -444,7 +452,8 @@ class TestSummarizeMessagesForProcessing:
             '{"role": "user", "content": "msg3"}',
         ]
         mock_env_reader.check_bool.return_value = False
-        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0), \
+             patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             mock_llm_chat = MagicMock()
             mock_prompt_ctl = MagicMock()
             mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
@@ -466,7 +475,8 @@ class TestSummarizeMessagesForProcessing:
             '{"role": "user", "content": "msg3"}',
         ]
         mock_env_reader.check_bool.return_value = False
-        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0), \
+             patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             mock_llm_chat = MagicMock()
             mock_prompt_ctl = MagicMock()
             mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
@@ -503,7 +513,8 @@ class TestEdgeCases:
             '{"role": "user", "content": "🎉 🎊"}',
         ]
         mock_env_reader.check_bool.return_value = False
-        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0), \
+             patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             mock_llm_chat = MagicMock()
             mock_prompt_ctl = MagicMock()
             mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
@@ -522,7 +533,8 @@ class TestEdgeCases:
             '{"role": "user", "content": "emoji: 🎯 <script>"}',
         ]
         mock_env_reader.check_bool.return_value = False
-        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0), \
+             patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             mock_llm_chat = MagicMock()
             mock_prompt_ctl = MagicMock()
             mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
@@ -539,7 +551,8 @@ class TestEdgeCases:
             f'{{"role": "user", "content": "msg{i}"}}' for i in range(100)
         ]
         mock_env_reader.check_bool.return_value = False
-        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0), \
+             patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             mock_llm_chat = MagicMock()
             mock_prompt_ctl = MagicMock()
             mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
@@ -588,7 +601,8 @@ class TestExceptionHandling:
             '{"role": "user", "content": "msg3"}',
         ]
         mock_env_reader.check_bool.return_value = False
-        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0):
+        with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0), \
+             patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             with patch.object(mock_agent2llm, '_summarize_messages', side_effect=RuntimeError("LLM error")):
                 with pytest.raises(RuntimeError, match="LLM error"):
                     mock_agent2llm.summarize_messages_for_processing()
@@ -646,9 +660,10 @@ class TestCtxBtw:
         msg_dict = runtime_instructions.ai_agent.messages[0]
         assert isinstance(msg_dict, dict)
         assert msg_dict["role"] == "user"
-        assert isinstance(msg_dict["content"], dict)
-        assert msg_dict["content"]["step_name"] == "observation"
-        assert msg_dict["content"]["raw_text"] == "hello world"
+        assert isinstance(msg_dict["content"], str)
+        content_dict = json.loads(msg_dict["content"])
+        assert content_dict["step_name"] == "observation"
+        assert content_dict["raw_text"] == "hello world"
 
     def test_add_single_arg(self, runtime_instructions):
         """Test adding a message with a single positional argument."""
@@ -656,13 +671,13 @@ class TestCtxBtw:
         assert "added 1 user message" in result
 
         msg_dict = runtime_instructions.ai_agent.messages[0]
-        assert msg_dict["content"]["raw_text"] == "hello"
+        assert json.loads(msg_dict["content"])["raw_text"] == "hello"
 
     def test_add_multiple_args_joined_with_space(self, runtime_instructions):
         """Test that multiple positional args are joined with a single space."""
         runtime_instructions.ctx_btw("this", "is", "a", "test")
         msg_dict = runtime_instructions.ai_agent.messages[0]
-        assert msg_dict["content"]["raw_text"] == "this is a test"
+        assert json.loads(msg_dict["content"])["raw_text"] == "this is a test"
 
     def test_role_is_always_user(self, runtime_instructions):
         """Test that the role is always user regardless of extra args."""
@@ -684,16 +699,17 @@ class TestCtxBtw:
         assert len(runtime_instructions.ai_agent.messages) == 1
         assert "added 1 user message" in result
 
-    def test_message_is_dict_not_json_string(self, runtime_instructions):
-        """Test that the appended message content is a dict, not a JSON string."""
+    def test_message_is_json_string_not_dict(self, runtime_instructions):
+        """Test that the appended message content is a JSON string, not a dict."""
         runtime_instructions.ctx_btw("some", "content")
 
         msg = runtime_instructions.ai_agent.messages[0]
         assert isinstance(msg, dict)
         assert msg["role"] == "user"
-        assert isinstance(msg["content"], dict)
-        assert msg["content"]["step_name"] == "observation"
-        assert msg["content"]["raw_text"] == "some content"
+        assert isinstance(msg["content"], str)
+        content_dict = json.loads(msg["content"])
+        assert content_dict["step_name"] == "observation"
+        assert content_dict["raw_text"] == "some content"
 
     def test_list_identity_preserved(self, runtime_instructions):
         """Test that the message list reference is preserved (uses +=)."""
@@ -708,5 +724,5 @@ class TestCtxBtw:
         runtime_instructions.ctx_btw("third")
 
         assert len(runtime_instructions.ai_agent.messages) == 3
-        texts = [m["content"]["raw_text"] for m in runtime_instructions.ai_agent.messages]
+        texts = [json.loads(m["content"])["raw_text"] for m in runtime_instructions.ai_agent.messages]
         assert texts == ["first", "second", "third"]

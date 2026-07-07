@@ -335,6 +335,11 @@ class LLMModel(LLMModelBase):
         elapsed = time.monotonic() - start_time
 
         if timed_out:
+            if hasattr(stream, "close"):
+                try:
+                    stream.close()
+                except Exception:
+                    pass
             if not create_timed_out:
                 self._log_first_byte_timeout(elapsed, first_byte_timeout)
             if raise_on_timeout:

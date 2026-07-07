@@ -588,7 +588,7 @@ class ContextRuntimeBase(object):
             head_offset_to_keep = env_tool.EnvReaderInstance.get(
                 "TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP",
                 default=0,
-                formatter=int
+                formatter=int,
             ) or 0
 
         if head_offset_to_keep < 0:
@@ -614,14 +614,13 @@ class ContextRuntimeBase(object):
             tail_offset_to_keep = env_tool.EnvReaderInstance.get(
                 "TOPSAILAI_CONTEXT_MESSAGES_TAIL_OFFSET_TO_KEEP",
                 default=0,
-                formatter=int
+                formatter=int,
             ) or 0
 
         if tail_offset_to_keep < 0:
             tail_offset_to_keep = 0
 
         return tail_offset_to_keep
-
 
     def _get_quantity_threshold(
             self,

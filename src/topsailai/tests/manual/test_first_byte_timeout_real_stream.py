@@ -86,7 +86,7 @@ class TestFirstByteTimeoutRealStream(unittest.TestCase):
         mock_print_warning.assert_called_once()
         warning_msg = mock_print_warning.call_args[0][0]
         self.assertIn("LLM Service", warning_msg)
-        self.assertIn("first byte took", warning_msg)
+        self.assertIn("first byte timeout threshold reached/exceeded", warning_msg)
 
 
 if __name__ == "__main__":

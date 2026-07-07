@@ -196,7 +196,7 @@ def test_create_slow_watchdog():
             assert elapsed >= 1.5, "Should wait for slow create()"
             assert mock_print_warning.call_count >= 1, "Expected warning to be logged"
             warning_msg = str(mock_print_warning.call_args[0][0])
-            assert "LLM first byte took" in warning_msg, f"Unexpected warning: {warning_msg}"
+            assert "first byte timeout threshold reached/exceeded" in warning_msg, f"Unexpected warning: {warning_msg}"
             print("  PASS")
     finally:
         os.environ.pop("TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT", None)
