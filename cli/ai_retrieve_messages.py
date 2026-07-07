@@ -22,6 +22,8 @@ Author: DawsonLin
 Email: lin_dongsen@126.com
 """
 
+import argparse
+import copy
 import sys
 import os
 
@@ -34,6 +36,39 @@ os.chdir(project_root)
 from topsailai.context.ctx_manager import get_session_manager
 from topsailai.utils import json_tool
 from topsailai.workspace.print_tool import print_context_messages
+
+
+def truncate_message_content(messages, max_chars):
+    """
+    Truncate message content to a maximum character count.
+
+    Each message's ``content`` field is limited to ``max_chars`` characters.
+    When truncation occurs, an ellipsis (``...``) is appended to indicate that
+    the content was shortened. Messages whose content is already within the
+    limit are returned unchanged.
+
+    Args:
+        messages (list): List of message dictionaries containing a 'content' field.
+        max_chars (int): Maximum number of characters to keep for each content.
+
+    Returns:
+        list: New list of message dictionaries with truncated content.
+    """
+    if max_chars is None or max_chars <= 0:
+        return messages
+
+    truncated = []
+    for message in messages:
+        msg = copy.deepcopy(message) if isinstance(message, dict) else message
+        if isinstance(msg, dict) and "content" in msg:
+            content = msg["content"]
+            text = content if isinstance(content, str) else str(content)
+            if len(text) > max_chars:
+                msg["content"] = text[:max_chars] + "..."
+            else:
+                msg["content"] = text
+        truncated.append(msg)
+    return truncated
 
 
 def format_messages(messages):
@@ -90,7 +125,42 @@ def format_messages(messages):
     return '\n'.join(output)
 
 
-def main():
+def parse_args(argv=None):
+    """
+    Parse command-line arguments.
+
+    Args:
+        argv: Optional argument list. Defaults to sys.argv[1:].
+
+    Returns:
+        argparse.Namespace: Parsed arguments.
+    """
+    parser = argparse.ArgumentParser(
+        description="Retrieve messages for a specific session ID."
+    )
+    parser.add_argument(
+        "session_id",
+        help="Required session identifier.",
+    )
+    parser.add_argument(
+        "db_conn",
+        nargs="?",
+        default=None,
+        help="Optional database connection string. Defaults to 'sqlite:///memory.db'.",
+    )
+    parser.add_argument(
+        "--max-chars",
+        "-c",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Truncate each message's content to at most N characters. "
+             "Truncated content is suffixed with '...'.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
     """
     Main entry point for retrieving messages.
     
@@ -106,29 +176,21 @@ def main():
     Raises:
         SystemExit: Exits with code 1 if session_id is missing or error occurs
     """
-    # Check for required session_id argument
-    if len(sys.argv) < 2:
-        print("Error: session_id is required")
-        print("Usage: retrieve_messages.py <session_id>")
-        sys.exit(1)
-
-    session_id = sys.argv[1]
-
-    db_conn = None
-    if len(sys.argv) > 2:
-        db_conn = sys.argv[2]
+    args = parse_args(argv)
 
     try:
         # Create manager
-        manager = get_session_manager(db_conn)
+        manager = get_session_manager(args.db_conn)
 
         # Retrieve messages
-        messages = manager.retrieve_messages(session_id)
+        messages = manager.retrieve_messages(args.session_id)
+
+        # Truncate content if requested
+        if args.max_chars is not None:
+            messages = truncate_message_content(messages, args.max_chars)
 
         # Display results
         print_context_messages(messages)
-        #formatted_output = format_messages(messages)
-        #print(formatted_output)
 
     except Exception as e:
         print(f"Error: {e}")
