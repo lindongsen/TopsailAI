@@ -192,7 +192,9 @@ def match_yaml_command(
         for instruction in state.yaml_commands:
             cmd_template = instruction.get("cmd", "").strip()
             if cmd_template in ("/cd", "cd"):
-                return instruction, {"session_id": "", "task_dir": task_dir}
+                scopes = instruction.get("scopes", [])
+                if state.current_scope in scopes:
+                    return instruction, {"session_id": "", "task_dir": task_dir}
 
     normalized_input = user_input.lstrip("/").strip()
 

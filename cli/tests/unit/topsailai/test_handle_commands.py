@@ -462,5 +462,17 @@ class TestProjectScopeCommands(unittest.TestCase):
         mock_input.return_value = "/cd"
         action, value = prompt_selection([], "/task")
         self.assertEqual(action, "yaml_handled")
+
+    @patch("cli_topsailai.core.input")
+    def test_bare_cd_from_project_with_real_yaml(self, mock_input):
+        """Bare 'cd' from project scope must match the real topsailai.yaml."""
+        from cli_topsailai.yaml_commands import load_yaml_commands
+
+        cli_state.current_scope = "project"
+        cli_state.yaml_commands = load_yaml_commands()
+        mock_input.return_value = "cd"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "yaml_handled")
+
 if __name__ == "__main__":
     unittest.main()

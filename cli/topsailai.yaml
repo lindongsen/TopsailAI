@@ -65,8 +65,16 @@ instructions:
   - cmd: "/cd {session_id}"
     scopes:
       - workspace
-    desc: "Entering to session scope; {session_id} can be a number (1-based index from file list) or a session ID string; Switch to root workspace via `cd`"
+    desc: "Entering to session scope; {session_id} can be a number (1-based index from file list) or a session ID string"
     example: "/cd 2 or /cd 20260520T105654"
+    shell: ""
+
+  - cmd: "/cd"
+    scopes:
+      - session
+      - project
+    desc: "Switch to root workspace scope"
+    example: "cd"
     shell: ""
 
   # After entering a specific session `/cd {session_id}`, these instructions can be executed

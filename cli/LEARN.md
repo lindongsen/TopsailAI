@@ -35,3 +35,40 @@
 3. **Preserve existing values**: add or update only the requested keys; never overwrite the whole file unless explicitly asked.
 4. **Verify immediately**: after writing, read the file and run `git diff` to confirm only the intended changes were made.
 5. **Report precisely**: state exactly which keys were added, updated, or left untouched, and at which paths.
+
+## 2026-07-07: Patching a function and then calling it for real data causes infinite loops
+
+### Root cause
+
+1. **Patched the loader while trying to use its real output**
+   - `test_bare_cd_from_project_with_real_yaml` decorated the method with `@patch("cli_topsailai.yaml_commands.load_yaml_commands")`.
+   - Inside the test it called `load_yaml_commands()` expecting the real YAML command list.
+   - Because the patch was active, `load_yaml_commands` was a `MagicMock`; calling it returned another `MagicMock`, not the real commands.
+
+2. **MagicMock silently broke downstream logic**
+   - `cli_state.yaml_commands` became a `MagicMock`.
+   - Iterating over a `MagicMock` yields nothing, so the command matcher found no `/cd` instruction.
+   - `prompt_selection` fell into its `while True` input loop: every `"cd"` input printed `Unknown command: 'cd'` and requested more input, which kept returning `"cd"` forever.
+
+3. **No protective guard during execution**
+   - The test was run without a timeout or resource cap.
+   - The infinite loop consumed memory/CPU until the system froze.
+
+### Why the initial request was not fulfilled
+
+- The test claimed to use "real YAML" but still patched the real loader, so the YAML commands were never actually loaded.
+- I trusted the test intent ("real yaml") without inspecting whether the patch made that impossible.
+
+### Why it was not caught earlier
+
+- The test file had other passing tests, so the bad test was assumed to be safe.
+- No timeout was used when running the specific test, so the hang was not bounded.
+- `MagicMock` returns `MagicMock` for any attribute access or call, making failures non-obvious until runtime behavior diverges.
+
+### What to do next time
+
+1. **Do not patch the function you need real data from**: if a test needs real YAML commands, import and call the real loader without a patch, or explicitly stop/unpatch first.
+2. **Inspect patched return values**: when patching is necessary, assert the mock returns the expected shape/type before using it in stateful objects.
+3. **Run loop-prone tests with a timeout**: use `timeout` (or the test framework's timeout) when executing tests that involve input loops, event loops, or `while True` code paths.
+4. **Add circuit-breakers in interactive loops**: production input loops should have a maximum iteration count or an explicit escape when the same unrecognized command repeats.
+5. **Verify the fix with the exact failing test name**: after editing, run the specific test first, then the surrounding class, then the full file.
