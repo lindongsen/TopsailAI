@@ -499,6 +499,27 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         self.assertEqual(action, "agent")
         self.assertEqual(value, "/path/to/project")
 
+    @patch("cli_topsailai.yaml_commands.handle_yaml_command")
+    @patch("cli_topsailai.core.input")
+    def test_bare_agent_in_workspace_uses_yaml(self, mock_input, mock_handle_yaml):
+        """Bare 'agent' in workspace scope must match the real topsailai.yaml."""
+        from cli_topsailai.yaml_commands import load_yaml_commands
+
+        cli_state.yaml_commands = load_yaml_commands()
+        mock_handle_yaml.return_value = "yaml_handled"
+        mock_input.return_value = "agent"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "yaml_handled")
+        mock_handle_yaml.assert_called_once()
+
+    @patch("cli_topsailai.core.input")
+    def test_agent_with_args_in_workspace(self, mock_input):
+        """'agent <folder>' without slash is treated as the new navigation command."""
+        mock_input.return_value = "agent /path/to/project"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "agent")
+        self.assertEqual(value, "/path/to/project")
+
     @patch("cli_topsailai.project_scope.launch_agent_in_folder")
     @patch("cli_topsailai.project_scope.resolve_agent_folder")
     @patch("cli_topsailai.core.prompt_selection")

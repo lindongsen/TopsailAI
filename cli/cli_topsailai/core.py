@@ -56,6 +56,9 @@ def prompt_selection(
     )
     from cli_topsailai.help_text import print_instruction_help
 
+    _MAX_CONSECUTIVE_UNRECOGNIZED = 100
+    _consecutive_unrecognized = 0
+
     while True:
         try:
             prompt_text = get_prompt()
@@ -174,9 +177,10 @@ def prompt_selection(
                 continue
 
             if (
-                lower_input in ("/agent", "agent")
+                lower_input == "/agent"
                 or lower_input.startswith("/agent ")
                 or lower_input.startswith("agent ")
+                or (state.current_scope == "project" and lower_input == "agent")
             ):
                 parts = user_input.split(None, 1)
                 if len(parts) < 2:
@@ -209,12 +213,18 @@ def prompt_selection(
                     f"Please enter a number, /refresh, /session {{number}}, "
                     f"/agent {{number|folder}}, /clean, /send, /help, or 'q'.{Colors.RESET}"
                 )
+                _consecutive_unrecognized += 1
+                if _consecutive_unrecognized >= _MAX_CONSECUTIVE_UNRECOGNIZED:
+                    print(
+                        f"{Colors.RED}[ERROR] Too many unrecognized commands; "
+                        f"exiting to prevent an infinite loop.{Colors.RESET}"
+                    )
+                    return ("quit", None)
 
         except (EOFError, KeyboardInterrupt):
             print(f"\n{Colors.YELLOW}[INFO] Exiting...{Colors.RESET}")
             cleanup_children()
             return ("quit", None)
-
 
 def main(argv: Optional[List[str]] = None) -> None:
     """Main entry point for the TopsailAI CLI."""
