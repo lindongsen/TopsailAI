@@ -635,3 +635,102 @@ class TestLaunchAgentInFolderWithDtach(unittest.TestCase):
         mock_getcwd.return_value = "/TopsailAI/cli"
         project_scope.launch_agent_in_folder("/work/project-a")
         mock_system.assert_called_once_with("topsailai_launch_agent")
+
+
+class TestLoadProjectWorkspaceLookup(unittest.TestCase):
+    """Tests for load_project_workspace_lookup."""
+
+    def _write_history(self, home, lines):
+        """Write project history lines to the home directory."""
+        history_path = os.path.join(home, ".project_history.jsonl")
+        with open(history_path, "w", encoding="utf-8") as fh:
+            for line in lines:
+                fh.write(line + "\n")
+
+    @patch("cli_topsailai.project_scope.get_topsailai_home")
+    def test_missing_history_file_returns_empty(self, mock_home):
+        with tempfile.TemporaryDirectory() as tmp:
+            mock_home.return_value = tmp
+            lookup = project_scope.load_project_workspace_lookup()
+            self.assertEqual(lookup, {})
+
+    @patch("cli_topsailai.project_scope.get_topsailai_home")
+    def test_empty_history_file_returns_empty(self, mock_home):
+        with tempfile.TemporaryDirectory() as tmp:
+            mock_home.return_value = tmp
+            self._write_history(tmp, [])
+            lookup = project_scope.load_project_workspace_lookup()
+            self.assertEqual(lookup, {})
+
+    @patch("cli_topsailai.project_scope.get_topsailai_home")
+    def test_newest_entry_wins_for_session(self, mock_home):
+        with tempfile.TemporaryDirectory() as tmp:
+            mock_home.return_value = tmp
+            # File order determines newest-first; the last written line wins.
+            self._write_history(
+                tmp,
+                [
+                    '{"ts": 1, "session_id": "s1", "project_workspace": "/work/old", "pwd": "/work/old"}',
+                    '{"ts": 2, "session_id": "s1", "project_workspace": "/work/new", "pwd": "/work/new"}',
+                    '{"ts": 3, "session_id": "s1", "project_workspace": "/work/newest", "pwd": "/work/newest"}',
+                ],
+            )
+            lookup = project_scope.load_project_workspace_lookup()
+            self.assertEqual(lookup, {"s1": "/work/newest"})
+
+    @patch("cli_topsailai.project_scope.get_topsailai_home")
+    def test_multiple_sessions_in_lookup(self, mock_home):
+        with tempfile.TemporaryDirectory() as tmp:
+            mock_home.return_value = tmp
+            self._write_history(
+                tmp,
+                [
+                    '{"ts": 1, "session_id": "s1", "project_workspace": "/work/a", "pwd": "/work/a"}',
+                    '{"ts": 2, "session_id": "s2", "project_workspace": "/work/b", "pwd": "/work/b"}',
+                ],
+            )
+            lookup = project_scope.load_project_workspace_lookup()
+            self.assertEqual(lookup, {"s1": "/work/a", "s2": "/work/b"})
+
+    @patch("cli_topsailai.project_scope.get_topsailai_home")
+    def test_malformed_lines_are_skipped(self, mock_home):
+        with tempfile.TemporaryDirectory() as tmp:
+            mock_home.return_value = tmp
+            self._write_history(
+                tmp,
+                [
+                    "not-json",
+                    '{"ts": 1, "session_id": "s1", "project_workspace": "/work/a", "pwd": "/work/a"}',
+                    "",
+                    '{"ts": 2, "session_id": "s2"}',
+                ],
+            )
+            lookup = project_scope.load_project_workspace_lookup()
+            self.assertEqual(lookup, {"s1": "/work/a"})
+
+    @patch("cli_topsailai.project_scope.get_topsailai_home")
+    def test_temp_session_included(self, mock_home):
+        with tempfile.TemporaryDirectory() as tmp:
+            mock_home.return_value = tmp
+            self._write_history(
+                tmp,
+                [
+                    '{"ts": 1, "session_id": "topsailai", "project_workspace": "/work/temp", "pwd": "/work/temp"}',
+                ],
+            )
+            lookup = project_scope.load_project_workspace_lookup()
+            self.assertEqual(lookup, {"topsailai": "/work/temp"})
+
+    @patch("cli_topsailai.project_scope.get_topsailai_home")
+    def test_empty_workspace_skipped(self, mock_home):
+        with tempfile.TemporaryDirectory() as tmp:
+            mock_home.return_value = tmp
+            self._write_history(
+                tmp,
+                [
+                    '{"ts": 1, "session_id": "s1", "project_workspace": "", "pwd": "/work/a"}',
+                    '{"ts": 2, "session_id": "s2", "project_workspace": null, "pwd": "/work/b"}',
+                ],
+            )
+            lookup = project_scope.load_project_workspace_lookup()
+            self.assertEqual(lookup, {})

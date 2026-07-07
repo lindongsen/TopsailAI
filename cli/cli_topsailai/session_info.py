@@ -6,6 +6,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional
 
+from cli_topsailai.project_scope import load_project_workspace_lookup
+
 
 # Timeout for each external session-info lookup, in seconds.
 _SESSION_INFO_TIMEOUT = 5
@@ -113,13 +115,17 @@ def _fetch_missing_session_names(session_ids: List[str]) -> None:
 
 
 def enrich_files_with_session_names(files: List[dict]) -> None:
-    """Add a ``session_name`` key to each file dict by looking up unique IDs.
+    """Add ``session_name`` and ``project_workspace`` keys to each file dict.
 
     Lookups are deduplicated and cached so the same session ID is only queried
     once across the process lifetime.  Missing IDs are fetched concurrently via
     a thread pool.  Transient failures and empty/whitespace-only names are not
     cached, so the next refresh will retry them.  Temporary sessions (``(temp)``)
     and files without a session ID are assigned ``None`` and skipped entirely.
+
+    The ``project_workspace`` value is resolved from ``.project_history.jsonl``
+    in ``TOPSAILAI_HOME`` and is updated on every refresh so it always reflects
+    the most recent recorded workspace for the session.
     """
     if not files:
         return
@@ -130,6 +136,7 @@ def enrich_files_with_session_names(files: List[dict]) -> None:
         session_id = file_info.get("session_id")
         if session_id is None or session_id == "(temp)" or session_id == "":
             file_info["session_name"] = None
+            file_info["project_workspace"] = None
             continue
         if session_id not in seen:
             seen.add(session_id)
@@ -141,10 +148,14 @@ def enrich_files_with_session_names(files: List[dict]) -> None:
     if missing_ids:
         _fetch_missing_session_names(missing_ids)
 
+    workspace_lookup = load_project_workspace_lookup()
+
     for file_info in files:
         session_id = file_info.get("session_id")
         if session_id is None or session_id == "(temp)" or session_id == "":
             file_info["session_name"] = None
+            file_info["project_workspace"] = None
             continue
         name = _SESSION_NAME_CACHE.get(session_id)
         file_info["session_name"] = name if name is not _MISSING else None
+        file_info["project_workspace"] = workspace_lookup.get(session_id)

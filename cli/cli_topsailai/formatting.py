@@ -27,7 +27,7 @@ def format_timestamp(ts: float) -> str:
 
 
 def format_timestamp_full(ts: float) -> str:
-    """Format a Unix timestamp to a full date/time string."""
+    """Format a Unix timestamp to a full date-time string."""
     dt = datetime.fromtimestamp(ts)
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -47,19 +47,26 @@ def print_table(files: List[dict]) -> None:
         return
 
     w_no = 4
-    w_session = 22
-    w_pid = 8
-    w_modified = 14
-    w_created = 14
-    w_name = 20
+    w_session = 18
+    w_pid = 6
+    w_modified = 13
+    w_created = 13
+    w_project = 24
+    w_name = 16
+    w_no = 4
+    w_session = 18
+    w_pid = 6
+    w_created = 13
+    w_project = 24
+    w_name = 16
 
     header = (
         f"{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE}"
         f" {'No':^{w_no}} |"
         f" {'Session ID':^{w_session}} |"
         f" {'PID':^{w_pid}} |"
-        f" {'Modified':^{w_modified}} |"
         f" {'Created':^{w_created}} |"
+        f" {'Project Workspace':^{w_project}} |"
         f" {'Session Name':^{w_name}} "
         f"{Colors.RESET}"
     )
@@ -68,8 +75,8 @@ def print_table(files: List[dict]) -> None:
         f"{'-' * (w_no + 1)}+"
         f"{'-' * (w_session + 2)}+"
         f"{'-' * (w_pid + 2)}+"
-        f"{'-' * (w_modified + 2)}+"
         f"{'-' * (w_created + 2)}+"
+        f"{'-' * (w_project + 2)}+"
         f"{'-' * (w_name + 1)}"
         f"{Colors.RESET}"
     )
@@ -91,8 +98,11 @@ def print_table(files: List[dict]) -> None:
             session = session[:w_session - 3] + "..."
 
         pid_str = str(pid) if pid else "-"
-        modified_str = format_timestamp(f["mtime"])
         created_str = format_timestamp(f["ctime"])
+
+        project_workspace = f.get("project_workspace") or "-"
+        if len(project_workspace) > w_project:
+            project_workspace = project_workspace[:w_project - 3] + "..."
 
         session_name = f.get("session_name") or "-"
         if len(session_name) > w_name:
@@ -105,8 +115,8 @@ def print_table(files: List[dict]) -> None:
             f" {idx:^{w_no}} |"
             f" {session:<{w_session}} |"
             f" {pid_str:^{w_pid}} |"
-            f" {modified_str:^{w_modified}} |"
             f" {created_str:^{w_created}} |"
+            f" {project_workspace:<{w_project}} |"
             f" {session_name:<{w_name}} "
             f"{Colors.RESET}"
         )
@@ -118,8 +128,6 @@ def print_table(files: List[dict]) -> None:
         f"{Colors.GRAY}○ Idle{Colors.RESET}  "
         f"{Colors.DIM}(Total: {len(files)} files){Colors.RESET}"
     )
-
-
 def format_file_table(files: List[dict]) -> str:
     """Return a formatted table of log files as a string.
 

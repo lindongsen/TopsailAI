@@ -129,3 +129,93 @@ class TestPrintTablePidDetection(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPrintTableProjectWorkspace(unittest.TestCase):
+    """Tests for Project Workspace column rendering in print_table."""
+
+    def _capture_print_table(self, files):
+        captured = StringIO()
+        with patch("sys.stdout", new=captured):
+            print_table(files)
+        return captured.getvalue()
+
+    @patch("cli_topsailai.formatting.os.kill")
+    def test_project_workspace_column_in_header(self, mock_kill):
+        mock_kill.return_value = None
+        output = self._capture_print_table(
+            [
+                {
+                    "filename": "s1.1234.session.stdout",
+                    "path": "/tmp/s1.1234.session.stdout",
+                    "session_id": "s1",
+                    "pid": 1234,
+                    "size": 100,
+                    "mtime": 1700000000.0,
+                    "ctime": 1700000000.0,
+                    "project_workspace": "/work/project-a",
+                }
+            ]
+        )
+        self.assertIn("Project Workspace", output)
+
+    @patch("cli_topsailai.formatting.os.kill")
+    def test_project_workspace_value_rendered(self, mock_kill):
+        mock_kill.return_value = None
+        output = self._capture_print_table(
+            [
+                {
+                    "filename": "s1.1234.session.stdout",
+                    "path": "/tmp/s1.1234.session.stdout",
+                    "session_id": "s1",
+                    "pid": 1234,
+                    "size": 100,
+                    "mtime": 1700000000.0,
+                    "ctime": 1700000000.0,
+                    "project_workspace": "/work/project-a",
+                }
+            ]
+        )
+        self.assertIn("/work/project-a", output)
+
+    @patch("cli_topsailai.formatting.os.kill")
+    def test_missing_project_workspace_shows_placeholder(self, mock_kill):
+        mock_kill.return_value = None
+        output = self._capture_print_table(
+            [
+                {
+                    "filename": "s1.1234.session.stdout",
+                    "path": "/tmp/s1.1234.session.stdout",
+                    "session_id": "s1",
+                    "pid": 1234,
+                    "size": 100,
+                    "mtime": 1700000000.0,
+                    "ctime": 1700000000.0,
+                }
+            ]
+        )
+        # The row should contain a placeholder; header does not count.
+        lines = output.splitlines()
+        data_lines = [line for line in lines if "s1" in line and "Project Workspace" not in line]
+        self.assertEqual(len(data_lines), 1)
+        self.assertIn("-", data_lines[0])
+
+    @patch("cli_topsailai.formatting.os.kill")
+    def test_long_project_workspace_truncated(self, mock_kill):
+        mock_kill.return_value = None
+        long_workspace = "/work/" + "a" * 50
+        output = self._capture_print_table(
+            [
+                {
+                    "filename": "s1.1234.session.stdout",
+                    "path": "/tmp/s1.1234.session.stdout",
+                    "session_id": "s1",
+                    "pid": 1234,
+                    "size": 100,
+                    "mtime": 1700000000.0,
+                    "ctime": 1700000000.0,
+                    "project_workspace": long_workspace,
+                }
+            ]
+        )
+        self.assertIn("...", output)

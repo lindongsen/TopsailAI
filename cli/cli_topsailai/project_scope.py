@@ -101,6 +101,51 @@ def _format_create_time(create_time: str) -> str:
         return create_time
 
 
+def _read_project_history_lines(home: str) -> list[str]:
+    """Yield non-empty lines from ``.project_history.jsonl`` newest first."""
+    history_path = os.path.join(home, ".project_history.jsonl")
+    if not os.path.exists(history_path):
+        return []
+    try:
+        with open(history_path, "r", encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return []
+    # Iterate from the end so the most recent entry wins.
+    return [line for line in reversed(lines) if line.strip()]
+
+
+def load_project_workspace_lookup() -> Dict[str, str]:
+    """Build a mapping from ``session_id`` to latest ``project_workspace``.
+
+    Reads ``{TOPSAILAI_HOME}/.project_history.jsonl`` and returns the most
+    recent ``project_workspace`` value recorded for each ``session_id``.
+    Temporary sessions (``topsailai``) are included as-is because callers
+    decide how to display them.
+
+    Returns:
+        Dictionary mapping ``session_id`` to ``project_workspace``.
+    """
+    home = get_topsailai_home()
+    lookup: Dict[str, str] = {}
+    for line in _read_project_history_lines(home):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        session_id = record.get("session_id")
+        project_workspace = record.get("project_workspace")
+        if not session_id or not isinstance(project_workspace, str) or not project_workspace:
+            continue
+        # Because we iterate newest-first, the first hit for a session is the
+        # most recent workspace.  Skip later (older) entries.
+        if session_id not in lookup:
+            lookup[session_id] = project_workspace
+    return lookup
+
+
 def build_project_list(limit: int = 10) -> List[Dict[str, Any]]:
     """Build the list of recent sessions with a project workspace.
 
@@ -277,7 +322,6 @@ def refresh_project_list(
         Fresh list from :func:`build_project_list`.
     """
     return build_project_list(limit=limit)
-
 
 
 def resolve_agent_folder(arg: str, entries: List[Dict[str, Any]]) -> Optional[str]:

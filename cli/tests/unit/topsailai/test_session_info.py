@@ -293,3 +293,80 @@ class TestEnrichFilesWithSessionNames(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEnrichFilesWithProjectWorkspace(unittest.TestCase):
+    """Tests for project_workspace enrichment in enrich_files_with_session_names."""
+
+    def tearDown(self):
+        """Clear module-level cache after each test."""
+        session_info._SESSION_NAME_CACHE._data.clear()
+
+    @patch("cli_topsailai.session_info.load_project_workspace_lookup")
+    @patch("cli_topsailai.session_info.subprocess.run")
+    def test_adds_project_workspace_from_lookup(self, mock_run, mock_lookup):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"session_name": "Auto Summary"}',
+            stderr="",
+        )
+        mock_lookup.return_value = {"s1": "/work/project-a"}
+        files = [{"session_id": "s1"}]
+        session_info.enrich_files_with_session_names(files)
+        self.assertEqual(files[0]["project_workspace"], "/work/project-a")
+
+    @patch("cli_topsailai.session_info.load_project_workspace_lookup")
+    @patch("cli_topsailai.session_info.subprocess.run")
+    def test_missing_workspace_shows_none(self, mock_run, mock_lookup):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"session_name": "Auto Summary"}',
+            stderr="",
+        )
+        mock_lookup.return_value = {}
+        files = [{"session_id": "s1"}]
+        session_info.enrich_files_with_session_names(files)
+        self.assertIsNone(files[0]["project_workspace"])
+
+    @patch("cli_topsailai.session_info.load_project_workspace_lookup")
+    def test_temp_session_workspace_is_none(self, mock_lookup):
+        mock_lookup.return_value = {"topsailai": "/work/temp"}
+        files = [{"session_id": "(temp)"}]
+        session_info.enrich_files_with_session_names(files)
+        self.assertIsNone(files[0]["project_workspace"])
+        mock_lookup.assert_called_once()
+
+    @patch("cli_topsailai.session_info.load_project_workspace_lookup")
+    def test_empty_session_id_workspace_is_none(self, mock_lookup):
+        mock_lookup.return_value = {"": "/work/empty"}
+        files = [{"session_id": ""}]
+        session_info.enrich_files_with_session_names(files)
+        self.assertIsNone(files[0]["project_workspace"])
+
+    @patch("cli_topsailai.session_info.load_project_workspace_lookup")
+    def test_missing_session_id_workspace_is_none(self, mock_lookup):
+        mock_lookup.return_value = {}
+        files = [{}]
+        session_info.enrich_files_with_session_names(files)
+        self.assertIsNone(files[0]["project_workspace"])
+
+    @patch("cli_topsailai.session_info.load_project_workspace_lookup")
+    @patch("cli_topsailai.session_info.subprocess.run")
+    def test_workspace_lookup_refreshed_each_call(self, mock_run, mock_lookup):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"session_name": "Auto Summary"}',
+            stderr="",
+        )
+        mock_lookup.side_effect = [
+            {"s1": "/work/first"},
+            {"s1": "/work/second"},
+        ]
+        files = [{"session_id": "s1"}]
+        session_info.enrich_files_with_session_names(files)
+        self.assertEqual(files[0]["project_workspace"], "/work/first")
+
+        files2 = [{"session_id": "s1"}]
+        session_info.enrich_files_with_session_names(files2)
+        self.assertEqual(files2[0]["project_workspace"], "/work/second")
+        self.assertEqual(mock_lookup.call_count, 2)
