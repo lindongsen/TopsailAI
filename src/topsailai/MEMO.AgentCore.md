@@ -55,6 +55,35 @@ def my_tool():
 ```
 
 
+## MEMO: Lazy Import Allowance for `openai`
+
+**Date:** 2026-07-07
+**Files:**
+- `/TopsailAI/src/topsailai/ai_base/llm_base.py`
+- `/TopsailAI/src/topsailai/ai_base/llm_control/`
+- Any other modules that import `openai` or closely related packages
+
+### Conclusion
+The `openai` module has a long import time. To reduce startup overhead, **lazy import is allowed** for any import that involves the `openai` module or modules closely related to it.
+
+### What this means
+- Code that does not immediately need `openai` functionality should defer the import until the first use.
+- This applies both to direct `import openai` statements and to imports of project modules whose only purpose is to wrap or extend `openai` behavior.
+- Prefer local imports inside functions or methods over module-level imports when the dependency is only needed at runtime.
+
+### Example
+```python
+def create_client():
+    import openai
+    return openai.OpenAI(api_key=api_key, base_url=base_url)
+```
+
+### Note for maintainers
+- Do not eagerly move `openai` imports back to module level for stylistic reasons alone.
+- When reviewing changes, verify that lazy imports still keep exception handling and type hints correct.
+- If a module is imported purely as a thin wrapper around `openai`, consider lazy importing that wrapper as well.
+
+
 ## MEMO: Auto Session-Name Thread Must Not Consume `TOPSAILAI_CONTEXT_USER_MESSAGE`
 
 **Date:** 2026-07-06
