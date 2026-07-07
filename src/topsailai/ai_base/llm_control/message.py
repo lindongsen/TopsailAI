@@ -6,9 +6,6 @@
 '''
 
 import simplejson
-from openai.types.chat import (
-    ChatCompletionMessage,
-)
 
 from topsailai.logger.log_chat import logger
 from topsailai.utils.print_tool import (
@@ -32,6 +29,11 @@ from .exception import (
 )
 from .llm_mistakes.base.init import check_or_fix_mistakes
 
+
+def _get_chat_completion_message_class():
+    """Lazy import of openai.types.chat.ChatCompletionMessage."""
+    from openai.types.chat import ChatCompletionMessage
+    return ChatCompletionMessage
 
 def _to_list(obj):
     """
@@ -62,7 +64,7 @@ def _to_list(obj):
         return list(obj)
     return [obj]
 
-def get_response_message(response) -> ChatCompletionMessage:
+def get_response_message(response) -> "ChatCompletionMessage":
     """
     Extract the message from the API response.
 
@@ -85,6 +87,7 @@ def get_response_message(response) -> ChatCompletionMessage:
             service_tier=None
         )
     """
+    ChatCompletionMessage = _get_chat_completion_message_class()
     if isinstance(response, ChatCompletionMessage):
         return response
     return response.choices[0].message
