@@ -5,6 +5,7 @@ import simplejson
 from topsailai.logger.log_chat import logger
 from topsailai.utils import thread_local_tool
 
+from topsailai.utils import env_tool
 
 g_flag_print_step = None
 
@@ -164,10 +165,7 @@ def print_step(msg, need_format=True, need_log=False):
         return
     if g_flag_print_step is False:
         return
-    from . import env_tool
-    if os.getenv("DEBUG", "0") == "1" \
-        or g_flag_print_step \
-        or env_tool.is_interactive_mode():
+    if env_tool.is_need_print():
         print_with_time(msg, need_format=need_format)
     return
 
@@ -189,10 +187,7 @@ def print_debug(msg):
         thread_local_tool.KEY_FLAG_DEBUG
     ) == 0:
         return
-    from . import env_tool
-    if os.getenv("DEBUG", "0") == "1" \
-        or g_flag_print_step \
-        or env_tool.is_interactive_mode():
+    if g_flag_print_step or env_tool.is_need_print():
         print_with_time(f"[DEBUG] {msg}", need_format=False)
 
 def print_error(msg, exception=False):

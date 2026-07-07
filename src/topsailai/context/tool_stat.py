@@ -14,7 +14,6 @@
   - Thread-safe operations
 '''
 
-import os
 import functools
 import logging
 
@@ -640,8 +639,8 @@ def record_tool_call(
     Returns:
         The sequence number assigned to this call
     """
-    if os.getenv("TOPSAILAI_ENABLE_TOOL_STAT") in ["1", "true"] or \
-        os.getenv("DEBUG") in ["1", "true"]:
+    if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_ENABLE_TOOL_STAT") or \
+        env_tool.is_debug_mode():
         return get_agent_tool_stat().record(tool_call, tool_args, error, result, metadata)
     return 0
 

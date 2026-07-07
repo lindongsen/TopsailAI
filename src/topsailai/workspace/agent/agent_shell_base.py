@@ -254,7 +254,7 @@ class AgentChat(AgentChatBase):
             # end time
             end_time = int(time.time())
 
-            if env_tool.is_interactive_mode() or env_tool.is_debug_mode():
+            if env_tool.is_need_print():
                 print()
                 print(SPLIT_LINE)
                 print(f"[{self.agent_name}] have scheduled tasks [{curr_count}] times")
