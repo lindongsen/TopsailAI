@@ -76,23 +76,14 @@ class TestBuildProjectList(unittest.TestCase):
         self.assertIn("--json", call_args)
         self.assertIn("--has-project", call_args)
         self.assertIn("--sort", call_args)
-        self.assertIn("desc", call_args)
+        self.assertIn("asc", call_args)
         self.assertIn("--limit", call_args)
         self.assertIn("10", call_args)
 
     @patch("cli_topsailai.project_scope.subprocess.run")
-    def test_build_project_list_keeps_newest_first_order(self, mock_run):
-        """If ai_list_sessions returns descending order, newest is row 1."""
+    def test_build_project_list_keeps_oldest_first_order(self, mock_run):
+        """If ai_list_sessions returns ascending order, oldest is row 1."""
         sessions = [
-            {
-                "session_id": "newest",
-                "session_name": "newest session",
-                "create_time": "2026-07-06T12:00:00",
-                "task": "new task",
-                "project_workspace": "/work/new",
-                "pwd": "/work/new",
-                "topsailai_home": "/home/user/.topsailai",
-            },
             {
                 "session_id": "oldest",
                 "session_name": "oldest session",
@@ -102,16 +93,24 @@ class TestBuildProjectList(unittest.TestCase):
                 "pwd": "/work/old",
                 "topsailai_home": "/home/user/.topsailai",
             },
+            {
+                "session_id": "newest",
+                "session_name": "newest session",
+                "create_time": "2026-07-06T12:00:00",
+                "task": "new task",
+                "project_workspace": "/work/new",
+                "pwd": "/work/new",
+                "topsailai_home": "/home/user/.topsailai",
+            },
         ]
         mock_run.return_value = MockCompletedProcess(stdout=json.dumps(sessions))
         entries = project_scope.build_project_list(limit=10)
 
         self.assertEqual(len(entries), 2)
-        self.assertEqual(entries[0]["session_id"], "newest")
-        self.assertEqual(entries[1]["session_id"], "oldest")
+        self.assertEqual(entries[0]["session_id"], "oldest")
+        self.assertEqual(entries[1]["session_id"], "newest")
         self.assertEqual(entries[0]["no"], 1)
         self.assertEqual(entries[1]["no"], 2)
-
     @patch("cli_topsailai.project_scope.subprocess.run")
     def test_build_project_list_passes_limit(self, mock_run):
         mock_run.return_value = MockCompletedProcess(stdout="[]")

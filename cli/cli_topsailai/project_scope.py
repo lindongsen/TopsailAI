@@ -102,10 +102,10 @@ def _format_create_time(create_time: str) -> str:
 def build_project_list(limit: int = 10) -> List[Dict[str, Any]]:
     """Build the list of recent sessions with a project workspace.
 
-    Runs ``ai_list_sessions.py --json --has-project --sort desc --limit N`` and
-    parses the JSON output.  Sessions are returned in descending chronological
-    order (newest first) so the most recent entry appears at the top of the
-    project scope table.
+    Runs ``ai_list_sessions.py --json --has-project --sort asc --limit N`` and
+    parses the JSON output.  Sessions are returned in ascending chronological
+    order (oldest first) so the oldest entry appears at the top of the project
+    scope table and the newest entry appears at the bottom.
 
     Each entry is enriched with a ``status`` field (``Running`` or ``Idle``)
     by scanning ``{TOPSAILAI_HOME}/workspace/task/`` for the most recent
@@ -127,7 +127,7 @@ def build_project_list(limit: int = 10) -> List[Dict[str, Any]]:
         "--json",
         "--has-project",
         "--sort",
-        "desc",
+        "asc",
         "--limit",
         str(limit),
     ]
