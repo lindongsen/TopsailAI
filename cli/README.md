@@ -4,7 +4,9 @@ This directory contains the command-line interface (CLI) tools for the project.
 
 ## Workspace Scope
 
-This directory (`./`) is the current workspace. All development, fixes, and documentation updates must stay within this workspace.
+This directory (`./`, example: `/TopsailAI/cli/`) is the current workspace. All development, fixes, and documentation updates must stay within this workspace.
+
+> **Path portability:** Use relative paths in this document. `../bin/` refers to the parent project's `bin/` directory and `../src/` refers to the parent project's `src/` directory.
 
 - Do not concern yourself with code under `../src/` (for example, `../src/topsailai`).
 - Do not modify any files in `../src/`.
