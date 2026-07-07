@@ -53,14 +53,11 @@ class _LookupResult:
 def _get_session_name(session_id: str) -> _LookupResult:
     """Return the session name for *session_id* using ``topsailai_session_info``.
 
-    Temporary sessions are skipped and a successful result with ``None`` is
-    returned immediately.  Transient failures (timeout, missing command,
-    non-zero exit, invalid JSON, etc.) return ``success=False`` so the caller
-    can avoid poisoning the cache.
+    Empty or whitespace-only names are treated as successful lookups but are
+    not cached by the caller, so the next refresh will retry them.  Transient
+    failures (timeout, missing command, non-zero exit, invalid JSON, etc.)
+    return ``success=False`` so the caller can avoid poisoning the cache.
     """
-    if not session_id or session_id == "(temp)":
-        return _LookupResult(None, True)
-
     try:
         result = subprocess.run(
             ["topsailai_session_info", "--json", session_id],
@@ -91,11 +88,11 @@ def _get_session_name(session_id: str) -> _LookupResult:
 
 
 def _fetch_missing_session_names(session_ids: List[str]) -> None:
-    """Fetch session names concurrently and cache only successful results.
+    """Fetch session names concurrently and cache only non-empty results.
 
     Each lookup runs in its own thread so slow subprocess calls do not block
-    each other.  Transient failures are not cached, allowing retries on the
-    next refresh.
+    each other.  Transient failures and empty/whitespace-only names are not
+    cached, allowing retries on the next refresh.
     """
     if not session_ids:
         return
@@ -111,7 +108,7 @@ def _fetch_missing_session_names(session_ids: List[str]) -> None:
                 lookup = future.result()
             except Exception:
                 continue
-            if lookup.success:
+            if lookup.success and lookup.name:
                 _SESSION_NAME_CACHE.set(session_id, lookup.name)
 
 
@@ -120,9 +117,9 @@ def enrich_files_with_session_names(files: List[dict]) -> None:
 
     Lookups are deduplicated and cached so the same session ID is only queried
     once across the process lifetime.  Missing IDs are fetched concurrently via
-    a thread pool.  Transient failures are not cached, so the next refresh will
-    retry them.  Missing or permanently empty lookups are stored as ``None``
-    and can be rendered as ``-`` by the caller.
+    a thread pool.  Transient failures and empty/whitespace-only names are not
+    cached, so the next refresh will retry them.  Temporary sessions (``(temp)``)
+    and files without a session ID are assigned ``None`` and skipped entirely.
     """
     if not files:
         return
@@ -131,7 +128,8 @@ def enrich_files_with_session_names(files: List[dict]) -> None:
     seen: set[str] = set()
     for file_info in files:
         session_id = file_info.get("session_id")
-        if session_id is None:
+        if session_id is None or session_id == "(temp)" or session_id == "":
+            file_info["session_name"] = None
             continue
         if session_id not in seen:
             seen.add(session_id)
@@ -145,5 +143,8 @@ def enrich_files_with_session_names(files: List[dict]) -> None:
 
     for file_info in files:
         session_id = file_info.get("session_id")
-        name = _SESSION_NAME_CACHE.get(session_id) if session_id is not None else _MISSING
-        file_info["session_name"] = None if name is _MISSING else name
+        if session_id is None or session_id == "(temp)" or session_id == "":
+            file_info["session_name"] = None
+            continue
+        name = _SESSION_NAME_CACHE.get(session_id)
+        file_info["session_name"] = name if name is not _MISSING else None

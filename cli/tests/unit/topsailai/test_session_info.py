@@ -20,18 +20,6 @@ from cli_topsailai import session_info
 class TestGetSessionName(unittest.TestCase):
     """Tests for _get_session_name."""
 
-    def test_temp_session_returns_success_with_none(self):
-        """Temporary session ID returns a successful None immediately."""
-        result = session_info._get_session_name("(temp)")
-        self.assertTrue(result.success)
-        self.assertIsNone(result.name)
-
-    def test_empty_session_id_returns_success_with_none(self):
-        """Empty session ID returns a successful None immediately."""
-        result = session_info._get_session_name("")
-        self.assertTrue(result.success)
-        self.assertIsNone(result.name)
-
     @patch("cli_topsailai.session_info.subprocess.run")
     def test_valid_session_returns_name(self, mock_run):
         """Valid JSON response returns session_name."""
@@ -164,6 +152,14 @@ class TestEnrichFilesWithSessionNames(unittest.TestCase):
         self.assertIsNone(files[0]["session_name"])
 
     @patch("cli_topsailai.session_info.subprocess.run")
+    def test_empty_session_id_skipped(self, mock_run):
+        """Empty session IDs are skipped and stored as None."""
+        files = [{"session_id": ""}]
+        session_info.enrich_files_with_session_names(files)
+        mock_run.assert_not_called()
+        self.assertIsNone(files[0]["session_name"])
+
+    @patch("cli_topsailai.session_info.subprocess.run")
     def test_transient_failure_not_cached(self, mock_run):
         """Transient failures are not cached; retries are allowed."""
         mock_run.return_value = MagicMock(
@@ -207,8 +203,8 @@ class TestEnrichFilesWithSessionNames(unittest.TestCase):
         self.assertEqual(files2[0]["session_name"], "Cached Name")
 
     @patch("cli_topsailai.session_info.subprocess.run")
-    def test_empty_name_in_valid_json_cached_as_none(self, mock_run):
-        """A valid JSON response with missing/empty name is cached as None."""
+    def test_empty_name_in_valid_json_not_cached(self, mock_run):
+        """A valid JSON response with missing/empty name is not cached."""
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout='{"session_name": ""}',
@@ -219,11 +215,40 @@ class TestEnrichFilesWithSessionNames(unittest.TestCase):
         self.assertIsNone(files[0]["session_name"])
         self.assertEqual(mock_run.call_count, 1)
 
-        mock_run.reset_mock()
+        # Second refresh should invoke subprocess again because empty name was not cached.
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"session_name": "Updated Name"}',
+            stderr="",
+        )
         files2 = [{"session_id": "s1"}]
         session_info.enrich_files_with_session_names(files2)
-        mock_run.assert_not_called()
-        self.assertIsNone(files2[0]["session_name"])
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertEqual(files2[0]["session_name"], "Updated Name")
+
+    @patch("cli_topsailai.session_info.subprocess.run")
+    def test_whitespace_name_not_cached(self, mock_run):
+        """A whitespace-only name is not cached."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"session_name": "   "}',
+            stderr="",
+        )
+        files = [{"session_id": "s1"}]
+        session_info.enrich_files_with_session_names(files)
+        self.assertIsNone(files[0]["session_name"])
+        self.assertEqual(mock_run.call_count, 1)
+
+        # Second refresh should invoke subprocess again.
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"session_name": "Real Name"}',
+            stderr="",
+        )
+        files2 = [{"session_id": "s1"}]
+        session_info.enrich_files_with_session_names(files2)
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertEqual(files2[0]["session_name"], "Real Name")
 
     @patch("cli_topsailai.session_info.subprocess.run")
     def test_cache_hit_returns_cached_name(self, mock_run):
