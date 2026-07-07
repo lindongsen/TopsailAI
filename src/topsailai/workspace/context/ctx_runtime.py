@@ -311,7 +311,8 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             raw_messages_from_session = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
 
             # add answer to session
-            ctx_manager.add_session_message(self.session_id, llm_chat.prompt_ctl.messages[-1])
+            summary_answer = llm_chat.prompt_ctl.messages[-1]
+            ctx_manager.add_session_message(self.session_id, summary_answer)
 
             # keep messages before first user task message
             raw_msg_ids_to_keep = []
@@ -360,7 +361,8 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                     new_messages.append(msg)
 
             # add answer(summary) to messages
-            new_messages.append(llm_chat.prompt_ctl.messages[-1])
+            summary_answer = llm_chat.prompt_ctl.messages[-1]
+            new_messages.append(summary_answer)
 
             # Re-insert the head_portion in chronological order so the final
             # list follows head_portion + tail_portion + [summary_answer] + [last_user_message].
@@ -371,6 +373,12 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                 if not self._message_in_list(last_user_msg, new_messages):
                     new_messages.append(last_user_msg)
 
+            self._log_summarize_message_identity_changes(
+                "summarize_messages_for_processed",
+                original_messages,
+                new_messages,
+                summary_answer,
+            )
             self.set_messages(new_messages)
 
         # Log message count and token usage after summarization

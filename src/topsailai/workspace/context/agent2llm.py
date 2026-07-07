@@ -240,7 +240,8 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 new_messages.append(msg)
 
         # add answer(summary) to messages
-        new_messages.append(llm_chat.prompt_ctl.messages[-1])
+        summary_answer = llm_chat.prompt_ctl.messages[-1]
+        new_messages.append(summary_answer)
 
         # Re-insert the head_portion in chronological order so the final
         # list follows head_portion + tail_portion + [summary_answer] + [last_user_message].
@@ -251,6 +252,12 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             if not self._message_in_list(last_user_msg, new_messages):
                 new_messages.append(last_user_msg)
 
+        self._log_summarize_message_identity_changes(
+            "summarize_messages_for_processing",
+            original_messages,
+            new_messages,
+            summary_answer,
+        )
         self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
 
         self.ai_agent.llm_model.tokenStat.add_msgs(self.ai_agent.messages)
