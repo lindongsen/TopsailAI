@@ -378,6 +378,10 @@ class LLMModel(LLMModelBase):
 
         first_byte_timeout, raise_on_first_byte_timeout = self._get_first_byte_timeout_config()
 
+        # Capture the stream start time before creating the request so that
+        # first-byte latency includes request creation + streaming startup.
+        stream_start_time = time.monotonic()
+
         response, create_timed_out = self._create_with_first_byte_timeout(
             messages,
             tools=tools,
@@ -396,7 +400,6 @@ class LLMModel(LLMModelBase):
         )
 
         first_byte_ms = None
-        stream_start_time = time.monotonic()
 
         for chunk in self.iter_stream_with_first_byte_timeout(
             response,
