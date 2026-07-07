@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import TYPE_CHECKING, List
 
@@ -18,6 +19,12 @@ if TYPE_CHECKING:
     from typing import Any, Dict, Optional
 
 from cli_topsailai.colors import Colors
+from cli_topsailai.log_files import _find_session_stdout_file, _get_pid_from_stdout_path
+from cli_topsailai.paths import get_topsailai_home
+
+
+# Maximum number of concurrent running-status checks per refresh.
+_MAX_RUNNING_STATUS_WORKERS = 8
 
 
 def _script_path() -> str:
@@ -25,6 +32,60 @@ def _script_path() -> str:
     module_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(module_dir)
     return os.path.join(project_root, "ai_list_sessions.py")
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """Return True if *pid* is currently running."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+
+
+def _check_session_running(home: str, session_id: str) -> bool:
+    """Check whether *session_id* has a live session process.
+
+    Scans ``{home}/workspace/task/`` for the most recent
+    ``{session_id}.{pid}.session.stdout`` file and checks whether the embedded
+    PID is still alive.
+    """
+    if not session_id:
+        return False
+    task_dir = os.path.join(home, "workspace", "task")
+    stdout_path = _find_session_stdout_file(task_dir, session_id)
+    if not stdout_path:
+        return False
+    pid = _get_pid_from_stdout_path(stdout_path)
+    if pid is None:
+        return False
+    return _is_pid_alive(pid)
+
+
+def _enrich_running_status(entries: List[Dict[str, Any]]) -> None:
+    """Add a ``status`` field to each entry by scanning stdout files.
+
+    Running status is determined by checking the embedded PID of the most
+    recent ``*.session.stdout`` file for each session.  Checks run in a
+    thread pool so filesystem scans do not block each other.
+    """
+    if not entries:
+        return
+
+    home = get_topsailai_home()
+    max_workers = min(_MAX_RUNNING_STATUS_WORKERS, len(entries))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_entry = {
+            executor.submit(_check_session_running, home, entry.get("session_id", "")): entry
+            for entry in entries
+        }
+        for future in as_completed(future_to_entry):
+            entry = future_to_entry[future]
+            try:
+                is_running = future.result()
+            except Exception:
+                is_running = False
+            entry["status"] = "Running" if is_running else "Idle"
 
 
 def _format_create_time(create_time: str) -> str:
@@ -46,13 +107,18 @@ def build_project_list(limit: int = 10) -> List[Dict[str, Any]]:
     order (newest first) so the most recent entry appears at the top of the
     project scope table.
 
+    Each entry is enriched with a ``status`` field (``Running`` or ``Idle``)
+    by scanning ``{TOPSAILAI_HOME}/workspace/task/`` for the most recent
+    ``*.session.stdout`` file and checking whether its embedded PID is alive.
+    Status checks run concurrently in a thread pool.
+
     Args:
         limit: Maximum number of sessions to return (default 10).
 
     Returns:
         List of session dictionaries with keys ``no``, ``session_id``,
         ``session_name``, ``project_workspace``, ``create_time``,
-        ``create_time_raw``, and ``task``.
+        ``create_time_raw``, ``task``, and ``status``.
     """
     script = _script_path()
     cmd = [
@@ -118,6 +184,8 @@ def build_project_list(limit: int = 10) -> List[Dict[str, Any]]:
                 "task": session.get("task") or "",
             }
         )
+
+    _enrich_running_status(entries)
     return entries
 
 
@@ -130,14 +198,16 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
         return
 
     w_no = 4
-    w_session = 24
-    w_project = 36
+    w_status = 10
+    w_session = 20
+    w_project = 30
     w_created = 14
-    w_name = 20
+    w_name = 16
 
     header = (
         f"{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE}"
         f" {'No':^{w_no}} |"
+        f" {'Status':^{w_status}} |"
         f" {'Session ID':^{w_session}} |"
         f" {'Project Workspace':^{w_project}} |"
         f" {'Created':^{w_created}} |"
@@ -147,6 +217,7 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
     sep = (
         f"{Colors.CYAN}"
         f"{'-' * (w_no + 1)}+"
+        f"{'-' * (w_status + 2)}+"
         f"{'-' * (w_session + 2)}+"
         f"{'-' * (w_project + 2)}+"
         f"{'-' * (w_created + 2)}+"
@@ -171,9 +242,13 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
         if len(session_name) > w_name:
             session_name = session_name[: w_name - 3] + "..."
 
+        status = entry.get("status") or "Idle"
+        status_color = Colors.GREEN if status == "Running" else Colors.RESET
+
         row = (
             f"{Colors.GRAY}"
             f" {entry['no']:^{w_no}} |"
+            f" {status_color}{status:^{w_status}}{Colors.RESET} |"
             f" {session_id:<{w_session}} |"
             f" {project:<{w_project}} |"
             f" {created:^{w_created}} |"

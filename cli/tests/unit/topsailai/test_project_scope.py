@@ -7,6 +7,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -152,6 +153,154 @@ class TestBuildProjectList(unittest.TestCase):
         self.assertEqual(entries, [])
 
 
+class TestRunningStatusDetection(unittest.TestCase):
+    """Tests for concurrent running-status enrichment."""
+
+    def _write_stdout(self, task_dir, session_id, pid):
+        """Create a session stdout file for testing."""
+        path = os.path.join(task_dir, f"{session_id}.{pid}.session.stdout")
+        with open(path, "w") as fh:
+            fh.write("log line\n")
+        return path
+
+    def _make_session(self, session_id, create_time="2026-07-06T10:00:00"):
+        return {
+            "session_id": session_id,
+            "session_name": f"name-{session_id}",
+            "create_time": create_time,
+            "task": "task",
+            "project_workspace": "/work/project",
+            "pwd": "/work/project",
+            "topsailai_home": "/home/user/.topsailai",
+        }
+
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    @patch("cli_topsailai.project_scope.get_topsailai_home")
+    @patch("cli_topsailai.project_scope.os.kill")
+    def test_marks_running_when_pid_alive(self, mock_kill, mock_home, mock_run):
+        """A session with a live PID is marked Running."""
+        session = self._make_session("s-alive")
+        mock_run.return_value = MockCompletedProcess(stdout=json.dumps([session]))
+        mock_kill.side_effect = lambda pid, sig: None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = os.path.join(tmp, "workspace", "task")
+            os.makedirs(task_dir)
+            self._write_stdout(task_dir, "s-alive", 1234)
+            mock_home.return_value = tmp
+
+            entries = project_scope.build_project_list(limit=10)
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["status"], "Running")
+
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    @patch("cli_topsailai.project_scope.get_topsailai_home")
+    @patch("cli_topsailai.project_scope.os.kill")
+    def test_marks_idle_when_pid_dead(self, mock_kill, mock_home, mock_run):
+        """A session whose PID no longer exists is marked Idle."""
+        session = self._make_session("s-dead")
+        mock_run.return_value = MockCompletedProcess(stdout=json.dumps([session]))
+        mock_kill.side_effect = ProcessLookupError("no such process")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = os.path.join(tmp, "workspace", "task")
+            os.makedirs(task_dir)
+            self._write_stdout(task_dir, "s-dead", 5678)
+            mock_home.return_value = tmp
+
+            entries = project_scope.build_project_list(limit=10)
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["status"], "Idle")
+
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    @patch("cli_topsailai.project_scope.get_topsailai_home")
+    @patch("cli_topsailai.project_scope.os.kill")
+    def test_marks_idle_when_no_stdout_file(self, mock_kill, mock_home, mock_run):
+        """A session with no stdout file is marked Idle."""
+        session = self._make_session("s-missing")
+        mock_run.return_value = MockCompletedProcess(stdout=json.dumps([session]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = os.path.join(tmp, "workspace", "task")
+            os.makedirs(task_dir)
+            mock_home.return_value = tmp
+
+            entries = project_scope.build_project_list(limit=10)
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["status"], "Idle")
+        mock_kill.assert_not_called()
+
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    @patch("cli_topsailai.project_scope.get_topsailai_home")
+    @patch("cli_topsailai.project_scope.os.kill")
+    def test_marks_mixed_sessions_correctly(self, mock_kill, mock_home, mock_run):
+        """Multiple sessions are checked concurrently with correct results."""
+        sessions = [
+            self._make_session("s-running", "2026-07-06T12:00:00"),
+            self._make_session("s-idle", "2026-07-06T11:00:00"),
+            self._make_session("s-no-file", "2026-07-06T10:00:00"),
+        ]
+        mock_run.return_value = MockCompletedProcess(stdout=json.dumps(sessions))
+
+        alive_pids = {1111}
+
+        def fake_kill(pid, sig):
+            if pid not in alive_pids:
+                raise ProcessLookupError("dead")
+
+        mock_kill.side_effect = fake_kill
+
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = os.path.join(tmp, "workspace", "task")
+            os.makedirs(task_dir)
+            self._write_stdout(task_dir, "s-running", 1111)
+            self._write_stdout(task_dir, "s-idle", 2222)
+            # s-no-file intentionally has no stdout file
+            mock_home.return_value = tmp
+
+            entries = project_scope.build_project_list(limit=10)
+
+        self.assertEqual(len(entries), 3)
+        by_id = {e["session_id"]: e["status"] for e in entries}
+        self.assertEqual(by_id["s-running"], "Running")
+        self.assertEqual(by_id["s-idle"], "Idle")
+        self.assertEqual(by_id["s-no-file"], "Idle")
+
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    @patch("cli_topsailai.project_scope.get_topsailai_home")
+    @patch("cli_topsailai.project_scope.os.kill")
+    def test_uses_most_recent_stdout_file(self, mock_kill, mock_home, mock_run):
+        """When multiple stdout files exist, the most recent PID is checked."""
+        session = self._make_session("s-multi")
+        mock_run.return_value = MockCompletedProcess(stdout=json.dumps([session]))
+
+        alive_pids = {9999}
+
+        def fake_kill(pid, sig):
+            if pid not in alive_pids:
+                raise ProcessLookupError("dead")
+
+        mock_kill.side_effect = fake_kill
+
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = os.path.join(tmp, "workspace", "task")
+            os.makedirs(task_dir)
+            old_path = self._write_stdout(task_dir, "s-multi", 1111)
+            new_path = self._write_stdout(task_dir, "s-multi", 9999)
+            # Ensure mtime ordering even on fast filesystems.
+            os.utime(old_path, (1000, 1000))
+            os.utime(new_path, (2000, 2000))
+            mock_home.return_value = tmp
+
+            entries = project_scope.build_project_list(limit=10)
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["status"], "Running")
+
+
 class TestPrintProjectTable(unittest.TestCase):
     """Tests for print_project_table."""
 
@@ -166,10 +315,13 @@ class TestPrintProjectTable(unittest.TestCase):
                 "create_time": "07-06 10:00",
                 "create_time_raw": "2026-07-06T10:00:00",
                 "task": "task one",
+                "status": "Running",
             }
         ]
         project_scope.print_project_table(entries)
         output = mock_stdout.getvalue()
+        self.assertIn("Status", output)
+        self.assertIn("Running", output)
         self.assertIn("Session ID", output)
         self.assertIn("Project Workspace", output)
         self.assertIn("s1", output)
@@ -194,6 +346,7 @@ class TestPrintProjectTable(unittest.TestCase):
                 "create_time": "07-06 10:00",
                 "create_time_raw": "2026-07-06T10:00:00",
                 "task": "task",
+                "status": "Idle",
             }
         ]
         project_scope.print_project_table(entries)
