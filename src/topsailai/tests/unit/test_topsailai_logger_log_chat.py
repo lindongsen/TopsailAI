@@ -127,14 +127,15 @@ class TestLogChatLoggerHandlers:
 class TestLogChatLoggerLevel:
     """Test suite for logger level configuration."""
 
-    def test_log_chat_logger_default_level_debug(self, reloaded_log_chat_module):
+    def test_log_chat_logger_default_level_info(self, reloaded_log_chat_module):
         """
-        Test that the logger default level is DEBUG.
-        
-        Verifies that the logger is configured to capture all log
-        messages at DEBUG level and above.
+        Test that the logger default level resolves from the environment.
+
+        The chat logger is created via setup_logger(LOGGER_NAME) without an
+        explicit level, so it follows the standard resolution: INFO when no
+        TOPSAILAI_LOG_LEVEL or DEBUG=1 is set.
         """
-        assert reloaded_log_chat_module.logger.level == logging.DEBUG
+        assert reloaded_log_chat_module.logger.level == logging.INFO
 
 
 class TestLogChatLoggerFormatter:

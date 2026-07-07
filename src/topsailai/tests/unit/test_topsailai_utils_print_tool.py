@@ -200,7 +200,8 @@ class TestPrintTool(unittest.TestCase):
 
     @patch('topsailai.utils.print_tool.print_with_time')
     @patch('topsailai.utils.print_tool.thread_local_tool.get_thread_var')
-    def test_print_debug_no_output(self, mock_get_thread_var, mock_print_with_time):
+    @patch('topsailai.utils.env_tool.is_interactive_mode')
+    def test_print_debug_no_output(self, mock_is_interactive_mode, mock_get_thread_var, mock_print_with_time):
         """Test print_debug when neither DEBUG env nor flag_debug is set."""
         # Ensure DEBUG environment variable is not set
         if 'DEBUG' in os.environ:
@@ -208,6 +209,9 @@ class TestPrintTool(unittest.TestCase):
 
         # Mock thread_local_tool.get_thread_var to return None (falsy)
         mock_get_thread_var.return_value = None
+
+        # Non-interactive mode so env_tool.is_interactive_mode() does not force output
+        mock_is_interactive_mode.return_value = False
 
         # Call print_debug
         print_tool.print_debug('test message')
