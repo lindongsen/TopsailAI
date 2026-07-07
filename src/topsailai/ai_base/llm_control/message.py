@@ -368,7 +368,7 @@ def format_response(response, rsp_obj=None, messages=None):
         except Exception as e:
             if count == (max_count-1):
                 print_error(f"parsing response: {e}\n>>>\n{response}\n<<<\nretrying times: {count}")
-                logger.exception(e)
+                logger.debug(e)
         finally:
             new_response = format_response_finally(response, rsp_obj, messages)
             if new_response is not response:
