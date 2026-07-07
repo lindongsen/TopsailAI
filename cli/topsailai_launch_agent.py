@@ -424,6 +424,10 @@ def _select_context_item(context_map, env_map):
             file=sys.stderr,
         )
 
+    print("\nContext Items:", file=sys.stderr)
+    for idx, item in enumerate(items, start=1):
+        print(f"  {idx}. {item}", file=sys.stderr)
+
     print(flush=True)
     default_item = "default" if "default" in items else None
     prompt_text = (
