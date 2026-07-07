@@ -10,6 +10,7 @@ import sys
 import time
 
 from topsailai.ai_base.llm_control.content_endpoint import ContentSender
+from topsailai.context import token as token_module
 from topsailai.utils import (
     format_tool,
     json_tool,
@@ -375,12 +376,68 @@ class ContentProgress(ContentSender):
         sys.stdout.flush()
         return True
 
-def print_context_messages(messages):
+def _count_words(content):
+    """
+    Count characters in message content.
+
+    Strings are counted directly with len(). Non-string values are converted
+    to str() first, then counted with len(). None counts as 0.
+    """
+    if content is None:
+        return 0
+    if isinstance(content, str):
+        return len(content)
+    return len(str(content))
+
+
+def _count_tokens(content):
+    """
+    Count tokens in message content.
+
+    Strings are counted directly using context.token.count_tokens().
+    Non-string values are converted to str() first, then counted.
+    None counts as 0.
+    """
+    if content is None:
+        return 0
+    if not isinstance(content, str):
+        content = str(content)
+    return token_module.count_tokens(content)
+
+
+def _truncate_content(content, max_length):
+    """
+    Truncate content for display without affecting counts.
+
+    Args:
+        content: The original message content.
+        max_length: Maximum number of characters to display. None means no
+            truncation.
+
+    Returns:
+        str: The possibly truncated string representation of the content.
+    """
+    if max_length is None:
+        return content
+    if content is None:
+        return ""
+    if not isinstance(content, str):
+        content = str(content)
+    if max_length <= 0:
+        return ""
+    if len(content) <= max_length:
+        return content
+    return content[:max_length] + "..."
+
+
+def print_context_messages(messages, content_max_length=None):
     """
     Format and print conversation messages for human-readable output
 
     Args:
         messages: List of message dictionaries containing 'role' and 'content' fields
+        content_max_length: Optional maximum number of characters to display
+            for each message's content. Does not affect word/token counts.
     """
     for i, msg in enumerate(messages):
         # Get role and content, with default values in case fields are missing
@@ -388,21 +445,32 @@ def print_context_messages(messages):
         content = msg.get('content', '')
         create_time = msg.get('create_time', '')
 
+        word_count = _count_words(content)
+        token_count = _count_tokens(content)
+
         # Format the output with visual separators
         print(f"\n{'='*50}")
-        print(f"#{i+1} - Role: {role.upper()}" + (f" - {create_time}" if create_time else ""))
+        print(
+            f"#{i+1} - Role: {role.upper()}"
+            f" - Words: {word_count}"
+            f" - Tokens: {token_count}"
+            + (f" - {create_time}" if create_time else "")
+        )
         print(f"{'='*50}")
+
+        # Truncate only the displayed content, counts use the original content
+        display_content = _truncate_content(content, content_max_length)
 
         # Handle multiline content while preserving formatting
         try:
-            content = format_tool.to_topsailai_format(
-                content, key_name="step_name", value_name="raw_text",
+            display_content = format_tool.to_topsailai_format(
+                display_content, key_name="step_name", value_name="raw_text",
                 for_print=True,
             ).strip()
         except Exception:
             pass
-        if content:
-            print(json_tool.safe_json_dump(content))
+        if display_content:
+            print(json_tool.safe_json_dump(display_content))
         else:
             print("  [No content]")
 

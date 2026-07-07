@@ -23,6 +23,9 @@ from topsailai.workspace.print_tool import (
     TeeOutput,
     ContentDots,
     ContentProgress,
+    _count_words,
+    _count_tokens,
+    _truncate_content,
     print_context_messages,
     print_raw_messages,
     decorator_tee_output,
@@ -47,7 +50,6 @@ class TestTeeOutput(unittest.TestCase):
             pass  # Already restored
         else:
             sys.stdout = sys.__stdout__
-        # Clean up test file
         if os.path.exists(self.test_file):
             os.remove(self.test_file)
 
@@ -200,6 +202,8 @@ class TestTeeOutput(unittest.TestCase):
         with open(self.test_file, 'r') as f:
             content = f.read()
         self.assertIn("Inside context", content)
+
+
 class TestContentDots(unittest.TestCase):
     """Test cases for ContentDots class (backward compatible dot sender)."""
 
@@ -357,6 +361,116 @@ class TestContentProgress(unittest.TestCase):
             self.assertEqual(progress.mode, "bar")
 
 
+class TestCountWords(unittest.TestCase):
+    """Test cases for _count_words helper."""
+
+    def test_plain_text(self):
+        self.assertEqual(_count_words("Hello world"), 11)
+        self.assertEqual(_count_words("  Hello   world  "), 17)
+
+    def test_cjk_characters(self):
+        # Strings are counted by len(), so CJK characters count as 1 each.
+        self.assertEqual(_count_words("你好世界"), 4)
+        self.assertEqual(_count_words("你好 世界"), 5)
+        self.assertEqual(_count_words("こんにちは"), 5)
+        self.assertEqual(_count_words("안녕하세요"), 5)
+
+    def test_mixed_content(self):
+        self.assertEqual(_count_words("Hello 你好 world 世界"), 17)
+        self.assertEqual(_count_words("Hello, world! This is a test."), 29)
+
+    def test_json_string(self):
+        # JSON strings are plain strings; count their full length.
+        text = '{"step_name": "observation", "raw_text": "Hello world"}'
+        self.assertEqual(_count_words(text), len(text))
+
+    def test_dict_content(self):
+        # Non-string values are converted to str and counted.
+        data = {"step_name": "observation", "raw_text": "Hello world"}
+        self.assertEqual(_count_words(data), len(str(data)))
+
+    def test_list_content(self):
+        self.assertEqual(_count_words(["Hello", "world"]), len(str(["Hello", "world"])))
+        self.assertEqual(_count_words(["你好", "世界"]), len(str(["你好", "世界"])))
+
+    def test_empty_and_none(self):
+        self.assertEqual(_count_words(None), 0)
+        self.assertEqual(_count_words(""), 0)
+        self.assertEqual(_count_words([]), 2)
+        self.assertEqual(_count_words({}), 2)
+
+
+class TestCountTokens(unittest.TestCase):
+    """Test cases for _count_tokens helper."""
+
+    @patch("topsailai.workspace.print_tool.token_module.count_tokens")
+    def test_plain_text(self, mock_count_tokens):
+        mock_count_tokens.return_value = 2
+        self.assertEqual(_count_tokens("Hello world"), 2)
+        mock_count_tokens.assert_called_once_with("Hello world")
+
+    @patch("topsailai.workspace.print_tool.token_module.count_tokens")
+    def test_non_string_content(self, mock_count_tokens):
+        mock_count_tokens.return_value = 5
+        data = {"step_name": "observation", "raw_text": "Hello world"}
+        self.assertEqual(_count_tokens(data), 5)
+        mock_count_tokens.assert_called_once_with(str(data))
+
+    @patch("topsailai.workspace.print_tool.token_module.count_tokens")
+    def test_json_string(self, mock_count_tokens):
+        mock_count_tokens.return_value = 3
+        text = '{"step_name": "observation", "raw_text": "Hello world"}'
+        self.assertEqual(_count_tokens(text), 3)
+        mock_count_tokens.assert_called_once_with(text)
+
+    @patch("topsailai.workspace.print_tool.token_module.count_tokens")
+    def test_list_content(self, mock_count_tokens):
+        mock_count_tokens.return_value = 4
+        self.assertEqual(_count_tokens(["Hello", "world"]), 4)
+        mock_count_tokens.assert_called_once_with(str(["Hello", "world"]))
+
+    @patch("topsailai.workspace.print_tool.token_module.count_tokens")
+    def test_none_content(self, mock_count_tokens):
+        self.assertEqual(_count_tokens(None), 0)
+        mock_count_tokens.assert_not_called()
+    @patch("topsailai.workspace.print_tool.token_module.count_tokens")
+    def test_empty_string(self, mock_count_tokens):
+        mock_count_tokens.return_value = 0
+        self.assertEqual(_count_tokens(""), 0)
+        mock_count_tokens.assert_called_once_with("")
+
+
+class TestTruncateContent(unittest.TestCase):
+    """Test cases for _truncate_content helper."""
+
+    def test_none_returns_empty(self):
+        self.assertEqual(_truncate_content(None, 10), "")
+
+    def test_none_max_length_returns_original(self):
+        self.assertEqual(_truncate_content("hello", None), "hello")
+        self.assertEqual(_truncate_content({"a": 1}, None), {"a": 1})
+
+    def test_string_shorter_than_limit(self):
+        self.assertEqual(_truncate_content("hello", 10), "hello")
+
+    def test_string_longer_than_limit(self):
+        self.assertEqual(_truncate_content("hello world", 5), "hello...")
+
+    def test_string_exact_limit(self):
+        self.assertEqual(_truncate_content("hello", 5), "hello")
+
+    def test_zero_max_length(self):
+        self.assertEqual(_truncate_content("hello", 0), "")
+
+    def test_negative_max_length(self):
+        self.assertEqual(_truncate_content("hello", -1), "")
+
+    def test_non_string_content(self):
+        data = {"step_name": "observation", "raw_text": "Hello world"}
+        text = str(data)
+        self.assertEqual(_truncate_content(data, 10), text[:10] + "...")
+
+
 class TestPrintContextMessages(unittest.TestCase):
     """Test cases for print_context_messages function."""
 
@@ -384,6 +498,8 @@ class TestPrintContextMessages(unittest.TestCase):
         self.assertIn("ASSISTANT", output)
         self.assertIn("Hello", output)
         self.assertIn("Hi there", output)
+        self.assertIn("Words:", output)
+        self.assertIn("Tokens:", output)
 
     def test_print_context_messages_empty_list(self):
         """Test print_context_messages with empty list."""
@@ -409,6 +525,8 @@ class TestPrintContextMessages(unittest.TestCase):
 
         output = self.captured_output.getvalue()
         self.assertIn("UNKNOWN", output)
+        self.assertIn("Words:", output)
+        self.assertIn("Tokens:", output)
 
     def test_print_context_messages_multiline_content(self):
         """Test print_context_messages with multiline content."""
@@ -424,19 +542,56 @@ class TestPrintContextMessages(unittest.TestCase):
         self.assertIn("Line 1", output)
         self.assertIn("Line 2", output)
         self.assertIn("Line 3", output)
+        self.assertIn("Words:", output)
+        self.assertIn("Tokens:", output)
 
     def test_print_context_messages_with_step_format(self):
         """Test print_context_messages with step_name/raw_text format."""
         sys.stdout = self.captured_output
 
         messages = [
-            {'role': 'user', 'content': 'step_name=thought\nraw_text=I am thinking'}
+            {'role': 'user', 'content': '{"step_name": "observation", "raw_text": "Hello world"}'}
         ]
 
         print_context_messages(messages)
 
         output = self.captured_output.getvalue()
         # Should handle the format gracefully
+        self.assertIn("Words:", output)
+        self.assertIn("Tokens:", output)
+        self.assertIn("Hello world", output)
+
+    def test_print_context_messages_with_content_max_length(self):
+        """Test content_max_length truncates display but not counts."""
+        sys.stdout = self.captured_output
+
+        messages = [
+            {'role': 'user', 'content': 'Hello world this is a long message'}
+        ]
+
+        print_context_messages(messages, content_max_length=10)
+
+        output = self.captured_output.getvalue()
+        # Display should be truncated (10 chars + "...")
+        self.assertIn("Hello worl...", output)
+        self.assertNotIn("this is a long message", output)
+        # Title counts should reflect the full content length
+        self.assertIn("Words: 34", output)
+
+    def test_print_context_messages_default_no_truncation(self):
+        """Test default behavior does not truncate content."""
+        sys.stdout = self.captured_output
+
+        long_content = "Hello world this is a long message"
+        messages = [
+            {'role': 'user', 'content': long_content}
+        ]
+
+        print_context_messages(messages)
+
+        output = self.captured_output.getvalue()
+        self.assertIn(long_content, output)
+        self.assertIn("Words: 34", output)
 
 
 class TestPrintRawMessages(unittest.TestCase):
@@ -458,7 +613,6 @@ class TestPrintRawMessages(unittest.TestCase):
         msg1 = MagicMock()
         msg1.msg_id = "msg-001"
         msg1.message = '{"role": "user", "content": "Hello"}'
-
         msg2 = MagicMock()
         msg2.msg_id = "msg-002"
         msg2.message = '{"role": "assistant", "content": "Hi"}'
