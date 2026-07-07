@@ -102,7 +102,10 @@ def print_messages(messages: List[Dict[str, Any]], raw: bool = False) -> None:
         print(content)
 
 
-def retrieve_session(session_id: str) -> None:
+def retrieve_session(
+    session_id: str,
+    max_chars: Optional[int] = None,
+) -> None:
     """
     Retrieve session content via the ``topsailai_retrieve_messages`` command.
 
@@ -110,12 +113,17 @@ def retrieve_session(session_id: str) -> None:
 
     Args:
         session_id: Session identifier to retrieve.
+        max_chars: If provided, truncate message content to this many
+            characters by passing ``--max-chars`` to the retrieval command.
     """
     print_header(f"Session Content: {session_id}")
     proc = None
+    cmd = ["topsailai_retrieve_messages", session_id]
+    if max_chars is not None:
+        cmd.extend(["--max-chars", str(max_chars)])
     try:
         proc = subprocess.Popen(
-            ["topsailai_retrieve_messages", session_id],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

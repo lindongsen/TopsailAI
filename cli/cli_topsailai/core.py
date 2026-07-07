@@ -443,7 +443,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                         f"{Colors.RED}[ERROR] No session ID available for this file.{Colors.RESET}"
                     )
                     continue
-                retrieve_session(session_id)
+                retrieve_session(session_id, max_chars=1000)
                 continue
 
             if action == "enter_session":

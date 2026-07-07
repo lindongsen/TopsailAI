@@ -873,6 +873,34 @@ class TestRetrieveSessionExceptions(unittest.TestCase):
             retrieve_session("session-a")
 
 
+    @patch("cli_topsailai.retrieve.subprocess.Popen")
+    def test_passes_max_chars(self, mock_popen):
+        """retrieve_session passes --max-chars when max_chars is provided."""
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("", "")
+        mock_proc.poll.return_value = 0
+        mock_popen.return_value = mock_proc
+
+        retrieve_session("session-a", max_chars=1000)
+        mock_popen.assert_called_once()
+        args = mock_popen.call_args[0][0]
+        self.assertIn("--max-chars", args)
+        self.assertIn("1000", args)
+        self.assertEqual(args[args.index("--max-chars") + 1], "1000")
+
+    @patch("cli_topsailai.retrieve.subprocess.Popen")
+    def test_omits_max_chars_when_none(self, mock_popen):
+        """retrieve_session does not pass --max-chars when omitted."""
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("", "")
+        mock_proc.poll.return_value = 0
+        mock_popen.return_value = mock_proc
+
+        retrieve_session("session-a")
+        mock_popen.assert_called_once()
+        args = mock_popen.call_args[0][0]
+        self.assertNotIn("--max-chars", args)
+
 class TestFindSessionStdoutFile(unittest.TestCase):
     """Tests for _find_session_stdout_file."""
 
@@ -1112,6 +1140,37 @@ class TestMainLoopActions(unittest.TestCase):
             cli_core.main()
         mock_clean.assert_called_once()
 
+    @patch("cli_topsailai.retrieve.retrieve_session")
+    @patch("cli_topsailai.core.signal.signal")
+    @patch("cli_topsailai.yaml_commands.load_yaml_commands", return_value=[])
+    @patch("cli_topsailai.paths.get_topsailai_home", return_value="/home")
+    @patch(
+        "cli_topsailai.log_files.discover_log_files",
+        return_value=[{"filename": "s1.123.session.stdout", "session_id": "s1"}],
+    )
+    @patch("cli_topsailai.formatting.print_table")
+    @patch(
+        "cli_topsailai.core.prompt_selection",
+        side_effect=[("session", 0), ("quit", None)],
+    )
+    @patch("cli_topsailai.history.HistoryManager")
+    def test_main_session_passes_max_chars(
+        self,
+        mock_history_cls,
+        mock_prompt,
+        mock_print_table,
+        mock_discover,
+        mock_home,
+        mock_yaml,
+        mock_signal,
+        mock_retrieve,
+    ):
+        """Main loop passes max_chars=1000 to retrieve_session for /session."""
+        mock_history = MagicMock()
+        mock_history_cls.return_value = mock_history
+        with patch("builtins.print"):
+            cli_core.main()
+        mock_retrieve.assert_called_once_with("s1", max_chars=1000)
     @patch("cli_topsailai.core.signal.signal")
     @patch("cli_topsailai.yaml_commands.load_yaml_commands", return_value=[])
     @patch("cli_topsailai.paths.get_topsailai_home", return_value="/home")
