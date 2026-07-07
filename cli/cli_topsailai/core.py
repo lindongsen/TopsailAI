@@ -256,7 +256,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     # Heavy imports are deferred until after --help / --version are handled.
     from cli_topsailai.cleaning import clean_by_numbers, clean_expired_files
     from cli_topsailai.completer import setup_tab_completion
-    from cli_topsailai.formatting import print_header, print_table
+    from cli_topsailai.formatting import format_size, print_header, print_table
     from cli_topsailai.help_text import print_help, print_instruction_help
     from cli_topsailai.history import HistoryManager, load_readline_history
     from cli_topsailai.log_files import discover_log_files
@@ -288,13 +288,29 @@ def main(argv: Optional[List[str]] = None) -> None:
     print_header("TopsailAI Task Watcher")
     print(f"{Colors.DIM}HOME: {topsailai_home}{Colors.RESET}")
     print(f"{Colors.DIM}DIR:  {task_dir}{Colors.RESET}")
-    log_files = discover_log_files(task_dir)
+
+    def _print_refresh_item(file_info: dict) -> None:
+        """Print a single file as it is discovered during refresh."""
+        session = file_info.get("session_id") or "-"
+        filename = file_info.get("filename", "")
+        size = format_size(file_info.get("size", 0))
+        print(
+            f"{Colors.DIM}  Found {Colors.RESET}{session}"
+            f"{Colors.DIM} {filename} ({size}){Colors.RESET}"
+        )
+        sys.stdout.flush()
+
+    print(f"{Colors.DIM}Refreshing list...{Colors.RESET}")
+    sys.stdout.flush()
+    log_files = discover_log_files(task_dir, on_item=_print_refresh_item)
     enrich_files_with_session_names(log_files)
     project_entries: List[Dict[str, Any]] = []
 
     def _refresh_workspace() -> None:
         nonlocal log_files
-        log_files = discover_log_files(task_dir)
+        print(f"{Colors.DIM}Refreshing list...{Colors.RESET}")
+        sys.stdout.flush()
+        log_files = discover_log_files(task_dir, on_item=_print_refresh_item)
         enrich_files_with_session_names(log_files)
         print_table(log_files)
 
@@ -316,7 +332,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         else:
             print(f"\n{Colors.YELLOW}[WARN] No .stdout log files found in:{Colors.RESET}")
             print(f"  {task_dir}")
-
     print(
         f"\n  {Colors.DIM}Type {Colors.YELLOW}/help{Colors.DIM} "
         f"for available commands{Colors.RESET}"
@@ -342,7 +357,6 @@ def main(argv: Optional[List[str]] = None) -> None:
                 break
 
             if action == "refresh":
-                print(f"\n{Colors.DIM}Refreshing list...{Colors.RESET}")
                 if state.current_scope == "project":
                     _refresh_project()
                 else:

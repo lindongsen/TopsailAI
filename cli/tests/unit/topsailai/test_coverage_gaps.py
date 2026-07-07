@@ -10,6 +10,7 @@ import builtins
 import errno
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -1597,6 +1598,77 @@ class TestMainEntryPoint(unittest.TestCase):
             sys.modules.pop("topsailai", None)
             runpy.run_path(topsailai_path, run_name="__main__")
             mock_signal.assert_called()
+        finally:
+            shutil.rmtree(home, ignore_errors=True)
+
+
+class TestMainRefreshIncremental(unittest.TestCase):
+    """Tests for incremental refresh output in main()."""
+
+    def setUp(self):
+        cli_state.running = True
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+        cli_state.history_manager = None
+
+    def tearDown(self):
+        cli_state.running = True
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+        cli_state.history_manager = None
+
+    @patch("cli_topsailai.core.signal.signal")
+    @patch("cli_topsailai.yaml_commands.load_yaml_commands", return_value=[])
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch(
+        "cli_topsailai.core.prompt_selection",
+        side_effect=[("refresh", None), ("quit", None)],
+    )
+    @patch("cli_topsailai.paths.get_topsailai_home")
+    def test_refresh_prints_each_file(
+        self,
+        mock_home,
+        mock_prompt,
+        mock_enrich,
+        mock_print_table,
+        mock_print_header,
+        mock_history_cls,
+        mock_load_history,
+        mock_setup_tab,
+        mock_load_yaml,
+        mock_signal,
+    ):
+        """Refresh action prints each discovered file before the table."""
+        home = tempfile.mkdtemp()
+        try:
+            task_dir = os.path.join(home, "workspace", "task")
+            os.makedirs(task_dir, exist_ok=True)
+            open(os.path.join(task_dir, "s1.1234.session.stdout"), "w").close()
+            open(os.path.join(task_dir, "s2.5678.task.stdout"), "w").close()
+            mock_home.return_value = home
+
+            mock_history = MagicMock()
+            mock_history_cls.return_value = mock_history
+
+            captured = io.StringIO()
+            with patch.object(sys, "stdout", captured):
+                cli_core.main()
+
+            output = captured.getvalue()
+            ansi_escape = re.compile(r"\x1b\[[0-9;]*m")
+            clean_output = ansi_escape.sub("", output)
+            self.assertIn("Found s1", clean_output)
+            self.assertIn("Found s2", clean_output)
+            self.assertIn("s1.1234.session.stdout", clean_output)
+            self.assertIn("s2.5678.task.stdout", clean_output)
+            mock_print_table.assert_called()
         finally:
             shutil.rmtree(home, ignore_errors=True)
 

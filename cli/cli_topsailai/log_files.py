@@ -4,7 +4,7 @@ import ctypes
 import os
 import re
 import subprocess
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from cli_topsailai.constants import (
     TEMP_SESSION_ID,
@@ -210,10 +210,17 @@ def _display_session_id(session_id: Optional[str], is_task: bool = False) -> str
 display_session_id = _display_session_id
 
 
-def discover_log_files(task_dir: str) -> List[dict]:
+def discover_log_files(
+    task_dir: str,
+    on_item: Optional[Callable[[dict], None]] = None,
+) -> List[dict]:
     """
     Discover all .stdout and .stderr log files in the task directory.
     Supports .session.stdout, .task.stdout, and generic naming conventions.
+
+    If *on_item* is provided, it is invoked for each discovered file dict
+    before the final sorted list is returned.  This lets callers show
+    incremental progress while scanning a large task directory.
     """
     log_files = []
     if not os.path.isdir(task_dir):
@@ -247,7 +254,7 @@ def discover_log_files(task_dir: str) -> List[dict]:
         created = _get_birth_time(full_path)
         if created is None:
             created = stat_info.st_ctime
-        log_files.append({
+        file_info = {
             "filename": entry,
             "path": full_path,
             "session_id": session_id,
@@ -256,7 +263,10 @@ def discover_log_files(task_dir: str) -> List[dict]:
             "size": stat_info.st_size,
             "mtime": stat_info.st_mtime,
             "ctime": created,
-        })
+        }
+        log_files.append(file_info)
+        if on_item is not None:
+            on_item(file_info)
 
     log_files.sort(key=lambda x: x["ctime"])
     return log_files
