@@ -352,7 +352,7 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
         self.test_instance._first_position = 0
         
         with patch('topsailai.workspace.context.agent2llm.logger'):
-            with patch('topsailai.workspace.context.agent2llm.print_step'):
+            with patch('topsailai.workspace.context.agent2llm.print_info'):
                 result = self.test_instance.summarize_messages_for_processing(
                     messages=custom_messages
                 )
@@ -369,7 +369,7 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
         original_len = len(self.test_instance._ai_agent.messages)
         
         with patch('topsailai.workspace.context.agent2llm.logger'):
-            with patch('topsailai.workspace.context.agent2llm.print_step'):
+            with patch('topsailai.workspace.context.agent2llm.print_info'):
                 self.test_instance.summarize_messages_for_processing()
                 self.assertNotEqual(len(self.test_instance._ai_agent.messages), original_len)
 
@@ -399,7 +399,7 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.test_instance._first_position = 0
 
             with patch('topsailai.workspace.context.agent2llm.logger'):
-                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                with patch('topsailai.workspace.context.agent2llm.print_info'):
                     self.test_instance.summarize_messages_for_processing()
 
             final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
@@ -417,7 +417,7 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.test_instance._first_position = 0
 
             with patch('topsailai.workspace.context.agent2llm.logger'):
-                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                with patch('topsailai.workspace.context.agent2llm.print_info'):
                     self.test_instance.summarize_messages_for_processing()
 
             final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
@@ -436,7 +436,7 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.test_instance._first_position = 0
 
             with patch('topsailai.workspace.context.agent2llm.logger'):
-                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                with patch('topsailai.workspace.context.agent2llm.print_info'):
                     self.test_instance.summarize_messages_for_processing()
 
             final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
@@ -488,7 +488,7 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.test_instance._first_position = 0
 
             with patch('topsailai.workspace.context.agent2llm.logger'):
-                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                with patch('topsailai.workspace.context.agent2llm.print_info'):
                     self.test_instance.summarize_messages_for_processing()
 
             final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
@@ -507,7 +507,7 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.test_instance._first_position = 0
 
             with patch('topsailai.workspace.context.agent2llm.logger'):
-                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                with patch('topsailai.workspace.context.agent2llm.print_info'):
                     self.test_instance.summarize_messages_for_processing()
 
             final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
@@ -526,7 +526,7 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.test_instance._first_position = 0
 
             with patch('topsailai.workspace.context.agent2llm.logger'):
-                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                with patch('topsailai.workspace.context.agent2llm.print_info'):
                     self.test_instance.summarize_messages_for_processing()
 
             final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
@@ -544,7 +544,7 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.test_instance._first_position = 0
 
             with patch('topsailai.workspace.context.agent2llm.logger'):
-                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                with patch('topsailai.workspace.context.agent2llm.print_info'):
                     self.test_instance.summarize_messages_for_processing()
 
             final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
@@ -562,7 +562,7 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.test_instance._first_position = 0
 
             with patch('topsailai.workspace.context.agent2llm.logger'):
-                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                with patch('topsailai.workspace.context.agent2llm.print_info'):
                     self.test_instance.summarize_messages_for_processing()
 
             final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
@@ -593,7 +593,7 @@ class TestEdgeCases(TestContextRuntimeAgent2LLM):
         self.test_instance._first_position = 0
         
         with patch('topsailai.workspace.context.agent2llm.logger'):
-            with patch('topsailai.workspace.context.agent2llm.print_step'):
+            with patch('topsailai.workspace.context.agent2llm.print_info'):
                 result1 = self.test_instance.summarize_messages_for_processing()
                 result2 = self.test_instance.summarize_messages_for_processing()
                 self.assertIsNotNone(result1)
@@ -613,7 +613,7 @@ class TestEdgeCases(TestContextRuntimeAgent2LLM):
         self.test_instance._first_position = 0
 
         with patch('topsailai.workspace.context.agent2llm.logger'):
-            with patch('topsailai.workspace.context.agent2llm.print_step'):
+            with patch('topsailai.workspace.context.agent2llm.print_info'):
                 self.test_instance.summarize_messages_for_processing()
 
         final_messages = self.test_instance._ai_agent.messages
@@ -650,7 +650,7 @@ class TestEdgeCases(TestContextRuntimeAgent2LLM):
 
         with patch.dict(os.environ, {"TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0"}):
             with patch('topsailai.workspace.context.agent2llm.logger'):
-                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                with patch('topsailai.workspace.context.agent2llm.print_info'):
                     self.test_instance.summarize_messages_for_processing()
 
         self.assertEqual(len(captured), 1)
@@ -689,7 +689,7 @@ class TestEdgeCases(TestContextRuntimeAgent2LLM):
 
         with patch.dict(os.environ, {"TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0"}):
             with patch('topsailai.workspace.context.agent2llm.logger'):
-                with patch('topsailai.workspace.context.agent2llm.print_step'):
+                with patch('topsailai.workspace.context.agent2llm.print_info'):
                     self.test_instance.summarize_messages_for_processing()
 
         final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]

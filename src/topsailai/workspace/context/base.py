@@ -725,10 +725,10 @@ Summarize Messages
         # stale context. The passed-in messages are the authoritative view from
         # the layer that triggered summarization.
         if all_messages and messages and len(all_messages) < len(messages):
-            print_tool.print_step("[summarize_runtime_messages] use passed-messages due to larger length", need_format=False, need_log=True)
+            print_tool.print_info("[summarize_runtime_messages] use passed-messages due to larger length")
             all_messages = messages
         assert all_messages, "null of messages"
-        print_tool.print_step(f"[summarize_runtime_messages] All of messages: length=[{len(all_messages)}]", need_format=False, need_log=True)
+        print_tool.print_info(f"[summarize_runtime_messages] All of messages: length=[{len(all_messages)}]")
 
         llm_chat = get_llm_chat(
             message="> SUMMARIZE MESSAGES",

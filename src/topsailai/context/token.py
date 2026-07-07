@@ -17,7 +17,7 @@ import tiktoken
 from openai.types.completion_usage import CompletionUsage
 
 from topsailai.logger.log_chat import logger
-from topsailai.utils.print_tool import print_step
+from topsailai.utils.print_tool import print_info
 
 
 def count_tokens(text, encoding_name="cl100k_base"):
@@ -210,7 +210,7 @@ class TokenStat(threading.Thread):
         - Message count
         - First-byte timing statistics for stream responses
 
-        The output is logged both through the print_step utility and the logger
+        The output is logged both through the print_info utility and the logger
         for visibility in different output streams.
 
         Returns:
@@ -248,7 +248,7 @@ class TokenStat(threading.Thread):
 
         # Format and output the statistics
         msg = f"[TokenStat] {info}"
-        print_step(msg, need_format=False)      # Output to console/step display
+        print_info(msg)      # Output to console/step display
         logger.info(msg)     # Output to log file
         return
 

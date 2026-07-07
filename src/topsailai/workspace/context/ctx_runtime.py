@@ -26,9 +26,8 @@ from topsailai.utils import (
     env_tool,
 )
 from topsailai.utils.print_tool import (
-    print_step,
-    print_critical,
     print_info,
+    print_critical,
 )
 from topsailai.tools import (
     story_tool,
@@ -260,10 +259,10 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         # structure remains head_portion + [summary_answer] + [last_user_message].
         original_messages = list(messages)
         keeping_messages = self._get_messages_before_first_user_task_message(messages)
-        print_step(f"!!! [User2Agent] [Summarization] head_messages_before_first_user_task_message_to_keep(session_messages)={len(keeping_messages)}", need_format=False, need_log=True)
+        print_info(f"!!! [User2Agent] [Summarization] head_messages_before_first_user_task_message_to_keep(session_messages)={len(keeping_messages)}")
 
         # print info
-        print_step(f"!!! [User2Agent] [Summarization] Summarizing context messages for processed: msg_len=[{len(messages)}]", need_format=False, need_log=True)
+        print_info(f"!!! [User2Agent] [Summarization] Summarizing context messages for processed: msg_len=[{len(messages)}]")
 
         # Log message count and token usage before summarization
         _token_count_before = self._get_current_tokens(realtime=True)
@@ -306,7 +305,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         # tail_offset_to_keep
         tail_offset_to_keep = self._get_tail_offset_to_keep_in_summary()
 
-        print_step(f"!!! [User2Agent] [Summarization] head_offset_to_keep={head_offset_to_keep}, tail_offset_to_keep={tail_offset_to_keep}, last_user_message_to_keep=1", need_format=False, need_log=True)
+        print_info(f"!!! [User2Agent] [Summarization] head_offset_to_keep={head_offset_to_keep}, tail_offset_to_keep={tail_offset_to_keep}, last_user_message_to_keep=1")
 
         if self.session_id:
             raw_messages_from_session = ctx_manager.get_messages_by_session(self.session_id, for_raw=True)
@@ -322,7 +321,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                     break
                 if i > 7:
                     break
-            print_step(f"!!! [User2Agent] [Summarization] head_messages_before_first_user_task_message_to_keep(session_raw_messages)={len(raw_msg_ids_to_keep)}")
+            print_info(f"!!! [User2Agent] [Summarization] head_messages_before_first_user_task_message_to_keep(session_raw_messages)={len(raw_msg_ids_to_keep)}")
 
             # keep last user message
             last_user_raw_msg = None
@@ -423,11 +422,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         if token_threshold > 0:
             current_tokens = self._get_current_tokens(self.messages) or 0
             if current_tokens > token_threshold:
-                print_step(
-                    f"!!! [User2Agent] [Summarization] token usage exceeded threshold: current_tokens=[{current_tokens}], threshold=[{token_threshold}]",
-                    need_format=False,
-                    need_log=True,
-                )
+                print_info(f"!!! [User2Agent] [Summarization] token usage exceeded threshold: current_tokens=[{current_tokens}], threshold=[{token_threshold}]")
                 return True
 
         return False

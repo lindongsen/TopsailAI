@@ -286,7 +286,7 @@ class TestTokenStatFirstByte(unittest.TestCase):
         stat.add_first_byte(100.0)
         stat.add_first_byte(200.0)
 
-        with patch('topsailai.context.token.print_step') as mock_print, \
+        with patch('topsailai.context.token.print_info') as mock_print, \
              patch('topsailai.context.token.logger') as mock_logger:
             stat.output_token_stat()
 
@@ -307,7 +307,7 @@ class TestTokenStatFirstByte(unittest.TestCase):
         stat.add_first_byte(200.9876543)
         stat.add_first_byte(50.5555555)
 
-        with patch('topsailai.context.token.print_step') as mock_print, \
+        with patch('topsailai.context.token.print_info') as mock_print, \
              patch('topsailai.context.token.logger') as mock_logger:
             stat.output_token_stat()
         logged_msg = mock_print.call_args[0][0]
@@ -320,7 +320,7 @@ class TestTokenStatFirstByte(unittest.TestCase):
         """Test output_token_stat reports None first-byte metrics when empty."""
         stat = TokenStat(self.llm_id, lifetime=0)
 
-        with patch('topsailai.context.token.print_step') as mock_print:
+        with patch('topsailai.context.token.print_info') as mock_print:
             stat.output_token_stat()
 
         logged_msg = mock_print.call_args[0][0]

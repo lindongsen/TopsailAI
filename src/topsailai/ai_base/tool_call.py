@@ -65,8 +65,6 @@ class StepCallBase(object):
             self.flag_interactive = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CHAT_INTERACTIVE_MODE")
         logger.info("chat interactive mode (TOPSAILAI_CHAT_INTERACTIVE_MODE): [%s]", self.flag_interactive)
 
-        # print_step(f"chat interactive mode (TOPSAILAI_CHAT_INTERACTIVE_MODE): [{self.flag_interactive}]", need_format=False)
-
         # internal variables, self._xxx
         # last step name, string
         self._last_step_name = None

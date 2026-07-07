@@ -142,6 +142,10 @@ def print_with_time(msg, need_format=False):
 def print_step(msg, need_format=True, need_log=False):
     """Print a step message if step printing is enabled.
 
+    IMPORTANT: This function is reserved for printing agent2llm message
+    interactions in ai_base/prompt_base.py only. For all other logging or
+    printing needs, use print_info() instead.
+
     This function only prints messages when:
     - DEBUG environment variable is set to "1"
     - OR g_flag_print_step is explicitly enabled

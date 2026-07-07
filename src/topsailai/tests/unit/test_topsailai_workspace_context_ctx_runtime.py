@@ -54,11 +54,11 @@ class TestContextRuntimeData(unittest.TestCase):
         )
         self.mock_story_memory = self.story_memory_patcher.start()
 
-        # Mock print_step
-        self.print_step_patcher = patch(
-            'topsailai.workspace.context.ctx_runtime.print_step'
+        # Mock print_info
+        self.print_info_patcher = patch(
+            'topsailai.workspace.context.ctx_runtime.print_info'
         )
-        self.mock_print_step = self.print_step_patcher.start()
+        self.mock_print_info = self.print_info_patcher.start()
 
         # Import after mocking
         from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
@@ -71,7 +71,7 @@ class TestContextRuntimeData(unittest.TestCase):
         self.json_tool_patcher.stop()
         self.story_tool_patcher.stop()
         self.story_memory_patcher.stop()
-        self.print_step_patcher.stop()
+        self.print_info_patcher.stop()
 
 
 class TestAddSessionMessage(TestContextRuntimeData):

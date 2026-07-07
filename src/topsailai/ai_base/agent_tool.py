@@ -10,7 +10,7 @@ from topsailai.utils import (
     env_tool,
 )
 from topsailai.utils.print_tool import (
-    print_step,
+    print_info,
 )
 from topsailai.ai_base.prompt_base import PromptBase
 from topsailai.prompt_hub import prompt_tool
@@ -164,6 +164,6 @@ class AgentTool(PromptBase):
         if self.tool_prompt \
             and env_tool.EnvReaderInstance.check_bool("TOPSAILAI_PRINT_TOOL_PROMPT") \
             and env_tool.is_interactive_mode():
-            print_step(f"[tool_prompt]:\n{self.tool_prompt}\n", need_format=False)
+            print_info(f"[tool_prompt]:\n{self.tool_prompt}\n")
 
         return self.tool_prompt

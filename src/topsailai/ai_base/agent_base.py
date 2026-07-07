@@ -8,7 +8,7 @@
 from topsailai.logger.log_chat import logger
 from topsailai.utils.print_tool import (
     print_critical,
-    print_step,
+    print_info,
 )
 from topsailai.utils.thread_local_tool import (
     ctxm_give_agent_name,
@@ -159,14 +159,14 @@ class AgentRun(AgentBase):
         # tools
         # Available tools for the agent
         all_tools = self.available_tools
-        print_step(f"[available_tools] [{len(all_tools)}] {list(all_tools.keys())}", need_format=False)
+        print_info(f"[available_tools] [{len(all_tools)}] {list(all_tools.keys())}")
 
         # Tools formatted for chat API
         tools_for_chat = {}
         if env_tool.is_use_tool_calls():
             tools_for_chat = get_tools_for_chat(all_tools)
         if tools_for_chat:
-            print_step(f"[effective_tools] [{len(tools_for_chat)}] {list(tools_for_chat.keys())}", need_format=False)
+            print_info(f"[effective_tools] [{len(tools_for_chat)}] {list(tools_for_chat.keys())}")
 
         # new session
         user_message = {"step_name":STEP_NAME_TASK,"raw_text":user_input} if user_input else None

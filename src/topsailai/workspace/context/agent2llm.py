@@ -17,7 +17,6 @@ from topsailai.ai_base.constants import (
     ROLE_SYSTEM,
 )
 from topsailai.utils.print_tool import (
-    print_step,
     print_info,
     print_error,
     print_critical,
@@ -183,12 +182,12 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 return None
 
         # print info
-        print_step(f"!!! [Agent2LLM] [Summarization] Summarizing context messages for processing: msg_len=[{len(messages)}]", need_format=False, need_log=True)
+        print_info(f"!!! [Agent2LLM] [Summarization] Summarizing context messages for processing: msg_len=[{len(messages)}]")
 
         # Preserve task messages (role=user, step_name=task) from summarization/deletion.
         original_messages = list(messages)
         keeping_messages = self._get_messages_before_first_user_task_message(messages)
-        print_step(f"!!! [Agent2LLM] [Summarization] head_messages_before_first_user_task_message_to_keep(session_messages)={len(keeping_messages)}", need_format=False, need_log=True)
+        print_info(f"!!! [Agent2LLM] [Summarization] head_messages_before_first_user_task_message_to_keep(session_messages)={len(keeping_messages)}")
 
         # Log message count and token usage before summarization
         _token_count_before = self._get_current_tokens()
@@ -214,7 +213,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         # user prompt for the next LLM call.
         last_user_msg = self.last_user_message
 
-        print_step(f"!!! [Agent2LLM] [Summarization] head_offset_to_keep={head_offset_to_keep}, tail_offset_to_keep={tail_offset_to_keep}, last_user_message_to_keep=1", need_format=False, need_log=True)
+        print_info(f"!!! [Agent2LLM] [Summarization] head_offset_to_keep={head_offset_to_keep}, tail_offset_to_keep={tail_offset_to_keep}, last_user_message_to_keep=1")
 
         # new messages: start with head_offset, then add session messages
         # if configured, then add tail_offset, then add summary answer, then
@@ -264,7 +263,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             _token_count_after,
         )
 
-        print_step(f"!!! [Agent2LLM] [Summarization] New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]", need_format=False, need_log=True)
+        print_info(f"!!! [Agent2LLM] [Summarization] New context messages for processing: msg_len=[{len(self.ai_agent.messages)}]")
         logger.info("new context messages: %s", self.ai_agent.messages)
         return answer
 
@@ -315,10 +314,8 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             current_tokens = self._get_current_tokens() or 0
 
             if current_tokens > token_threshold:
-                print_step(
-                    f"!!! [Agent2LLM] [Summarization] token usage exceeded threshold: current_tokens=[{current_tokens}], threshold=[{token_threshold}]",
-                    need_format=False,
-                    need_log=True,
+                print_info(
+                    f"!!! [Agent2LLM] [Summarization] token usage exceeded threshold: current_tokens=[{current_tokens}], threshold=[{token_threshold}]"
                 )
                 return True
 
