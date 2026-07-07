@@ -17,7 +17,7 @@ class TestAgentBaseInitialization(unittest.TestCase):
         self.mock_llm_model.max_tokens = 4096
         
         self.patches = [
-            patch('topsailai.ai_base.agent_base.LLMModel', return_value=self.mock_llm_model),
+            patch('topsailai.ai_base.llm_base.LLMModel', return_value=self.mock_llm_model),
             patch('topsailai.ai_base.agent_base.AgentTool.__init__', return_value=None),
             patch('topsailai.ai_base.agent_base.get_tools_for_chat'),
             patch('topsailai.ai_base.agent_base.logger'),
@@ -100,7 +100,7 @@ class TestAgentBaseMaxTokens(unittest.TestCase):
         self.mock_llm_model.max_tokens = 4096
 
         self.patches = [
-            patch('topsailai.ai_base.agent_base.LLMModel', return_value=self.mock_llm_model),
+            patch('topsailai.ai_base.llm_base.LLMModel', return_value=self.mock_llm_model),
             patch('topsailai.ai_base.agent_base.AgentTool.__init__', return_value=None),
             patch('topsailai.ai_base.agent_base.logger'),
             patch('topsailai.ai_base.agent_base.print_critical'),
@@ -142,7 +142,7 @@ class TestAgentBaseRun(unittest.TestCase):
         self.step_call_mock = MagicMock()
 
         self.patches = [
-            patch('topsailai.ai_base.agent_base.LLMModel', return_value=self.mock_llm_model),
+            patch('topsailai.ai_base.llm_base.LLMModel', return_value=self.mock_llm_model),
             patch('topsailai.ai_base.agent_base.AgentTool.__init__', return_value=None),
             patch('topsailai.ai_base.agent_base.get_tools_for_chat'),
             patch('topsailai.ai_base.agent_base.logger'),
@@ -257,7 +257,7 @@ class TestAgentRunRunEdgeCases(unittest.TestCase):
         self.step_call_mock = MagicMock()
 
         self.patches = [
-            patch('topsailai.ai_base.agent_base.LLMModel', return_value=self.mock_llm_model),
+            patch('topsailai.ai_base.llm_base.LLMModel', return_value=self.mock_llm_model),
             patch('topsailai.ai_base.agent_base.AgentTool.__init__', return_value=None),
             patch('topsailai.ai_base.agent_base.get_tools_for_chat'),
             patch('topsailai.ai_base.agent_base.logger'),
