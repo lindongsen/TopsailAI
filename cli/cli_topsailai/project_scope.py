@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -317,8 +319,41 @@ def resolve_agent_folder(arg: str, entries: List[Dict[str, Any]]) -> Optional[st
     return arg
 
 
+def _build_dtach_socket_path() -> str:
+    """Return an absolute dtach socket path under the task directory.
+
+    The socket is placed in ``{TOPSAILAI_HOME}/workspace/task/`` so it lives
+    alongside other session/task runtime artifacts.  The directory is created
+    on demand.
+    """
+    home = get_topsailai_home()
+    task_dir = os.path.join(home, "workspace", "task")
+    os.makedirs(task_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S.%f")
+    return os.path.join(task_dir, f"{timestamp}.dtach")
+
+
+def _wrap_command_with_dtach(command: str) -> str:
+    """Wrap *command* with dtach if the dtach binary is available.
+
+    If ``dtach`` is not found in ``PATH``, *command* is returned unchanged.
+    The dtach socket is placed under ``{TOPSAILAI_HOME}/workspace/task/``
+    with a timestamped filename.
+    """
+    if shutil.which("dtach") is None:
+        return command
+    socket_path = _build_dtach_socket_path()
+    return f"dtach -A {shlex.quote(socket_path)} {command}"
+
+
 def launch_agent_in_folder(folder: str) -> None:
     """Change to *folder* and launch ``topsailai_launch_agent`` via os.system.
+
+    When the ``dtach`` tool is available in ``PATH``, the launcher is wrapped
+    as ``dtach -A {socket} topsailai_launch_agent`` so the agent runs inside
+    a dtach session.  The socket is placed under
+    ``{TOPSAILAI_HOME}/workspace/task/`` with a timestamped filename.  If
+    ``dtach`` is not available, the launcher is invoked unchanged.
 
     The launcher reads ``TOPSAILAI_PWD`` at import time and uses it to decide
     its working directory, so both the process working directory and the
@@ -344,7 +379,8 @@ def launch_agent_in_folder(folder: str) -> None:
         print(
             f"{Colors.GREEN}[INFO] Launching agent in {target_folder} ...{Colors.RESET}"
         )
-        os.system("topsailai_launch_agent")
+        command = _wrap_command_with_dtach("topsailai_launch_agent")
+        os.system(command)
     except OSError as exc:
         print(
             f"{Colors.RED}[ERROR] Failed to change to folder '{target_folder}': {exc}{Colors.RESET}"

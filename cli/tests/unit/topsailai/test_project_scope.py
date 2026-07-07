@@ -6,6 +6,7 @@ Unit tests for project scope support in cli_topsailai.
 import io
 import json
 import os
+import shlex
 import sys
 import tempfile
 import unittest
@@ -471,11 +472,12 @@ class TestLaunchAgentInFolder(unittest.TestCase):
             )
         return _side_effect
 
+    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
     @patch("cli_topsailai.project_scope.os.system")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
     def test_launches_agent_with_os_system_and_env(
-        self, mock_getcwd, mock_chdir, mock_system
+        self, mock_getcwd, mock_chdir, mock_system, mock_which
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
         mock_system.side_effect = self._assert_env_during_launch("/work/project-a")
@@ -484,11 +486,12 @@ class TestLaunchAgentInFolder(unittest.TestCase):
         mock_chdir.assert_any_call("/TopsailAI/cli")
         mock_system.assert_called_once_with("topsailai_launch_agent")
 
+    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
     @patch("cli_topsailai.project_scope.os.system")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
     def test_restores_cwd_and_env_on_system_failure(
-        self, mock_getcwd, mock_chdir, mock_system
+        self, mock_getcwd, mock_chdir, mock_system, mock_which
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
         mock_system.side_effect = OSError("launch failed")
@@ -496,11 +499,12 @@ class TestLaunchAgentInFolder(unittest.TestCase):
         mock_chdir.assert_any_call("/work/project-a")
         mock_chdir.assert_any_call("/TopsailAI/cli")
 
+    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
     @patch("cli_topsailai.project_scope.os.system")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
     def test_command_uses_bare_launcher_name(
-        self, mock_getcwd, mock_chdir, mock_system
+        self, mock_getcwd, mock_chdir, mock_system, mock_which
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
         mock_system.side_effect = self._assert_env_during_launch("/work/weird dir")
@@ -509,11 +513,12 @@ class TestLaunchAgentInFolder(unittest.TestCase):
         mock_chdir.assert_any_call("/TopsailAI/cli")
         mock_system.assert_called_once_with("topsailai_launch_agent")
 
+    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
     @patch("cli_topsailai.project_scope.os.system")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
     def test_restores_original_env_values_after_launch(
-        self, mock_getcwd, mock_chdir, mock_system
+        self, mock_getcwd, mock_chdir, mock_system, mock_which
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
         original_pwd = os.environ.get("PWD")
@@ -522,11 +527,12 @@ class TestLaunchAgentInFolder(unittest.TestCase):
         self.assertEqual(os.environ.get("PWD"), original_pwd)
         self.assertEqual(os.environ.get("TOPSAILAI_PWD"), original_topsailai_pwd)
 
+    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
     @patch("cli_topsailai.project_scope.os.system")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
     def test_converts_relative_folder_to_absolute(
-        self, mock_getcwd, mock_chdir, mock_system
+        self, mock_getcwd, mock_chdir, mock_system, mock_which
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
         mock_system.side_effect = self._assert_env_during_launch(
@@ -535,3 +541,97 @@ class TestLaunchAgentInFolder(unittest.TestCase):
         project_scope.launch_agent_in_folder("relative-project")
         mock_chdir.assert_any_call("/TopsailAI/cli/relative-project")
         mock_chdir.assert_any_call("/TopsailAI/cli")
+
+
+class TestBuildDtachSocketPath(unittest.TestCase):
+    """Tests for _build_dtach_socket_path."""
+
+    @patch("cli_topsailai.project_scope.os.makedirs")
+    @patch("cli_topsailai.project_scope.get_topsailai_home")
+    @patch("cli_topsailai.project_scope.datetime")
+    def test_creates_task_dir_and_timestamped_socket(
+        self, mock_dt, mock_home, mock_makedirs
+    ):
+        mock_home.return_value = "/home/user/.topsailai"
+        mock_dt.now.return_value.strftime.return_value = "20260707T221748.169974"
+        path = project_scope._build_dtach_socket_path()
+        self.assertEqual(
+            path,
+            "/home/user/.topsailai/workspace/task/20260707T221748.169974.dtach",
+        )
+        mock_makedirs.assert_called_once_with(
+            "/home/user/.topsailai/workspace/task", exist_ok=True
+        )
+
+
+class TestWrapCommandWithDtach(unittest.TestCase):
+    """Tests for _wrap_command_with_dtach."""
+
+    @patch("cli_topsailai.project_scope.shutil.which")
+    def test_no_dtach_returns_command_unchanged(self, mock_which):
+        mock_which.return_value = None
+        result = project_scope._wrap_command_with_dtach("topsailai_launch_agent")
+        self.assertEqual(result, "topsailai_launch_agent")
+        mock_which.assert_called_once_with("dtach")
+
+    @patch("cli_topsailai.project_scope._build_dtach_socket_path")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    def test_dtach_available_wraps_command(
+        self, mock_which, mock_build_socket
+    ):
+        mock_which.return_value = "/usr/bin/dtach"
+        mock_build_socket.return_value = "/home/user/.topsailai/workspace/task/20260707T221748.169974.dtach"
+        result = project_scope._wrap_command_with_dtach("topsailai_launch_agent")
+        expected = (
+            "dtach -A "
+            + shlex.quote("/home/user/.topsailai/workspace/task/20260707T221748.169974.dtach")
+            + " topsailai_launch_agent"
+        )
+        self.assertEqual(result, expected)
+
+    @patch("cli_topsailai.project_scope._build_dtach_socket_path")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    def test_dtach_quotes_socket_path_with_spaces(
+        self, mock_which, mock_build_socket
+    ):
+        mock_which.return_value = "/usr/bin/dtach"
+        mock_build_socket.return_value = "/home/user/weird path/task/20260707T221748.169974.dtach"
+        result = project_scope._wrap_command_with_dtach("topsailai_launch_agent")
+        self.assertTrue(result.startswith("dtach -A "))
+        self.assertIn(
+            shlex.quote("/home/user/weird path/task/20260707T221748.169974.dtach"),
+            result,
+        )
+        self.assertIn(" topsailai_launch_agent", result)
+
+
+class TestLaunchAgentInFolderWithDtach(unittest.TestCase):
+    """Integration tests for launch_agent_in_folder with dtach wrapping."""
+
+    @patch("cli_topsailai.project_scope._build_dtach_socket_path")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_launches_with_dtach_when_available(
+        self, mock_getcwd, mock_chdir, mock_system, mock_which, mock_build_socket
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.return_value = "/usr/bin/dtach"
+        mock_build_socket.return_value = "/home/user/.topsailai/workspace/task/20260707T221748.169974.dtach"
+        project_scope.launch_agent_in_folder("/work/project-a")
+        mock_system.assert_called_once()
+        called_command = mock_system.call_args[0][0]
+        self.assertTrue(called_command.startswith("dtach -A "))
+        self.assertIn("topsailai_launch_agent", called_command)
+
+    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_launches_without_dtach_when_unavailable(
+        self, mock_getcwd, mock_chdir, mock_system, mock_which
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        project_scope.launch_agent_in_folder("/work/project-a")
+        mock_system.assert_called_once_with("topsailai_launch_agent")
