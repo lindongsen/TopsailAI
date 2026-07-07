@@ -225,16 +225,16 @@ class TokenStat(threading.Thread):
                 current_text_len=self.current_text_len,
                 total_text_len=self.total_text_len,
                 total_tokens=self.total_count,
-                first_byte_avg_ms=(
-                    round(self.first_byte_sum_ms / self.first_byte_count, 3)
+                first_byte_avg_sec=(
+                    round(self.first_byte_sum_ms / self.first_byte_count / 1000, 3)
                     if self.first_byte_count > 0 else None
                 ),
-                first_byte_max_ms=(
-                    round(self.first_byte_max_ms, 3)
+                first_byte_max_sec=(
+                    round(self.first_byte_max_ms / 1000, 3)
                     if self.first_byte_max_ms is not None else None
                 ),
-                first_byte_min_ms=(
-                    round(self.first_byte_min_ms, 3)
+                first_byte_min_sec=(
+                    round(self.first_byte_min_ms / 1000, 3)
                     if self.first_byte_min_ms is not None else None
                 ),
             )
