@@ -24,14 +24,18 @@ DEFAULT_RETRIES = 1
 
 
 def get_test_files(selected=None):
-    """Return sorted list of test file names in TEST_DIR.
+    """Return sorted list of test file paths in TEST_DIR, recursively.
+
+    Paths are returned relative to TEST_DIR so nested files keep their
+    subdirectory prefix (e.g. ``utils/test_state_visualizer.py``).
 
     If ``selected`` is provided, only keep files that are present in the
     directory and in the selection.
     """
     all_files = sorted(
-        f for f in os.listdir(TEST_DIR)
-        if f.startswith("test_") and f.endswith(".py")
+        str(p.relative_to(TEST_DIR))
+        for p in TEST_DIR.rglob("*.py")
+        if p.name.startswith("test_")
     )
     if not selected:
         return all_files
