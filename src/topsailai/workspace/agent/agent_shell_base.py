@@ -264,7 +264,7 @@ class AgentChat(AgentChatBase):
                 print(f"elapsed_time    : {end_time-start_time}")
                 sys.stdout.flush()
 
-            if env_tool.is_debug_mode():
+            if env_tool.is_debug_mode() or env_tool.EnvReaderInstance.check_bool("TOPSAILAI_PRINT_TOOL_STAT", True):
                 tool_call_stat = tool_stat.get_agent_tool_stat(self.ai_agent)
                 __content = tool_call_stat.export_json()
                 logger.info("ToolStat of tool_calls:\n [%s]", __content)

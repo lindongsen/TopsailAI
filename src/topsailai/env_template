@@ -681,6 +681,7 @@ TOPSAILAI_MEMORY_WORKSPACE=""
 # Observation Configuration
 # =============================================================================
 TOPSAILAI_ENABLE_TOOL_STAT=1
+TOPSAILAI_PRINT_TOOL_STAT=1
 
 # default is 60 seconds
 TOPSAILAI_LLM_SLOW_CHAT_THRESHOLD=60
