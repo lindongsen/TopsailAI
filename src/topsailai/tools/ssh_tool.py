@@ -100,6 +100,21 @@ def _validate_private_key(private_key: str | None) -> tuple | None:
     return None
 
 
+def _validate_copy_paths(source: str, target: str, direction: str) -> tuple | None:
+    """Ensure source and target paths are absolute for file-copy operations."""
+    if direction == "to_remote":
+        if not os.path.isabs(source):
+            return (1, "", f"source must be an absolute local path: {source}")
+        if not target.startswith("/"):
+            return (1, "", f"target must be an absolute remote path: {target}")
+    else:
+        if not source.startswith("/"):
+            return (1, "", f"source must be an absolute remote path: {source}")
+        if not os.path.isabs(target):
+            return (1, "", f"target must be an absolute local path: {target}")
+    return None
+
+
 def _exec_remote_shell(ctx: SSHContext, command: str) -> tuple:
     """Execute a shell command on the remote host via SSH.
 
@@ -146,6 +161,10 @@ class SSHScpOperator:
     ) -> tuple:
         if not source or not target:
             return (1, "", "source and target are required")
+
+        err = _validate_copy_paths(source, target, direction)
+        if err:
+            return err
 
         err = _validate_private_key(ctx.private_key)
         if err:
@@ -207,6 +226,10 @@ class SSHRsyncOperator:
     ) -> tuple:
         if not source or not target:
             return (1, "", "source and target are required")
+
+        err = _validate_copy_paths(source, target, direction)
+        if err:
+            return err
 
         err = _validate_private_key(ctx.private_key)
         if err:

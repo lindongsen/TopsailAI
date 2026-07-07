@@ -190,6 +190,48 @@ class TestSSHScpOperator:
         assert op.run(ctx, source=None, target="/tmp")[0] == 1
         assert op.run(ctx, source="/tmp", target=None)[0] == 1
 
+    def test_scp_rejects_relative_local_source(self):
+        """Test scp rejects relative local source path."""
+        ctx = SSHContext(host="remote.com")
+        op = SSHScpOperator()
+        result = op.run(ctx, source="tmp/file.txt", target="/tmp/file.txt")
+        assert result[0] == 1
+        assert "source must be an absolute local path" in result[2]
+
+    def test_scp_rejects_relative_remote_target(self):
+        """Test scp rejects relative remote target path."""
+        ctx = SSHContext(host="remote.com")
+        op = SSHScpOperator()
+        result = op.run(ctx, source="/tmp/file.txt", target="tmp/file.txt")
+        assert result[0] == 1
+        assert "target must be an absolute remote path" in result[2]
+
+    def test_scp_from_remote_rejects_relative_remote_source(self):
+        """Test scp from_remote rejects relative remote source path."""
+        ctx = SSHContext(host="remote.com")
+        op = SSHScpOperator()
+        result = op.run(
+            ctx,
+            source="etc/file.txt",
+            target="/tmp/file.txt",
+            direction="from_remote",
+        )
+        assert result[0] == 1
+        assert "source must be an absolute remote path" in result[2]
+
+    def test_scp_from_remote_rejects_relative_local_target(self):
+        """Test scp from_remote rejects relative local target path."""
+        ctx = SSHContext(host="remote.com")
+        op = SSHScpOperator()
+        result = op.run(
+            ctx,
+            source="/etc/file.txt",
+            target="tmp/file.txt",
+            direction="from_remote",
+        )
+        assert result[0] == 1
+        assert "target must be an absolute local path" in result[2]
+
     def test_scp_file_to_remote(self):
         """Test scp file copy to remote."""
         ctx = SSHContext(host="remote.com", username="admin")
@@ -270,6 +312,48 @@ class TestSSHRsyncOperator:
         op = SSHRsyncOperator()
         assert op.run(ctx, source=None, target="/tmp")[0] == 1
         assert op.run(ctx, source="/tmp", target=None)[0] == 1
+
+    def test_rsync_rejects_relative_local_source(self):
+        """Test rsync rejects relative local source path."""
+        ctx = SSHContext(host="remote.com")
+        op = SSHRsyncOperator()
+        result = op.run(ctx, source="tmp/file.txt", target="/tmp/file.txt")
+        assert result[0] == 1
+        assert "source must be an absolute local path" in result[2]
+
+    def test_rsync_rejects_relative_remote_target(self):
+        """Test rsync rejects relative remote target path."""
+        ctx = SSHContext(host="remote.com")
+        op = SSHRsyncOperator()
+        result = op.run(ctx, source="/tmp/file.txt", target="tmp/file.txt")
+        assert result[0] == 1
+        assert "target must be an absolute remote path" in result[2]
+
+    def test_rsync_from_remote_rejects_relative_remote_source(self):
+        """Test rsync from_remote rejects relative remote source path."""
+        ctx = SSHContext(host="remote.com")
+        op = SSHRsyncOperator()
+        result = op.run(
+            ctx,
+            source="etc/file.txt",
+            target="/tmp/file.txt",
+            direction="from_remote",
+        )
+        assert result[0] == 1
+        assert "source must be an absolute remote path" in result[2]
+
+    def test_rsync_from_remote_rejects_relative_local_target(self):
+        """Test rsync from_remote rejects relative local target path."""
+        ctx = SSHContext(host="remote.com")
+        op = SSHRsyncOperator()
+        result = op.run(
+            ctx,
+            source="/etc/file.txt",
+            target="tmp/file.txt",
+            direction="from_remote",
+        )
+        assert result[0] == 1
+        assert "target must be an absolute local path" in result[2]
 
     def test_rsync_file_to_remote(self):
         """Test rsync file copy to remote."""
@@ -371,7 +455,6 @@ class TestOperateSSH:
             result = operate_ssh("exec", "remote.com", command="whoami")
             assert result == (0, "ok", "")
             mock_run.assert_called_once()
-
     def test_factory_dispatch_scp(self):
         """Test factory dispatches scp action."""
         with patch.object(SSHScpOperator, "run") as mock_run:
