@@ -33,6 +33,20 @@ class TestPrintHelp(unittest.TestCase):
         self.assertIn("/help", output)
         self.assertIn("/refresh", output)
 
+    def test_print_help_project_scope_shows_session_number(self):
+        output = self._capture(print_help, [], "project")
+        self.assertIn("Enter the selected session by its number.", output)
+        self.assertNotIn(
+            "Select a log file by its number to stream output in real-time.", output
+        )
+
+    def test_print_help_workspace_scope_shows_log_file_number(self):
+        output = self._capture(print_help, [], "workspace")
+        self.assertIn(
+            "Select a log file by its number to stream output in real-time.", output
+        )
+        self.assertNotIn("Enter the selected session by its number.", output)
+
     def test_print_help_with_keyword_matches_builtin(self):
         output = self._capture(print_help, [], "workspace", keyword="refresh")
         self.assertIn("Commands matching 'refresh'", output)

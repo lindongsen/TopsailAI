@@ -104,7 +104,13 @@ def print_help(
             "cmd": "<number>",
             "desc": "Select a log file by its number to stream output in real-time.",
             "example": "Example: 3",
-            "scopes": ["workspace", "project"],
+            "scopes": ["workspace"],
+        },
+        {
+            "cmd": "<number>",
+            "desc": "Enter the selected session by its number.",
+            "example": "Example: 3",
+            "scopes": ["project"],
         },
         {
             "cmd": "/refresh",

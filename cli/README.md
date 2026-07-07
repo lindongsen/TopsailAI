@@ -2,6 +2,15 @@
 
 This directory contains the command-line interface (CLI) tools for the project.
 
+## Workspace Scope
+
+This directory (`./`) is the current workspace. All development, fixes, and documentation updates must stay within this workspace.
+
+- Do not concern yourself with code under `../src/` (for example, `../src/topsailai`).
+- Do not modify any files in `../src/`.
+
+If a change in the CLI requires a corresponding change in `../src/`, treat it as out of scope and report it instead of editing the source tree.
+
 ## List Sorting
 
 Lists that display discovered files or history entries are sorted by creation time by default, with older items appearing first and newer items appearing last.
@@ -52,7 +61,7 @@ When you create a new CLI script under this directory, you must also register it
 
 ### Step 1: Create the CLI script
 
-Add a Python entry point named `topsailai_<feature>.py` in this directory (`/TopsailAI/cli/`). For example:
+Add a Python entry point named `topsailai_<feature>.py` in this directory (`./`). For example:
 
 ```bash
 topsailai_session_info.py
@@ -60,24 +69,24 @@ topsailai_session_info.py
 
 ### Step 2: Create a matching symlink in `bin/`
 
-Most CLI scripts are dispatched through `/TopsailAI/bin/topsailai.cli`, which resolves the script name from `basename "$0"` and runs `cli/<name>.py`. Therefore, add a symlink pointing to `topsailai.cli`:
+Most CLI scripts are dispatched through `../bin/topsailai.cli`, which resolves the script name from `basename "$0"` and runs `cli/<name>.py`. Therefore, add a symlink pointing to `topsailai.cli`:
 
 ```bash
-cd /TopsailAI/bin
+cd ../bin
 ln -s topsailai.cli topsailai_<feature>
 ```
 
 For example, for `topsailai_session_info.py`:
 
 ```bash
-cd /TopsailAI/bin
+cd ../bin
 ln -s topsailai.cli topsailai_session_info
 ```
 
 ### Step 3: Verify the symlink
 
 ```bash
-ls -l /TopsailAI/bin/topsailai_<feature>
+ls -l ../bin/topsailai_<feature>
 # should show: topsailai_<feature> -> topsailai.cli
 ```
 
@@ -94,7 +103,7 @@ topsailai_<feature> --help
 
 ## TOPSAILAI_HOME Workspace
 
-The CLI and agent processes share a single workspace root referred to as `TOPSAILAI_HOME`. It is resolved by `cli_topsailai/paths.py` (and mirrored in `src/topsailai/workspace/folder_constants.py`) with the following priority:
+The CLI and agent processes share a single workspace root referred to as `TOPSAILAI_HOME`. It is resolved by `cli_topsailai/paths.py` (and mirrored in `../src/topsailai/workspace/folder_constants.py`) with the following priority:
 
 1. `TOPSAILAI_HOME` environment variable (supports `~` expansion and absolute paths).
 2. Default: `~/.topsailai`
@@ -143,7 +152,7 @@ JSONL history files (`.history.jsonl`, `.input_history.jsonl`, `.project_history
 - `TOPSAILAI_PROJECT_HISTORY_MAX_SIZE` controls `.project_history.jsonl` rotation.
 - `TOPSAILAI_HISTORY_LOAD_MAX_ENTRIES` limits how many recent records are loaded into memory from `.input_history.jsonl` and `.project_history.jsonl`.
 
-See `src/topsailai/docs/Environment_Variables.md` for the full list of environment variables.
+See `../src/topsailai/docs/Environment_Variables.md` for the full list of environment variables.
 
 ## Session Output Files
 
