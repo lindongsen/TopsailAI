@@ -14,7 +14,7 @@ Purpose: Provides LLM chat interface for the TopsailAI framework.
 import os
 
 from topsailai.ai_base.llm_base import LLMModel
-from topsailai.ai_base.llm_control.base_class import ContentStdout
+from topsailai.ai_base.llm_control.content_endpoint import ContentStdout
 from topsailai.ai_base.prompt_base import PromptBase
 from topsailai.workspace.project_history import record_project_history
 from topsailai.ai_base.llm_control.base_class import LLMModelBase

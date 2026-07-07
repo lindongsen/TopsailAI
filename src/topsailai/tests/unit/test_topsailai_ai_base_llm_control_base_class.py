@@ -6,69 +6,13 @@ Purpose: Unit tests for ai_base/llm_control/base_class.py
 """
 
 import pytest
-import sys
 import os
-from io import StringIO
 from unittest.mock import patch, MagicMock
 
 from topsailai.ai_base.llm_control.base_class import (
-    ContentSender,
-    ContentStdout,
     parse_model_settings,
     LLMModelBase,
 )
-
-
-class TestContentSender:
-    """Tests for ContentSender abstract base class."""
-
-    def test_send_raises_not_implemented(self):
-        """Test that send method raises NotImplementedError."""
-        sender = ContentSender()
-        with pytest.raises(NotImplementedError):
-            sender.send("test content")
-
-    def test_finish_returns_true_by_default(self):
-        """Test that finish method has a backward-compatible no-op default."""
-        sender = ContentSender()
-        assert sender.finish() is True
-
-class TestContentStdout:
-    """Tests for ContentStdout class."""
-
-    def test_send_writes_to_stdout(self):
-        """Test that send method writes content to stdout."""
-        sender = ContentStdout()
-        captured_output = StringIO()
-        with patch.object(sys, 'stdout', captured_output):
-            sender.send("Hello, World!")
-        assert captured_output.getvalue() == "Hello, World!"
-
-    def test_send_with_empty_string(self):
-        """Test send with empty string."""
-        sender = ContentStdout()
-        captured_output = StringIO()
-        with patch.object(sys, 'stdout', captured_output):
-            sender.send("")
-        assert captured_output.getvalue() == ""
-
-    def test_send_with_multiline_content(self):
-        """Test send with multiline content."""
-        sender = ContentStdout()
-        captured_output = StringIO()
-        content = "Line 1\nLine 2\nLine 3"
-        with patch.object(sys, 'stdout', captured_output):
-            sender.send(content)
-        assert captured_output.getvalue() == content
-
-    def test_send_with_unicode_content(self):
-        """Test send with unicode content."""
-        sender = ContentStdout()
-        captured_output = StringIO()
-        content = "‰Ω†Â•Ω‰∏ñÁïå üåç"
-        with patch.object(sys, 'stdout', captured_output):
-            sender.send(content)
-        assert captured_output.getvalue() == content
 
 
 class TestParseModelSettings:

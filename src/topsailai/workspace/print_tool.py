@@ -9,7 +9,7 @@ import os
 import sys
 import time
 
-from topsailai.ai_base.llm_control.base_class import ContentSender
+from topsailai.ai_base.llm_control.content_endpoint import ContentSender
 from topsailai.utils import (
     format_tool,
     json_tool,

@@ -8,7 +8,7 @@
 import os
 from typing import Optional
 
-from topsailai.ai_base.llm_control.base_class import ContentStdout
+from topsailai.ai_base.llm_control.content_endpoint import ContentStdout
 from topsailai.utils import env_tool
 from topsailai.utils.env_tool import EnvReaderInstance
 from topsailai.logger.log_chat import logger
