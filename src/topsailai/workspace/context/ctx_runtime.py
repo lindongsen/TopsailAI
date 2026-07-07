@@ -265,7 +265,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         print_info(f"!!! [User2Agent] [Summarization] Summarizing context messages for processed: msg_len=[{len(messages)}]")
 
         # Log message count and token usage before summarization
-        _token_count_before = self._get_current_tokens(realtime=True)
+        _token_count_before = self._get_current_tokens(self.messages)
         logger.info("[summarize_processed] before: messages=%s, tokens=%s", len(messages), _token_count_before)
 
         # The summarizer is called with the current runtime messages. In
@@ -382,7 +382,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             self.set_messages(new_messages)
 
         # Log message count and token usage after summarization
-        _token_count_after = self._get_current_tokens(realtime=True)
+        _token_count_after = self._get_current_tokens(self.messages)
         logger.info("[summarize_processed] after: messages=%s, tokens=%s", len(self.messages), _token_count_after)
         self._check_summarize_token_reduction(
             "summarize_messages_for_processed",
