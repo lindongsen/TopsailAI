@@ -84,7 +84,7 @@ def get_ai_agent(
     )
     agent.agent_type = agent_type_name or agent_type.AGENT_NAME
 
-    if env_tool.is_debug_mode():
+    if env_tool.is_debug_mode() or env_tool.is_interactive_mode():
         if env_tool.EnvReaderInstance.check_bool("LLM_RESPONSE_STREAM"):
             agent.llm_model.content_senders.append(ContentProgress())
 
