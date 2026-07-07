@@ -173,7 +173,8 @@ def print_step(msg, need_format=True, need_log=False):
 
 def print_info(msg):
     """ Print a message to both logger and console """
-    print_step(msg, need_format=False, need_log=True)
+    logger.info(msg)
+    print_with_time(msg, need_format=False)
 
 def print_debug(msg):
     """Print a debug message with step printing enabled.
@@ -181,8 +182,18 @@ def print_debug(msg):
     Args:
         msg: Debug message to print.
     """
-    msg = f"[DEBUG] {msg}"
-    print_step(msg, need_format=False)
+    logger.debug(msg)
+    # thread required, refer to tools/agent_tool.py:
+    # Background story-generation thread disables debug printing
+    if thread_local_tool.get_thread_var(
+        thread_local_tool.KEY_FLAG_DEBUG
+    ) == 0:
+        return
+    from . import env_tool
+    if os.getenv("DEBUG", "0") == "1" \
+        or g_flag_print_step \
+        or env_tool.is_interactive_mode():
+        print_with_time(f"[DEBUG] {msg}", need_format=False)
 
 def print_error(msg, exception=False):
     """Print an error message to both logger and console.
