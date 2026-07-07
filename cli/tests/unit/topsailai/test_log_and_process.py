@@ -64,6 +64,9 @@ class TestDiscoverLogFiles(unittest.TestCase):
                 m.st_size = 0
                 m.st_mtime = 0
                 m.st_ctime = 0
+                # The implementation may fall back to st_birthtime, so expose it
+                # on the mock to keep the test deterministic on all platforms.
+                m.st_birthtime = 0
                 if path == tmpdir:
                     m.st_mode = 0o40755
                     return m
@@ -75,6 +78,7 @@ class TestDiscoverLogFiles(unittest.TestCase):
                 }
                 m.st_mtime = times.get(base, 0)
                 m.st_ctime = times.get(base, 0)
+                m.st_birthtime = times.get(base, 0)
                 m.st_mode = 0o100644
                 return m
 

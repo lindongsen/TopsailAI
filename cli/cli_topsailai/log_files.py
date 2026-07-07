@@ -1,5 +1,6 @@
 """Log file discovery, filename parsing, and process detection helpers."""
 
+import ctypes
 import os
 import re
 import subprocess
@@ -12,6 +13,84 @@ from cli_topsailai.constants import (
     _TEMP_SESSION_MARKER,
 )
 from cli_topsailai.process import register_process, unregister_process
+
+
+# Linux statx constants for retrieving file birth time.
+_AT_FDCWD = -100
+_STATX_BTIME = 0x00000800
+
+
+class _StatxTimestamp(ctypes.Structure):
+    _fields_ = [
+        ("tv_sec", ctypes.c_int64),
+        ("tv_nsec", ctypes.c_uint32),
+        ("__reserved", ctypes.c_int32),
+    ]
+
+
+class _Statx(ctypes.Structure):
+    _fields_ = [
+        ("stx_mask", ctypes.c_uint32),
+        ("stx_blksize", ctypes.c_uint32),
+        ("stx_attributes", ctypes.c_uint64),
+        ("stx_nlink", ctypes.c_uint32),
+        ("stx_uid", ctypes.c_uint32),
+        ("stx_gid", ctypes.c_uint32),
+        ("stx_mode", ctypes.c_uint16),
+        ("__spare0", ctypes.c_uint16 * 1),
+        ("stx_ino", ctypes.c_uint64),
+        ("stx_size", ctypes.c_uint64),
+        ("stx_blocks", ctypes.c_uint64),
+        ("stx_attributes_mask", ctypes.c_uint64),
+        ("stx_atime", _StatxTimestamp),
+        ("stx_btime", _StatxTimestamp),
+        ("stx_ctime", _StatxTimestamp),
+        ("stx_mtime", _StatxTimestamp),
+        ("stx_rdev_major", ctypes.c_uint32),
+        ("stx_rdev_minor", ctypes.c_uint32),
+        ("stx_dev_major", ctypes.c_uint32),
+        ("stx_dev_minor", ctypes.c_uint32),
+        ("__spare2", ctypes.c_uint64 * 14),
+    ]
+
+
+def _get_birth_time(path: str) -> Optional[float]:
+    """
+    Return the file birth time as a float timestamp, or None if unavailable.
+
+    Priority:
+      1. ``os.stat().st_birthtime`` (available on macOS, Windows, some BSDs).
+      2. The ``statx`` syscall with ``STATX_BTIME`` (Linux 4.11+).
+      3. ``None`` if neither source can provide a birth time.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+
+    birth = getattr(st, "st_birthtime", None)
+    if birth is not None:
+        return float(birth)
+
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        statx = libc.statx
+        statx.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_uint32,
+            ctypes.POINTER(_Statx),
+        ]
+        statx.restype = ctypes.c_int
+        buf = _Statx()
+        rc = statx(_AT_FDCWD, os.fsencode(path), 0, _STATX_BTIME, ctypes.byref(buf))
+        if rc == 0 and (buf.stx_mask & _STATX_BTIME):
+            return buf.stx_btime.tv_sec + buf.stx_btime.tv_nsec / 1e9
+    except (OSError, AttributeError, ctypes.ArgumentError):
+        pass
+
+    return None
 
 
 def _parse_stdout_filename(filename: str) -> Tuple[Optional[str], Optional[int]]:
@@ -163,6 +242,11 @@ def discover_log_files(task_dir: str) -> List[dict]:
             session_id, pid = _parse_stdout_filename(entry)
 
         stat_info = os.stat(full_path)
+        # Prefer real birth time when available.  On Linux this requires the
+        # statx syscall; fall back to st_ctime (inode change time) otherwise.
+        created = _get_birth_time(full_path)
+        if created is None:
+            created = stat_info.st_ctime
         log_files.append({
             "filename": entry,
             "path": full_path,
@@ -171,7 +255,7 @@ def discover_log_files(task_dir: str) -> List[dict]:
             "pid": pid,
             "size": stat_info.st_size,
             "mtime": stat_info.st_mtime,
-            "ctime": stat_info.st_ctime,
+            "ctime": created,
         })
 
     log_files.sort(key=lambda x: x["ctime"])
