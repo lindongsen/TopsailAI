@@ -347,7 +347,6 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         else:
             # keep last user message
             last_user_msg = self.last_user_message
-
             # new messages: start with head_offset, then add tail_offset,
             # then add summary answer. The final structure is completed by
             # merging keeping_messages (head_portion) back in below and then
@@ -357,7 +356,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             # add tail_offset messages
             tail_messages = messages[-tail_offset_to_keep:] if tail_offset_to_keep > 0 else []
             for msg in tail_messages:
-                if msg not in new_messages:
+                if not self._message_in_list(msg, new_messages):
                     new_messages.append(msg)
 
             # add answer(summary) to messages
@@ -369,7 +368,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                 new_messages = self._merge_task_messages(original_messages, new_messages, keeping_messages)
 
             if last_user_msg:
-                if last_user_msg not in new_messages:
+                if not self._message_in_list(last_user_msg, new_messages):
                     new_messages.append(last_user_msg)
 
             self.set_messages(new_messages)

@@ -5,6 +5,7 @@ Created: 2026-03-23
 Purpose: Context runtime base module for managing chat sessions and message handling.
 """
 
+import copy
 import random
 
 from topsailai.logger import logger
@@ -250,6 +251,138 @@ class ContextRuntimeBase(object):
                 pass
         return False
 
+    @staticmethod
+    def _normalize_message_value(value):
+        """
+        Recursively normalize a message value so JSON-string payloads are parsed
+        before comparison.
+
+        - Strings that are valid JSON are parsed and the result is normalized
+          recursively. This handles message ``content`` fields that are stored
+          as serialized JSON objects/lists.
+        - Dict values and list items are normalized recursively so nested
+          JSON strings are also unpacked.
+        - Other values are returned unchanged.
+
+        Note: scalar JSON strings such as "123", "true", "null" or '"hello"'
+        are parsed to their Python values (int, bool, None, str). Callers that
+        need to distinguish a JSON number string from a plain string should
+        compare the original values before normalization.
+
+        Args:
+            value: A message value (dict, list, str, or other).
+
+        Returns:
+            The normalized value.
+        """
+        if isinstance(value, str):
+            try:
+                parsed = json_tool.json_load(value)
+            except Exception:
+                return value
+            return ContextRuntimeBase._normalize_message_value(parsed)
+        if isinstance(value, dict):
+            return {
+                k: ContextRuntimeBase._normalize_message_value(v)
+                for k, v in value.items()
+            }
+        if isinstance(value, list):
+            return [
+                ContextRuntimeBase._normalize_message_value(v)
+                for v in value
+            ]
+        return value
+
+    @staticmethod
+    def _message_equal(a, b) -> bool:
+        """
+        Compare two messages for semantic equality.
+
+        Messages may be dict instances, JSON strings, or plain strings. Two
+        messages are considered equal when their content is the same, even if
+        they are different object instances, one is a dict and the other is
+        its JSON serialization, or nested ``content`` fields mix serialized
+        JSON strings with parsed dict/list values.
+
+        Comparison order:
+        1. Same object identity -> equal.
+        2. Direct equality (``a == b``) -> equal if True. This covers plain
+           strings, numbers, and value equality for list/dict.
+        3. Recursively normalize JSON-string payloads in both operands and
+           compare the normalized values with ``==``.
+
+        Args:
+            a: First message (dict, list, str, or other).
+            b: Second message (dict, list, str, or other).
+
+        Returns:
+            bool: True if the messages are semantically equal, False otherwise.
+        """
+        if a is b:
+            return True
+
+        # Direct equality covers strings, numbers, list/dict value equality.
+        try:
+            if a == b:
+                return True
+        except Exception:
+            pass
+
+        # Normalize JSON-string payloads recursively and compare again.
+        # This handles cases such as:
+        #   {"content": '{"step_name": "observation"}'}
+        # vs
+        #   {"content": {"step_name": "observation"}}
+        try:
+            a_normalized = ContextRuntimeBase._normalize_message_value(a)
+            b_normalized = ContextRuntimeBase._normalize_message_value(b)
+            if a_normalized == b_normalized:
+                return True
+        except Exception:
+            pass
+
+        return False
+
+    @staticmethod
+    def _message_in_list(msg, msg_list: list) -> bool:
+        """
+        Check whether a semantically equal message already exists in a list.
+
+        Uses :meth:`_message_equal` so that dict/list content is compared by
+        value and JSON-string representations are normalized before comparing.
+
+        Args:
+            msg: The message to search for.
+            msg_list (list): The list of messages to search in.
+
+        Returns:
+            bool: True if an equal message is found, False otherwise.
+        """
+        for m in msg_list:
+            if ContextRuntimeBase._message_equal(m, msg):
+                return True
+        return False
+
+    @staticmethod
+    def _message_index_in_list(msg, msg_list: list) -> int:
+        """
+        Find the index of the first message in ``msg_list`` that is semantically
+        equal to ``msg``.
+
+        Uses :meth:`_message_equal` for content-based matching.
+
+        Args:
+            msg: The message to search for.
+            msg_list (list): The list of messages to search in.
+
+        Returns:
+            int: The zero-based index of the matching message, or -1 if not found.
+        """
+        for i, m in enumerate(msg_list):
+            if ContextRuntimeBase._message_equal(m, msg):
+                return i
+        return -1
+
     def _split_task_messages(self, messages: list) -> tuple[list, list]:
         """
         Split messages into task messages and non-task messages.
@@ -306,7 +439,7 @@ class ContextRuntimeBase(object):
                 task_messages[0],
                 task_messages[-1],
             ]
-            if task_messages[0] is task_messages[-1]:
+            if self._message_equal(task_messages[0], task_messages[-1]):
                 first_and_last_task_messages = [task_messages[0]]
         return first_and_last_task_messages
 
@@ -345,56 +478,43 @@ class ContextRuntimeBase(object):
         """
         if not task_messages:
             return new_messages
-        task_ids = {id(m) for m in task_messages}
-        original_ids = {id(m) for m in original_messages}
-        new_ids = {id(m) for m in new_messages}
-
-        # Find each task message's predecessor in the original list.
-        task_predecessors = {}
-        for i, msg in enumerate(original_messages):
-            if id(msg) in task_ids:
-                task_predecessors[id(msg)] = original_messages[i - 1] if i > 0 else None
 
         # Locate the summary message: the first message in new_messages that did
         # not exist in original_messages (e.g. the LLM-generated summary).
         summary_index = None
         for i, msg in enumerate(new_messages):
-            _id = id(msg)
-            if _id not in original_ids:
+            if not self._message_in_list(msg, original_messages):
                 summary_index = i
                 break
 
-        # Track current positions in the result list for predecessor lookup.
-        result = list(new_messages)
-        positions = {id(m): i for i, m in enumerate(result)}
+        result_messages = list(new_messages)
 
         for task_msg in task_messages:
-            _id_task = id(task_msg)
-            if _id_task in new_ids:
+            if self._message_in_list(task_msg, result_messages):
                 continue
-            predecessor = task_predecessors.get(_id_task)
+            predecessor = None
+            for orig_idx, msg in enumerate(original_messages):
+                if self._message_equal(msg, task_msg):
+                    predecessor = original_messages[orig_idx - 1] if orig_idx > 0 else None
+                    break
 
             if predecessor is None:
                 insert_pos = 0
-            elif id(predecessor) in positions:
-                insert_pos = positions[id(predecessor)] + 1
             else:
-                # Predecessor was summarized; place task before the summary.
-                insert_pos = summary_index if summary_index is not None else len(result)
+                pred_idx = self._message_index_in_list(predecessor, result_messages)
+                if pred_idx >= 0:
+                    insert_pos = pred_idx + 1
+                else:
+                    # Predecessor was summarized; place task before the summary.
+                    insert_pos = summary_index if summary_index is not None else len(result_messages)
 
-            result.insert(insert_pos, task_msg)
-
-            # Update positions for messages shifted by this insertion.
-            for msg_id in list(positions.keys()):
-                if positions[msg_id] >= insert_pos:
-                    positions[msg_id] += 1
-            positions[_id_task] = insert_pos
+            result_messages.insert(insert_pos, task_msg)
 
             # Summary index shifts if we inserted before it.
             if summary_index is not None and insert_pos <= summary_index:
                 summary_index += 1
 
-        return result
+        return result_messages
 
     ###############################################################
     # Env
@@ -728,6 +848,9 @@ Summarize Messages
             print_tool.print_info("[summarize_runtime_messages] use passed-messages due to larger length")
             all_messages = messages
         assert all_messages, "null of messages"
+
+        # Deep Copy for Safe
+        all_messages = copy.deepcopy(all_messages)
         print_tool.print_info(f"[summarize_runtime_messages] All of messages: length=[{len(all_messages)}]")
 
         llm_chat = get_llm_chat(

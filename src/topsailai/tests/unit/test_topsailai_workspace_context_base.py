@@ -882,5 +882,327 @@ class TestSummarizeRuntimeMessages(unittest.TestCase):
         self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "fallback-0")
 
 
+class TestMessageEqual(unittest.TestCase):
+    """Test suite for _message_equal semantic comparison helper."""
+
+    def setUp(self):
+        from topsailai.workspace.context.base import ContextRuntimeBase
+        self.runtime = ContextRuntimeBase()
+
+    def test_same_object_identity(self):
+        """Identical object references are equal without deep comparison."""
+        msg = {"role": "user", "content": "hello"}
+        self.assertTrue(self.runtime._message_equal(msg, msg))
+
+    def test_plain_string_equal(self):
+        """Plain string equality is detected directly."""
+        self.assertTrue(self.runtime._message_equal("hello", "hello"))
+
+    def test_plain_string_not_equal(self):
+        """Different plain strings are not equal."""
+        self.assertFalse(self.runtime._message_equal("hello", "world"))
+
+    def test_dict_equal_different_instances(self):
+        """Dicts with identical content but different instances are equal."""
+        a = {"role": "user", "content": "hello"}
+        b = {"role": "user", "content": "hello"}
+        self.assertIsNot(a, b)
+        self.assertTrue(self.runtime._message_equal(a, b))
+
+    def test_dict_not_equal(self):
+        """Dicts with different content are not equal."""
+        a = {"role": "user", "content": "hello"}
+        b = {"role": "assistant", "content": "hello"}
+        self.assertFalse(self.runtime._message_equal(a, b))
+
+    def test_list_equal(self):
+        """Lists with identical content are equal."""
+        a = [{"role": "user", "content": "hello"}]
+        b = [{"role": "user", "content": "hello"}]
+        self.assertIsNot(a, b)
+        self.assertTrue(self.runtime._message_equal(a, b))
+
+    def test_json_string_vs_dict_equal(self):
+        """A JSON string and its parsed dict are equal."""
+        dict_msg = {"role": "user", "content": "hello"}
+        str_msg = '{"role": "user", "content": "hello"}'
+        self.assertTrue(self.runtime._message_equal(str_msg, dict_msg))
+        self.assertTrue(self.runtime._message_equal(dict_msg, str_msg))
+
+    def test_json_string_vs_list_equal(self):
+        """A JSON string and its parsed list are equal."""
+        list_msg = [{"role": "user", "content": "hello"}]
+        str_msg = '[{"role": "user", "content": "hello"}]'
+        self.assertTrue(self.runtime._message_equal(str_msg, list_msg))
+
+    def test_non_json_string_vs_dict_not_equal(self):
+        """A non-JSON string must not match a dict."""
+        self.assertFalse(self.runtime._message_equal("not json", {"role": "user"}))
+
+    def test_nested_content_equal(self):
+        """Nested dict/list message content is compared by value."""
+        a = {
+            "role": "user",
+            "content": {
+                "step_name": "observation",
+                "raw_text": "result",
+                "items": [1, 2, {"x": 3}],
+            },
+        }
+        b = {
+            "role": "user",
+            "content": {
+                "step_name": "observation",
+                "raw_text": "result",
+                "items": [1, 2, {"x": 3}],
+            },
+        }
+        self.assertTrue(self.runtime._message_equal(a, b))
+
+    def test_nested_content_order_matters(self):
+        """List order is part of value equality."""
+        a = {"role": "user", "content": {"items": [1, 2]}}
+        b = {"role": "user", "content": {"items": [2, 1]}}
+        self.assertFalse(self.runtime._message_equal(a, b))
+
+    def test_content_string_json_vs_dict_equal(self):
+        """Message whose content is a JSON string matches an equivalent dict content."""
+        a = {
+            "role": "user",
+            "content": '{"step_name": "observation", "raw_text": "hello"}',
+        }
+        b = {
+            "role": "user",
+            "content": {"step_name": "observation", "raw_text": "hello"},
+        }
+        self.assertTrue(self.runtime._message_equal(a, b))
+
+    def test_none_equal(self):
+        """None values are equal."""
+        self.assertTrue(self.runtime._message_equal(None, None))
+
+    def test_none_vs_string_not_equal(self):
+        """None is not equal to a plain string."""
+        self.assertFalse(self.runtime._message_equal(None, "hello"))
+
+    def test_different_types_not_equal(self):
+        """Different non-stringifiable types are not equal."""
+        self.assertFalse(self.runtime._message_equal({"a": 1}, ["a", 1]))
+
+    def test_content_string_json_vs_list_equal(self):
+        """Message whose content is a JSON list string matches an equivalent list content."""
+        a = {
+            "role": "user",
+            "content": '[{"step_name": "observation", "raw_text": "hello"}]',
+        }
+        b = {
+            "role": "user",
+            "content": [{"step_name": "observation", "raw_text": "hello"}],
+        }
+        self.assertTrue(self.runtime._message_equal(a, b))
+
+    def test_deeply_nested_json_string_equal(self):
+        """Nested JSON strings inside dicts and lists are normalized and compared."""
+        a = {
+            "role": "user",
+            "content": {
+                "step_name": "observation",
+                "raw_text": '{"items": [{"x": 1}, {"x": 2}]}',
+            },
+        }
+        b = {
+            "role": "user",
+            "content": {
+                "step_name": "observation",
+                "raw_text": {"items": [{"x": 1}, {"x": 2}]},
+            },
+        }
+        self.assertTrue(self.runtime._message_equal(a, b))
+
+    def test_mixed_list_with_json_strings_equal(self):
+        """A list mixing JSON strings and dicts compares equal when normalized."""
+        a = [
+            {"role": "user", "content": '{"step_name": "task", "raw_text": "t1"}'},
+            {"role": "assistant", "content": "ok"},
+        ]
+        b = [
+            {"role": "user", "content": {"step_name": "task", "raw_text": "t1"}},
+            {"role": "assistant", "content": "ok"},
+        ]
+        self.assertTrue(self.runtime._message_equal(a, b))
+
+    def test_json_scalar_string_vs_python_scalar_equal(self):
+        """JSON scalar strings normalize to Python scalars and compare equal."""
+        self.assertTrue(self.runtime._message_equal("123", 123))
+        self.assertTrue(self.runtime._message_equal("true", True))
+        self.assertTrue(self.runtime._message_equal("null", None))
+        self.assertTrue(self.runtime._message_equal('"hello"', "hello"))
+
+    def test_plain_text_not_parsed_as_json(self):
+        """Plain text strings that are not valid JSON remain as strings."""
+        self.assertFalse(self.runtime._message_equal("hello", "world"))
+        self.assertFalse(self.runtime._message_equal("not json", '{"key": "value"}'))
+
+    def test_real_message_content_list_dict_format(self):
+        """Real-world message content with list-dict format compares correctly."""
+        a = {
+            "role": "assistant",
+            "content": [
+                {
+                    "step_name": "action",
+                    "raw_text": '{"tool_call": "file_tool-read_file", "tool_args": {"file_path": "/tmp/a"}}',
+                },
+                {
+                    "step_name": "observation",
+                    "raw_text": "file content",
+                },
+            ],
+        }
+        b = {
+            "role": "assistant",
+            "content": [
+                {
+                    "step_name": "action",
+                    "raw_text": {
+                        "tool_call": "file_tool-read_file",
+                        "tool_args": {"file_path": "/tmp/a"},
+                    },
+                },
+                {
+                    "step_name": "observation",
+                    "raw_text": "file content",
+                },
+            ],
+        }
+        self.assertTrue(self.runtime._message_equal(a, b))
+
+
+class TestMessageInList(unittest.TestCase):
+    """Test suite for _message_in_list semantic membership helper."""
+
+    def setUp(self):
+        from topsailai.workspace.context.base import ContextRuntimeBase
+        self.runtime = ContextRuntimeBase()
+
+    def test_found_by_identity(self):
+        """Message found by object identity returns True."""
+        msg = {"role": "user", "content": "hello"}
+        self.assertTrue(self.runtime._message_in_list(msg, [msg]))
+
+    def test_found_by_equality(self):
+        """Semantically equal message is found even as a different instance."""
+        msg = {"role": "user", "content": "hello"}
+        other = {"role": "user", "content": "hello"}
+        self.assertTrue(self.runtime._message_in_list(msg, [other]))
+
+    def test_found_by_json_normalization(self):
+        """JSON-string message is found against dict list."""
+        str_msg = '{"role": "user", "content": "hello"}'
+        dict_msg = {"role": "user", "content": "hello"}
+        self.assertTrue(self.runtime._message_in_list(str_msg, [dict_msg]))
+
+    def test_not_found(self):
+        """Different message is not found in list."""
+        self.assertFalse(
+            self.runtime._message_in_list(
+                {"role": "user", "content": "hello"},
+                [{"role": "assistant", "content": "hi"}],
+            )
+        )
+
+    def test_empty_list(self):
+        """Empty list always returns False."""
+        self.assertFalse(self.runtime._message_in_list({"role": "user"}, []))
+
+
+class TestMessageIndexInList(unittest.TestCase):
+    """Test suite for _message_index_in_list helper."""
+
+    def setUp(self):
+        from topsailai.workspace.context.base import ContextRuntimeBase
+        self.runtime = ContextRuntimeBase()
+
+    def test_found_at_index_zero(self):
+        """Message found at the first position returns 0."""
+        msg = {"role": "user", "content": "first"}
+        self.assertEqual(
+            self.runtime._message_index_in_list(msg, [msg, {"role": "assistant"}]),
+            0,
+        )
+
+    def test_found_by_content(self):
+        """Semantically equal message returns its index."""
+        a = {"role": "user", "content": "second"}
+        b = {"role": "user", "content": "second"}
+        self.assertEqual(
+            self.runtime._message_index_in_list(
+                a, [{"role": "system"}, b, {"role": "assistant"}]
+            ),
+            1,
+        )
+
+    def test_not_found_returns_minus_one(self):
+        """Missing message returns -1."""
+        self.assertEqual(
+            self.runtime._message_index_in_list(
+                {"role": "user"},
+                [{"role": "assistant"}],
+            ),
+            -1,
+        )
+
+
+class TestTaskMessageHelpersWithSemanticEquality(unittest.TestCase):
+    """Test task-message helpers using the new semantic equality."""
+
+    def setUp(self):
+        from topsailai.workspace.context.base import ContextRuntimeBase
+        self.runtime = ContextRuntimeBase()
+
+    def test_first_and_last_task_equal_different_instances(self):
+        """Equal first/last task messages as different objects collapse to one."""
+        task_a = {"role": "user", "content": {"step_name": "task", "raw_text": "t"}}
+        task_b = {"role": "user", "content": {"step_name": "task", "raw_text": "t"}}
+        messages = [task_a, {"role": "assistant", "content": "ok"}, task_b]
+        result = self.runtime._get_first_and_last_task_messages(messages)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], task_a)
+
+    def test_first_and_last_task_different(self):
+        """Different first/last task messages are both preserved."""
+        task_a = {"role": "user", "content": {"step_name": "task", "raw_text": "a"}}
+        task_b = {"role": "user", "content": {"step_name": "task", "raw_text": "b"}}
+        messages = [task_a, {"role": "assistant", "content": "ok"}, task_b]
+        result = self.runtime._get_first_and_last_task_messages(messages)
+        self.assertEqual(len(result), 2)
+
+    def test_merge_task_messages_avoids_duplicates_by_content(self):
+        """Task message already present in new_messages by content is not re-inserted."""
+        task = {"role": "user", "content": {"step_name": "task", "raw_text": "task1"}}
+        original = [task, {"role": "assistant", "content": "summary"}]
+        new_messages = [task]
+        result = self.runtime._merge_task_messages(original, new_messages, [task])
+        self.assertEqual(len(result), 1)
+
+    def test_merge_task_messages_inserts_missing_task(self):
+        """Missing task message is inserted before the summary message."""
+        task = {"role": "user", "content": {"step_name": "task", "raw_text": "task1"}}
+        original = [task, {"role": "assistant", "content": "old"}]
+        summary = {"role": "assistant", "content": "summary"}
+        new_messages = [summary]
+        result = self.runtime._merge_task_messages(original, new_messages, [task])
+        self.assertEqual(result, [task, summary])
+
+    def test_merge_task_messages_predecessor_found_by_content(self):
+        """Task predecessor is located by semantic equality, not object identity."""
+        pred_a = {"role": "system", "content": "sys"}
+        pred_b = {"role": "system", "content": "sys"}
+        task = {"role": "user", "content": {"step_name": "task", "raw_text": "task1"}}
+        original = [pred_a, task]
+        new_messages = [pred_b]
+        result = self.runtime._merge_task_messages(original, new_messages, [task])
+        self.assertEqual(result, [pred_b, task])
+
+
 if __name__ == '__main__':
     unittest.main()

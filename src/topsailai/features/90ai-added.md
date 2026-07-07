@@ -70,3 +70,16 @@ Key logic:
 - The tool is auto-registered via module discovery in `tools/base/init.py` as `ssh_tool-operate_ssh`.
 
 System impact: Agents can now run commands and transfer files over SSH using a unified, extensible interface.
+
+## Robust Message Comparison for Summarization
+
+Added semantic message comparison helpers so User2Agent and Agent2LLM summarization can recognize logically identical messages even when they are different object instances or use JSON-string vs dict/list content.
+
+Key logic:
+- `_normalize_message_value()` recursively parses JSON strings inside messages, including nested structures, so a JSON-string payload and its parsed equivalent compare equal.
+- `_message_equal()` short-circuits on object identity, then tries direct equality, then normalizes both sides and compares again.
+- `_message_in_list()` and `_message_index_in_list()` provide membership/index lookups using the semantic equality instead of Python's default `in`/`index()`, which relies on object identity for nested mutable structures.
+- `_get_first_and_last_task_messages()` and `_merge_task_messages()` in `workspace/context/base.py` now use semantic comparison to detect duplicate task messages and locate the summary boundary.
+- `workspace/context/ctx_runtime.py` and `workspace/context/agent2llm.py` use `_message_in_list()` for tail-offset and last-user-message deduplication, preventing duplicate content from appearing in summarized context.
+
+System impact: Summarized context is now free of duplicate messages caused by object reconstruction or JSON-string content, while preserving the original ordering and head/tail offsets. Unit tests cover string, non-string, list, dict, nested JSON-string, and task-message scenarios.

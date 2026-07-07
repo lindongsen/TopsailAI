@@ -229,14 +229,14 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             else:
                 _len = len(new_messages)
                 for msg in self.messages:
-                    if msg in new_messages[:_len]:
+                    if self._message_in_list(msg, new_messages[:_len]):
                         continue
                     new_messages.append(msg)
 
         # add tail_offset messages
         tail_messages = messages[-tail_offset_to_keep:] if tail_offset_to_keep > 0 else []
         for msg in tail_messages:
-            if msg not in new_messages:
+            if not self._message_in_list(msg, new_messages):
                 new_messages.append(msg)
 
         # add answer(summary) to messages
@@ -248,7 +248,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             new_messages = self._merge_task_messages(original_messages, new_messages, keeping_messages)
 
         if last_user_msg:
-            if last_user_msg not in new_messages:
+            if not self._message_in_list(last_user_msg, new_messages):
                 new_messages.append(last_user_msg)
 
         self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
