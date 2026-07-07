@@ -113,7 +113,7 @@ def exec_cmd(
         cmd:str|list,
         no_need_stderr:int=0,
         timeout:int=120,
-        cwd:str=EnvReaderInstance.get("TOPSAILAI_PWD"),
+        cwd:str=EnvReaderInstance.project_folder,
         env:dict|None=None,
     ):
     """ execute command

@@ -211,6 +211,20 @@ def is_need_print() -> bool:
 class EnvironmentReader(object):
     """ base class to read env """
 
+    @property
+    def project_folder(self) -> str|None:
+        """
+        Current Project Folder
+
+        Returns:
+            str|None:
+        """
+        return (
+            EnvReaderInstance.get("TOPSAILAI_PROJECT_WORKSPACE")
+            or EnvReaderInstance.get("TOPSAILAI_PROJECT_PWD")
+            or EnvReaderInstance.get("TOPSAILAI_PWD")
+        )
+
     @staticmethod
     def try_read_file(file_path:str) -> str:
         """Attempt to read content from a file path.
