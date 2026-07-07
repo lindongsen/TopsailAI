@@ -355,7 +355,7 @@ These variables are for runtime use only and should not be set manually.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOPSAILAI_ENABLE_TOOL_STAT` | `1` | Enable tool call statistics. `1` = enabled. |
-| `TOPSAILAI_PRINT_TOOL_STAT` | `1` | When `1`, print/log JSON-exported tool-call statistics at the end of each agent turn when debug mode is active. Set to `0` to suppress. |
+| `TOPSAILAI_PRINT_TOOL_STAT` | `1` | When `1`, print/log JSON-exported tool-call statistics at the end of each agent turn. When `0`, tool-call statistics are still printed if debug mode is active. Set to `0` to suppress when not in debug mode. |
 | `TOPSAILAI_LLM_SLOW_CHAT_THRESHOLD` | `60` | Threshold in seconds for detecting slow LLM chats. |
 | `TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT` | `180` | Threshold in seconds for the first chunk of a streaming LLM response. If the first chunk takes longer than this value, a warning is logged. Set to `0` to disable the warning. |
 | `TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE` | `0` | When set to a truthy value (`1`, `true`, `yes`, `on`, `enabled`), raise `openai.APITimeoutError` if the first chunk of a streaming LLM response exceeds `TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT`. The outer chat retry loop will then automatically retry the request. Otherwise (default), only a warning is logged. |
