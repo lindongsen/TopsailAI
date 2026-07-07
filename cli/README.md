@@ -192,12 +192,19 @@ Launch an AI agent driver based on a local `.topsailai/settings.yaml` configurat
 **What it does:**
 
 - Reads `.topsailai/settings.yaml` from the current working directory.
-- Selects a configured item via `--item` (default is `default`).
+- Selects a configured context item via `--item`, or automatically chooses one based on the `context` section (see below).
 - Merges environment variables in the order: system environment → `_default` → item-specific values.
-- Reads the configured context files ( `_default` first, then item-specific files) and appends a workspace folder tree to `TOPSAILAI_CONTEXT_USER_MESSAGE`.
+- Reads the configured context files (`_default` first, then item-specific files) and appends a workspace folder tree to `TOPSAILAI_CONTEXT_USER_MESSAGE`.
 - Writes the assembled context message to a temporary file under `{workspace}/.tmp/` to avoid exceeding environment-variable size limits.
 - Launches the configured `ai_agent_driver` using `os.system` by default, or `subprocess.run` when `--subprocess` is passed.
 - Cleans up the temporary context file on exit, uncaught exceptions, and `SIGINT`/`SIGTERM`.
+
+**Context item selection (when `--item` is omitted):**
+
+- If the `context` section is completely empty (not even `_default`), the launcher enters an interactive setup in TTY mode to help you configure context files, then continues. In non-TTY mode it prints a warning and continues without context files.
+- If only `_default` is configured, `_default` is used automatically.
+- If exactly one non-default item is configured, that item is used automatically.
+- If multiple non-default items are configured, a numbered list is shown with each item's full configuration (context files and environment variables). The `default` item is pre-selected if it exists; otherwise you must choose one.
 
 **Common options:**
 
@@ -217,7 +224,6 @@ If `.topsailai/settings.yaml` is missing:
 
 - In an interactive terminal, the script launches a guided setup that asks for the driver command, workspace, default context files, and environment variables, then writes the configuration and continues launching.
 - In a non-interactive terminal, the script writes a default configuration file, prints the template, and exits so you can fill in `context._default` before the next run.
-
 ### `topsailai_session_add_message` vs `topsailai_session_add_agent2llm_message`
 
 These two commands append messages to a session, but they target different conversation layers and have different lifecycles.

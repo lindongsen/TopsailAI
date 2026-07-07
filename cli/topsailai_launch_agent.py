@@ -7,6 +7,11 @@ Parse .topsailai/settings.yaml in the current working directory. If the file
 is missing, create it from a default configuration template, prompt the user
 to fill context._default, and continue launching.
 
+When no --item is provided, the launcher inspects the context section and
+auto-selects the item: a single item is used directly, multiple items prompt
+for selection (with "default" as the default choice), and an empty context
+enters an interactive setup guide.
+
 Assemble environment variables based on --item argument, read configured
 context files into TOPSAILAI_CONTEXT_USER_MESSAGE, and launch the subprocess
 via os.system (default) or subprocess.run (with --subprocess).
@@ -235,15 +240,11 @@ def _prompt_list(question):
     print(question)
     values = []
     while True:
-        try:
-            line = input("> ").strip()
-        except EOFError:
-            break
+        line = _prompt("", default="")
         if not line:
             break
         values.append(line)
     return values
-
 
 def _run_interactive_setup(settings_path):
     """Guide the user through creating a minimal settings.yaml interactively."""
@@ -308,7 +309,6 @@ def _run_interactive_setup(settings_path):
         context_default=_render_yaml_list(context_default, base_indent=2),
         extra_env=_render_env_lines(extra_env, base_indent=2),
     )
-
     os.makedirs(os.path.dirname(settings_path), exist_ok=True)
     with open(settings_path, "w", encoding="utf-8") as f:
         f.write(content)
@@ -348,6 +348,188 @@ def print_available_items(context_map):
     for item in items:
         print(f"  - {item}")
     print(f"\nUse: python3 {sys.argv[0]} --item <item_name>")
+
+
+def _get_context_items(context_map):
+    """Return non-_default context item names in their configured order."""
+    return [k for k in context_map.keys() if k != "_default"]
+
+
+def _format_item_config(item_name, context_map, env_map):
+    """Return a human-readable summary of an item's effective configuration.
+
+    The summary merges the `_default` context files and environment variables
+    with the item-specific values so the user sees exactly what will be used
+    for each option.
+    """
+    default_context = list(context_map.get("_default", []) or [])
+    item_context = list(context_map.get(item_name, []) or [])
+    merged_context = default_context + item_context
+
+    default_env = dict(env_map.get("_default", {}) or {})
+    item_env = dict(env_map.get(item_name, {}) or {})
+    merged_env = dict(default_env)
+    merged_env.update(item_env)
+
+    lines = [f"{item_name}"]
+    if merged_context:
+        lines.append("    context files:")
+        for path in merged_context:
+            prefix = "      [default] " if path in default_context and path not in item_context else "      "
+            lines.append(f"{prefix}- {path}")
+    else:
+        lines.append("    context files: (none)")
+    if merged_env:
+        lines.append("    environment variables:")
+        for key, value in sorted(merged_env.items()):
+            source = "[default]" if key in default_env and key not in item_env else "[item]"
+            lines.append(f"      {source} {key}={value}")
+    else:
+        lines.append("    environment variables: (none)")
+    return "\n".join(lines)
+
+
+def _select_context_item(context_map, env_map):
+    """Select a context item based on configuration and interactivity.
+
+    - 0 non-_default items: use _default.
+    - 1 non-_default item: use it automatically.
+    - 2+ non-_default items: prompt interactively; "default" is the default
+      choice when configured. In non-interactive mode, "default" is used if
+      present, otherwise the launcher exits with an error.
+    """
+    items = _get_context_items(context_map)
+    if len(items) <= 1:
+        return items[0] if items else "_default"
+
+    if not sys.stdin.isatty():
+        if "default" in items:
+            return "default"
+        print(
+            "Error: Multiple context items are configured but no default is set. "
+            "Use --item to select one of the following:",
+            file=sys.stderr,
+        )
+        for item in items:
+            print(f"  - {item}", file=sys.stderr)
+        sys.exit(1)
+
+    print(
+        "\nMultiple context items are configured. Please select one:",
+        file=sys.stderr,
+    )
+    for idx, item in enumerate(items, start=1):
+        print(
+            f"\n  {idx}. {_format_item_config(item, context_map, env_map)}",
+            file=sys.stderr,
+        )
+
+    print(flush=True)
+    default_item = "default" if "default" in items else None
+    prompt_text = (
+        f"Select context item (1-{len(items)}, default: {default_item})"
+        if default_item
+        else f"Select context item (1-{len(items)})"
+    )
+
+    while True:
+        answer = _prompt(prompt_text, default=default_item or "")
+        if answer in items:
+            return answer
+        try:
+            idx = int(answer)
+            if 1 <= idx <= len(items):
+                return items[idx - 1]
+        except ValueError:
+            pass
+        print(
+            f"Invalid selection. Please enter a number 1-{len(items)} or an item name.",
+            file=sys.stderr,
+        )
+
+
+def _run_context_setup(settings_path, settings):
+    """Guide the user through configuring context when it is empty."""
+    print(
+        "\n=== TopsailAI Launcher Context Setup ===",
+        file=sys.stderr,
+    )
+    print(
+        "No context is configured. Context files help the agent understand your project.\n",
+        file=sys.stderr,
+    )
+
+    workspace = settings.get("workspace", ".")
+    settings["context"] = settings.get("context") or {}
+    settings["environment"] = settings.get("environment") or {}
+    context_map = settings["context"]
+    env_map = settings["environment"]
+    if "_default" not in context_map:
+        context_map["_default"] = []
+    if "_default" not in env_map:
+        env_map["_default"] = {"TOPSAILAI_INTERACTIVE_MODE": "1"}
+
+    print(
+        "Context files are injected into every agent run. "
+        "Paths are relative to the workspace unless they start with '/'.",
+        file=sys.stderr,
+    )
+    if _prompt_yn(
+        "Would you like to add files to the '_default' context now?", default=True
+    ):
+        context_map["_default"] = _prompt_list(
+            "Enter context file paths one per line (empty line to finish):"
+        )
+
+    while _prompt_yn(
+        "Would you like to add another context item (e.g., 'memo', 'test')?",
+        default=False,
+    ):
+        item_name = _prompt("Context item name")
+        if not item_name or item_name == "_default":
+            print("Invalid item name. Skipping.", file=sys.stderr)
+            continue
+        context_map[item_name] = _prompt_list(
+            f"Enter context file paths for '{item_name}' one per line (empty line to finish):"
+        )
+        if _prompt_yn(
+            f"Would you like to add environment variables for '{item_name}'?",
+            default=False,
+        ):
+            env_vars = {}
+            print("Enter KEY=VALUE pairs one per line (empty line to finish):")
+            while True:
+                try:
+                    line = input("> ").strip()
+                except EOFError:
+                    break
+                if not line:
+                    break
+                if "=" not in line:
+                    print(
+                        f"Warning: Ignoring invalid env line (expected KEY=VALUE): {line}",
+                        file=sys.stderr,
+                    )
+                    continue
+                key, value = line.split("=", 1)
+                env_vars[key.strip()] = value.strip()
+            env_map[item_name] = env_vars
+
+    try:
+        import yaml
+    except ImportError as exc:
+        print(
+            "Error: PyYAML is required. Install it via: pip install pyyaml",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+
+    with open(settings_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(settings, f, sort_keys=False, allow_unicode=True)
+    print(
+        f"\nConfiguration saved to: {settings_path}",
+        file=sys.stderr,
+    )
 
 
 
@@ -493,8 +675,11 @@ def main():
     )
     parser.add_argument(
         "--item",
-        default="default",
-        help="Item name defined in settings.yaml context/environment sections",
+        default=None,
+        help=(
+            "Item name defined in settings.yaml context/environment sections. "
+            "If omitted, the launcher auto-selects based on context configuration."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -545,7 +730,40 @@ def main():
 
     settings = load_yaml(settings_path)
 
-    env_map = settings.get("environment", {})
+    workspace = settings.get("workspace", os.getcwd()) or "."
+    if workspace[0] != "/":
+        workspace = os.path.abspath(workspace)
+
+    # Resolve the context item to use when --item is not provided.
+    if args.item is None:
+        context_map = settings.get("context", {}) or {}
+        non_default_items = _get_context_items(context_map)
+
+        if not context_map:
+            if sys.stdin.isatty():
+                if _prompt_yn(
+                    "No context is configured. Would you like to configure context now?",
+                    default=True,
+                ):
+                    _run_context_setup(settings_path, settings)
+                    settings = load_yaml(settings_path)
+                    context_map = settings.get("context", {}) or {}
+                    non_default_items = _get_context_items(context_map)
+            else:
+                print(
+                    "[TopsailAI-Launcher] Warning: context is empty. "
+                    "Continuing without context files.",
+                    file=sys.stderr,
+                )
+
+        if len(non_default_items) <= 1:
+            args.item = non_default_items[0] if non_default_items else "_default"
+        else:
+            args.item = _select_context_item(
+                context_map, settings.get("environment", {}) or {}
+            )
+
+    env_map = settings.get("environment", {}) or {}
     # Resolve driver with the following priority:
     # 1. --driver CLI argument
     # 2. TOPSAILAI_AGENT_DRIVER from settings.environment (item-specific or _default)
@@ -566,19 +784,11 @@ def main():
             or os.getenv("TOPSAILAI_AGENT_DRIVER", "")
         )
     )
-    workspace = settings.get("workspace", os.getcwd()) or "."
-    if workspace[0] != "/":
-        workspace = os.path.abspath(workspace)
-    context_map = settings.get("context", {})
+    context_map = settings.get("context", {}) or {}
 
     if not ai_agent_driver:
         print("Error: 'ai_agent_driver' is not defined in settings.yaml", file=sys.stderr)
         sys.exit(1)
-
-    # When --item is not specified, display available items and exit
-    if args.item is None:
-        print_available_items(context_map)
-        sys.exit(0)
 
     item_name = args.item
 
