@@ -227,6 +227,13 @@ TOPSAILAI_DISABLE_ROOT_LOGGER_CONFIG=0
 # If unset, falls back to DEBUG when DEBUG=1, otherwise INFO.
 TOPSAILAI_LOG_LEVEL="INFO"
 
+# Summarize message identity check.
+# When set to 1 (enabled, default), context summarization logs a warning for any
+# message in the rebuilt message list that is not the same object instance as a
+# message from the original list. This helps detect unexpected replacements or
+# insertions during summarization. Set to 0 to disable the check.
+TOPSAILAI_LOG_SUMMARIZE_MESSAGE_IDENTITY_CHANGES=1
+
 
 # =============================================================================
 # LLM Parameters
