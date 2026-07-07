@@ -327,16 +327,20 @@ def refresh_project_list(
 def resolve_agent_folder(arg: str, entries: List[Dict[str, Any]]) -> Optional[str]:
     """Resolve a `/agent` argument to a folder path.
 
-    If *arg* is a number, it is mapped to the ``project_workspace`` of the
-    corresponding entry in *entries* (1-based index).  Otherwise *arg* is
-    returned as-is so it can be used as a direct folder path.
+    If *arg* is a number, it is mapped to the project workspace of the
+    corresponding entry in *entries* (1-based index).  Project scope entries
+    provide ``project_workspace`` directly; workspace log file entries provide
+    ``session_id`` and the project workspace is resolved from
+    ``.project_history.jsonl``.  Otherwise *arg* is returned as-is so it can be
+    used as a direct folder path.
 
     Args:
         arg: User-provided argument, either a list number or a folder path.
-        entries: Current project scope entries.
+        entries: Current project scope entries or workspace log file entries.
 
     Returns:
-        Resolved folder path, or ``None`` when the number is out of range.
+        Resolved folder path, or ``None`` when the number is out of range or
+        no project workspace can be determined.
     """
     arg = arg.strip()
     if not arg:
@@ -348,7 +352,14 @@ def resolve_agent_folder(arg: str, entries: List[Dict[str, Any]]) -> Optional[st
     if arg.isdigit():
         idx = int(arg) - 1
         if 0 <= idx < len(entries):
-            folder = entries[idx].get("project_workspace", "")
+            entry = entries[idx]
+            folder = entry.get("project_workspace", "")
+            if folder:
+                return folder
+            session_id = entry.get("session_id", "")
+            if session_id and session_id != "(temp)":
+                lookup = load_project_workspace_lookup()
+                folder = lookup.get(session_id, "")
             if folder:
                 return folder
             print(

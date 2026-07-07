@@ -126,9 +126,9 @@ def print_help(
         },
         {
             "cmd": "/agent <number|folder>",
-            "desc": "Change to the selected project workspace folder and launch topsailai_launch_agent. Use a list number or an absolute/relative folder path.",
+            "desc": "Change to the selected project workspace folder and launch topsailai_launch_agent. In workspace scope the number refers to the log file list; in project scope it refers to the project session list. An absolute/relative folder path can also be used.",
             "example": "Example: /agent 3  or  /agent /path/to/project",
-            "scopes": ["project"],
+            "scopes": ["workspace", "project"],
         },
         {
             "cmd": "/clean [<number> [<number>...]]",

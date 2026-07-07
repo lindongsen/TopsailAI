@@ -453,6 +453,56 @@ class TestResolveAgentFolder(unittest.TestCase):
         folder = project_scope.resolve_agent_folder("1", [])
         self.assertIsNone(folder)
 
+    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
+    def test_resolve_workspace_log_entry_by_session_id(self, mock_lookup):
+        mock_lookup.return_value = {"session-1": "/work/from-history"}
+        entries = [
+            {
+                "no": 1,
+                "session_id": "session-1",
+                "filename": "session-1.1234.session.stdout",
+            }
+        ]
+        folder = project_scope.resolve_agent_folder("1", entries)
+        self.assertEqual(folder, "/work/from-history")
+        mock_lookup.assert_called_once()
+
+    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
+    def test_resolve_workspace_log_entry_without_project_workspace(self, mock_lookup):
+        mock_lookup.return_value = {}
+        entries = [
+            {
+                "no": 1,
+                "session_id": "session-1",
+                "filename": "session-1.1234.session.stdout",
+            }
+        ]
+        folder = project_scope.resolve_agent_folder("1", entries)
+        self.assertIsNone(folder)
+
+    def test_resolve_workspace_log_entry_with_project_workspace(self):
+        entries = [
+            {
+                "no": 1,
+                "session_id": "session-1",
+                "project_workspace": "/work/direct",
+            }
+        ]
+        folder = project_scope.resolve_agent_folder("1", entries)
+        self.assertEqual(folder, "/work/direct")
+
+    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
+    def test_resolve_temp_session_returns_none(self, mock_lookup):
+        entries = [
+            {
+                "no": 1,
+                "session_id": "(temp)",
+                "filename": "topsailai.1234.session.stdout",
+            }
+        ]
+        folder = project_scope.resolve_agent_folder("1", entries)
+        self.assertIsNone(folder)
+        mock_lookup.assert_not_called()
 
 class TestLaunchAgentInFolder(unittest.TestCase):
     """Tests for launch_agent_in_folder."""

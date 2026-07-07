@@ -419,15 +419,15 @@ def main(argv: Optional[List[str]] = None) -> None:
                 continue
 
             if action == "agent":
-                if state.current_scope != "project":
-                    print(
-                        f"\n{Colors.YELLOW}[INFO] /agent is only available in project scope.{Colors.RESET}"
-                    )
-                    continue
-                folder = resolve_agent_folder(value, project_entries)
+                active_entries = (
+                    project_entries
+                    if state.current_scope == "project"
+                    else log_files
+                )
+                folder = resolve_agent_folder(value, active_entries)
                 if folder is None:
                     print(
-                        f"{Colors.RED}[ERROR] Invalid project number: '{value}'. "
+                        f"\n{Colors.RED}[ERROR] Invalid number or folder: '{value}'. "
                         f"Use /agent {{number}} or /agent {{folder}}.{Colors.RESET}"
                     )
                     continue

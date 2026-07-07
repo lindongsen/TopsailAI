@@ -474,5 +474,113 @@ class TestProjectScopeCommands(unittest.TestCase):
         action, value = prompt_selection([], "/task")
         self.assertEqual(action, "yaml_handled")
 
+
+class TestWorkspaceAgentCommand(unittest.TestCase):
+    """Tests for /agent command support in workspace scope."""
+
+    def setUp(self):
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+        cli_state.history_manager = None
+
+    def tearDown(self):
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+        cli_state.history_manager = None
+        cli_state._child_processes.clear()
+
+    @patch("cli_topsailai.core.input")
+    def test_prompt_selection_agent_in_workspace(self, mock_input):
+        """/agent argument is parsed in workspace scope."""
+        mock_input.return_value = "/agent /path/to/project"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "agent")
+        self.assertEqual(value, "/path/to/project")
+
+    @patch("cli_topsailai.project_scope.launch_agent_in_folder")
+    @patch("cli_topsailai.project_scope.resolve_agent_folder")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    def test_agent_folder_in_workspace(
+        self,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        mock_resolve: MagicMock,
+        mock_launch: MagicMock,
+    ) -> None:
+        """/agent with a folder path launches agent from workspace scope."""
+        from cli_topsailai.core import main
+
+        log_file = {
+            "filename": "s1.1234.session.stdout",
+            "path": "/task/s1.1234.session.stdout",
+            "session_id": "s1",
+            "project_workspace": "/work/a",
+        }
+        mock_discover.return_value = [log_file]
+        mock_prompt.side_effect = [("agent", "/work/a"), ("quit", None)]
+        mock_resolve.return_value = "/work/a"
+
+        main([])
+
+        mock_resolve.assert_called_once_with("/work/a", [log_file])
+        mock_launch.assert_called_once_with("/work/a")
+
+    @patch("cli_topsailai.project_scope.launch_agent_in_folder")
+    @patch("cli_topsailai.project_scope.resolve_agent_folder")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    def test_agent_number_in_workspace(
+        self,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        mock_resolve: MagicMock,
+        mock_launch: MagicMock,
+    ) -> None:
+        """/agent with a number resolves via the workspace log file list."""
+        from cli_topsailai.core import main
+
+        log_file = {
+            "filename": "s1.1234.session.stdout",
+            "path": "/task/s1.1234.session.stdout",
+            "session_id": "s1",
+            "project_workspace": "/work/a",
+        }
+        mock_discover.return_value = [log_file]
+        mock_prompt.side_effect = [("agent", "1"), ("quit", None)]
+        mock_resolve.return_value = "/work/a"
+
+        main([])
+
+        mock_resolve.assert_called_once_with("1", [log_file])
+        mock_launch.assert_called_once_with("/work/a")
+
+
 if __name__ == "__main__":
     unittest.main()
