@@ -18,6 +18,9 @@ from openai.types.completion_usage import CompletionUsage
 
 from topsailai.logger.log_chat import logger
 from topsailai.utils.print_tool import print_info
+from topsailai.utils import (
+    env_tool,
+)
 
 
 def count_tokens(text, encoding_name="cl100k_base"):
@@ -247,6 +250,9 @@ class TokenStat(threading.Thread):
                 )
 
         # Format and output the statistics
+        if env_tool.is_need_print():
+            # print one empty line
+            print(flush=True)
         msg = f"[TokenStat] {info}"
         print_info(msg)      # Output to console/step display
         logger.info(msg)     # Output to log file

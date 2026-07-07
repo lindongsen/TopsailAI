@@ -200,6 +200,14 @@ def get_input_pipe_timeout() -> float | None:
         return None
 
 
+def is_need_print() -> bool:
+    if is_debug_mode():
+        return True
+    if is_interactive_mode():
+        return True
+    return False
+
+
 class EnvironmentReader(object):
     """ base class to read env """
 
