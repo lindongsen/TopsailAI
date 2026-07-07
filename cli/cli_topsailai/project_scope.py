@@ -41,9 +41,9 @@ def _format_create_time(create_time: str) -> str:
 def build_project_list(limit: int = 10) -> List[Dict[str, Any]]:
     """Build the list of recent sessions with a project workspace.
 
-    Runs ``ai_list_sessions.py --json --has-project --sort asc --limit N`` and
-    parses the JSON output.  Sessions are returned in ascending chronological
-    order (earliest first) so the oldest entry appears at the top of the
+    Runs ``ai_list_sessions.py --json --has-project --sort desc --limit N`` and
+    parses the JSON output.  Sessions are returned in descending chronological
+    order (newest first) so the most recent entry appears at the top of the
     project scope table.
 
     Args:
@@ -61,7 +61,7 @@ def build_project_list(limit: int = 10) -> List[Dict[str, Any]]:
         "--json",
         "--has-project",
         "--sort",
-        "asc",
+        "desc",
         "--limit",
         str(limit),
     ]
