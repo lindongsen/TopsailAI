@@ -31,9 +31,6 @@ from topsailai.ai_base.agent_types.exception import (
     AgentNeedRefreshSession,
     DataAgentRefreshSession,
 )
-from topsailai.ai_base.llm_base import (
-    LLMModel,
-)
 
 from topsailai.tools.base.common import (
     get_tools_for_chat,
@@ -85,6 +82,10 @@ class AgentBase(AgentTool):
         self.agent_type = ""
 
         # LLM
+        # lazy import due to too long time to import
+        from topsailai.ai_base.llm_base import (
+           LLMModel,
+        )
         self.llm_model = LLMModel()
         return
 
