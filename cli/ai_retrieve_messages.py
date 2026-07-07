@@ -91,7 +91,7 @@ def format_messages(messages):
         >>> print(format_messages(msgs))
         Messages:
         ------------------------------------------------------------------------------------------------------------------------
-        Message #1:
+        Message #1 (chars: 5):
         {
           "role": "user",
           "content": "Hello"
@@ -103,6 +103,15 @@ def format_messages(messages):
     if not messages:
         return "No messages found for this session."
 
+    def _content_chars(message):
+        """Return the character length of the message content field."""
+        if not isinstance(message, dict):
+            return len(str(message))
+        content = message.get("content")
+        if content is None:
+            return 0
+        return len(content) if isinstance(content, str) else len(str(content))
+
     # Header
     output = []
     output.append("Messages:")
@@ -110,7 +119,7 @@ def format_messages(messages):
 
     # Messages
     for i, message in enumerate(messages, 1):
-        output.append(f"Message #{i}:")
+        output.append(f"Message #{i} (chars: {_content_chars(message)}):")
         if isinstance(message, dict):
             # Pretty print the JSON
             output.append(json_tool.json_dump(message, indent=2))
@@ -154,8 +163,8 @@ def parse_args(argv=None):
         type=int,
         default=None,
         metavar="N",
-        help="Truncate each message's content to at most N characters. "
-             "Truncated content is suffixed with '...'.",
+        help="Truncate each message's displayed content to at most N characters. "
+             "Truncation is applied by the shared formatter and does not affect counts.",
     )
     return parser.parse_args(argv)
 
@@ -163,16 +172,16 @@ def parse_args(argv=None):
 def main(argv=None):
     """
     Main entry point for retrieving messages.
-    
+
     This function:
     1. Validates command-line arguments (requires session_id)
     2. Creates a session manager with optional database connection
     3. Retrieves all messages for the specified session
     4. Displays the messages using print_context_messages
-    
+
     Returns:
         None
-        
+
     Raises:
         SystemExit: Exits with code 1 if session_id is missing or error occurs
     """
@@ -185,12 +194,9 @@ def main(argv=None):
         # Retrieve messages
         messages = manager.retrieve_messages(args.session_id)
 
-        # Truncate content if requested
-        if args.max_chars is not None:
-            messages = truncate_message_content(messages, args.max_chars)
-
-        # Display results
-        print_context_messages(messages)
+        # Display results using the shared formatter, passing through the
+        # truncation limit so counts remain based on the original content.
+        print_context_messages(messages, content_max_length=args.max_chars)
 
     except Exception as e:
         print(f"Error: {e}")

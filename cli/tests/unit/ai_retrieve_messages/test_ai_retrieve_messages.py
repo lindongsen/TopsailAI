@@ -113,7 +113,7 @@ class TestParseArgs(unittest.TestCase):
         self.assertEqual(args.session_id, "abc123")
         self.assertEqual(args.max_chars, 100)
 
-    def test_max_chars_short_option(self):
+    def test_max_chars_short_flag(self):
         """-c is parsed as an integer."""
         args = ai_retrieve_messages.parse_args(["abc123", "-c", "50"])
         self.assertEqual(args.session_id, "abc123")
@@ -129,13 +129,59 @@ class TestParseArgs(unittest.TestCase):
         self.assertEqual(args.max_chars, 25)
 
 
+class TestFormatMessages(unittest.TestCase):
+    """Tests for format_messages helper."""
+
+    def test_empty_messages(self):
+        """Empty messages list returns a friendly notice."""
+        result = ai_retrieve_messages.format_messages([])
+        self.assertEqual(result, "No messages found for this session.")
+
+    def test_single_message_char_count(self):
+        """Header includes the character count for a single message."""
+        messages = [{"role": "user", "content": "Hello"}]
+        result = ai_retrieve_messages.format_messages(messages)
+        self.assertIn("Message #1 (chars: 5):", result)
+        self.assertIn('"role": "user"', result)
+        self.assertIn('"content": "Hello"', result)
+        self.assertIn("Total: 1 messages", result)
+
+    def test_multiple_message_char_counts(self):
+        """Each message header includes its own character count."""
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello world"},
+        ]
+        result = ai_retrieve_messages.format_messages(messages)
+        self.assertIn("Message #1 (chars: 2):", result)
+        self.assertIn("Message #2 (chars: 11):", result)
+
+    def test_missing_content_counts_as_zero(self):
+        """Messages without content show chars: 0."""
+        messages = [{"role": "system"}]
+        result = ai_retrieve_messages.format_messages(messages)
+        self.assertIn("Message #1 (chars: 0):", result)
+
+    def test_non_string_content_char_count(self):
+        """Non-string content is converted to string for counting."""
+        messages = [{"role": "user", "content": 12345}]
+        result = ai_retrieve_messages.format_messages(messages)
+        self.assertIn("Message #1 (chars: 5):", result)
+
+    def test_non_dict_message_char_count(self):
+        """Non-dict messages use str() length for counting."""
+        messages = ["plain text"]
+        result = ai_retrieve_messages.format_messages(messages)
+        self.assertIn("Message #1 (chars: 10):", result)
+
+
 class TestMain(unittest.TestCase):
     """Tests for the main entry point."""
 
     @patch("ai_retrieve_messages.print_context_messages")
     @patch("ai_retrieve_messages.get_session_manager")
     def test_main_without_max_chars(self, mock_get_manager, mock_print):
-        """main retrieves and prints messages without truncation by default."""
+        """main calls print_context_messages with no truncation by default."""
         mock_manager = MagicMock()
         mock_manager.retrieve_messages.return_value = [
             {"role": "user", "content": "hello world"}
@@ -146,14 +192,15 @@ class TestMain(unittest.TestCase):
 
         mock_get_manager.assert_called_once_with(None)
         mock_manager.retrieve_messages.assert_called_once_with("abc123")
-        mock_print.assert_called_once_with([
-            {"role": "user", "content": "hello world"}
-        ])
+        mock_print.assert_called_once_with(
+            [{"role": "user", "content": "hello world"}],
+            content_max_length=None,
+        )
 
     @patch("ai_retrieve_messages.print_context_messages")
     @patch("ai_retrieve_messages.get_session_manager")
     def test_main_with_max_chars(self, mock_get_manager, mock_print):
-        """main truncates messages when --max-chars is provided."""
+        """main passes content_max_length to the shared formatter."""
         mock_manager = MagicMock()
         mock_manager.retrieve_messages.return_value = [
             {"role": "user", "content": "hello world"}
@@ -164,9 +211,10 @@ class TestMain(unittest.TestCase):
 
         mock_get_manager.assert_called_once_with(None)
         mock_manager.retrieve_messages.assert_called_once_with("abc123")
-        mock_print.assert_called_once_with([
-            {"role": "user", "content": "hello..."}
-        ])
+        mock_print.assert_called_once_with(
+            [{"role": "user", "content": "hello world"}],
+            content_max_length=5,
+        )
 
     @patch("ai_retrieve_messages.print_context_messages")
     @patch("ai_retrieve_messages.get_session_manager")
@@ -180,7 +228,7 @@ class TestMain(unittest.TestCase):
 
         mock_get_manager.assert_called_once_with("sqlite:///custom.db")
         mock_manager.retrieve_messages.assert_called_once_with("abc123")
-        mock_print.assert_called_once_with([])
+        mock_print.assert_called_once_with([], content_max_length=None)
 
     @patch("ai_retrieve_messages.print_context_messages")
     @patch("ai_retrieve_messages.get_session_manager")
