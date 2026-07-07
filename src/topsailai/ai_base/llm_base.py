@@ -150,7 +150,8 @@ class LLMModel(LLMModelBase):
     def _log_first_byte_timeout(self, elapsed, first_byte_timeout):
         """Log a first-byte timeout warning using project conventions."""
         print_warning(
-            f"{LLM_KEYWORD_SERVICE}: first byte took {elapsed:.1f}s, reached/exceeded threshold {first_byte_timeout}s"
+            f"{LLM_KEYWORD_SERVICE}: first byte timeout threshold reached/exceeded: "
+            f"elapsed {elapsed:.1f}s >= threshold {first_byte_timeout}s"
         )
 
     def _create_with_first_byte_timeout(

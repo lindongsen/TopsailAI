@@ -251,7 +251,7 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         mock_print_warning.assert_called_once()
         warning_msg = mock_print_warning.call_args[0][0]
         self.assertIn("LLM Service", warning_msg)
-        self.assertIn("first byte took", warning_msg)
+        self.assertIn("first byte timeout threshold reached/exceeded", warning_msg)
         self.assertIn("0.1s", warning_msg)
 
     @patch("topsailai.ai_base.llm_base.logger")
@@ -307,6 +307,39 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         first_byte_arg = model.tokenStat.add_first_byte.call_args[0][0]
         self.assertIsInstance(first_byte_arg, float)
         self.assertGreaterEqual(first_byte_arg, 0.0)
+
+    @patch("topsailai.ai_base.llm_base.time.monotonic")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_call_llm_model_by_stream_first_byte_unit_is_milliseconds(
+        self, mock_base_init, mock_monotonic
+    ):
+        """Test that first-byte timing passed to tokenStat is in milliseconds."""
+        # Sequence of monotonic timestamps seen by the streaming path for a
+        # single-chunk response with no timeout:
+        #   1. _create_with_first_byte_timeout start_time
+        #   2. _create_with_first_byte_timeout elapsed
+        #   3. call_llm_model_by_stream stream_start_time
+        #   4. iter_stream_with_first_byte_timeout start_time
+        #   5. iter_stream_with_first_byte_timeout elapsed before first chunk
+        #   6. first_byte_ms computation (1.5s after stream_start_time)
+        mock_monotonic.side_effect = [0.0, 0.0, 0.0, 0.0, 0.0, 1.5]
+
+        mock_chunk = MagicMock()
+        mock_chunk.choices = [MagicMock()]
+        mock_chunk.choices[0].delta.content = "Hello"
+        mock_chunk.choices[0].delta.tool_calls = None
+
+        model = self._create_mock_model()
+        model.model.create.return_value = iter([mock_chunk])
+
+        result = model.call_llm_model_by_stream(self.messages)
+
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(result[1], "Hello")
+        model.tokenStat.add_first_byte.assert_called_once()
+        first_byte_arg = model.tokenStat.add_first_byte.call_args[0][0]
+        self.assertIsInstance(first_byte_arg, float)
+        self.assertAlmostEqual(first_byte_arg, 1500.0, delta=1.0)
 
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -577,7 +610,9 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         mock_print_warning.assert_called_once()
         warning_msg = mock_print_warning.call_args[0][0]
         self.assertIn("LLM Service", warning_msg)
-        self.assertIn("first byte took", warning_msg)
+        self.assertIn("first byte timeout threshold reached/exceeded", warning_msg)
+        self.assertIn("elapsed", warning_msg)
+        self.assertIn(">= threshold", warning_msg)
 
     @patch("topsailai.ai_base.llm_base.env_tool")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -662,8 +697,9 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         mock_print_warning.assert_called_once()
         warning_msg = mock_print_warning.call_args[0][0]
         self.assertIn("LLM Service", warning_msg)
-        self.assertIn("first byte took", warning_msg)
-        self.assertIn("reached/exceeded threshold", warning_msg)
+        self.assertIn("first byte timeout threshold reached/exceeded", warning_msg)
+        self.assertIn("elapsed", warning_msg)
+        self.assertIn(">= threshold", warning_msg)
         self.assertIn("0.1s", warning_msg)
     @patch("topsailai.ai_base.llm_base.os.getenv")
     @patch("topsailai.ai_base.llm_base.env_tool")
