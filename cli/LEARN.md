@@ -72,3 +72,22 @@
 3. **Run loop-prone tests with a timeout**: use `timeout` (or the test framework's timeout) when executing tests that involve input loops, event loops, or `while True` code paths.
 4. **Add circuit-breakers in interactive loops**: production input loops should have a maximum iteration count or an explicit escape when the same unrecognized command repeats.
 5. **Verify the fix with the exact failing test name**: after editing, run the specific test first, then the surrounding class, then the full file.
+
+## 2026-07-07: Sort direction and limit interact when fetching paginated data
+
+### Trigger
+The user asked to display the project scope list oldest-first (older entries at the top, newer at the bottom).
+
+### What I did wrong first
+I changed the `ai_list_sessions.py` argument from `--sort desc` to `--sort asc`, thinking that would simply reverse the display order.
+
+### Correct fix
+Keep `--sort desc` so the database returns the newest N entries, then call `sessions.reverse()` after parsing the JSON so the UI renders them oldest-first.
+
+### Why the first approach was wrong
+When a `--limit N` is applied, the sort direction determines which N records are returned, not just their display order. Using `--sort asc` would fetch the oldest N sessions and silently discard newer ones; `--sort desc` fetches the newest N, and reversing afterward preserves all recent data while still showing the oldest entry at the top.
+
+### What to do next time
+- Distinguish between "fetch order" and "display order" when a limit is involved.
+- If the requirement is oldest-first UI but only the latest N records matter, fetch newest-first and reverse locally.
+- Verify ordering assumptions with tests that include both timestamps and row numbers.

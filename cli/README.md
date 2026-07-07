@@ -2,6 +2,10 @@
 
 This directory contains the command-line interface (CLI) tools for the project.
 
+## List Sorting
+
+Lists that display discovered files or history entries are sorted by creation time by default, with older items appearing first and newer items appearing last.
+
 ## Structure
 
 ```
