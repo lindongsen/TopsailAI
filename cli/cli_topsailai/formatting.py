@@ -1,7 +1,9 @@
 """Output formatting helpers for the TopsailAI CLI."""
 
+import io
 import os
 import sys
+from contextlib import redirect_stdout as contextlib_redirect_stdout
 from datetime import datetime
 from typing import List
 
@@ -46,13 +48,6 @@ def print_table(files: List[dict]) -> None:
         print(f"{Colors.YELLOW}[WARN] No log files found.{Colors.RESET}")
         return
 
-    w_no = 4
-    w_session = 18
-    w_pid = 6
-    w_modified = 13
-    w_created = 13
-    w_project = 24
-    w_name = 16
     w_no = 4
     w_session = 18
     w_pid = 6
@@ -128,14 +123,14 @@ def print_table(files: List[dict]) -> None:
         f"{Colors.GRAY}○ Idle{Colors.RESET}  "
         f"{Colors.DIM}(Total: {len(files)} files){Colors.RESET}"
     )
+
+
 def format_file_table(files: List[dict]) -> str:
     """Return a formatted table of log files as a string.
 
     This is a string-returning variant of :func:`print_table` for callers
     that need the rendered output rather than direct printing.
     """
-    import io
-
     captured = io.StringIO()
     with contextlib_redirect_stdout(captured):
         print_table(files)
