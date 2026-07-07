@@ -49,7 +49,6 @@ def print_table(files: List[dict]) -> None:
     w_no = 4
     w_session = 22
     w_pid = 8
-    w_size = 10
     w_modified = 14
     w_created = 14
     w_name = 20
@@ -59,7 +58,6 @@ def print_table(files: List[dict]) -> None:
         f" {'No':^{w_no}} |"
         f" {'Session ID':^{w_session}} |"
         f" {'PID':^{w_pid}} |"
-        f" {'Size':^{w_size}} |"
         f" {'Modified':^{w_modified}} |"
         f" {'Created':^{w_created}} |"
         f" {'Session Name':^{w_name}} "
@@ -70,7 +68,6 @@ def print_table(files: List[dict]) -> None:
         f"{'-' * (w_no + 1)}+"
         f"{'-' * (w_session + 2)}+"
         f"{'-' * (w_pid + 2)}+"
-        f"{'-' * (w_size + 2)}+"
         f"{'-' * (w_modified + 2)}+"
         f"{'-' * (w_created + 2)}+"
         f"{'-' * (w_name + 1)}"
@@ -94,7 +91,6 @@ def print_table(files: List[dict]) -> None:
             session = session[:w_session - 3] + "..."
 
         pid_str = str(pid) if pid else "-"
-        size_str = format_size(f["size"])
         modified_str = format_timestamp(f["mtime"])
         created_str = format_timestamp(f["ctime"])
 
@@ -109,7 +105,6 @@ def print_table(files: List[dict]) -> None:
             f" {idx:^{w_no}} |"
             f" {session:<{w_session}} |"
             f" {pid_str:^{w_pid}} |"
-            f" {size_str:>{w_size}} |"
             f" {modified_str:^{w_modified}} |"
             f" {created_str:^{w_created}} |"
             f" {session_name:<{w_name}} "

@@ -275,7 +275,6 @@ Each row represents a discovered log file and shows:
 | `No` | Row number used to select the file |
 | `Session` | Session ID, or `(temp)` for temporary sessions |
 | `PID` | Process ID embedded in the filename |
-| `Size` | Current file size |
 | `Modified` | Last modification time |
 | `Created` | Creation time |
 

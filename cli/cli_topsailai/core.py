@@ -256,7 +256,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     # Heavy imports are deferred until after --help / --version are handled.
     from cli_topsailai.cleaning import clean_by_numbers, clean_expired_files
     from cli_topsailai.completer import setup_tab_completion
-    from cli_topsailai.formatting import format_size, print_header, print_table
+    from cli_topsailai.formatting import print_header, print_table
     from cli_topsailai.help_text import print_help, print_instruction_help
     from cli_topsailai.history import HistoryManager, load_readline_history
     from cli_topsailai.log_files import discover_log_files
@@ -293,10 +293,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         """Print a single file as it is discovered during refresh."""
         session = file_info.get("session_id") or "-"
         filename = file_info.get("filename", "")
-        size = format_size(file_info.get("size", 0))
         print(
             f"{Colors.DIM}  Found {Colors.RESET}{session}"
-            f"{Colors.DIM} {filename} ({size}){Colors.RESET}"
+            f"{Colors.DIM} {filename}{Colors.RESET}"
         )
         sys.stdout.flush()
 
