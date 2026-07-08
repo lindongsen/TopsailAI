@@ -77,5 +77,5 @@ run_cli="uv run"
 [ "${UV_NO_DEV}" == "1" ] && run_cli="python"
 
 # start
-export TOPSAILAI_USER_MESSAGE="${task} ${task_ex}"
-${run_cli} cli/llm_chat.py
+#export TOPSAILAI_USER_MESSAGE=
+${run_cli} cli/llm_chat.py "${task} ${task_ex}"
