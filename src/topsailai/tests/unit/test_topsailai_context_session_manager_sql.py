@@ -118,6 +118,57 @@ class TestSessionSQLAlchemy:
         sessions = session_mgr.list_sessions()
         assert len(sessions) == 3
 
+    def test_list_sessions_with_filter(self, session_mgr):
+        """Test listing sessions filtered by session IDs."""
+        # Create multiple sessions
+        for i in range(3):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+
+        # Filter by subset of session IDs
+        sessions = session_mgr.list_sessions(sessions=["test_session_000", "test_session_002"])
+        assert len(sessions) == 2
+        assert {s.session_id for s in sessions} == {"test_session_000", "test_session_002"}
+
+    def test_list_sessions_with_empty_filter(self, session_mgr):
+        """Test listing sessions with empty filter returns all sessions."""
+        # Create multiple sessions
+        for i in range(3):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+
+        # Empty list should return all sessions
+        sessions = session_mgr.list_sessions(sessions=[])
+        assert len(sessions) == 3
+
+        # None should also return all sessions
+        sessions = session_mgr.list_sessions(sessions=None)
+        assert len(sessions) == 3
+
+    def test_list_sessions_with_nonexistent_filter(self, session_mgr):
+        """Test listing sessions filtered by non-existent session IDs."""
+        # Create multiple sessions
+        for i in range(3):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+
+        # Filter by non-existent session IDs returns empty list
+        sessions = session_mgr.list_sessions(sessions=["non_existent_001", "non_existent_002"])
+        assert len(sessions) == 0
+        assert sessions == []
+
     def test_update_session_name(self, session_mgr):
         """Test updating session name."""
         session_data = SessionData(
@@ -355,3 +406,247 @@ class TestSessionSQLAlchemy:
         assert sessions[0].project_workspace == "/workspace/project"
         assert sessions[0].pwd == "/workspace/project/src"
         assert sessions[0].topsailai_home == "/home/user/.topsailai"
+
+    def test_list_sessions_order_by_create_time_asc(self, session_mgr):
+        """Test listing sessions sorted by create_time ascending."""
+        for i in range(3):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+            time.sleep(0.01)
+
+        sessions = session_mgr.list_sessions(order_by="create_time")
+        assert len(sessions) == 3
+        assert sessions[0].session_id == "test_session_000"
+        assert sessions[1].session_id == "test_session_001"
+        assert sessions[2].session_id == "test_session_002"
+
+    def test_list_sessions_order_by_create_time_desc(self, session_mgr):
+        """Test listing sessions sorted by create_time descending."""
+        for i in range(3):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+            time.sleep(0.01)
+
+        sessions = session_mgr.list_sessions(order_by="-create_time")
+        assert len(sessions) == 3
+        assert sessions[0].session_id == "test_session_002"
+        assert sessions[1].session_id == "test_session_001"
+        assert sessions[2].session_id == "test_session_000"
+
+    def test_list_sessions_order_by_session_id(self, session_mgr):
+        """Test listing sessions sorted by session_id."""
+        for i in range(3):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+
+        sessions = session_mgr.list_sessions(order_by="session_id")
+        assert len(sessions) == 3
+        assert sessions[0].session_id == "test_session_000"
+        assert sessions[1].session_id == "test_session_001"
+        assert sessions[2].session_id == "test_session_002"
+
+    def test_list_sessions_order_by_session_id_desc(self, session_mgr):
+        """Test listing sessions sorted by session_id descending."""
+        for i in range(3):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+
+        sessions = session_mgr.list_sessions(order_by="-session_id")
+        assert len(sessions) == 3
+        assert sessions[0].session_id == "test_session_002"
+        assert sessions[1].session_id == "test_session_001"
+        assert sessions[2].session_id == "test_session_000"
+
+    def test_list_sessions_order_by_unsupported_field(self, session_mgr):
+        """Test that ordering by an unsupported field raises ValueError."""
+        session_data = SessionData(
+            session_id="test_session_001",
+            session_name="Test Session",
+            task="Test task"
+        )
+        session_mgr.create_session(session_data)
+
+        with pytest.raises(ValueError, match="Unsupported order_by field"):
+            session_mgr.list_sessions(order_by="unsupported_field")
+
+    def test_list_sessions_with_offset(self, session_mgr):
+        """Test listing sessions with offset."""
+        for i in range(3):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+            time.sleep(0.01)
+
+        sessions = session_mgr.list_sessions(order_by="create_time", offset=1)
+        assert len(sessions) == 2
+        assert sessions[0].session_id == "test_session_001"
+        assert sessions[1].session_id == "test_session_002"
+
+    def test_list_sessions_with_limit(self, session_mgr):
+        """Test listing sessions with limit."""
+        for i in range(3):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+            time.sleep(0.01)
+
+        sessions = session_mgr.list_sessions(order_by="create_time", limit=2)
+        assert len(sessions) == 2
+        assert sessions[0].session_id == "test_session_000"
+        assert sessions[1].session_id == "test_session_001"
+
+    def test_list_sessions_with_offset_and_limit(self, session_mgr):
+        """Test listing sessions with offset and limit combined."""
+        for i in range(5):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+            time.sleep(0.01)
+
+        sessions = session_mgr.list_sessions(order_by="create_time", offset=1, limit=2)
+        assert len(sessions) == 2
+        assert sessions[0].session_id == "test_session_001"
+        assert sessions[1].session_id == "test_session_002"
+
+    def test_list_sessions_combined_filter_order_offset_limit(self, session_mgr):
+        """Test combined sessions filter, ordering, offset, and limit."""
+        for i in range(5):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+            time.sleep(0.01)
+
+        sessions = session_mgr.list_sessions(
+            sessions=["test_session_001", "test_session_002", "test_session_003", "test_session_004"],
+            order_by="-session_id",
+            offset=1,
+            limit=2,
+        )
+        assert len(sessions) == 2
+        assert sessions[0].session_id == "test_session_003"
+        assert sessions[1].session_id == "test_session_002"
+
+    def test_list_sessions_default_order_is_create_time_desc(self, session_mgr):
+        """Test that default ordering is create_time descending."""
+        for i in range(3):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+            time.sleep(0.01)
+
+        sessions = session_mgr.list_sessions()
+        assert len(sessions) == 3
+        assert sessions[0].session_id == "test_session_002"
+        assert sessions[1].session_id == "test_session_001"
+        assert sessions[2].session_id == "test_session_000"
+
+    def test_list_sessions_offset_zero_returns_all(self, session_mgr):
+        """Test that offset=0 returns all sessions."""
+        for i in range(3):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+
+        sessions = session_mgr.list_sessions(offset=0)
+        assert len(sessions) == 3
+
+    def test_list_sessions_limit_zero_returns_empty(self, session_mgr):
+        """Test that limit=0 returns an empty list."""
+        for i in range(3):
+            session_data = SessionData(
+                session_id=f"test_session_{i:03d}",
+                session_name=f"Test Session {i}",
+                task=f"Test task {i}"
+            )
+            session_mgr.create_session(session_data)
+
+        sessions = session_mgr.list_sessions(limit=0)
+        assert sessions == []
+
+    def test_list_sessions_order_by_session_name(self, session_mgr):
+        """Test listing sessions sorted by session_name."""
+        session_data_1 = SessionData(
+            session_id="s1",
+            session_name="Charlie",
+            task="task1"
+        )
+        session_data_2 = SessionData(
+            session_id="s2",
+            session_name="Alpha",
+            task="task2"
+        )
+        session_data_3 = SessionData(
+            session_id="s3",
+            session_name="Bravo",
+            task="task3"
+        )
+        session_mgr.create_session(session_data_1)
+        session_mgr.create_session(session_data_2)
+        session_mgr.create_session(session_data_3)
+
+        sessions = session_mgr.list_sessions(order_by="session_name")
+        assert len(sessions) == 3
+        assert sessions[0].session_name == "Alpha"
+        assert sessions[1].session_name == "Bravo"
+        assert sessions[2].session_name == "Charlie"
+
+    def test_list_sessions_order_by_task(self, session_mgr):
+        """Test listing sessions sorted by task."""
+        session_data_1 = SessionData(
+            session_id="s1",
+            session_name="Session 1",
+            task="task_c"
+        )
+        session_data_2 = SessionData(
+            session_id="s2",
+            session_name="Session 2",
+            task="task_a"
+        )
+        session_data_3 = SessionData(
+            session_id="s3",
+            session_name="Session 3",
+            task="task_b"
+        )
+        session_mgr.create_session(session_data_1)
+        session_mgr.create_session(session_data_2)
+        session_mgr.create_session(session_data_3)
+
+        sessions = session_mgr.list_sessions(order_by="task")
+        assert len(sessions) == 3
+        assert sessions[0].task == "task_a"
+        assert sessions[1].task == "task_b"
+        assert sessions[2].task == "task_c"

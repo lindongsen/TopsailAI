@@ -101,16 +101,32 @@ class SessionStorageBase(object):
         """
         raise NotImplementedError
 
-    def list_sessions(self) -> list[SessionData]:
+    def list_sessions(
+        self,
+        sessions: list[str] = None,
+        order_by: str = None,
+        offset: int = 0,
+        limit: int = None,
+    ) -> list[SessionData]:
         """
-        Retrieve all stored sessions.
+        Retrieve stored sessions, optionally filtered, sorted, and paginated.
 
-        This method returns a list of all sessions currently persisted in
-        the storage backend, ordered by creation time (most recent first).
+        Args:
+            sessions (list[str], optional): A list of session IDs to include.
+                When provided, only sessions whose ID is in this list are returned.
+                When empty or None, all sessions are returned.
+            order_by (str, optional): Field name to sort by. Supported fields include
+                ``session_id``, ``session_name``, ``task``, and ``create_time``.
+                Prefix the field name with ``-`` for descending order
+                (e.g., ``-created_at``). When not provided, the default order is
+                implementation-defined (typically ``create_time`` descending).
+            offset (int, optional): Number of sessions to skip. Defaults to ``0``.
+            limit (int, optional): Maximum number of sessions to return.
+                If ``None``, all matching sessions are returned.
 
         Returns:
-            list[SessionData]: A list of all stored SessionData instances.
-                Returns an empty list if no sessions exist.
+            list[SessionData]: A list of SessionData instances matching the query.
+                Returns an empty list if no sessions match.
 
         Raises:
             NotImplementedError: This is an abstract method that must be

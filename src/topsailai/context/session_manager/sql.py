@@ -154,20 +154,42 @@ class SessionSQLAlchemy(SessionStorageBase):
             finally:
                 db_session.close()
 
-    def list_sessions(self, offset: int = None, limit: int = None) -> list[SessionData]:
+    def list_sessions(
+        self,
+        sessions: list[str] = None,
+        order_by: str = None,
+        offset: int = 0,
+        limit: int = None,
+    ) -> list[SessionData]:
         """
-        List sessions from the storage with optional pagination.
+        List sessions from the storage with optional filtering, sorting, and pagination.
 
         Args:
-            offset (int, optional): Number of sessions to skip. Defaults to None.
-            limit (int, optional): Maximum number of sessions to return. If None, returns all sessions.
+            sessions (list[str], optional): A list of session IDs to include.
+                When provided, only sessions whose ID is in this list are returned.
+                When empty or None, all sessions are returned.
+            order_by (str, optional): Field name to sort by. Supported fields are
+                ``session_id``, ``session_name``, ``task``, and ``create_time``.
+                Prefix the field name with ``-`` for descending order
+                (e.g., ``-create_time``). When not provided, sessions are ordered
+                by ``create_time`` descending.
+            offset (int, optional): Number of sessions to skip. Defaults to ``0``.
+            limit (int, optional): Maximum number of sessions to return.
+                If ``None``, all matching sessions are returned.
 
         Returns:
-            list[SessionData]: List of session data objects, ordered by creation time (descending).
+            list[SessionData]: List of session data objects matching the query.
         """
         db_session = self.SessionLocal()
         try:
-            query = db_session.query(Session).order_by(Session.create_time.desc())
+            query = db_session.query(Session)
+
+            # Apply session ID filter if provided
+            if sessions:
+                query = query.filter(Session.session_id.in_(sessions))
+
+            # Apply ordering
+            query = self._apply_order_by(query, order_by)
 
             # Apply offset if provided
             if offset is not None:
@@ -198,6 +220,44 @@ class SessionSQLAlchemy(SessionStorageBase):
             raise e
         finally:
             db_session.close()
+
+    def _apply_order_by(self, query, order_by: str):
+        """
+        Apply SQLAlchemy ordering based on the order_by string.
+
+        Args:
+            query: SQLAlchemy query object.
+            order_by (str): Field name to sort by. Prefix with ``-`` for descending.
+
+        Returns:
+            Query with ordering applied.
+
+        Raises:
+            ValueError: If the field name is not supported.
+        """
+        allowed_fields = {
+            "session_id": Session.session_id,
+            "session_name": Session.session_name,
+            "task": Session.task,
+            "create_time": Session.create_time,
+        }
+
+        if order_by is None:
+            return query.order_by(Session.create_time.desc())
+
+        direction = "asc"
+        field_name = order_by
+        if field_name.startswith("-"):
+            direction = "desc"
+            field_name = field_name[1:]
+
+        if field_name not in allowed_fields:
+            raise ValueError(f"Unsupported order_by field: {order_by}")
+
+        column = allowed_fields[field_name]
+        if direction == "desc":
+            return query.order_by(column.desc())
+        return query.order_by(column.asc())
 
     def get_session(self, session_id: str) -> SessionData | None:
         """

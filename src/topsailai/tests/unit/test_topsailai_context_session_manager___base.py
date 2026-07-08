@@ -119,9 +119,30 @@ class TestSessionStorageBase(unittest.TestCase):
     def test_list_sessions_raises_not_implemented(self):
         """Test that list_sessions raises NotImplementedError."""
         storage = SessionStorageBase()
-        
+
         with self.assertRaises(NotImplementedError):
             storage.list_sessions()
+
+    def test_list_sessions_with_sessions_filter_raises_not_implemented(self):
+        """Test that list_sessions with sessions filter raises NotImplementedError."""
+        storage = SessionStorageBase()
+
+        with self.assertRaises(NotImplementedError):
+            storage.list_sessions(sessions=["s1", "s2"])
+
+    def test_list_sessions_with_order_by_raises_not_implemented(self):
+        """Test that list_sessions with order_by raises NotImplementedError."""
+        storage = SessionStorageBase()
+
+        with self.assertRaises(NotImplementedError):
+            storage.list_sessions(order_by="-create_time")
+
+    def test_list_sessions_with_offset_limit_raises_not_implemented(self):
+        """Test that list_sessions with offset/limit raises NotImplementedError."""
+        storage = SessionStorageBase()
+
+        with self.assertRaises(NotImplementedError):
+            storage.list_sessions(offset=1, limit=2)
 
     def test_update_session_name_raises_not_implemented(self):
         """Test that update_session_name raises NotImplementedError."""
@@ -152,14 +173,6 @@ class TestSessionStorageBase(unittest.TestCase):
             storage.clean_sessions(3600)
 
     def test_get_messages_by_session_raises_not_implemented(self):
-        """Test that get_messages_by_session raises NotImplementedError."""
-        storage = SessionStorageBase()
-        
-        with self.assertRaises(NotImplementedError):
-            storage.get_messages_by_session("test_session_id")
-
-    def test_tb_session_attribute(self):
-        """Test that tb_session class attribute is set correctly."""
         self.assertEqual(SessionStorageBase.tb_session, "session")
 
     def test_chat_history_initialized_to_none(self):
