@@ -56,10 +56,19 @@ def prompt_selection(
     )
     from cli_topsailai.help_text import print_instruction_help
 
-    _MAX_CONSECUTIVE_UNRECOGNIZED = 100
+    _MAX_CONSECUTIVE_UNRECOGNIZED = 10
+    _MAX_PROMPT_ITERATIONS = 100
     _consecutive_unrecognized = 0
+    _iterations = 0
 
     while True:
+        _iterations += 1
+        if _iterations > _MAX_PROMPT_ITERATIONS:
+            print(
+                f"{Colors.RED}[ERROR] Maximum prompt iterations exceeded; "
+                f"exiting to prevent an infinite loop.{Colors.RESET}"
+            )
+            return ("quit", None)
         try:
             prompt_text = get_prompt()
             user_input = input(prompt_text).strip()

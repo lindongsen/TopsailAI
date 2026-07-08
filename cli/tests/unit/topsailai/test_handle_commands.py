@@ -144,6 +144,27 @@ class TestHandleCommands(unittest.TestCase):
             any("Unknown command" in str(call) for call in mock_print.call_args_list)
         )
 
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_unknown_command_circuit_breaker(self, mock_input, mock_print):
+        """Repeated unrecognized commands must not hang the prompt."""
+        mock_input.return_value = "/unknown"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("infinite loop" in str(call) for call in mock_print.call_args_list)
+        )
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_total_iteration_limit(self, mock_input, mock_print):
+        """Any loop that does not make progress must be bounded."""
+        mock_input.return_value = ""
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("Maximum prompt iterations" in str(call) for call in mock_print.call_args_list)
+        )
 
 class TestPerCommandHelp(unittest.TestCase):
     """Tests for -h/--help suffix on YAML commands."""
