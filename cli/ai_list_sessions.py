@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-List Sessions CLI - List all sessions from the session database
+List Sessions CLI - List sessions from the session database
 
-This module provides command-line functionality to list all sessions
+This module provides command-line functionality to list sessions
 stored in the database, displaying session ID, name, creation time,
 and task information in a human-readable card format.
 
 Usage:
-    ai_list_sessions.py [database_connection_string]
+    ai_list_sessions.py [database_connection_string] [options]
 
 Arguments:
     database_connection_string: Optional database connection string.
@@ -17,6 +17,8 @@ Arguments:
 Examples:
     ai_list_sessions.py
     ai_list_sessions.py sqlite:///custom.db
+    ai_list_sessions.py --limit 10 --sort desc
+    ai_list_sessions.py --sessions s1,s2,s3 --json
 
 Author: DawsonLin
 Email: lin_dongsen@126.com
@@ -226,10 +228,11 @@ def format_sessions_json(sessions):
     return json.dumps([_session_to_dict(session) for session in sessions], indent=2)
 
 
-def _sort_sessions(sessions, sort_order):
-    """Sort sessions by create_time in ascending or descending order."""
-    reverse = sort_order == "desc"
-    return sorted(sessions, key=lambda session: session.create_time or datetime.min, reverse=reverse)
+def _parse_order_by(sort_order):
+    """Convert legacy --sort value to backend order_by string."""
+    if sort_order == "desc":
+        return "-create_time"
+    return "create_time"
 
 
 def _filter_sessions(sessions, has_project):
@@ -239,11 +242,11 @@ def _filter_sessions(sessions, has_project):
     return [session for session in sessions if session.project_workspace]
 
 
-def _limit_sessions(sessions, limit):
-    """Limit the number of sessions returned."""
-    if limit is None or limit <= 0:
-        return sessions
-    return sessions[:limit]
+def _parse_sessions(value):
+    """Parse a comma-separated list of session IDs into a list of strings."""
+    if not value:
+        return None
+    return [session_id.strip() for session_id in value.split(",") if session_id.strip()]
 
 
 def main():
@@ -251,10 +254,10 @@ def main():
     Main entry point for listing sessions.
 
     This function:
-    1. Parses command-line arguments for database connection
+    1. Parses command-line arguments for database connection and query options
     2. Creates a session manager with the specified database connection
-    3. Retrieves all sessions from the database
-    4. Displays the sessions in a formatted card layout
+    3. Retrieves sessions from the database using backend filtering/sorting/pagination
+    4. Displays the sessions in a formatted card layout or JSON
 
     Default Behavior:
         - If no database_connection_string provided, uses 'sqlite:///sessions.db'
@@ -266,7 +269,7 @@ def main():
         SystemExit: Exits with code 1 if error occurs during retrieval
     """
     parser = argparse.ArgumentParser(
-        description="List all sessions from the session database."
+        description="List sessions from the session database."
     )
     parser.add_argument(
         "db_conn",
@@ -291,6 +294,18 @@ def main():
         help="Return at most N sessions",
     )
     parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="Skip the first N sessions (default: 0)",
+    )
+    parser.add_argument(
+        "--sessions",
+        type=str,
+        default=None,
+        help="Comma-separated list of session IDs to include",
+    )
+    parser.add_argument(
         "--has-project",
         action="store_true",
         help="Only include sessions with a non-empty project_workspace",
@@ -301,6 +316,12 @@ def main():
         default="asc",
         help="Sort by create_time (default: asc, oldest first)",
     )
+    parser.add_argument(
+        "--order-by",
+        type=str,
+        default=None,
+        help="Sort by field name; prefix with '-' for descending (e.g., '-create_time')",
+    )
     args = parser.parse_args()
 
     if args.no_color:
@@ -308,10 +329,18 @@ def main():
 
     try:
         manager = get_session_manager(args.db_conn)
-        sessions = manager.list_sessions()
-        sessions = _sort_sessions(sessions, args.sort)
+
+        order_by = args.order_by
+        if order_by is None:
+            order_by = _parse_order_by(args.sort)
+
+        sessions = manager.list_sessions(
+            sessions=_parse_sessions(args.sessions),
+            order_by=order_by,
+            offset=args.offset,
+            limit=args.limit,
+        )
         sessions = _filter_sessions(sessions, args.has_project)
-        sessions = _limit_sessions(sessions, args.limit)
 
         if args.json:
             print(format_sessions_json(sessions))

@@ -140,7 +140,11 @@ def _is_session_running(home: str, session_id: str) -> bool:
 
 
 def _session_to_dict(session: SessionData, home: str) -> dict[str, Any]:
-    """Convert a SessionData object into a JSON-serializable dictionary."""
+    """Convert a SessionData object into a JSON-serializable dictionary.
+
+    The returned dictionary contains every field stored on *session* plus
+    computed metadata such as running status and human-readable timestamps.
+    """
     session_id = str(session.session_id) if session.session_id else ""
     running = _is_session_running(home, session_id)
     create_time_str = ""
@@ -148,12 +152,17 @@ def _session_to_dict(session: SessionData, home: str) -> dict[str, Any]:
         create_time_str = session.create_time.strftime("%Y-%m-%d %H:%M:%S")
 
     return {
+        # Original SessionData fields
         "session_id": session_id,
         "session_name": str(session.session_name) if session.session_name else "",
         "task": str(session.task) if session.task else "",
+        "project_workspace": str(session.project_workspace) if session.project_workspace else "",
+        "pwd": str(session.pwd) if session.pwd else "",
+        "topsailai_home": str(session.topsailai_home) if session.topsailai_home else "",
+        "create_time": create_time_str,
+        # Computed metadata
         "status": "Running" if running else "Idle",
         "is_running": running,
-        "create_time": create_time_str,
         "create_time_relative": _relative_time(session.create_time),
     }
 
@@ -192,7 +201,7 @@ def _format_session(session: SessionData, home: str, color_enabled: bool) -> str
     lines.append(separator)
     lines.append("")
 
-    label_width = 12
+    label_width = 18
     indent = "  "
     value_prefix = indent + " " * (label_width + 1)
 
@@ -216,6 +225,9 @@ def _format_session(session: SessionData, home: str, color_enabled: bool) -> str
     add_row("Created", time_value)
 
     add_row("Status", status, status_color)
+    add_row("Project Workspace", str(session.project_workspace) if session.project_workspace else "(none)")
+    add_row("PWD", str(session.pwd) if session.pwd else "(none)")
+    add_row("TOPSAILAI_HOME", str(session.topsailai_home) if session.topsailai_home else "(none)")
 
     task_label = "Task"
     task_label_text = f"{task_label}:".ljust(label_width)

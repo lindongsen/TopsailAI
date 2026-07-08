@@ -255,8 +255,20 @@ def match_yaml_command(
                 pattern = pattern.replace(
                     f"\\{{{var_name}\\}}", f"(?P<{var_name}>\\S+)"
                 )
+        # Commands with variable placeholders legitimately consume trailing
+        # arguments.  A small set of message commands accept a free-form
+        # trailing message even though they do not declare a placeholder.
+        # For all other commands (e.g. /agent) require an exact match so that
+        # "agent <arg>" can be handled by explicit branches in core.py.
+        allows_trailing_args = bool(var_names) or cmd_template.startswith(
+            ("/ctx.add_msg", "/ctx.btw", "/agent2llm.add_msg")
+        )
+        pattern = f"^/?{pattern}"
+        if allows_trailing_args:
+            pattern += r"(?:\s+.*)?$"
+        else:
+            pattern += r"$"
 
-        pattern = f"^/?{pattern}(?:\\s+.*)?$"
         flags = re.DOTALL if cmd_template.startswith(("/ctx.add_msg", "/ctx.btw", "/agent2llm.add_msg")) else 0
         match = re.match(pattern, user_input, flags)
         if match:
@@ -290,7 +302,11 @@ def match_yaml_command(
                     alias_pattern = alias_pattern.replace(
                         f"\\{{{var_name}\\}}", f"(?P<{var_name}>\\S+)"
                     )
-            alias_pattern = f"^/?{alias_pattern}(?:\\s+.*)?$"
+            alias_pattern = f"^/?{alias_pattern}"
+            if allows_trailing_args:
+                alias_pattern += r"(?:\s+.*)?$"
+            else:
+                alias_pattern += r"$"
             alias_match = re.match(alias_pattern, user_input)
             if alias_match:
                 variables = alias_match.groupdict()

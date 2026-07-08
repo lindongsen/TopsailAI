@@ -129,6 +129,9 @@ class TestSessionToDict:
             session_id="abc123",
             task="Do something useful.",
             session_name="test-session",
+            project_workspace="/workspace/abc",
+            pwd="/workspace/abc/src",
+            topsailai_home="/home/user/.topsailai",
         )
         session.create_time = datetime(2026, 7, 5, 10, 30, 15)
 
@@ -136,6 +139,9 @@ class TestSessionToDict:
         assert data["session_id"] == "abc123"
         assert data["session_name"] == "test-session"
         assert data["task"] == "Do something useful."
+        assert data["project_workspace"] == "/workspace/abc"
+        assert data["pwd"] == "/workspace/abc/src"
+        assert data["topsailai_home"] == "/home/user/.topsailai"
         assert data["status"] == "Idle"
         assert data["is_running"] is False
         assert data["create_time"] == "2026-07-05 10:30:15"
@@ -154,21 +160,54 @@ class TestSessionToDict:
 
 
 class TestFormatSessionJson:
-    def test_json_output_is_valid(self, tmp_path: Path):
+    def test_json_output_contains_all_session_fields(self, tmp_path: Path):
         session = SessionData(
             session_id="json1",
             task="JSON task.",
             session_name="json-session",
+            project_workspace="/workspace/json",
+            pwd="/workspace/json/src",
+            topsailai_home="/home/json/.topsailai",
         )
         session.create_time = datetime(2026, 7, 5, 10, 30, 15)
 
         output = si._format_session_json(session, str(tmp_path))
         parsed = json.loads(output)
+
+        # Original SessionData fields
         assert parsed["session_id"] == "json1"
         assert parsed["session_name"] == "json-session"
         assert parsed["task"] == "JSON task."
+        assert parsed["project_workspace"] == "/workspace/json"
+        assert parsed["pwd"] == "/workspace/json/src"
+        assert parsed["topsailai_home"] == "/home/json/.topsailai"
+        assert parsed["create_time"] == "2026-07-05 10:30:15"
+
+        # Computed metadata
         assert parsed["status"] == "Idle"
         assert parsed["is_running"] is False
+        assert isinstance(parsed["create_time_relative"], str)
+
+    def test_json_output_includes_all_expected_keys(self, tmp_path: Path):
+        session = SessionData(session_id="json2", task="Task two")
+        session.create_time = datetime(2026, 7, 5, 10, 30, 15)
+
+        output = si._format_session_json(session, str(tmp_path))
+        parsed = json.loads(output)
+
+        expected_keys = {
+            "session_id",
+            "session_name",
+            "task",
+            "project_workspace",
+            "pwd",
+            "topsailai_home",
+            "create_time",
+            "status",
+            "is_running",
+            "create_time_relative",
+        }
+        assert set(parsed.keys()) == expected_keys
 
 
 class TestFormatSession:
@@ -179,6 +218,9 @@ class TestFormatSession:
             session_id="abc123",
             task="Do something useful.",
             session_name="test-session",
+            project_workspace="/workspace/abc",
+            pwd="/workspace/abc/src",
+            topsailai_home="/home/abc/.topsailai",
         )
         session.create_time = datetime(2026, 7, 5, 10, 30, 15)
 
@@ -189,6 +231,9 @@ class TestFormatSession:
         assert "2026-07-05 10:30:15" in output
         assert "Idle" in output
         assert "Do something useful." in output
+        assert "/workspace/abc" in output
+        assert "/workspace/abc/src" in output
+        assert "/home/abc/.topsailai" in output
 
     @patch.object(si, "_supports_color", return_value=False)
     @patch("shutil.get_terminal_size", return_value=Mock(columns=80))

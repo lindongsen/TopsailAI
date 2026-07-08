@@ -541,6 +541,28 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         self.assertEqual(action, "agent")
         self.assertEqual(value, "/path/to/project")
 
+    @patch("cli_topsailai.core.input")
+    def test_agent_with_args_in_workspace_uses_explicit_branch_with_real_yaml(self, mock_input):
+        """'agent <folder>' with real YAML loaded must use explicit branch, not YAML."""
+        from cli_topsailai.yaml_commands import load_yaml_commands
+
+        cli_state.yaml_commands = load_yaml_commands()
+        mock_input.return_value = "agent /path/to/project"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "agent")
+        self.assertEqual(value, "/path/to/project")
+
+    @patch("cli_topsailai.core.input")
+    def test_slash_agent_with_args_in_workspace_uses_explicit_branch_with_real_yaml(self, mock_input):
+        """'/agent <folder>' with real YAML loaded must use explicit branch, not YAML."""
+        from cli_topsailai.yaml_commands import load_yaml_commands
+
+        cli_state.yaml_commands = load_yaml_commands()
+        mock_input.return_value = "/agent /path/to/project"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "agent")
+        self.assertEqual(value, "/path/to/project")
+
     @patch("cli_topsailai.project_scope.launch_agent_in_folder")
     @patch("cli_topsailai.project_scope.resolve_agent_folder")
     @patch("cli_topsailai.core.prompt_selection")
