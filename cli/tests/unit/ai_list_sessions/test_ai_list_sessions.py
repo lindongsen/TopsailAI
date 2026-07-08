@@ -225,7 +225,7 @@ class TestMainIntegration(unittest.TestCase):
         manager.create_session(
             SessionData(session_id="s2", task="Task two")
         )
-        with mock.patch("sys.argv", ["ai_list_sessions.py", self.db_conn, "--no-color"]):
+        with mock.patch("sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn, "--no-color"]):
             with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
                 ai_list_sessions.main()
                 output = mock_stdout.getvalue()
@@ -240,7 +240,7 @@ class TestMainIntegration(unittest.TestCase):
 
     @mock.patch.object(sys.stdout, "isatty", return_value=False)
     def test_main_no_sessions(self, _mock_tty):
-        with mock.patch("sys.argv", ["ai_list_sessions.py", self.db_conn, "--no-color"]):
+        with mock.patch("sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn, "--no-color"]):
             with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
                 ai_list_sessions.main()
                 output = mock_stdout.getvalue()
@@ -276,7 +276,7 @@ class TestJsonAndFilterFlags(unittest.TestCase):
             )
         )
         with mock.patch(
-            "sys.argv", ["ai_list_sessions.py", self.db_conn, "--json", "--no-color"]
+            "sys.argv", ["ai_list_sessions.py", "--db-conn", self.db_conn, "--json", "--no-color"]
         ):
             with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
                 ai_list_sessions.main()
@@ -304,7 +304,7 @@ class TestJsonAndFilterFlags(unittest.TestCase):
         )
         with mock.patch(
             "sys.argv",
-            ["ai_list_sessions.py", self.db_conn, "--json", "--has-project", "--no-color"],
+            ["ai_list_sessions.py", "--db-conn", self.db_conn, "--json", "--has-project", "--no-color"],
         ):
             with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
                 ai_list_sessions.main()
@@ -323,7 +323,7 @@ class TestJsonAndFilterFlags(unittest.TestCase):
             )
         with mock.patch(
             "sys.argv",
-            ["ai_list_sessions.py", self.db_conn, "--json", "--limit", "2", "--no-color"],
+            ["ai_list_sessions.py", "--db-conn", self.db_conn, "--json", "--limit", "2", "--no-color"],
         ):
             with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
                 ai_list_sessions.main()
@@ -347,6 +347,7 @@ class TestJsonAndFilterFlags(unittest.TestCase):
             "sys.argv",
             [
                 "ai_list_sessions.py",
+                "--db-conn",
                 self.db_conn,
                 "--json",
                 "--sort",
@@ -380,6 +381,7 @@ class TestJsonAndFilterFlags(unittest.TestCase):
             "sys.argv",
             [
                 "ai_list_sessions.py",
+                "--db-conn",
                 self.db_conn,
                 "--json",
                 "--has-project",
@@ -399,6 +401,32 @@ class TestJsonAndFilterFlags(unittest.TestCase):
         # asc order: oldest first, newest last.
         self.assertEqual(data[0]["session_id"], "proj-0")
         self.assertEqual(data[2]["session_id"], "proj-2")
+
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_positional_session_ids(self, _mock_tty):
+        manager = get_session_manager(self.db_conn)
+        manager.create_session(SessionData(session_id="pos-s1", task="t1"))
+        manager.create_session(SessionData(session_id="pos-s2", task="t2"))
+        manager.create_session(SessionData(session_id="pos-s3", task="t3"))
+        with mock.patch(
+            "sys.argv",
+            [
+                "ai_list_sessions.py",
+                "--db-conn",
+                self.db_conn,
+                "--json",
+                "pos-s1",
+                "pos-s3",
+                "--no-color",
+            ],
+        ):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                ai_list_sessions.main()
+                output = mock_stdout.getvalue()
+
+        data = json.loads(output)
+        self.assertEqual(len(data), 2)
+        self.assertEqual({session["session_id"] for session in data}, {"pos-s1", "pos-s3"})
 
 
 if __name__ == "__main__":

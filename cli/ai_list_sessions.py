@@ -8,17 +8,21 @@ stored in the database, displaying session ID, name, creation time,
 and task information in a human-readable card format.
 
 Usage:
-    ai_list_sessions.py [database_connection_string] [options]
+    ai_list_sessions.py [sessions ...] [options]
 
 Arguments:
-    database_connection_string: Optional database connection string.
-                                Defaults to 'sqlite:///sessions.db'
+    sessions: Optional session IDs to include. Multiple IDs can be provided
+              as positional arguments.
+
+Options:
+    --db-conn: Database connection string. Defaults to 'sqlite:///sessions.db'
 
 Examples:
     ai_list_sessions.py
-    ai_list_sessions.py sqlite:///custom.db
+    ai_list_sessions.py --db-conn sqlite:///custom.db
+    ai_list_sessions.py s1 s2 s3 --json
     ai_list_sessions.py --limit 10 --sort desc
-    ai_list_sessions.py --sessions s1,s2,s3 --json
+    ai_list_sessions.py --db-conn sqlite:///custom.db s1 s2 --json
 
 Author: DawsonLin
 Email: lin_dongsen@126.com
@@ -225,7 +229,7 @@ def format_sessions_json(sessions):
     Returns:
         str: JSON array string containing session dictionaries.
     """
-    return json.dumps([_session_to_dict(session) for session in sessions], indent=2)
+    return json.dumps([_session_to_dict(session) for session in sessions], indent=2, ensure_ascii=False)
 
 
 def _parse_order_by(sort_order):
@@ -242,11 +246,11 @@ def _filter_sessions(sessions, has_project):
     return [session for session in sessions if session.project_workspace]
 
 
-def _parse_sessions(value):
-    """Parse a comma-separated list of session IDs into a list of strings."""
-    if not value:
+def _parse_sessions(positional_sessions):
+    """Parse positional session IDs into a list of strings."""
+    if not positional_sessions:
         return None
-    return [session_id.strip() for session_id in value.split(",") if session_id.strip()]
+    return [session_id.strip() for session_id in positional_sessions if session_id.strip()]
 
 
 def main():
@@ -260,7 +264,7 @@ def main():
     4. Displays the sessions in a formatted card layout or JSON
 
     Default Behavior:
-        - If no database_connection_string provided, uses 'sqlite:///sessions.db'
+        - If no --db-conn provided, uses 'sqlite:///sessions.db'
 
     Returns:
         None
@@ -272,10 +276,15 @@ def main():
         description="List sessions from the session database."
     )
     parser.add_argument(
-        "db_conn",
-        nargs="?",
+        "sessions",
+        nargs="*",
+        help="Session IDs to include as positional arguments",
+    )
+    parser.add_argument(
+        "--db-conn",
+        type=str,
         default=None,
-        help="Optional database connection string (default: sqlite:///sessions.db)",
+        help="Database connection string (default: sqlite:///sessions.db)",
     )
     parser.add_argument(
         "--no-color",
@@ -298,12 +307,6 @@ def main():
         type=int,
         default=0,
         help="Skip the first N sessions (default: 0)",
-    )
-    parser.add_argument(
-        "--sessions",
-        type=str,
-        default=None,
-        help="Comma-separated list of session IDs to include",
     )
     parser.add_argument(
         "--has-project",
