@@ -37,3 +37,6 @@ LLM service errors
 
 Task execution time is too long
 
+### LOG_ATTENTION: "[0-9]- .* new_messages.* is not identical to any original message"
+
+Message may have been inserted or replaced during summarization.
