@@ -4,8 +4,8 @@
 AI Agent TopsailAI-Launcher Script
 
 Parse .topsailai/settings.yaml in the current working directory. If the file
-is missing, create it from a default configuration template, prompt the user
-to fill context._default, and continue launching.
+is missing, the launcher falls back to a built-in default configuration and
+continues launching without creating a settings file.
 
 When no --item is provided, the launcher inspects the context section and
 auto-selects the item: a single item is used directly, multiple items prompt
@@ -19,6 +19,7 @@ via os.system (default) or subprocess.run (with --subprocess).
 
 import argparse
 import atexit
+import copy
 import json
 import os
 import shlex
@@ -320,6 +321,60 @@ def _run_interactive_setup(settings_path):
         "You can edit this file later or re-run this setup by deleting it.\n",
         file=sys.stderr,
     )
+
+
+def _handle_missing_settings(settings_path, args):
+    """Decide what to do when .topsailai/settings.yaml is missing.
+
+    - If --setup is passed, run the guided interactive setup and load the
+      newly created configuration.
+    - In an interactive terminal, prompt the user to choose between running
+      with the default driver or entering the guided setup.
+    - In a non-interactive terminal, fall back to the built-in default
+      configuration without creating a file.
+
+    Returns a tuple of (settings, settings_from_default).
+    """
+    if args.setup:
+        print(
+            f"[TopsailAI-Launcher] Settings file not found: {settings_path}",
+            file=sys.stderr,
+        )
+        print(
+            "[TopsailAI-Launcher] --setup requested, launching guided setup.",
+            file=sys.stderr,
+        )
+        _run_interactive_setup(settings_path)
+        return load_yaml(settings_path), False
+
+    if sys.stdin.isatty():
+        print(
+            f"[TopsailAI-Launcher] Settings file not found: {settings_path}",
+            file=sys.stderr,
+        )
+        print(
+            "[TopsailAI-Launcher] Choose how to proceed:",
+            file=sys.stderr,
+        )
+        print("  [r] Run with the default agent driver", file=sys.stderr)
+        print(
+            "  [s] Run guided setup to create .topsailai/settings.yaml",
+            file=sys.stderr,
+        )
+        choice = _prompt("Your choice", default="r").lower()
+        if choice in ("s", "setup"):
+            _run_interactive_setup(settings_path)
+            return load_yaml(settings_path), False
+
+    print(
+        f"[TopsailAI-Launcher] Settings file not found: {settings_path}",
+        file=sys.stderr,
+    )
+    print(
+        "[TopsailAI-Launcher] Using default configuration and continuing.",
+        file=sys.stderr,
+    )
+    return copy.deepcopy(DEFAULT_CONFIG), True
 
 
 def load_yaml(path):
@@ -702,37 +757,21 @@ def main():
         default=None,
         help="Override the ai_agent_driver defined in settings.yaml",
     )
+    parser.add_argument(
+        "--setup",
+        action="store_true",
+        dest="setup",
+        help="Force the guided interactive setup to create .topsailai/settings.yaml when it is missing",
+    )
     args = parser.parse_args()
 
     # 1. Locate and parse .topsailai/settings.yaml in the current working directory
     settings_path = os.path.join(os.getcwd(), ".topsailai", "settings.yaml")
+    settings_from_default = False
     if not os.path.isfile(settings_path):
-        print(
-            f"[TopsailAI-Launcher] Settings file not found: {settings_path}",
-            file=sys.stderr,
-        )
-        if not sys.stdin.isatty():
-            print(
-                "[TopsailAI-Launcher] Non-interactive mode detected. "
-                "Creating a default configuration file for you.",
-                file=sys.stderr,
-            )
-            _write_default_settings(settings_path)
-            print(
-                "\nIMPORTANT: `context._default` is currently empty. "
-                "Fill it with the files you want every agent run to receive "
-                "(e.g. project.yaml, docs, features).",
-                file=sys.stderr,
-            )
-            print(
-                "\n--- Generated Configuration Template ---\n",
-                file=sys.stderr,
-            )
-            print(CONFIG_TEMPLATE, file=sys.stderr)
-        else:
-            _run_interactive_setup(settings_path)
-
-    settings = load_yaml(settings_path)
+        settings, settings_from_default = _handle_missing_settings(settings_path, args)
+    else:
+        settings = load_yaml(settings_path)
 
     workspace = settings.get("workspace", os.getcwd()) or "."
     if workspace[0] != "/":
@@ -760,13 +799,14 @@ def main():
                     file=sys.stderr,
                 )
 
-        if len(non_default_items) <= 1:
+        if settings_from_default:
+            args.item = "_default"
+        elif len(non_default_items) <= 1:
             args.item = non_default_items[0] if non_default_items else "_default"
         else:
             args.item = _select_context_item(
                 context_map, settings.get("environment", {}) or {}
             )
-
     env_map = settings.get("environment", {}) or {}
     # Resolve driver with the following priority:
     # 1. --driver CLI argument

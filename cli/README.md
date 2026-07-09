@@ -223,6 +223,7 @@ Launch an AI agent driver based on a local `.topsailai/settings.yaml` configurat
 - `--driver <command>` — Override the `ai_agent_driver` value.
 - `--dry-run` — Print the resolved command, working directory, and merged environment variables without executing.
 - `--subprocess` — Use `subprocess.run()` instead of `os.system()`.
+- `--setup` — Force the guided interactive setup to create `.topsailai/settings.yaml` when it is missing.
 
 **Driver resolution priority:**
 
@@ -231,10 +232,22 @@ Launch an AI agent driver based on a local `.topsailai/settings.yaml` configurat
 3. `ai_agent_driver` field in `settings.yaml`
 4. `TOPSAILAI_AGENT_DRIVER` from the OS environment
 
-If `.topsailai/settings.yaml` is missing:
+If `.topsailai/settings.yaml` is missing, the launcher asks how to proceed:
 
-- In an interactive terminal, the script launches a guided setup that asks for the driver command, workspace, default context files, and environment variables, then writes the configuration and continues launching.
-- In a non-interactive terminal, the script writes a default configuration file, prints the template, and exits so you can fill in `context._default` before the next run.
+- In an interactive terminal (TTY), you are prompted to choose:
+  - `[r] Run with the default agent driver` — uses the built-in default
+    configuration (`ai_agent_driver: ai-team-flow-dev`) and launches the
+    driver without creating a settings file. This is the default choice.
+  - `[s] Run guided setup` — runs the interactive setup to create
+    `.topsailai/settings.yaml`, then continues launching with the new
+    configuration.
+- In a non-interactive terminal, the launcher automatically runs with the
+  built-in default configuration and does not create a settings file.
+- Pass `--setup` to force the guided setup regardless of terminal type.
+
+You can still override the driver with `--driver` or the
+`TOPSAILAI_AGENT_DRIVER` environment variable when running with the default
+configuration.
 ### `topsailai_session_add_message` vs `topsailai_session_add_agent2llm_message`
 
 These two commands append messages to a session, but they target different conversation layers and have different lifecycles.
