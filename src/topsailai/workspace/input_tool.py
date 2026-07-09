@@ -352,13 +352,14 @@ def input_yes(tips: str = "Continue [yes/no] ") -> bool:
     Get yes/no confirmation from user.
 
     Prompts the user for a yes/no response and returns True only if the
-    response is exactly "yes" (case-insensitive, stripped).
+    response is exactly "yes" (case-insensitive, stripped). Invalid input
+    prints a hint and the prompt is repeated until a valid answer is given.
 
     Args:
         tips (str, optional): Prompt message. Defaults to "Continue [yes/no] ".
 
     Returns:
-        bool: True if user entered "yes", False otherwise
+        bool: True if user entered "yes", False if the user entered "no"
 
     Example:
         >>> should_continue = input_yes("Proceed with deletion? ")
@@ -366,8 +367,7 @@ def input_yes(tips: str = "Continue [yes/no] ") -> bool:
         >>> print(should_continue)
         True
     """
-    yn = input_one_line(tips)
-    return yn.strip().lower() == "yes"
+    return utils_input_tool.input_yes_or_no(tips, input_func=input_one_line)
 
 
 def _build_pipe_path(session_id: str | None = None) -> str:

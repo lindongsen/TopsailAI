@@ -460,12 +460,13 @@ class TestInputYes(unittest.TestCase):
         self.assertFalse(result)
 
     @patch("topsailai.workspace.input_tool.input")
-    def test_other_input_returns_false(self, mock_input):
-        """Test that other input returns False."""
+    def test_other_input_loops_until_valid(self, mock_input):
+        """Test that invalid input prints a hint and loops until valid."""
         from topsailai.workspace.input_tool import input_yes
-        mock_input.return_value = "maybe"
+        mock_input.side_effect = ["maybe", "no"]
         result = input_yes("Continue? ")
         self.assertFalse(result)
+        self.assertEqual(mock_input.call_count, 2)
 
     @patch("topsailai.workspace.input_tool.input")
     def test_default_tips(self, mock_input):
