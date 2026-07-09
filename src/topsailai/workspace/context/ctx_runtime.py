@@ -36,6 +36,7 @@ from topsailai.tools import (
 from topsailai.workspace.input_tool import (
     SPLIT_LINE,
     input_one_line,
+    input_yes,
 )
 from topsailai.workspace.context.agent2llm import (
     ContextRuntimeAgent2LLM,
@@ -279,13 +280,8 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         if need_interactive:
             try:
                 print(SPLIT_LINE)
-                while True:
-                    yn = input_one_line(">>> Is this answer acceptable? [yes/no] ").lower().strip()
-                    if not yn:
-                        continue
-                    if yn != "yes":
-                        return answer
-                    break
+                if not input_yes(">>> Is this answer acceptable? [yes/no] "):
+                    return answer
             except Exception:
                 return answer
 
