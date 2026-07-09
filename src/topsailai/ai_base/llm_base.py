@@ -26,7 +26,9 @@ from topsailai.utils import (
     env_tool,
     thread_tool,
     qos_tool,
+    input_tool,
 )
+from topsailai.utils.input_tool import input_yes_or_no
 from topsailai.utils.state_visualizer import (
     StateVisualizer,
     VisualizationState,
@@ -583,21 +585,17 @@ class LLMModel(LLMModelBase):
                     return rsp_content
 
                 result = format_response(rsp_content, rsp_obj, messages=messages)
-
                 if not result:
                     raise TypeError("null of response content: [%s]" % rsp_content)
-
                 if for_response:
                     return (rsp_obj, result)
-
                 return result
             except KeyboardInterrupt:
                 # The LLM service has been stuck for a long time, we can proactively retry
                 input_func = get_agent_runtime_input()
                 if input_func is None:
                     input_func = input
-                yn = input_func(">>> LLM Retry [yes/no] ")
-                if yn.strip().lower() == "yes":
+                if input_yes_or_no(">>> LLM Retry [yes/no] ", input_func):
                     continue
                 raise KeyboardInterrupt()
             except JsonError as e:
@@ -695,8 +693,7 @@ class LLMModel(LLMModelBase):
                     input_func = get_agent_runtime_input()
                     if input_func is None:
                         input_func = input
-                    yn = input_func(">>> LLM Retry [yes/no] ")
-                    if yn.strip().lower() == "yes":
+                    if input_yes_or_no(">>> LLM Retry [yes/no] ", input_func):
                         continue
                 raise e
 

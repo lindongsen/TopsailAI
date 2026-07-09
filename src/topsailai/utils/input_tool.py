@@ -221,6 +221,48 @@ def _get_input_history_max_backup() -> int:
     return max(count, 0)
 
 
+def input_yes_or_no(tips: str, input_func=None) -> bool:
+    """Prompt the user for a yes/no answer and return a boolean.
+
+    ``input_func`` is the callable used to read user input. It is typically
+    the agent-runtime input function (``get_agent_runtime_input()``) with a
+    fallback to the builtin ``input()``. The caller is responsible for
+    resolving it so that lower layers stay decoupled from thread-local
+    storage.
+
+    Only ``"yes"`` or ``"no"`` (case-insensitive, whitespace stripped) are
+    accepted. Invalid input prints a hint and loops until a valid answer is
+    given.
+
+    Parameters
+    ----------
+    tips:
+        Text to display before reading input.
+    input_func:
+        Callable used to read one line of input. If ``None``, the builtin
+        ``input()`` is used.
+
+    Returns
+    -------
+    ``True`` if the user entered ``"yes"``, ``False`` if the user entered
+    ``"no"``.
+    """
+    if input_func is None:
+        input_func = input
+
+    while True:
+        line = input_func(tips)
+        if line is None:
+            # Treat EOF / pipe close as "no" so callers do not loop forever.
+            return False
+        decision = line.strip().lower()
+        if decision == "yes":
+            return True
+        if decision == "no":
+            return False
+        print("Please enter 'yes' or 'no'.")
+
+
 def _get_input_history_max_size() -> int:
     """Return the maximum JSONL history file size in bytes before rotation.
 
