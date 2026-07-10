@@ -226,6 +226,7 @@ I am a sub-agent, and my name is ({role_name or agent_name})
         need_input_message=False,
         agent_name=agent_name,
         need_set_agent_name_to_thread_local=False,
+        need_project_workspace_lock=False,
     )
     if llm:
         task_agent.ai_agent.llm_model.model_name = llm

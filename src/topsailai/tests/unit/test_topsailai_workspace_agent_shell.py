@@ -582,10 +582,6 @@ class TestGetAgentChat(unittest.TestCase):
         self.assertEqual(os.environ.get("TOPSAILAI_TASK"), "")
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class TestGetAgentChatProjectWorkspaceLock(unittest.TestCase):
     """Test suite for project workspace lock integration in get_agent_chat."""
 
@@ -731,3 +727,25 @@ class TestGetAgentChatProjectWorkspaceLock(unittest.TestCase):
         agent_chat = get_agent_chat(session_id="test-session")
 
         self.assertEqual(agent_chat, self.mock_agent_chat_instance)
+
+    @patch('topsailai.workspace.agent_shell.ctxm_void')
+    @patch('topsailai.workspace.agent_shell.ctxm_project_workspace_lock')
+    def test_get_agent_chat_skips_project_workspace_lock(self, mock_lock, mock_void):
+        """Test that get_agent_chat(need_project_workspace_lock=False) uses ctxm_void."""
+        from topsailai.workspace.agent_shell import get_agent_chat
+
+        mock_void.return_value.__enter__ = MagicMock(return_value=True)
+        mock_void.return_value.__exit__ = MagicMock(return_value=False)
+
+        agent_chat = get_agent_chat(
+            session_id="test-session",
+            need_project_workspace_lock=False,
+        )
+
+        mock_lock.assert_not_called()
+        mock_void.assert_called_once()
+        self.assertEqual(agent_chat, self.mock_agent_chat_instance)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -32,7 +32,7 @@ from topsailai.workspace.context.instruction import (
 )
 from topsailai.workspace.hook_instruction import HookInstruction
 from topsailai.workspace.print_tool import ContentProgress
-from topsailai.workspace.lock_tool import ctxm_project_workspace_lock
+from topsailai.workspace.lock_tool import ctxm_project_workspace_lock, ctxm_void
 #from topsailai.workspace.context.agent_tool import (
 #    ContextRuntimeAgentTools,
 #)
@@ -112,6 +112,7 @@ def _get_agent_chat_impl(
         need_print_session:bool=None,
         need_input_message:bool=True,
         need_set_agent_name_to_thread_local:bool=True,
+        need_project_workspace_lock:bool=True,
     ) -> AgentChat:
     """Internal implementation of get_agent_chat()."""
     if need_print_session is None:
@@ -254,6 +255,7 @@ def get_agent_chat(
         need_print_session:bool=None,
         need_input_message:bool=True,
         need_set_agent_name_to_thread_local:bool=True,
+        need_project_workspace_lock:bool=True,
     ) -> AgentChat:
     """Create and return an AgentChat instance with all required components.
 
@@ -272,11 +274,14 @@ def get_agent_chat(
         session_head_tail_offset: Number of messages to keep from head/tail.
         need_print_session: Whether to print session information.
         need_input_message: Whether to prompt for input when needed.
+        need_project_workspace_lock: Whether to acquire the project workspace lock
+            before creating the agent. Defaults to True.
 
     Returns:
         AgentChat: A fully initialized AgentChat instance ready for conversation.
     """
-    with ctxm_project_workspace_lock() as has_lock:
+    lock_ctx = ctxm_project_workspace_lock if need_project_workspace_lock else ctxm_void
+    with lock_ctx() as has_lock:
         return _get_agent_chat_impl(
             system_prompt=system_prompt,
             to_dump_messages=to_dump_messages,
@@ -291,4 +296,5 @@ def get_agent_chat(
             need_print_session=need_print_session,
             need_input_message=need_input_message,
             need_set_agent_name_to_thread_local=need_set_agent_name_to_thread_local,
+            need_project_workspace_lock=need_project_workspace_lock,
         )

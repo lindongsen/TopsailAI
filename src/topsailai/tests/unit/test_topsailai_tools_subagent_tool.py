@@ -118,6 +118,7 @@ class TestCallAssistant:
         assert "disabled_tools" in call_kwargs
         assert "subagent_tool" in call_kwargs["disabled_tools"]
         assert call_kwargs["need_input_message"] is False
+        assert call_kwargs["need_project_workspace_lock"] is False
         
         # Verify agent was run
         mock_agent._run.assert_called_once_with(
@@ -159,6 +160,7 @@ class TestCallAssistant:
         
         call_kwargs = mock_get_agent_chat.call_args[1]
         assert call_kwargs["agent_name"] == "Sub.TestAgent"
+        assert call_kwargs["need_project_workspace_lock"] is False
 
     @patch("topsailai.workspace.agent_shell.get_agent_chat")
     @patch("topsailai.tools.subagent_tool.get_task_id")
@@ -179,6 +181,7 @@ class TestCallAssistant:
         
         call_kwargs = mock_get_agent_chat.call_args[1]
         assert call_kwargs["agent_name"] == "Sub.Agent"
+        assert call_kwargs["need_project_workspace_lock"] is False
 class TestToolsDictionary:
     """Test TOOLS dictionary structure."""
 
@@ -306,6 +309,8 @@ class TestSubagentRoles:
 
             subagent_tool.call_assistant("check this", role="reviewer.member")
 
+            call_kwargs = mock_get_agent_chat.call_args[1]
+            assert call_kwargs["need_project_workspace_lock"] is False
             mock_agent._run.assert_called_once_with(
                 message="@reviewer:\ncheck this",
                 times=1,
@@ -333,6 +338,7 @@ class TestSubagentRoles:
             assert "You review code." in call_kwargs["system_prompt"]
             # The full role catalog should NOT be injected into the subagent system prompt.
             assert "## Available Subagent Roles" not in call_kwargs["system_prompt"]
+            assert call_kwargs["need_project_workspace_lock"] is False
             mock_agent._run.assert_called_once_with(
                 message="@reviewer:\ncheck this",
                 times=1,
@@ -390,6 +396,8 @@ class TestSubagentRoles:
 
             subagent_tool.call_assistant("plain task")
 
+            call_kwargs = mock_get_agent_chat.call_args[1]
+            assert call_kwargs["need_project_workspace_lock"] is False
             mock_agent._run.assert_called_once_with(
                 message="plain task",
                 times=1,
@@ -489,6 +497,7 @@ class TestIntegration:
         disabled = call_kwargs["disabled_tools"]
         assert "agent_tool" in disabled
         assert "subagent_tool" in disabled
+        assert call_kwargs["need_project_workspace_lock"] is False
 
 
 class TestEdgeCases:
@@ -533,6 +542,7 @@ class TestEdgeCases:
         
         call_kwargs = mock_get_agent_chat.call_args[1]
         assert call_kwargs["agent_name"] == "Sub.Test_Agent-123"
+        assert call_kwargs["need_project_workspace_lock"] is False
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
