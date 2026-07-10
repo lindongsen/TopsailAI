@@ -11,6 +11,8 @@ references:
 
 # Environment Variables
 
+> Description Rule: Keep every variable description concise. State only the purpose, default behavior, and valid values; avoid redundant explanations or examples unless essential for clarity.
+
 This document provides a reference for environment variables used by TopsailAI.
 
 ## Workspace and Project Folders
@@ -228,6 +230,7 @@ For team agents, the effective offset is resolved in this order:
 | `TOPSAILAI_SUBAGENT_TOOL_PROMPT` | `""` | Prompt for the subagent tool. |
 | `TOPSAILAI_SUBAGENT_SYSTEM_PROMPT` | `""` | System prompt for subagents. |
 | `TOPSAILAI_MULTIMODAL_TOOL_PROMPT` | `""` | Prompt for the multimodal tool. |
+| `TOPSAILAI_SUBAGENT_ROLE_FOLDER` | `""` | Folder for subagent role files (`{role_name}.member`). Defaults to `${TOPSAILAI_HOME}/subagents`. Loaded into the subagent tool prompt; matching roles prefix messages with `@{role_name}:`. |
 | `TOPSALAI_TOOL_CMD_TIMEOUT_MAP` | (JSON) | Command timeout map as JSON. Defines `min_timeout` and `max_timeout` for matching command prefixes such as `pytest `, `go test`, `bash tests/run_test`, and `make test`. |
 
 ## Tool Approval

@@ -127,8 +127,6 @@ class TestCallAssistant:
             task_id="task_123",
         )
         
-        assert result == "assistant response"
-
     @patch("topsailai.workspace.agent_shell.get_agent_chat")
     @patch("topsailai.tools.subagent_tool.get_task_id")
     def test_call_assistant_clears_final_answer_hooks(self, mock_get_task_id, mock_get_agent_chat):
@@ -144,6 +142,7 @@ class TestCallAssistant:
         call_assistant("test task")
         
         assert len(mock_agent.hooks_for_final_answer) == 0
+
     @patch("topsailai.workspace.agent_shell.get_agent_chat")
     @patch("topsailai.tools.subagent_tool.get_task_id")
     @patch.dict(os.environ, {"TOPSAILAI_AGENT_NAME": "TestAgent"})
@@ -159,7 +158,7 @@ class TestCallAssistant:
         call_assistant("test task")
         
         call_kwargs = mock_get_agent_chat.call_args[1]
-        assert call_kwargs["agent_name"] == "Sub.TestAgent."
+        assert call_kwargs["agent_name"] == "Sub.TestAgent"
 
     @patch("topsailai.workspace.agent_shell.get_agent_chat")
     @patch("topsailai.tools.subagent_tool.get_task_id")
@@ -179,8 +178,7 @@ class TestCallAssistant:
         call_assistant("test task")
         
         call_kwargs = mock_get_agent_chat.call_args[1]
-        assert call_kwargs["agent_name"] == "Sub.Agent."
-
+        assert call_kwargs["agent_name"] == "Sub.Agent"
 class TestToolsDictionary:
     """Test TOOLS dictionary structure."""
 
@@ -260,6 +258,182 @@ class TestModuleExports:
         """Verify get_task_id is callable."""
         from topsailai.tools.subagent_tool import get_task_id
         assert callable(get_task_id)
+
+
+class TestSubagentRoles:
+    """Tests for subagent role configuration via TOPSAILAI_SUBAGENT_ROLE_FOLDER."""
+
+    def test_role_catalog_in_prompt_when_roles_exist(self, tmp_path):
+        """Verify PROMPT lists role names then details when role files exist."""
+        import importlib
+        import topsailai.tools.subagent_tool as subagent_tool_module
+
+        role_folder = tmp_path / "subagents"
+        role_folder.mkdir()
+        (role_folder / "coder.member").write_text("You are a coding assistant.")
+
+        original_env = os.environ.get("TOPSAILAI_SUBAGENT_ROLE_FOLDER", "")
+        try:
+            os.environ["TOPSAILAI_SUBAGENT_ROLE_FOLDER"] = str(role_folder)
+            importlib.reload(subagent_tool_module)
+            assert "## Available Subagent Roles" in subagent_tool_module.PROMPT
+            assert "- ``coder``" in subagent_tool_module.PROMPT
+            assert "## Subagent Role Details" in subagent_tool_module.PROMPT
+            assert "### coder" in subagent_tool_module.PROMPT
+            assert "You are a coding assistant." in subagent_tool_module.PROMPT
+            # Role content must be wrapped in a fenced code block to avoid
+            # markdown nesting when the role file itself contains markdown.
+            assert "```text\nYou are a coding assistant.\n```" in subagent_tool_module.PROMPT
+        finally:
+            if original_env:
+                os.environ["TOPSAILAI_SUBAGENT_ROLE_FOLDER"] = original_env
+            else:
+                os.environ.pop("TOPSAILAI_SUBAGENT_ROLE_FOLDER", None)
+            importlib.reload(subagent_tool_module)
+
+    def test_role_mention_prepended_when_role_with_member_extension(self):
+        """Verify message is prefixed when role is given with .member extension."""
+        from topsailai.tools import subagent_tool
+
+        with patch("topsailai.workspace.agent_shell.get_agent_chat") as mock_get_agent_chat, \
+             patch("topsailai.tools.subagent_tool.get_task_id") as mock_get_task_id, \
+             patch.object(subagent_tool, "_SUBAGENT_ROLES", {"reviewer": "You review code."}):
+
+            mock_agent = MagicMock()
+            mock_agent._run.return_value = "response"
+            mock_get_agent_chat.return_value = mock_agent
+            mock_get_task_id.return_value = "task_123"
+
+            subagent_tool.call_assistant("check this", role="reviewer.member")
+
+            mock_agent._run.assert_called_once_with(
+                message="@reviewer:\ncheck this",
+                times=1,
+                need_session_lock=False,
+                task_id="task_123",
+            )
+
+    def test_role_mention_prepended_when_role_matches(self):
+        """Verify message is prefixed when role matches a known role."""
+        from topsailai.tools import subagent_tool
+
+        with patch("topsailai.workspace.agent_shell.get_agent_chat") as mock_get_agent_chat, \
+             patch("topsailai.tools.subagent_tool.get_task_id") as mock_get_task_id, \
+             patch.object(subagent_tool, "_SUBAGENT_ROLES", {"reviewer": "You review code."}), \
+             patch.object(subagent_tool, "_SUBAGENT_ROLE_CATALOG", "## Available Subagent Roles\n- reviewer"):
+
+            mock_agent = MagicMock()
+            mock_agent._run.return_value = "response"
+            mock_get_agent_chat.return_value = mock_agent
+            mock_get_task_id.return_value = "task_123"
+
+            subagent_tool.call_assistant("check this", role="reviewer")
+
+            call_kwargs = mock_get_agent_chat.call_args[1]
+            assert "You review code." in call_kwargs["system_prompt"]
+            # The full role catalog should NOT be injected into the subagent system prompt.
+            assert "## Available Subagent Roles" not in call_kwargs["system_prompt"]
+            mock_agent._run.assert_called_once_with(
+                message="@reviewer:\ncheck this",
+                times=1,
+                need_session_lock=False,
+                task_id="task_123",
+            )
+
+    def test_role_catalog_escapes_markdown_in_member_content(self):
+        """Verify role content containing markdown is wrapped so it does not break the main prompt."""
+        import tempfile
+        import importlib
+        import os
+        from topsailai.tools import subagent_tool as subagent_tool_module
+
+        original_env = os.environ.get("TOPSAILAI_SUBAGENT_ROLE_FOLDER")
+        tmpdir = tempfile.mkdtemp()
+        try:
+            role_path = os.path.join(tmpdir, "writer.member")
+            with open(role_path, "w", encoding="utf-8") as f:
+                f.write("# Writer Role\n\nYou write docs.\n\n```python\nprint('hello')\n```\n")
+
+            os.environ["TOPSAILAI_SUBAGENT_ROLE_FOLDER"] = tmpdir
+            importlib.reload(subagent_tool_module)
+
+            assert "## Available Subagent Roles" in subagent_tool_module.PROMPT
+            assert "- ``writer``" in subagent_tool_module.PROMPT
+            assert "## Subagent Role Details" in subagent_tool_module.PROMPT
+            assert "### writer" in subagent_tool_module.PROMPT
+            # The content must be inside a fenced code block whose fence is longer than any
+            # fence present in the role content, preventing markdown nesting.
+            assert "````text" in subagent_tool_module.PROMPT
+            assert "# Writer Role" in subagent_tool_module.PROMPT
+            assert "```python" in subagent_tool_module.PROMPT
+            assert "````" in subagent_tool_module.PROMPT
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            if original_env:
+                os.environ["TOPSAILAI_SUBAGENT_ROLE_FOLDER"] = original_env
+            else:
+                os.environ.pop("TOPSAILAI_SUBAGENT_ROLE_FOLDER", None)
+            importlib.reload(subagent_tool_module)
+
+    def test_no_mention_when_role_missing(self):
+        """Verify no prefix when role is omitted."""
+        from topsailai.tools import subagent_tool
+
+        with patch("topsailai.workspace.agent_shell.get_agent_chat") as mock_get_agent_chat, \
+             patch("topsailai.tools.subagent_tool.get_task_id") as mock_get_task_id:
+
+            mock_agent = MagicMock()
+            mock_agent._run.return_value = "response"
+            mock_get_agent_chat.return_value = mock_agent
+            mock_get_task_id.return_value = "task_123"
+
+            subagent_tool.call_assistant("plain task")
+
+            mock_agent._run.assert_called_once_with(
+                message="plain task",
+                times=1,
+                need_session_lock=False,
+                task_id="task_123",
+            )
+
+    def test_no_mention_when_role_unknown(self):
+        """Verify error raised when role does not match any file."""
+        from topsailai.tools import subagent_tool
+
+        with patch("topsailai.workspace.agent_shell.get_agent_chat") as mock_get_agent_chat, \
+             patch("topsailai.tools.subagent_tool.get_task_id") as mock_get_task_id, \
+             patch.object(subagent_tool, "_SUBAGENT_ROLES", {}):
+
+            mock_agent = MagicMock()
+            mock_agent._run.return_value = "response"
+            mock_get_agent_chat.return_value = mock_agent
+            mock_get_task_id.return_value = "task_123"
+
+            with pytest.raises(AssertionError, match="invalid role"):
+                subagent_tool.call_assistant("plain task", role="unknown")
+
+    def test_role_folder_override_via_env_var(self, tmp_path):
+        """Verify custom role folder is discovered via env var."""
+        import importlib
+        import topsailai.tools.subagent_tool as subagent_tool_module
+
+        role_folder = tmp_path / "custom_roles"
+        role_folder.mkdir()
+        (role_folder / "test_role.member").write_text("You are a test role.")
+
+        original_env = os.environ.get("TOPSAILAI_SUBAGENT_ROLE_FOLDER", "")
+        try:
+            os.environ["TOPSAILAI_SUBAGENT_ROLE_FOLDER"] = str(role_folder)
+            importlib.reload(subagent_tool_module)
+            assert "test_role" in subagent_tool_module._SUBAGENT_ROLES
+            assert subagent_tool_module._SUBAGENT_ROLES["test_role"] == "You are a test role."
+        finally:
+            if original_env:
+                os.environ["TOPSAILAI_SUBAGENT_ROLE_FOLDER"] = original_env
+            else:
+                os.environ.pop("TOPSAILAI_SUBAGENT_ROLE_FOLDER", None)
+            importlib.reload(subagent_tool_module)
 
 
 class TestIntegration:
@@ -358,8 +532,7 @@ class TestEdgeCases:
             call_assistant("test task")
         
         call_kwargs = mock_get_agent_chat.call_args[1]
-        assert call_kwargs["agent_name"] == "Sub.Test_Agent-123."
-
+        assert call_kwargs["agent_name"] == "Sub.Test_Agent-123"
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

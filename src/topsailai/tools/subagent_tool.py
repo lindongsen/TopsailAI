@@ -6,6 +6,7 @@
 '''
 
 import os
+import re
 
 from topsailai.logger import logger
 from topsailai.utils.env_tool import (
@@ -16,6 +17,131 @@ from topsailai.tools import (
 )
 from topsailai.prompt_hub import prompt_tool
 from topsailai.workspace.task import task_tool
+from topsailai.workspace.folder_constants import FOLDER_ROOT
+
+
+DEFAULT_SUBAGENT_ROLE_FOLDER = os.path.join(FOLDER_ROOT, "subagents")
+SUBAGENT_ROLE_FILE_PATTERN = re.compile(r"^(?P<name>[^.]+)\.member$")
+
+
+def _get_subagent_role_folder() -> str:
+    """Resolve the folder that contains subagent role definition files.
+
+    Reads ``TOPSAILAI_SUBAGENT_ROLE_FOLDER``. When unset or empty, falls back
+    to ``{TOPSAILAI_HOME}/subagents``.
+
+    Returns:
+        str: Absolute path to the role folder.
+    """
+    folder = EnvReaderInstance.get("TOPSAILAI_SUBAGENT_ROLE_FOLDER", "")
+    if not folder:
+        folder = DEFAULT_SUBAGENT_ROLE_FOLDER
+    folder = os.path.expanduser(folder)
+    return os.path.abspath(folder)
+
+
+def _discover_subagent_roles(folder: str) -> dict[str, str]:
+    """Discover and load subagent role definitions from a folder.
+
+    Scans ``folder`` for files matching ``*.member`` and returns a
+    mapping from role name to file content. Roles are sorted alphabetically to
+    keep prompt construction deterministic.
+
+    Args:
+        folder: Path to the role folder.
+
+    Returns:
+        dict[str, str]: Mapping of role name -> role markdown content.
+    """
+    roles: dict[str, str] = {}
+    if not os.path.isdir(folder):
+        logger.debug("subagent role folder does not exist: %s", folder)
+        return roles
+
+    for entry in sorted(os.listdir(folder)):
+        match = SUBAGENT_ROLE_FILE_PATTERN.match(entry)
+        if not match:
+            continue
+        name = match.group("name")
+        file_path = os.path.join(folder, entry)
+        content = EnvReaderInstance.try_read_file(file_path)
+        if content:
+            roles[name] = content
+    return roles
+
+
+def _escape_role_content(content: str) -> str:
+    """Wrap role content in a markdown code fence to avoid nesting issues.
+
+    Role files may contain markdown headings, lists, or other formatting that
+    would break the main tool prompt's own markdown structure. Wrapping the
+    content in a fenced code block renders it verbatim. The fence length is
+    chosen to be longer than any run of backticks in the content.
+
+    Args:
+        content: Raw role file content.
+
+    Returns:
+        str: Role content wrapped in a markdown code fence.
+    """
+    max_ticks = 0
+    current = 0
+    for ch in content:
+        if ch == "`":
+            current += 1
+            max_ticks = max(max_ticks, current)
+        else:
+            current = 0
+    fence = "`" * max(max_ticks + 1, 3)
+    return f"{fence}text\n{content}\n{fence}"
+
+
+def _build_role_catalog(roles: dict[str, str]) -> str:
+    """Build a markdown catalog of available subagent roles.
+
+    The catalog is split into two sections to keep the prompt readable even
+    when role definition files contain markdown formatting:
+
+    1. ``## Available Subagent Roles`` lists only the role names.
+    2. ``## Subagent Role Details`` contains each role's full
+       ``{role}.member`` definition wrapped in a fenced code block to prevent
+       markdown nesting.
+
+    Args:
+        roles: Mapping of role name -> role markdown content.
+
+    Returns:
+        str: Markdown sections describing available subagents and their roles.
+    """
+    if not roles:
+        return ""
+
+    sorted_names = sorted(roles)
+
+    lines = [
+        "",
+        "## Available Subagent Roles",
+        "",
+        "You can delegate tasks to a specialized subagent by passing the ``role`` argument.",
+        "",
+    ]
+    for name in sorted_names:
+        lines.append(f"- ``{name}``")
+    lines.append("")
+
+    lines.append("## Subagent Role Details")
+    lines.append("")
+    for name in sorted_names:
+        lines.append(f"### {name}")
+        lines.append("")
+        lines.append(_escape_role_content(roles[name]))
+        lines.append("")
+    return "\n".join(lines)
+
+
+_SUBAGENT_ROLE_FOLDER = _get_subagent_role_folder()
+_SUBAGENT_ROLES = _discover_subagent_roles(_SUBAGENT_ROLE_FOLDER)
+_SUBAGENT_ROLE_CATALOG = _build_role_catalog(_SUBAGENT_ROLES)
 
 
 def gen_task_id():
@@ -50,7 +176,7 @@ def get_task_id():
     return gen_task_id()
 
 
-def call_assistant(task:str, llm:str=None) -> str:
+def call_assistant(task:str, role:str=None, llm:str=None) -> str:
     """
     This is a versatile AI assistant. Leave everything you can't solve to it.
 
@@ -59,6 +185,7 @@ def call_assistant(task:str, llm:str=None) -> str:
 
     Args:
         task (str): content
+        role (str, optional): subagent role name
         llm (str, optional): large language model
 
     Returns:
@@ -66,8 +193,15 @@ def call_assistant(task:str, llm:str=None) -> str:
     """
     assert task, "missing task content"
 
-    agent_name = os.getenv("TOPSAILAI_AGENT_NAME") or "Agent"
-    agent_name = "Sub." + agent_name + f".{llm or ''}"
+    if role:
+        if role.endswith(".member"):
+            role = role[:-len(".member")]
+        assert role in _SUBAGENT_ROLES, f"invalid role: [{role}]"
+
+    role_name = role
+    agent_name = role_name or os.getenv("TOPSAILAI_AGENT_NAME") or "Agent"
+    suffix = f".{llm}" if llm else ""
+    agent_name = f"Sub.{agent_name}{suffix}"
 
     from topsailai.workspace.agent_shell import get_agent_chat
 
@@ -75,9 +209,16 @@ def call_assistant(task:str, llm:str=None) -> str:
 
     system_prompt = f"""
 ## Sub Agent
-I am a sub-agent, and my name is ({agent_name})
+I am a sub-agent, and my name is ({role_name or agent_name})
 """
     system_prompt += EnvReaderInstance.read_file_or_content("TOPSAILAI_SUBAGENT_SYSTEM_PROMPT")
+
+    message = task
+    if role:
+        role_content = _SUBAGENT_ROLES.get(role)
+        assert role_content, f"role content missing: [{role}]"
+        system_prompt += "\n\n" + role_content
+        message = f"@{role}:\n{task}"
 
     task_agent = get_agent_chat(
         system_prompt=system_prompt,
@@ -92,11 +233,12 @@ I am a sub-agent, and my name is ({agent_name})
 
     task_id = get_task_id()
     return task_agent._run(
-        message=task,
+        message=message,
         times=1,
         need_session_lock=False,
         task_id=task_id,
     )
+
 
 def init_doc():
     models = EnvReaderInstance.get_list_str("TOPSAILAI_SUBAGENT_TOOL_AVAILABLE_LLMS", separator="")
@@ -109,7 +251,6 @@ def init_doc():
     return
 
 init_doc()
-
 TOOLS = dict(
     call_assistant=call_assistant,
 )
@@ -117,4 +258,5 @@ TOOLS = dict(
 FLAG_TOOL_ENABLED = False
 
 PROMPT = prompt_tool.read_prompt("work_mode/sop/collaboration.md") + \
-    EnvReaderInstance.read_file_or_content("TOPSAILAI_SUBAGENT_TOOL_PROMPT")
+    EnvReaderInstance.read_file_or_content("TOPSAILAI_SUBAGENT_TOOL_PROMPT") + \
+    _SUBAGENT_ROLE_CATALOG

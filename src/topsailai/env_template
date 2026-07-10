@@ -495,6 +495,9 @@ TOPSAILAI_TOOL_CALL_MAXIMUM_RETURN=300000
 TOPSAILAI_SUBAGENT_TOOL_AVAILABLE_LLMS=""
 TOPSAILAI_SUBAGENT_TOOL_PROMPT=""
 TOPSAILAI_SUBAGENT_SYSTEM_PROMPT=""
+# Folder containing subagent role definition files named {role_name}.member.
+# When unset or empty, defaults to ${TOPSAILAI_HOME}/subagents.
+TOPSAILAI_SUBAGENT_ROLE_FOLDER=""
 
 # multimodal_tool
 TOPSAILAI_MULTIMODAL_TOOL_PROMPT=""
