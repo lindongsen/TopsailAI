@@ -149,6 +149,12 @@ def print_help(
             "scopes": ["session", "runtime"],
         },
         {
+            "cmd": "<free-form text>",
+            "desc": "While streaming a log, any input that is not a recognized command prompts 'Send as message? [y/N]'. Answering yes sends the input to the watched session via /send.",
+            "example": "Example: hello  (then answer y to send it)",
+            "scopes": ["runtime"],
+        },
+        {
             "cmd": "/help [<keyword>]",
             "desc": "Display this help message with all available commands. Use /help <keyword> to search commands by name, alias, or description.",
             "example": "Example: /help ctx",

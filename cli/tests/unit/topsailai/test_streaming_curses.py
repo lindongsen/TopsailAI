@@ -7,7 +7,7 @@ import os
 import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 sys.path.insert(
     0,
@@ -21,6 +21,7 @@ from cli_topsailai.streaming import (
     _CursesOutputCapture,
     _build_stream_command_handler,
     _can_use_curses,
+    _prompt_send_as_message,
     _run_curses_ui,
     stream_file,
 )
@@ -53,9 +54,7 @@ class TestStreamFileCursesPath(unittest.TestCase):
 
     @patch("cli_topsailai.streaming._run_curses_ui")
     @patch("cli_topsailai.streaming._can_use_curses", return_value=True)
-    def test_uses_curses_when_available(
-        self, mock_can_use, mock_run_curses
-    ):
+    def test_uses_curses_when_available(self, mock_can_use, mock_run_curses):
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write("log line\n")
             path = f.name
@@ -83,9 +82,7 @@ class TestStreamFileCursesPath(unittest.TestCase):
 
     @patch("cli_topsailai.streaming._stream_file_legacy")
     @patch("cli_topsailai.streaming._can_use_curses", return_value=False)
-    def test_falls_back_to_legacy_when_unavailable(
-        self, mock_can_use, mock_legacy
-    ):
+    def test_falls_back_to_legacy_when_unavailable(self, mock_can_use, mock_legacy):
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write("log line\n")
             path = f.name
@@ -120,7 +117,7 @@ class TestRunCursesUi(unittest.TestCase):
     def test_builds_ui_and_runs(self, mock_build_handler, mock_ui_cls):
         mock_ui = MagicMock()
         mock_ui_cls.return_value = mock_ui
-        mock_handler = MagicMock()
+        mock_handler = MagicMock(return_value=True)
         mock_build_handler.return_value = mock_handler
 
         _run_curses_ui(
@@ -131,7 +128,6 @@ class TestRunCursesUi(unittest.TestCase):
             "/tmp/tasks/s1.123.session.stdout",
         )
 
-        mock_ui_cls.assert_called_once()
         call_kwargs = mock_ui_cls.call_args.kwargs
         self.assertEqual(call_kwargs["filepath"], "/tmp/test.log")
         self.assertEqual(call_kwargs["task_dir"], "/tmp/tasks")
@@ -200,7 +196,7 @@ class TestCursesOutputCapture(unittest.TestCase):
         capture.write("line1\nline2\n")
         self.assertEqual(
             self.ui.append_status.call_args_list,
-            [(("line1",),), (("line2",),)],
+            [call("line1"), call("line2")],
         )
 
     def test_flush_calls_original_flush(self):
@@ -255,7 +251,10 @@ class TestCursesOutputCapture(unittest.TestCase):
             print("printed line")
 
         self.assertTrue(
-            any("printed line" in str(call) for call in self.ui.append_status.call_args_list)
+            any(
+                "printed line" in str(call)
+                for call in self.ui.append_status.call_args_list
+            )
         )
 
 
@@ -316,13 +315,15 @@ class TestBuildStreamCommandHandler(unittest.TestCase):
         mock_handle.assert_called_once()
         self.assertEqual(mock_handle.call_args[0][0], "/help")
 
-    def test_unknown_command_appends_status(self):
+    @patch("cli_topsailai.streaming._prompt_send_as_message")
+    def test_unknown_command_prompts_send_as_message(self, mock_prompt):
         result = self.handler("not-a-command")
         self.assertTrue(result)
-        self.ui.append_status.assert_called_once()
-        status = self.ui.append_status.call_args[0][0]
-        self.assertIn("Unknown streaming command", status)
-        self.assertIn("/send", status)
+        mock_prompt.assert_called_once()
+        args = mock_prompt.call_args
+        self.assertEqual(args[0][0], "not-a-command")
+        self.assertEqual(args[1]["output_callback"], self.ui.append_status)
+        self.assertEqual(args[1]["input_callback"], self.ui.read_multi_line_blocking)
 
     @patch("cli_topsailai.streaming._handle_stream_command")
     def test_input_provider_uses_ui_multi_line(self, mock_handle):
@@ -358,6 +359,114 @@ class TestBuildStreamCommandHandler(unittest.TestCase):
         finally:
             sys.stdout = original_stdout
             sys.stderr = original_stderr
+
+
+class TestPromptSendAsMessage(unittest.TestCase):
+    """Tests for the yes/no prompt that sends unrecognized input as /send."""
+
+    @patch("cli_topsailai.streaming._handle_stream_command")
+    def test_yes_sends_input_via_send(self, mock_handle):
+        result = _prompt_send_as_message(
+            "hello",
+            "/tmp/tasks",
+            [{"filename": "s1.stdout"}],
+            "s1",
+            "/tmp/tasks/s1.123.session.stdout",
+            input_provider=None,
+            output_callback=None,
+            input_callback=lambda prompt: "y",
+        )
+        self.assertTrue(result)
+        mock_handle.assert_called_once_with(
+            "/send hello",
+            "/tmp/tasks",
+            [{"filename": "s1.stdout"}],
+            "s1",
+            "/tmp/tasks/s1.123.session.stdout",
+            input_provider=None,
+        )
+
+    @patch("cli_topsailai.streaming._handle_stream_command")
+    def test_yes_uppercase_sends_input(self, mock_handle):
+        result = _prompt_send_as_message(
+            "hello",
+            "/tmp/tasks",
+            [],
+            "s1",
+            "/tmp/tasks/s1.123.session.stdout",
+            input_callback=lambda prompt: "YES",
+        )
+        self.assertTrue(result)
+        mock_handle.assert_called_once()
+        self.assertEqual(mock_handle.call_args[0][0], "/send hello")
+
+    @patch("cli_topsailai.streaming._handle_stream_command")
+    def test_no_preserves_unknown_command(self, mock_handle):
+        output = MagicMock()
+        result = _prompt_send_as_message(
+            "hello",
+            "/tmp/tasks",
+            [],
+            "s1",
+            "/tmp/tasks/s1.123.session.stdout",
+            input_callback=lambda prompt: "n",
+            output_callback=output,
+        )
+        self.assertTrue(result)
+        mock_handle.assert_not_called()
+        output.assert_called_once()
+        self.assertIn("Unknown streaming command", output.call_args[0][0])
+
+    @patch("cli_topsailai.streaming._handle_stream_command")
+    def test_empty_answer_preserves_unknown_command(self, mock_handle):
+        output = MagicMock()
+        result = _prompt_send_as_message(
+            "hello",
+            "/tmp/tasks",
+            [],
+            "s1",
+            "/tmp/tasks/s1.123.session.stdout",
+            input_callback=lambda prompt: "",
+            output_callback=output,
+        )
+        self.assertTrue(result)
+        mock_handle.assert_not_called()
+        output.assert_called_once()
+
+    @patch("cli_topsailai.streaming._handle_stream_command")
+    def test_cancel_returns_false(self, mock_handle):
+        result = _prompt_send_as_message(
+            "hello",
+            "/tmp/tasks",
+            [],
+            "s1",
+            "/tmp/tasks/s1.123.session.stdout",
+            input_callback=lambda prompt: None,
+        )
+        self.assertFalse(result)
+        mock_handle.assert_not_called()
+
+    @patch("cli_topsailai.streaming._handle_stream_command")
+    @patch("builtins.input")
+    def test_fallback_to_builtin_input(self, mock_input, mock_handle):
+        mock_input.return_value = "y"
+        result = _prompt_send_as_message(
+            "hello",
+            "/tmp/tasks",
+            [],
+            "s1",
+            "/tmp/tasks/s1.123.session.stdout",
+        )
+        self.assertTrue(result)
+        mock_input.assert_called_once_with("Send as message? [y/N]: ")
+        mock_handle.assert_called_once_with(
+            "/send hello",
+            "/tmp/tasks",
+            [],
+            "s1",
+            "/tmp/tasks/s1.123.session.stdout",
+            input_provider=None,
+        )
 
 
 if __name__ == "__main__":

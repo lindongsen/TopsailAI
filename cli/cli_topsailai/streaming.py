@@ -318,15 +318,76 @@ def _build_stream_command_handler(
                     input_provider=_multi_line_input_provider,
                 )
             else:
-                ui.append_status(
-                    f"[ERROR] Unknown streaming command: {cmd_line}. "
-                    f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', or 'cd'."
+                _prompt_send_as_message(
+                    cmd_line,
+                    task_dir,
+                    log_files,
+                    default_session_id,
+                    default_stdout_path,
+                    input_provider=_multi_line_input_provider,
+                    output_callback=ui.append_status,
+                    input_callback=ui.read_multi_line_blocking,
                 )
         return True
 
     return handler
 
 
+def _prompt_send_as_message(
+    raw_input: str,
+    task_dir: str,
+    log_files: List[dict],
+    default_session_id: Optional[str],
+    default_stdout_path: Optional[str],
+    input_provider: Optional[Callable[[str], Optional[str]]] = None,
+    output_callback: Optional[Callable[[str], None]] = None,
+    input_callback: Optional[Callable[[str], Optional[str]]] = None,
+) -> bool:
+    """
+    Ask the user whether to send unrecognized runtime input as a message.
+
+    If the user confirms, the raw input is forwarded to the existing ``/send``
+    mechanism.  If the user declines, the original "Unknown command" behavior
+    is preserved.
+
+    Returns ``True`` if the input was handled (sent or declined), ``False``
+    when the user cancels the prompt.
+    """
+    prompt = "Send as message? [y/N]: "
+    if input_callback is not None:
+        answer = input_callback(prompt)
+    else:
+        try:
+            answer = input(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            return False
+
+    if answer is None:
+        return False
+
+    answer_lower = answer.strip().lower()
+    if answer_lower in ("y", "yes"):
+        _handle_stream_command(
+            f"/send {raw_input}",
+            task_dir,
+            log_files,
+            default_session_id,
+            default_stdout_path,
+            input_provider=input_provider,
+        )
+        return True
+
+    if output_callback is not None:
+        output_callback(
+            f"[ERROR] Unknown streaming command: {raw_input}. "
+            f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', 'quit', 'exit', or 'cd'."
+        )
+    else:
+        print(
+            f"{Colors.RED}[ERROR] Unknown streaming command: {raw_input}. "
+            f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
+        )
+    return True
 
 
 def _tail_file(path: str, tail_lines: int) -> None:
@@ -390,11 +451,16 @@ def _dispatch_input(
             default_stdout_path,
         )
         return True
-    print(
-        f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
-        f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
+    return _prompt_send_as_message(
+        cmd_line,
+        task_dir,
+        log_files,
+        default_session_id,
+        default_stdout_path,
+        input_provider=None,
+        output_callback=None,
+        input_callback=None,
     )
-    return True
 
 
 def _stream_file_raw(
@@ -528,9 +594,15 @@ def _stream_file_legacy(
                                     default_stdout_path,
                                 )
                                 continue
-                            print(
-                                f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
-                                f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
+                            _prompt_send_as_message(
+                                cmd_line,
+                                task_dir,
+                                log_files,
+                                default_session_id,
+                                default_stdout_path,
+                                input_provider=None,
+                                output_callback=None,
+                                input_callback=None,
                             )
                     else:
                         time.sleep(0.05)
@@ -709,6 +781,7 @@ def _handle_stream_ctx_btw(
 
     yaml_commands.handle_yaml_command(instruction, variables)
 
+
 def _format_pipe_payload(message: str) -> bytes:
     """
     Format a message for the pipe protocol.
@@ -742,10 +815,8 @@ def send_message_to_session(
         and is displayed as ``(temp)``.
 
     PID resolution priority:
-      1. ``pid`` argument when provided (e.g. the PID recorded in the task
-         list entry selected by the user).
-      2. PID parsed from the stdout filename (session stdout files contain
-         the session PID; task stdout files contain the task child PID).
+      1. ``pid`` argument when provided (e.g. from the task list entry).
+      2. PID parsed from the stdout filename.
       3. PID discovered by scanning processes that currently have the stdout
          file open (``lsof`` / ``fuser``).
 

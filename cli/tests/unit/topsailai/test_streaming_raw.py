@@ -22,6 +22,7 @@ from cli_topsailai.streaming import (
     _extract_session_id_from_path,
     _handle_stream_ctx_btw,
     _handle_stream_send,
+    _prompt_send_as_message,
     _read_input_line,
     _stream_file_raw,
     _tail_file,
@@ -121,17 +122,22 @@ class TestDispatchRawInput(unittest.TestCase):
             "/send hello", "/task", [], "s1", "/task/s.log"
         )
 
-    def test_unknown_command_prints_error(self):
-        with patch("builtins.print") as mock_print:
-            result = _dispatch_input(
-                "what", "/task", [], "s1", "/task/s.log"
-            )
+    @patch("cli_topsailai.streaming._prompt_send_as_message")
+    def test_unknown_command_prompts_send_as_message(self, mock_prompt):
+        mock_prompt.return_value = True
+        result = _dispatch_input(
+            "what", "/task", [], "s1", "/task/s.log"
+        )
         self.assertTrue(result)
-        self.assertTrue(
-            any(
-                "Unknown streaming command" in str(call)
-                for call in mock_print.call_args_list
-            )
+        mock_prompt.assert_called_once_with(
+            "what",
+            "/task",
+            [],
+            "s1",
+            "/task/s.log",
+            input_provider=None,
+            output_callback=None,
+            input_callback=None,
         )
 
 
@@ -195,6 +201,41 @@ class TestStreamFileRaw(unittest.TestCase):
 
             mock_handle.assert_called_once_with(
                 "/send hello", tmpdir, [], "s1", path
+            )
+
+    @patch("cli_topsailai.streaming.subprocess.run")
+    @patch("cli_topsailai.streaming.sys.stdin.isatty", return_value=True)
+    @patch("cli_topsailai.streaming.select.select")
+    @patch("cli_topsailai.streaming._read_input_line")
+    @patch("cli_topsailai.streaming._prompt_send_as_message")
+    def test_unknown_command_prompts_in_raw_mode(
+        self,
+        mock_prompt,
+        mock_read,
+        mock_select,
+        mock_isatty,
+        mock_run,
+    ):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "s1.1234.session.stdout")
+            with open(path, "w") as f:
+                f.write("existing line\n")
+
+            mock_select.side_effect = [([sys.stdin], [], []), ([], [], [])]
+            mock_read.side_effect = ["hello", "q"]
+            mock_prompt.return_value = True
+
+            _stream_file_raw(path, tmpdir, [], "s1", path, tail_lines=1)
+
+            mock_prompt.assert_called_once_with(
+                "hello",
+                tmpdir,
+                [],
+                "s1",
+                path,
+                input_provider=None,
+                output_callback=None,
+                input_callback=None,
             )
 
     @patch("cli_topsailai.streaming.subprocess.run")
@@ -301,6 +342,65 @@ class TestHandleStreamCtxBtwRestored(unittest.TestCase):
         self.assertTrue(
             any("Could not match /ctx.btw" in str(p) for p in printed)
         )
+
+
+class TestPromptSendAsMessageRaw(unittest.TestCase):
+    """Tests for the yes/no prompt in raw/legacy mode."""
+
+    @patch("cli_topsailai.streaming._handle_stream_command")
+    @patch("builtins.input")
+    def test_yes_sends_input(self, mock_input, mock_handle):
+        mock_input.return_value = "y"
+        result = _prompt_send_as_message(
+            "hello",
+            "/tmp/tasks",
+            [],
+            "s1",
+            "/tmp/tasks/s1.123.session.stdout",
+        )
+        self.assertTrue(result)
+        mock_input.assert_called_once_with("Send as message? [y/N]: ")
+        mock_handle.assert_called_once_with(
+            "/send hello",
+            "/tmp/tasks",
+            [],
+            "s1",
+            "/tmp/tasks/s1.123.session.stdout",
+            input_provider=None,
+        )
+
+    @patch("cli_topsailai.streaming._handle_stream_command")
+    @patch("builtins.input")
+    def test_no_preserves_unknown_command(self, mock_input, mock_handle):
+        mock_input.return_value = "n"
+        with patch("builtins.print") as mock_print:
+            result = _prompt_send_as_message(
+                "hello",
+                "/tmp/tasks",
+                [],
+                "s1",
+                "/tmp/tasks/s1.123.session.stdout",
+            )
+        self.assertTrue(result)
+        mock_handle.assert_not_called()
+        printed = [call[0][0] for call in mock_print.call_args_list]
+        self.assertTrue(
+            any("Unknown streaming command" in str(p) for p in printed)
+        )
+
+    @patch("cli_topsailai.streaming._handle_stream_command")
+    @patch("builtins.input")
+    def test_eof_returns_false(self, mock_input, mock_handle):
+        mock_input.side_effect = EOFError
+        result = _prompt_send_as_message(
+            "hello",
+            "/tmp/tasks",
+            [],
+            "s1",
+            "/tmp/tasks/s1.123.session.stdout",
+        )
+        self.assertFalse(result)
+        mock_handle.assert_not_called()
 
 
 if __name__ == "__main__":
