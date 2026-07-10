@@ -254,7 +254,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
 
         self._log_summarize_message_identity_changes(
             "summarize_messages_for_processing",
-            original_messages,
+            original_messages + self.messages,
             new_messages,
             summary_answer,
         )
