@@ -538,32 +538,95 @@ def _read_input_line_tty(prompt: str, already_raw: bool = False) -> Optional[str
     def display_width(chars: List[str]) -> int:
         return sum(_char_display_width(c) for c in chars)
 
+    last_total_rows = 1
+
     def redraw() -> None:
-        # Return to the start of the prompt, repaint the whole input line,
-        # clear to the end of the screen, then move the cursor to its logical
-        # position.  We use \r and ANSI cursor positioning instead of relying
-        # on the terminal's own wrap state, because in raw mode the terminal
-        # still auto-wraps when the cursor reaches the rightmost column and
-        # that causes the prompt to scroll/duplicate on every keystroke once
-        # the input is wider than the screen.
-        #
-        # To prevent the terminal from inserting soft line breaks while we
-        # repaint, auto-wrap is temporarily disabled; this keeps the input on
-        # a single logical line even when it is longer than the terminal width.
+        # Repaint the prompt and input buffer, wrapping long input across
+        # multiple terminal lines manually.  The terminal's auto-wrap is
+        # disabled during the repaint so the prompt is not duplicated when
+        # the input is wider than the screen; we emit explicit \r\n at the
+        # calculated wrap points instead.
+        nonlocal last_total_rows
+        try:
+            cols = os.get_terminal_size().columns
+        except OSError:
+            cols = 80
+
+        full_text = prompt + "".join(buffer)
+
+        def _wrap_text(text: str, width: int) -> List[str]:
+            lines: List[str] = []
+            current_line = ""
+            current_width = 0
+            pos = 0
+            while pos < len(text):
+                m = _ANSI_ESCAPE_RE.match(text, pos)
+                if m:
+                    current_line += m.group(0)
+                    pos = m.end()
+                    continue
+                ch = text[pos]
+                w = _char_display_width(ch)
+                if current_width + w > width and current_line:
+                    lines.append(current_line)
+                    current_line = ch
+                    current_width = w
+                else:
+                    current_line += ch
+                    current_width += w
+                pos += 1
+            lines.append(current_line)
+            return lines
+
+        lines = _wrap_text(full_text, cols)
+        if not lines:
+            lines = [""]
+
+        prompt_width = _display_width_str(prompt)
+        cursor_offset = prompt_width + display_width(buffer[:cursor])
+
+        cursor_row = 0
+        cursor_col = 0
+        pos = 0
+        found = False
+        for i, line in enumerate(lines):
+            line_width = _display_width_str(line)
+            if pos + line_width >= cursor_offset:
+                cursor_row = i
+                remaining = cursor_offset - pos
+                cursor_col = 0
+                for ch in line:
+                    w = _char_display_width(ch)
+                    if remaining <= 0:
+                        break
+                    cursor_col += w
+                    remaining -= w
+                found = True
+                break
+            pos += line_width
+        if not found:
+            cursor_row = len(lines) - 1
+            cursor_col = _display_width_str(lines[-1])
+
         sys.stdout.write("\033[?7l")
         try:
             sys.stdout.write("\r")
-            sys.stdout.write(prompt)
-            for ch in buffer:
-                sys.stdout.write(ch)
+            if last_total_rows > 1:
+                sys.stdout.write(f"\033[{last_total_rows - 1}A")
+            for i, line in enumerate(lines):
+                if i > 0:
+                    sys.stdout.write("\r\n")
+                sys.stdout.write(line)
             sys.stdout.write("\033[J")
-            prompt_width = _display_width_str(prompt)
-            target = prompt_width + display_width(buffer[:cursor])
-            sys.stdout.write(f"\033[{target + 1}G")
+            rows_up = len(lines) - 1 - cursor_row
+            if rows_up > 0:
+                sys.stdout.write(f"\033[{rows_up}A")
+            sys.stdout.write(f"\033[{cursor_col + 1}G")
             sys.stdout.flush()
         finally:
             sys.stdout.write("\033[?7h")
             sys.stdout.flush()
+            last_total_rows = len(lines)
 
     def read_byte() -> Optional[int]:
         data = stdin_buffer.read(1)
