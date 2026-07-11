@@ -2,6 +2,7 @@
 
 import errno
 import os
+import re
 import select
 import stat
 import subprocess
@@ -439,6 +440,18 @@ def _tail_file(path: str, tail_lines: int, raw_mode: bool = False) -> None:
     except Exception:
         pass
 
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from text for display-width calculation."""
+    return _ANSI_ESCAPE_RE.sub("", text)
+
+
+def _display_width_str(text: str) -> int:
+    """Return the display width of a string, ignoring ANSI escape sequences."""
+    return sum(_char_display_width(ch) for ch in _strip_ansi(text))
+
 
 def _char_display_width(ch: str) -> int:
     """Return the display width of a single character.
@@ -525,20 +538,28 @@ def _read_input_line_tty(prompt: str, already_raw: bool = False) -> Optional[str
     def display_width(chars: List[str]) -> int:
         return sum(_char_display_width(c) for c in chars)
 
+    buffer: List[str] = []
+    cursor = 0
+
+    def display_width(chars: List[str]) -> int:
+        return sum(_char_display_width(c) for c in chars)
+
     def redraw() -> None:
-        # Return to the start of the line, repaint the buffer, clear the rest,
-        # then move the cursor to its logical position.
+        # Return to the start of the prompt, repaint the whole input line,
+        # clear to the end of the screen, then move the cursor to its logical
+        # position.  We use \r and ANSI cursor positioning instead of relying
+        # on the terminal's own wrap state, because in raw mode the terminal
+        # still auto-wraps when the cursor reaches the rightmost column and
+        # that causes the prompt to scroll/duplicate on every keystroke once
+        # the input is wider than the screen.
         sys.stdout.write("\r")
         sys.stdout.write(prompt)
         for ch in buffer:
             sys.stdout.write(ch)
-        sys.stdout.write("\033[K")
-        target = display_width(buffer[:cursor])
-        total = display_width(buffer)
-        if total > target:
-            # Use an ANSI cursor-left sequence so wide characters are counted
-            # in display columns rather than relying on backspace (one column).
-            sys.stdout.write(f"\033[{total - target}D")
+        sys.stdout.write("\033[J")
+        prompt_width = _display_width_str(prompt)
+        target = prompt_width + display_width(buffer[:cursor])
+        sys.stdout.write(f"\033[{target + 1}G")
         sys.stdout.flush()
 
     def read_byte() -> Optional[int]:
