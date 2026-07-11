@@ -3,6 +3,7 @@
 Unit tests for the raw runtime streaming mode in cli_topsailai.streaming.
 """
 
+import io
 import os
 import sys
 import tempfile
@@ -24,10 +25,10 @@ from cli_topsailai.streaming import (
     _handle_stream_send,
     _prompt_send_as_message,
     _read_input_line,
+    _read_input_line_tty,
     _stream_file_raw,
     _tail_file,
 )
-
 
 class TestExtractSessionIdFromPath(unittest.TestCase):
     """Tests for _extract_session_id_from_path."""
@@ -401,6 +402,55 @@ class TestPromptSendAsMessageRaw(unittest.TestCase):
         )
         self.assertFalse(result)
         mock_handle.assert_not_called()
+
+
+class TestReadInputLineTty(unittest.TestCase):
+    """Tests for the raw TTY line editor used in runtime scope."""
+
+    def _run_tty_input(self, input_bytes, prompt="", already_raw=True):
+        stdout = io.StringIO()
+        stdin_buffer = io.BytesIO(input_bytes)
+        mock_stdin = MagicMock()
+        mock_stdin.isatty.return_value = True
+        mock_stdin.fileno.return_value = 0
+        mock_stdin.buffer = stdin_buffer
+
+        with patch("cli_topsailai.streaming.sys.stdin", mock_stdin), \
+             patch("cli_topsailai.streaming.sys.stdout", stdout), \
+             patch("cli_topsailai.streaming.termios") as mock_termios, \
+             patch("cli_topsailai.streaming.tty") as mock_tty:
+            mock_termios.tcgetattr.return_value = []
+            return _read_input_line_tty(prompt, already_raw=already_raw), stdout.getvalue()
+
+    def test_csi_left_arrow_inserts_at_correct_position(self):
+        # Type "ab", move cursor left, type "c", press enter.
+        result, _ = self._run_tty_input(b"ab\x1b[Dc\r")
+        self.assertEqual(result, "acb")
+
+    def test_csi_right_arrow_moves_cursor(self):
+        # Type "a", left twice, right once, type "b", press enter.
+        result, _ = self._run_tty_input(b"a\x1b[D\x1b[D\x1b[Cb\r")
+        self.assertEqual(result, "ab")
+
+    def test_ss3_left_arrow_inserts_at_correct_position(self):
+        # Type "ab", move cursor left via SS3 sequence, type "c", press enter.
+        result, _ = self._run_tty_input(b"ab\x1bODc\r")
+        self.assertEqual(result, "acb")
+
+    def test_ss3_right_arrow_moves_cursor(self):
+        # Type "a", left, right, type "b", press enter.
+        result, _ = self._run_tty_input(b"a\x1bOD\x1bOCb\r")
+        self.assertEqual(result, "ab")
+
+    def test_home_and_end_keys(self):
+        # Type "ab", home, type "x", end, type "y", press enter.
+        result, _ = self._run_tty_input(b"ab\x1b[Hx\x1b[Fy\r")
+        self.assertEqual(result, "xaby")
+
+    def test_wide_character_cursor_positioning(self):
+        # Type a CJK character (3 bytes UTF-8), left, type "a", enter.
+        result, _ = self._run_tty_input("中\x1b[Da\r".encode("utf-8"))
+        self.assertEqual(result, "a中")
 
 
 if __name__ == "__main__":
