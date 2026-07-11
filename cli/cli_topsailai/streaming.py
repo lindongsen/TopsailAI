@@ -536,7 +536,9 @@ def _read_input_line_tty(prompt: str, already_raw: bool = False) -> Optional[str
         target = display_width(buffer[:cursor])
         total = display_width(buffer)
         if total > target:
-            sys.stdout.write("\b" * (total - target))
+            # Use an ANSI cursor-left sequence so wide characters are counted
+            # in display columns rather than relying on backspace (one column).
+            sys.stdout.write(f"\033[{total - target}D")
         sys.stdout.flush()
 
     def read_byte() -> Optional[int]:
@@ -642,7 +644,17 @@ def _read_input_line_tty(prompt: str, already_raw: bool = False) -> Optional[str
                 elif seq1 == 0x4F:  # 'O'
                     seq2 = read_byte()
                     _debug_input(f"ESC O seq2={seq2}")
-                    if seq2 == 0x48:  # home
+                    if seq2 == 0x44:  # 'D' left
+                        if cursor > 0:
+                            cursor -= 1
+                            _debug_input(f"SS3 Left cursor={cursor}")
+                            redraw()
+                    elif seq2 == 0x43:  # 'C' right
+                        if cursor < len(buffer):
+                            cursor += 1
+                            _debug_input(f"SS3 Right cursor={cursor}")
+                            redraw()
+                    elif seq2 == 0x48:  # home
                         cursor = 0
                         redraw()
                     elif seq2 == 0x46:  # end
