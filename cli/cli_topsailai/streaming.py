@@ -538,12 +538,6 @@ def _read_input_line_tty(prompt: str, already_raw: bool = False) -> Optional[str
     def display_width(chars: List[str]) -> int:
         return sum(_char_display_width(c) for c in chars)
 
-    buffer: List[str] = []
-    cursor = 0
-
-    def display_width(chars: List[str]) -> int:
-        return sum(_char_display_width(c) for c in chars)
-
     def redraw() -> None:
         # Return to the start of the prompt, repaint the whole input line,
         # clear to the end of the screen, then move the cursor to its logical
@@ -552,15 +546,24 @@ def _read_input_line_tty(prompt: str, already_raw: bool = False) -> Optional[str
         # still auto-wraps when the cursor reaches the rightmost column and
         # that causes the prompt to scroll/duplicate on every keystroke once
         # the input is wider than the screen.
-        sys.stdout.write("\r")
-        sys.stdout.write(prompt)
-        for ch in buffer:
-            sys.stdout.write(ch)
-        sys.stdout.write("\033[J")
-        prompt_width = _display_width_str(prompt)
-        target = prompt_width + display_width(buffer[:cursor])
-        sys.stdout.write(f"\033[{target + 1}G")
-        sys.stdout.flush()
+        #
+        # To prevent the terminal from inserting soft line breaks while we
+        # repaint, auto-wrap is temporarily disabled; this keeps the input on
+        # a single logical line even when it is longer than the terminal width.
+        sys.stdout.write("\033[?7l")
+        try:
+            sys.stdout.write("\r")
+            sys.stdout.write(prompt)
+            for ch in buffer:
+                sys.stdout.write(ch)
+            sys.stdout.write("\033[J")
+            prompt_width = _display_width_str(prompt)
+            target = prompt_width + display_width(buffer[:cursor])
+            sys.stdout.write(f"\033[{target + 1}G")
+            sys.stdout.flush()
+        finally:
+            sys.stdout.write("\033[?7h")
+            sys.stdout.flush()
 
     def read_byte() -> Optional[int]:
         data = stdin_buffer.read(1)
