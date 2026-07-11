@@ -143,6 +143,37 @@ def prompt_selection(
                     if "{args}" not in instruction.get("cmd", ""):
                         return ("help_cmd", instruction)
 
+
+            # Project scope: cd {session_id|number} enters session scope using
+            # the displayed entries, matching the behavior of bare numbers.
+            if state.current_scope == "project":
+                cd_match = re.match(r"^/?cd\s+(.+)$", user_input)
+                if cd_match:
+                    arg = cd_match.group(1).strip()
+                    if arg.isdigit():
+                        idx = int(arg) - 1
+                        if 0 <= idx < len(files):
+                            session_id = files[idx].get("session_id")
+                            if not session_id:
+                                print(
+                                    f"{Colors.RED}[ERROR] Selected entry has no "
+                                    f"session ID.{Colors.RESET}"
+                                )
+                                continue
+                            if session_id == "(temp)":
+                                print(
+                                    f"{Colors.RED}[ERROR] No session ID available "
+                                    f"for entry {idx + 1}.{Colors.RESET}"
+                                )
+                                continue
+                            return ("enter_session", session_id)
+                        print(
+                            f"{Colors.RED}[ERROR] Invalid number. "
+                            f"Please enter 1-{len(files)}.{Colors.RESET}"
+                        )
+                        continue
+                    # Non-numeric argument is treated as a literal session ID.
+                    return ("enter_session", arg)
             # Try YAML command matching first
             yaml_match = match_yaml_command(user_input, task_dir)
             if yaml_match:

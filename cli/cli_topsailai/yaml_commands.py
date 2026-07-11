@@ -438,27 +438,34 @@ def handle_yaml_command(
                 print_success("Switched to project scope.")
             elif session_id:
                 if session_id.isdigit():
-                    resolved_task_dir = variables.get("task_dir", "")
-                    if resolved_task_dir:
-                        log_files = discover_log_files(resolved_task_dir)
-                        idx = int(session_id) - 1
-                        if 0 <= idx < len(log_files):
-                            resolved = log_files[idx].get("session_id")
-                            if resolved:
-                                if resolved == "(temp)":
-                                    print_error(
-                                        f"No session ID available for entry {idx + 1}."
-                                    )
-                                    return "yaml_handled"
-                                session_id = resolved
-                            else:
-                                print_error(f"Entry {idx + 1} has no session ID.")
-                                return "yaml_handled"
+                    if state.current_scope == "project":
+                        from cli_topsailai.project_scope import build_project_list
+
+                        entries = build_project_list(limit=10)
+                    else:
+                        resolved_task_dir = variables.get("task_dir", "")
+                        if resolved_task_dir:
+                            entries = discover_log_files(resolved_task_dir)
                         else:
-                            print_error(
-                                f"Invalid number. Please enter 1-{len(log_files)}."
-                            )
+                            entries = []
+                    idx = int(session_id) - 1
+                    if 0 <= idx < len(entries):
+                        resolved = entries[idx].get("session_id")
+                        if resolved:
+                            if resolved == "(temp)":
+                                print_error(
+                                    f"No session ID available for entry {idx + 1}."
+                                )
+                                return "yaml_handled"
+                            session_id = resolved
+                        else:
+                            print_error(f"Entry {idx + 1} has no session ID.")
                             return "yaml_handled"
+                    else:
+                        print_error(
+                            f"Invalid number. Please enter 1-{len(entries)}."
+                        )
+                        return "yaml_handled"
                 else:
                     session_id = _resolve_literal_session_id(session_id)
                 state.current_scope = "session"

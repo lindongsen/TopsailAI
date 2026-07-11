@@ -65,6 +65,7 @@ instructions:
   - cmd: "/cd {session_id}"
     scopes:
       - workspace
+      - project
     desc: "Entering to session scope; {session_id} can be a number (1-based index from file list) or a session ID string"
     example: "/cd 2 or /cd 20260520T105654"
     shell: ""
