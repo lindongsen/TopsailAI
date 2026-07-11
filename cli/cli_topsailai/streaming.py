@@ -7,7 +7,17 @@ import stat
 import subprocess
 import sys
 import time
+import unicodedata
 from typing import Any, Callable, Dict, List, Optional
+
+try:
+    import termios
+    import tty
+except ImportError:
+    termios = None  # type: ignore[assignment]
+    tty = None  # type: ignore[assignment]
+
+_DEBUG_INPUT = os.environ.get("TOPSAILAI_DEBUG_INPUT")
 
 from cli_topsailai.colors import (
     Colors,
@@ -30,6 +40,12 @@ from cli_topsailai.paths import get_topsailai_home
 from cli_topsailai.process import register_process, unregister_process
 from cli_topsailai import yaml_commands
 import cli_topsailai.state as state
+
+
+def _debug_input(msg: str) -> None:
+    if _DEBUG_INPUT:
+        with open("/TopsailAI/cli/.tmp/read_input_debug.log", "a", encoding="utf-8") as f:
+            f.write(f"{time.time():.6f} {msg}\n")
 
 
 def _extract_session_id_from_path(path: str) -> Optional[str]:
@@ -390,36 +406,390 @@ def _prompt_send_as_message(
     return True
 
 
-def _tail_file(path: str, tail_lines: int) -> None:
-    """Print the most recent ``tail_lines`` lines of ``path`` to stdout."""
+def _tail_file(path: str, tail_lines: int, raw_mode: bool = False) -> None:
+    """Print the most recent ``tail_lines`` lines of ``path`` to stdout.
+
+    When ``raw_mode`` is True the TTY is in raw mode (``ONLCR`` is disabled),
+    so newlines are translated to ``\\r\\n`` to avoid stair-stepped output.
+    """
     n = max(0, tail_lines)
-    try:
-        subprocess.run(
-            ["tail", "-n", str(n), path],
-            check=False,
-        )
-        return
-    except FileNotFoundError:
-        pass
-    except Exception:
-        pass
+    if not raw_mode:
+        try:
+            subprocess.run(
+                ["tail", "-n", str(n), path],
+                check=False,
+            )
+            return
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
 
-    # Fallback pure-Python tail when the system ``tail`` is unavailable.
+    # Fallback pure-Python tail when the system ``tail`` is unavailable or
+    # when the TTY is raw and we must control line endings.
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            all_lines = fh.readlines()
+        with open(path, "rb") as fh:
+            all_lines = fh.read().splitlines()
         for line in all_lines[-n:]:
-            print(line, end="")
+            if raw_mode and hasattr(sys.stdout, "buffer"):
+                sys.stdout.buffer.write(line + b"\r\n")
+                sys.stdout.buffer.flush()
+            else:
+                print(line.decode("utf-8", errors="replace") + "\n", end="")
     except Exception:
         pass
 
 
-def _read_input_line(prompt: str = "") -> Optional[str]:
-    """Read a single line from stdin, returning None on EOF/KeyboardInterrupt."""
+def _char_display_width(ch: str) -> int:
+    """Return the display width of a single character.
+
+    Uses ``wcwidth`` when available; otherwise falls back to
+    ``unicodedata.east_asian_width`` so CJK characters are counted as two
+    columns.
+    """
+    if not ch:
+        return 0
     try:
-        return input(prompt).strip()
+        import wcwidth
+
+        return wcwidth.wcwidth(ch) or 0
+    except Exception:
+        pass
+    ea = unicodedata.east_asian_width(ch)
+    if ea in ("F", "W"):
+        return 2
+    return 1
+
+
+def _read_input_line(prompt: str = "", already_raw: bool = False) -> Optional[str]:
+    """Read a single line from stdin, returning None on EOF/KeyboardInterrupt.
+
+    In an interactive terminal we put the TTY into raw mode and implement a
+    tiny ANSI line editor so that arrow keys, backspace, and multi-byte UTF-8
+    characters (including CJK) work correctly while the raw stream loop is
+    using ``select.select``.  The standard ``input()``/readline path conflicts
+    with that loop and leaks escape sequences or miscalculates display widths
+    for wide characters.
+
+    The raw editor is only used when the caller has already placed the TTY in
+    raw mode (``already_raw=True``).  In all other cases we keep the original
+    ``input()`` behaviour so that existing tests and non-raw callers continue
+    to work.
+    """
+    try:
+        if not sys.stdin.isatty() or not already_raw:
+            print(prompt, end="", flush=True)
+            return input().strip()
+        return _read_input_line_tty(prompt, already_raw=already_raw)
     except (EOFError, KeyboardInterrupt):
         return None
+
+
+def _read_input_line_tty(prompt: str, already_raw: bool = False) -> Optional[str]:
+    """TTY-aware line editor using raw byte reads.
+
+    Puts the terminal into raw mode so keystrokes are available one byte at a
+    time, parses UTF-8 incrementally, handles ANSI escape sequences for arrow
+    keys/home/end/delete, and maintains the display using ``\\r`` and
+    backspaces.  Returns ``None`` on Ctrl+C, Ctrl+D at empty line, or EOF.
+
+    When ``already_raw`` is True the caller manages the TTY mode and this
+    function only reads and interprets keystrokes.
+    """
+    _debug_input(f"_read_input_line_tty start prompt={prompt!r} already_raw={already_raw}")
+    if termios is None or tty is None:
+        print(prompt, end="", flush=True)
+        return input().strip()
+
+    fd = sys.stdin.fileno()
+    old_settings = None
+    if not already_raw:
+        try:
+            old_settings = termios.tcgetattr(fd)
+        except termios.error:
+            print(prompt, end="", flush=True)
+            return input().strip()
+
+    # Read raw bytes from the binary buffer.  Python's TextIOWrapper can
+    # buffer and decode multi-byte UTF-8 sequences into a single character,
+    # which breaks our incremental parser.  Reading from the binary buffer
+    # gives us the true raw bytes.
+    stdin_buffer = getattr(sys.stdin, "buffer", None)
+    if stdin_buffer is None:
+        print(prompt, end="", flush=True)
+        return input().strip()
+
+    buffer: List[str] = []
+    cursor = 0
+
+    def display_width(chars: List[str]) -> int:
+        return sum(_char_display_width(c) for c in chars)
+
+    def redraw() -> None:
+        # Return to the start of the line, repaint the buffer, clear the rest,
+        # then move the cursor to its logical position.
+        sys.stdout.write("\r")
+        sys.stdout.write(prompt)
+        for ch in buffer:
+            sys.stdout.write(ch)
+        sys.stdout.write("\033[K")
+        target = display_width(buffer[:cursor])
+        total = display_width(buffer)
+        if total > target:
+            sys.stdout.write("\b" * (total - target))
+        sys.stdout.flush()
+
+    def read_byte() -> Optional[int]:
+        data = stdin_buffer.read(1)
+        if not data:
+            return None
+        return data[0]
+
+    try:
+        if not already_raw:
+            tty.setraw(fd)
+        redraw()
+        while True:
+            byte = read_byte()
+            _debug_input(f"read byte byte={byte}")
+            if byte is None:
+                _debug_input("EOF on read, returning None")
+                return None
+
+            if byte in (0x0A, 0x0D):
+                result = "".join(buffer).strip()
+                _debug_input(f"Enter pressed, returning result={result!r}")
+                sys.stdout.write("\r\n")
+                sys.stdout.flush()
+                return result
+
+            # Ctrl+C
+            if byte == 0x03:
+                _debug_input("Ctrl+C, returning None")
+                sys.stdout.write("\r\n")
+                sys.stdout.flush()
+                return None
+
+            # Ctrl+D
+            if byte == 0x04:
+                if not buffer:
+                    _debug_input("Ctrl+D on empty buffer, returning None")
+                    sys.stdout.write("\r\n")
+                    sys.stdout.flush()
+                    return None
+                _debug_input("Ctrl+D ignored (non-empty buffer)")
+                continue
+
+            # Backspace / DEL / Ctrl+H
+            if byte in (0x08, 0x7F):
+                if cursor > 0:
+                    cursor -= 1
+                    deleted = buffer[cursor]
+                    del buffer[cursor]
+                    _debug_input(f"Backspace deleted={deleted!r} cursor={cursor} buffer={''.join(buffer)!r}")
+                    redraw()
+                else:
+                    _debug_input("Backspace ignored at cursor=0")
+                continue
+
+            # Ctrl+A (home)
+            if byte == 0x01:
+                cursor = 0
+                _debug_input("Ctrl+A home")
+                redraw()
+                continue
+
+            # Ctrl+E (end)
+            if byte == 0x05:
+                cursor = len(buffer)
+                _debug_input("Ctrl+E end")
+                redraw()
+                continue
+
+            # Escape sequences
+            if byte == 0x1B:
+                seq1 = read_byte()
+                _debug_input(f"ESC seq1={seq1}")
+                if seq1 == 0x5B:  # '['
+                    seq2 = read_byte()
+                    _debug_input(f"ESC [ seq2={seq2}")
+                    if seq2 == 0x44:  # 'D' left
+                        if cursor > 0:
+                            cursor -= 1
+                            _debug_input(f"Left cursor={cursor}")
+                            redraw()
+                    elif seq2 == 0x43:  # 'C' right
+                        if cursor < len(buffer):
+                            cursor += 1
+                            _debug_input(f"Right cursor={cursor}")
+                            redraw()
+                    elif seq2 == 0x48:  # 'H' home
+                        cursor = 0
+                        _debug_input("Home")
+                        redraw()
+                    elif seq2 == 0x46:  # 'F' end
+                        cursor = len(buffer)
+                        _debug_input("End")
+                        redraw()
+                    elif seq2 == 0x33:  # '3' delete
+                        seq3 = read_byte()
+                        _debug_input(f"Delete seq3={seq3}")
+                        if seq3 == 0x7E and cursor < len(buffer):  # '~'
+                            del buffer[cursor]
+                            _debug_input(f"Delete cursor={cursor} buffer={''.join(buffer)!r}")
+                            redraw()
+                    # up/down (A/B) ignored
+                elif seq1 == 0x4F:  # 'O'
+                    seq2 = read_byte()
+                    _debug_input(f"ESC O seq2={seq2}")
+                    if seq2 == 0x48:  # home
+                        cursor = 0
+                        redraw()
+                    elif seq2 == 0x46:  # end
+                        cursor = len(buffer)
+                        redraw()
+                continue
+
+            # Ignore other control characters
+            if byte < 0x20:
+                _debug_input(f"Ignoring control byte {byte:#x}")
+                continue
+
+            # Decode UTF-8 character
+            if byte < 0x80:
+                char = chr(byte)
+            else:
+                if byte < 0xC0:
+                    _debug_input(f"Invalid UTF-8 start byte {byte:#x}")
+                    continue
+                elif byte < 0xE0:
+                    num_bytes = 2
+                elif byte < 0xF0:
+                    num_bytes = 3
+                elif byte < 0xF8:
+                    num_bytes = 4
+                else:
+                    _debug_input(f"Invalid UTF-8 start byte {byte:#x}")
+                    continue
+
+                bytes_data = [byte]
+                valid = True
+                for _ in range(num_bytes - 1):
+                    next_byte = read_byte()
+                    if next_byte is None:
+                        _debug_input("EOF in middle of UTF-8 sequence")
+                        return None
+                    if next_byte & 0xC0 != 0x80:
+                        valid = False
+                        _debug_input(f"Invalid UTF-8 continuation {next_byte:#x}")
+                        break
+                    bytes_data.append(next_byte)
+                if not valid:
+                    continue
+                try:
+                    char = bytes(bytes_data).decode("utf-8")
+                except UnicodeDecodeError:
+                    _debug_input(f"UTF-8 decode error bytes={bytes_data!r}")
+                    continue
+
+            buffer.insert(cursor, char)
+            cursor += 1
+            _debug_input(f"Inserted char={char!r} cursor={cursor} buffer={''.join(buffer)!r}")
+            redraw()
+    finally:
+        _debug_input("_read_input_line_tty finally")
+        if old_settings is not None:
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            except termios.error:
+                pass
+
+
+class _RawStdoutBufferWrapper:
+    """Binary buffer companion for ``_RawStdoutWrapper``.
+
+    In raw TTY mode the terminal's ``ONLCR`` output processing is disabled,
+    so ``\n`` bytes must be converted to ``\r\n`` to keep output aligned.
+    This wrapper performs the same normalization as ``_RawStdoutWrapper``
+    but on byte strings.
+    """
+
+    def __init__(self, buffer: Any) -> None:
+        self._buffer = buffer
+
+    def write(self, data: bytes) -> None:
+        self._buffer.write(data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+
+    def flush(self) -> None:
+        self._buffer.flush()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._buffer, name)
+
+
+class _RawStdoutWrapper:
+    """Wrap a text stream so that lone ``\\n`` characters are emitted as ``\\r\\n``.
+
+    In raw TTY mode the terminal's ``ONLCR`` output processing is disabled,
+    so normal ``print()`` calls would produce stair-stepped output.  This
+    wrapper normalizes any existing ``\\r\\n`` first and then converts remaining
+    ``\\n`` characters to ``\\r\\n``.
+    """
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+        if hasattr(stream, "buffer"):
+            self.buffer = _RawStdoutBufferWrapper(stream.buffer)
+
+    def write(self, text: str) -> None:
+        self._stream.write(text.replace("\r\n", "\n").replace("\n", "\r\n"))
+
+    def flush(self) -> None:
+        self._stream.flush()
+
+    def isatty(self) -> bool:
+        return getattr(self._stream, "isatty", lambda: False)()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+def _restore_tty_for_command(
+    fd: Optional[int],
+    old_settings: Optional[Any],
+    original_stdout: Any,
+    raw_mode_active: bool,
+) -> None:
+    """Restore cooked TTY mode and original stdout while handling a command.
+
+    Raw mode is great for the single-line ANSI editor, but commands such as
+    ``/send`` may drop into multi-line ``input()`` loops.  Those need the
+    terminal back in cooked mode and stdout unwrapped so ``\n`` is handled
+    normally.
+    """
+    if not raw_mode_active:
+        return
+    sys.stdout = original_stdout
+    if fd is not None and old_settings is not None and termios is not None:
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        except termios.error:
+            pass
+
+
+def _enter_raw_tty_for_input(
+    fd: Optional[int],
+    original_stdout: Any,
+    raw_mode_active: bool,
+) -> None:
+    """Re-enable raw TTY mode and wrap stdout after command handling."""
+    if not raw_mode_active:
+        return
+    if fd is not None and tty is not None:
+        try:
+            tty.setraw(fd)
+        except termios.error:
+            pass
+    sys.stdout = _RawStdoutWrapper(original_stdout)
 
 
 def _dispatch_input(
@@ -483,39 +853,93 @@ def _stream_file_raw(
     session_label = default_session_id or "(temp)"
     prompt = f"[runtime:{session_label}]> "
 
-    _tail_file(filepath, tail_lines)
+    fd = None
+    if sys.stdin.isatty():
+        try:
+            fd = sys.stdin.fileno()
+        except (OSError, ValueError):
+            fd = None
+    old_settings = None
+    raw_mode_active = False
+    original_stdout = sys.stdout
 
     try:
-        with open(filepath, "rb") as f:
-            f.seek(0, 2)
-            while state.running:
-                chunk = f.read(4096)
-                if chunk:
-                    if hasattr(sys.stdout, "buffer"):
-                        sys.stdout.buffer.write(chunk)
-                        sys.stdout.buffer.flush()
+        try:
+            if fd is not None and termios is not None and tty is not None:
+                try:
+                    old_settings = termios.tcgetattr(fd)
+                    tty.setraw(fd)
+                    raw_mode_active = True
+                except Exception:
+                    pass
+
+            if raw_mode_active:
+                sys.stdout = _RawStdoutWrapper(sys.stdout)
+
+            if raw_mode_active:
+                _tail_file(filepath, tail_lines, raw_mode=True)
+            else:
+                _tail_file(filepath, tail_lines)
+
+            with open(filepath, "rb") as f:
+                f.seek(0, 2)
+                while state.running:
+                    chunk = f.read(4096)
+                    if chunk:
+                        if raw_mode_active:
+                            chunk = chunk.replace(b"\r\n", b"\n").replace(
+                                b"\n", b"\r\n"
+                            )
+                        if hasattr(sys.stdout, "buffer"):
+                            sys.stdout.buffer.write(chunk)
+                            sys.stdout.buffer.flush()
+                        else:
+                            print(chunk.decode("utf-8", errors="replace"), end="")
+                            sys.stdout.flush()
                     else:
-                        print(chunk.decode("utf-8", errors="replace"), end="")
-                        sys.stdout.flush()
-                else:
-                    if sys.stdin.isatty():
-                        readable, _, _ = select.select([sys.stdin], [], [], 0.05)
-                        if readable:
-                            cmd_line = _read_input_line(prompt)
-                            if cmd_line is None:
-                                break
-                            if not cmd_line:
-                                continue
-                            if not _dispatch_input(
-                                cmd_line,
-                                task_dir,
-                                log_files,
-                                default_session_id,
-                                default_stdout_path,
-                            ):
-                                break
-                    else:
-                        time.sleep(0.05)
+                        if sys.stdin.isatty():
+                            readable, _, _ = select.select([sys.stdin], [], [], 0.05)
+                            if readable:
+                                cmd_line = _read_input_line(
+                                    prompt, already_raw=raw_mode_active
+                                )
+                                if cmd_line is None:
+                                    break
+                                if not cmd_line:
+                                    continue
+                                _restore_tty_for_command(
+                                    fd,
+                                    old_settings,
+                                    original_stdout,
+                                    raw_mode_active,
+                                )
+                                keep_running = True
+                                try:
+                                    keep_running = _dispatch_input(
+                                        cmd_line,
+                                        task_dir,
+                                        log_files,
+                                        default_session_id,
+                                        default_stdout_path,
+                                    )
+                                finally:
+                                    if keep_running:
+                                        _enter_raw_tty_for_input(
+                                            fd,
+                                            original_stdout,
+                                            raw_mode_active,
+                                        )
+                                if not keep_running:
+                                    break
+                        else:
+                            time.sleep(0.05)
+        finally:
+            sys.stdout = original_stdout
+            if old_settings is not None:
+                try:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                except termios.error:
+                    pass
     except FileNotFoundError:
         print(f"{Colors.RED}[ERROR] File not found: {filepath}{Colors.RESET}")
     except PermissionError:
