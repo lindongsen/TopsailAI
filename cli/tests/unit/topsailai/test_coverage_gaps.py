@@ -1065,10 +1065,18 @@ class TestPromptSelectionHistoryAndYaml(unittest.TestCase):
             action, value = cli_core.prompt_selection([], "/task")
         self.assertEqual(action, "quit")
 
-    def test_session_invalid_number(self):
-        """/session with non-numeric argument shows error and continues."""
+    def test_session_literal_session_id(self):
+        """/session with a non-numeric argument resolves to a literal session ID."""
         files = [{"filename": "a.stdout", "session_id": "s1"}]
-        with patch("builtins.input", side_effect=["/session abc", "q"]):
+        with patch("builtins.input", return_value="/session abc"):
+            action, value = cli_core.prompt_selection(files, "/task")
+        self.assertEqual(action, "session_id")
+        self.assertEqual(value, "abc")
+
+    def test_session_invalid_empty(self):
+        """/session with an empty argument shows error and continues."""
+        files = [{"filename": "a.stdout", "session_id": "s1"}]
+        with patch("builtins.input", side_effect=["/session ", "q"]):
             action, value = cli_core.prompt_selection(files, "/task")
         self.assertEqual(action, "quit")
 

@@ -482,6 +482,44 @@ class TestProjectScopeCommands(unittest.TestCase):
         self.assertEqual(action, "enter_session")
         self.assertEqual(value, "proj-s1")
 
+    @patch("cli_topsailai.core.input")
+    def test_session_number_in_project_retrieves_context(self, mock_input):
+        cli_state.current_scope = "project"
+        project_entries = [
+            {"session_id": "proj-s1", "project_workspace": "/work/a"},
+            {"session_id": "proj-s2", "project_workspace": "/work/b"},
+        ]
+        mock_input.return_value = "/session 2"
+        action, value = prompt_selection(project_entries, "/task")
+        self.assertEqual(action, "session")
+        self.assertEqual(value, 1)
+
+    @patch("cli_topsailai.core.input")
+    def test_session_id_in_project_retrieves_context(self, mock_input):
+        cli_state.current_scope = "project"
+        project_entries = [
+            {"session_id": "proj-s1", "project_workspace": "/work/a"},
+            {"session_id": "proj-s2", "project_workspace": "/work/b"},
+        ]
+        mock_input.return_value = "/session proj-s1"
+        action, value = prompt_selection(project_entries, "/task")
+        self.assertEqual(action, "session_id")
+        self.assertEqual(value, "proj-s1")
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_session_missing_arg_in_project_shows_usage(self, mock_input, mock_print):
+        cli_state.current_scope = "project"
+        project_entries = [
+            {"session_id": "proj-s1", "project_workspace": "/work/a"},
+        ]
+        mock_input.side_effect = ["/session", "q"]
+        action, value = prompt_selection(project_entries, "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("Usage: /session" in str(call) for call in mock_print.call_args_list)
+        )
+
 
     @patch("cli_topsailai.core.input")
     def test_cd_from_project_returns_to_workspace(self, mock_input):

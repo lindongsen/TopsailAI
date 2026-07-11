@@ -189,31 +189,29 @@ def prompt_selection(
                 parts = user_input.split(None, 1)
                 if len(parts) < 2:
                     print(
-                        f"{Colors.RED}[ERROR] Usage: /session {{number}}{Colors.RESET}"
+                        f"{Colors.RED}[ERROR] Usage: /session {{number|session_id}}{Colors.RESET}"
                     )
                     continue
-                try:
-                    num = int(parts[1].strip())
+                arg = parts[1].strip()
+                if arg.isdigit():
+                    num = int(arg)
                     if 1 <= num <= len(files):
-                        if state.current_scope == "project":
-                            session_id = files[num - 1].get("session_id")
-                            if not session_id:
-                                print(
-                                    f"{Colors.RED}[ERROR] Selected entry has no "
-                                    f"session ID.{Colors.RESET}"
-                                )
-                                continue
-                            return ("enter_session", session_id)
                         return ("session", num - 1)
                     print(
                         f"{Colors.RED}[ERROR] Invalid number. "
                         f"Please enter 1-{len(files)}.{Colors.RESET}"
                     )
-                except ValueError:
-                    print(
-                        f"{Colors.RED}[ERROR] Invalid number. "
-                        f"Usage: /session {{number}}{Colors.RESET}"
-                    )
+                else:
+                    # Literal session ID: resolve (temp) marker and retrieve.
+                    from cli_topsailai.log_files import _resolve_literal_session_id
+
+                    session_id = _resolve_literal_session_id(arg)
+                    if not session_id:
+                        print(
+                            f"{Colors.RED}[ERROR] Invalid session ID.{Colors.RESET}"
+                        )
+                        continue
+                    return ("session_id", session_id)
                 continue
 
             if (
@@ -486,7 +484,12 @@ def main(argv: Optional[List[str]] = None) -> None:
 
 
             if action == "session":
-                selected_file = log_files[value]
+                active_entries = (
+                    project_entries
+                    if state.current_scope == "project"
+                    else log_files
+                )
+                selected_file = active_entries[value]
                 session_id = selected_file.get("session_id")
                 if not session_id or session_id == "(temp)":
                     print(
@@ -494,6 +497,10 @@ def main(argv: Optional[List[str]] = None) -> None:
                     )
                     continue
                 retrieve_session(session_id, max_chars=1000)
+                continue
+
+            if action == "session_id":
+                retrieve_session(value, max_chars=1000)
                 continue
 
             if action == "enter_session":
@@ -505,7 +512,12 @@ def main(argv: Optional[List[str]] = None) -> None:
                 continue
 
             if action == "watch":
-                selected_file = log_files[value]
+                active_entries = (
+                    project_entries
+                    if state.current_scope == "project"
+                    else log_files
+                )
+                selected_file = active_entries[value]
                 session_id = selected_file.get("session_id")
                 stdout_path = selected_file.get("path")
                 if session_id == "(temp)":
@@ -525,6 +537,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     _refresh_project()
                 else:
                     _refresh_workspace()
+                continue
     except KeyboardInterrupt:
         print(f"\n{Colors.YELLOW}[INFO] Interrupted by user.{Colors.RESET}")
     finally:
