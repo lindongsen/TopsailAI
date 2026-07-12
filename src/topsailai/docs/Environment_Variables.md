@@ -375,6 +375,8 @@ These variables control the independent event recording subsystem.
 | `TOPSAILAI_EVENTS_FLUSH_INTERVAL_MS` | `100` | Interval in milliseconds between background flush attempts. |
 | `TOPSAILAI_EVENTS_BACKEND` | `file` | Backend adapter used to persist events. Supported values: `file`, `db`, `webhook`. Unknown values fall back to `file`. |
 | `TOPSAILAI_EVENTS_FILE_PATH` | `""` | Optional full path for the file backend. When empty, the file is placed in `TOPSAILAI_HOME/workspace/task` using the session stdout naming convention with the `.events` extension: `{session_id}.{pid}.session.events` when `SESSION_ID` is set, otherwise `topsailai.{pid}.session.events`. |
+| `TOPSAILAI_EVENTS_FILE_RETENTION_DAYS` | `7` | Number of days to retain event files written by the file backend. Files older than this are removed during cleanup. Set to `0` to disable age-based cleanup. |
+| `TOPSAILAI_EVENTS_FILE_MAX_COUNT` | `0` | Maximum number of event files to keep in the file backend directory. When the limit is exceeded, oldest files are deleted first. `0` disables count-based cleanup. |
 
 ## Project History
 

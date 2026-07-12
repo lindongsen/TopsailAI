@@ -1,8 +1,8 @@
 """
 Webhook event storage backend (stub).
 
-Reserved for future implementations that push events to an external HTTP
-endpoint. The interface matches EventBackend.
+Future implementations can push events to an HTTP endpoint and implement
+:meth:`cleanup` to retry or discard undelivered events.
 """
 
 from __future__ import annotations
@@ -14,20 +14,14 @@ from topsailai.events.models import Event
 
 
 class WebhookEventBackend(EventBackend):
-    """
-    Stub webhook backend for event persistence.
-
-    Raises NotImplementedError on write to signal that concrete configuration
-    (endpoint URL, authentication, retry policy, etc.) is required before use.
-    """
-
-    def __init__(self, endpoint_url: str | None = None):
-        self._endpoint_url = endpoint_url or ""
+    """Placeholder webhook backend."""
 
     def write(self, events: List[Event]) -> bool:
-        raise NotImplementedError(
-            "WebhookEventBackend is not implemented yet; configure an endpoint URL and retry policy."
-        )
+        raise NotImplementedError("WebhookEventBackend.write() is not implemented")
 
     def close(self) -> None:
+        pass
+
+    def cleanup(self) -> None:
+        """Retry or discard undelivered webhook events."""
         pass

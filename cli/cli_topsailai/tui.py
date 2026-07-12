@@ -12,9 +12,10 @@ import re
 import sys
 from typing import TYPE_CHECKING
 
+import cli_topsailai.state as state
+
 if TYPE_CHECKING:
     from typing import Callable, List, Optional
-
 
 # Regex to strip ANSI escape sequences from log lines before rendering.
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -91,6 +92,13 @@ class CursesStreamUI:
         self._multi_line_buffer: List[str] = []
         self._multi_line_prompt = ""
 
+        # Runtime command history for the single-line input prompt.
+        # _history stores commands newest-first; _history_index is the
+        # currently recalled position, or -1 when the user is editing a
+        # fresh line.
+        self._history: List[str] = []
+        self._history_index = -1
+
         self.stdscr = None
         self.log_win = None
         self.input_win = None
@@ -105,22 +113,39 @@ class CursesStreamUI:
         display = self.session_id or "?"
         return f"[runtime:{display}]> "
 
+    def _load_history(self) -> None:
+        """Load persisted runtime history for the current session.
+
+        filter_entries returns oldest-first, but the UI navigates history
+        newest-first (Up arrow recalls the most recent command).  Reverse the
+        loaded list so index 0 is the newest entry.
+        """
+        manager = getattr(state, "history_manager", None)
+        if manager is None:
+            return
+        try:
+            self._history = list(reversed(manager.filter_entries("runtime", self.session_id)))
+        except Exception:
+            self._history = []
+        self._history_index = -1
+
     def run(self) -> None:
         """Start the curses UI."""
         import curses
 
         curses.wrapper(self._main)
 
+
     def _main(self, stdscr) -> None:
         """Main curses loop."""
         import curses
 
         self.stdscr = stdscr
+        self._load_history()
         self._setup_colors()
         self._build_windows()
         self._tail_initial_lines()
         self._needs_redraw = True
-
         self.stdscr.nodelay(True)
         self.stdscr.keypad(True)
         try:
@@ -247,6 +272,7 @@ class CursesStreamUI:
                     + self._input_buffer[self._cursor_pos :]
                 )
                 self._cursor_pos -= 1
+                self._history_index = -1
                 return True
             return False
         if ch in (curses.KEY_DC, 330):
@@ -255,6 +281,7 @@ class CursesStreamUI:
                     self._input_buffer[: self._cursor_pos]
                     + self._input_buffer[self._cursor_pos + 1 :]
                 )
+                self._history_index = -1
                 return True
             return False
         if ch == curses.KEY_LEFT or ch == 260:
@@ -277,6 +304,10 @@ class CursesStreamUI:
                 self._cursor_pos = len(self._input_buffer)
                 return True
             return False
+        if ch == curses.KEY_UP or ch == 259:
+            return self._recall_history(1)
+        if ch == curses.KEY_DOWN or ch == 258:
+            return self._recall_history(-1)
         if ch == curses.KEY_PPAGE or ch == curses.KEY_NPAGE:
             if ch == curses.KEY_PPAGE:
                 self._scroll_up(self._page_scroll_lines)
@@ -293,8 +324,33 @@ class CursesStreamUI:
                 + self._input_buffer[self._cursor_pos :]
             )
             self._cursor_pos += 1
+            self._history_index = -1
             return True
         return False
+
+    def _recall_history(self, direction: int) -> bool:
+        """Recall a previous or next command into the input buffer.
+
+        direction=1 moves toward newer history (Up arrow), direction=-1
+        moves toward older history (Down arrow).  Returns True when the
+        input buffer changed.
+        """
+        if not self._history:
+            return False
+
+        new_index = self._history_index + direction
+        new_index = max(-1, min(new_index, len(self._history) - 1))
+        if new_index == self._history_index:
+            return False
+
+        self._history_index = new_index
+        if self._history_index == -1:
+            self._input_buffer = ""
+        else:
+            self._input_buffer = self._history[self._history_index]
+        self._cursor_pos = len(self._input_buffer)
+        return True
+
     def _scroll_up(self, lines: int) -> None:
         """Scroll the log pane up by *lines* (towards older log lines)."""
         # The viewport shows at most _visible_count lines, so the largest
@@ -409,8 +465,20 @@ class CursesStreamUI:
         raw = self._input_buffer.strip()
         self._input_buffer = ""
         self._cursor_pos = 0
+        self._history_index = -1
         if not raw:
             return
+        # Persist the command so future sessions can recall it.
+        # _history is newest-first; insert at the front and avoid consecutive
+        # duplicates.
+        if not self._history or self._history[0] != raw:
+            self._history.insert(0, raw)
+        manager = getattr(state, "history_manager", None)
+        if manager is not None:
+            try:
+                manager.append("runtime", self.session_id, raw)
+            except Exception:
+                pass
 
         self._append_log_line(f"{self._prompt}{raw}")
         try:
@@ -558,6 +626,7 @@ class CursesStreamUI:
             self._render_log_pane(log_height, width)
 
         curses.doupdate()
+
     def _draw(self) -> None:
         """Render the log pane, separator, and input pane."""
         import curses

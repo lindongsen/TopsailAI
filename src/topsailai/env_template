@@ -722,3 +722,12 @@ TOPSAILAI_EVENTS_BACKEND=file
 #   {session_id}.{pid}.session.events   (when SESSION_ID is set)
 #   topsailai.{pid}.session.events      (otherwise)
 # TOPSAILAI_EVENTS_FILE_PATH=""
+
+# Number of days to retain event files written by the file backend. Files older
+# than this are removed during cleanup. Set to 0 to disable age-based cleanup.
+TOPSAILAI_EVENTS_FILE_RETENTION_DAYS=7
+
+# Maximum number of event files to keep in the file backend directory. When the
+# limit is exceeded, oldest files are deleted first. Set to 0 to disable
+# count-based cleanup.
+TOPSAILAI_EVENTS_FILE_MAX_COUNT=0

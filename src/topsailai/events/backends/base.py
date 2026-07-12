@@ -12,26 +12,30 @@ from topsailai.events.models import Event
 
 class EventBackend(ABC):
     """
-    Abstract base class for event storage adapters.
+    Adapter interface for event storage.
 
-    Implementations must be thread-safe for concurrent writes.
+    Concrete backends may write to files, databases, webhooks, or any other
+    durable sink. Backends are also responsible for implementing their own
+    recycling/cleanup logic via :meth:`cleanup`.
     """
 
     @abstractmethod
     def write(self, events: List[Event]) -> bool:
-        """
-        Persist a batch of events.
-
-        Args:
-            events: Non-empty list of events to persist.
-
-        Returns:
-            True when all events were persisted successfully. Returning False
-            signals the collector to keep the events in the buffer for retry.
-        """
+        """Persist a batch of events. Return True on success."""
         raise NotImplementedError
 
     @abstractmethod
     def close(self) -> None:
         """Release any resources held by the backend."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def cleanup(self) -> None:
+        """
+        Perform backend-specific recycling/cleanup of old events.
+
+        For file backends this may delete files older than a retention period
+        or enforce a maximum file count. Database/webhook backends may
+        implement equivalent pruning or archival logic.
+        """
         raise NotImplementedError

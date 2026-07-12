@@ -51,6 +51,24 @@ class Event:
     source: Optional[str] = None
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
+    @classmethod
+    def create(
+        cls,
+        event_type: str,
+        payload: Optional[dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> "Event":
+        """Create a new event with the given attributes."""
+        return cls(
+            event_type=event_type,
+            session_id=session_id,
+            payload=payload or {},
+            trace_id=trace_id,
+            source=source,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize the event to a plain dictionary."""
         data = asdict(self)

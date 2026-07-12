@@ -177,7 +177,7 @@ class TestDecoratorAsk:
         monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")
         monkeypatch.setenv(
             "TOPSAILAI_TOOL_APPROVAL_RULES",
-            '[{"match": "cmd_tool-exec_cmd", "mode": "require", "timeout": 1.0, "policy": "deny"}]',
+            '[{"match": "cmd_tool-exec_cmd", "mode": "require", "policy": "deny"}]',
         )
         from topsailai.ai_base.tool_approval import matcher
 
@@ -202,7 +202,7 @@ class TestDecoratorAsk:
         monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")
         monkeypatch.setenv(
             "TOPSAILAI_TOOL_APPROVAL_RULES",
-            '[{"match": "cmd_tool-exec_cmd", "mode": "require", "timeout": 1.0, "policy": "deny"}]',
+            '[{"match": "cmd_tool-exec_cmd", "mode": "require", "policy": "deny"}]',
         )
         from topsailai.ai_base.tool_approval import matcher
 
@@ -284,7 +284,7 @@ class TestDecoratorAsk:
         monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")
         monkeypatch.setenv(
             "TOPSAILAI_TOOL_APPROVAL_RULES",
-            '[{"match": "cmd_tool-exec_cmd", "mode": "require", "timeout": 1.0, "policy": "ask_again"}]',
+            '[{"match": "cmd_tool-exec_cmd", "mode": "require", "timeout": 0.05, "policy": "ask_again"}]',
         )
         from topsailai.ai_base.tool_approval import matcher
 

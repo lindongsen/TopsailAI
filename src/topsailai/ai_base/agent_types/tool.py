@@ -27,6 +27,7 @@ from topsailai.utils import (
     print_tool,
     env_tool,
 )
+from topsailai.events import record_tool_call_events
 from topsailai.ai_base.constants import (
     LLM_KEYWORD_MISTAKE,
 )
@@ -99,10 +100,10 @@ def with_tool_response_safe(exec_tool_func: Callable) -> Callable:
 
     return wrapper
 
-
 @tool_stat.detect_duplicate_tool_call
 @with_tool_response_safe
 @with_tool_approval
+@record_tool_call_events
 def exec_tool_func(tool_func, args, tool_name:str=None):
     """
     Execute a tool function with the given arguments.

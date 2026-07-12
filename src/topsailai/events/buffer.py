@@ -50,6 +50,15 @@ class EventBuffer:
             for event in events:
                 self._buffer.append(event)
 
+    def prepend(self, events: Iterable[Event]) -> None:
+        """Insert events at the front of the buffer, dropping oldest if needed."""
+        with self._lock:
+            new_events = list(events)
+            remaining = max(0, self._max_size - len(new_events))
+            keep = new_events + list(self._buffer)[-remaining:]
+            self._buffer.clear()
+            self._buffer.extend(keep)
+
     def drain(self, count: Optional[int] = None) -> List[Event]:
         """
         Remove and return events from the buffer.
@@ -67,6 +76,11 @@ class EventBuffer:
                 return events
             events = [self._buffer.popleft() for _ in range(count)]
             return events
+
+    def snapshot(self) -> List[Event]:
+        """Return a copy of the current buffer contents without draining."""
+        with self._lock:
+            return list(self._buffer)
 
     def peek(self) -> List[Event]:
         """Return a snapshot of the buffer without removing events."""

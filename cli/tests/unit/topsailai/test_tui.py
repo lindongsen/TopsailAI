@@ -4,6 +4,7 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+import cli_topsailai.state as cli_state
 from cli_topsailai.tui import (
     CursesStreamUI,
     _MAX_BUFFERED_LINES,
@@ -11,7 +12,6 @@ from cli_topsailai.tui import (
     _strip_ansi,
     is_curses_available,
 )
-
 
 class FakeCurses:
     """Minimal mock of the curses module for unit tests."""
@@ -26,6 +26,8 @@ class FakeCurses:
     KEY_HOME = 262
     KEY_END = 360
     KEY_DC = 330
+    KEY_UP = 259
+    KEY_DOWN = 258
     COLOR_GREEN = 1
     COLOR_YELLOW = 2
     COLOR_RED = 3
@@ -1199,6 +1201,249 @@ class TestCursesStreamUI(unittest.TestCase):
         ui._render_log_pane(21, 80)
         # Back to tail-following view
         log_win.addstr.assert_any_call(0, 0, "line 079")
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_load_history_loads_persisted_runtime_history_newest_first(self):
+        fake_curses = sys.modules["curses"]
+        manager = MagicMock()
+        # filter_entries returns oldest-first, as stored in the JSONL file.
+        manager.filter_entries.return_value = ["/send world", "/send hello"]
+        original_manager = cli_state.history_manager
+        try:
+            cli_state.history_manager = manager
+            ui = self._make_ui(fake_curses)
+            ui._load_history()
+        finally:
+            cli_state.history_manager = original_manager
+
+        manager.filter_entries.assert_called_once_with("runtime", "s1")
+        # _history is kept newest-first so Up arrow recalls the latest command.
+        self.assertEqual(ui._history, ["/send hello", "/send world"])
+        self.assertEqual(ui._history_index, -1)
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_load_history_ignores_missing_manager(self):
+        fake_curses = sys.modules["curses"]
+        original_manager = cli_state.history_manager
+        try:
+            cli_state.history_manager = None
+            ui = self._make_ui(fake_curses)
+            ui._load_history()
+        finally:
+            cli_state.history_manager = original_manager
+
+        self.assertEqual(ui._history, [])
+        self.assertEqual(ui._history_index, -1)
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_poll_input_up_recalls_history_newest_first(self):
+        fake_curses = sys.modules["curses"]
+        stdscr = MagicMock()
+        stdscr.getmaxyx.return_value = (24, 80)
+
+        ui = self._make_ui(fake_curses)
+        ui.stdscr = stdscr
+        ui._history = ["/send hello", "/send world"]
+
+        self._poll_input_with_key(ui, fake_curses.KEY_UP)
+        self.assertEqual(ui._input_buffer, "/send hello")
+        self.assertEqual(ui._history_index, 0)
+
+        self._poll_input_with_key(ui, fake_curses.KEY_UP)
+        self.assertEqual(ui._input_buffer, "/send world")
+        self.assertEqual(ui._history_index, 1)
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_poll_input_down_returns_to_empty_line(self):
+        fake_curses = sys.modules["curses"]
+        stdscr = MagicMock()
+        stdscr.getmaxyx.return_value = (24, 80)
+
+        ui = self._make_ui(fake_curses)
+        ui.stdscr = stdscr
+        ui._history = ["/send hello"]
+
+        self._poll_input_with_key(ui, fake_curses.KEY_UP)
+        self.assertEqual(ui._input_buffer, "/send hello")
+
+        self._poll_input_with_key(ui, fake_curses.KEY_DOWN)
+        self.assertEqual(ui._input_buffer, "")
+        self.assertEqual(ui._history_index, -1)
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_poll_input_up_down_does_not_exceed_bounds(self):
+        fake_curses = sys.modules["curses"]
+        stdscr = MagicMock()
+        stdscr.getmaxyx.return_value = (24, 80)
+
+        ui = self._make_ui(fake_curses)
+        ui.stdscr = stdscr
+        ui._history = ["/send hello"]
+
+        # Down from fresh line should stay at fresh line.
+        self._poll_input_with_key(ui, fake_curses.KEY_DOWN)
+        self.assertEqual(ui._input_buffer, "")
+        self.assertEqual(ui._history_index, -1)
+
+        # Up past the newest entry should stay at the oldest entry.
+        self._poll_input_with_key(ui, fake_curses.KEY_UP)
+        self._poll_input_with_key(ui, fake_curses.KEY_UP)
+        self.assertEqual(ui._input_buffer, "/send hello")
+        self.assertEqual(ui._history_index, 0)
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_execute_input_inserts_newest_at_front(self):
+        fake_curses = sys.modules["curses"]
+        ui = self._make_ui(fake_curses)
+        ui._history = ["/send old"]
+        ui._input_buffer = "/send new"
+        ui._execute_input()
+
+        self.assertEqual(ui._history, ["/send new", "/send old"])
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_execute_input_avoids_consecutive_duplicates(self):
+        fake_curses = sys.modules["curses"]
+        ui = self._make_ui(fake_curses)
+        ui._input_buffer = "/send hello"
+        ui._execute_input()
+        ui._input_buffer = "/send hello"
+        ui._execute_input()
+
+        self.assertEqual(ui._history, ["/send hello"])
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_execute_input_allows_non_consecutive_duplicates(self):
+        fake_curses = sys.modules["curses"]
+        ui = self._make_ui(fake_curses)
+        for text in ["/send hello", "/send world", "/send hello"]:
+            ui._input_buffer = text
+            ui._execute_input()
+
+        self.assertEqual(
+            ui._history, ["/send hello", "/send world", "/send hello"]
+        )
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_execute_input_persists_to_history_manager(self):
+        fake_curses = sys.modules["curses"]
+        manager = MagicMock()
+        original_manager = cli_state.history_manager
+        try:
+            cli_state.history_manager = manager
+            ui = self._make_ui(fake_curses)
+            ui._input_buffer = "/send hello"
+            ui._execute_input()
+        finally:
+            cli_state.history_manager = original_manager
+
+        manager.append.assert_called_once_with("runtime", "s1", "/send hello")
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_execute_input_ignores_history_manager_errors(self):
+        fake_curses = sys.modules["curses"]
+        manager = MagicMock()
+        manager.append.side_effect = RuntimeError("boom")
+        original_manager = cli_state.history_manager
+        try:
+            cli_state.history_manager = manager
+            ui = self._make_ui(fake_curses)
+            ui._input_buffer = "/send hello"
+            # Should not raise.
+            ui._execute_input()
+        finally:
+            cli_state.history_manager = original_manager
+
+        self.assertEqual(ui._history, ["/send hello"])
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_history_index_resets_on_regular_typing(self):
+        fake_curses = sys.modules["curses"]
+        stdscr = MagicMock()
+        stdscr.getmaxyx.return_value = (24, 80)
+
+        ui = self._make_ui(fake_curses)
+        ui.stdscr = stdscr
+        ui._history = ["/send hello"]
+
+        self._poll_input_with_key(ui, fake_curses.KEY_UP)
+        self.assertEqual(ui._history_index, 0)
+
+        self._poll_input_with_key(ui, "x")
+        self.assertEqual(ui._history_index, -1)
+        self.assertEqual(ui._input_buffer, "/send hellox")
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_history_index_resets_on_backspace(self):
+        fake_curses = sys.modules["curses"]
+        stdscr = MagicMock()
+        stdscr.getmaxyx.return_value = (24, 80)
+
+        ui = self._make_ui(fake_curses)
+        ui.stdscr = stdscr
+        ui._history = ["/send hello"]
+        ui._input_buffer = "ab"
+        ui._cursor_pos = 2
+
+        self._poll_input_with_key(ui, fake_curses.KEY_UP)
+        self.assertEqual(ui._history_index, 0)
+
+        ui.stdscr.get_wch.return_value = 127
+        ui._poll_input()
+        self.assertEqual(ui._history_index, -1)
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_history_index_resets_on_delete(self):
+        fake_curses = sys.modules["curses"]
+        stdscr = MagicMock()
+        stdscr.getmaxyx.return_value = (24, 80)
+
+        ui = self._make_ui(fake_curses)
+        ui.stdscr = stdscr
+        ui._history = ["/send hello"]
+
+        self._poll_input_with_key(ui, fake_curses.KEY_UP)
+        self.assertEqual(ui._history_index, 0)
+
+        # Position cursor at the start so delete actually removes a character.
+        ui._cursor_pos = 0
+        ui.stdscr.get_wch.return_value = fake_curses.KEY_DC
+        ui._poll_input()
+        self.assertEqual(ui._history_index, -1)
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_history_index_does_not_reset_on_cursor_movement(self):
+        fake_curses = sys.modules["curses"]
+        stdscr = MagicMock()
+        stdscr.getmaxyx.return_value = (24, 80)
+
+        ui = self._make_ui(fake_curses)
+        ui.stdscr = stdscr
+        ui._history = ["/send hello"]
+
+        self._poll_input_with_key(ui, fake_curses.KEY_UP)
+        self.assertEqual(ui._history_index, 0)
+
+        # Cursor movement should keep the recalled command selected.
+        self._poll_input_with_key(ui, fake_curses.KEY_LEFT)
+        self.assertEqual(ui._history_index, 0)
+        self.assertEqual(ui._input_buffer, "/send hello")
+
+    @patch.dict("sys.modules", {"curses": FakeCurses()})
+    def test_execute_input_empty_buffer_does_not_persist(self):
+        fake_curses = sys.modules["curses"]
+        manager = MagicMock()
+        original_manager = cli_state.history_manager
+        try:
+            cli_state.history_manager = manager
+            ui = self._make_ui(fake_curses)
+            ui._input_buffer = "   "
+            ui._execute_input()
+        finally:
+            cli_state.history_manager = original_manager
+
+        manager.append.assert_not_called()
+        self.assertEqual(ui._history, [])
 
 if __name__ == "__main__":
     unittest.main()
