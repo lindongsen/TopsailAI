@@ -115,7 +115,6 @@ class TestBuildProjectList(unittest.TestCase):
         self.assertEqual(entries[0]["no"], 1)
         self.assertEqual(entries[1]["no"], 2)
 
-
     @patch("cli_topsailai.project_scope.subprocess.run")
     def test_build_project_list_passes_limit(self, mock_run):
         mock_run.return_value = MockCompletedProcess(stdout="[]")
@@ -411,10 +410,6 @@ class TestRefreshProjectList(unittest.TestCase):
         self.assertEqual(new_entries, [])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestResolveAgentFolder(unittest.TestCase):
     """Tests for resolve_agent_folder."""
 
@@ -503,6 +498,7 @@ class TestResolveAgentFolder(unittest.TestCase):
         folder = project_scope.resolve_agent_folder("1", entries)
         self.assertIsNone(folder)
         mock_lookup.assert_not_called()
+
 
 class TestLaunchAgentInFolder(unittest.TestCase):
     """Tests for launch_agent_in_folder."""
@@ -784,3 +780,232 @@ class TestLoadProjectWorkspaceLookup(unittest.TestCase):
             )
             lookup = project_scope.load_project_workspace_lookup()
             self.assertEqual(lookup, {})
+
+
+class TestPromptForDriver(unittest.TestCase):
+    """Tests for _prompt_for_driver."""
+
+    @patch("builtins.input", side_effect=[""])
+    def test_default_selection(self, mock_input):
+        driver = project_scope._prompt_for_driver()
+        self.assertEqual(driver, "topsailai_agent_plan_tasks")
+
+    @patch("builtins.input", side_effect=["1"])
+    def test_select_first_option(self, mock_input):
+        driver = project_scope._prompt_for_driver()
+        self.assertEqual(driver, "topsailai_agent_chats")
+
+    @patch("builtins.input", side_effect=["3"])
+    def test_select_third_option(self, mock_input):
+        driver = project_scope._prompt_for_driver()
+        self.assertEqual(driver, "ai-team-flow-dev")
+
+    @patch("builtins.input", side_effect=["4", "my-custom-driver"])
+    def test_select_custom_input(self, mock_input):
+        driver = project_scope._prompt_for_driver()
+        self.assertEqual(driver, "my-custom-driver")
+
+    @patch("builtins.input", side_effect=["4", "", "2"])
+    def test_custom_empty_then_default(self, mock_input):
+        driver = project_scope._prompt_for_driver()
+        self.assertEqual(driver, "topsailai_agent_plan_tasks")
+
+    @patch("builtins.input", side_effect=["invalid", "0", "5", "2"])
+    def test_invalid_then_valid_selection(self, mock_input):
+        driver = project_scope._prompt_for_driver()
+        self.assertEqual(driver, "topsailai_agent_plan_tasks")
+
+
+class TestLaunchAgentDriver(unittest.TestCase):
+    """Tests for launch_agent_driver."""
+
+    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_launches_driver_directly_without_dtach(
+        self, mock_getcwd, mock_chdir, mock_system, mock_which
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123"
+        )
+        mock_system.assert_called_once_with("topsailai_agent_plan_tasks")
+        mock_chdir.assert_any_call("/work/project-a")
+        mock_chdir.assert_any_call("/TopsailAI/cli")
+
+    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_sets_session_id_env_var(
+        self, mock_getcwd, mock_chdir, mock_system, mock_which
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        captured = {}
+
+        def _capture_system(cmd):
+            captured["cmd"] = cmd
+            captured["session_id"] = os.environ.get("TOPSAILAI_SESSION_ID")
+            captured["pwd"] = os.environ.get("PWD")
+            captured["topsailai_pwd"] = os.environ.get("TOPSAILAI_PWD")
+            return 0
+
+        mock_system.side_effect = _capture_system
+        original_session_id = os.environ.pop("TOPSAILAI_SESSION_ID", None)
+        try:
+            project_scope.launch_agent_driver(
+                "/work/project-a", "topsailai_agent_plan_tasks", "s-123"
+            )
+            self.assertEqual(captured["cmd"], "topsailai_agent_plan_tasks")
+            self.assertEqual(captured["session_id"], "s-123")
+            self.assertEqual(captured["pwd"], "/work/project-a")
+            self.assertEqual(captured["topsailai_pwd"], "/work/project-a")
+        finally:
+            if original_session_id is None:
+                os.environ.pop("TOPSAILAI_SESSION_ID", None)
+            else:
+                os.environ["TOPSAILAI_SESSION_ID"] = original_session_id
+    @patch("cli_topsailai.project_scope._build_dtach_socket_path")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_launches_with_dtach_when_available(
+        self, mock_getcwd, mock_chdir, mock_system, mock_which, mock_build_socket
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.return_value = "/usr/bin/dtach"
+        mock_build_socket.return_value = "/home/user/.topsailai/workspace/task/20260707T221748.169974.dtach"
+        project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123"
+        )
+        mock_system.assert_called_once()
+        called_command = mock_system.call_args[0][0]
+        self.assertTrue(called_command.startswith("dtach -A "))
+        self.assertIn("topsailai_agent_plan_tasks", called_command)
+
+    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_restores_original_env_values_after_launch(
+        self, mock_getcwd, mock_chdir, mock_system, mock_which
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        original_pwd = os.environ.get("PWD")
+        original_topsailai_pwd = os.environ.get("TOPSAILAI_PWD")
+        original_session_id = os.environ.get("TOPSAILAI_SESSION_ID")
+        project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123"
+        )
+        self.assertEqual(os.environ.get("PWD"), original_pwd)
+        self.assertEqual(os.environ.get("TOPSAILAI_PWD"), original_topsailai_pwd)
+        self.assertEqual(os.environ.get("TOPSAILAI_SESSION_ID"), original_session_id)
+
+
+class TestResumeSession(unittest.TestCase):
+    """Tests for resume_session."""
+
+    def _make_entry(self, session_id, status, workspace):
+        return {
+            "no": 1,
+            "session_id": session_id,
+            "session_name": f"name-{session_id}",
+            "project_workspace": workspace,
+            "create_time": "07-06 10:00",
+            "create_time_raw": "2026-07-06T10:00:00",
+            "task": "task",
+            "status": status,
+        }
+
+    @patch("cli_topsailai.project_scope.launch_agent_driver")
+    @patch("cli_topsailai.project_scope._prompt_for_driver")
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_resume_idle_session_default_driver(
+        self, mock_stdout, mock_prompt, mock_launch
+    ):
+        mock_prompt.return_value = "topsailai_agent_plan_tasks"
+        entries = [self._make_entry("s-idle", "Idle", "/work/project-a")]
+        project_scope.resume_session("1", entries)
+        mock_prompt.assert_called_once()
+        mock_launch.assert_called_once_with(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-idle"
+        )
+        output = mock_stdout.getvalue()
+        self.assertIn("Resuming session 's-idle'", output)
+        self.assertIn("topsailai_agent_plan_tasks", output)
+
+    @patch("cli_topsailai.project_scope.launch_agent_driver")
+    @patch("cli_topsailai.project_scope._prompt_for_driver")
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_resume_idle_session_custom_driver(
+        self, mock_stdout, mock_prompt, mock_launch
+    ):
+        mock_prompt.return_value = "ai-team-flow-dev"
+        entries = [self._make_entry("s-idle", "Idle", "/work/project-a")]
+        project_scope.resume_session("1", entries)
+        mock_launch.assert_called_once_with(
+            "/work/project-a", "ai-team-flow-dev", "s-idle"
+        )
+        output = mock_stdout.getvalue()
+        self.assertIn("ai-team-flow-dev", output)
+
+    @patch("cli_topsailai.project_scope.launch_agent_driver")
+    @patch("cli_topsailai.project_scope._prompt_for_driver")
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_refuse_to_resume_running_session(
+        self, mock_stdout, mock_prompt, mock_launch
+    ):
+        entries = [self._make_entry("s-running", "Running", "/work/project-a")]
+        project_scope.resume_session("1", entries)
+        mock_prompt.assert_not_called()
+        mock_launch.assert_not_called()
+        output = mock_stdout.getvalue()
+        self.assertIn("already running", output)
+
+    @patch("cli_topsailai.project_scope.launch_agent_driver")
+    @patch("cli_topsailai.project_scope._prompt_for_driver")
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_resume_invalid_number(self, mock_stdout, mock_prompt, mock_launch):
+        entries = [self._make_entry("s-idle", "Idle", "/work/project-a")]
+        project_scope.resume_session("5", entries)
+        mock_prompt.assert_not_called()
+        mock_launch.assert_not_called()
+        output = mock_stdout.getvalue()
+        self.assertIn("Invalid number", output)
+
+    @patch("cli_topsailai.project_scope.launch_agent_driver")
+    @patch("cli_topsailai.project_scope._prompt_for_driver")
+    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_resume_uses_history_workspace_when_missing(
+        self, mock_stdout, mock_lookup, mock_prompt, mock_launch
+    ):
+        mock_lookup.return_value = {"s-idle": "/work/from-history"}
+        mock_prompt.return_value = "topsailai_agent_plan_tasks"
+        entries = [self._make_entry("s-idle", "Idle", "")]
+        project_scope.resume_session("1", entries)
+        mock_lookup.assert_called_once()
+        mock_launch.assert_called_once_with(
+            "/work/from-history", "topsailai_agent_plan_tasks", "s-idle"
+        )
+
+    @patch("cli_topsailai.project_scope.launch_agent_driver")
+    @patch("cli_topsailai.project_scope._prompt_for_driver")
+    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_resume_no_workspace_prints_error(
+        self, mock_stdout, mock_lookup, mock_prompt, mock_launch
+    ):
+        mock_lookup.return_value = {}
+        entries = [self._make_entry("s-idle", "Idle", "")]
+        project_scope.resume_session("1", entries)
+        mock_prompt.assert_not_called()
+        mock_launch.assert_not_called()
+        output = mock_stdout.getvalue()
+        self.assertIn("no project workspace", output)
+
+
+if __name__ == "__main__":
+    unittest.main()

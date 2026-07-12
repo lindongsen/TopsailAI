@@ -143,7 +143,6 @@ def prompt_selection(
                     if "{args}" not in instruction.get("cmd", ""):
                         return ("help_cmd", instruction)
 
-
             # Project scope: cd {session_id|number} enters session scope using
             # the displayed entries, matching the behavior of bare numbers.
             if state.current_scope == "project":
@@ -174,6 +173,7 @@ def prompt_selection(
                         continue
                     # Non-numeric argument is treated as a literal session ID.
                     return ("enter_session", arg)
+
             # Try YAML command matching first
             yaml_match = match_yaml_command(user_input, task_dir)
             if yaml_match:
@@ -228,6 +228,20 @@ def prompt_selection(
                     continue
                 return ("agent", parts[1].strip())
 
+            if (
+                lower_input == "/resume"
+                or lower_input.startswith("/resume ")
+                or lower_input.startswith("resume ")
+                or (state.current_scope == "project" and lower_input == "resume")
+            ):
+                parts = user_input.split(None, 1)
+                if len(parts) < 2:
+                    print(
+                        f"{Colors.RED}[ERROR] Usage: /resume {{number}}{Colors.RESET}"
+                    )
+                    continue
+                return ("resume", parts[1].strip())
+
             try:
                 selected = int(user_input)
                 if 1 <= selected <= len(files):
@@ -249,7 +263,7 @@ def prompt_selection(
                 print(
                     f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
                     f"Please enter a number, /refresh, /session {{number}}, "
-                    f"/agent {{number|folder}}, /clean, /send, /help, or 'q'.{Colors.RESET}"
+                    f"/agent {{number|folder}}, /resume {{number}}, /clean, /send, /help, or 'q'.{Colors.RESET}"
                 )
                 _consecutive_unrecognized += 1
                 if _consecutive_unrecognized >= _MAX_CONSECUTIVE_UNRECOGNIZED:
@@ -263,6 +277,7 @@ def prompt_selection(
             print(f"\n{Colors.YELLOW}[INFO] Exiting...{Colors.RESET}")
             cleanup_children()
             return ("quit", None)
+
 
 def main(argv: Optional[List[str]] = None) -> None:
     """Main entry point for the TopsailAI CLI."""
@@ -328,6 +343,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         launch_agent_in_folder,
         print_project_table,
         resolve_agent_folder,
+        resume_session,
     )
     from cli_topsailai.retrieve import retrieve_session
     from cli_topsailai.session_info import enrich_files_with_session_names
@@ -482,6 +498,14 @@ def main(argv: Optional[List[str]] = None) -> None:
                 launch_agent_in_folder(folder)
                 continue
 
+            if action == "resume":
+                if state.current_scope != "project":
+                    print(
+                        f"\n{Colors.RED}[ERROR] /resume is only available in project scope.{Colors.RESET}"
+                    )
+                    continue
+                resume_session(value, project_entries)
+                continue
 
             if action == "session":
                 active_entries = (

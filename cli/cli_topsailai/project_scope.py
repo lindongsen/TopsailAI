@@ -28,6 +28,13 @@ from cli_topsailai.paths import get_topsailai_home
 # Maximum number of concurrent running-status checks per refresh.
 _MAX_RUNNING_STATUS_WORKERS = 8
 
+# Built-in agent drivers offered when resuming a session.
+_RESUME_DRIVER_OPTIONS = [
+    "topsailai_agent_chats",
+    "topsailai_agent_plan_tasks",
+    "ai-team-flow-dev",
+]
+
 
 def _script_path() -> str:
     """Return the absolute path to ``ai_list_sessions.py``."""
@@ -453,3 +460,180 @@ def launch_agent_in_folder(folder: str) -> None:
             print(
                 f"{Colors.RED}[ERROR] Failed to restore working directory '{original_cwd}': {exc}{Colors.RESET}"
             )
+
+
+def launch_agent_driver(folder: str, driver: str, session_id: str) -> None:
+    """Change to *folder* and launch *driver* directly with *session_id* set.
+
+    The process working directory and the ``TOPSAILAI_PWD``/``PWD``
+    environment variables are set to the target folder so the driver reads
+    ``.topsailai/settings.yaml`` from the correct project workspace.
+    ``TOPSAILAI_SESSION_ID`` is set to *session_id* so the resumed agent
+    continues the existing session instead of generating a new one.
+
+    When ``dtach`` is available in ``PATH``, the driver is wrapped as
+    ``dtach -A {socket} {driver}`` so it runs inside a detachable session.
+    If ``dtach`` is not available, the driver is invoked unchanged.
+
+    The original working directory and environment values are restored
+    after the driver returns.
+
+    Args:
+        folder: Target project workspace folder.
+        driver: Agent driver command to execute.
+        session_id: Session ID to resume.
+    """
+    original_cwd = os.getcwd()
+    target_folder = os.path.abspath(folder)
+
+    env_keys = ("TOPSAILAI_PWD", "PWD", "TOPSAILAI_SESSION_ID")
+    original_env: Dict[str, Optional[str]] = {
+        key: os.environ.get(key) for key in env_keys
+    }
+
+    try:
+        os.chdir(target_folder)
+        os.environ["TOPSAILAI_PWD"] = target_folder
+        os.environ["PWD"] = target_folder
+        os.environ["TOPSAILAI_SESSION_ID"] = session_id
+        print(
+            f"{Colors.GREEN}[INFO] Launching driver '{driver}' in {target_folder} "
+            f"for session '{session_id}' ...{Colors.RESET}"
+        )
+        command = _wrap_command_with_dtach(driver)
+        os.system(command)
+    except OSError as exc:
+        print(
+            f"{Colors.RED}[ERROR] Failed to change to folder '{target_folder}': {exc}{Colors.RESET}"
+        )
+    finally:
+        for key in env_keys:
+            original_value = original_env[key]
+            if original_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = original_value
+        try:
+            os.chdir(original_cwd)
+        except OSError as exc:
+            print(
+                f"{Colors.RED}[ERROR] Failed to restore working directory '{original_cwd}': {exc}{Colors.RESET}"
+            )
+
+
+def _prompt_for_driver() -> str:
+    """Prompt the user to select an agent driver for resuming a session.
+
+    Presents a numbered list of built-in drivers plus a custom-input option.
+    The default selection is ``topsailai_agent_plan_tasks`` (option 2).
+
+    Returns:
+        The selected driver command string.
+    """
+    print("\nSelect an agent driver to resume the session:")
+    for idx, driver in enumerate(_RESUME_DRIVER_OPTIONS, start=1):
+        print(f"  {idx}. {driver}")
+    print(f"  {len(_RESUME_DRIVER_OPTIONS) + 1}. (custom input)")
+
+    default_option = 2
+    total_options = len(_RESUME_DRIVER_OPTIONS) + 1
+    prompt_text = f"Select driver (1-{total_options}, default: {default_option}): "
+
+    while True:
+        try:
+            answer = input(prompt_text).strip()
+        except EOFError:
+            answer = ""
+        if not answer:
+            return _RESUME_DRIVER_OPTIONS[default_option - 1]
+        if answer.isdigit():
+            option = int(answer)
+            if 1 <= option <= len(_RESUME_DRIVER_OPTIONS):
+                return _RESUME_DRIVER_OPTIONS[option - 1]
+            if option == total_options:
+                custom = input("Enter custom driver name: ").strip()
+                if custom:
+                    return custom
+                print(
+                    f"{Colors.YELLOW}[WARN] Custom driver name cannot be empty.{Colors.RESET}"
+                )
+                continue
+        print(
+            f"{Colors.RED}[ERROR] Invalid selection. Please enter 1-{total_options}.{Colors.RESET}"
+        )
+
+
+def _resolve_session_entry(
+    arg: str, entries: List[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """Resolve a numeric argument to a project-scope session entry.
+
+    Args:
+        arg: User-provided argument, expected to be a 1-based number.
+        entries: Current project scope entries.
+
+    Returns:
+        The matching entry dictionary, or ``None`` if the argument is invalid.
+    """
+    if not arg.isdigit():
+        print(
+            f"{Colors.RED}[ERROR] Usage: /resume <number>{Colors.RESET}"
+        )
+        return None
+    idx = int(arg) - 1
+    if not (0 <= idx < len(entries)):
+        print(
+            f"{Colors.RED}[ERROR] Invalid number. Please enter 1-{len(entries)}.{Colors.RESET}"
+        )
+        return None
+    return entries[idx]
+
+
+def resume_session(arg: str, entries: List[Dict[str, Any]]) -> None:
+    """Resume an idle session by launching an agent driver in its workspace.
+
+    The selected session must not be running.  If it is, a message is printed
+    and no action is taken.  Otherwise the user is prompted to choose an agent
+    driver (default ``topsailai_agent_plan_tasks``) and the selected driver is
+    launched directly in the session's project workspace with
+    ``TOPSAILAI_SESSION_ID`` set to the session ID.
+
+    Args:
+        arg: User-provided argument, expected to be a 1-based entry number.
+        entries: Current project scope entries.
+    """
+    entry = _resolve_session_entry(arg, entries)
+    if entry is None:
+        return
+
+    session_id = entry.get("session_id", "")
+    if not session_id:
+        print(
+            f"{Colors.RED}[ERROR] Selected entry has no session ID.{Colors.RESET}"
+        )
+        return
+
+    status = entry.get("status") or "Idle"
+    if status == "Running":
+        print(
+            f"{Colors.YELLOW}[INFO] Session '{session_id}' is already running. "
+            f"Use /send or enter the session instead.{Colors.RESET}"
+        )
+        return
+
+    project_workspace = entry.get("project_workspace", "")
+    if not project_workspace:
+        lookup = load_project_workspace_lookup()
+        project_workspace = lookup.get(session_id, "")
+    if not project_workspace:
+        print(
+            f"{Colors.RED}[ERROR] Selected session has no project workspace.{Colors.RESET}"
+        )
+        return
+
+    driver = _prompt_for_driver()
+    print(
+        f"{Colors.GREEN}[INFO] Resuming session '{session_id}' with driver '{driver}' "
+        f"in {project_workspace} ...{Colors.RESET}"
+    )
+    launch_agent_driver(project_workspace, driver, session_id)

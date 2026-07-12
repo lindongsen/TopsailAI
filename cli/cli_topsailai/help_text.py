@@ -131,6 +131,12 @@ def print_help(
             "scopes": ["workspace", "project"],
         },
         {
+            "cmd": "/resume <number>",
+            "desc": "Resume an idle session in its project workspace. The selected session must not be running. You will be prompted to choose an agent driver (default: topsailai_agent_plan_tasks).",
+            "example": "Example: /resume 3",
+            "scopes": ["project"],
+        },
+        {
             "cmd": "/clean [<number> [<number>...]]",
             "desc": "Clean up .stdout files. Without arguments: deletes idle files older than 3 days. With numbers: deletes the specified files by their list number.",
             "example": "Example: /clean 3 5 7",
