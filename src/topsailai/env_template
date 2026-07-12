@@ -695,3 +695,30 @@ TOPSAILAI_PRINT_TOOL_STAT=1
 
 # default is 60 seconds
 TOPSAILAI_LLM_SLOW_CHAT_THRESHOLD=60
+
+
+# =============================================================================
+# Event Module Configuration
+# =============================================================================
+
+# Master switch for the event recording subsystem.
+# Set to 1 to enable event recording, 0 to disable.
+TOPSAILAI_EVENTS_ENABLED=1
+
+# Maximum number of events held in the in-memory buffer. Oldest events are
+# dropped when the buffer is full. Must be a positive integer.
+TOPSAILAI_EVENTS_BUFFER_SIZE=1000
+
+# Interval in milliseconds between background flush attempts.
+TOPSAILAI_EVENTS_FLUSH_INTERVAL_MS=100
+
+# Backend adapter used to persist events. Supported values: file, db, webhook.
+# Unknown values fall back to file.
+TOPSAILAI_EVENTS_BACKEND=file
+
+# Optional full path for the file backend. When empty, the file is placed in
+# TOPSAILAI_HOME/workspace/task using the session stdout naming convention
+# with the .events extension:
+#   {session_id}.{pid}.session.events   (when SESSION_ID is set)
+#   topsailai.{pid}.session.events      (otherwise)
+# TOPSAILAI_EVENTS_FILE_PATH=""

@@ -34,33 +34,49 @@ def is_true(value: str | None) -> bool:
 
 
 @contextmanager
-def ctxm_set_env(kv:dict):
-    """ set environ """
+def ctxm_set_env(kv: dict):
+    """Temporarily set environment variables.
+
+    Args:
+        kv: Mapping of environment variable names to values. A value of None
+            removes the variable if it exists.
+
+    Yields:
+        dict: Original values for variables that existed before the override.
+    """
     old_kv = {}
     for k in kv.keys():
         old_v = os.getenv(k)
-        if old_v is None:
-            # no exists
-            continue
-        old_kv[k] = old_v
+        if old_v is not None:
+            old_kv[k] = old_v
 
     try:
         for k, v in kv.items():
-            # case: remove env
-            if k in os.environ and v is None:
-                del os.environ[k]
-
-            os.environ[k] = v
-
-        yield
+            if v is None:
+                if k in os.environ:
+                    del os.environ[k]
+            else:
+                os.environ[k] = v
+        yield old_kv
     finally:
         for k, v in old_kv.items():
             os.environ[k] = v
-    return
+        for k, v in kv.items():
+            if k not in old_kv:
+                if k in os.environ:
+                    del os.environ[k]
+
 
 @contextmanager
-def ctxm_hide_env(keys:list[str]):
-    """ hide environ """
+def ctxm_hide_env(keys):
+    """Temporarily hide environment variables.
+
+    Args:
+        keys: A single environment variable name or a list of names to hide.
+
+    Yields:
+        dict: Original values for the hidden variables.
+    """
     if isinstance(keys, str):
         keys = [keys]
 
@@ -76,20 +92,22 @@ def ctxm_hide_env(keys:list[str]):
     finally:
         for k, v in ori_data.items():
             os.environ[k] = v
-    return
 
 
-def get_session_id() -> str|None:
-    """ get session """
-    return \
-        os.getenv("TOPSAILAI_SESSION_ID") or \
-        os.getenv("SESSION_ID")
+def get_session_id() -> str | None:
+    """Get session identifier from environment variables."""
+    return (
+        os.getenv("TOPSAILAI_SESSION_ID")
+        or os.getenv("SESSION_ID")
+    )
+
 
 def is_interactive_mode() -> bool:
-    """ Check if running in interactive mode, default is True """
+    """Check if running in interactive mode, default is True."""
     if os.getenv("TOPSAILAI_INTERACTIVE_MODE", "1") == "0":
         return False
     return True
+
 
 def is_debug_mode():
     """Check if the application is running in debug mode.
@@ -105,6 +123,7 @@ def is_debug_mode():
         return False
     return True
 
+
 def is_use_tool_calls() -> bool:
     """Check if tool calls functionality is enabled.
 
@@ -116,9 +135,10 @@ def is_use_tool_calls() -> bool:
         bool: True if tool calls are enabled, False otherwise
     """
     if os.getenv("USE_TOOL_CALLS", "0") != "0" or \
-        os.getenv("TOPSAILAI_USE_TOOL_CALLS", "0") != "0":
+            os.getenv("TOPSAILAI_USE_TOOL_CALLS", "0") != "0":
         return True
     return False
+
 
 def get_history_load_max_entries(default: int = 100) -> int:
     """Return the maximum number of history entries to load into memory.
@@ -209,15 +229,14 @@ def is_need_print() -> bool:
 
 
 class EnvironmentReader(object):
-    """ base class to read env """
+    """Base class to read environment variables."""
 
     @property
-    def project_folder(self) -> str|None:
-        """
-        Current Project Folder
+    def project_folder(self) -> str | None:
+        """Current project folder.
 
         Returns:
-            str|None:
+            str|None: Resolved project folder path.
         """
         return (
             EnvReaderInstance.get("TOPSAILAI_PROJECT_WORKSPACE")
@@ -226,7 +245,7 @@ class EnvironmentReader(object):
         )
 
     @staticmethod
-    def try_read_file(file_path:str) -> str:
+    def try_read_file(file_path: str) -> str:
         """Attempt to read content from a file path.
 
         This method checks if the given path is a valid file and reads its content.
@@ -249,14 +268,14 @@ class EnvironmentReader(object):
         return ""
 
     @staticmethod
-    def read_file_or_content(env_key:str) -> str:
-        """Environment Variable may be file, if it is file, return file content
+    def read_file_or_content(env_key: str) -> str:
+        """Environment variable may be a file; if so, return file content.
 
         Args:
-            env_key (str):
+            env_key (str): Environment variable name.
 
         Returns:
-            str:
+            str: File content or the raw variable value.
         """
         env_var = os.getenv(env_key)
         if not env_var:
@@ -299,7 +318,7 @@ class EnvironmentReader(object):
         return content or env_var
 
     def clean_context_x_message(self):
-        """ Only use once in a session """
+        """Only use once in a session."""
         for env_key in [
             "TOPSAILAI_CONTEXT_USER_MESSAGE",
         ]:
@@ -308,24 +327,39 @@ class EnvironmentReader(object):
         return
 
     def check_bool(self, name, default=None) -> bool:
-        """ value in [1, true] for True """
-        return is_true(str(os.getenv(name, default)).lower())
+        """Return True when the environment variable represents an affirmative value.
+
+        Truthy values (case-insensitive): "1", "true", "yes", "on", "enabled".
+        When the variable is unset, *default* is normalized the same way if it is
+        a string; otherwise it is converted via ``bool()``.
+        """
+        value = os.getenv(name)
+        if value is None:
+            if default is None:
+                return False
+            if isinstance(default, str):
+                return is_true(default.lower())
+            return bool(default)
+        return is_true(str(value).lower())
 
     def get_list_str(
             self,
-            name:str,
-            separator:str=';',
+            name: str,
+            separator: str = ';',
             to_lower=False,
-        ) -> list[str]|None|str:
-        """
+    ) -> list[str] | None | str:
+        """Parse an environment variable as a list of strings.
+
         Args:
-            name (str):
+            name (str): Environment variable name.
             separator (str, optional): Defaults to ';'.
+            to_lower (bool, optional): Convert items to lowercase.
 
         Returns:
             list[str]|None|str:
-              None for no config;
-              str for null of config;
+              None when the variable is not set;
+              str (empty) when the variable is set but empty;
+              list[str] otherwise.
         """
         env_var = os.getenv(name)
         if env_var is None:
@@ -380,6 +414,7 @@ class EnvironmentReader(object):
         if v is None:
             v = default
         return v
+
 
 # init
 EnvReaderInstance = EnvironmentReader()

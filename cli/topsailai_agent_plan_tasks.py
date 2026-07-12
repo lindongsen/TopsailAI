@@ -21,6 +21,7 @@ from topsailai.tools import (
     file_readonly_tool,
 )
 from topsailai.context.common import get_session_id
+from topsailai.utils.env_tool import is_true
 from topsailai.workspace.agent_shell import get_agent_chat
 
 
@@ -61,14 +62,53 @@ def main():
     Returns:
         None
     """
-    # plan agent
-    plan_agent = get_agent_chat(
+
+    # Tool availability for the plan_agent:
+    #
+    # `enabled_tools` acts as an explicit allow-list. Only the tool kits listed
+    # below are available to the plan_agent, plus any tools injected via
+    # `tool_map`.
+    #
+    # Available tools:
+    #   - file_readonly_tool-* (read-only file operations, injected by get_tool_map)
+    #       - check_files_existing
+    #       - get_file_size
+    #       - list_dirs
+    #       - read_file
+    #       - read_file_around_line
+    #       - read_file_lines
+    #       - read_file_with_context
+    #       - read_files
+    #   - story_memory_tool-* (persistent memory access)
+    #   - subagent_tool-call_assistant (delegate work to sub-agents)
+    #
+    # Deliberately unavailable:
+    #   - agent_tool is disabled via disabled_tools.
+    #   - cmd_tool, file_tool (write variants), skill_tool, time_tool, ctx_tool,
+    #     and all other internal tools are NOT in the allow-list, so the main
+    #     agent cannot execute commands, write files, call skills, etc. directly.
+    #     Any such action must be delegated to a sub-agent through
+    #     subagent_tool-call_assistant.
+    #
+    # Determine whether to inject the read-only file tool map into the plan
+    # agent. This is controlled by the TOPSAILAI_AGENT_PLAN_USE_TOOL_MAP
+    # environment variable. When set to a truthy value (e.g. "1", "true", "yes",
+    # "on", "enabled"), the file_readonly_tool-* handlers are passed via
+    # tool_map. When unset or falsy, tool_map is omitted and the plan agent only
+    # has access to the story_memory_tool and subagent_tool kits.
+    use_tool_map = is_true(os.getenv("TOPSAILAI_AGENT_PLAN_USE_TOOL_MAP"))
+
+    plan_agent_kwargs = dict(
         session_id=get_session_id(),
         disabled_tools=["agent_tool"],
         enabled_tools=["story_memory_tool", "subagent_tool"],
-        tool_map=get_tool_map(),
         agent_type="plan_and_execute",
     )
+    if use_tool_map:
+        plan_agent_kwargs["tool_map"] = get_tool_map()
+
+    # plan agent
+    plan_agent = get_agent_chat(**plan_agent_kwargs)
 
     # run
     plan_agent.run()

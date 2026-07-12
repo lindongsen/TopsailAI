@@ -364,6 +364,18 @@ These variables are for runtime use only and should not be set manually.
 | `TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT` | `180` | Threshold in seconds for the first chunk of a streaming LLM response. If the first chunk takes longer than this value, a warning is logged. Set to `0` to disable the warning. |
 | `TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE` | `0` | When set to a truthy value (`1`, `true`, `yes`, `on`, `enabled`), raise `openai.APITimeoutError` if the first chunk of a streaming LLM response exceeds `TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT`. The outer chat retry loop will then automatically retry the request. Otherwise (default), only a warning is logged. |
 
+## Event Module Configuration
+
+These variables control the independent event recording subsystem.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_EVENTS_ENABLED` | `1` | Master switch for event recording. `1` = enabled, `0` = disabled. When disabled, `record_event` and the decorators are cheap no-ops. |
+| `TOPSAILAI_EVENTS_BUFFER_SIZE` | `1000` | Maximum number of events held in the in-memory buffer. Oldest events are dropped when the buffer is full. |
+| `TOPSAILAI_EVENTS_FLUSH_INTERVAL_MS` | `100` | Interval in milliseconds between background flush attempts. |
+| `TOPSAILAI_EVENTS_BACKEND` | `file` | Backend adapter used to persist events. Supported values: `file`, `db`, `webhook`. Unknown values fall back to `file`. |
+| `TOPSAILAI_EVENTS_FILE_PATH` | `""` | Optional full path for the file backend. When empty, the file is placed in `TOPSAILAI_HOME/workspace/task` using the session stdout naming convention with the `.events` extension: `{session_id}.{pid}.session.events` when `SESSION_ID` is set, otherwise `topsailai.{pid}.session.events`. |
+
 ## Project History
 
 The project history file (`.project_history.jsonl`) records each agent/LLM startup as a single JSON object per line.
