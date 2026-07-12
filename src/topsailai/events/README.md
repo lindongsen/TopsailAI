@@ -35,7 +35,7 @@ An event is represented by the `Event` dataclass in `events/models.py`.
 | `event_id` | `str` | Unique identifier (UUID4). |
 | `event_type` | `str` | Dot-separated type, e.g. `tool_call.start`, `tool_call.end`. |
 | `timestamp` | `datetime` | UTC creation time. |
-| `session_id` | `str \| None` | Optional session identifier, usually from `env_tool.get_session_id()`. |
+| `session_id` | `str \| None` | Session identifier. Auto-resolved from `TOPSAILAI_SESSION_ID` / `SESSION_ID` when not explicitly provided, so JSONL records match the file backend filename. |
 | `trace_id` | `str \| None` | Optional correlation/trace id for distributed tracing. |
 | `source` | `str \| None` | Optional source component, e.g. `ai_base.tool`. |
 | `payload` | `dict` | Arbitrary event-specific data. |
@@ -98,7 +98,7 @@ Appends events as JSON Lines to a file under `TOPSAILAI_HOME/workspace/task`.
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| File naming | session-aware | `{session_id}.{pid}.session.events` when `SESSION_ID` is set, otherwise `topsailai.{pid}.session.events`. |
+| File naming | session-aware | `{session_id}.{pid}.session.events` when a session ID is resolved, otherwise `topsailai.{pid}.session.events`. The same `session_id` is written into each JSONL record. |
 | Retention | `7` days | Removes `.events` files older than `TOPSAILAI_EVENTS_FILE_RETENTION_DAYS`. |
 | Max count | `0` (unlimited) | Keeps only the newest `N` `.events` files when set > 0. |
 | Delete on exit | `False` | When `True`, registers an `atexit` handler to delete the current process's events file. |

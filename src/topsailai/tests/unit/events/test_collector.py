@@ -81,3 +81,67 @@ def test_collector_unknown_backend_falls_back_to_file(monkeypatch, tmp_path):
         lines = [line.strip() for line in f if line.strip()]
     assert len(lines) == 1
     assert json.loads(lines[0])["event_type"] == "a"
+
+
+def test_collector_record_resolves_session_id_from_env(file_config, monkeypatch):
+    """When session_id is not provided, it is resolved from environment variables."""
+    monkeypatch.setenv("TOPSAILAI_SESSION_ID", "session-from-env")
+    collector = EventCollector(config=file_config)
+    collector.record("a", {})
+    collector.flush()
+    collector.close()
+
+    with open(file_config.file_path, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
+    assert len(lines) == 1
+    data = json.loads(lines[0])
+    assert data["session_id"] == "session-from-env"
+
+
+def test_collector_record_preserves_explicit_session_id(file_config):
+    """Explicitly provided session_id values are preserved, including empty string."""
+    collector = EventCollector(config=file_config)
+    collector.record("a", {}, session_id="explicit-session")
+    collector.record("b", {}, session_id="")
+    collector.flush()
+    collector.close()
+
+    with open(file_config.file_path, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
+    assert len(lines) == 2
+    assert json.loads(lines[0])["session_id"] == "explicit-session"
+    assert json.loads(lines[1])["session_id"] == ""
+
+
+def test_collector_record_session_id_follows_env_changes(file_config, monkeypatch):
+    """Session ID resolution reflects the current environment at record time."""
+    monkeypatch.setenv("SESSION_ID", "first-session")
+    collector = EventCollector(config=file_config)
+    collector.record("a", {})
+
+    monkeypatch.setenv("SESSION_ID", "second-session")
+    collector.record("b", {})
+
+    collector.flush()
+    collector.close()
+
+    with open(file_config.file_path, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
+    assert len(lines) == 2
+    assert json.loads(lines[0])["session_id"] == "first-session"
+    assert json.loads(lines[1])["session_id"] == "second-session"
+
+
+def test_collector_record_session_id_none_when_env_unset(file_config, monkeypatch):
+    """When no session env var is set and none is provided, session_id is null."""
+    monkeypatch.delenv("TOPSAILAI_SESSION_ID", raising=False)
+    monkeypatch.delenv("SESSION_ID", raising=False)
+    collector = EventCollector(config=file_config)
+    collector.record("a", {})
+    collector.flush()
+    collector.close()
+
+    with open(file_config.file_path, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
+    assert len(lines) == 1
+    assert json.loads(lines[0])["session_id"] is None

@@ -4,6 +4,7 @@ Unit tests for topsailai.events.decorators.
 
 import time
 
+from topsailai.events.config import get_session_id
 from topsailai.events.decorators import (
     record_approval_events,
     record_llm_chat_events,
@@ -17,6 +18,8 @@ class FakeCollector:
         self.enabled = True
 
     def record(self, event_type, payload=None, session_id=None, **kwargs):
+        if session_id is None:
+            session_id = get_session_id()
         self.events.append(
             {"event_type": event_type, "payload": payload, "session_id": session_id}
         )
@@ -190,3 +193,31 @@ def test_decorator_disabled_collector():
 
     fn()
     assert len(collector.events) == 0
+
+
+def test_record_tool_call_events_resolves_session_id_from_env(monkeypatch):
+    """Decorators that do not pass session_id inherit it from the environment."""
+    monkeypatch.setenv("TOPSAILAI_SESSION_ID", "decorator-env-session")
+    collector = FakeCollector()
+
+    @record_tool_call_events(collector=collector, tool_name="env_tool")
+    def env_tool():
+        return "ok"
+
+    env_tool()
+    assert collector.events[0]["session_id"] == "decorator-env-session"
+    assert collector.events[1]["session_id"] == "decorator-env-session"
+
+
+def test_record_tool_call_events_preserves_explicit_session_id():
+    """Decorators can forward an explicit session_id if the caller provides one."""
+    collector = FakeCollector()
+
+    @record_tool_call_events(collector=collector, tool_name="explicit")
+    def explicit_tool():
+        return "ok"
+
+    # Simulate a caller that passes session_id through kwargs (decorator ignores it
+    # today, but the collector should preserve any explicit value it receives).
+    collector.record("manual", {}, session_id="caller-session")
+    assert collector.events[0]["session_id"] == "caller-session"

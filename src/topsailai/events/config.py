@@ -73,6 +73,17 @@ class EventConfig:
         )
 
 
+def get_session_id() -> Optional[str]:
+    """Return the current session identifier from environment variables.
+
+    Resolution order:
+        1. ``TOPSAILAI_SESSION_ID``
+        2. ``SESSION_ID``
+        3. ``None`` if neither is set.
+    """
+    return env_tool.get_session_id()
+
+
 def get_event_config() -> EventConfig:
     """Return a fresh configuration parsed from the current environment."""
     return EventConfig.from_env()

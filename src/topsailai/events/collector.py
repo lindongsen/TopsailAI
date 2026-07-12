@@ -8,9 +8,8 @@ from typing import Optional
 
 from topsailai.events.backends import create_backend
 from topsailai.events.buffer import EventBuffer
-from topsailai.events.config import EventConfig
+from topsailai.events.config import EventConfig, get_session_id
 from topsailai.events.models import Event
-
 logger = logging.getLogger(__name__)
 
 
@@ -99,12 +98,20 @@ class EventCollector:
         return [event.to_dict() for event in self._buffer.snapshot()]
 
     def record(self, event_or_type, payload=None, session_id=None, **kwargs):
-        """Append an event or create one from the given arguments."""
+        """Append an event or create one from the given arguments.
+
+        When ``session_id`` is not provided (``None``), the collector resolves
+        it from environment variables (``TOPSAILAI_SESSION_ID`` / ``SESSION_ID``)
+        so that JSONL records stay consistent with the file backend's filename.
+        Explicitly passed values, including empty strings, are preserved.
+        """
         if not self.config.enabled or self._closed:
             return
         if isinstance(event_or_type, Event):
             event = event_or_type
         else:
+            if session_id is None:
+                session_id = get_session_id()
             event = Event.create(
                 event_type=event_or_type,
                 payload=payload or {},
