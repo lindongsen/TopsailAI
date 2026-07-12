@@ -3,9 +3,24 @@
 from __future__ import annotations
 
 import functools
-from typing import Callable, Optional
+import json
+import time
+from typing import Any, Callable, Optional
 
 from topsailai.events.collector import get_event_collector
+
+
+def _safe_result(result: Any, max_bytes: int = 10000) -> Any:
+    """Return the result if small, otherwise a truncated string marker."""
+    try:
+        text = json.dumps(result, ensure_ascii=False, default=str)
+    except Exception:
+        text = str(result)
+    encoded = text.encode("utf-8")
+    if len(encoded) > max_bytes:
+        truncated = encoded[:max_bytes].decode("utf-8", errors="ignore")
+        return f"{truncated}...[truncated, original {len(text)} chars]"
+    return result
 
 
 def record_tool_call_events(func=None, *, collector=None, tool_name: Optional[str] = None):
@@ -17,22 +32,55 @@ def record_tool_call_events(func=None, *, collector=None, tool_name: Optional[st
             coll = collector if collector is not None else get_event_collector()
             if not getattr(coll, "enabled", True):
                 return func(*args, **kwargs)
-            effective_tool_name = tool_name or getattr(func, "__name__", None) or "unknown_tool"
+
+            effective_tool_name = tool_name
+            if effective_tool_name is None:
+                effective_tool_name = kwargs.get("tool_name") or getattr(
+                    func, "__name__", None
+                )
+            if not effective_tool_name:
+                effective_tool_name = "unknown_tool"
+
+            # The wrapped function (exec_tool_func) receives the tool args as
+            # the positional ``args`` parameter or as the keyword ``args``.
+            tool_args = kwargs.get("args")
+            if tool_args is None and len(args) >= 2:
+                tool_args = args[1]
+            if tool_args is None:
+                tool_args = {}
+
             coll.record(
                 "tool_call.start",
-                {"tool_name": effective_tool_name, "args": {"args": list(args), "kwargs": kwargs}},
+                {"tool_name": effective_tool_name, "args": tool_args},
             )
+            start_time = time.perf_counter()
             try:
                 result = func(*args, **kwargs)
+                duration_ms = (time.perf_counter() - start_time) * 1000
                 coll.record(
                     "tool_call.end",
-                    {"tool_name": effective_tool_name, "success": True, "result": result},
+                    {
+                        "tool_name": effective_tool_name,
+                        "args": tool_args,
+                        "success": True,
+                        "result": _safe_result(result),
+                        "duration_ms": duration_ms,
+                        "error_type": None,
+                    },
                 )
                 return result
             except Exception as exc:
+                duration_ms = (time.perf_counter() - start_time) * 1000
                 coll.record(
                     "tool_call.end",
-                    {"tool_name": effective_tool_name, "success": False, "error": str(exc)},
+                    {
+                        "tool_name": effective_tool_name,
+                        "args": tool_args,
+                        "success": False,
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                        "duration_ms": duration_ms,
+                    },
                 )
                 raise
 

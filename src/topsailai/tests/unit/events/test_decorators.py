@@ -2,6 +2,8 @@
 Unit tests for topsailai.events.decorators.
 """
 
+import time
+
 from topsailai.events.decorators import (
     record_approval_events,
     record_llm_chat_events,
@@ -56,6 +58,64 @@ def test_record_tool_call_events_error():
     assert collector.events[1]["event_type"] == "tool_call.end"
     assert collector.events[1]["payload"]["success"] is False
     assert "boom" in collector.events[1]["payload"]["error"]
+
+
+def test_record_tool_call_events_payload_has_duration_ms():
+    collector = FakeCollector()
+
+    @record_tool_call_events(collector=collector, tool_name="slow")
+    def slow_tool():
+        time.sleep(0.01)
+        return "ok"
+
+    slow_tool()
+    end_payload = collector.events[1]["payload"]
+    assert "duration_ms" in end_payload
+    assert end_payload["duration_ms"] >= 10
+
+
+def test_record_tool_call_events_payload_args_is_original_dict():
+    collector = FakeCollector()
+    original_args = {"a": 1, "b": 2}
+
+    @record_tool_call_events(collector=collector, tool_name="with_args")
+    def with_args_tool(tool_func, args, tool_name=""):
+        return args
+
+    with_args_tool(None, original_args, tool_name="with_args")
+    end_payload = collector.events[1]["payload"]
+    assert end_payload["args"] is original_args
+    assert end_payload["args"] == {"a": 1, "b": 2}
+
+
+def test_record_tool_call_events_payload_truncates_large_result():
+    collector = FakeCollector()
+
+    @record_tool_call_events(collector=collector, tool_name="big")
+    def big_tool():
+        return "x" * 20000
+
+    big_tool()
+    end_payload = collector.events[1]["payload"]
+    assert end_payload["success"] is True
+    assert len(end_payload["result"]) < 20000
+    assert "truncated" in end_payload["result"]
+
+def test_record_tool_call_events_payload_error_type():
+    collector = FakeCollector()
+
+    @record_tool_call_events(collector=collector, tool_name="err")
+    def err_tool():
+        raise RuntimeError("crash")
+
+    try:
+        err_tool()
+    except RuntimeError:
+        pass
+
+    end_payload = collector.events[1]["payload"]
+    assert end_payload["success"] is False
+    assert end_payload["error_type"] == "RuntimeError"
 
 
 def test_record_approval_events():

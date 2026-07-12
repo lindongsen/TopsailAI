@@ -4,6 +4,7 @@ Unit tests for topsailai.events.backends.
 
 import json
 import os
+import time
 
 import pytest
 
@@ -79,3 +80,92 @@ def test_file_backend_serializes_non_json_payload(temp_events_file):
     assert len(lines) == 2
     assert json.loads(lines[0])["payload"]["items"] == [1, 2, 3]
     assert json.loads(lines[1])["payload"]["raw"] == "hello"
+
+
+def test_file_backend_cleanup_by_retention_days(tmp_path):
+    old_file = tmp_path / "old.session.events"
+    new_file = tmp_path / "new.session.events"
+    old_file.write_text("{}")
+    new_file.write_text("{}")
+    # Make old file appear 10 days old
+    old_mtime = time.time() - 10 * 86400
+    os.utime(old_file, (old_mtime, old_mtime))
+
+    backend = FileEventBackend(
+        file_path=str(new_file), retention_days=7, max_count=0
+    )
+    backend.cleanup()
+    backend.close()
+
+    assert not old_file.exists()
+    assert new_file.exists()
+
+
+def test_file_backend_cleanup_by_max_count(tmp_path):
+    files = []
+    for i in range(5):
+        path = tmp_path / f"f{i}.session.events"
+        path.write_text("{}")
+        files.append(path)
+        time.sleep(0.01)
+
+    backend = FileEventBackend(
+        file_path=str(files[-1]), retention_days=0, max_count=3
+    )
+    backend.cleanup()
+    backend.close()
+
+    assert not files[0].exists()
+    assert not files[1].exists()
+    assert files[2].exists()
+    assert files[3].exists()
+    assert files[4].exists()
+
+
+def test_file_backend_delete_on_exit_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOPSAILAI_EVENTS_FILE_DELETE_ON_EXIT", "1")
+    pid = os.getpid()
+    path = str(tmp_path / f"delete_me.{pid}.session.events")
+    backend = FileEventBackend(file_path=path)
+    backend.write([Event(event_type="x", payload={})])
+    backend.close()
+    assert os.path.exists(path)
+
+    # Simulate interpreter shutdown by invoking registered atexit handlers.
+    import atexit
+    atexit._run_exitfuncs()
+
+    assert not os.path.exists(path)
+
+
+def test_file_backend_delete_on_exit_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOPSAILAI_EVENTS_FILE_DELETE_ON_EXIT", "0")
+    pid = os.getpid()
+    path = str(tmp_path / f"keep_me.{pid}.session.events")
+    backend = FileEventBackend(file_path=path)
+    backend.write([Event(event_type="x", payload={})])
+    backend.close()
+    assert os.path.exists(path)
+
+    import atexit
+    atexit._run_exitfuncs()
+
+    assert os.path.exists(path)
+
+
+def test_file_backend_fsync_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOPSAILAI_EVENTS_FILE_FSYNC", "1")
+    path = str(tmp_path / "fsync.session.events")
+    backend = FileEventBackend(file_path=path)
+    backend.write([Event(event_type="x", payload={})])
+    backend.close()
+    assert os.path.exists(path)
+
+
+def test_file_backend_fsync_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOPSAILAI_EVENTS_FILE_FSYNC", "0")
+    path = str(tmp_path / "no_fsync.session.events")
+    backend = FileEventBackend(file_path=path)
+    backend.write([Event(event_type="x", payload={})])
+    backend.close()
+    assert os.path.exists(path)

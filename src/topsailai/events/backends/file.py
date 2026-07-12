@@ -26,10 +26,11 @@ class FileEventBackend(EventBackend):
     """
     Append-only JSONL backend for events.
 
-    The backend registers an ``atexit`` handler to delete the current process's
-    events file when the interpreter shuts down. It also implements ``cleanup()``
-    to remove old events files based on retention days and an optional maximum
-    file count.
+    The backend optionally registers an ``atexit`` handler to delete the current
+    process's events file when the interpreter shuts down. Deletion is disabled
+    by default and is controlled by ``TOPSAILAI_EVENTS_FILE_DELETE_ON_EXIT``.
+    It also implements ``cleanup()`` to remove old events files based on
+    retention days and an optional maximum file count.
     """
 
     def __init__(
@@ -38,14 +39,20 @@ class FileEventBackend(EventBackend):
         retention_days: int | None = None,
         max_count: int | None = None,
         register_atexit: bool = True,
+        delete_on_exit: bool | None = None,
+        fsync: bool | None = None,
     ):
         self._file_path = file_path or self._resolve_default_path()
         self._retention_days = (
             retention_days if retention_days is not None else self._resolve_retention_days()
         )
         self._max_count = max_count if max_count is not None else self._resolve_max_count()
+        self._delete_on_exit = (
+            delete_on_exit if delete_on_exit is not None else self._resolve_delete_on_exit()
+        )
+        self._fsync = fsync if fsync is not None else self._resolve_fsync()
         self._ensure_directory()
-        if register_atexit:
+        if register_atexit and self._delete_on_exit:
             atexit.register(self._atexit_cleanup)
 
     @property
@@ -77,6 +84,18 @@ class FileEventBackend(EventBackend):
             "TOPSAILAI_EVENTS_FILE_MAX_COUNT", default=0, formatter=int
         )
         return value if value is not None and value >= 0 else 0
+
+    @staticmethod
+    def _resolve_delete_on_exit() -> bool:
+        return env_tool.EnvReaderInstance.check_bool(
+            "TOPSAILAI_EVENTS_FILE_DELETE_ON_EXIT", default=False
+        )
+
+    @staticmethod
+    def _resolve_fsync() -> bool:
+        return env_tool.EnvReaderInstance.check_bool(
+            "TOPSAILAI_EVENTS_FILE_FSYNC", default=True
+        )
 
     def _ensure_directory(self) -> None:
         directory = os.path.dirname(self._file_path)
@@ -112,6 +131,11 @@ class FileEventBackend(EventBackend):
             with open(self._file_path, "a", encoding="utf-8") as handle:
                 handle.write("\n".join(lines) + "\n")
                 handle.flush()
+                if self._fsync:
+                    try:
+                        os.fsync(handle.fileno())
+                    except Exception:
+                        pass
             return True
         except Exception:
             return False

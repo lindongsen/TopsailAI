@@ -35,4 +35,6 @@ def create_backend(config: "EventConfig") -> Optional[EventBackend]:
         file_path=config.file_path,
         retention_days=config.retention_days,
         max_count=config.max_count,
+        delete_on_exit=config.delete_on_exit,
+        fsync=config.fsync,
     )

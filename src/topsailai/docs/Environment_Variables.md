@@ -377,6 +377,8 @@ These variables control the independent event recording subsystem.
 | `TOPSAILAI_EVENTS_FILE_PATH` | `""` | Optional full path for the file backend. When empty, the file is placed in `TOPSAILAI_HOME/workspace/task` using the session stdout naming convention with the `.events` extension: `{session_id}.{pid}.session.events` when `SESSION_ID` is set, otherwise `topsailai.{pid}.session.events`. |
 | `TOPSAILAI_EVENTS_FILE_RETENTION_DAYS` | `7` | Number of days to retain event files written by the file backend. Files older than this are removed during cleanup. Set to `0` to disable age-based cleanup. |
 | `TOPSAILAI_EVENTS_FILE_MAX_COUNT` | `0` | Maximum number of event files to keep in the file backend directory. When the limit is exceeded, oldest files are deleted first. `0` disables count-based cleanup. |
+| `TOPSAILAI_EVENTS_FILE_DELETE_ON_EXIT` | `0` | When `1`, the file backend deletes the current process's `.events` file on interpreter shutdown. Defaults to `0` so events are preserved across restarts. |
+| `TOPSAILAI_EVENTS_FILE_FSYNC` | `1` | When `1`, the file backend calls `os.fsync()` after each write to improve durability. Set to `0` to reduce I/O overhead at the cost of potential data loss on crash. |
 
 ## Project History
 

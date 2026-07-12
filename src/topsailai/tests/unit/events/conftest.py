@@ -83,7 +83,7 @@ def mock_collector(monkeypatch):
     from topsailai.events import collector as collector_module
 
     mock = MockCollector()
-    original = getattr(collector_module, "_COLLECTOR", None)
-    collector_module._COLLECTOR = mock
+    original = getattr(collector_module, "_collector_instance", None)
+    collector_module._collector_instance = mock
     yield mock
-    collector_module._COLLECTOR = original
+    collector_module._collector_instance = original

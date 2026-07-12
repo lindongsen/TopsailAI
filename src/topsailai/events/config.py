@@ -23,6 +23,9 @@ class EventConfig:
         file_path: Optional override for the file backend output path.
         retention_days: Number of days to retain events files (file backend).
         max_count: Maximum number of events files to keep (0 = unlimited).
+        delete_on_exit: Whether the file backend deletes the current process's
+            events file on interpreter shutdown.
+        fsync: Whether the file backend calls ``os.fsync`` after each write.
     """
 
     enabled: bool = True
@@ -32,6 +35,8 @@ class EventConfig:
     file_path: Optional[str] = None
     retention_days: int = 7
     max_count: int = 0
+    delete_on_exit: bool = False
+    fsync: bool = True
 
     @classmethod
     def from_env(cls) -> "EventConfig":
@@ -48,6 +53,10 @@ class EventConfig:
             "TOPSAILAI_EVENTS_FILE_RETENTION_DAYS", default=7, formatter=int
         )
         max_count = reader.get("TOPSAILAI_EVENTS_FILE_MAX_COUNT", default=0, formatter=int)
+        delete_on_exit = reader.check_bool(
+            "TOPSAILAI_EVENTS_FILE_DELETE_ON_EXIT", default=False
+        )
+        fsync = reader.check_bool("TOPSAILAI_EVENTS_FILE_FSYNC", default=True)
 
         return cls(
             enabled=enabled,
@@ -59,6 +68,8 @@ class EventConfig:
             file_path=file_path if file_path else None,
             retention_days=retention_days if retention_days is not None and retention_days >= 0 else 7,
             max_count=max_count if max_count is not None and max_count >= 0 else 0,
+            delete_on_exit=delete_on_exit,
+            fsync=fsync,
         )
 
 
