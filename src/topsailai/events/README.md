@@ -74,6 +74,29 @@ The buffer is used by `EventCollector` to absorb bursts of events without blocki
 
 When events are disabled, a `NoOpFlusher` is used so no background thread is started.
 
+### Auto-Start
+
+`get_event_collector()` automatically creates **and starts** the global collector, so callers do not need to invoke `.start()` manually. The background flusher begins running as soon as the first event is recorded.
+
+### Synchronous Flush
+
+By default, events are buffered and flushed asynchronously. If an event must be durable before the caller continues, pass `flush=True`:
+
+```python
+record_event("critical.event", {"key": "value"}, flush=True)
+```
+
+This drains the buffer and writes to the backend on the caller thread. Use sparingly for high-frequency events because it adds I/O latency to every call.
+
+### Buffer Full Behavior
+
+The buffer never blocks the caller. When the buffer reaches its capacity, the **oldest event is dropped** and the new event is appended. A full buffer does **not** trigger an immediate flush; the background flusher remains on its configured interval.
+
+### Process Exit Guarantee
+
+An `atexit` handler is registered when the module is imported. It flushes any remaining events and closes the collector when the interpreter shuts down, so short-lived scripts do not lose the last buffered events.
+
+
 ---
 
 ## 6. Backend Adapters
@@ -292,10 +315,16 @@ Unit tests are located under `tests/unit/events/`:
 Run the events tests:
 
 ```bash
-python tests/run_tests.py tests/unit/events
+pytest tests/unit/events/
 ```
 
-Or run a single test file:
+Or use the project test runner with a specific file path:
+
+```bash
+python tests/run_tests.py events/test_decorators.py
+```
+
+Run a single test file directly:
 
 ```bash
 pytest tests/unit/events/test_decorators.py
