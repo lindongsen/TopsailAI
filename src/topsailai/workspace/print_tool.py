@@ -458,17 +458,19 @@ def print_context_messages(messages, content_max_length=None):
         )
         print(f"{'='*50}")
 
-        # Truncate only the displayed content, counts use the original content
-        display_content = _truncate_content(content, content_max_length)
-
-        # Handle multiline content while preserving formatting
+        # Format the content first, then truncate the formatted result for display.
+        # Counts still use the original content so truncation does not affect them.
+        display_content = content
         try:
             display_content = format_tool.to_topsailai_format(
                 display_content, key_name="step_name", value_name="raw_text",
                 for_print=True,
             ).strip()
         except Exception:
-            pass
+            if not isinstance(display_content, str):
+                display_content = str(display_content)
+        display_content = _truncate_content(display_content, content_max_length)
+
         if display_content:
             print(json_tool.safe_json_dump(display_content))
         else:
@@ -476,6 +478,7 @@ def print_context_messages(messages, content_max_length=None):
 
     #print(f"\n{'='*50}")
     print()
+
 
 def print_raw_messages(messages: list[ChatHistoryMessageData]):
     """
