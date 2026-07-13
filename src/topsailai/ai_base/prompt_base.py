@@ -13,6 +13,7 @@ from topsailai.ai_base.constants import (
     NON_SYSTEM_PROMPT_MESSAGE_INDEX,
     STEP_NAME_OBSERVATION,
 )
+from topsailai.ai_base.exception import HeavyTaskError
 from topsailai.utils.print_tool import (
     print_step,
     print_error,
@@ -266,6 +267,9 @@ class PromptBase(object):
         for hook in self.hooks_pre_chat:
             try:
                 hook(self)
+            except HeavyTaskError:
+                # HeavyTaskError must propagate so the agent loop can terminate gracefully.
+                raise
             except Exception as e:
                 logger.exception("failed to call hook [%s]: %s", hook, e)
         return

@@ -16,6 +16,9 @@ from topsailai.ai_base.constants import (
     ROLE_ASSISTANT,
     ROLE_SYSTEM,
 )
+from topsailai.ai_base.exception import (
+    HeavyTaskError,
+)
 from topsailai.ai_base.prompt_base import (
     MessageData,
 )
@@ -61,7 +64,8 @@ class HeavyTaskBase(object):
         return False
 
     def block_heavy_task(self):
-        assert self.continuous_summary_times < (self.threshold_continuous_summary_times + 7), self.prompt
+        if self.continuous_summary_times >= (self.threshold_continuous_summary_times + 7):
+            raise HeavyTaskError(self.prompt)
         return
 
     def reset_count(self):

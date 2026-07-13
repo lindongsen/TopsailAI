@@ -31,7 +31,7 @@ from topsailai.ai_base.agent_types.exception import (
     AgentNeedRefreshSession,
     DataAgentRefreshSession,
 )
-
+from topsailai.ai_base.exception import HeavyTaskError
 from topsailai.tools.base.common import (
     get_tools_for_chat,
 )
@@ -250,7 +250,12 @@ class AgentRun(AgentBase):
                 return None
 
             # hook, pre-chat
-            self.call_hooks_pre_chat()
+            try:
+                self.call_hooks_pre_chat()
+            except HeavyTaskError as e:
+                logger.warning("HeavyTaskError caught in agent run: %s", e)
+                print_critical(f"Task terminated: {e}")
+                return None
 
             # update env
             self.update_message_for_env()

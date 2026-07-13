@@ -29,6 +29,7 @@ from topsailai.ai_base.agent_types.init import (
 from topsailai.ai_base.agent_types import (
     exception as agent_exception,
 )
+from topsailai.ai_base.exception import HeavyTaskError
 from topsailai.workspace.input_tool import (
     get_message,
     input_message,
@@ -211,6 +212,11 @@ class AgentChat(AgentChatBase):
 
             except agent_exception.AgentEndProcess:
                 self.last_message = self.messages[-1]
+            except HeavyTaskError as e:
+                logger.warning("HeavyTaskError caught in agent chat loop: %s", e)
+                answer = f"Task terminated: {e}"
+                self.last_message = answer
+                break
             except (KeyboardInterrupt, EOFError):
                 flag_abort = True
                 answer = "failed due to abort by Human"

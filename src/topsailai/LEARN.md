@@ -17,3 +17,12 @@ Lessons:
 (1) define the measurement boundary explicitly: "first byte" should include everything from the caller's decision to start the request up to the first useful response chunk;
 (2) place the start timestamp at the earliest point inside that boundary, immediately before any work that contributes to the latency;
 (3) when a user reports a metric "looks wrong", verify the placement of the start and end timestamps before questioning the unit conversion or aggregation logic.
+
+## Do not use assert for recoverable control flow that must cross a swallowing exception boundary
+
+When `workspace/agent/agent_chat_base.py::HeavyTaskBase.block_heavy_task()` used `assert` to stop an overloaded task, the resulting `AssertionError` was swallowed by `ai_base/prompt_base.py::call_hooks_pre_chat()`, which catches all exceptions and only logs them. The agent's ReAct loop therefore never terminated, context summarization never ran, and `msg_count` grew without bound.
+
+Lessons:
+(1) Use a dedicated exception class (`HeavyTaskError`) for control-flow errors that must propagate through generic catch-all handlers;
+(2) Generic hook callers should explicitly re-raise domain-specific exceptions rather than swallowing them;
+(3) Any termination signal that crosses a layer boundary must be treated as part of the API contract, not as an internal invariant.
