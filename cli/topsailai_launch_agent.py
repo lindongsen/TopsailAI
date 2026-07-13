@@ -676,7 +676,11 @@ def _is_ignored(rel_path, name, is_dir, patterns):
 
 
 def _scan_workspace_files(workspace):
-    """Scan workspace and return folder structure as a tree string."""
+    """Scan workspace and return folder structure as a tree string.
+
+    Symbolic links are not followed: symlinked files are listed as leaf
+    entries and symlinked directories are not recursed into.
+    """
     workspace = os.path.abspath(workspace)
     patterns = _load_gitignore_patterns(workspace)
 
@@ -694,7 +698,8 @@ def _scan_workspace_files(workspace):
                 continue
             full_path = os.path.join(current_dir, name)
             rel_path = os.path.relpath(full_path, workspace).replace("\\", "/")
-            is_dir = os.path.isdir(full_path)
+            is_symlink = os.path.islink(full_path)
+            is_dir = os.path.isdir(full_path) and not is_symlink
             if _is_ignored(rel_path, name, is_dir, patterns):
                 continue
             visible_items.append((name, full_path, is_dir))
