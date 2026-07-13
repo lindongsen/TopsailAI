@@ -449,14 +449,14 @@ def print_context_messages(messages, content_max_length=None):
         token_count = _count_tokens(content)
 
         # Format the output with visual separators
-        print(f"\n{'='*50}")
+        print(f"\n{'='*80}")
         print(
             f"#{i+1} - Role: {role.upper()}"
             f" - Words: {word_count}"
             f" - Tokens: {token_count}"
             + (f" - {create_time}" if create_time else "")
         )
-        print(f"{'='*50}")
+        print(f"{'='*80}")
 
         # Format the content first, then truncate the formatted result for display.
         # Counts still use the original content so truncation does not affect them.
