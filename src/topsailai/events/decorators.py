@@ -23,7 +23,9 @@ def _safe_result(result: Any, max_bytes: int = 10000) -> Any:
     return result
 
 
-def record_tool_call_events(func=None, *, collector=None, tool_name: Optional[str] = None):
+def record_tool_call_events(
+    func=None, *, collector=None, tool_name: Optional[str] = None, flush: bool = False
+):
     """Decorator that records tool_call.start and tool_call.end events."""
 
     def decorator(func: Callable) -> Callable:
@@ -52,6 +54,7 @@ def record_tool_call_events(func=None, *, collector=None, tool_name: Optional[st
             coll.record(
                 "tool_call.start",
                 {"tool_name": effective_tool_name, "args": tool_args},
+                flush=flush,
             )
             start_time = time.perf_counter()
             try:
@@ -67,6 +70,7 @@ def record_tool_call_events(func=None, *, collector=None, tool_name: Optional[st
                         "duration_ms": duration_ms,
                         "error_type": None,
                     },
+                    flush=flush,
                 )
                 return result
             except Exception as exc:
@@ -81,6 +85,7 @@ def record_tool_call_events(func=None, *, collector=None, tool_name: Optional[st
                         "error_type": type(exc).__name__,
                         "duration_ms": duration_ms,
                     },
+                    flush=flush,
                 )
                 raise
 
@@ -91,7 +96,7 @@ def record_tool_call_events(func=None, *, collector=None, tool_name: Optional[st
     return decorator(func)
 
 
-def record_approval_events(func=None, *, collector=None):
+def record_approval_events(func=None, *, collector=None, flush: bool = False):
     """Decorator that records a tool_approval.decision event."""
 
     def decorator(func: Callable) -> Callable:
@@ -101,7 +106,7 @@ def record_approval_events(func=None, *, collector=None):
             if not getattr(coll, "enabled", True):
                 return func(*args, **kwargs)
             decision = func(*args, **kwargs)
-            coll.record("tool_approval.decision", {"decision": decision})
+            coll.record("tool_approval.decision", {"decision": decision}, flush=flush)
             return decision
 
         return wrapper
@@ -111,7 +116,7 @@ def record_approval_events(func=None, *, collector=None):
     return decorator(func)
 
 
-def record_llm_chat_events(func=None, *, collector=None):
+def record_llm_chat_events(func=None, *, collector=None, flush: bool = False):
     """Decorator that records llm.request.start and llm.response.* events."""
 
     def decorator(func: Callable) -> Callable:
@@ -120,13 +125,13 @@ def record_llm_chat_events(func=None, *, collector=None):
             coll = collector if collector is not None else get_event_collector()
             if not getattr(coll, "enabled", True):
                 return func(*args, **kwargs)
-            coll.record("llm.request.start", {})
+            coll.record("llm.request.start", {}, flush=flush)
             try:
                 result = func(*args, **kwargs)
-                coll.record("llm.response.success", {"result": result})
+                coll.record("llm.response.success", {"result": result}, flush=flush)
                 return result
             except Exception as exc:
-                coll.record("llm.response.error", {"error": str(exc)})
+                coll.record("llm.response.error", {"error": str(exc)}, flush=flush)
                 raise
 
         return wrapper

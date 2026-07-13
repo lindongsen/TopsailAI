@@ -12,6 +12,7 @@ from __future__ import annotations
 import atexit
 import glob
 import json
+import logging
 import os
 import time
 from typing import List
@@ -20,6 +21,9 @@ from topsailai.events.backends.base import EventBackend
 from topsailai.events.models import Event
 from topsailai.utils import env_tool
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
+
+
+logger = logging.getLogger(__name__)
 
 
 class FileEventBackend(EventBackend):
@@ -59,7 +63,6 @@ class FileEventBackend(EventBackend):
     def file_path(self) -> str:
         """Return the resolved output file path."""
         return self._file_path
-
 
     @staticmethod
     def _resolve_default_path() -> str:
@@ -103,7 +106,7 @@ class FileEventBackend(EventBackend):
             try:
                 os.makedirs(directory, exist_ok=True)
             except Exception:
-                pass
+                logger.exception("Failed to create events directory: %s", directory)
 
     def _atexit_cleanup(self) -> None:
         """Delete the current process's events file on interpreter shutdown."""
@@ -136,8 +139,12 @@ class FileEventBackend(EventBackend):
                         os.fsync(handle.fileno())
                     except Exception:
                         pass
+            logger.debug("Wrote %d events to %s", len(events), self._file_path)
             return True
-        except Exception:
+        except Exception as exc:
+            logger.exception(
+                "Failed to write %d events to %s: %s", len(events), self._file_path, exc
+            )
             return False
 
     def close(self) -> None:

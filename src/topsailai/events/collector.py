@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import logging
 import threading
 from typing import Optional
@@ -10,6 +11,7 @@ from topsailai.events.backends import create_backend
 from topsailai.events.buffer import EventBuffer
 from topsailai.events.config import EventConfig, get_session_id
 from topsailai.events.models import Event
+
 logger = logging.getLogger(__name__)
 
 
@@ -97,13 +99,25 @@ class EventCollector:
         """Return a snapshot of buffered events as dictionaries."""
         return [event.to_dict() for event in self._buffer.snapshot()]
 
-    def record(self, event_or_type, payload=None, session_id=None, **kwargs):
+    def record(
+        self,
+        event_or_type,
+        payload=None,
+        session_id=None,
+        flush: bool = False,
+        **kwargs,
+    ):
         """Append an event or create one from the given arguments.
 
         When ``session_id`` is not provided (``None``), the collector resolves
         it from environment variables (``TOPSAILAI_SESSION_ID`` / ``SESSION_ID``)
         so that JSONL records stay consistent with the file backend's filename.
         Explicitly passed values, including empty strings, are preserved.
+
+        Args:
+            flush: If True, immediately flush the buffer to the backend after
+                recording. This makes the event durable synchronously but adds
+                a small I/O cost on the caller thread.
         """
         if not self.config.enabled or self._closed:
             return
@@ -119,6 +133,8 @@ class EventCollector:
                 **kwargs,
             )
         self._buffer.append(event)
+        if flush:
+            self.flush()
 
     def flush(self) -> bool:
         """Flush buffered events to the backend. Re-queue on failure."""
@@ -142,7 +158,6 @@ class EventCollector:
         """Stop the flusher, flush remaining events, and close the backend."""
         if self._closed:
             return
-        self._closed = True
         if isinstance(self._flusher, BackgroundFlusher):
             self._flusher.stop()
             if self._flusher.is_alive():
@@ -151,6 +166,7 @@ class EventCollector:
             self.flush()
         except Exception:
             logger.exception("Final event flush failed")
+        self._closed = True
         if self._backend is not None:
             try:
                 self._backend.close()
@@ -164,11 +180,11 @@ _collector_lock = threading.Lock()
 
 
 def get_event_collector(config: Optional[EventConfig] = None) -> EventCollector:
-    """Return the global event collector, creating it if necessary."""
+    """Return the global event collector, creating and starting it if necessary."""
     global _collector_instance
     with _collector_lock:
         if _collector_instance is None:
-            _collector_instance = EventCollector(config)
+            _collector_instance = EventCollector(config).start()
         return _collector_instance
 
 
@@ -185,9 +201,35 @@ def reset_event_collector() -> None:
             _collector_instance = None
 
 
-def record_event(event_type: str, payload: dict, session_id: Optional[str] = None) -> None:
-    """Record an event through the global collector if enabled."""
+def record_event(
+    event_type: str,
+    payload: dict,
+    session_id: Optional[str] = None,
+    flush: bool = False,
+    **kwargs,
+) -> None:
+    """Record an event through the global collector if enabled.
+
+    Args:
+        flush: If True, immediately flush the buffer to the backend after
+            recording. This makes the event durable synchronously.
+    """
     collector = get_event_collector()
     if not collector.enabled:
         return
-    collector.record(event_type, payload=payload, session_id=session_id)
+    collector.record(event_type, payload=payload, session_id=session_id, flush=flush, **kwargs)
+
+
+def _atexit_flush() -> None:
+    """Flush remaining events before process exit."""
+    global _collector_instance
+    with _collector_lock:
+        if _collector_instance is not None:
+            try:
+                _collector_instance.flush()
+                _collector_instance.close()
+            except Exception:
+                logger.exception("Final event flush on exit failed")
+
+
+atexit.register(_atexit_flush)
