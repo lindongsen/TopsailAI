@@ -389,6 +389,9 @@ class CursesStreamUI:
         import curses
 
         if ch in (curses.KEY_ENTER, "\n", "\r"):
+            if self._input_buffer == "EOF":
+                self._multi_line_finished = True
+                return True
             self._multi_line_buffer.append(self._input_buffer)
             self._input_buffer = ""
             self._cursor_pos = 0
@@ -509,7 +512,7 @@ class CursesStreamUI:
         """Collect multi-line input from the user and return it.
 
         The input pane is expanded temporarily while collecting lines.  The
-        user finishes with Ctrl+D or cancels with ESC.
+        user finishes with Ctrl+D, a standalone 'EOF' line, or cancels with ESC.
         """
         import curses
 

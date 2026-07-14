@@ -1260,6 +1260,29 @@ def _read_multiline_input_for_send() -> Optional[str]:
     return "\n".join(lines)
 
 
+def _read_multiline_input_for_ctx_btw() -> Optional[str]:
+    """
+    Read multi-line input until EOF (Ctrl+D) or a standalone 'EOF' line is received.
+
+    Returns ``None`` if the user cancels with Ctrl+C.
+    """
+    print(
+        f"{Colors.CYAN}[INFO] Enter /ctx.btw message (type EOF on its own line or Ctrl+D to finish):{Colors.RESET}"
+    )
+    lines: List[str] = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        except KeyboardInterrupt:
+            print(f"\n{Colors.YELLOW}[INFO] Cancelled.{Colors.RESET}")
+            return None
+        if line == "EOF":
+            break
+        lines.append(line)
+    return "\n".join(lines)
+
 def _handle_stream_ctx_btw(
     cmd_line: str,
     task_dir: str,
@@ -1282,16 +1305,17 @@ def _handle_stream_ctx_btw(
         return
     instruction, variables = matched
 
-    # When no inline message is provided and an external input provider is
-    # available, use it to collect multi-line input without blocking the UI.
-    if (
-        input_provider is not None
-        and not variables.get("message", "").strip()
-        and instruction.get("shell", "")
-    ):
-        message = input_provider(
-            f"{Colors.CYAN}[INFO] Enter /ctx.btw message (Ctrl+D to finish):{Colors.RESET}"
-        )
+    # When no inline message is provided, collect multi-line input.  Use the
+    # external provider (e.g. the curses UI) when available; otherwise fall
+    # back to standard input so raw/legacy streaming modes also support
+    # multi-line messages.
+    if not variables.get("message", "").strip() and instruction.get("shell", ""):
+        if input_provider is not None:
+            message = input_provider(
+                f"{Colors.CYAN}[INFO] Enter /ctx.btw message (Ctrl+D to finish):{Colors.RESET}"
+            )
+        else:
+            message = _read_multiline_input_for_ctx_btw()
         if message is None:
             print(f"\n{Colors.YELLOW}[INFO] Cancelled.{Colors.RESET}")
             return

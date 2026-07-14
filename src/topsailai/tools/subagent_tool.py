@@ -12,10 +12,8 @@ from topsailai.logger import logger
 from topsailai.utils.env_tool import (
     EnvReaderInstance,
 )
-from topsailai.tools import (
-    skill_tool,
-)
 from topsailai.prompt_hub import prompt_tool
+from topsailai.context.common import get_session_id
 from topsailai.workspace.task import task_tool
 from topsailai.workspace.folder_constants import FOLDER_ROOT
 
@@ -185,7 +183,7 @@ def call_assistant(task:str, role:str=None, llm:str=None) -> str:
 
     Args:
         task (str): content
-        role (str, optional): subagent role name
+        role (str, optional): subagent role/member name
         llm (str, optional): large language model
 
     Returns:
@@ -233,18 +231,117 @@ I am a sub-agent, and my name is ({role_name or agent_name})
     task_agent.hooks_for_final_answer.clear()
 
     task_id = get_task_id()
-    return task_agent._run(
-        message=message,
-        times=1,
-        need_session_lock=False,
-        task_id=task_id,
-    )
+    try:
+        return task_agent._run(
+            message=message,
+            times=1,
+            need_session_lock=False,
+            task_id=task_id,
+        )
+    finally:
+        del task_agent
+
+
+class MainAgent(object):
+    """ Main Agent Object """
+    def __init__(self, agent_name=None):
+        if not agent_name:
+            agent_name = os.getenv("TOPSAILAI_AGENT_NAME") or "Agent"
+
+        self.agent_name = agent_name
+        self.system_prompt = """
+## Main(Manager) & Sub(Member) Agents
+I am Main-Agent(Manager)
+
+> Manager Role & Constraint
+> Manager is a "Router and Coordinator". Not an Executor.
+> Manager subdivide the tasks to ensure that the tasks assigned to each member are detailed, focused, as simple and clear as possible.
+"""
+
+        # Tool availability for the plan_agent:
+        #
+        # `enabled_tools` acts as an explicit allow-list. Only the tool kits listed
+        # below are available to the plan_agent, plus any tools injected via
+        # `tool_map`.
+        #
+        # Available tools:
+        #   - file_readonly_tool-* (read-only file operations, injected by get_tool_map)
+        #       - check_files_existing
+        #       - get_file_size
+        #       - list_dirs
+        #       - read_file
+        #       - read_file_around_line
+        #       - read_file_lines
+        #       - read_file_with_context
+        #       - read_files
+        #   - story_memory_tool-* (persistent memory access)
+        #   - subagent_tool-call_assistant (delegate work to sub-agents)
+        #
+        # Deliberately unavailable:
+        #   - agent_tool is disabled via disabled_tools.
+        #   - cmd_tool, file_tool (write variants), skill_tool, time_tool, ctx_tool,
+        #     and all other internal tools are NOT in the allow-list, so the main
+        #     agent cannot execute commands, write files, call skills, etc. directly.
+        #     Any such action must be delegated to a sub-agent through
+        #     subagent_tool-call_assistant.
+        #
+        # Determine whether to inject the read-only file tool map into the plan
+        # agent. This is controlled by the TOPSAILAI_AGENT_PLAN_USE_TOOL_MAP
+        # environment variable. When set to a truthy value (e.g. "1", "true", "yes",
+        # "on", "enabled"), the file_readonly_tool-* handlers are passed via
+        # tool_map. When unset or falsy, tool_map is omitted and the plan agent only
+        # has access to the story_memory_tool and subagent_tool kits.
+        self.use_tool_map = EnvReaderInstance.check_bool("TOPSAILAI_AGENT_PLAN_USE_TOOL_MAP")
+
+        self.plan_agent_kwargs = dict(
+            system_prompt=self.system_prompt,
+            session_id=get_session_id(),
+            disabled_tools=["agent_tool"],
+            enabled_tools=["story_memory_tool", "subagent_tool"],
+            agent_type="plan_and_execute",
+        )
+        if self.use_tool_map:
+            self.plan_agent_kwargs["tool_map"] = self.tool_map
+
+        # agent
+        from topsailai.workspace.agent_shell import get_agent_chat
+        # plan agent
+        self.plan_agent = get_agent_chat(**self.plan_agent_kwargs)
+        self.run = self.plan_agent.run
+
+        return
+
+    @property
+    def tool_map(self) -> dict:
+        """
+        Build and return a mapping of tool names to their corresponding functions.
+
+        This function constructs a dictionary that maps tool names to their handler
+        functions. It includes the plan_tool-call_assistant function and all file
+        readonly tools. Each tool is also registered using the add_tool function.
+
+        Returns:
+            dict: A dictionary mapping tool names (str) to their handler functions.
+        """
+        from topsailai.tools import (
+            file_readonly_tool,
+        )
+        tool_map = {}
+        for tool_name, tool_func in file_readonly_tool.FILE_RO_TOOLS.items():
+            tool_name = "file_readonly_tool-" + tool_name
+            tool_map[tool_name] = tool_func
+
+        return tool_map
 
 
 def init_doc():
     models = EnvReaderInstance.get_list_str("TOPSAILAI_SUBAGENT_TOOL_AVAILABLE_LLMS", separator="")
     if models:
         call_assistant.__doc__ += f"\nSupported LLM: {models}\n"
+
+    from topsailai.tools import (
+        skill_tool,
+    )
 
     if skill_tool.PROMPT_PLUGIN_SKILLS:
         call_assistant.__doc__ += "\n>>> SKILL START\n" + skill_tool.PROMPT_PLUGIN_SKILLS + "\n<<< SKILL END"
