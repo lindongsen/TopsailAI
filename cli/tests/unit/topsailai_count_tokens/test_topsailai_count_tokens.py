@@ -58,7 +58,7 @@ class TestCountTokensCLI:
         assert captured.out == ""
 
     def test_text_and_file_mutually_exclusive(self, capsys):
-        """Passing both --text and --text triggers argparse error."""
+        """Passing both --text and --file triggers argparse error."""
         with patch.object(
             sys,
             "argv",
@@ -108,3 +108,100 @@ class TestCountTokensCLI:
         captured = capsys.readouterr()
         assert code == 0
         assert captured.out.strip() == "0"
+
+    def test_count_multiple_files(self, tmp_path, capsys):
+        """Token counts are printed with paths for multiple positional files."""
+        file1 = tmp_path / "first.txt"
+        file2 = tmp_path / "second.txt"
+        file1.write_text("hello world", encoding="utf-8")
+        file2.write_text("another sample file content", encoding="utf-8")
+
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "topsailai_count_tokens",
+                str(file1),
+                str(file2),
+            ],
+        ):
+            code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        lines = captured.out.strip().split("\n")
+        assert len(lines) == 2
+        assert lines[0] == f"2 {file1}"
+        assert lines[1] == f"4 {file2}"
+        assert captured.err == ""
+
+    def test_count_multiple_files_with_missing_file(self, tmp_path, capsys):
+        """Missing positional files are reported and the exit code is non-zero."""
+        existing = tmp_path / "existing.txt"
+        existing.write_text("hello world", encoding="utf-8")
+        missing = tmp_path / "missing.txt"
+
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "topsailai_count_tokens",
+                str(existing),
+                str(missing),
+            ],
+        ):
+            code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 1
+        assert f"2 {existing}" in captured.out
+        assert "file not found" in captured.err
+        assert str(missing) in captured.err
+
+    def test_no_arguments(self, capsys):
+        """Running without any arguments reports a usage error."""
+        with patch.object(sys, "argv", ["topsailai_count_tokens"]):
+            code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 2
+        assert "provide --text, --file, or one or more file paths" in captured.err
+        assert captured.out == ""
+
+    def test_text_with_positional_files(self, capsys):
+        """--text combined with positional files is rejected."""
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "topsailai_count_tokens",
+                "--text",
+                "hello",
+                "/tmp/sample.txt",
+            ],
+        ):
+            code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 2
+        assert "--text cannot be used with positional file arguments" in captured.err
+        assert captured.out == ""
+
+    def test_file_option_with_positional_files(self, capsys):
+        """--file combined with positional files is rejected."""
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "topsailai_count_tokens",
+                "--file",
+                "/tmp/sample.txt",
+                "/tmp/other.txt",
+            ],
+        ):
+            code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 2
+        assert "--file cannot be used with positional file arguments" in captured.err
+        assert captured.out == ""
