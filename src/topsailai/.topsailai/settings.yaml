@@ -15,7 +15,7 @@ context:
 
   default: []
 
-  memo:
+  agent:
     - MEMO.CommonUtils.md
     - MEMO.AgentCore.md
     - MEMO.AgentWorkers.md
