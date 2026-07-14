@@ -11,12 +11,17 @@ context:
     - workspace/readme.md
     - docs/Environment_Variables.md # env_template
     - MEMO.md
-    - MEMO.CommonUtils.md
-    - MEMO.AgentCore.md
-    - MEMO.AgentWorkers.md
     - LEARN.md
 
   default: []
+
+  memo:
+    - MEMO.CommonUtils.md
+    - MEMO.AgentCore.md
+    - MEMO.AgentWorkers.md
+
+  tools:
+    - tools/readme.md
 
   test:
     - test.md
@@ -28,7 +33,8 @@ context:
   approval:
     - features/91-tool_approval.md
 
-  memo: []
+  events:
+    - events/README.md
 
 # Environment variable configuration: each item can define its own environment variables
 # _default is the base environment variables shared by all items
