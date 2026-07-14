@@ -205,3 +205,46 @@ class TestCountTokensCLI:
         assert code == 2
         assert "--file cannot be used with positional file arguments" in captured.err
         assert captured.out == ""
+
+    def test_relative_path_with_topsailai_pwd(self, tmp_path, capsys, monkeypatch):
+        """Relative paths are resolved against TOPSAILAI_PWD when set."""
+        file_path = tmp_path / "relative.txt"
+        file_path.write_text("hello world", encoding="utf-8")
+        monkeypatch.setenv("TOPSAILAI_PWD", str(tmp_path))
+
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "topsailai_count_tokens",
+                "relative.txt",
+            ],
+        ):
+            code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        assert captured.out.strip() == "2 relative.txt"
+        assert captured.err == ""
+
+    def test_relative_path_with_file_option(self, tmp_path, capsys, monkeypatch):
+        """Relative paths passed via --file are resolved against TOPSAILAI_PWD."""
+        file_path = tmp_path / "relative.txt"
+        file_path.write_text("hello world", encoding="utf-8")
+        monkeypatch.setenv("TOPSAILAI_PWD", str(tmp_path))
+
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "topsailai_count_tokens",
+                "--file",
+                "relative.txt",
+            ],
+        ):
+            code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        assert captured.out.strip() == "2"
+        assert captured.err == ""

@@ -12,11 +12,26 @@ SRC_DIR = os.path.join(os.path.dirname(CLI_DIR), "src")
 if os.path.isdir(SRC_DIR):
     sys.path.insert(0, SRC_DIR)
 
+from topsailai.context.token import count_tokens
+
+# change PWD after importing topsailai
 PWD = os.getenv("TOPSAILAI_PWD")
 if PWD:
     os.chdir(PWD)
 
-from topsailai.context.token import count_tokens
+
+def resolve_path(path: str) -> str:
+    """Resolve a relative path against the original TOPSAILAI_PWD.
+
+    Importing the parent project's source tree may change the current working
+    directory (for example to TOPSAILAI_HOME). To keep file arguments working
+    when invoked through the dispatcher script, relative paths are resolved
+    against the directory where the user ran the command.
+    """
+    pwd = os.getenv("TOPSAILAI_PWD")
+    if pwd and not os.path.isabs(path):
+        return os.path.join(os.path.abspath(pwd), path)
+    return path
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,10 +98,11 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
-        if not os.path.isfile(args.file):
+        file_path = resolve_path(args.file)
+        if not os.path.isfile(file_path):
             print(f"Error: file not found: {args.file}", file=sys.stderr)
             return 1
-        print(count_file(args.file, args.encoding))
+        print(count_file(file_path, args.encoding))
         return 0
 
     if not args.files:
@@ -98,11 +114,12 @@ def main() -> int:
 
     exit_code = 0
     for path in args.files:
-        if not os.path.isfile(path):
+        resolved = resolve_path(path)
+        if not os.path.isfile(resolved):
             print(f"Error: file not found: {path}", file=sys.stderr)
             exit_code = 1
             continue
-        token_count = count_file(path, args.encoding)
+        token_count = count_file(resolved, args.encoding)
         print(f"{token_count} {path}")
 
     return exit_code
