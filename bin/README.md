@@ -6,7 +6,7 @@ Each entry here is one of:
 
 - a **shell script** that bootstraps and dispatches to a CLI implementation,
 - a **symbolic link** to such a shell script, or
-- a **compiled binary** (for example, Go binaries under the agent-daemon subsystem).
+- a **compiled binary**.
 
 ## Quick Start
 
@@ -29,7 +29,6 @@ llm_chat "hello"
 ```text
 bin/
 ├── topsailai.cli              # Generic dispatcher for ../cli/<name>.py
-├── topsailai.cli.agent_daemon # Dispatcher for compiled agent-daemon binaries
 ├── <custom-wrapper>           # Special-purpose shell scripts (e.g. ai_agent, llm_chat)
 ├── <cli-name> -> topsailai.cli           # Symlink to the generic CLI dispatcher
 ├── <topsailai_xxx> -> <custom-wrapper>   # Symlink to a custom wrapper
@@ -69,24 +68,7 @@ Example symlinks using this mechanism:
 - `ai_team` → `topsailai.cli` → runs `cli/ai_team.py`
 - `topsailai_session_status` → `topsailai.cli` → runs `cli/topsailai_session_status.py`
 
-### 2. Agent-Daemon Binary Dispatcher
-
-`topsailai.cli.agent_daemon` dispatches to a compiled binary or Python script inside the agent-daemon subsystem.
-
-For a command named `<cli-name>`, it searches the following candidates in order:
-
-1. `${WORK_DIR}/src/topsailai_server/agent_daemon/<cli-name>.py`
-2. `${WORK_DIR}/topsailai_server/agent_daemon/<cli-name>`
-3. `${WORK_DIR}/topsailai_server/agent_daemon/<cli-name>.py`
-
-The first existing candidate is executed with the original arguments.
-
-Example symlinks using this mechanism:
-
-- `topsailai_agent_daemon` → `topsailai.cli.agent_daemon`
-- `topsailai_agent_client` → `topsailai.cli.agent_daemon`
-
-### 3. Custom Wrapper Scripts
+### 2. Custom Wrapper Scripts
 
 Some commands require special argument handling or environment setup. These are implemented as standalone shell scripts in `bin/` and may also be exposed through symlinks.
 
@@ -96,6 +78,7 @@ Examples:
 - `agent_chat` — wraps `cli/agent_chat.py` and handles `SESSION_ID` / `SYSTEM_PROMPT`.
 - `llm_chat` — wraps `cli/llm_chat.py` and handles `SESSION_ID` / `SYSTEM_PROMPT`.
 - `ai_team` — wraps `cli/ai_team.py`.
+
 ## Conventions
 
 ### Prefer the `topsailai` Prefix
@@ -121,9 +104,7 @@ When using the generic dispatcher, keep the `topsailai_` command name consistent
 
 2. If the command needs special environment handling, write a dedicated shell script in `bin/` and optionally expose it through symlinks.
 
-3. If the command belongs to the agent-daemon subsystem, create a symlink to `topsailai.cli.agent_daemon` and ensure the target executable exists under `topsailai_server/agent_daemon/`.
-
-4. Update this `README.md` to document the new command and its mechanism.
+3. Update this `README.md` to document the new command and its mechanism.
 
 ## Environment Variables Used by Dispatchers
 
