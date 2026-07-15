@@ -2,15 +2,10 @@ TopsailAI:
   version: '1.0'
   python_version: '3'
   src:
-    include: []
+    include:
+      - topsailai
     exclude: []
-    lib_home: '/topsail/lib/TopsailAI'
-  non-src:
-    bin/agent_chats: '/topsail/lib/TopsailAI/bin/topsailai_agent_chats'
-    bin/agent_story: '/topsail/lib/TopsailAI/bin/agent_story'
-    bin/topsailai.cli: '/topsail/lib/TopsailAI/bin/topsailai.cli'
-    cli/agent_chats.py: '/topsail/lib/TopsailAI/cli/agent_chats.py'
-    cli/agent_story.py: '/topsail/lib/TopsailAI/cli/agent_story.py'
+    lib_home: '/TopsailAI'
   control:
     template: 'build/data/template/control'
     params:
@@ -18,4 +13,5 @@ TopsailAI:
   prerm:
     template: 'build/data/template/prerm'
     params:
-      lib_home: '/topsail/lib/TopsailAI'
+      lib_home: '/TopsailAI'
+

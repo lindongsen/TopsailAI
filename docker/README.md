@@ -30,6 +30,6 @@ Replace /path/to/your/.env with the actual path to your .env file, then run:
 
 ```bash
 docker run -d \
-    -v "/path/to/your/.env:/林生的奇思妙想/TopsailAI/.env" \
+    -v "/path/to/your/.env:/TopsailAI/.env" \
     ai-essence
 ```

@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Delete Session CLI - Delete a session by session ID
+
+This module provides command-line functionality to delete a specific session
+from the database. It checks if the session exists before attempting deletion
+and provides appropriate error messages.
+
+Usage:
+    delete_session.py <session_id> [database_connection_string]
+
+Arguments:
+    session_id: Required session identifier to delete
+    database_connection_string: Optional database connection string.
+                                Defaults to 'sqlite:///memory.db'
+
+Examples:
+    delete_session.py abc123
+    delete_session.py abc123 sqlite:///custom.db
+
+Author: DawsonLin
+Email: lin_dongsen@126.com
+"""
+
+import sys
+import os
+
+import _import_topsailai
+
+from topsailai.context.ctx_manager import get_session_manager
+os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
+from cli_topsailai.session_cleanup import delete_session_disk_files, get_task_dir
+
+
+def main():
+    """
+    Main entry point for deleting a session.
+
+    This function:
+    1. Validates command-line arguments (requires session_id)
+    2. Creates a session manager with optional database connection
+    3. Checks if the session exists before deletion
+    4. Deletes the session and its chat history from the database
+    5. Cleans up any disk files associated with the session
+
+    Returns:
+        None
+
+    Raises:
+        SystemExit: Exits with code 1 if session_id is missing, session doesn't exist, or error occurs
+
+    Example:
+        $ python ai_delete_session.py abc123
+        Session 'abc123' has been successfully deleted
+
+        $ python ai_delete_session.py nonexistent
+        Error: Session 'nonexistent' does not exist
+    """
+    # Check for required session_id argument
+    if len(sys.argv) < 2:
+        print("Error: session_id is required")
+        print("Usage: delete_session.py <session_id> [database_connection_string]")
+        sys.exit(1)
+
+    session_id = sys.argv[1]
+
+    db_conn = None
+    if len(sys.argv) > 2:
+        db_conn = sys.argv[2]
+
+    try:
+        # Create manager
+        manager = get_session_manager(db_conn)
+
+        # Check if session exists
+        if not manager.exists_session(session_id):
+            print(f"Error: Session '{session_id}' does not exist")
+            sys.exit(1)
+
+        # Delete session and its chat history
+        manager.delete_session(session_id)
+
+        # Clean up disk files associated with the session
+        deleted, failed = delete_session_disk_files(get_task_dir(), session_id)
+
+        print(f"Session '{session_id}' has been successfully deleted")
+        if deleted:
+            print(f"[INFO] Removed {len(deleted)} disk file(s)")
+        if failed:
+            print(f"[WARN] Failed to remove {len(failed)} disk file(s)")
+
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

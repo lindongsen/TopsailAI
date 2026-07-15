@@ -1,0 +1,22 @@
+#!/bin/bash
+# Author: DawsonLin
+# Email: lin_dongsen@126.com
+# Created: 2025-10-29
+# Purpose:
+
+CWD=$(dirname "$(readlink -f $0)")
+cd "${CWD}/../"
+
+function error_quit() {
+    echo "ERROR: $*"
+    echo ""
+    exit 1
+}
+
+# debug, default is 0
+[ "${DEBUG}" == "" ] && DEBUG=0
+
+run_cli="uv run"
+[ "${UV_NO_DEV}" == "1" ] && run_cli="python"
+
+DEBUG=${DEBUG} ${run_cli} cli/ai_retrieve_messages.py $*

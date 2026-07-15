@@ -1,0 +1,68 @@
+#!/bin/bash
+# Author: DawsonLin
+# Email: lin_dongsen@126.com
+# Created: 2025-10-19
+# Purpose:
+#  Env:
+#    @SESSION_ID: string;
+#    @SYSTEM_PROMPT: file or content;
+
+export TOPSAILAI_PWD=${PWD}
+
+BASE_NAME=$(basename "$0")
+ARG1=$1
+[ "${ARG1}" != "-" ] && [ "${ARG1:0:1}" == "-" ] && {
+  echo "Usage: ${BASE_NAME} [TASK]"
+  echo "
+Env:
+  [SESSION_ID]
+    set session id for persistent memory
+
+  [SYSTEM_PROMPT]
+    a file path
+
+Example:
+  - ${BASE_NAME} 'chat content'
+  - SYSTEM_PROMPT=/path/to/file ${BASE_NAME} 'chat content'
+"
+
+  exit 1
+}
+
+CWD=$(dirname "$(readlink -f $0)")
+cd "${CWD}/../"
+
+function error_quit() {
+    echo "ERROR: $*"
+    echo ""
+    exit 1
+}
+
+# debug, default is 0
+[ "${DEBUG}" == "" ] && DEBUG=0
+export DEBUG
+
+# task
+task="$*"
+task_ex=""
+if [ "$1" == "-" ]; then
+  task=$(cat "$1")
+  [ "$2" != "" ] && task_ex=$(echo -e "\n----\n$*")
+fi
+
+# fallback SESSION_ID to TOPSAILAI_SESSION_ID when not set
+[ -n "${SESSION_ID}" ] || SESSION_ID="${TOPSAILAI_SESSION_ID}"
+export SESSION_ID
+
+# print histroy messages
+# [ -n "${SESSION_ID}" ] && {
+#   command -v ai_retrieve_messages > /dev/null && ai_retrieve_messages "${SESSION_ID}"
+# }
+
+run_cli="uv run"
+[ "${UV_NO_DEV}" == "1" ] && run_cli="python"
+
+# start
+DEBUG=1 \
+  CHAT_MULTI_LINE=1 \
+  ${run_cli} cli/agent_chats.py "${task} ${task_ex}"
