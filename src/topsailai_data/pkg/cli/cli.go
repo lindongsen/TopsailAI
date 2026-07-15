@@ -25,7 +25,8 @@ type Command struct {
 // Run parses the command line and dispatches to the appropriate subcommand.
 func Run(ctx context.Context, mgr *manager.Manager, args []string) error {
 	if len(args) == 0 {
-		return runInteractive(ctx, mgr)
+		printUsage(os.Stderr)
+		return fmt.Errorf("no command specified")
 	}
 
 	name := args[0]
@@ -113,32 +114,4 @@ func requireArgs(args []string, min, max int) error {
 		return fmt.Errorf("expected at most %d argument(s), got %d", max, len(args))
 	}
 	return nil
-}
-
-// runInteractive provides a minimal interactive prompt when no command is given.
-func runInteractive(ctx context.Context, mgr *manager.Manager) error {
-	fmt.Println("topsailai_data interactive mode")
-	fmt.Println("Type 'help' for available commands or 'exit' to quit.")
-	for {
-		fmt.Print("> ")
-		var line string
-		if _, err := fmt.Scanln(&line); err != nil {
-			if err == io.EOF {
-				fmt.Println()
-				return nil
-			}
-			return fmt.Errorf("read input: %w", err)
-		}
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if line == "exit" || line == "quit" {
-			return nil
-		}
-		parts := strings.Fields(line)
-		if err := Run(ctx, mgr, parts); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		}
-	}
 }

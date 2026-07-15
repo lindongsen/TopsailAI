@@ -38,6 +38,18 @@ func setupManager(t *testing.T) (*manager.Manager, string, context.Context) {
 	return mgr, tmp, ctx
 }
 
+func TestRunNoArgsReturnsError(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, nil)
+	if err == nil {
+		t.Fatalf("expected error when no command is provided")
+	}
+	if !strings.Contains(err.Error(), "no command specified") {
+		t.Fatalf("expected error to mention missing command, got %v", err)
+	}
+}
+
 func TestCreateAndShow(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
