@@ -806,7 +806,7 @@ The skill hub is controlled by several environment variables. They are documente
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOPSAILAI_PLUGIN_SKILLS` | `""` | Plugin skill directories separated by `;`. Supports searching folders up to `TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH`. |
-| `TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH` | `3` | Maximum recursion depth when searching for plugin skills. Also used by `skill_repo.list_skills()` when scanning `FOLDER_SKILL`. |
+| `TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH` | `5` | Maximum recursion depth when searching for plugin skills. Also used by `skill_repo.list_skills()` when scanning `FOLDER_SKILL`. |
 | `TOPSAILAI_DISABLED_SKILLS` | `""` | Skills to disable. |
 | `TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS` | `""` | Skills whose overview should be loaded into the prompt. Can be a `;`-separated list of skill names or `*` for all. |
 | `TOPSAILAI_SESSION_LOCK_ON_SKILLS` | `""` | Lock session before calling these skills. |

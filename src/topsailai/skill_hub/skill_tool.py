@@ -37,7 +37,9 @@ from topsailai.prompt_hub import prompt_tool
 from topsailai.workspace.folder_constants import FOLDER_SKILL
 
 logger = logging.getLogger(__name__)
-g_skills = {} # key is folder, value is SkillInfo
+g_skills = {}  # key is folder, value is SkillInfo
+
+_DEFAULT_SEARCH_SKILLS_MAX_DEPTH = 5  # Default recursion depth when searching for plugin skills
 
 PROMPT_SKILL_FORMAT = """
 # Skill Registry
@@ -334,7 +336,11 @@ def get_skill_markdown(skill_folders=None) -> str:
             if os.path.exists(env_dir_skill) and env_dir_skill not in skill_folders:
                 skill_folders.append(env_dir_skill)
 
-    max_recursion_depth = EnvReaderInstance.get("TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH", default=3, formatter=int) or 3
+    max_recursion_depth = EnvReaderInstance.get(
+        "TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH",
+        default=_DEFAULT_SEARCH_SKILLS_MAX_DEPTH,
+        formatter=int,
+    ) or _DEFAULT_SEARCH_SKILLS_MAX_DEPTH
     for skill_folder in to_list(skill_folders):
         if not os.path.exists(skill_folder):
             continue

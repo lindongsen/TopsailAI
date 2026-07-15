@@ -21,13 +21,17 @@ from topsailai.workspace.folder_constants import (
 )
 from topsailai.skill_hub.skill_tool import (
     get_file_skill_md,
+    _DEFAULT_SEARCH_SKILLS_MAX_DEPTH,
 )
 
 # Module-level constants
-MAX_DEPTH = EnvReaderInstance.get("TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH", default=3, formatter=int) or 3  # Maximum recursion depth for skill discovery
+MAX_DEPTH = EnvReaderInstance.get(
+    "TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH",
+    default=_DEFAULT_SEARCH_SKILLS_MAX_DEPTH,
+    formatter=int,
+) or _DEFAULT_SEARCH_SKILLS_MAX_DEPTH  # Maximum recursion depth for skill discovery
 GIT_CLONE_TIMEOUT = 300  # 5 minutes timeout for git clone
 URL_DOWNLOAD_TIMEOUT = 300  # 5 minutes timeout for URL download
-
 
 def list_skills() -> list[str]:
     """
