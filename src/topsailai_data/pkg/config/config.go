@@ -61,6 +61,15 @@ func Load() (*Config, error) {
 		AdapterConfig:       make(map[string]string),
 	}
 
+	if cfg.Root == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("cannot determine home directory for default %sROOT: %w", EnvPrefix, err)
+		}
+		cfg.Root = filepath.Join(home, ".topsailai", "data")
+	}
+
+
 	if cfg.MetadataAdapter == "" {
 		cfg.MetadataAdapter = "local"
 	}

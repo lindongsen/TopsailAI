@@ -1,0 +1,22 @@
+# Build artifacts
+/bin/
+/skills/topsailai_data/bin/
+*.exe
+*test
+*out
+vendor/
+
+# Environment files
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+
+# Editor swap files
+*swp
+*swo
+
+# OS files
+.DS_Store
