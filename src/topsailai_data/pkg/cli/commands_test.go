@@ -18,13 +18,13 @@ func setupManager(t *testing.T) (*manager.Manager, string, context.Context) {
 	t.Helper()
 	tmp := t.TempDir()
 	cfg := &config.Config{
-		Root:                  tmp,
-		MetadataAdapter:       "local",
-		ActualDataAdapter:     "local",
-		ReadLock:              false,
-		IncludeDeleted:        false,
-		CeasedRetentionDays:   0,
-		LogLevel:              "ERROR",
+		Root:                tmp,
+		MetadataAdapter:     "local",
+		ActualDataAdapter:   "local",
+		ReadLock:            false,
+		IncludeDeleted:      false,
+		CeasedRetentionDays: 0,
+		LogLevel:            "ERROR",
 	}
 	mgr, err := manager.New(cfg)
 	if err != nil {
@@ -38,15 +38,44 @@ func setupManager(t *testing.T) (*manager.Manager, string, context.Context) {
 	return mgr, tmp, ctx
 }
 
-func TestRunNoArgsReturnsError(t *testing.T) {
+func TestRunNoArgsEntersInteractiveMode(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	err := Run(ctx, mgr, nil)
-	if err == nil {
-		t.Fatalf("expected error when no command is provided")
+	// With no arguments and no stdin input, Run enters interactive mode and
+	// returns cleanly when stdin reaches EOF.
+	if err := Run(ctx, mgr, nil); err != nil {
+		t.Fatalf("expected no error when entering interactive mode, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "no command specified") {
-		t.Fatalf("expected error to mention missing command, got %v", err)
+}
+
+func TestInteractiveMode(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	oldStdin := os.Stdin
+	r, w, _ := os.Pipe()
+	os.Stdin = r
+	done := make(chan struct{})
+	var runErr error
+	go func() {
+		defer close(done)
+		runErr = Run(ctx, mgr, nil)
+	}()
+
+	_, _ = w.WriteString("create hello --classify demo --tag a,b\nlist\nexit\n")
+	_ = w.Close()
+	<-done
+	os.Stdin = oldStdin
+
+	if runErr != nil {
+		t.Fatalf("interactive mode: %v", runErr)
+	}
+
+	objects, err := mgr.ListObjects(ctx, models.ListOptions{})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(objects) != 1 {
+		t.Fatalf("expected 1 object, got %d", len(objects))
 	}
 }
 
@@ -451,5 +480,58 @@ func TestGCDefaultScansCreatingAndCeased(t *testing.T) {
 	// Ceased object must be gone.
 	if _, err := mgr.GetObject(ctx, ceasedObj.ID, true); err == nil {
 		t.Fatalf("ceased object should be cleaned up")
+	}
+}
+
+func TestCreateClassifySlashPath(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	if err := Run(ctx, mgr, []string{"create", "slashdoc", "--classify", "photos/2024"}); err != nil {
+		t.Fatalf("create with slash classify: %v", err)
+	}
+
+	got, err := mgr.GetObject(ctx, "slashdoc", false)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	wantSuffix := "photos/2024/slashdoc"
+	if !strings.HasSuffix(got.Path, wantSuffix) {
+		t.Fatalf("expected path to end with %q, got %q", wantSuffix, got.Path)
+	}
+}
+
+func TestGCStatusDeletedFinalizesObjects(t *testing.T) {
+	mgr, tmp, ctx := setupManager(t)
+
+	// Create and delete an object; in the local adapter this goes straight to ceased.
+	obj, err := mgr.CreateObject(ctx, "stale", manager.CreateObjectOptions{Classify: []string{"demo"}})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	// Simulate a stale deleted object by reverting the status from ceased to deleted.
+	metaPath := filepath.Join(tmp, obj.Path, "metadata.json")
+	metaBytes, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	metaBytes = bytes.ReplaceAll(metaBytes, []byte(`"ceased"`), []byte(`"deleted"`))
+	if err := os.WriteFile(metaPath, metaBytes, 0644); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	if err := Run(ctx, mgr, []string{"gc", "--status", "deleted"}); err != nil {
+		t.Fatalf("gc --status deleted: %v", err)
+	}
+
+	got, err := mgr.GetObject(ctx, obj.ID, true)
+	if err != nil {
+		t.Fatalf("get after gc: %v", err)
+	}
+	if got.Status != models.ObjectStatusCeased {
+		t.Fatalf("expected status ceased, got %s", got.Status)
 	}
 }

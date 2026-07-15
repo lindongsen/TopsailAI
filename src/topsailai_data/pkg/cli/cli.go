@@ -5,6 +5,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -23,10 +24,11 @@ type Command struct {
 }
 
 // Run parses the command line and dispatches to the appropriate subcommand.
+// When no command is provided, Run enters an interactive REPL that reads
+// commands from standard input until EOF or an explicit exit command.
 func Run(ctx context.Context, mgr *manager.Manager, args []string) error {
 	if len(args) == 0 {
-		printUsage(os.Stderr)
-		return fmt.Errorf("no command specified")
+		return runInteractive(ctx, mgr)
 	}
 
 	name := args[0]
@@ -43,6 +45,40 @@ func Run(ctx context.Context, mgr *manager.Manager, args []string) error {
 	}
 
 	return fmt.Errorf("unknown command %q", name)
+}
+
+// runInteractive reads commands from stdin one line at a time and dispatches
+// them. It exits when stdin reaches EOF or the user types "exit", "quit", or
+// "q".
+func runInteractive(ctx context.Context, mgr *manager.Manager) error {
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Fprint(os.Stdout, "> ")
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return fmt.Errorf("interactive input: %w", err)
+			}
+			fmt.Fprintln(os.Stdout)
+			return nil
+		}
+
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if line == "exit" || line == "quit" || line == "q" {
+			return nil
+		}
+		if line == "help" {
+			printUsage(os.Stdout)
+			continue
+		}
+
+		args := strings.Fields(line)
+		if err := Run(ctx, mgr, args); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		}
+	}
 }
 
 func registeredCommands() []Command {

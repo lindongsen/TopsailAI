@@ -13,6 +13,7 @@ import (
 	"github.com/topsailai/topsailai_data/pkg/manager"
 	"github.com/topsailai/topsailai_data/pkg/models"
 )
+
 // runCreate implements the "create" command.
 func runCreate(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("create")
@@ -29,7 +30,7 @@ func runCreate(ctx context.Context, mgr *manager.Manager, args []string) error {
 
 	name := remaining[0]
 	opts := manager.CreateObjectOptions{
-		Classify: splitList(*classify),
+		Classify: flattenClassifyArgs(splitList(*classify)),
 		Tags:     splitList(*tags),
 	}
 
@@ -40,10 +41,7 @@ func runCreate(ctx context.Context, mgr *manager.Manager, args []string) error {
 		}
 		defer r.Close()
 
-		if *from == "-" {
-			// stdin: require explicit archive format; treat as tar for now.
-			opts.Data = r
-		} else if isTarArchive(*from) {
+		if *from == "-" || isTarArchive(*from) {
 			opts.Data = r
 		} else {
 			// Plain file: wrap as a single-file archive so the manager can
@@ -231,7 +229,6 @@ func runRecover(ctx context.Context, mgr *manager.Manager, args []string) error 
 	}
 	id := models.ObjectID(fs.Args()[0])
 
-
 	var r io.Reader
 	if *from != "" {
 		in, err := openInput(*from)
@@ -298,6 +295,28 @@ func runGC(ctx context.Context, mgr *manager.Manager, args []string) error {
 				return fmt.Errorf("gc: recover creating %s: %w", obj.ID, err)
 			}
 			fmt.Printf("recovered creating object %s\n", obj.ID)
+		}
+	}
+
+	if filter == "" || filter == "deleted" {
+		objects, err := mgr.ListDeletedObjects(ctx)
+		if err != nil {
+			return fmt.Errorf("gc: list deleted: %w", err)
+		}
+		if len(objects) == 0 && filter == "deleted" {
+			fmt.Println("no deleted objects to gc")
+			return nil
+		}
+		for _, obj := range objects {
+			if *dryRun {
+				fmt.Printf("dry-run: would finalize deleted object %s\n", obj.ID)
+				continue
+			}
+			if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+				fmt.Fprintf(os.Stderr, "gc: finalize %s: %v\n", obj.ID, err)
+				continue
+			}
+			fmt.Printf("finalized deleted object %s\n", obj.ID)
 		}
 	}
 

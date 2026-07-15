@@ -4,6 +4,7 @@ package manager
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"os"
@@ -127,30 +128,37 @@ func (m *Manager) CreateObject(ctx context.Context, name string, opts CreateObje
 		return nil, fmt.Errorf("%w: %v", errors.ErrInvalidName, err)
 	}
 
+	id := models.ObjectID(name)
+	// The local adapter uses the object name as its stable ID. Reject creation
+	// if any object (active, creating, deleted, or ceased) already uses this ID.
+	if _, err := m.meta.Get(ctx, id, true); err == nil {
+		return nil, fmt.Errorf("%w: %s", errors.ErrObjectExists, id)
+	} else if !stderrors.Is(err, errors.ErrObjectNotFound) {
+		return nil, fmt.Errorf("check existing object: %w", err)
+	}
+
 	now := time.Now()
 	objectPath, err := local.BuildObjectPath(now, opts.Classify, name)
 	if err != nil {
 		return nil, err
 	}
 
-	id := models.ObjectID(name)
 	objectDir := filepath.Join(m.metaRoot, objectPath)
 	obj := &models.Object{
-		ID:        id,
-		Name:      name,
-		Path:      objectPath,
-		Status:    models.ObjectStatusCreating,
-		CreatedAt: now,
-		UpdatedAt: now,
-		DataRef:   objectDir,
+		ID:            id,
+		Name:          name,
+		Path:          objectPath,
+		Status:        models.ObjectStatusCreating,
+		SchemaVersion: 1,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		DataRef:       objectDir,
 	}
 
 	// Step 1: create metadata in creating state.
 	if err := m.meta.Create(ctx, obj); err != nil {
 		return nil, fmt.Errorf("create metadata: %w", err)
 	}
-
-	// Step 2: acquire exclusive lock before any filesystem writes.
 	lock, err := local.AcquireWriteLock(objectDir)
 	if err != nil {
 		_ = os.RemoveAll(objectDir)
@@ -508,6 +516,7 @@ func (m *Manager) GC(ctx context.Context) error {
 
 	return nil
 }
+
 // ListCreatingObjects returns objects that are still in the "creating" state.
 // These objects are not visible to normal list/get operations and are intended
 // for recovery or cleanup tools.
@@ -532,6 +541,9 @@ func (m *Manager) ListDeletedObjects(ctx context.Context) ([]*models.Object, err
 
 // AddTag adds a tag to an active object.
 func (m *Manager) AddTag(ctx context.Context, id models.ObjectID, tag string) error {
+	if err := local.ValidateTag(tag); err != nil {
+		return fmt.Errorf("%w: %v", errors.ErrInvalidTag, err)
+	}
 	if _, err := m.requireActive(ctx, id); err != nil {
 		return err
 	}
@@ -540,6 +552,9 @@ func (m *Manager) AddTag(ctx context.Context, id models.ObjectID, tag string) er
 
 // RemoveTag removes a tag from an active object.
 func (m *Manager) RemoveTag(ctx context.Context, id models.ObjectID, tag string) error {
+	if err := local.ValidateTag(tag); err != nil {
+		return fmt.Errorf("%w: %v", errors.ErrInvalidTag, err)
+	}
 	if _, err := m.requireActive(ctx, id); err != nil {
 		return err
 	}
@@ -566,7 +581,6 @@ func (m *Manager) objectDir(ctx context.Context, id models.ObjectID) (string, er
 	}
 	return filepath.Join(m.metaRoot, obj.Path), nil
 }
-
 
 // lockedReadCloser wraps an io.ReadCloser so that an advisory lock is released
 // when the stream is closed.

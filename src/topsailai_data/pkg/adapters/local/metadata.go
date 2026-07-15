@@ -50,6 +50,9 @@ func (a *MetadataAdapter) Create(ctx context.Context, obj *models.Object) error 
 		return fmt.Errorf("%w: %s", errors.ErrObjectExists, obj.ID)
 	}
 
+	if obj.SchemaVersion == 0 {
+		obj.SchemaVersion = 1
+	}
 	data, err := json.MarshalIndent(obj, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal metadata: %w", err)
@@ -64,10 +67,18 @@ func (a *MetadataAdapter) Create(ctx context.Context, obj *models.Object) error 
 // Creating, deleted and ceased objects are only returned when includeDeleted is
 // true, allowing recovery and administrative tools to locate them.
 func (a *MetadataAdapter) Get(ctx context.Context, id models.ObjectID, includeDeleted bool) (*models.Object, error) {
-	obj, _, err := a.findObject(id)
+	obj, objectDir, err := a.findObject(id)
 	if err != nil {
 		return nil, err
 	}
+
+	// Merge tags from .tags files so that show reflects the same effective
+	// tags as list and search.
+	inherited, err := CollectTags(a.root, objectDir)
+	if err != nil {
+		return nil, fmt.Errorf("collect tags for %q: %w", objectDir, err)
+	}
+	obj.Tags = mergeTags(inherited, obj.Tags)
 
 	switch obj.Status {
 	case models.ObjectStatusActive:
@@ -210,6 +221,11 @@ func (a *MetadataAdapter) List(ctx context.Context, opts models.ListOptions) ([]
 		return nil, err
 	}
 
+	// Apply tag filtering.
+	if len(opts.Tags) > 0 {
+		objects = filterByTags(objects, opts.Tags)
+	}
+
 	// Apply pagination.
 	if opts.Offset < 0 {
 		opts.Offset = 0
@@ -337,7 +353,7 @@ func (a *MetadataAdapter) GC(ctx context.Context, retention time.Duration) ([]*m
 
 // AddTag appends a tag to an active object if it is not already present.
 func (a *MetadataAdapter) AddTag(ctx context.Context, id models.ObjectID, tag string) error {
-	obj, _, err := a.findObject(id)
+	obj, objectDir, err := a.findObject(id)
 	if err != nil {
 		return err
 	}
@@ -345,18 +361,36 @@ func (a *MetadataAdapter) AddTag(ctx context.Context, id models.ObjectID, tag st
 		return fmt.Errorf("%w: object %s is %s", errors.ErrObjectNotActive, id, obj.Status)
 	}
 
-	for _, existing := range obj.Tags {
+	// Read current effective tags from .tags files and merge with metadata tags.
+	inherited, err := CollectTags(a.root, objectDir)
+	if err != nil {
+		return fmt.Errorf("collect tags for %q: %w", objectDir, err)
+	}
+	ownTagsFile := filepath.Join(objectDir, string(id)+".tags")
+	ownTags, err := ReadTagsFile(ownTagsFile)
+	if err != nil {
+		return fmt.Errorf("read object tags: %w", err)
+	}
+	effective := mergeTags(inherited, ownTags)
+
+	for _, existing := range effective {
 		if existing == tag {
 			return nil
 		}
 	}
-	obj.Tags = append(obj.Tags, tag)
+
+	// Persist the new tag to the object's own .tags file and update metadata.
+	ownTags = append(ownTags, tag)
+	if err := WriteTagsFile(ownTagsFile, ownTags); err != nil {
+		return fmt.Errorf("write object tags: %w", err)
+	}
+	obj.Tags = mergeTags(inherited, ownTags)
 	return a.Update(ctx, obj)
 }
 
 // RemoveTag removes a tag from an active object.
 func (a *MetadataAdapter) RemoveTag(ctx context.Context, id models.ObjectID, tag string) error {
-	obj, _, err := a.findObject(id)
+	obj, objectDir, err := a.findObject(id)
 	if err != nil {
 		return err
 	}
@@ -364,16 +398,41 @@ func (a *MetadataAdapter) RemoveTag(ctx context.Context, id models.ObjectID, tag
 		return fmt.Errorf("%w: object %s is %s", errors.ErrObjectNotActive, id, obj.Status)
 	}
 
-	var updated []string
-	for _, existing := range obj.Tags {
-		if existing != tag {
-			updated = append(updated, existing)
+	ownTagsFile := filepath.Join(objectDir, string(id)+".tags")
+	ownTags, err := ReadTagsFile(ownTagsFile)
+	if err != nil {
+		return fmt.Errorf("read object tags: %w", err)
+	}
+
+	// Tags inherited from classify directories cannot be removed at the object level.
+	// Collect tags from ancestor directories only (exclude the object folder itself).
+	inherited, err := CollectTags(a.root, filepath.Dir(objectDir))
+	if err != nil {
+		return fmt.Errorf("collect inherited tags for %q: %w", objectDir, err)
+	}
+	for _, inheritedTag := range inherited {
+		if inheritedTag == tag {
+			return fmt.Errorf("%w: tag %q is inherited and cannot be removed from object", errors.ErrInvalidArgument, tag)
 		}
 	}
-	if len(updated) == len(obj.Tags) {
+
+	var updated []string
+	found := false
+	for _, existing := range ownTags {
+		if existing == tag {
+			found = true
+			continue
+		}
+		updated = append(updated, existing)
+	}
+	if !found {
 		return fmt.Errorf("%w: tag %q not found", errors.ErrTagNotFound, tag)
 	}
-	obj.Tags = updated
+
+	if err := WriteTagsFile(ownTagsFile, updated); err != nil {
+		return fmt.Errorf("write object tags: %w", err)
+	}
+	obj.Tags = mergeTags(inherited, updated)
 	return a.Update(ctx, obj)
 }
 
@@ -441,6 +500,31 @@ func (a *MetadataAdapter) scanObjects(ctx context.Context, includeDeleted bool) 
 		return objects[i].CreatedAt.After(objects[j].CreatedAt)
 	})
 	return objects, nil
+}
+
+// filterByTags returns only objects whose Tags contain all required tags.
+func filterByTags(objects []*models.Object, required []string) []*models.Object {
+	var matches []*models.Object
+	for _, obj := range objects {
+		if hasAllTags(obj.Tags, required) {
+			matches = append(matches, obj)
+		}
+	}
+	return matches
+}
+
+// hasAllTags reports whether tags contains every tag in required.
+func hasAllTags(tags, required []string) bool {
+	set := make(map[string]struct{}, len(tags))
+	for _, t := range tags {
+		set[t] = struct{}{}
+	}
+	for _, r := range required {
+		if _, ok := set[r]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // mergeTags combines inherited and explicit tags without duplicates.
