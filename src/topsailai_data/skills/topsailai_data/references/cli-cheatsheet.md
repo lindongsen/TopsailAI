@@ -72,16 +72,6 @@ bin/topsailai_data put <id> <file> [--from file]
 bin/topsailai_data put-archive <id> <archive>
 ```
 
-## Interactive mode
-
-```
-bin/topsailai_data
-> create hello --classify demo
-> list
-> get hello hello.md
-> exit
-```
-
 ## Environment variables
 
 ```

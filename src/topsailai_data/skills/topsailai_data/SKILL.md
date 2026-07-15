@@ -42,14 +42,12 @@ bin/topsailai_data <command> [args]
 
 If `TOPSAILAI_DATA_ROOT` is not set, the CLI defaults to `${HOME}/.topsailai/data/`.
 
-Invoke without arguments to enter interactive mode:
+Invoke without arguments to show usage and available commands:
 
 ```
 bin/topsailai_data
-> create hello --classify demo --tag quickstart
-> list
-> show hello
-> exit
+```
+
 ## Skill layout
 
 ```text
@@ -157,7 +155,6 @@ Variables prefixed with `TOPSAILAI_DATA_ADAPTER_` are passed to adapter factorie
 - **Tar archives** are extracted into the object folder. Symbolic links inside tar archives are rejected to prevent directory traversal.
 - **`gc --status deleted`** is intentionally unsupported in the current release and returns a clear error.
 - **Deleted/ceased objects** are hidden from normal `list`, `show`, and `search` unless `--include-deleted` is used.
-- **Interactive mode** reads a full line and supports multi-word commands with flags.
 
 ## See also
 
