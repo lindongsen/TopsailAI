@@ -1,0 +1,37 @@
+# AI Agent TopsailAI-Launcher Configuration
+# This file tells topsailai_launch_agent.py which driver to run, which files
+# to inject into the agent context, and which environment variables to set.
+
+# AI Agent driver path or command.
+# Resolution order (first match wins):
+#   1. --driver CLI argument
+#   2. TOPSAILAI_AGENT_DRIVER environment variable from this file (item-specific or _default)
+#   3. ai_agent_driver field below
+#   4. TOPSAILAI_AGENT_DRIVER from the OS environment
+ai_agent_driver: "ai-team-flow-dev"
+
+# Working directory for the launched driver.
+workspace: "."
+
+# Context configuration: each item corresponds to a set of context files.
+# _default is the base context shared by all items; item-specific files are
+# appended after _default files. Paths are relative to `workspace` unless
+# they start with `/`.
+#
+# IMPORTANT: `context._default` is currently empty. Fill it with the files
+# you want every agent run to receive (e.g. project.yaml, docs, features).
+context:
+  _default:
+    - "docs/DESIGN.md"
+  default: []
+
+# Environment variable configuration: each item can define its own variables.
+# _default variables are applied first, then item-specific variables override
+# them. System environment variables are inherited and can be overridden here.
+#
+# TOPSAILAI_INTERACTIVE_MODE enables interactive behavior in the agent driver.
+# Set to "1" to enable, "0" to disable.
+environment:
+  _default:
+    TOPSAILAI_INTERACTIVE_MODE: "1"
+  default: {}
