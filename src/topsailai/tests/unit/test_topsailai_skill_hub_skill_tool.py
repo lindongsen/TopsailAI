@@ -333,7 +333,7 @@ class TestDuplicateSkillFolderBlocking(unittest.TestCase):
             f.write(content)
 
     def test_duplicate_basename_identical_skill_md_is_skipped(self):
-        """Same basename and identical SKILL.md should be skipped without error."""
+        """Same basename and identical SKILL.md should return cached skill info."""
         content = "---\nname: hello\ndescription: same\n---\n"
         with tempfile.TemporaryDirectory() as parent:
             folder1 = os.path.join(parent, "a", "hello")
@@ -348,7 +348,8 @@ class TestDuplicateSkillFolderBlocking(unittest.TestCase):
                 result2 = parse_skill_folder(folder2)
 
             self.assertEqual(result1.name, "hello")
-            self.assertEqual(result2.name, "")
+            self.assertEqual(result2.name, "hello")
+            self.assertIs(result2, g_skills[folder1])
             self.assertIn(folder1, g_skills)
             self.assertNotIn(folder2, g_skills)
             self.assertTrue(
@@ -721,8 +722,8 @@ class TestDuplicateSkillFolderBlocking(unittest.TestCase):
         g_skills.clear()
 
     @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
-    def test_duplicate_basename_identical_skill_md_is_skipped(self, mock_env):
-        """Same basename and identical SKILL.md should be skipped without error."""
+    def test_duplicate_basename_identical_skill_md_returns_cached(self, mock_env):
+        """Same basename and identical SKILL.md should return cached skill info."""
         mock_env.get_list_str.return_value = []
 
         with tempfile.TemporaryDirectory() as parent_dir:
@@ -742,7 +743,8 @@ class TestDuplicateSkillFolderBlocking(unittest.TestCase):
                 self.assertIn(first_dir, g_skills)
 
                 second_info = parse_skill_folder(second_dir)
-                self.assertEqual(second_info.name, "")
+                self.assertEqual(second_info.name, "HelloSkill")
+                self.assertIs(second_info, g_skills[first_dir])
                 self.assertNotIn(second_dir, g_skills)
                 mock_logger.info.assert_called_once()
                 logged_message = mock_logger.info.call_args[0][0]
@@ -800,7 +802,6 @@ class TestDuplicateSkillFolderBlocking(unittest.TestCase):
             self.assertEqual(second_info.name, "WorldSkill")
             self.assertIn(first_dir, g_skills)
             self.assertIn(second_dir, g_skills)
-
     @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
     def test_reloading_same_path_is_allowed(self, mock_env):
         """Loading the exact same folder path again is not treated as a duplicate."""

@@ -249,7 +249,8 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
     # Block duplicate skill folder basenames. A skill whose folder basename
     # matches an already-loaded skill from a different path is handled based on
     # the content of its SKILL.md: identical content is treated as a harmless
-    # duplicate and skipped; differing content is a conflict and is rejected.
+    # duplicate and the cached SkillInfo is returned; differing content is a
+    # conflict and is rejected.
     normalized_folder = os.path.normpath(folder_path)
     skill_basename = os.path.basename(normalized_folder)
     for existing_folder, existing_info in list(g_skills.items()):
@@ -261,9 +262,10 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
             logger.info(
                 "Duplicate skill folder name detected with identical SKILL.md: "
                 "basename '%s' of '%s' matches already loaded skill '%s'. "
-                "Skipping '%s'.",
-                skill_basename, folder_path, existing_folder, folder_path
+                "Returning cached skill info.",
+                skill_basename, folder_path, existing_folder
             )
+            return existing_info
         else:
             logger.error(
                 "Conflicting skill folder name detected: basename '%s' of '%s' "

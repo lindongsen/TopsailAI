@@ -10,6 +10,7 @@ import shlex
 
 from topsailai.skill_hub import skill_hook
 from topsailai.skill_hub.skill_tool import (
+    g_skills,
     get_skill_markdown,
     get_skills_from_cache,
     overview_skill_native,
@@ -251,9 +252,18 @@ def load_skill(skill_folder:str):
 
     Args:
         skill_folder (str):
+
+    Raises:
+        RuntimeError: when the skill folder is invalid, disabled, or a
+            duplicate basename has already been loaded and no valid name
+            could be resolved.
     """
     s = parse_skill_folder(skill_folder)
-    assert s.name, f"load skill failed: {skill_folder}"
+    if not s.name:
+        raise RuntimeError(
+            f"load skill failed: {skill_folder} "
+            "(no valid SKILL.md, skill disabled, or duplicate basename already loaded)"
+        )
     return s.markdown
 
 

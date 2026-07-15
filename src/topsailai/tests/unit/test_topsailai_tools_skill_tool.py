@@ -1,16 +1,9 @@
-"""
-Unit tests for tools/skill_tool.py
-
-Author: mm-m25
-Purpose: Test skill tool functionality including skill overview, file reading, and execution
-"""
-
 import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 from types import SimpleNamespace
-
 # Add project root to path
 sys.path.insert(0, '/root/ai/TopsailAI/src')
 
@@ -300,6 +293,89 @@ class TestReadSkillFile(unittest.TestCase):
                 
                 self.assertIn('no found this skill file', str(context.exception))
 
+class TestLoadSkill(unittest.TestCase):
+    """Test load_skill function"""
+
+    def setUp(self):
+        """Clear global skills cache before each test."""
+        from topsailai.skill_hub.skill_tool import g_skills
+        g_skills.clear()
+
+    def test_load_skill_success(self):
+        """Test successful skill loading returns markdown."""
+        from topsailai.tools.skill_tool import load_skill
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "SKILL.md")
+            with open(skill_file, "w", encoding="utf-8") as f:
+                f.write("---\nname: LoadedSkill\ndescription: A loaded skill\n---\n")
+
+            result = load_skill(tmpdir)
+
+            self.assertIn("LoadedSkill", result)
+            self.assertIn(tmpdir, result)
+
+    def test_load_skill_missing_name_raises_runtime_error(self):
+        """Test load_skill raises RuntimeError when SKILL.md has no name."""
+        from topsailai.tools.skill_tool import load_skill
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "SKILL.md")
+            with open(skill_file, "w", encoding="utf-8") as f:
+                f.write("---\ndescription: no name\n---\n")
+
+            with self.assertRaises(RuntimeError) as context:
+                load_skill(tmpdir)
+
+            self.assertIn("load skill failed", str(context.exception))
+            self.assertIn("no valid SKILL.md", str(context.exception))
+
+    def test_load_skill_duplicate_basename_identical_content_returns_markdown(self):
+        """Test load_skill succeeds when an identical-content duplicate basename is already loaded."""
+        from topsailai.tools.skill_tool import load_skill
+        from topsailai.skill_hub.skill_tool import g_skills
+
+        content = "---\nname: DupSkill\ndescription: duplicate\n---\n"
+        with tempfile.TemporaryDirectory() as parent:
+            folder1 = os.path.join(parent, "a", "dup")
+            folder2 = os.path.join(parent, "b", "dup")
+            os.makedirs(folder1)
+            os.makedirs(folder2)
+
+            for folder in (folder1, folder2):
+                with open(os.path.join(folder, "SKILL.md"), "w", encoding="utf-8") as f:
+                    f.write(content)
+
+            result1 = load_skill(folder1)
+            self.assertIn("DupSkill", result1)
+            self.assertIn(folder1, g_skills)
+
+            result2 = load_skill(folder2)
+            self.assertIn("DupSkill", result2)
+
+    def test_load_skill_duplicate_basename_different_content_raises_runtime_error(self):
+        """Test load_skill fails when a conflicting duplicate basename is already loaded."""
+        from topsailai.tools.skill_tool import load_skill
+        from topsailai.skill_hub.skill_tool import g_skills
+
+        with tempfile.TemporaryDirectory() as parent:
+            folder1 = os.path.join(parent, "a", "dup")
+            folder2 = os.path.join(parent, "b", "dup")
+            os.makedirs(folder1)
+            os.makedirs(folder2)
+
+            with open(os.path.join(folder1, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: DupSkill\ndescription: first\n---\n")
+            with open(os.path.join(folder2, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: DupSkill\ndescription: second\n---\n")
+
+            load_skill(folder1)
+            self.assertIn(folder1, g_skills)
+
+            with self.assertRaises(RuntimeError) as context:
+                load_skill(folder2)
+
+            self.assertIn("load skill failed", str(context.exception))
 
 class TestModuleConstants(unittest.TestCase):
     """Test module constants"""
@@ -311,10 +387,12 @@ class TestModuleConstants(unittest.TestCase):
         self.assertIn('call_skill', TOOLS)
         self.assertIn('overview_skill', TOOLS)
         self.assertIn('read_skill_file', TOOLS)
+        self.assertIn('load_skill', TOOLS)
         
         self.assertTrue(callable(TOOLS['call_skill']))
         self.assertTrue(callable(TOOLS['overview_skill']))
         self.assertTrue(callable(TOOLS['read_skill_file']))
+        self.assertTrue(callable(TOOLS['load_skill']))
 
     def test_prompt_skill_tool_rule_contains_mandatory_inspection(self):
         """Test PROMPT_SKILL_TOOL_RULE contains mandatory inspection text"""
