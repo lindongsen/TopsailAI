@@ -1,14 +1,72 @@
----
 name: topsailai_data
 author: DawsonLin
-description: Skill for operating the topsailai_data CLI, a local-first object store that separates metadata from actual data through pluggable adapters.
+description: |
+  Skill for operating the topsailai_data CLI, a local-first object store that
+  separates metadata from actual data through pluggable adapters.
+
+  Trigger this skill whenever the user wants to manage structured data objects
+  stored by topsailai_data: create, read, update, delete, search, move, tag, or
+  garbage-collect objects. Also use it when the user asks to test, inspect, or
+  troubleshoot the topsailai_data CLI or its stored data.
+
+  Typical intents that should route here:
+  - "create a note/document/object in topsailai_data"
+  - "list/search/show my objects" or "find objects tagged with X"
+  - "add/remove a tag from object X"
+  - "move object X to classify path Y"
+  - "delete object X" or "clean up topsailai_data"
+  - "run gc" or "recover object X"
+  - "test topsailai_data" or "smoke test the CLI"
+
+  Common scenarios include local knowledge bases, project document storage,
+  tagged data archiving, soft-delete and gc workflows, automated test data
+  management, and future db/s3 backend extensions.
+
 ---
 
 # topsailai_data
 
 ## When to use
 
-Use this skill when you need to create, organize, search, move, or delete data objects managed by the `topsailai_data` CLI. The tool stores **metadata** (name, path, tags, status) and **actual data** (files, archives) through independent adapters. The current implementation focuses on the **local adapter**, which keeps everything on the local filesystem under a configurable root directory.
+Use this skill when the user intends to manage data objects through the
+`topsailai_data` CLI. The tool stores **metadata** (name, path, tags, status) and
+**actual data** (files, archives) through independent adapters. The current
+implementation focuses on the **local adapter**, which keeps everything on the
+local filesystem under a configurable root directory.
+
+### User intents that trigger this skill
+
+| Intent | Example user phrases |
+|--------|----------------------|
+| Create objects | "create an object", "add a note", "store a document", "create X under classify Y" |
+| Read/query objects | "list my objects", "show object X", "search for X", "find objects tagged Y" |
+| Update objects/tags | "update object X", "add tag Y to X", "remove tag Y from X" |
+| Move objects | "move object X to path Y", "reclassify object X" |
+| Delete objects | "delete object X", "remove object X", "clean up topsailai_data" |
+| Recover/gc | "recover object X", "run gc", "clean up creating/ceased objects" |
+| Test/inspect | "test topsailai_data", "smoke test the CLI", "check my data" |
+
+### Common usage scenarios
+
+- **Local knowledge base**: create notes under classify paths such as
+  `work/2026` or `personal/ideas`, tag them, and search later.
+- **Project document storage**: store project artifacts, READMEs, or design
+  documents as objects and retrieve them by name or tag.
+- **Tagged data archiving**: organize files with classify tags inherited
+  recursively, then filter lists and searches by tag.
+- **Soft-delete and gc workflows**: delete objects safely (metadata transitions
+  through `deleted` to `ceased`), then run `gc` to finalize cleanup after the
+  retention window.
+- **Automated test data management**: configure a temporary
+  `TOPSAILAI_DATA_ROOT` in scripts or CI to create isolated test objects and
+  clean them up with `gc`.
+- **Future backend extensions**: the same CLI commands work once additional
+  metadata or actual-data adapters (e.g. postgres, s3) are enabled through
+  environment variables.
+
+If the request is about general file-system operations outside the
+`topsailai_data` root, or about editing the source code of topsailai_data
+itself, use the appropriate development tools instead of this skill.
 
 ## Build
 
@@ -71,7 +129,7 @@ The `bin/` directory holds the executable. Helper shell scripts are intentionall
 | `move` | `move <id> <new-classify...>` | Move an active object to a different classify path. The ID and name stay the same. |
 | `delete` | `delete <id>` | Soft-delete an active object. Actual data is removed and metadata transitions to `ceased`. |
 | `recover` | `recover <id> [--resume] [--from archive]` | Resume or clean up a `creating` object. |
-| `gc` | `gc [--dry-run] [--status creating\|ceased]` | Clean up `creating` or expired `ceased` objects. `--status deleted` is not supported and returns an error. |
+| `gc` | `gc [--dry-run] [--status creating\|deleted\|ceased]` | Clean up `creating` objects, finalize `deleted` objects to `ceased`, or remove expired `ceased` objects. |
 | `get` | `get <id> <file>` | Read a single actual-data file to stdout. |
 | `get-archive` | `get-archive <id>` | Output the object's actual data as a tar archive to stdout. |
 | `put` | `put <id> <file> [--from file]` | Write a single file into the object's actual data. Defaults to stdin. |
@@ -153,7 +211,7 @@ Variables prefixed with `TOPSAILAI_DATA_ADAPTER_` are passed to adapter factorie
 - **Object ID equals object name** in the local adapter. Two objects with the same name cannot exist at different paths.
 - **Always create through the CLI** rather than manually creating folders, so metadata and the mandatory `.md` marker are written consistently.
 - **Tar archives** are extracted into the object folder. Symbolic links inside tar archives are rejected to prevent directory traversal.
-- **`gc --status deleted`** is intentionally unsupported in the current release and returns a clear error.
+- **`gc --status deleted`** finalizes `deleted` objects to `ceased` and removes them once the retention window expires.
 - **Deleted/ceased objects** are hidden from normal `list`, `show`, and `search` unless `--include-deleted` is used.
 
 ## See also
