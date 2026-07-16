@@ -107,6 +107,7 @@ Invoke without arguments to show usage and available commands:
 ```
 bin/topsailai_data
 ```
+
 ## Mandatory input rule
 
 When the source content already exists as a file on disk, you MUST pass it to the CLI through the `--from <path>` option. Do **not** use shell redirection, pipes, or heredocs to feed file content into `stdin`.
@@ -129,17 +130,25 @@ bin/topsailai_data create note < /path/to/note.md
 
 Only use `stdin` when the data is generated in memory and has no corresponding file.
 
-
 ## Skill layout
 
 ```text
 skills/topsailai_data/
   bin/topsailai_data      # the CLI binary consumed by this skill
-  references/             # cheatsheets and best practices
   config/example.env      # example environment variables
 ```
 
 The `bin/` directory holds the executable. Helper shell scripts are intentionally not provided; all operations go through `bin/topsailai_data`.
+
+## Quick start
+
+```
+export TOPSAILAI_DATA_ROOT=./data
+make build
+bin/topsailai_data create hello --tag quickstart
+bin/topsailai_data list
+bin/topsailai_data show hello
+```
 
 ## Commands
 
@@ -159,23 +168,82 @@ The `bin/` directory holds the executable. Helper shell scripts are intentionall
 | `put` | `put <id> <file> [--from file]` | Write a single file into the object's actual data. Defaults to stdin. |
 | `put-archive` | `put-archive <id> <archive>` | Replace object actual data from a tar archive. |
 
+### Command examples
+
+Create:
+
+```
+bin/topsailai_data create note --classify work/2026 --tag work,important
+bin/topsailai_data create report --from report.md
+bin/topsailai_data create bundle --from bundle.tar
+echo "inline content" | bin/topsailai_data create inline-note
+```
+
+Read metadata:
+
+```
+bin/topsailai_data show <id>
+bin/topsailai_data list [--tag tag] [--include-deleted]
+bin/topsailai_data search <query> [--include-deleted]
+```
+
+Modify tags:
+
+```
+bin/topsailai_data tag add <id> <tag>
+bin/topsailai_data tag remove <id> <tag>
+```
+
+Move:
+
+```
+bin/topsailai_data move <id> <new-classify...>
+bin/topsailai_data move hello archive/2026
+```
+
+Delete and cleanup:
+
+```
+bin/topsailai_data delete <id>
+bin/topsailai_data gc [--dry-run] [--status creating|ceased]
+bin/topsailai_data recover <id> [--resume] [--from archive]
+```
+
+Actual data I/O:
+
+```
+bin/topsailai_data get <id> <file>
+bin/topsailai_data get-archive <id> > backup.tar
+bin/topsailai_data put <id> <file> [--from file]
+bin/topsailai_data put-archive <id> <archive>
+```
+
 ## Data layout conventions
+
+### Object folder rule
+
+Every object is a folder whose name matches the object name. The folder must contain a file with the same name and a `.md` extension. This file is actual data, but its presence marks the folder boundary.
+
+```text
+hello/
+  hello.md
+```
 
 ### Time-based path
 
-Objects are placed under a time prefix derived from the creation time:
+Objects are placed under a time prefix derived from the creation time using local time:
 
 ```text
 {ROOT}/YYYY/MMDD/HHMM/<object>
 ```
 
-Example:
+Example for an object created on 2026-07-14 at 23:23:
 
 ```text
 ./data/2026/0714/2323/hello
 ```
 
-### Object folder
+### Object folder contents
 
 An object named `hello` is stored as a folder `hello` that must contain a file named `hello.md`. The folder may also contain other files and subdirectories as actual data.
 
@@ -189,12 +257,18 @@ hello/
 
 ### Classify directories
 
-After the time prefix you may add custom classify directories. The total depth from root to the object folder must not exceed 11 levels. The time prefix consumes 3 levels, leaving up to 7 extra classify levels.
+After the time prefix you may add custom classify directories. The total depth from root to the object folder must not exceed 11 levels. The time prefix consumes 3 levels and the object folder consumes 1 level, leaving up to 7 extra classify levels.
 
 Example with classify path `projects/demo`:
 
 ```text
 ./data/2026/0714/2323/projects/demo/hello
+```
+
+Too deep:
+
+```text
+2026/0714/2323/a/b/c/d/e/f/g/h/hello  # 12 levels, exceeds limit
 ```
 
 ### Tag files
@@ -212,9 +286,29 @@ urgent
 
 Lines starting with `#`, `;`, `//`, or `--` (after optional whitespace) are comments. Empty lines are ignored. Tags are trimmed and deduplicated.
 
+### Tag inheritance
+
+Classify tag files apply recursively. Object tag files apply only to that object. Inherited and object tags are merged and deduplicated.
+
+```text
+2026/0714/2323/
+  2323.tags            # applies to all objects under 2323/
+  projects/
+    projects.tags      # applies to all objects under projects/
+    demo/
+      demo.tags        # applies to all objects under demo/
+      hello/
+        hello.md
+        hello.tags     # applies only to hello
+```
+
+Object `hello` receives the merged tags from `2323.tags`, `projects.tags`, `demo.tags`, and `hello.tags`.
+
 ### Scanning rule
 
 When scanning for objects, the adapter stops at any directory that contains a file named `{directory-name}.md`. Subdirectories inside that folder are not scanned as independent objects.
+
+A file such as `hello/sub/hello.md` does **not** make `sub` an object folder; only `hello/hello.md` makes `hello` an object folder.
 
 ## Environment variables
 
@@ -230,6 +324,16 @@ When scanning for objects, the adapter stops at any directory that contains a fi
 
 Variables prefixed with `TOPSAILAI_DATA_ADAPTER_` are passed to adapter factories as adapter-specific settings.
 
+Example `.env`:
+
+```
+TOPSAILAI_DATA_ROOT=./data
+TOPSAILAI_DATA_METADATA_ADAPTER=local
+TOPSAILAI_DATA_ACTUAL_DATA_ADAPTER=local
+TOPSAILAI_DATA_INCLUDE_DELETED=false
+TOPSAILAI_DATA_CEASED_RETENTION_DAYS=30
+```
+
 ## Notes and common pitfalls
 
 - **Object ID equals object name** in the local adapter. Two objects with the same name cannot exist at different paths.
@@ -237,10 +341,9 @@ Variables prefixed with `TOPSAILAI_DATA_ADAPTER_` are passed to adapter factorie
 - **Tar archives** are extracted into the object folder. Symbolic links inside tar archives are rejected to prevent directory traversal.
 - **`gc --status deleted`** finalizes `deleted` objects to `ceased` and removes them once the retention window expires.
 - **Deleted/ceased objects** are hidden from normal `list`, `show`, and `search` unless `--include-deleted` is used.
+- **Avoid manual changes**: do not create or rename object folders manually. Use the CLI so that metadata, the `.md` marker, and tag files stay consistent.
 
 ## See also
 
 - `bin/topsailai_data` — the CLI binary used by this skill
-- `references/cli-cheatsheet.md`
-- `references/data-layout.md`
 - `config/example.env`
