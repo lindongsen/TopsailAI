@@ -22,6 +22,8 @@ description: |
   Common scenarios include local knowledge bases, project document storage,
   tagged data archiving, soft-delete and gc workflows, automated test data
   management, and future db/s3 backend extensions.
+
+  > You Must use the CLI to manage data, DONOT USE shell command!
 ---
 
 # topsailai_data
@@ -105,6 +107,28 @@ Invoke without arguments to show usage and available commands:
 ```
 bin/topsailai_data
 ```
+## Mandatory input rule
+
+When the source content already exists as a file on disk, you MUST pass it to the CLI through the `--from <path>` option. Do **not** use shell redirection, pipes, or heredocs to feed file content into `stdin`.
+
+This rule applies to commands that accept `--from`, such as `create` and `put`.
+
+Correct:
+
+```
+bin/topsailai_data create note --from /path/to/note.md
+bin/topsailai_data put note attachment.txt --from /path/to/attachment.txt
+```
+
+Incorrect:
+
+```
+cat /path/to/note.md | bin/topsailai_data create note
+bin/topsailai_data create note < /path/to/note.md
+```
+
+Only use `stdin` when the data is generated in memory and has no corresponding file.
+
 
 ## Skill layout
 
