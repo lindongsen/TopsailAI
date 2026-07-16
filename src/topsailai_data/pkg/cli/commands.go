@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"golang.org/x/term"
 	"github.com/topsailai/topsailai_data/pkg/manager"
@@ -266,9 +267,13 @@ func runSearch(ctx context.Context, mgr *manager.Manager, args []string) error {
 	if err := validateListFormat(*format); err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
-	query := fs.Args()[0]
 
-	objects, err := mgr.SearchObjects(ctx, query, models.ListOptions{
+	terms, err := parseSearchQuery(fs.Args()[0])
+	if err != nil {
+		return fmt.Errorf("search: %w", err)
+	}
+
+	objects, err := mgr.SearchObjects(ctx, terms, models.ListOptions{
 		IncludeDeleted: *includeDeleted,
 		Offset:         *offset,
 		Limit:          *limit,
@@ -278,6 +283,32 @@ func runSearch(ctx context.Context, mgr *manager.Manager, args []string) error {
 	}
 	printObjectList(objects, *format)
 	return nil
+}
+
+// parseSearchQuery splits a raw search query into terms using '|' as the OR
+// separator. It rejects whitespace and backslash escapes because the search
+// command does not support quoting or escaping.
+func parseSearchQuery(query string) ([]string, error) {
+	if query == "" {
+		return nil, fmt.Errorf("search query cannot be empty")
+	}
+	for _, r := range query {
+		if r == '\\' {
+			return nil, fmt.Errorf("search query cannot contain backslash escapes")
+		}
+		if unicode.IsSpace(r) {
+			return nil, fmt.Errorf("search query cannot contain spaces or tabs")
+		}
+	}
+
+	terms := strings.Split(query, "|")
+	for i, term := range terms {
+		if term == "" {
+			return nil, fmt.Errorf("search query contains an empty term")
+		}
+		terms[i] = strings.ToLower(term)
+	}
+	return terms, nil
 }
 // runTag implements the "tag" command.
 func runTag(ctx context.Context, mgr *manager.Manager, args []string) error {

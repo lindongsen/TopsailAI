@@ -900,3 +900,95 @@ func TestShowNoExtraFiles(t *testing.T) {
 		t.Fatalf("show should indicate no extra files: %s", out)
 	}
 }
+
+func TestSearchORLogic(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	alpha, err := mgr.CreateObject(ctx, "alpha", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+		Tags:     []string{"first"},
+	})
+	if err != nil {
+		t.Fatalf("create alpha: %v", err)
+	}
+
+	beta, err := mgr.CreateObject(ctx, "beta", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+		Tags:     []string{"second"},
+	})
+	if err != nil {
+		t.Fatalf("create beta: %v", err)
+	}
+
+	gamma, err := mgr.CreateObject(ctx, "gamma", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+		Tags:     []string{"third"},
+	})
+	if err != nil {
+		t.Fatalf("create gamma: %v", err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := Run(ctx, mgr, []string{"search", "alpha|gamma"}); err != nil {
+			t.Fatalf("search: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, string(alpha.ID)) {
+		t.Fatalf("search output missing alpha: %s", out)
+	}
+	if !strings.Contains(out, string(gamma.ID)) {
+		t.Fatalf("search output missing gamma: %s", out)
+	}
+	if strings.Contains(out, string(beta.ID)) {
+		t.Fatalf("search output should not contain beta: %s", out)
+	}
+}
+
+func TestSearchByTagOR(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	obj, err := mgr.CreateObject(ctx, "tagged", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+		Tags:     []string{"alpha", "beta"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := Run(ctx, mgr, []string{"search", "alpha|gamma"}); err != nil {
+			t.Fatalf("search: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, string(obj.ID)) {
+		t.Fatalf("search output missing object: %s", out)
+	}
+}
+
+func TestSearchUnsupportedCharacters(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	cases := []struct {
+		query string
+		want  string
+	}{
+		{"foo bar", "spaces or tabs"},
+		{"foo\tbar", "spaces or tabs"},
+		{`foo\bar`, "backslash escapes"},
+		{"foo|", "empty term"},
+		{"|foo", "empty term"},
+		{"foo||bar", "empty term"},
+	}
+
+	for _, tc := range cases {
+		err := Run(ctx, mgr, []string{"search", tc.query})
+		if err == nil {
+			t.Fatalf("search %q: expected error, got nil", tc.query)
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("search %q: expected error to contain %q, got %v", tc.query, tc.want, err)
+		}
+	}
+}

@@ -243,28 +243,23 @@ func (a *MetadataAdapter) List(ctx context.Context, opts models.ListOptions) ([]
 	return objects[opts.Offset:end], nil
 }
 
-// Search returns active objects whose name or tags match the query.
-func (a *MetadataAdapter) Search(ctx context.Context, query string, opts models.ListOptions) ([]*models.Object, error) {
+// Search returns active objects whose name or tags match any of the provided
+// query terms. Terms are combined with OR semantics: an object matches if its
+// name or any tag contains at least one term as a substring. An empty terms
+// slice matches all objects.
+func (a *MetadataAdapter) Search(ctx context.Context, terms []string, opts models.ListOptions) ([]*models.Object, error) {
 	objects, err := a.scanObjects(ctx, opts.IncludeDeleted)
 	if err != nil {
 		return nil, err
 	}
 
-	query = strings.ToLower(strings.TrimSpace(query))
 	var matches []*models.Object
 	for _, obj := range objects {
 		if obj.Status != models.ObjectStatusActive && !opts.IncludeDeleted {
 			continue
 		}
-		if strings.Contains(strings.ToLower(string(obj.Name)), query) {
+		if matchesSearchTerms(obj, terms) {
 			matches = append(matches, obj)
-			continue
-		}
-		for _, tag := range obj.Tags {
-			if strings.Contains(strings.ToLower(tag), query) {
-				matches = append(matches, obj)
-				break
-			}
 		}
 	}
 
@@ -276,6 +271,30 @@ func (a *MetadataAdapter) Search(ctx context.Context, query string, opts models.
 		end = opts.Offset + opts.Limit
 	}
 	return matches[opts.Offset:end], nil
+}
+
+// matchesSearchTerms reports whether an object's name or tags match any of the
+// provided terms. Matching is case-insensitive substring. An empty terms slice
+// matches everything.
+func matchesSearchTerms(obj *models.Object, terms []string) bool {
+	if len(terms) == 0 {
+		return true
+	}
+	name := strings.ToLower(obj.Name)
+	for _, term := range terms {
+		if term == "" {
+			continue
+		}
+		if strings.Contains(name, term) {
+			return true
+		}
+		for _, tag := range obj.Tags {
+			if strings.Contains(strings.ToLower(tag), term) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Recover returns objects in the creating state.

@@ -38,8 +38,10 @@ type MetadataAdapter interface {
 	// List returns metadata matching the provided options.
 	List(ctx context.Context, opts models.ListOptions) ([]*models.Object, error)
 
-	// Search returns metadata whose name or tags match the query.
-	Search(ctx context.Context, query string, opts models.ListOptions) ([]*models.Object, error)
+	// Search returns metadata whose name or tags match any of the provided
+	// query terms. Terms are combined with OR semantics: an object matches if
+	// its name or any tag contains at least one term as a substring.
+	Search(ctx context.Context, terms []string, opts models.ListOptions) ([]*models.Object, error)
 
 	// AddTag appends a tag to an object's metadata if it is not already present.
 	AddTag(ctx context.Context, id models.ObjectID, tag string) error
@@ -54,6 +56,7 @@ type MetadataAdapter interface {
 	// GC returns objects that are eligible for permanent metadata cleanup, such
 	// as ceased objects whose retention period has expired.
 	GC(ctx context.Context, retention time.Duration) ([]*models.Object, error)
+
 	// Close releases any resources held by the adapter.
 	Close() error
 }

@@ -227,9 +227,11 @@ func (m *Manager) ListObjects(ctx context.Context, opts models.ListOptions) ([]*
 	return m.meta.List(ctx, opts)
 }
 
-// SearchObjects searches active objects by name or tags.
-func (m *Manager) SearchObjects(ctx context.Context, query string, opts models.ListOptions) ([]*models.Object, error) {
-	return m.meta.Search(ctx, query, opts)
+// SearchObjects searches active objects by name or tags. The terms slice
+// follows OR semantics: an object matches if its name or any tag contains at
+// least one term as a substring.
+func (m *Manager) SearchObjects(ctx context.Context, terms []string, opts models.ListOptions) ([]*models.Object, error) {
+	return m.meta.Search(ctx, terms, opts)
 }
 
 // UpdateActualData replaces the actual data of an active object with a tar

@@ -394,7 +394,8 @@ The CLI is named `topsaildata`. Commands include:
 | `update <id>` | Update an object's metadata or tags. |
 | `move <id> <new-classify...>` | Move an object to a different classify path. The ID and name do not change. |
 | `delete <id>` | Soft-delete an object and its actual data. |
-| `list [--tag tag]` | List objects, optionally filtered by tag. |
+| `list [--tag tag] [--include-deleted] [--offset n] [--limit n] [--format table|json]` | List objects, optionally filtered by tag. |
+| `search <query> [--include-deleted] [--offset n] [--limit n] [--format table|json]` | Search objects by name or tag. Use `|` in `<query>` for OR logic (e.g. `foo|bar`). Spaces, tabs, and backslash escapes are not supported. |
 | `tag add <id> <tag>` | Add a tag to an object. |
 | `tag remove <id> <tag>` | Remove a tag from an object. |
 | `get <id> <file>` | Read a single actual data file from an object. |
@@ -404,8 +405,9 @@ The CLI is named `topsaildata`. Commands include:
 | `recover <id>` | Attempt to finish a `creating` object if actual data exists; otherwise mark it `ceased`. |
 | `gc [--dry-run] [--status creating|deleted|ceased]` | Scan and clean up objects in the specified status. Default scans `creating` and `ceased`. |
 
-All commands support interactive mode when invoked without inline arguments.
+Search queries are case-insensitive substring matches against object names and tags. Multiple terms separated by `|` are combined with OR semantics: an object matches if any term matches its name or any tag. Queries containing spaces, tabs, or backslash escapes are rejected with a clear error.
 
+All commands support interactive mode when invoked without inline arguments.
 Read commands accept an optional `--lock` flag to force advisory locking. Write commands always acquire the object lock by default.
 
 ## 9. Error Handling
