@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"encoding/json"
 	"archive/tar"
+	"fmt"
 	"bytes"
 	"context"
 	"io"
@@ -39,6 +41,19 @@ func setupManager(t *testing.T) (*manager.Manager, string, context.Context) {
 	})
 	return mgr, tmp, ctx
 }
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	fn()
+	w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	return buf.String()
+}
+
 
 func TestRunNoArgsEntersInteractiveMode(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
@@ -691,5 +706,197 @@ func TestCreateFromStdinTarArchive(t *testing.T) {
 	}
 	if !bytes.Equal(got2, extraContent) {
 		t.Fatalf("expected extra %q, got %q", extraContent, got2)
+	}
+}
+func TestListOutputFormatAndPagination(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	for i := 1; i <= 5; i++ {
+		name := fmt.Sprintf("obj%d", i)
+		if _, err := mgr.CreateObject(ctx, name, manager.CreateObjectOptions{
+			Classify: []string{"demo"},
+			Tags:     []string{fmt.Sprintf("tag%d", i)},
+		}); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+
+	out := captureStdout(t, func() {
+		if err := Run(ctx, mgr, []string{"list"}); err != nil {
+			t.Fatalf("list: %v", err)
+		}
+	})
+	if !strings.Contains(out, "| ID   | NAME | STATUS | PATH                     | TAGS | CREATED AT                | UPDATED AT                |") &&
+		!strings.Contains(out, "| ID    | NAME  | STATUS | PATH                      | TAGS | CREATED AT                | UPDATED AT                |") {
+		t.Fatalf("list output missing pipe-separated header: %s", out)
+	}
+	if !strings.Contains(out, "obj1") || !strings.Contains(out, "obj5") {
+		t.Fatalf("list output missing objects: %s", out)
+	}
+	if !strings.Contains(out, "|") {
+		t.Fatalf("list table should use | separators: %s", out)
+	}
+
+	// Test offset/limit.
+	out = captureStdout(t, func() {
+		if err := Run(ctx, mgr, []string{"list", "--offset", "1", "--limit", "2"}); err != nil {
+			t.Fatalf("list offset/limit: %v", err)
+		}
+	})
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 3 { // header + 2 data rows
+		t.Fatalf("expected 3 lines, got %d: %s", len(lines), out)
+	}
+}
+
+func TestListFormatJSON(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	if _, err := mgr.CreateObject(ctx, "jsonobj", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+		Tags:     []string{"alpha", "beta"},
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := Run(ctx, mgr, []string{"list", "--format", "json"}); err != nil {
+			t.Fatalf("list json: %v", err)
+		}
+	})
+
+	var results []map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatalf("list json output is not valid JSON: %v\n%s", err, out)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0]["id"] != "jsonobj" {
+		t.Fatalf("expected id jsonobj, got %v", results[0]["id"])
+	}
+	if results[0]["name"] != "jsonobj" {
+		t.Fatalf("expected name jsonobj, got %v", results[0]["name"])
+	}
+	if results[0]["status"] != "active" {
+		t.Fatalf("expected status active, got %v", results[0]["status"])
+	}
+	tags, ok := results[0]["tags"].([]interface{})
+	if !ok || len(tags) != 2 {
+		t.Fatalf("expected 2 tags, got %v", results[0]["tags"])
+	}
+}
+
+func TestListEmpty(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	out := captureStdout(t, func() {
+		if err := Run(ctx, mgr, []string{"list"}); err != nil {
+			t.Fatalf("list: %v", err)
+		}
+	})
+
+	if strings.Contains(out, "|") {
+		t.Fatalf("empty list should not print table: %s", out)
+	}
+	if !strings.Contains(out, "No objects found") {
+		t.Fatalf("empty list should print friendly message: %s", out)
+	}
+
+	out = captureStdout(t, func() {
+		if err := Run(ctx, mgr, []string{"list", "--format", "json"}); err != nil {
+			t.Fatalf("list json empty: %v", err)
+		}
+	})
+	if strings.TrimSpace(out) != "[]" {
+		t.Fatalf("empty list json should be [], got %s", out)
+	}
+}
+
+func TestShowReadsMarkdownAndTree(t *testing.T) {
+	mgr, root, ctx := setupManager(t)
+
+	content := []byte("# Hello\n\nThis is the object content.\n")
+	obj, err := mgr.CreateObject(ctx, "hello", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+		Tags:     []string{"greeting"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := mgr.WriteActualFile(ctx, obj.ID, "hello.md", bytes.NewReader(content)); err != nil {
+		t.Fatalf("put hello.md: %v", err)
+	}
+
+	extraContent := []byte("extra data")
+	if err := mgr.WriteActualFile(ctx, obj.ID, "extra.txt", bytes.NewReader(extraContent)); err != nil {
+		t.Fatalf("put extra.txt: %v", err)
+	}
+
+	subDir := filepath.Join(root, obj.Path, "attachments")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("mkdir attachments: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "note.txt"), []byte("note"), 0644); err != nil {
+		t.Fatalf("write note.txt: %v", err)
+	}
+
+	var buf bytes.Buffer
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err = Run(ctx, mgr, []string{"show", string(obj.ID)})
+	w.Close()
+	os.Stdout = old
+	if err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	_, _ = buf.ReadFrom(r)
+	out := buf.String()
+
+	if !strings.Contains(out, "ID:") || !strings.Contains(out, "hello") {
+		t.Fatalf("show output missing metadata: %s", out)
+	}
+	if !strings.Contains(out, "# Hello") {
+		t.Fatalf("show output missing markdown content: %s", out)
+	}
+	if !strings.Contains(out, "attachments") || !strings.Contains(out, "note.txt") {
+		t.Fatalf("show output missing folder structure: %s", out)
+	}
+}
+
+func TestShowNoExtraFiles(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	content := []byte("# Minimal\n")
+	obj, err := mgr.CreateObject(ctx, "minimal", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := mgr.WriteActualFile(ctx, obj.ID, "minimal.md", bytes.NewReader(content)); err != nil {
+		t.Fatalf("put minimal.md: %v", err)
+	}
+
+	var buf bytes.Buffer
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err = Run(ctx, mgr, []string{"show", string(obj.ID)})
+	w.Close()
+	os.Stdout = old
+	if err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	_, _ = buf.ReadFrom(r)
+	out := buf.String()
+
+	if !strings.Contains(out, "# Minimal") {
+		t.Fatalf("show output missing markdown content: %s", out)
+	}
+	if !strings.Contains(out, "no additional files") {
+		t.Fatalf("show should indicate no extra files: %s", out)
 	}
 }

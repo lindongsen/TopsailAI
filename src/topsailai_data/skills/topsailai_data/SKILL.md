@@ -155,15 +155,15 @@ bin/topsailai_data show hello
 | Command | Usage | Description |
 |---------|-------|-------------|
 | `create` | `create <object> [--classify dir1/dir2/...] [--tag t1,t2] [--from file\|archive]` | Create a new object. Writes a mandatory `<object>.md` marker and optional tags. `--from` accepts a plain file or a tar archive; when omitted, content is read from stdin. |
-| `show` | `show <id>` | Display metadata of an object. |
-| `list` | `list [--tag tag] [--include-deleted]` | List active objects, optionally filtered by tag. |
+| `show` | `show <id>` | Display metadata, the `<object>.md` content, and the folder structure of an object. |
+| `list` | `list [--tag tag] [--include-deleted] [--offset n] [--limit n] [--format table|json]` | List active objects, optionally filtered by tag and paginated. Default format is a pipe-separated table; use `json` for machine-readable output. |
 | `search` | `search <query> [--include-deleted]` | Search objects by name or tag. |
 | `tag` | `tag add <id> <tag>` or `tag remove <id> <tag>` | Add or remove an object-specific tag. |
 | `move` | `move <id> <new-classify...>` | Move an active object to a different classify path. The ID and name stay the same. |
 | `delete` | `delete <id>` | Soft-delete an active object. Actual data is removed and metadata transitions to `ceased`. |
 | `recover` | `recover <id> [--resume] [--from archive]` | Resume or clean up a `creating` object. |
 | `gc` | `gc [--dry-run] [--status creating\|deleted\|ceased]` | Clean up `creating` objects, finalize `deleted` objects to `ceased`, or remove expired `ceased` objects. |
-| `get` | `get <id> <file>` | Read a single actual-data file to stdout. |
+| `get` | `get <id> <file>` | Read a single actual-data file to stdout. The raw byte stream is preserved, so this works for binary files such as images, videos, and compiled executables. |
 | `get-archive` | `get-archive <id>` | Output the object's actual data as a tar archive to stdout. |
 | `put` | `put <id> <file> [--from file]` | Write a single file into the object's actual data. Defaults to stdin. |
 | `put-archive` | `put-archive <id> <archive>` | Replace object actual data from a tar archive. |
@@ -183,7 +183,7 @@ Read metadata:
 
 ```
 bin/topsailai_data show <id>
-bin/topsailai_data list [--tag tag] [--include-deleted]
+bin/topsailai_data list [--tag tag] [--include-deleted] [--offset 0] [--limit 10] [--format table|json]
 bin/topsailai_data search <query> [--include-deleted]
 ```
 
@@ -216,6 +216,128 @@ bin/topsailai_data get <id> <file>
 bin/topsailai_data get-archive <id> > backup.tar
 bin/topsailai_data put <id> <file> [--from file]
 bin/topsailai_data put-archive <id> <archive>
+```
+
+#### Binary files with `get`
+
+`get` writes the file's raw bytes to stdout without any text conversion, line-ending changes, or truncation. This makes it suitable for binary payloads such as images, videos, compiled executables, compressed archives, or PDFs.
+
+To save the binary data to a file, redirect stdout directly to a file:
+
+```
+bin/topsailai_data put myobj photo.png --from ./photo.png
+bin/topsailai_data get myobj photo.png > photo-copy.png
+```
+
+The redirected file is an exact byte-for-byte copy of the stored file. You can then open or process it with normal tools:
+
+```
+open photo-copy.png
+xxd photo-copy.png | head
+```
+
+Avoid piping `get` output through tools that interpret or re-encode the stream (for example `cat` in some terminals, or text-processing utilities). Redirect stdout straight to the destination file to keep the data intact.
+
+### Output format
+
+`list` supports two output formats selected with `--format table|json`.
+
+`--format table` (default) prints a pipe-separated table with a header row and one row per object. Values are not truncated, so long paths or tag lists are shown in full:
+
+```text
+| ID    | NAME  | STATUS | PATH                 | TAGS       | CREATED AT           | UPDATED AT           |
+| hello | hello | active | 2026/0714/2323/hello | quickstart | 2026-07-14T23:23:00Z | 2026-07-14T23:23:00Z |
+```
+
+Use `--offset` and `--limit` to paginate. When no objects match, `list` prints `No objects found`.
+
+`--format json` prints the full result as a pretty-printed JSON array:
+
+```json
+[
+  {
+    "id": "hello",
+    "name": "hello",
+    "path": "2026/0714/2323/hello",
+    "status": "active",
+    "tags": ["quickstart"],
+    "created_at": "2026-07-14T23:23:00Z",
+    "updated_at": "2026-07-14T23:23:00Z",
+    "schema_version": 1,
+    "data_ref": "2026/0714/2323/hello"
+  }
+]
+```
+
+`show` prints three sections for an object: metadata, the content of `<object>.md`, and the folder structure.
+
+### show output format
+
+#### Metadata section
+
+The first section lists the object's stored metadata. All timestamps are formatted as RFC3339 strings.
+
+| Field | Description |
+|-------|-------------|
+| `ID` | Stable object identifier. In the local adapter this equals the object name. |
+| `Name` | Object name (the folder name). |
+| `Path` | Full relative path from the root to the object folder. |
+| `Status` | Lifecycle status: `creating`, `active`, `deleted`, or `ceased`. |
+| `SchemaVersion` | Persistent storage format version of the object record. |
+| `CreatedAt` | Object creation timestamp. |
+| `UpdatedAt` | Last modification timestamp. |
+| `DeletedAt` | Present only when the object has been soft-deleted. |
+| `CeasedAt` | Present only when the object has been finalized after deletion. |
+| `Tags` | Merged list of inherited classify tags and object-specific tags. Empty when there are no tags. |
+| `DataRef` | Opaque reference to the actual data, managed by the actual-data adapter. |
+
+#### Markdown content section
+
+The second section is labeled `--- Markdown ---` and prints the contents of the object's mandatory `<object>.md` file. If the file is empty, the section prints `(empty)`.
+
+#### Folder structure section
+
+The third section is labeled `--- folder structure ---` and prints a tree-style listing of the object folder. The mandatory `<object>.md` marker file and metadata marker files (`.tags`, `.lock`, `.deleted`, `.ceased`, `metadata.json`) are excluded from the tree so only user actual data is shown.
+
+If the object folder contains no files besides the mandatory `<object>.md`, the section prints:
+
+```text
+hello/
+└── hello.md
+no additional files
+```
+
+#### Example
+
+```text
+ID:            hello
+Name:          hello
+Path:          2026/0714/2323/hello
+Status:        active
+SchemaVersion: 1
+CreatedAt:     2026-07-14T23:23:00+08:00
+UpdatedAt:     2026-07-14T23:23:00+08:00
+Tags:          quickstart
+DataRef:       2026/0714/2323/hello
+
+--- Markdown ---
+Hello, world!
+
+--- folder structure ---
+hello/
+└── hello.md
+no additional files
+```
+
+An object with extra actual data files might look like:
+
+```text
+--- folder structure ---
+hello/
+├── hello.md
+├── attachment.txt
+└── assets/
+    └── screenshot.png
 ```
 
 ## Data layout conventions

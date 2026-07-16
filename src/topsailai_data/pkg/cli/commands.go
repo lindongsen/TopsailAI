@@ -5,9 +5,11 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -71,7 +73,6 @@ func runCreate(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fmt.Printf("created object %s at %s\n", obj.ID, obj.Path)
 	return nil
 }
-
 // tarBytes returns a reader that yields a tar archive containing a single
 // regular file with the given name and content.
 func tarBytes(filename string, content []byte) io.Reader {
@@ -111,7 +112,110 @@ func runShow(ctx context.Context, mgr *manager.Manager, args []string) error {
 		return fmt.Errorf("show: %w", err)
 	}
 	printObject(obj)
+
+	fmt.Println()
+	fmt.Println("--- Markdown ---")
+	if err := printObjectMarkdown(ctx, mgr, id); err != nil {
+		fmt.Fprintf(os.Stderr, "show: read object.md: %v\n", err)
+	}
+
+	fmt.Println()
+	fmt.Println("--- folder structure ---")
+	if err := printObjectTree(obj.Name, obj.DataRef); err != nil {
+		fmt.Fprintf(os.Stderr, "show: read folder structure: %v\n", err)
+	}
 	return nil
+}
+
+// printObjectMarkdown reads and prints the object's mandatory <id>.md file.
+func printObjectMarkdown(ctx context.Context, mgr *manager.Manager, id models.ObjectID) error {
+	rc, err := mgr.ReadActualFile(ctx, id, string(id)+".md")
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	content, err := io.ReadAll(rc)
+	if err != nil {
+		return err
+	}
+	if len(content) == 0 {
+		fmt.Println("(empty)")
+		return nil
+	}
+	fmt.Print(string(content))
+	if !bytes.HasSuffix(content, []byte("\n")) {
+		fmt.Println()
+	}
+	return nil
+}
+
+// printObjectTree prints a tree-style listing of the object directory,
+// excluding the mandatory object marker file and other metadata markers.
+func printObjectTree(objectName, dir string) error {
+	markerName := objectName + ".md"
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+
+	// Filter out the mandatory object marker and metadata marker files.
+	var visible []os.DirEntry
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == markerName || isMetadataMarkerName(name) {
+			continue
+		}
+		visible = append(visible, entry)
+	}
+
+	if len(visible) == 0 {
+		fmt.Println("no additional files")
+		return nil
+	}
+
+	fmt.Println(objectName + "/")
+	return printObjectTreeEntries(dir, visible, "")
+}
+
+// printObjectTreeEntries recursively prints directory entries with tree connectors.
+func printObjectTreeEntries(dir string, entries []os.DirEntry, prefix string) error {
+	for i, entry := range entries {
+		isLast := i == len(entries)-1
+		connector := "├── "
+		if isLast {
+			connector = "└── "
+		}
+		fmt.Printf("%s%s%s\n", prefix, connector, entry.Name())
+		if entry.IsDir() {
+			nextPrefix := prefix
+			if isLast {
+				nextPrefix += "    "
+			} else {
+				nextPrefix += "│   "
+			}
+			subEntries, err := os.ReadDir(filepath.Join(dir, entry.Name()))
+			if err != nil {
+				return err
+			}
+			if err := printObjectTreeEntries(filepath.Join(dir, entry.Name()), subEntries, nextPrefix); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// isMetadataMarkerName reports whether name is a reserved metadata marker.
+func isMetadataMarkerName(name string) bool {
+	if name == "metadata.json" {
+		return true
+	}
+	for _, suffix := range []string{".tags", ".lock", ".deleted", ".ceased"} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // runList implements the "list" command.
@@ -119,22 +223,30 @@ func runList(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("list")
 	tag := fs.String("tag", "", "comma-separated tags to filter by")
 	includeDeleted := fs.Bool("include-deleted", false, "include deleted and ceased objects")
+	offset := fs.Int("offset", 0, "number of results to skip")
+	limit := fs.Int("limit", 0, "maximum number of results to return")
+	format := fs.String("format", "table", "output format: table or json")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if err := requireArgs(fs.Args(), 0, 0); err != nil {
 		return fmt.Errorf("list: %w", err)
 	}
+	if err := validateListFormat(*format); err != nil {
+		return fmt.Errorf("list: %w", err)
+	}
 
 	opts := models.ListOptions{
 		Tags:           splitList(*tag),
 		IncludeDeleted: *includeDeleted,
+		Offset:         *offset,
+		Limit:          *limit,
 	}
 	objects, err := mgr.ListObjects(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("list: %w", err)
 	}
-	printObjectList(objects)
+	printObjectList(objects, *format)
 	return nil
 }
 
@@ -142,22 +254,31 @@ func runList(ctx context.Context, mgr *manager.Manager, args []string) error {
 func runSearch(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("search")
 	includeDeleted := fs.Bool("include-deleted", false, "include deleted and ceased objects")
+	offset := fs.Int("offset", 0, "number of results to skip")
+	limit := fs.Int("limit", 0, "maximum number of results to return")
+	format := fs.String("format", "table", "output format: table or json")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if err := requireArgs(fs.Args(), 1, 1); err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
+	if err := validateListFormat(*format); err != nil {
+		return fmt.Errorf("search: %w", err)
+	}
 	query := fs.Args()[0]
 
-	objects, err := mgr.SearchObjects(ctx, query, models.ListOptions{IncludeDeleted: *includeDeleted})
+	objects, err := mgr.SearchObjects(ctx, query, models.ListOptions{
+		IncludeDeleted: *includeDeleted,
+		Offset:         *offset,
+		Limit:          *limit,
+	})
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
-	printObjectList(objects)
+	printObjectList(objects, *format)
 	return nil
 }
-
 // runTag implements the "tag" command.
 func runTag(ctx context.Context, mgr *manager.Manager, args []string) error {
 	if err := requireArgs(args, 3, 3); err != nil {
@@ -454,15 +575,104 @@ func printObject(obj *models.Object) {
 	fmt.Printf("Tags:          %s\n", strings.Join(obj.Tags, ", "))
 	fmt.Printf("DataRef:       %s\n", obj.DataRef)
 }
+// validateListFormat returns an error if format is not a supported list output format.
+func validateListFormat(format string) error {
+	switch format {
+	case "table", "json":
+		return nil
+	default:
+		return fmt.Errorf("unsupported format %q (expected table or json)", format)
+	}
+}
 
-// printObjectList prints a compact list of objects.
-func printObjectList(objects []*models.Object) {
+// printObjectList prints objects using the requested format.
+func printObjectList(objects []*models.Object, format string) {
+	switch format {
+	case "json":
+		printObjectListJSON(objects)
+	default:
+		printObjectListTable(objects)
+	}
+}
+
+// listObjectJSON is the JSON representation of an object used by list/search output.
+type listObjectJSON struct {
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Path          string    `json:"path"`
+	Status        string    `json:"status"`
+	Tags          []string  `json:"tags"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	SchemaVersion int       `json:"schema_version"`
+	DataRef       string    `json:"data_ref"`
+}
+
+// printObjectListJSON prints objects as a pretty-printed JSON array.
+func printObjectListJSON(objects []*models.Object) {
+	items := make([]listObjectJSON, 0, len(objects))
+	for _, obj := range objects {
+		items = append(items, listObjectJSON{
+			ID:            string(obj.ID),
+			Name:          obj.Name,
+			Path:          obj.Path,
+			Status:        string(obj.Status),
+			Tags:          obj.Tags,
+			CreatedAt:     obj.CreatedAt,
+			UpdatedAt:     obj.UpdatedAt,
+			SchemaVersion: obj.SchemaVersion,
+			DataRef:       obj.DataRef,
+		})
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(items)
+}
+
+// printObjectListTable prints objects as a pipe-separated table without truncation.
+func printObjectListTable(objects []*models.Object) {
 	if len(objects) == 0 {
-		fmt.Println("no objects")
+		fmt.Println("No objects found")
 		return
 	}
+
+	headers := []string{"ID", "NAME", "STATUS", "PATH", "TAGS", "CREATED AT", "UPDATED AT"}
+	rows := make([][]string, 0, len(objects))
 	for _, obj := range objects {
-		fmt.Printf("%s  %-10s  %s  [%s]\n", obj.ID, obj.Status, obj.Path, strings.Join(obj.Tags, ", "))
+		rows = append(rows, []string{
+			string(obj.ID),
+			obj.Name,
+			string(obj.Status),
+			obj.Path,
+			strings.Join(obj.Tags, ","),
+			obj.CreatedAt.Format(time.RFC3339),
+			obj.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+
+	widths := make([]int, len(headers))
+	for i, h := range headers {
+		widths[i] = len(h)
+	}
+	for _, row := range rows {
+		for i, cell := range row {
+			if len(cell) > widths[i] {
+				widths[i] = len(cell)
+			}
+		}
+	}
+
+	printRow := func(cells []string) {
+		parts := make([]string, len(cells))
+		for i, cell := range cells {
+			parts[i] = fmt.Sprintf(" %-*s ", widths[i], cell)
+		}
+		fmt.Println("|" + strings.Join(parts, "|") + "|")
+	}
+
+	printRow(headers)
+	for _, row := range rows {
+		printRow(row)
 	}
 }
 
