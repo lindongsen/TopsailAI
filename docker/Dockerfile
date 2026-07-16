@@ -2,7 +2,8 @@
 FROM python:3.13
 
 # 2. Install git for cloning the repository
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update
+RUN apt-get install -y git less expect wget curl
 
 # 3. Set the working directory to the repository root
 WORKDIR /TopsailAI
