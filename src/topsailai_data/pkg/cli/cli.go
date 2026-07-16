@@ -83,7 +83,7 @@ func runInteractive(ctx context.Context, mgr *manager.Manager) error {
 
 func registeredCommands() []Command {
 	return []Command{
-		{Name: "create", Usage: "create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--from file|archive]", Run: runCreate},
+		{Name: "create", Usage: "create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--from file|archive|-]", Run: runCreate},
 		{Name: "show", Usage: "show <id>", Run: runShow},
 		{Name: "list", Usage: "list [--tag tag] [--include-deleted]", Run: runList},
 		{Name: "search", Usage: "search <query>", Run: runSearch},

@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -533,5 +535,161 @@ func TestGCStatusDeletedFinalizesObjects(t *testing.T) {
 	}
 	if got.Status != models.ObjectStatusCeased {
 		t.Fatalf("expected status ceased, got %s", got.Status)
+	}
+}
+
+func TestCreateFromStdin(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	content := []byte("hello from stdin")
+	oldStdin := os.Stdin
+	r, w, _ := os.Pipe()
+	os.Stdin = r
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = w.Write(content)
+		_ = w.Close()
+	}()
+
+	err := Run(ctx, mgr, []string{"create", "stdinobj"})
+	<-done
+	os.Stdin = oldStdin
+	if err != nil {
+		t.Fatalf("create from stdin: %v", err)
+	}
+
+	obj, err := mgr.GetObject(ctx, "stdinobj", false)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if obj.Status != models.ObjectStatusActive {
+		t.Fatalf("expected status active, got %s", obj.Status)
+	}
+
+	rc, err := mgr.ReadActualFile(ctx, "stdinobj", "stdinobj.md")
+	if err != nil {
+		t.Fatalf("read actual file: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read content: %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("expected %q, got %q", content, got)
+	}
+}
+
+func TestCreateFromStdinEmpty(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	oldStdin := os.Stdin
+	r, w, _ := os.Pipe()
+	os.Stdin = r
+	_ = w.Close()
+
+	err := Run(ctx, mgr, []string{"create", "emptyobj"})
+	os.Stdin = oldStdin
+	if err != nil {
+		t.Fatalf("create from empty stdin: %v", err)
+	}
+
+	obj, err := mgr.GetObject(ctx, "emptyobj", false)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if obj.Status != models.ObjectStatusActive {
+		t.Fatalf("expected status active, got %s", obj.Status)
+	}
+
+	rc, err := mgr.ReadActualFile(ctx, "emptyobj", "emptyobj.md")
+	if err != nil {
+		t.Fatalf("read actual file: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read content: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty object.md, got %q", got)
+	}
+}
+
+func TestCreateFromStdinTarArchive(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	var tarBuf bytes.Buffer
+	tw := tar.NewWriter(&tarBuf)
+	markerContent := []byte("archive marker content")
+	hdr := &tar.Header{
+		Name: "stdinarchive.md",
+		Mode: 0o644,
+		Size: int64(len(markerContent)),
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatalf("write tar header: %v", err)
+	}
+	if _, err := tw.Write(markerContent); err != nil {
+		t.Fatalf("write tar content: %v", err)
+	}
+	extraContent := []byte("extra file content")
+	hdr2 := &tar.Header{
+		Name: "extra.txt",
+		Mode: 0o644,
+		Size: int64(len(extraContent)),
+	}
+	if err := tw.WriteHeader(hdr2); err != nil {
+		t.Fatalf("write tar header: %v", err)
+	}
+	if _, err := tw.Write(extraContent); err != nil {
+		t.Fatalf("write tar content: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+
+	oldStdin := os.Stdin
+	r, w, _ := os.Pipe()
+	os.Stdin = r
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = w.Write(tarBuf.Bytes())
+		_ = w.Close()
+	}()
+
+	err := Run(ctx, mgr, []string{"create", "stdinarchive"})
+	<-done
+	os.Stdin = oldStdin
+	if err != nil {
+		t.Fatalf("create from stdin tar: %v", err)
+	}
+
+	rc, err := mgr.ReadActualFile(ctx, "stdinarchive", "stdinarchive.md")
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read marker content: %v", err)
+	}
+	if !bytes.Equal(got, markerContent) {
+		t.Fatalf("expected marker %q, got %q", markerContent, got)
+	}
+
+	rc2, err := mgr.ReadActualFile(ctx, "stdinarchive", "extra.txt")
+	if err != nil {
+		t.Fatalf("read extra: %v", err)
+	}
+	defer rc2.Close()
+	got2, err := io.ReadAll(rc2)
+	if err != nil {
+		t.Fatalf("read extra content: %v", err)
+	}
+	if !bytes.Equal(got2, extraContent) {
+		t.Fatalf("expected extra %q, got %q", extraContent, got2)
 	}
 }

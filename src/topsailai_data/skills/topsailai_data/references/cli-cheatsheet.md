@@ -17,7 +17,7 @@ bin/topsailai_data show hello
 ### Create
 
 ```
-bin/topsailai_data create <object> [--classify dir1/dir2] [--tag t1,t2] [--from file|archive]
+bin/topsailai_data create <object> [--classify dir1/dir2] [--tag t1,t2] [--from file|archive|-]
 ```
 
 Examples:
@@ -26,6 +26,7 @@ Examples:
 bin/topsailai_data create note --classify work/2026 --tag work,important
 bin/topsailai_data create report --from report.md
 bin/topsailai_data create bundle --from bundle.tar
+echo "inline content" | bin/topsailai_data create inline-note
 ```
 
 ### Read metadata

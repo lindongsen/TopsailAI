@@ -3,6 +3,7 @@ package cli
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/term"
 	"github.com/topsailai/topsailai_data/pkg/manager"
 	"github.com/topsailai/topsailai_data/pkg/models"
 )
@@ -19,7 +21,7 @@ func runCreate(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("create")
 	classify := fs.String("classify", "", "comma-separated classify directories after the time prefix")
 	tags := fs.String("tag", "", "comma-separated tags for the object")
-	from := fs.String("from", "", "local file or tar archive to use as initial actual data (use - for stdin)")
+	from := fs.String("from", "", "local file or tar archive to use as initial actual data (use - for stdin); default is stdin")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -34,23 +36,31 @@ func runCreate(ctx context.Context, mgr *manager.Manager, args []string) error {
 		Tags:     splitList(*tags),
 	}
 
-	if *from != "" {
-		r, err := openInput(*from)
+	var r io.ReadCloser
+	src := *from
+	if src != "" {
+		var err error
+		r, err = openInput(src)
 		if err != nil {
 			return fmt.Errorf("create: open input: %w", err)
 		}
 		defer r.Close()
+	} else if !term.IsTerminal(int(os.Stdin.Fd())) {
+		// No --from and stdin is redirected: read object.md content from stdin.
+		r = io.NopCloser(os.Stdin)
+	}
 
-		if *from == "-" || isTarArchive(*from) {
-			opts.Data = r
-		} else {
-			// Plain file: wrap as a single-file archive so the manager can
-			// write it as actual data containing one file named <name>.md.
-			buf, err := io.ReadAll(r)
-			if err != nil {
-				return fmt.Errorf("create: read file: %w", err)
+	if r != nil {
+		buf, err := io.ReadAll(r)
+		if err != nil {
+			return fmt.Errorf("create: read input: %w", err)
+		}
+		if len(buf) > 0 {
+			if isTarBytes(buf) {
+				opts.Data = bytes.NewReader(buf)
+			} else {
+				opts.Data = tarBytes(name+".md", buf)
 			}
-			opts.Data = tarBytes(name+".md", buf)
 		}
 	}
 
@@ -454,6 +464,14 @@ func printObjectList(objects []*models.Object) {
 	for _, obj := range objects {
 		fmt.Printf("%s  %-10s  %s  [%s]\n", obj.ID, obj.Status, obj.Path, strings.Join(obj.Tags, ", "))
 	}
+}
+
+// isTarBytes reports whether buf looks like a tar archive by inspecting its
+// first bytes.
+func isTarBytes(buf []byte) bool {
+	tr := tar.NewReader(bytes.NewReader(buf))
+	_, err := tr.Next()
+	return err == nil
 }
 
 // isTarArchive reports whether a file looks like a tar archive by inspecting

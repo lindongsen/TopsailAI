@@ -145,7 +145,7 @@ The `bin/` directory holds the executable. Helper shell scripts are intentionall
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `create` | `create <object> [--classify dir1/dir2/...] [--tag t1,t2] [--from file\|archive]` | Create a new object. Writes a mandatory `<object>.md` marker and optional tags. `--from` accepts a plain file or a tar archive. |
+| `create` | `create <object> [--classify dir1/dir2/...] [--tag t1,t2] [--from file\|archive]` | Create a new object. Writes a mandatory `<object>.md` marker and optional tags. `--from` accepts a plain file or a tar archive; when omitted, content is read from stdin. |
 | `show` | `show <id>` | Display metadata of an object. |
 | `list` | `list [--tag tag] [--include-deleted]` | List active objects, optionally filtered by tag. |
 | `search` | `search <query> [--include-deleted]` | Search objects by name or tag. |
