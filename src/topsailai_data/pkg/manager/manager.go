@@ -130,9 +130,17 @@ func (m *Manager) CreateObject(ctx context.Context, name string, opts CreateObje
 
 	id := models.ObjectID(name)
 	// The local adapter uses the object name as its stable ID. Reject creation
-	// if any object (active, creating, deleted, or ceased) already uses this ID.
-	if _, err := m.meta.Get(ctx, id, true); err == nil {
-		return nil, fmt.Errorf("%w: %s", errors.ErrObjectExists, id)
+	// if an active, creating, or deleted object already uses this ID. A ceased
+	// object may be overwritten by purging it first.
+	if existing, err := m.meta.Get(ctx, id, true); err == nil {
+		switch existing.Status {
+		case models.ObjectStatusCeased:
+			if err := m.meta.Purge(ctx, id); err != nil {
+				return nil, fmt.Errorf("purge ceased object: %w", err)
+			}
+		default:
+			return nil, fmt.Errorf("%w: %s", errors.ErrObjectExists, id)
+		}
 	} else if !stderrors.Is(err, errors.ErrObjectNotFound) {
 		return nil, fmt.Errorf("check existing object: %w", err)
 	}

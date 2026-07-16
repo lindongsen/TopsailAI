@@ -35,6 +35,11 @@ type MetadataAdapter interface {
 	// For local adapters this renames the deleted marker to a ceased marker.
 	FinalizeDelete(ctx context.Context, id models.ObjectID) error
 
+	// Purge permanently removes a ceased object's metadata and any associated
+	// storage. For local adapters this removes the entire object directory.
+	// Only objects in the "ceased" state may be purged.
+	Purge(ctx context.Context, id models.ObjectID) error
+
 	// List returns metadata matching the provided options.
 	List(ctx context.Context, opts models.ListOptions) ([]*models.Object, error)
 

@@ -161,7 +161,7 @@ bin/topsailai_data show hello
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `create` | `create <object> [--classify dir1/dir2/...] [--tag t1,t2] [--from file\|archive]` | Create a new object. Writes a mandatory `<object>.md` marker and optional tags. `--from` accepts a plain file or a tar archive; when omitted, content is read from stdin. |
+| `create` | `create <object> [--classify dir1/dir2/...] [--tag t1,t2] [--from file\|archive]` | Create a new object. Writes a mandatory `<object>.md` marker and optional tags. `--from` accepts a plain file or a tar archive; when omitted, content is read from stdin. If an object with the same name already exists in `ceased` status, the ceased object is purged and the new object is created; `active`, `creating`, and `deleted` objects cause `ErrObjectExists`. |
 | `show` | `show <id>` | Display metadata, the `<object>.md` content, and the folder structure of an object. |
 | `list` | `list [--tag tag] [--include-deleted] [--offset n] [--limit n] [--format table|json]` | List active objects, optionally filtered by tag and paginated. Default format is a pipe-separated table; use `json` for machine-readable output. |
 | `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format table|json]` | Search objects by name or tag. Use `|` in `<query>` for OR logic (e.g. `foo|bar`). Spaces, tabs, and backslash escapes are not supported. |
@@ -473,6 +473,7 @@ TOPSAILAI_DATA_CEASED_RETENTION_DAYS=30
 
 - **Object ID equals object name** in the local adapter. Two objects with the same name cannot exist at different paths.
 - **Always create through the CLI** rather than manually creating folders, so metadata and the mandatory `.md` marker are written consistently.
+- **Creating over a ceased object** purges the ceased object (metadata and actual data) and creates the new object with the same name. Creating over `active`, `creating`, or `deleted` objects still returns `ErrObjectExists`.
 - **Tar archives** are extracted into the object folder. Symbolic links inside tar archives are rejected to prevent directory traversal.
 - **`gc --status deleted`** finalizes `deleted` objects to `ceased` and removes them once the retention window expires.
 - **Deleted/ceased objects** are hidden from normal `list`, `show`, and `search` unless `--include-deleted` is used.

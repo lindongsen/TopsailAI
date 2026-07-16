@@ -213,6 +213,22 @@ func (a *MetadataAdapter) FinalizeDelete(ctx context.Context, id models.ObjectID
 	}
 	return nil
 }
+// Purge permanently removes a ceased object and its entire directory.
+// Only objects in the "ceased" state may be purged.
+func (a *MetadataAdapter) Purge(ctx context.Context, id models.ObjectID) error {
+	obj, objectDir, err := a.findObject(id)
+	if err != nil {
+		return err
+	}
+	if obj.Status != models.ObjectStatusCeased {
+		return fmt.Errorf("%w: object %s is %s, expected ceased", errors.ErrObjectNotActive, id, obj.Status)
+	}
+
+	if err := os.RemoveAll(objectDir); err != nil {
+		return fmt.Errorf("purge object directory %q: %w", objectDir, err)
+	}
+	return nil
+}
 
 // List returns active objects, optionally including deleted/ceased ones.
 func (a *MetadataAdapter) List(ctx context.Context, opts models.ListOptions) ([]*models.Object, error) {
