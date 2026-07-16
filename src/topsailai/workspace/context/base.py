@@ -26,6 +26,7 @@ from topsailai.utils import (
     env_tool,
     file_tool,
     print_tool,
+    message_tool,
 )
 from topsailai.workspace.llm_shell import get_llm_chat
 from topsailai.workspace.context import summary_tool
@@ -257,118 +258,32 @@ class ContextRuntimeBase(object):
         Recursively normalize a message value so JSON-string payloads are parsed
         before comparison.
 
-        - Strings that are valid JSON are parsed and the result is normalized
-          recursively. This handles message ``content`` fields that are stored
-          as serialized JSON objects/lists.
-        - Dict values and list items are normalized recursively so nested
-          JSON strings are also unpacked.
-        - Other values are returned unchanged.
-
-        Note: scalar JSON strings such as "123", "true", "null" or '"hello"'
-        are parsed to their Python values (int, bool, None, str). Callers that
-        need to distinguish a JSON number string from a plain string should
-        compare the original values before normalization.
-
-        Args:
-            value: A message value (dict, list, str, or other).
-
-        Returns:
-            The normalized value.
+        Delegates to :mod:`topsailai.utils.message_tool` so the same logic can
+        be reused by other layers (e.g. ``ai_base``) without creating a circular
+        dependency.
         """
-        if isinstance(value, str):
-            try:
-                parsed = json_tool.json_load(value)
-            except Exception:
-                return value
-            return ContextRuntimeBase._normalize_message_value(parsed)
-        if isinstance(value, dict):
-            return {
-                k: ContextRuntimeBase._normalize_message_value(v)
-                for k, v in value.items()
-            }
-        if isinstance(value, list):
-            return [
-                ContextRuntimeBase._normalize_message_value(v)
-                for v in value
-            ]
-        return value
-
+        return message_tool._normalize_message_value(value)
     @staticmethod
     def _message_equal(a, b) -> bool:
         """
         Compare two messages for semantic equality.
 
-        Messages may be dict instances, JSON strings, or plain strings. Two
-        messages are considered equal when their content is the same, even if
-        they are different object instances, one is a dict and the other is
-        its JSON serialization, or nested ``content`` fields mix serialized
-        JSON strings with parsed dict/list values.
-
-        Comparison order:
-        1. Same object identity -> equal.
-        2. Direct equality (``a == b``) -> equal if True. This covers plain
-           strings, numbers, and value equality for list/dict.
-        3. Recursively normalize JSON-string payloads in both operands and
-           compare the normalized values with ``==``.
-
-        Args:
-            a: First message (dict, list, str, or other).
-            b: Second message (dict, list, str, or other).
-
-        Returns:
-            bool: True if the messages are semantically equal, False otherwise.
+        Delegates to :mod:`topsailai.utils.message_tool` so the same logic can
+        be reused by other layers (e.g. ``ai_base``) without creating a circular
+        dependency.
         """
-        if a is b:
-            return True
-
-        # Direct equality covers strings, numbers, list/dict value equality.
-        try:
-            if a == b:
-                return True
-        except Exception:
-            pass
-
-        # Normalize JSON-string payloads recursively and compare again.
-        # This handles cases such as:
-        #   {"content": '{"step_name": "observation"}'}
-        # vs
-        #   {"content": {"step_name": "observation"}}
-        try:
-            a_normalized = ContextRuntimeBase._normalize_message_value(a)
-            b_normalized = ContextRuntimeBase._normalize_message_value(b)
-            if a_normalized == b_normalized:
-                return True
-        except Exception:
-            pass
-
-        return False
+        return message_tool.message_equal(a, b)
 
     @staticmethod
     def _message_in_list(msg, msg_list: list) -> bool:
         """
         Check whether a semantically equal message already exists in a list.
 
-        Uses :meth:`_message_equal` so that dict/list content is compared by
-        value and JSON-string representations are normalized before comparing.
-        An identity check (``is``) is performed first because most messages are
-        not modified during summarization.
-
-        Args:
-            msg: The message to search for.
-            msg_list (list): The list of messages to search in.
-
-        Returns:
-            bool: True if an equal message is found, False otherwise.
+        Delegates to :mod:`topsailai.utils.message_tool` so the same logic can
+        be reused by other layers (e.g. ``ai_base``) without creating a circular
+        dependency.
         """
-        # Fast path: identity check first.
-        for m in msg_list:
-            if m is msg:
-                return True
-        # Fallback: semantic equality.
-        for m in msg_list:
-            if ContextRuntimeBase._message_equal(m, msg):
-                return True
-        return False
+        return message_tool.message_in_list(msg, msg_list)
 
     @staticmethod
     def _message_index_in_list(msg, msg_list: list) -> int:
@@ -376,26 +291,11 @@ class ContextRuntimeBase(object):
         Find the index of the first message in ``msg_list`` that is semantically
         equal to ``msg``.
 
-        Uses :meth:`_message_equal` for content-based matching. An identity check
-        (``is``) is performed first because most messages are not modified during
-        summarization.
-
-        Args:
-            msg: The message to search for.
-            msg_list (list): The list of messages to search in.
-
-        Returns:
-            int: The zero-based index of the matching message, or -1 if not found.
+        Delegates to :mod:`topsailai.utils.message_tool` so the same logic can
+        be reused by other layers (e.g. ``ai_base``) without creating a circular
+        dependency.
         """
-        # Fast path: identity check first.
-        for i, m in enumerate(msg_list):
-            if m is msg:
-                return i
-        # Fallback: semantic equality.
-        for i, m in enumerate(msg_list):
-            if ContextRuntimeBase._message_equal(m, msg):
-                return i
-        return -1
+        return message_tool.message_index_in_list(msg, msg_list)
 
     def _log_summarize_message_identity_changes(
             self,

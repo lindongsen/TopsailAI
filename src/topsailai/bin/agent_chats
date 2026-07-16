@@ -7,6 +7,7 @@
 #    @SESSION_ID: string;
 #    @SYSTEM_PROMPT: file or content;
 
+export TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS=1
 export TOPSAILAI_PWD=${PWD}
 
 BASE_NAME=$(basename "$0")

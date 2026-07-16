@@ -12,6 +12,8 @@ Created: 2026-03-23
 
 from topsailai.context import ctx_manager
 from topsailai.ai_base.agent_base import AgentBase
+from topsailai.utils.env_tool import EnvReaderInstance
+from topsailai.utils import message_tool
 from topsailai.workspace.context.ctx_runtime import ContextRuntimeData
 
 
@@ -106,7 +108,21 @@ class ContextRuntimeAIAgent(ContextRuntimeUtils):
 
         Copies all messages from the runtime context (self.messages) and
         appends them to the AI agent's message history.
+
+        When ``TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS`` is enabled,
+        only messages that are not already present in the AI agent's message
+        history are appended, so the Agent2LLM context persists across turns.
         """
-        if self.messages:
+        if not self.messages:
+            return
+
+        keep_messages = EnvReaderInstance.check_bool(
+            "TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS", default=False
+        )
+        if keep_messages:
+            for msg in self.messages:
+                if not message_tool.message_in_list(msg, self.ai_agent.messages):
+                    self.ai_agent.messages.append(msg)
+        else:
             self.ai_agent.messages += self.messages
         return

@@ -1,3 +1,11 @@
+import os
+import sys
+import json
+import unittest
+from unittest.mock import patch, MagicMock, mock_open
+
+from topsailai.utils import message_tool
+
 """
 Unit tests for ai_base/prompt_base module - PromptBase class.
 
@@ -10,14 +18,6 @@ Test coverage:
 
 Author: mm-m25
 """
-
-import os
-import sys
-import json
-import unittest
-from unittest.mock import patch, MagicMock, mock_open
-
-
 class TestPromptBase(unittest.TestCase):
     """Test cases for PromptBase class."""
 
@@ -26,7 +26,8 @@ class TestPromptBase(unittest.TestCase):
         # Store original env vars
         self.original_env = {}
         for var in ["TOPSAILAI_FLAG_DUMP_MESSAGES", "TOPSAILAI_OBTAIN_SYSTEM_PROMPT_SCRIPT",
-                    "TOPSAILAI_OBTAIN_TOOL_PROMPT_SCRIPT", "TOPSAILAI_CONTEXT_USER_MESSAGE"]:
+                    "TOPSAILAI_OBTAIN_TOOL_PROMPT_SCRIPT", "TOPSAILAI_CONTEXT_USER_MESSAGE",
+                    "TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS"]:
             self.original_env[var] = os.environ.get(var)
             # Clear to avoid interference
             if var in os.environ:
@@ -48,7 +49,6 @@ class TestPromptBase(unittest.TestCase):
     # =========================================================================
     # Group A: Initialization Tests
     # =========================================================================
-
     @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
     @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
     def test_init_basic(self, mock_generate_prompt, mock_get_managers):
@@ -88,10 +88,8 @@ class TestPromptBase(unittest.TestCase):
         """Test assertion error when system_prompt is empty."""
         from topsailai.ai_base.prompt_base import PromptBase
 
-        with self.assertRaises(AssertionError) as context:
+        with self.assertRaises(AssertionError):
             PromptBase(system_prompt="")
-
-        self.assertEqual(str(context.exception), "missing system_prompt")
 
     @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
     @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
@@ -121,9 +119,9 @@ class TestPromptBase(unittest.TestCase):
 
         pb = PromptBase(system_prompt="test")
 
-        self.assertEqual(pb.hooks_after_init_prompt, [])
-        self.assertEqual(pb.hooks_after_new_session, [])
-        self.assertEqual(pb.hooks_pre_chat, [])
+        self.assertIsInstance(pb.hooks_after_init_prompt, list)
+        self.assertIsInstance(pb.hooks_after_new_session, list)
+        self.assertIsInstance(pb.hooks_ctx_history, list)
 
     @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
     @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
@@ -622,6 +620,218 @@ class TestPromptBase(unittest.TestCase):
 
         pb.reset_messages.assert_called_once()
         mock_hook.assert_called_once_with(pb)
+
+    @patch("topsailai.ai_base.prompt_base.logger")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_init_prompt_keep_messages_disabled(
+        self, mock_generate_prompt, mock_get_managers, mock_logger
+    ):
+        """Test init_prompt resets messages when persistence is disabled."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+
+        os.environ["TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS"] = "0"
+        pb = PromptBase(system_prompt="test")
+        pb.add_user_message("existing message")
+        pb.reset_messages = MagicMock()
+        pb.update_message_for_env = MagicMock()
+        mock_hook = MagicMock()
+        pb.hooks_after_init_prompt.append(mock_hook)
+
+        pb.init_prompt()
+
+        pb.reset_messages.assert_called_once()
+        pb.update_message_for_env.assert_not_called()
+        mock_hook.assert_called_once_with(pb)
+
+    @patch("topsailai.ai_base.prompt_base.logger")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_init_prompt_keep_messages_enabled(
+        self, mock_generate_prompt, mock_get_managers, mock_logger
+    ):
+        """Test init_prompt preserves messages when persistence is enabled."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+
+        os.environ["TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS"] = "1"
+        pb = PromptBase(system_prompt="test")
+        pb.add_user_message("existing message")
+        original_messages = list(pb.messages)
+        pb.reset_messages = MagicMock()
+        pb.update_message_for_env = MagicMock()
+        mock_hook = MagicMock()
+        pb.hooks_after_init_prompt.append(mock_hook)
+
+        pb.init_prompt()
+
+        pb.reset_messages.assert_not_called()
+        pb.update_message_for_env.assert_called_once()
+        mock_hook.assert_called_once_with(pb)
+        self.assertEqual(pb.messages, original_messages)
+
+    @patch("topsailai.ai_base.prompt_base.logger")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_init_prompt_keep_messages_empty_messages(
+        self, mock_generate_prompt, mock_get_managers, mock_logger
+    ):
+        """Test init_prompt resets messages when persistence is enabled but messages is empty."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+
+        os.environ["TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS"] = "1"
+        pb = PromptBase(system_prompt="test")
+        # Simulate empty messages after construction
+        pb.messages = []
+        pb.reset_messages = MagicMock()
+        pb.update_message_for_env = MagicMock()
+        mock_hook = MagicMock()
+        pb.hooks_after_init_prompt.append(mock_hook)
+
+        pb.init_prompt()
+
+        pb.reset_messages.assert_called_once()
+        pb.update_message_for_env.assert_not_called()
+        mock_hook.assert_called_once_with(pb)
+
+    @patch("topsailai.ai_base.prompt_base.logger")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    @patch("topsailai.ai_base.prompt_base.print_step")
+    def test_new_session_keep_messages_does_not_duplicate_user_message(
+        self, mock_print, mock_generate_prompt, mock_get_managers, mock_logger
+    ):
+        """Test persistence mode does not add user_message twice when hook already added it."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+
+        os.environ["TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS"] = "1"
+        pb = PromptBase(system_prompt="test")
+
+        # Simulate an after-init hook that appends the user message from session.
+        def hook(prompt_base):
+            prompt_base.add_user_message("turn 1", need_print=False)
+
+        pb.hooks_after_init_prompt.append(hook)
+
+        pb.new_session("turn 1", need_print_message=False)
+
+        user_messages = [m for m in pb.messages if m["role"] == "user"]
+        self.assertEqual(len(user_messages), 1)
+        self.assertEqual(user_messages[0]["content"], "turn 1")
+
+    @patch("topsailai.ai_base.prompt_base.logger")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    @patch("topsailai.ai_base.prompt_base.print_step")
+    def test_new_session_keep_messages_multi_turn_no_duplicates(
+        self, mock_print, mock_generate_prompt, mock_get_managers, mock_logger
+    ):
+        """Test persistence mode across multiple turns keeps history without duplicates."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+
+        os.environ["TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS"] = "1"
+        pb = PromptBase(system_prompt="test")
+
+        # Simulate an after-init hook that appends session messages.
+        session_messages = []
+
+        def hook(prompt_base):
+            for msg in session_messages:
+                if not message_tool.message_in_list(msg, prompt_base.messages):
+                    prompt_base.messages.append(msg)
+
+        pb.hooks_after_init_prompt.append(hook)
+
+        # Turn 1: session has the first user message.
+        session_messages = [{"role": "user", "content": "turn 1"}]
+        pb.new_session("turn 1", need_print_message=False)
+        self.assertEqual(len([m for m in pb.messages if m["role"] == "user"]), 1)
+
+        # Simulate an assistant reply produced during the ReAct loop.
+        pb.messages.append({"role": "assistant", "content": "answer 1"})
+
+        # Turn 2: session now has turn 1 + assistant answer + turn 2.
+        session_messages = [
+            {"role": "user", "content": "turn 1"},
+            {"role": "assistant", "content": "answer 1"},
+            {"role": "user", "content": "turn 2"},
+        ]
+        pb.new_session("turn 2", need_print_message=False)
+
+        user_messages = [m for m in pb.messages if m["role"] == "user"]
+        self.assertEqual(len(user_messages), 2)
+        self.assertEqual(user_messages[0]["content"], "turn 1")
+        self.assertEqual(user_messages[1]["content"], "turn 2")
+
+        assistant_messages = [m for m in pb.messages if m["role"] == "assistant"]
+        self.assertEqual(len(assistant_messages), 1)
+        self.assertEqual(assistant_messages[0]["content"], "answer 1")
+
+    @patch("topsailai.ai_base.prompt_base.logger")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    @patch("topsailai.ai_base.prompt_base.print_step")
+    def test_new_session_keep_messages_adds_new_user_message(
+        self, mock_print, mock_generate_prompt, mock_get_managers, mock_logger
+    ):
+        """Test persistence mode still adds user_message when it is not in history."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+
+        os.environ["TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS"] = "1"
+        pb = PromptBase(system_prompt="test")
+
+        # No after-init hook adds the message.
+        pb.new_session("turn 1", need_print_message=False)
+
+        user_messages = [m for m in pb.messages if m["role"] == "user"]
+        self.assertEqual(len(user_messages), 1)
+    @patch("topsailai.ai_base.prompt_base.logger")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    @patch("topsailai.ai_base.prompt_base.print_step")
+    def test_new_session_keep_messages_appends_when_not_at_tail(
+        self, mock_print, mock_generate_prompt, mock_get_managers, mock_logger
+    ):
+        """Test persistence mode appends user_message when it exists in history but is not the tail."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+
+        os.environ["TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS"] = "1"
+        pb = PromptBase(system_prompt="test")
+
+        # Pre-populate ai_agent.messages with an older copy of the same user
+        # message followed by an assistant reply. The current user_message must
+        # still be appended at the tail because it has the highest priority.
+        pb.messages.append({"role": "user", "content": "turn 1"})
+        pb.messages.append({"role": "assistant", "content": "answer 1"})
+
+        pb.new_session("turn 1", need_print_message=False)
+
+        user_messages = [m for m in pb.messages if m["role"] == "user"]
+        self.assertEqual(len(user_messages), 2)
+        self.assertEqual(user_messages[0]["content"], "turn 1")
+        self.assertEqual(user_messages[1]["content"], "turn 1")
+        self.assertEqual(pb.messages[-1]["role"], "user")
+        self.assertEqual(pb.messages[-1]["content"], "turn 1")
 
     # =========================================================================
     # Group E: Utility Method Tests

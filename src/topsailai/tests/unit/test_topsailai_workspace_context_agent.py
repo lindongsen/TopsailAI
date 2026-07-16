@@ -176,6 +176,72 @@ class TestContextRuntimeAIAgent(unittest.TestCase):
         # Verify no messages were added
         self.assertEqual(self.mock_ai_agent.messages, initial_messages)
 
+    @patch("topsailai.workspace.context.agent.EnvReaderInstance")
+    def test_add_runtime_messages_keep_disabled(self, mock_env_reader):
+        """Test add_runtime_messages appends all messages when persistence is disabled."""
+        mock_env_reader.check_bool.return_value = False
+        self.mock_ctx_runtime_data.messages = [
+            {"role": "user", "content": "turn 1"},
+            {"role": "assistant", "content": "answer 1"},
+        ]
+
+        self.agent.add_runtime_messages()
+
+        self.assertEqual(
+            self.mock_ai_agent.messages,
+            [
+                {"role": "user", "content": "Test message"},
+                {"role": "user", "content": "turn 1"},
+                {"role": "assistant", "content": "answer 1"},
+            ],
+        )
+        mock_env_reader.check_bool.assert_called_once_with(
+            "TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS", default=False
+        )
+
+    @patch("topsailai.workspace.context.agent.EnvReaderInstance")
+    @patch("topsailai.workspace.context.agent.message_tool")
+    def test_add_runtime_messages_keep_enabled_deduplicates(
+        self, mock_message_tool, mock_env_reader
+    ):
+        """Test add_runtime_messages skips duplicates when persistence is enabled."""
+        mock_env_reader.check_bool.return_value = True
+        existing = {"role": "user", "content": "existing"}
+        new_msg = {"role": "assistant", "content": "new"}
+        self.mock_ai_agent.messages = [existing]
+        self.mock_ctx_runtime_data.messages = [existing, new_msg]
+        mock_message_tool.message_in_list.side_effect = [
+            True,   # existing is already in ai_agent.messages
+            False,  # new_msg is not
+        ]
+
+        self.agent.add_runtime_messages()
+
+        self.assertEqual(self.mock_ai_agent.messages, [existing, new_msg])
+        mock_message_tool.message_in_list.assert_any_call(
+            existing, self.mock_ai_agent.messages
+        )
+        mock_message_tool.message_in_list.assert_any_call(
+            new_msg, self.mock_ai_agent.messages
+        )
+
+    @patch("topsailai.workspace.context.agent.EnvReaderInstance")
+    @patch("topsailai.workspace.context.agent.message_tool")
+    def test_add_runtime_messages_keep_enabled_no_new_messages(
+        self, mock_message_tool, mock_env_reader
+    ):
+        """Test add_runtime_messages does nothing when all messages already exist."""
+        mock_env_reader.check_bool.return_value = True
+        existing = {"role": "user", "content": "existing"}
+        self.mock_ai_agent.messages = [existing]
+        self.mock_ctx_runtime_data.messages = [existing]
+        mock_message_tool.message_in_list.return_value = True
+
+        self.agent.add_runtime_messages()
+
+        self.assertEqual(self.mock_ai_agent.messages, [existing])
+
+
 
 class TestContextRuntimeUtilsEdgeCases(unittest.TestCase):
     """Test suite for edge cases in ContextRuntimeUtils."""

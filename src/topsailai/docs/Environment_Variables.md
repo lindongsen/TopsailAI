@@ -129,6 +129,7 @@ These variables control when the agent archives or summarizes message history to
 | `TOPSAILAI_SESSION_LOCK_FILE_NEED_DELETE` | `1` | Delete lock file after unlock. `1` = enabled. |
 | `TOPSAILAI_CONTEXT_ONE_MESSAGE_MAX_KB` | `30` | Maximum size in KB for a single message before truncation. |
 | `TOPSAILAI_SESSION_HEAD_TAIL_OFFSET` | `0` | Number of messages to keep from head and tail when truncating session history. Falls back to `DEFAULT_HEAD_TAIL_OFFSET` (`7`) if unset. Set to `0` to keep all messages. |
+| `TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS` | `0` | When `1`, Agent2LLM messages persist across User2Agent turns. Each turn appends the current User2Agent session messages to the existing Agent2LLM context instead of resetting it. Duplicates are skipped. When `0` (default), Agent2LLM messages are reset each turn and rebuilt from the session. |
 | `CONTEXT_HISTORY_MANAGERS` | `"sql.ChatHistorySQLAlchemy conn=sqlite:///memory.db;"` | Chat history manager classes separated by semicolons (`;`). Each manager is `class_name parameters`. If not set, context management is disabled. |
 | `CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH` | `43` | Maximum number of messages allowed before context slimming is considered. Effective minimum is `27`. |
 | `CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS` | `128000` | Token budget used as the denominator for the cached-token ratio threshold check. |
@@ -183,6 +184,15 @@ These variables tune the conditions under which the Agent2LLM summarizer keeps o
 
 - `TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO` replaces the previous hard-coded division of the Agent2LLM quantity threshold by `2`. For example, with the default `0.5`, if the effective Agent2LLM quantity threshold is `97`, session messages are dropped when the User2Agent session length reaches `int(97 * 0.5) = 48` messages.
 - `TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES` replaces the previous hard-coded value `17`. If the total Agent2LLM message count is less than `session_msg_len + min_extra_messages`, summarization is skipped because the context is not long enough to justify a summary.
+## Agent2LLM Message Persistence
+
+`TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS` controls whether the Agent2LLM message context is reset at the start of each User2Agent turn.
+
+- When `0` (default), `PromptBase.init_prompt()` resets `ai_agent.messages` to the system prompts at the start of each turn. The hook `ContextRuntimeAIAgent.add_runtime_messages()` then appends the full current User2Agent session messages, so each turn starts from a clean Agent2LLM context containing only the persisted session history.
+- When `1`, `PromptBase.init_prompt()` preserves the existing `ai_agent.messages` and only refreshes the environment message. `ContextRuntimeAIAgent.add_runtime_messages()` then appends only the User2Agent session messages that are not already present in `ai_agent.messages` (deduplicated via `_message_in_list()`). This allows the Agent2LLM context to accumulate across turns, preserving previous ReAct reasoning, tool calls, and observations.
+
+Enabling persistence causes `ai_agent.messages` to grow faster, so users may need to adjust `TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD` and `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` to trigger summarization more aggressively.
+
 
 ## Session Truncation
 

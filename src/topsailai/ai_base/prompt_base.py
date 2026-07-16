@@ -26,6 +26,7 @@ from topsailai.utils import (
     time_tool,
     cmd_tool,
     thread_local_tool,
+    message_tool,
 )
 from topsailai.utils.env_tool import EnvReaderInstance
 from topsailai.utils.thread_local_tool import (
@@ -329,10 +330,19 @@ class PromptBase(object):
         """
         Initialize the prompt system
 
-        Resets messages and calls after-init-prompt hooks
+        Resets messages and calls after-init-prompt hooks.
+        When TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS is enabled and
+        messages already exist, the existing message list is preserved and
+        only the environment message is refreshed.
         """
         logger.info("initializing prompt")
-        self.reset_messages()
+        keep_messages = EnvReaderInstance.check_bool(
+            "TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS", default=False
+        )
+        if keep_messages and self.messages:
+            self.update_message_for_env()
+        else:
+            self.reset_messages()
         for hook in self.hooks_after_init_prompt:
             try:
                 hook(self)
@@ -356,7 +366,22 @@ class PromptBase(object):
             }
             self.add_user_message(context_message, need_print=need_print_message)
         if user_message:
-            self.add_user_message(user_message, need_print=need_print_message)
+            # In persistence mode the after-init hook may have already loaded
+            # this user_message from the persisted User2Agent session into
+            # ai_agent.messages (self.messages). The current user_message has
+            # the highest priority and must be the last message, so only skip
+            # adding it when the tail of the active Agent2LLM context already
+            # matches it semantically.
+            keep_messages = EnvReaderInstance.check_bool(
+                "TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS", default=False
+            )
+            if keep_messages and self.messages and message_tool.message_equal(
+                {"role": ROLE_USER, "content": user_message},
+                self.messages[-1],
+            ):
+                logger.debug("user_message already present at tail of ai_agent.messages, skipping duplicate")
+            else:
+                self.add_user_message(user_message, need_print=need_print_message)
         for hook in self.hooks_after_new_session:
             try:
                 hook(self)

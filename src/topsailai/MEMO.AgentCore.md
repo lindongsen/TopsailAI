@@ -609,6 +609,33 @@ Both summarization paths must follow this convention:
 
 ### Note for maintainers
 When modifying summarization logic, keep this ordering invariant intact. If a future use case needs a different ordering, add a new method or configuration path rather than silently changing the shared convention.
+## MEMO: Agent2LLM Message Persistence Across Turns
+
+**Date:** 2026-07-16
+**Files:**
+- `/TopsailAI/src/topsailai/ai_base/prompt_base.py`
+- `/TopsailAI/src/topsailai/workspace/context/agent.py`
+
+### Conclusion
+The environment variable `TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS` adds an optional persistence mode for the Agent2LLM message context. When enabled, Agent2LLM messages are preserved across User2Agent turns instead of being reset each turn.
+
+### Behavior
+
+- **Default (`0`)**: `PromptBase.init_prompt()` resets `ai_agent.messages` to the system prompts at the start of each turn. The `hook_after_init_prompt` then reloads the User2Agent session and `ContextRuntimeAIAgent.add_runtime_messages()` appends the full session to `ai_agent.messages`.
+- **Persistence mode (`1`)**: `PromptBase.init_prompt()` skips `reset_messages()` when `ai_agent.messages` already exist, and only calls `update_message_for_env()` to refresh environment information. `ContextRuntimeAIAgent.add_runtime_messages()` then appends only the User2Agent session messages that are not already present in `ai_agent.messages`, using `ContextRuntimeBase._message_in_list()` for semantic deduplication.
+
+### Why this matters
+
+- Preserving Agent2LLM context allows the agent to retain previous ReAct reasoning, tool calls, and observations across human turns.
+- Deduplication is required because the User2Agent session contains all historical turns, most of which are already present in `ai_agent.messages` from previous appends.
+- The env message is refreshed each turn so environment context (current date, project folder, etc.) stays current even when messages are preserved.
+
+### Note for maintainers
+
+- When persistence mode is enabled, `ai_agent.messages` grows faster. Users may need to lower `TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD` or `TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD` to avoid context overflow.
+- Do not bypass `add_runtime_messages()` or remove the deduplication check in persistence mode; doing so would duplicate the entire User2Agent session on every turn.
+- If the deduplication semantics need to change (e.g., identity-only vs semantic), modify `_message_in_list()` or add a layer-specific helper rather than inlining the comparison.
+
 
 ## MEMO: Agent2LLM Runtime Message Injection
 
