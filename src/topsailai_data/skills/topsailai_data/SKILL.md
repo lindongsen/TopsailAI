@@ -10,6 +10,11 @@ description: |
   garbage-collect objects. Also use it when the user asks to test, inspect, or
   troubleshoot the topsailai_data CLI or its stored data.
 
+  When the user refers to historical records, past notes, or uses phrases like
+  "remember that...", "I recall...", or "there was something about X", ALWAYS
+  search the topsailai_data store through the CLI first. Do not answer from
+  conversation memory alone or fabricate object IDs, paths, or contents.
+
   Typical intents that should route here:
   - "create a note/document/object in topsailai_data"
   - "list/search/show my objects" or "find objects tagged with X"
@@ -18,6 +23,8 @@ description: |
   - "delete object X" or "clean up topsailai_data"
   - "run gc" or "recover object X"
   - "test topsailai_data" or "smoke test the CLI"
+  - "remember that note about X" or "find my previous note on Y"
+  - Personal lessons learned
 
   Common scenarios include local knowledge bases, project document storage,
   tagged data archiving, soft-delete and gc workflows, automated test data
