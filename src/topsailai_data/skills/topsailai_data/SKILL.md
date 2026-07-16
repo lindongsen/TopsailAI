@@ -161,20 +161,19 @@ bin/topsailai_data show hello
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `create` | `create <object> [--classify dir1/dir2/...] [--tag t1,t2] [--from file\|archive]` | Create a new object. Writes a mandatory `<object>.md` marker and optional tags. `--from` accepts a plain file or a tar archive; when omitted, content is read from stdin. If an object with the same name already exists in `ceased` status, the ceased object is purged and the new object is created; `active`, `creating`, and `deleted` objects cause `ErrObjectExists`. |
+| `create` | `create <object> [--classify dir1/dir2/...] [--tag t1,t2] [--from <file\|archive\|->]` | Create a new object. Writes a mandatory `<object>.md` marker and optional tags. `--from` accepts a plain file, a tar archive, or `-` for stdin; when omitted, content is read from stdin. If an object with the same name already exists in `ceased` status, the ceased object is purged and the new object is created; `active`, `creating`, and `deleted` objects cause `ErrObjectExists`. |
 | `show` | `show <id>` | Display metadata, the `<object>.md` content, and the folder structure of an object. |
-| `list` | `list [--tag tag] [--include-deleted] [--offset n] [--limit n] [--format table|json]` | List active objects, optionally filtered by tag and paginated. Default format is a pipe-separated table; use `json` for machine-readable output. |
+| `list` | `list [--tag tag1,tag2,...] [--include-deleted] [--offset n] [--limit n] [--format table|json]` | List active objects, optionally filtered by tag and paginated. Default format is a pipe-separated table; use `json` for machine-readable output. |
 | `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format table|json]` | Search objects by name or tag. Use `|` in `<query>` for OR logic (e.g. `foo|bar`). Spaces, tabs, and backslash escapes are not supported. |
 | `tag` | `tag add <id> <tag>` or `tag remove <id> <tag>` | Add or remove an object-specific tag. |
 | `move` | `move <id> <new-classify...>` | Move an active object to a different classify path. The ID and name stay the same. |
 | `delete` | `delete <id>` | Soft-delete an active object. Actual data is removed and metadata transitions to `ceased`. |
-| `recover` | `recover <id> [--resume] [--from archive]` | Resume or clean up a `creating` object. |
+| `recover` | `recover <id> [--resume] [--from <archive\|->]` | Resume or clean up a `creating` object. `--from` accepts a tar archive or `-` for stdin. |
 | `gc` | `gc [--dry-run] [--status creating\|deleted\|ceased]` | Clean up `creating` objects, finalize `deleted` objects to `ceased`, or remove expired `ceased` objects. |
-| `get` | `get <id> <file>` | Read a single actual-data file to stdout. The raw byte stream is preserved, so this works for binary files such as images, videos, and compiled executables. |
+| `get` | `get <id> <object-file>` | Read a single actual-data file to stdout. The raw byte stream is preserved, so this works for binary files such as images, videos, and compiled executables. |
 | `get-archive` | `get-archive <id>` | Output the object's actual data as a tar archive to stdout. |
-| `put` | `put <id> <file> [--from file]` | Write a single file into the object's actual data. Defaults to stdin. |
-| `put-archive` | `put-archive <id> <archive>` | Replace object actual data from a tar archive. |
-
+| `put` | `put <id> <dest-file> [--from <file\|->]` | Write a single file into the object's actual data. `<dest-file>` is the name inside the object; `--from` accepts a local file or `-` for stdin; when omitted, content is read from stdin. |
+| `put-archive` | `put-archive <id> <archive\|->` | Replace object actual data from a tar archive. Use `-` to read the archive from stdin. |
 ### Command examples
 
 Create:
@@ -190,7 +189,7 @@ Read metadata:
 
 ```
 bin/topsailai_data show <id>
-bin/topsailai_data list [--tag tag] [--include-deleted] [--offset 0] [--limit 10] [--format table|json]
+bin/topsailai_data list [--tag tag1,tag2,...] [--include-deleted] [--offset 0] [--limit 10] [--format table|json]
 bin/topsailai_data search <query> [--include-deleted] [--offset 0] [--limit 10] [--format table|json]
 ```
 
@@ -218,17 +217,17 @@ Delete and cleanup:
 
 ```
 bin/topsailai_data delete <id>
-bin/topsailai_data gc [--dry-run] [--status creating|ceased]
-bin/topsailai_data recover <id> [--resume] [--from archive]
+bin/topsailai_data gc [--dry-run] [--status creating|deleted|ceased]
+bin/topsailai_data recover <id> [--resume] [--from <archive|->]
 ```
 
 Actual data I/O:
 
 ```
-bin/topsailai_data get <id> <file>
+bin/topsailai_data get <id> <object-file>
 bin/topsailai_data get-archive <id> > backup.tar
-bin/topsailai_data put <id> <file> [--from file]
-bin/topsailai_data put-archive <id> <archive>
+bin/topsailai_data put <id> <dest-file> [--from <file|->]
+bin/topsailai_data put-archive <id> <archive|->
 ```
 
 #### Binary files with `get`
