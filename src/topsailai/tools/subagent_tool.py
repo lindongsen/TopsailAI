@@ -22,6 +22,10 @@ DEFAULT_SUBAGENT_ROLE_FOLDER = os.path.join(FOLDER_ROOT, "subagents")
 SUBAGENT_ROLE_FILE_PATTERN = re.compile(r"^(?P<name>[^.]+)\.member$")
 
 
+# key is member name, value is agent instance
+g_subagents = {}
+
+
 def _get_subagent_role_folder() -> str:
     """Resolve the folder that contains subagent role definition files.
 
@@ -218,17 +222,23 @@ I am a sub-agent, and my name is ({role_name or agent_name})
         system_prompt += "\n\n" + role_content
         message = f"@{role}:\n{task}"
 
-    task_agent = get_agent_chat(
-        system_prompt=system_prompt,
-        disabled_tools=disabled_tools,
-        need_input_message=False,
-        agent_name=agent_name,
-        need_set_agent_name_to_thread_local=False,
-        need_project_workspace_lock=False,
+    task_agent = g_subagents.get(agent_name)
+    if task_agent is None:
+        task_agent = get_agent_chat(
+            system_prompt=system_prompt,
+            disabled_tools=disabled_tools,
+            need_input_message=False,
+            agent_name=agent_name,
+            need_set_agent_name_to_thread_local=False,
+            need_project_workspace_lock=False,
+        )
+        g_subagents[agent_name] = task_agent
+
+    # init agent
+    task_agent.reset(
+        first_message=message,
+        model_name=llm,
     )
-    if llm:
-        task_agent.ai_agent.llm_model.model_name = llm
-    task_agent.hooks_for_final_answer.clear()
 
     task_id = get_task_id()
     try:

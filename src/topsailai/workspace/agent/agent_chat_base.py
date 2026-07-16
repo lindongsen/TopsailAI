@@ -362,3 +362,15 @@ class AgentChatBase(object):
         ]:
             return ""
         return message
+
+    def reset(self, first_message:str, model_name:str):
+        """ Reset options """
+        if first_message:
+            self.first_message = first_message
+
+        self.heavy_task.reset_count()
+
+        if model_name:
+            self.ai_agent.llm_model.model_name = model_name
+
+        return
