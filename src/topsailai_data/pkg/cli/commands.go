@@ -108,11 +108,17 @@ func runShow(ctx context.Context, mgr *manager.Manager, args []string) error {
 		return fmt.Errorf("show: %w", err)
 	}
 	id := models.ObjectID(args[0])
-	obj, err := mgr.GetObject(ctx, id, false)
+	obj, err := mgr.GetObject(ctx, id, true)
 	if err != nil {
 		return fmt.Errorf("show: %w", err)
 	}
 	printObject(obj)
+
+	if obj.Status != models.ObjectStatusActive {
+		fmt.Println()
+		fmt.Printf("--- Actual data unavailable for %s object ---\n", obj.Status)
+		return nil
+	}
 
 	fmt.Println()
 	fmt.Println("--- Markdown ---")

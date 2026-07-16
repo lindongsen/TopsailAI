@@ -301,11 +301,12 @@ func matchesSearchTerms(obj *models.Object, terms []string) bool {
 		if term == "" {
 			continue
 		}
-		if strings.Contains(name, term) {
+		lowerTerm := strings.ToLower(term)
+		if strings.Contains(name, lowerTerm) {
 			return true
 		}
 		for _, tag := range obj.Tags {
-			if strings.Contains(strings.ToLower(tag), term) {
+			if strings.Contains(strings.ToLower(tag), lowerTerm) {
 				return true
 			}
 		}
@@ -317,8 +318,6 @@ func matchesSearchTerms(obj *models.Object, terms []string) bool {
 //
 // Unlike normal scans, this method does not require the mandatory object
 // marker file ({name}.md) to be present. A creating object may have crashed
-// before the marker was written, so recovery looks for metadata.json files
-// with status "creating" anywhere under the root.
 func (a *MetadataAdapter) Recover(ctx context.Context) ([]*models.Object, error) {
 	var creating []*models.Object
 

@@ -475,7 +475,7 @@ TOPSAILAI_DATA_CEASED_RETENTION_DAYS=30
 - **Creating over a ceased object** purges the ceased object (metadata and actual data) and creates the new object with the same name. Creating over `active`, `creating`, or `deleted` objects still returns `ErrObjectExists`.
 - **Tar archives** are extracted into the object folder. Symbolic links inside tar archives are rejected to prevent directory traversal.
 - **`gc --status deleted`** finalizes `deleted` objects to `ceased` and removes them once the retention window expires.
-- **Deleted/ceased objects** are hidden from normal `list`, `show`, and `search` unless `--include-deleted` is used.
+-- **Deleted/ceased objects** are hidden from normal `list` and `search` unless `--include-deleted` is used. The `show` command, however, always resolves an object by ID and displays its metadata regardless of status. For `deleted` and `ceased` objects the actual-data sections (`--- Markdown ---` and `--- folder structure ---`) are omitted and replaced with a note that actual data is unavailable, because the payload may have been partially or fully removed.
 - **Avoid manual changes**: do not create or rename object folders manually. Use the CLI so that metadata, the `.md` marker, and tag files stay consistent.
 
 ## See also

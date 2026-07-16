@@ -901,6 +901,108 @@ func TestShowNoExtraFiles(t *testing.T) {
 	}
 }
 
+func TestShowCeasedObject(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	obj, err := mgr.CreateObject(ctx, "ceasedobj", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+		Tags:     []string{"demo-tag"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	var buf bytes.Buffer
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err = Run(ctx, mgr, []string{"show", string(obj.ID)})
+	w.Close()
+	os.Stdout = old
+	if err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	_, _ = buf.ReadFrom(r)
+	out := buf.String()
+
+	if !strings.Contains(out, "ID:") || !strings.Contains(out, "ceasedobj") {
+		t.Fatalf("show output missing metadata: %s", out)
+	}
+	if !strings.Contains(out, "Status:        ceased") {
+		t.Fatalf("show output missing ceased status: %s", out)
+	}
+	if !strings.Contains(out, "Actual data unavailable for ceased object") {
+		t.Fatalf("show output missing actual-data unavailable note: %s", out)
+	}
+	if strings.Contains(out, "--- Markdown ---") {
+		t.Fatalf("show should not print markdown section for ceased object: %s", out)
+	}
+	if strings.Contains(out, "--- folder structure ---") {
+		t.Fatalf("show should not print folder structure section for ceased object: %s", out)
+	}
+}
+
+func TestShowDeletedObject(t *testing.T) {
+	mgr, tmp, ctx := setupManager(t)
+
+	obj, err := mgr.CreateObject(ctx, "deletedobj", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+		Tags:     []string{"demo-tag"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	// Revert the local adapter's immediate finalization to the "deleted" state
+	// so we can verify show behavior for an intermediate deleted object.
+	metaPath := filepath.Join(tmp, obj.Path, "metadata.json")
+	metaBytes, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	metaBytes = bytes.ReplaceAll(metaBytes, []byte(`"ceased"`), []byte(`"deleted"`))
+	if err := os.WriteFile(metaPath, metaBytes, 0644); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	var buf bytes.Buffer
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err = Run(ctx, mgr, []string{"show", string(obj.ID)})
+	w.Close()
+	os.Stdout = old
+	if err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	_, _ = buf.ReadFrom(r)
+	out := buf.String()
+
+	if !strings.Contains(out, "ID:") || !strings.Contains(out, "deletedobj") {
+		t.Fatalf("show output missing metadata: %s", out)
+	}
+	if !strings.Contains(out, "Status:        deleted") {
+		t.Fatalf("show output missing deleted status: %s", out)
+	}
+	if !strings.Contains(out, "Actual data unavailable for deleted object") {
+		t.Fatalf("show output missing actual-data unavailable note: %s", out)
+	}
+	if strings.Contains(out, "--- Markdown ---") {
+		t.Fatalf("show should not print markdown section for deleted object: %s", out)
+	}
+	if strings.Contains(out, "--- folder structure ---") {
+		t.Fatalf("show should not print folder structure section for deleted object: %s", out)
+	}
+}
+
 func TestSearchORLogic(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 

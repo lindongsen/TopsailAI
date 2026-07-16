@@ -369,14 +369,12 @@ Objects with status `deleted` or `ceased` are excluded from normal `List` and `G
 
 The following table maps each object status to the operations that may be performed on it. Operations that are not allowed return an error appropriate for the context (for example, `ErrObjectNotFound` for invisible objects or `ErrObjectLocked` for a locked `active` object).
 
-| Status | Visible in List/Get/Search | Read Actual | Write Actual | Tag | Move | Delete | Allowed Resolution |
-|--------|---------------------------|-------------|--------------|-----|------|--------|-------------------|
-| `creating` | No | No | Yes (during creation) | No | No | No | `recover`, `gc` |
-| `active` | Yes | Yes | Yes | Yes | Yes | Yes (soft delete) | — |
-| `deleted` | Only with `--include-deleted` | Only if data still exists | No | No | No | Yes (retry/finalize) | `delete`, `gc` |
-| `ceased` | Only with `--include-deleted` | No | No | No | No | No | `gc` (cleanup after retention) |
-
-Notes:
+| Status | Visible in List/Search | Visible in show | Read Actual | Write Actual | Tag | Move | Delete | Allowed Resolution |
+|--------|------------------------|-----------------|-------------|--------------|-----|------|--------|-------------------|
+| `creating` | No | No | No | Yes (during creation) | No | No | No | `recover`, `gc` |
+| `active` | Yes | Yes | Yes | Yes | Yes | Yes | Yes (soft delete) | — |
+| `deleted` | Only with `--include-deleted` | Yes | Only if data still exists | No | No | No | Yes (retry/finalize) | `delete`, `gc` |
+| `ceased` | Only with `--include-deleted` | Yes | No | No | No | No | No | `gc` (cleanup after retention) |
 
 - `creating` objects are invisible to normal `List`, `Get`, and search. They may only be resolved by `recover` (which promotes them to `active` if actual data exists) or `gc` (which removes incomplete metadata and any partial actual data).
 - `active` objects support all operations. Write operations acquire the advisory object lock; `Delete` performs a soft delete.
@@ -390,7 +388,7 @@ The CLI is named `topsaildata`. Commands include:
 | Command | Purpose |
 |---------|---------|
 | `create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--from <path|->]` | Create a new object. Optional classify directories may follow the time prefix. |
-| `show <id>` | Display metadata of an object. |
+| `show <id>` | Display metadata of an object. For `active` objects also display the markdown content and folder structure; for `deleted` or `ceased` objects only metadata is shown. |
 | `update <id>` | Update an object's metadata or tags. |
 | `move <id> <new-classify...>` | Move an object to a different classify path. The ID and name do not change. |
 | `delete <id>` | Soft-delete an object and its actual data. |
@@ -436,6 +434,7 @@ Errors are wrapped with context using `fmt.Errorf("...: %w", err)` so callers ca
 - Scanning stops at object boundaries; nested `object.md` files are ignored.
 - Classify tags are inherited recursively; closer tag files override or augment more distant ones, with deduplication.
 - Moving an object updates its `Path` but preserves its `ID` and `Name`.
+- The `show` command resolves an object through its metadata record and therefore works for any status. Actual data content and folder structure are displayed only when the object's status is `active`; for `deleted` and `ceased` objects only metadata is shown.
 - In the local adapter, two objects cannot share the same name at different paths.
 
 ## 10. Database Metadata Adapter Design
