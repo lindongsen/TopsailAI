@@ -83,18 +83,18 @@ func runInteractive(ctx context.Context, mgr *manager.Manager) error {
 
 func registeredCommands() []Command {
 	return []Command{
-		{Name: "create", Usage: "create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--from file|archive|-]", Run: runCreate},
+		{Name: "create", Usage: "create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--from <path|->]", Run: runCreate},
 		{Name: "show", Usage: "show <id>", Run: runShow},
-		{Name: "list", Usage: "list [--tag tag] [--include-deleted] [--offset n] [--limit n] [--format table|json]", Run: runList},
+		{Name: "list", Usage: "list [--tag tag1,tag2,...] [--include-deleted] [--offset n] [--limit n] [--format table|json]", Run: runList},
 		{Name: "search", Usage: "search <query> [--include-deleted] [--offset n] [--limit n] [--format table|json] (use | for OR; spaces/tabs and backslash escapes are not supported)", Run: runSearch},
 		{Name: "tag", Usage: "tag add <id> <tag> | tag remove <id> <tag>", Run: runTag},
 		{Name: "move", Usage: "move <id> <new-classify...>", Run: runMove},
 		{Name: "delete", Usage: "delete <id>", Run: runDelete},
-		{Name: "recover", Usage: "recover <id>", Run: runRecover},
+		{Name: "recover", Usage: "recover <id> [--resume] [--from <archive|->]", Run: runRecover},
 		{Name: "gc", Usage: "gc [--dry-run] [--status creating|deleted|ceased]", Run: runGC},
-		{Name: "get", Usage: "get <id> <file>", Run: runGet},
+		{Name: "get", Usage: "get <id> <object-file>", Run: runGet},
 		{Name: "get-archive", Usage: "get-archive <id>", Run: runGetArchive},
-		{Name: "put", Usage: "put <id> <file>", Run: runPut},
+		{Name: "put", Usage: "put <id> <dest-file> [--from <src-file|->]", Run: runPut},
 		{Name: "put-archive", Usage: "put-archive <id> <archive>", Run: runPutArchive},
 	}
 }
@@ -106,6 +106,13 @@ func printUsage(w io.Writer) {
 	for _, cmd := range registeredCommands() {
 		fmt.Fprintf(w, "  %-15s %s\n", cmd.Name, cmd.Usage)
 	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Notes:")
+	fmt.Fprintln(w, "  <id> is the object identifier (the object name).")
+	fmt.Fprintln(w, "  <object-file> in get/put is the name of a file inside the object, not a local path.")
+	fmt.Fprintln(w, "  put <id> <dest-file> reads from --from <src-file|-> or from redirected stdin.")
+	fmt.Fprintln(w, "  put-archive <id> <archive> reads the archive from the positional argument (use - for stdin).")
+	fmt.Fprintln(w, "  create reads initial object data from --from <path|-> or from redirected stdin.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Environment variables:")
 	fmt.Fprintln(w, "  TOPSAILAI_DATA_ROOT                  root directory for local storage")

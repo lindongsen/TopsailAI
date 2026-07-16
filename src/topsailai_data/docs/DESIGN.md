@@ -188,7 +188,7 @@ type ActualDataAdapter interface {
 
 `Move` only handles the actual-data payload; it does **not** update metadata. For the local adapter, `newRef` is the new full object folder path (e.g. `2026/0714/2323/projects/demo/xyz`). For remote adapters, `newRef` is adapter-specific, such as an S3 object key. The caller (the manager) is responsible for computing `newRef` from the user's classify input and for updating `Object.Path` after the adapter reports success.
 
-The local adapter implements both patterns over the object folder. Remote adapters such as S3 may store a single archive object and emulate single-file access, or expose only archive access depending on backend capabilities.
+The local adapter implements both patterns over the object folder. Remote adapters such as S3 may store payloads as single blobs or object-storage keys.
 
 ### 6.3 ListOptions
 
@@ -389,18 +389,18 @@ The CLI is named `topsaildata`. Commands include:
 
 | Command | Purpose |
 |---------|---------|
-| `create <object> [--classify dir1/dir2/...]` | Create a new object. Optional classify directories may follow the time prefix. |
+| `create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--from <path|->]` | Create a new object. Optional classify directories may follow the time prefix. |
 | `show <id>` | Display metadata of an object. |
 | `update <id>` | Update an object's metadata or tags. |
 | `move <id> <new-classify...>` | Move an object to a different classify path. The ID and name do not change. |
 | `delete <id>` | Soft-delete an object and its actual data. |
-| `list [--tag tag] [--include-deleted] [--offset n] [--limit n] [--format table|json]` | List objects, optionally filtered by tag. |
+| `list [--tag tag1,tag2,...] [--include-deleted] [--offset n] [--limit n] [--format table|json]` | List objects, optionally filtered by tag. |
 | `search <query> [--include-deleted] [--offset n] [--limit n] [--format table|json]` | Search objects by name or tag. Use `|` in `<query>` for OR logic (e.g. `foo|bar`). Spaces, tabs, and backslash escapes are not supported. |
 | `tag add <id> <tag>` | Add a tag to an object. |
 | `tag remove <id> <tag>` | Remove a tag from an object. |
-| `get <id> <file>` | Read a single actual data file from an object. |
+| `get <id> <object-file>` | Read a single actual data file from an object. |
 | `get-archive <id>` | Output the actual data archive (tar) of an object. |
-| `put <id> <file>` | Write a single actual data file to an object. |
+| `put <id> <dest-file> [--from <src-file|->]` | Write a single actual data file to an object. `<dest-file>` is the filename inside the object; the source is read from `--from` or from redirected stdin. |
 | `put-archive <id> <archive>` | Replace object actual data from a tar archive. |
 | `recover <id>` | Attempt to finish a `creating` object if actual data exists; otherwise mark it `ceased`. |
 | `gc [--dry-run] [--status creating|deleted|ceased]` | Scan and clean up objects in the specified status. Default scans `creating` and `ceased`. |

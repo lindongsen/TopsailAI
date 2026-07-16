@@ -24,7 +24,7 @@ func runCreate(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("create")
 	classify := fs.String("classify", "", "comma-separated classify directories after the time prefix")
 	tags := fs.String("tag", "", "comma-separated tags for the object")
-	from := fs.String("from", "", "local file or tar archive to use as initial actual data (use - for stdin); default is stdin")
+	from := fs.String("from", "", "local file or tar archive to use as initial actual data (use - for stdin); default is stdin when stdin is redirected")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -527,7 +527,7 @@ func runGetArchive(ctx context.Context, mgr *manager.Manager, args []string) err
 // runPut implements the "put" command.
 func runPut(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("put")
-	from := fs.String("from", "", "local file to read (use - for stdin); default is stdin")
+	from := fs.String("from", "", "local file to read (use - for stdin); default is stdin when stdin is redirected")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -539,6 +539,9 @@ func runPut(ctx context.Context, mgr *manager.Manager, args []string) error {
 
 	src := *from
 	if src == "" {
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			return fmt.Errorf("put: --from is required when stdin is a terminal")
+		}
 		src = "-"
 	}
 	r, err := openInput(src)
