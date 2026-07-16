@@ -82,6 +82,16 @@ func (o Object) Clone() Object {
 	return cloned
 }
 
+// SortOrder represents the ordering direction for list/search results.
+type SortOrder string
+
+const (
+	// SortOrderDesc sorts results in descending order (newest first).
+	SortOrderDesc SortOrder = "desc"
+	// SortOrderAsc sorts results in ascending order (oldest first).
+	SortOrderAsc SortOrder = "asc"
+)
+
 // ListOptions controls the behavior of metadata list and search operations.
 type ListOptions struct {
 	// Tags filters the results to objects that have all of the specified tags.
@@ -95,6 +105,11 @@ type ListOptions struct {
 	// IncludeDeleted includes objects whose status is deleted or ceased when
 	// true.
 	IncludeDeleted bool
+	// Sort controls the result ordering. The default empty value keeps the
+	// existing behavior (descending by creation time). Supported values are
+	// "time:desc" and "time:asc", which sort by the YYYY/MMDD/HHMM prefix
+	// extracted from Object.Path.
+	Sort string
 }
 
 // AdapterConfig holds key-value configuration for an adapter factory.

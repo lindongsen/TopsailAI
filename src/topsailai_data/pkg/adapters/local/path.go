@@ -115,6 +115,42 @@ func ParseObjectIDFromPath(objectPath string) (models.ObjectID, error) {
 	return models.ObjectID(name), nil
 }
 
+// ExtractTimePrefix extracts the YYYY/MMDD/HHMM prefix from an object path.
+// It returns the three segments and a boolean indicating whether a valid time
+// prefix was found. The path uses forward slashes regardless of the host OS.
+func ExtractTimePrefix(objectPath string) (year, monthDay, hourMinute string, ok bool) {
+	objectPath = strings.TrimSpace(objectPath)
+	if objectPath == "" {
+		return "", "", "", false
+	}
+	objectPath = filepath.ToSlash(objectPath)
+	objectPath = strings.Trim(objectPath, "/")
+	segments := strings.Split(objectPath, "/")
+	if len(segments) < 3 {
+		return "", "", "", false
+	}
+	if !isTimePrefixSegments(segments[0], segments[1], segments[2]) {
+		return "", "", "", false
+	}
+	return segments[0], segments[1], segments[2], true
+}
+
+// isTimePrefixSegments reports whether the three segments look like a time
+// prefix produced by TimePath: YYYY/MMDD/HHMM.
+func isTimePrefixSegments(year, monthDay, hourMinute string) bool {
+	if len(year) != 4 || len(monthDay) != 4 || len(hourMinute) != 4 {
+		return false
+	}
+	for _, s := range []string{year, monthDay, hourMinute} {
+		for _, r := range s {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // ValidateObjectName checks whether name is a valid object name.
 // Object names must be non-empty, valid UTF-8, not reserved, and must not
 // contain path separators or control characters.

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -242,6 +241,15 @@ func (a *MetadataAdapter) List(ctx context.Context, opts models.ListOptions) ([]
 		objects = filterByTags(objects, opts.Tags)
 	}
 
+	// Apply sorting. Default to descending by time path (newest first).
+	if opts.Sort != "" {
+		if err := applySort(objects, opts.Sort); err != nil {
+			return nil, err
+		}
+	} else {
+		SortObjectsByTimePath(objects, false)
+	}
+
 	// Apply pagination.
 	if opts.Offset < 0 {
 		opts.Offset = 0
@@ -277,6 +285,14 @@ func (a *MetadataAdapter) Search(ctx context.Context, terms []string, opts model
 		if matchesSearchTerms(obj, terms) {
 			matches = append(matches, obj)
 		}
+	}
+
+	if opts.Sort != "" {
+		if err := applySort(matches, opts.Sort); err != nil {
+			return nil, err
+		}
+	} else {
+		SortObjectsByTimePath(matches, false)
 	}
 
 	if opts.Offset >= len(matches) {
@@ -363,9 +379,7 @@ func (a *MetadataAdapter) Recover(ctx context.Context) ([]*models.Object, error)
 		return nil, err
 	}
 
-	sort.Slice(creating, func(i, j int) bool {
-		return creating[i].CreatedAt.After(creating[j].CreatedAt)
-	})
+	SortObjectsByTimePath(creating, false)
 	return creating, nil
 }
 
@@ -534,10 +548,19 @@ func (a *MetadataAdapter) scanObjects(ctx context.Context, includeDeleted bool) 
 		return nil, err
 	}
 
-	sort.Slice(objects, func(i, j int) bool {
-		return objects[i].CreatedAt.After(objects[j].CreatedAt)
-	})
+	SortObjectsByTimePath(objects, false)
 	return objects, nil
+}
+
+// applySort applies the requested sort order to a slice of objects.
+// It returns an error for unsupported sort values.
+func applySort(objects []*models.Object, sortOpt string) error {
+	ascending, err := ParseSortOption(sortOpt)
+	if err != nil {
+		return err
+	}
+	SortObjectsByTimePath(objects, ascending)
+	return nil
 }
 
 // filterByTags returns only objects whose Tags contain all required tags.

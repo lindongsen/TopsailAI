@@ -240,6 +240,7 @@ func runList(ctx context.Context, mgr *manager.Manager, args []string) error {
 	offset := fs.Int("offset", 0, "number of results to skip")
 	limit := fs.Int("limit", 0, "maximum number of results to return")
 	format := fs.String("format", "table", "output format: table or json")
+	sort := fs.String("sort", "time:desc", "sort order: time:desc (newest first) or time:asc (oldest first)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -249,11 +250,15 @@ func runList(ctx context.Context, mgr *manager.Manager, args []string) error {
 	if err := validateListFormat(*format); err != nil {
 		return fmt.Errorf("list: %w", err)
 	}
+	if err := validateSortOption(*sort); err != nil {
+		return fmt.Errorf("list: %w", err)
+	}
 
 	opts := models.ListOptions{
 		IncludeDeleted: *includeDeleted,
 		Offset:         *offset,
 		Limit:          *limit,
+		Sort:           *sort,
 	}
 	objects, err := mgr.ListObjects(ctx, opts)
 	if err != nil {
@@ -270,6 +275,7 @@ func runSearch(ctx context.Context, mgr *manager.Manager, args []string) error {
 	offset := fs.Int("offset", 0, "number of results to skip")
 	limit := fs.Int("limit", 0, "maximum number of results to return")
 	format := fs.String("format", "table", "output format: table or json")
+	sort := fs.String("sort", "time:desc", "sort order: time:desc (newest first) or time:asc (oldest first)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -277,6 +283,9 @@ func runSearch(ctx context.Context, mgr *manager.Manager, args []string) error {
 		return fmt.Errorf("search: %w", err)
 	}
 	if err := validateListFormat(*format); err != nil {
+		return fmt.Errorf("search: %w", err)
+	}
+	if err := validateSortOption(*sort); err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
 
@@ -289,6 +298,7 @@ func runSearch(ctx context.Context, mgr *manager.Manager, args []string) error {
 		IncludeDeleted: *includeDeleted,
 		Offset:         *offset,
 		Limit:          *limit,
+		Sort:           *sort,
 	})
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
@@ -630,6 +640,19 @@ func validateListFormat(format string) error {
 		return nil
 	default:
 		return fmt.Errorf("unsupported format %q (expected table or json)", format)
+	}
+}
+
+// validateSortOption returns an error if sort is not a supported sort option.
+// Supported values are "time:desc" (newest first, default) and "time:asc"
+// (oldest first), which order results by the YYYY/MMDD/HHMM prefix of the
+// object path.
+func validateSortOption(sort string) error {
+	switch sort {
+	case "time:desc", "time:asc":
+		return nil
+	default:
+		return fmt.Errorf("unsupported sort %q (expected time:desc or time:asc)", sort)
 	}
 }
 

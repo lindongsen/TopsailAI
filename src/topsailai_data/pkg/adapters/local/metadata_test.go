@@ -473,6 +473,134 @@ func TestMetadataAdapterSearchByClassifyPath(t *testing.T) {
 		t.Fatalf("expected 2 results for OR search, got %d", len(results))
 	}
 }
+
+func TestMetadataAdapterListSortByTimePath(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewMetadataAdapter(root)
+	if err := adapter.Init(ctx); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	createWithTime := func(name string, created time.Time) {
+		path, err := BuildObjectPath(created, nil, name)
+		if err != nil {
+			t.Fatalf("build object path: %v", err)
+		}
+		obj := &models.Object{
+			ID:            models.ObjectID(name),
+			Name:          name,
+			Path:          path,
+			Tags:          nil,
+			Status:        models.ObjectStatusActive,
+			SchemaVersion: 1,
+			CreatedAt:     created,
+			UpdatedAt:     created,
+			DataRef:       path,
+		}
+		createObjectDir(t, root, obj)
+	}
+
+	old := time.Date(2026, 1, 1, 12, 0, 0, 0, time.Local)
+	mid := time.Date(2026, 6, 15, 12, 0, 0, 0, time.Local)
+	new := time.Date(2026, 12, 31, 12, 0, 0, 0, time.Local)
+
+	createWithTime("old-obj", old)
+	createWithTime("mid-obj", mid)
+	createWithTime("new-obj", new)
+
+	// Default sort is descending (newest first).
+	results, err := adapter.List(ctx, models.ListOptions{})
+	if err != nil {
+		t.Fatalf("List default sort failed: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	want := []string{"new-obj", "mid-obj", "old-obj"}
+	for i, name := range want {
+		if string(results[i].Name) != name {
+			t.Fatalf("default desc order: position %d expected %s, got %s", i, name, results[i].Name)
+		}
+	}
+
+	// Explicit ascending.
+	results, err = adapter.List(ctx, models.ListOptions{Sort: "time:asc"})
+	if err != nil {
+		t.Fatalf("List asc sort failed: %v", err)
+	}
+	want = []string{"old-obj", "mid-obj", "new-obj"}
+	for i, name := range want {
+		if string(results[i].Name) != name {
+			t.Fatalf("asc order: position %d expected %s, got %s", i, name, results[i].Name)
+		}
+	}
+
+	// Explicit descending.
+	results, err = adapter.List(ctx, models.ListOptions{Sort: "time:desc"})
+	if err != nil {
+		t.Fatalf("List desc sort failed: %v", err)
+	}
+	want = []string{"new-obj", "mid-obj", "old-obj"}
+	for i, name := range want {
+		if string(results[i].Name) != name {
+			t.Fatalf("explicit desc order: position %d expected %s, got %s", i, name, results[i].Name)
+		}
+	}
+}
+
+func TestMetadataAdapterSearchSortByTimePath(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewMetadataAdapter(root)
+	if err := adapter.Init(ctx); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	createWithTime := func(name string, created time.Time) {
+		path, err := BuildObjectPath(created, nil, name)
+		if err != nil {
+			t.Fatalf("build object path: %v", err)
+		}
+		obj := &models.Object{
+			ID:            models.ObjectID(name),
+			Name:          name,
+			Path:          path,
+			Tags:          []string{"report"},
+			Status:        models.ObjectStatusActive,
+			SchemaVersion: 1,
+			CreatedAt:     created,
+			UpdatedAt:     created,
+			DataRef:       path,
+		}
+		createObjectDir(t, root, obj)
+	}
+
+	old := time.Date(2026, 1, 1, 12, 0, 0, 0, time.Local)
+	new := time.Date(2026, 12, 31, 12, 0, 0, 0, time.Local)
+
+	createWithTime("old-report", old)
+	createWithTime("new-report", new)
+
+	results, err := adapter.Search(ctx, []string{"report"}, models.ListOptions{})
+	if err != nil {
+		t.Fatalf("Search default sort failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Name != "new-report" || results[1].Name != "old-report" {
+		t.Fatalf("expected new-report, old-report, got %v", results)
+	}
+
+	results, err = adapter.Search(ctx, []string{"report"}, models.ListOptions{Sort: "time:asc"})
+	if err != nil {
+		t.Fatalf("Search asc sort failed: %v", err)
+	}
+	if results[0].Name != "old-report" || results[1].Name != "new-report" {
+		t.Fatalf("expected old-report, new-report, got %v", results)
+	}
+}
 func TestMetadataAdapterAddAndRemoveTag(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
