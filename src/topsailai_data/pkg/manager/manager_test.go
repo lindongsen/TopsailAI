@@ -132,6 +132,11 @@ func TestCreateObjectOverCeased(t *testing.T) {
 	if err := mgr.DeleteObject(ctx, "reuse"); err != nil {
 		t.Fatalf("DeleteObject failed: %v", err)
 	}
+	// First delete transitions active -> deleted; finalize to ceased so the
+	// recreate path can purge it.
+	if err := mgr.DeleteObject(ctx, "reuse"); err != nil {
+		t.Fatalf("DeleteObject finalize failed: %v", err)
+	}
 
 	// Creating over a ceased object should purge it and succeed.
 	obj, err := mgr.CreateObject(ctx, "reuse", CreateObjectOptions{Tags: []string{"new"}})
@@ -519,6 +524,29 @@ func TestDeleteObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetObject include-deleted failed: %v", err)
 	}
+	if obj.Status != models.ObjectStatusDeleted {
+		t.Fatalf("expected status deleted, got %q", obj.Status)
+	}
+}
+
+func TestDeleteObjectFinalize(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+		t.Fatalf("CreateObject failed: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, "obj"); err != nil {
+		t.Fatalf("DeleteObject failed: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, "obj"); err != nil {
+		t.Fatalf("DeleteObject finalize failed: %v", err)
+	}
+
+	obj, err := mgr.GetObject(ctx, "obj", true)
+	if err != nil {
+		t.Fatalf("GetObject include-deleted failed: %v", err)
+	}
 	if obj.Status != models.ObjectStatusCeased {
 		t.Fatalf("expected status ceased, got %q", obj.Status)
 	}
@@ -533,6 +561,9 @@ func TestDeleteObjectRetry(t *testing.T) {
 	}
 	if err := mgr.DeleteObject(ctx, "obj"); err != nil {
 		t.Fatalf("DeleteObject failed: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, "obj"); err != nil {
+		t.Fatalf("DeleteObject finalize failed: %v", err)
 	}
 
 	// Re-deleting a ceased object should return not found.
@@ -801,8 +832,8 @@ func TestRecoverObjectNotCreating(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error recovering active object")
 	}
-	if !errors.Is(err, apperrors.ErrObjectNotFound) {
-		t.Fatalf("expected ErrObjectNotFound, got %v", err)
+	if !errors.Is(err, apperrors.ErrObjectExists) {
+		t.Fatalf("expected ErrObjectExists, got %v", err)
 	}
 }
 
@@ -899,13 +930,16 @@ func TestGC(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	// Create and delete an object so it becomes ceased.
+	// Create and delete an object so it becomes deleted, then finalize to ceased.
 	obj, err := mgr.CreateObject(ctx, "old", CreateObjectOptions{})
 	if err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 	if err := mgr.DeleteObject(ctx, "old"); err != nil {
 		t.Fatalf("DeleteObject failed: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, "old"); err != nil {
+		t.Fatalf("DeleteObject finalize failed: %v", err)
 	}
 
 	// Backdate the ceased_at timestamp in metadata.json so GC removes it.
@@ -962,6 +996,9 @@ func TestGCZeroRetention(t *testing.T) {
 	}
 	if err := mgr.DeleteObject(ctx, "old"); err != nil {
 		t.Fatalf("DeleteObject failed: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, "old"); err != nil {
+		t.Fatalf("DeleteObject finalize failed: %v", err)
 	}
 
 	// With zero retention, the ceased object should be eligible immediately.
@@ -1023,8 +1060,8 @@ func TestListDeletedObjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListDeletedObjects failed: %v", err)
 	}
-	if len(deleted) != 0 {
-		t.Fatalf("expected 0 deleted objects (already ceased), got %d", len(deleted))
+	if len(deleted) != 1 {
+		t.Fatalf("expected 1 deleted object, got %d", len(deleted))
 	}
 }
 
@@ -1098,7 +1135,7 @@ func TestRequireActive(t *testing.T) {
 
 	_, err := mgr.ReadActualFile(ctx, "obj", "obj.md")
 	if !errors.Is(err, apperrors.ErrObjectNotFound) {
-		t.Fatalf("expected ErrObjectNotFound for ceased object, got %v", err)
+		t.Fatalf("expected ErrObjectNotFound for deleted object, got %v", err)
 	}
 }
 
@@ -1211,3 +1248,154 @@ func (e *errorCloseActualDataAdapter) Exists(ctx context.Context, ref string) (b
 func (e *errorCloseActualDataAdapter) Close() error { return errors.New("actual close error") }
 
 var _ adapters.ActualDataAdapter = (*errorCloseActualDataAdapter)(nil)
+
+func TestMoveObjectRemovesOldPathAndEmptyParents(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	obj, err := mgr.CreateObject(ctx, "moveme", CreateObjectOptions{Classify: []string{"old", "nested"}})
+	if err != nil {
+		t.Fatalf("CreateObject failed: %v", err)
+	}
+
+	oldObjectDir := filepath.Join(mgr.Root(), obj.Path)
+	oldNestedDir := filepath.Dir(oldObjectDir)
+	oldClassifyDir := filepath.Dir(oldNestedDir)
+
+	if err := mgr.MoveObject(ctx, "moveme", []string{"new", "nested"}); err != nil {
+		t.Fatalf("MoveObject failed: %v", err)
+	}
+
+	if _, err := os.Stat(oldObjectDir); !os.IsNotExist(err) {
+		t.Fatalf("old object directory should be removed: %v", err)
+	}
+	if _, err := os.Stat(oldNestedDir); !os.IsNotExist(err) {
+		t.Fatalf("old nested classify directory should be removed: %v", err)
+	}
+	if _, err := os.Stat(oldClassifyDir); !os.IsNotExist(err) {
+		t.Fatalf("old classify directory should be removed: %v", err)
+	}
+
+	newObj, err := mgr.GetObject(ctx, "moveme", false)
+	if err != nil {
+		t.Fatalf("GetObject after move failed: %v", err)
+	}
+	if !strings.HasSuffix(newObj.Path, "new/nested/moveme") {
+		t.Fatalf("expected path to end with new/nested/moveme, got %q", newObj.Path)
+	}
+}
+
+func TestGCRemovesEmptyParents(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	obj, err := mgr.CreateObject(ctx, "gcme", CreateObjectOptions{Classify: []string{"demo"}})
+	if err != nil {
+		t.Fatalf("CreateObject failed: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, "gcme"); err != nil {
+		t.Fatalf("DeleteObject failed: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, "gcme"); err != nil {
+		t.Fatalf("DeleteObject finalize failed: %v", err)
+	}
+
+	// Backdate the ceased_at timestamp so the object is eligible for GC.
+	metaPath := filepath.Join(mgr.Root(), obj.Path, "metadata.json")
+	metaBytes, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read metadata.json failed: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(metaBytes, &raw); err != nil {
+		t.Fatalf("unmarshal metadata.json failed: %v", err)
+	}
+	raw["CeasedAt"] = time.Now().Add(-31 * 24 * time.Hour).UTC().Format(time.RFC3339Nano)
+	metaBytes, err = json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("marshal metadata.json failed: %v", err)
+	}
+	if err := os.WriteFile(metaPath, metaBytes, 0o644); err != nil {
+		t.Fatalf("write metadata.json failed: %v", err)
+	}
+
+	objectDir := filepath.Join(mgr.Root(), obj.Path)
+	classifyDir := filepath.Dir(objectDir)
+
+	if err := mgr.GC(ctx); err != nil {
+		t.Fatalf("GC failed: %v", err)
+	}
+
+	if _, err := os.Stat(objectDir); !os.IsNotExist(err) {
+		t.Fatalf("object directory should be removed by GC: %v", err)
+	}
+	if _, err := os.Stat(classifyDir); !os.IsNotExist(err) {
+		t.Fatalf("empty classify directory should be removed by GC: %v", err)
+	}
+}
+
+func TestRecoverCleanupRemovesEmptyParents(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	objectPath := buildObjectPathForTest(t, now, []string{"demo"}, "orphan")
+	objectDir := filepath.Join(mgr.Root(), objectPath)
+	if err := os.MkdirAll(objectDir, 0o755); err != nil {
+		t.Fatalf("mkdir object dir: %v", err)
+	}
+
+	if err := mgr.meta.Create(ctx, &models.Object{
+		ID:        "orphan",
+		Name:      "orphan",
+		Path:      objectPath,
+		Status:    models.ObjectStatusCreating,
+		CreatedAt: now,
+		UpdatedAt: now,
+		DataRef:   objectDir,
+	}); err != nil {
+		t.Fatalf("Create metadata failed: %v", err)
+	}
+
+	classifyDir := filepath.Dir(objectDir)
+
+	if err := mgr.RecoverObject(ctx, "orphan", false, nil); err != nil {
+		t.Fatalf("RecoverObject failed: %v", err)
+	}
+
+	if _, err := os.Stat(objectDir); !os.IsNotExist(err) {
+		t.Fatalf("creating object directory should be removed: %v", err)
+	}
+	if _, err := os.Stat(classifyDir); !os.IsNotExist(err) {
+		t.Fatalf("empty classify directory should be removed: %v", err)
+	}
+}
+
+func TestDeleteObjectRetainsMetadataAndParents(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	obj, err := mgr.CreateObject(ctx, "keepme", CreateObjectOptions{Classify: []string{"demo"}})
+	if err != nil {
+		t.Fatalf("CreateObject failed: %v", err)
+	}
+
+	objectDir := filepath.Join(mgr.Root(), obj.Path)
+	classifyDir := filepath.Dir(objectDir)
+
+	if err := mgr.DeleteObject(ctx, "keepme"); err != nil {
+		t.Fatalf("DeleteObject failed: %v", err)
+	}
+
+	// Deleted objects retain metadata, so the object directory and its parents
+	// must remain even though actual data was removed.
+	if _, err := os.Stat(objectDir); err != nil {
+		t.Fatalf("deleted object directory should be retained: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(objectDir, "metadata.json")); err != nil {
+		t.Fatalf("deleted object metadata should be retained: %v", err)
+	}
+	if _, err := os.Stat(classifyDir); err != nil {
+		t.Fatalf("classify directory should be retained: %v", err)
+	}
+}

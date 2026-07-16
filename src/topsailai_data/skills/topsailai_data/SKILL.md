@@ -163,8 +163,8 @@ bin/topsailai_data show hello
 |---------|-------|-------------|
 | `create` | `create <object> [--classify dir1/dir2/...] [--tag t1,t2] [--from <file\|archive\|->]` | Create a new object. Writes a mandatory `<object>.md` marker and optional tags. `--from` accepts a plain file, a tar archive, or `-` for stdin; when omitted, content is read from stdin. If an object with the same name already exists in `ceased` status, the ceased object is purged and the new object is created; `active`, `creating`, and `deleted` objects cause `ErrObjectExists`. |
 | `show` | `show <id>` | Display metadata, the `<object>.md` content, and the folder structure of an object. |
-| `list` | `list [--tag tag1,tag2,...] [--include-deleted] [--offset n] [--limit n] [--format table|json]` | List active objects, optionally filtered by tag and paginated. Default format is a pipe-separated table; use `json` for machine-readable output. |
-| `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format table|json]` | Search objects by name or tag. Use `|` in `<query>` for OR logic (e.g. `foo|bar`). Spaces, tabs, and backslash escapes are not supported. |
+| `list` | `list [--include-deleted] [--offset n] [--limit n] [--format table|json]` | List active objects, optionally paginated. Default format is a pipe-separated table; use `json` for machine-readable output. |
+| `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format table|json]` | Search objects by name, tag, or classify path. Use `|` in `<query>` for OR logic (e.g. `foo|bar`). Spaces, tabs, and backslash escapes are not supported. |
 | `tag` | `tag add <id> <tag>` or `tag remove <id> <tag>` | Add or remove an object-specific tag. |
 | `move` | `move <id> <new-classify...>` | Move an active object to a different classify path. The ID and name stay the same. |
 | `delete` | `delete <id>` | Soft-delete an active object. Actual data is removed and metadata transitions to `ceased`. |
@@ -189,15 +189,15 @@ Read metadata:
 
 ```
 bin/topsailai_data show <id>
-bin/topsailai_data list [--tag tag1,tag2,...] [--include-deleted] [--offset 0] [--limit 10] [--format table|json]
+bin/topsailai_data list [--include-deleted] [--offset 0] [--limit 10] [--format table|json]
 bin/topsailai_data search <query> [--include-deleted] [--offset 0] [--limit 10] [--format table|json]
 ```
 
 #### Search query syntax
 
-- `search` performs a case-insensitive substring match against object names and tags.
-- Use `|` to separate multiple terms. An object matches if any term matches (OR logic). Example: `search foo|bar` matches objects whose name or tags contain `foo` or `bar`.
-- Spaces, tabs, and backslash escapes are not supported in search queries. To match multi-word tags, search for one word at a time or use `list --tag`.
+- `search` performs a case-insensitive substring match against object names, tags, and classify paths.
+- Use `|` to separate multiple terms. An object matches if any term matches (OR logic). Example: `search foo|bar` matches objects whose name, tags, or classify path contain `foo` or `bar`.
+- Spaces, tabs, and backslash escapes are not supported in search queries. To match multi-word tags, search for one word at a time.
 
 Modify tags:
 

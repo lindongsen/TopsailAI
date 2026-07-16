@@ -17,6 +17,9 @@ var (
 	// ErrObjectNotActive is returned when an operation requires an active object.
 	ErrObjectNotActive = errors.New("object is not active")
 
+	// ErrObjectDeleted is returned when an operation is not allowed on a deleted object.
+	ErrObjectDeleted = errors.New("object has been deleted")
+
 	// ErrObjectCeased is returned when actual-data operations are requested on a ceased object.
 	ErrObjectCeased = errors.New("object has ceased")
 

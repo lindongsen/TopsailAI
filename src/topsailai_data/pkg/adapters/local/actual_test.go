@@ -442,6 +442,7 @@ func TestActualDataAdapterMove(t *testing.T) {
 	oldRef := filepath.Join(root, "old", "obj")
 	_ = os.MkdirAll(oldRef, 0o755)
 	_ = os.WriteFile(filepath.Join(oldRef, "obj.md"), []byte("data"), 0o644)
+	_ = os.WriteFile(filepath.Join(oldRef, "extra.txt"), []byte("extra"), 0o644)
 
 	newRef := filepath.Join(root, "new", "obj")
 	movedRef, err := adapter.Move(ctx, oldRef, newRef)
@@ -451,11 +452,16 @@ func TestActualDataAdapterMove(t *testing.T) {
 	if movedRef != newRef {
 		t.Fatalf("expected moved ref %q, got %q", newRef, movedRef)
 	}
-	if _, err := os.Stat(oldRef); !os.IsNotExist(err) {
-		t.Fatal("old ref should no longer exist")
+	// Move copies the object directory; the caller is responsible for deleting
+	// the old reference and cleaning up empty parent directories.
+	if _, err := os.Stat(oldRef); err != nil {
+		t.Fatalf("old ref should still exist after copy-only Move: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(newRef, "obj.md")); err != nil {
 		t.Fatalf("moved object.md not found: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(newRef, "extra.txt")); err != nil {
+		t.Fatalf("moved extra.txt not found: %v", err)
 	}
 
 	// Moving to existing target should fail.
@@ -467,6 +473,87 @@ func TestActualDataAdapterMove(t *testing.T) {
 	}
 	if !errors.Is(err, apperrors.ErrObjectExists) {
 		t.Fatalf("expected ErrObjectExists, got %v", err)
+	}
+}
+
+func TestActualDataAdapterMoveCopiesDirectoryTree(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	_ = adapter.Init(ctx)
+
+	oldRef := filepath.Join(root, "old", "obj")
+	_ = os.MkdirAll(filepath.Join(oldRef, "subdir"), 0o755)
+	_ = os.WriteFile(filepath.Join(oldRef, "obj.md"), []byte("data"), 0o644)
+	_ = os.WriteFile(filepath.Join(oldRef, "subdir", "file.txt"), []byte("nested"), 0o644)
+
+	newRef := filepath.Join(root, "new", "obj")
+	if _, err := adapter.Move(ctx, oldRef, newRef); err != nil {
+		t.Fatalf("Move failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(newRef, "subdir", "file.txt")); err != nil {
+		t.Fatalf("nested file not copied: %v", err)
+	}
+}
+
+func TestRemoveEmptyParents(t *testing.T) {
+	root := t.TempDir()
+
+	// Build a deep path: root/2026/0714/2323/demo/obj
+	objDir := filepath.Join(root, "2026", "0714", "2323", "demo", "obj")
+	if err := os.MkdirAll(objDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	_ = os.WriteFile(filepath.Join(objDir, "obj.md"), []byte("data"), 0o644)
+
+	// Remove the object directory contents and then the directory itself.
+	_ = os.Remove(filepath.Join(objDir, "obj.md"))
+	_ = os.Remove(objDir)
+
+	if err := RemoveEmptyParents(objDir, root); err != nil {
+		t.Fatalf("RemoveEmptyParents failed: %v", err)
+	}
+
+	// All parent directories should be removed because they are empty.
+	for _, dir := range []string{
+		filepath.Join(root, "2026", "0714", "2323", "demo"),
+		filepath.Join(root, "2026", "0714", "2323"),
+		filepath.Join(root, "2026", "0714"),
+		filepath.Join(root, "2026"),
+	} {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Fatalf("expected %q to be removed", dir)
+		}
+	}
+}
+
+func TestRemoveEmptyParentsStopsAtRoot(t *testing.T) {
+	root := t.TempDir()
+
+	objDir := filepath.Join(root, "2026", "0714", "2323", "obj")
+	if err := os.MkdirAll(objDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Leave a sibling directory so 2026/0714/2323 is not empty.
+	sibling := filepath.Join(root, "2026", "0714", "2323", "other")
+	if err := os.MkdirAll(sibling, 0o755); err != nil {
+		t.Fatalf("mkdir sibling: %v", err)
+	}
+	_ = os.WriteFile(filepath.Join(objDir, "obj.md"), []byte("data"), 0o644)
+
+	_ = os.Remove(filepath.Join(objDir, "obj.md"))
+	_ = os.Remove(objDir)
+
+	if err := RemoveEmptyParents(objDir, root); err != nil {
+		t.Fatalf("RemoveEmptyParents failed: %v", err)
+	}
+
+	if _, err := os.Stat(sibling); err != nil {
+		t.Fatalf("sibling directory should remain: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "2026", "0714", "2323")); err != nil {
+		t.Fatalf("parent with sibling should remain: %v", err)
 	}
 }
 
@@ -529,5 +616,51 @@ func TestActualDataAdapterWriteFileRejectsInvalidFilename(t *testing.T) {
 	_, err := adapter.WriteFile(ctx, ref, "../escape.txt", strings.NewReader("x"))
 	if !errors.Is(err, apperrors.ErrInvalidPath) {
 		t.Fatalf("expected ErrInvalidPath, got %v", err)
+	}
+}
+
+func TestRemoveEmptyParentsNeverRemovesRoot(t *testing.T) {
+	root := t.TempDir()
+
+	objDir := filepath.Join(root, "2026", "0714", "2323", "obj")
+	if err := os.MkdirAll(objDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	_ = os.WriteFile(filepath.Join(objDir, "obj.md"), []byte("data"), 0o644)
+
+	_ = os.Remove(filepath.Join(objDir, "obj.md"))
+	_ = os.Remove(objDir)
+
+	if err := RemoveEmptyParents(objDir, root); err != nil {
+		t.Fatalf("RemoveEmptyParents failed: %v", err)
+	}
+
+	// The adapter root must always survive, even when it becomes empty.
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("adapter root should never be removed: %v", err)
+	}
+}
+
+func TestActualDataAdapterMovePreservesMetadataMarkers(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	_ = adapter.Init(ctx)
+
+	oldRef := filepath.Join(root, "old", "obj")
+	_ = os.MkdirAll(oldRef, 0o755)
+	_ = os.WriteFile(filepath.Join(oldRef, "obj.md"), []byte("data"), 0o644)
+	_ = os.WriteFile(filepath.Join(oldRef, "obj.tags"), []byte("tag\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(oldRef, "metadata.json"), []byte("{}"), 0o644)
+
+	newRef := filepath.Join(root, "new", "obj")
+	if _, err := adapter.Move(ctx, oldRef, newRef); err != nil {
+		t.Fatalf("Move failed: %v", err)
+	}
+
+	for _, name := range []string{"obj.md", "obj.tags", "metadata.json"} {
+		if _, err := os.Stat(filepath.Join(newRef, name)); err != nil {
+			t.Fatalf("%s not copied: %v", name, err)
+		}
 	}
 }

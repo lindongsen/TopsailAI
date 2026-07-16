@@ -178,9 +178,10 @@ func (a *actualDataAdapter) ReadFile(ctx context.Context, ref string, filename s
 	return f, nil
 }
 
-// Move relocates the object directory to newRef. For the local adapter newRef
-// is the new absolute object directory path. The returned ref is newRef on
-// success.
+// Move copies the object directory from oldRef to newRef. For the local adapter
+// newRef is the new absolute object directory path. The returned ref is newRef
+// on success. The caller is responsible for deleting the old directory and for
+// cleaning up any empty parent directories.
 func (a *actualDataAdapter) Move(ctx context.Context, oldRef string, newRef string) (string, error) {
 	if ctx.Err() != nil {
 		return "", ctx.Err()
@@ -191,6 +192,12 @@ func (a *actualDataAdapter) Move(ctx context.Context, oldRef string, newRef stri
 	if newRef == "" {
 		return "", fmt.Errorf("%w: newRef is empty", errors.ErrInvalidArgument)
 	}
+	if _, err := os.Stat(oldRef); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("%w: source path %q", errors.ErrObjectNotFound, oldRef)
+		}
+		return "", fmt.Errorf("stat source path %q: %w", oldRef, err)
+	}
 	if err := os.MkdirAll(filepath.Dir(newRef), 0o755); err != nil {
 		return "", fmt.Errorf("create parent directory for %q: %w", newRef, err)
 	}
@@ -199,10 +206,103 @@ func (a *actualDataAdapter) Move(ctx context.Context, oldRef string, newRef stri
 	} else if !os.IsNotExist(err) {
 		return "", fmt.Errorf("stat target path %q: %w", newRef, err)
 	}
-	if err := os.Rename(oldRef, newRef); err != nil {
-		return "", fmt.Errorf("move object directory from %q to %q: %w", oldRef, newRef, err)
+	if err := copyDir(oldRef, newRef); err != nil {
+		return "", fmt.Errorf("copy object directory from %q to %q: %w", oldRef, newRef, err)
 	}
 	return newRef, nil
+}
+
+// copyDir recursively copies src to dst. dst must not already exist.
+func copyDir(src, dst string) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("stat source %q: %w", src, err)
+	}
+	if !srcInfo.IsDir() {
+		return fmt.Errorf("source %q is not a directory", src)
+	}
+	if err := os.MkdirAll(dst, srcInfo.Mode().Perm()); err != nil {
+		return fmt.Errorf("create destination %q: %w", dst, err)
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return fmt.Errorf("read source directory %q: %w", src, err)
+	}
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("get info for %q: %w", srcPath, err)
+		}
+		if entry.IsDir() {
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := copyFile(srcPath, dstPath, info.Mode().Perm()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// copyFile copies src to dst, creating parent directories as needed.
+func copyFile(src, dst string, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("create parent directories for %q: %w", dst, err)
+	}
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open source file %q: %w", src, err)
+	}
+	defer srcFile.Close()
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if err != nil {
+		return fmt.Errorf("create destination file %q: %w", dst, err)
+	}
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		_ = dstFile.Close()
+		return fmt.Errorf("copy %q to %q: %w", src, dst, err)
+	}
+	if err := dstFile.Close(); err != nil {
+		return fmt.Errorf("close destination file %q: %w", dst, err)
+	}
+	return nil
+}
+
+// RemoveEmptyParents walks upward from dir and removes each parent directory
+// if it is empty, stopping when it reaches root or a non-empty directory.
+// The root directory itself is never removed.
+func RemoveEmptyParents(dir, root string) error {
+	root = filepath.Clean(root)
+	current := filepath.Clean(dir)
+	for {
+		parent := filepath.Dir(current)
+		if parent == current || parent == root {
+			return nil
+		}
+		entries, err := os.ReadDir(parent)
+		if err != nil {
+			if os.IsNotExist(err) {
+				current = parent
+				continue
+			}
+			return fmt.Errorf("read directory %q: %w", parent, err)
+		}
+		if len(entries) > 0 {
+			return nil
+		}
+		if err := os.Remove(parent); err != nil {
+			if os.IsNotExist(err) {
+				current = parent
+				continue
+			}
+			return fmt.Errorf("remove empty directory %q: %w", parent, err)
+		}
+		current = parent
+	}
 }
 
 // Delete removes all actual-data files and directories inside the object

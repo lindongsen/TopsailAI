@@ -421,6 +421,58 @@ func TestMetadataAdapterSearch(t *testing.T) {
 	}
 }
 
+func TestMetadataAdapterSearchByClassifyPath(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewMetadataAdapter(root)
+	_ = adapter.Init(ctx)
+	defer adapter.Close()
+
+	now := time.Now()
+	create := func(name string, classify []string, status models.ObjectStatus) {
+		objectPath, _ := BuildObjectPath(now, classify, name)
+		obj := &models.Object{
+			ID:        models.ObjectID(name),
+			Name:      name,
+			Path:      objectPath,
+			Status:    status,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		createObjectDir(t, root, obj)
+	}
+
+	create("work-note", []string{"work", "reports"}, models.ObjectStatusActive)
+	create("personal-note", []string{"personal", "reports"}, models.ObjectStatusActive)
+	create("untagged", nil, models.ObjectStatusActive)
+
+	// Classify path match.
+	results, err := adapter.Search(ctx, []string{"work"}, models.ListOptions{})
+	if err != nil {
+		t.Fatalf("Search by classify path failed: %v", err)
+	}
+	if len(results) != 1 || results[0].Name != "work-note" {
+		t.Fatalf("expected work-note, got %v", results)
+	}
+
+	// Deeper classify path match shared by two objects.
+	results, err = adapter.Search(ctx, []string{"reports"}, models.ListOptions{})
+	if err != nil {
+		t.Fatalf("Search by deeper classify path failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results for reports, got %d", len(results))
+	}
+
+	// Classify path combined with name via OR.
+	results, err = adapter.Search(ctx, []string{"untagged", "personal"}, models.ListOptions{})
+	if err != nil {
+		t.Fatalf("Search OR by name and classify path failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results for OR search, got %d", len(results))
+	}
+}
 func TestMetadataAdapterAddAndRemoveTag(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

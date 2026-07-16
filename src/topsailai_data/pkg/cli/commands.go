@@ -159,7 +159,8 @@ func printObjectMarkdown(ctx context.Context, mgr *manager.Manager, id models.Ob
 }
 
 // printObjectTree prints a tree-style listing of the object directory,
-// excluding the mandatory object marker file and other metadata markers.
+// always including the mandatory object marker file as the first entry.
+// Additional files and directories are listed after the marker.
 func printObjectTree(objectName, dir string) error {
 	markerName := objectName + ".md"
 	entries, err := os.ReadDir(dir)
@@ -167,22 +168,27 @@ func printObjectTree(objectName, dir string) error {
 		return err
 	}
 
-	// Filter out the mandatory object marker and metadata marker files.
+	// Filter out metadata marker files, keeping the mandatory object marker.
 	var visible []os.DirEntry
 	for _, entry := range entries {
 		name := entry.Name()
-		if name == markerName || isMetadataMarkerName(name) {
+		if name == markerName {
+			continue
+		}
+		if isMetadataMarkerName(name) {
 			continue
 		}
 		visible = append(visible, entry)
 	}
 
+	fmt.Println(objectName + "/")
 	if len(visible) == 0 {
+		fmt.Printf("└── %s\n", markerName)
 		fmt.Println("no additional files")
 		return nil
 	}
 
-	fmt.Println(objectName + "/")
+	fmt.Printf("├── %s\n", markerName)
 	return printObjectTreeEntries(dir, visible, "")
 }
 
@@ -230,7 +236,6 @@ func isMetadataMarkerName(name string) bool {
 // runList implements the "list" command.
 func runList(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("list")
-	tag := fs.String("tag", "", "comma-separated tags to filter by")
 	includeDeleted := fs.Bool("include-deleted", false, "include deleted and ceased objects")
 	offset := fs.Int("offset", 0, "number of results to skip")
 	limit := fs.Int("limit", 0, "maximum number of results to return")
@@ -246,7 +251,6 @@ func runList(ctx context.Context, mgr *manager.Manager, args []string) error {
 	}
 
 	opts := models.ListOptions{
-		Tags:           splitList(*tag),
 		IncludeDeleted: *includeDeleted,
 		Offset:         *offset,
 		Limit:          *limit,
@@ -321,28 +325,33 @@ func runTag(ctx context.Context, mgr *manager.Manager, args []string) error {
 	}
 	sub := args[0]
 	id := models.ObjectID(args[1])
-	tag := args[2]
+	tags := splitList(args[2])
+	if len(tags) == 0 {
+		return fmt.Errorf("tag: at least one tag is required")
+	}
 
-	switch sub {
-	case "add":
-		if err := mgr.AddTag(ctx, id, tag); err != nil {
-			return fmt.Errorf("tag add: %w", err)
+	for _, tag := range tags {
+		switch sub {
+		case "add":
+			if err := mgr.AddTag(ctx, id, tag); err != nil {
+				return fmt.Errorf("tag add: %w", err)
+			}
+			fmt.Printf("added tag %q to %s\n", tag, id)
+		case "remove":
+			if err := mgr.RemoveTag(ctx, id, tag); err != nil {
+				return fmt.Errorf("tag remove: %w", err)
+			}
+			fmt.Printf("removed tag %q from %s\n", tag, id)
+		default:
+			return fmt.Errorf("tag: unknown subcommand %q (expected add or remove)", sub)
 		}
-		fmt.Printf("added tag %q to %s\n", tag, id)
-	case "remove":
-		if err := mgr.RemoveTag(ctx, id, tag); err != nil {
-			return fmt.Errorf("tag remove: %w", err)
-		}
-		fmt.Printf("removed tag %q from %s\n", tag, id)
-	default:
-		return fmt.Errorf("tag: unknown subcommand %q (expected add or remove)", sub)
 	}
 	return nil
 }
 
 // runMove implements the "move" command.
 func runMove(ctx context.Context, mgr *manager.Manager, args []string) error {
-	if err := requireArgs(args, 2, -1); err != nil {
+	if err := requireArgs(args, 1, -1); err != nil {
 		return fmt.Errorf("move: %w", err)
 	}
 	id := models.ObjectID(args[0])
@@ -651,12 +660,16 @@ type listObjectJSON struct {
 func printObjectListJSON(objects []*models.Object) {
 	items := make([]listObjectJSON, 0, len(objects))
 	for _, obj := range objects {
+		tags := obj.Tags
+		if tags == nil {
+			tags = []string{}
+		}
 		items = append(items, listObjectJSON{
 			ID:            string(obj.ID),
 			Name:          obj.Name,
 			Path:          obj.Path,
 			Status:        string(obj.Status),
-			Tags:          obj.Tags,
+			Tags:          tags,
 			CreatedAt:     obj.CreatedAt,
 			UpdatedAt:     obj.UpdatedAt,
 			SchemaVersion: obj.SchemaVersion,

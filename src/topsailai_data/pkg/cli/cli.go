@@ -24,11 +24,11 @@ type Command struct {
 }
 
 // Run parses the command line and dispatches to the appropriate subcommand.
-// When no command is provided, Run enters an interactive REPL that reads
-// commands from standard input until EOF or an explicit exit command.
+// When no command is provided, Run prints usage and returns nil.
 func Run(ctx context.Context, mgr *manager.Manager, args []string) error {
 	if len(args) == 0 {
-		return runInteractive(ctx, mgr)
+		printUsage(os.Stdout)
+		return nil
 	}
 
 	name := args[0]
@@ -40,6 +40,12 @@ func Run(ctx context.Context, mgr *manager.Manager, args []string) error {
 	commands := registeredCommands()
 	for _, cmd := range commands {
 		if cmd.Name == name {
+			for _, a := range args[1:] {
+				if a == "-h" || a == "--help" {
+					fmt.Fprintf(os.Stdout, "Usage: topsailai_data %s\n", cmd.Usage)
+					return nil
+				}
+			}
 			return cmd.Run(ctx, mgr, args[1:])
 		}
 	}
@@ -85,10 +91,10 @@ func registeredCommands() []Command {
 	return []Command{
 		{Name: "create", Usage: "create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--from <path|->]", Run: runCreate},
 		{Name: "show", Usage: "show <id>", Run: runShow},
-		{Name: "list", Usage: "list [--tag tag1,tag2,...] [--include-deleted] [--offset n] [--limit n] [--format table|json]", Run: runList},
+		{Name: "list", Usage: "list [--include-deleted] [--offset n] [--limit n] [--format table|json]", Run: runList},
 		{Name: "search", Usage: "search <query> [--include-deleted] [--offset n] [--limit n] [--format table|json] (use | for OR; spaces/tabs and backslash escapes are not supported)", Run: runSearch},
 		{Name: "tag", Usage: "tag add <id> <tag> | tag remove <id> <tag>", Run: runTag},
-		{Name: "move", Usage: "move <id> <new-classify...>", Run: runMove},
+		{Name: "move", Usage: "move <id> [new-classify...]", Run: runMove},
 		{Name: "delete", Usage: "delete <id>", Run: runDelete},
 		{Name: "recover", Usage: "recover <id> [--resume] [--from <archive|->]", Run: runRecover},
 		{Name: "gc", Usage: "gc [--dry-run] [--status creating|deleted|ceased]", Run: runGC},

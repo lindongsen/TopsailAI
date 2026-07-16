@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/topsailai/topsailai_data/pkg/adapters"
@@ -335,10 +336,18 @@ func (m *Manager) ReadActualFile(ctx context.Context, id models.ObjectID, filena
 	return m.actual.ReadFile(ctx, obj.DataRef, filename)
 }
 
-// DeleteObject soft-deletes an active object. The metadata is first marked as
-// deleted, then the actual data is removed, and finally the metadata is
-// transitioned to ceased. If actual data removal fails, the object remains in
-// the deleted state and can be retried.
+// DeleteObject soft-deletes an active object or finalizes a deleted object.
+//
+// For an active object, the metadata is marked as deleted and the actual data
+// is preserved so the object can be recovered. The object is not visible to
+// normal list/get operations after this call.
+//
+// For an already-deleted object, the actual data is removed and the metadata
+// is transitioned to ceased. If actual-data removal fails, the object remains
+// in the deleted state and can be retried.
+//
+// Ceased objects are treated as not found. Creating objects must be handled
+// through RecoverObject.
 func (m *Manager) DeleteObject(ctx context.Context, id models.ObjectID) error {
 	obj, err := m.meta.Get(ctx, id, true)
 	if err != nil {
@@ -347,9 +356,38 @@ func (m *Manager) DeleteObject(ctx context.Context, id models.ObjectID) error {
 
 	switch obj.Status {
 	case models.ObjectStatusActive:
-		// proceed with deletion
+		lock, err := local.AcquireWriteLock(obj.DataRef)
+		if err != nil {
+			return fmt.Errorf("acquire write lock: %w", err)
+		}
+		defer lock.Release()
+
+		if err := m.meta.Delete(ctx, id); err != nil {
+			return fmt.Errorf("mark metadata deleted: %w", err)
+		}
+		return nil
+
 	case models.ObjectStatusDeleted:
-		// retry: actual data removal was not completed previously
+		lock, err := local.AcquireWriteLock(obj.DataRef)
+		if err != nil {
+			return fmt.Errorf("acquire write lock: %w", err)
+		}
+		defer lock.Release()
+
+		if err := m.actual.Delete(ctx, obj.DataRef); err != nil {
+			return fmt.Errorf("delete actual data: %w", err)
+		}
+
+		if err := m.meta.FinalizeDelete(ctx, id); err != nil {
+			return fmt.Errorf("finalize delete: %w", err)
+		}
+
+		// The object has ceased; remove the advisory lock file and clean up
+		// any empty parent directories.
+		_ = os.Remove(lock.Path())
+		_ = local.RemoveEmptyParents(obj.DataRef, m.metaRoot)
+		return nil
+
 	case models.ObjectStatusCreating:
 		return fmt.Errorf("%w: object %s is %s, use RecoverObject", errors.ErrObjectNotActive, id, obj.Status)
 	case models.ObjectStatusCeased:
@@ -357,42 +395,19 @@ func (m *Manager) DeleteObject(ctx context.Context, id models.ObjectID) error {
 	default:
 		return fmt.Errorf("%w: object %s has unexpected status %s", errors.ErrObjectNotActive, id, obj.Status)
 	}
-
-	lock, err := local.AcquireWriteLock(obj.DataRef)
-	if err != nil {
-		return fmt.Errorf("acquire write lock: %w", err)
-	}
-	defer lock.Release()
-
-	// Step 1: mark metadata as deleted (skip if already deleted).
-	if obj.Status != models.ObjectStatusDeleted {
-		if err := m.meta.Delete(ctx, id); err != nil {
-			return fmt.Errorf("mark metadata deleted: %w", err)
-		}
-	}
-
-	// Step 2: remove actual data.
-	if err := m.actual.Delete(ctx, obj.DataRef); err != nil {
-		return fmt.Errorf("delete actual data: %w", err)
-	}
-
-	// Step 3: finalize to ceased.
-	if err := m.meta.FinalizeDelete(ctx, id); err != nil {
-		return fmt.Errorf("finalize delete: %w", err)
-	}
-
-	// Step 4: remove the lock file; the object is no longer active.
-	_ = os.Remove(lock.Path())
-	return nil
 }
 
 // MoveObject moves an active object to a new classify path. The object name
-// does not change.
+// does not change. If classify begins with the object's time prefix, that
+// prefix is stripped so users may pass either a classify path or a full path.
+// If the trailing segment equals the object name, it is also stripped.
 func (m *Manager) MoveObject(ctx context.Context, id models.ObjectID, classify []string) error {
 	obj, err := m.requireActive(ctx, id)
 	if err != nil {
 		return err
 	}
+
+	classify = normalizeClassifyForMove(obj.CreatedAt, obj.Name, classify)
 
 	newPath, err := local.BuildObjectPath(obj.CreatedAt, classify, obj.Name)
 	if err != nil {
@@ -401,6 +416,11 @@ func (m *Manager) MoveObject(ctx context.Context, id models.ObjectID, classify [
 	newRef := filepath.Join(m.metaRoot, newPath)
 	if newRef == obj.DataRef {
 		return nil
+	}
+
+	// Safety: refuse to move a directory into a subdirectory of itself.
+	if strings.HasPrefix(newRef+string(filepath.Separator), obj.DataRef+string(filepath.Separator)) {
+		return fmt.Errorf("destination is inside the source object folder")
 	}
 
 	lock, err := local.AcquireWriteLock(obj.DataRef)
@@ -429,14 +449,54 @@ func (m *Manager) MoveObject(ctx context.Context, id models.ObjectID, classify [
 		return fmt.Errorf("update metadata after move: %w", err)
 	}
 
+	// After successful metadata update, remove the old directory and clean up
+	// any empty parent directories.
+	_ = os.RemoveAll(oldRef)
+	_ = local.RemoveEmptyParents(oldRef, m.metaRoot)
 	return nil
 }
 
-// RecoverObject attempts to resume or clean up a creating object.
+// normalizeClassifyForMove strips a leading time-prefix-like segment sequence
+// (YYYY/MMDD/HHMM) from classify segments when the user supplied a full path,
+// and also strips a trailing segment that equals the object name. The object's
+// own creation time is always used as the time prefix, so any leading
+// time-prefix pattern in the user input is discarded.
+func normalizeClassifyForMove(createdAt time.Time, name string, classify []string) []string {
+	if len(classify) >= 3 && isTimePrefix(classify[0], classify[1], classify[2]) {
+		classify = classify[3:]
+	}
+	if len(classify) > 0 && classify[len(classify)-1] == name {
+		classify = classify[:len(classify)-1]
+	}
+	return classify
+}
+
+// isTimePrefix reports whether the three segments look like a time prefix
+// produced by local.TimePath: YYYY/MMDD/HHMM.
+func isTimePrefix(year, monthDay, hourMinute string) bool {
+	if len(year) != 4 || len(monthDay) != 4 || len(hourMinute) != 4 {
+		return false
+	}
+	for _, s := range []string{year, monthDay, hourMinute} {
+		for _, r := range s {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// RecoverObject attempts to resume or clean up a creating object, or restore
+// a soft-deleted object back to active.
 //
 // Default behavior (resume=false):
-//   - If actual data already exists, the object is activated.
-//   - Otherwise the object and any partial data are removed.
+//   - For creating objects: if actual data already exists, the object is
+//     activated; otherwise the object and any partial data are removed.
+//   - For deleted objects: the object is restored to active. Actual data is
+//     preserved.
+//   - For ceased objects: an error is returned because ceased objects cannot
+//     be recovered.
 //
 // When resume=true:
 //   - If r is provided, it is written as the object's actual data and the
@@ -450,17 +510,49 @@ func (m *Manager) RecoverObject(ctx context.Context, id models.ObjectID, resume 
 	if err != nil {
 		return fmt.Errorf("list creating objects: %w", err)
 	}
-	var obj *models.Object
 	for _, candidate := range creating {
 		if candidate.ID == id {
-			obj = candidate
-			break
+			return m.recoverCreatingObject(ctx, candidate, resume, r)
 		}
 	}
-	if obj == nil {
-		return fmt.Errorf("%w: %s", errors.ErrObjectNotFound, id)
+
+	// Not a creating object; resolve through metadata (including deleted/ceased).
+	obj, err := m.meta.Get(ctx, id, true)
+	if err != nil {
+		return err
 	}
 
+	switch obj.Status {
+	case models.ObjectStatusDeleted:
+		objectDir := filepath.Join(m.metaRoot, obj.Path)
+		lock, err := local.AcquireWriteLock(objectDir)
+		if err != nil {
+			return fmt.Errorf("acquire write lock: %w", err)
+		}
+		defer lock.Release()
+
+		obj.Status = models.ObjectStatusActive
+		obj.DeletedAt = nil
+		obj.UpdatedAt = time.Now()
+		if err := m.meta.Update(ctx, obj); err != nil {
+			return fmt.Errorf("restore deleted object: %w", err)
+		}
+		return nil
+
+	case models.ObjectStatusCeased:
+		return fmt.Errorf("%w: object %s has ceased and cannot be recovered", errors.ErrObjectCeased, id)
+	case models.ObjectStatusActive:
+		return fmt.Errorf("%w: object %s is already active", errors.ErrObjectExists, id)
+	case models.ObjectStatusCreating:
+		// Should not happen because we checked the Recover list above.
+		return fmt.Errorf("%w: object %s is still being created", errors.ErrObjectCreating, id)
+	default:
+		return fmt.Errorf("%w: object %s has unexpected status %s", errors.ErrInvalidStatus, id, obj.Status)
+	}
+}
+
+// recoverCreatingObject resumes or cleans up a single creating object.
+func (m *Manager) recoverCreatingObject(ctx context.Context, obj *models.Object, resume bool, r io.Reader) error {
 	objectDir := filepath.Join(m.metaRoot, obj.Path)
 	lock, err := local.AcquireWriteLock(objectDir)
 	if err != nil {
@@ -490,12 +582,13 @@ func (m *Manager) RecoverObject(ctx context.Context, id models.ObjectID, resume 
 	}
 
 	if resume {
-		return fmt.Errorf("%w: object %s has no actual data; provide --from to resume creation", errors.ErrInvalidArgument, id)
+		return fmt.Errorf("%w: object %s has no actual data; provide --from to resume creation", errors.ErrInvalidArgument, obj.ID)
 	}
 
 	// Default cleanup: creating object never became active, remove it entirely.
 	_ = m.actual.Delete(ctx, obj.DataRef)
 	_ = os.RemoveAll(objectDir)
+	_ = local.RemoveEmptyParents(objectDir, m.metaRoot)
 	return nil
 }
 
@@ -522,6 +615,9 @@ func (m *Manager) GC(ctx context.Context) error {
 			return fmt.Errorf("remove object directory %q: %w", objectDir, err)
 		}
 		_ = lock.Release()
+
+		// Clean up any empty parent directories, stopping at the adapter root.
+		_ = local.RemoveEmptyParents(objectDir, m.metaRoot)
 	}
 
 	return nil
@@ -606,5 +702,4 @@ func (l *lockedReadCloser) Close() error {
 		err = lockErr
 	}
 	return err
-
 }

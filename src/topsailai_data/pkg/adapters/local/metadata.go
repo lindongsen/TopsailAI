@@ -259,10 +259,10 @@ func (a *MetadataAdapter) List(ctx context.Context, opts models.ListOptions) ([]
 	return objects[opts.Offset:end], nil
 }
 
-// Search returns active objects whose name or tags match any of the provided
-// query terms. Terms are combined with OR semantics: an object matches if its
-// name or any tag contains at least one term as a substring. An empty terms
-// slice matches all objects.
+// Search returns active objects whose name, tags, or classify path match any
+// of the provided query terms. Terms are combined with OR semantics: an object
+// matches if its name, any tag, or its path contains at least one term as a
+// substring. An empty terms slice matches all objects.
 func (a *MetadataAdapter) Search(ctx context.Context, terms []string, opts models.ListOptions) ([]*models.Object, error) {
 	objects, err := a.scanObjects(ctx, opts.IncludeDeleted)
 	if err != nil {
@@ -289,20 +289,24 @@ func (a *MetadataAdapter) Search(ctx context.Context, terms []string, opts model
 	return matches[opts.Offset:end], nil
 }
 
-// matchesSearchTerms reports whether an object's name or tags match any of the
-// provided terms. Matching is case-insensitive substring. An empty terms slice
-// matches everything.
+// matchesSearchTerms reports whether an object's name, tags, or classify path
+// match any of the provided terms. Matching is case-insensitive substring. An
+// empty terms slice matches everything.
 func matchesSearchTerms(obj *models.Object, terms []string) bool {
 	if len(terms) == 0 {
 		return true
 	}
 	name := strings.ToLower(obj.Name)
+	path := strings.ToLower(obj.Path)
 	for _, term := range terms {
 		if term == "" {
 			continue
 		}
 		lowerTerm := strings.ToLower(term)
 		if strings.Contains(name, lowerTerm) {
+			return true
+		}
+		if strings.Contains(path, lowerTerm) {
 			return true
 		}
 		for _, tag := range obj.Tags {
