@@ -23,6 +23,7 @@ workspace: "."
 context:
   _default:
     - "docs/DESIGN.md"
+    - skills/topsailai_data/SKILL.md
   default: []
 
 # Environment variable configuration: each item can define its own variables.
