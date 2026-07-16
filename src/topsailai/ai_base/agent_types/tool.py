@@ -5,6 +5,7 @@
   Purpose:
 '''
 
+from datetime import datetime
 import functools
 from typing import Any, Callable
 
@@ -253,7 +254,7 @@ class StepCallTool(StepCallBase):
 
             # case: no tool_call has been executed.
             if agent_ctx.get_count_of_action_for_current_agent() == 0:
-                _auto_msg += "No tool_call has been executed. "
+                _auto_msg += f"[{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}] No tool_call has been executed. "
 
             # default
             _auto_msg += "If you are sure that user information is required or task is finished, output `final_answer`. Otherwise, continue executing"
