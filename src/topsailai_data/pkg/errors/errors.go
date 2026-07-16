@@ -46,6 +46,9 @@ var (
 
 	// ErrInvalidArgument is returned for general argument errors.
 	ErrInvalidArgument = errors.New("invalid argument")
+
+	// ErrInvalidSearchQuery is returned when a search query contains unsupported characters.
+	ErrInvalidSearchQuery = errors.New("invalid search query")
 )
 
 // Adapter errors.

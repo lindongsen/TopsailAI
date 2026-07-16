@@ -1094,3 +1094,410 @@ func TestSearchUnsupportedCharacters(t *testing.T) {
 		}
 	}
 }
+
+func TestGetArchiveSuccess(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	content := []byte("archive marker")
+	obj, err := mgr.CreateObject(ctx, "archobj", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+		Data:     tarBytes("archobj.md", content),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	extra := []byte("extra content")
+	if err := mgr.WriteActualFile(ctx, obj.ID, "extra.txt", bytes.NewReader(extra)); err != nil {
+		t.Fatalf("write extra: %v", err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := Run(ctx, mgr, []string{"get-archive", string(obj.ID)}); err != nil {
+			t.Fatalf("get-archive: %v", err)
+		}
+	})
+
+	tr := tar.NewReader(bytes.NewReader([]byte(out)))
+	found := map[string][]byte{}
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read tar: %v", err)
+		}
+		buf, err := io.ReadAll(tr)
+		if err != nil {
+			t.Fatalf("read tar entry: %v", err)
+		}
+		found[hdr.Name] = buf
+	}
+
+	if !bytes.Equal(found["archobj.md"], content) {
+		t.Fatalf("expected marker %q, got %q", content, found["archobj.md"])
+	}
+	if !bytes.Equal(found["extra.txt"], extra) {
+		t.Fatalf("expected extra %q, got %q", extra, found["extra.txt"])
+	}
+}
+
+func TestGetArchiveMissingObject(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, []string{"get-archive", "missing"})
+	if err == nil {
+		t.Fatalf("expected error for missing object")
+	}
+	if !strings.Contains(err.Error(), "get-archive") {
+		t.Fatalf("expected get-archive prefix, got %v", err)
+	}
+}
+
+func TestPutArchiveSuccess(t *testing.T) {
+	mgr, tmp, ctx := setupManager(t)
+
+	obj, err := mgr.CreateObject(ctx, "putarch", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	var tarBuf bytes.Buffer
+	tw := tar.NewWriter(&tarBuf)
+	marker := []byte("replaced marker")
+	hdr := &tar.Header{
+		Name: "putarch.md",
+		Mode: 0o644,
+		Size: int64(len(marker)),
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatalf("write header: %v", err)
+	}
+	if _, err := tw.Write(marker); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	extra := []byte("new extra")
+	hdr2 := &tar.Header{
+		Name: "new.txt",
+		Mode: 0o644,
+		Size: int64(len(extra)),
+	}
+	if err := tw.WriteHeader(hdr2); err != nil {
+		t.Fatalf("write header: %v", err)
+	}
+	if _, err := tw.Write(extra); err != nil {
+		t.Fatalf("write extra: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+
+	archivePath := filepath.Join(tmp, "archive.tar")
+	if err := os.WriteFile(archivePath, tarBuf.Bytes(), 0644); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+
+	if err := Run(ctx, mgr, []string{"put-archive", string(obj.ID), archivePath}); err != nil {
+		t.Fatalf("put-archive: %v", err)
+	}
+
+	rc, err := mgr.ReadActualFile(ctx, obj.ID, "putarch.md")
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read marker content: %v", err)
+	}
+	if !bytes.Equal(got, marker) {
+		t.Fatalf("expected marker %q, got %q", marker, got)
+	}
+
+	rc2, err := mgr.ReadActualFile(ctx, obj.ID, "new.txt")
+	if err != nil {
+		t.Fatalf("read new.txt: %v", err)
+	}
+	defer rc2.Close()
+	got2, err := io.ReadAll(rc2)
+	if err != nil {
+		t.Fatalf("read new.txt content: %v", err)
+	}
+	if !bytes.Equal(got2, extra) {
+		t.Fatalf("expected extra %q, got %q", extra, got2)
+	}
+}
+
+func TestPutArchiveMissingFile(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, []string{"put-archive", "missing", "/nonexistent/archive.tar"})
+	if err == nil {
+		t.Fatalf("expected error for missing archive file")
+	}
+	if !strings.Contains(err.Error(), "put-archive") {
+		t.Fatalf("expected put-archive prefix, got %v", err)
+	}
+}
+
+func TestPutArchiveMissingObject(t *testing.T) {
+	mgr, tmp, ctx := setupManager(t)
+
+	archivePath := filepath.Join(tmp, "archive.tar")
+	if err := os.WriteFile(archivePath, []byte("not a tar"), 0644); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+
+	err := Run(ctx, mgr, []string{"put-archive", "missing", archivePath})
+	if err == nil {
+		t.Fatalf("expected error for missing object")
+	}
+}
+
+func TestTagRemoveSuccess(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	obj, err := mgr.CreateObject(ctx, "tagged", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+		Tags:     []string{"alpha", "beta"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := Run(ctx, mgr, []string{"tag", "remove", string(obj.ID), "alpha"}); err != nil {
+		t.Fatalf("tag remove: %v", err)
+	}
+
+	got, err := mgr.GetObject(ctx, obj.ID, false)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Tags) != 1 || got.Tags[0] != "beta" {
+		t.Fatalf("expected tags [beta], got %v", got.Tags)
+	}
+}
+
+func TestTagRemoveInheritedTagBlocked(t *testing.T) {
+	mgr, root, ctx := setupManager(t)
+
+	obj, err := mgr.CreateObject(ctx, "inhtest", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Create a classify tag file that applies to all objects under the demo/
+	// classify directory on the object's actual path.
+	classifyDir := filepath.Join(root, obj.Path, "..")
+	classifyDir = filepath.Clean(classifyDir)
+	if err := os.WriteFile(filepath.Join(classifyDir, "demo.tags"), []byte("inherited\n"), 0644); err != nil {
+		t.Fatalf("write classify tags: %v", err)
+	}
+
+	got, err := mgr.GetObject(ctx, obj.ID, false)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Tags) != 1 || got.Tags[0] != "inherited" {
+		t.Fatalf("expected inherited tag, got %v", got.Tags)
+	}
+
+	err = Run(ctx, mgr, []string{"tag", "remove", string(obj.ID), "inherited"})
+	if err == nil {
+		t.Fatalf("expected error removing inherited tag")
+	}
+}
+
+func TestTagRemoveMissingTag(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	obj, err := mgr.CreateObject(ctx, "notag", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	err = Run(ctx, mgr, []string{"tag", "remove", string(obj.ID), "missing"})
+	if err == nil {
+		t.Fatalf("expected error removing non-existent tag")
+	}
+}
+
+func TestTagUnknownSubcommand(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, []string{"tag", "unknown", "obj", "tag"})
+	if err == nil {
+		t.Fatalf("expected error for unknown tag subcommand")
+	}
+	if !strings.Contains(err.Error(), "unknown subcommand") {
+		t.Fatalf("expected unknown subcommand error, got %v", err)
+	}
+}
+
+func TestUnknownCommand(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, []string{"unknown"})
+	if err == nil {
+		t.Fatalf("expected error for unknown command")
+	}
+	if !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("expected unknown command error, got %v", err)
+	}
+}
+
+func TestHelpPrintsUsage(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	out := captureStdout(t, func() {
+		if err := Run(ctx, mgr, []string{"help"}); err != nil {
+			t.Fatalf("help: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "Usage: topsailai_data") {
+		t.Fatalf("help output missing usage: %s", out)
+	}
+	if !strings.Contains(out, "create") {
+		t.Fatalf("help output missing commands: %s", out)
+	}
+}
+
+func TestInvalidListFormat(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, []string{"list", "--format", "xml"})
+	if err == nil {
+		t.Fatalf("expected error for invalid list format")
+	}
+	if !strings.Contains(err.Error(), "unsupported format") {
+		t.Fatalf("expected unsupported format error, got %v", err)
+	}
+}
+
+func TestInvalidSearchFormat(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, []string{"search", "query", "--format", "xml"})
+	if err == nil {
+		t.Fatalf("expected error for invalid search format")
+	}
+}
+
+func TestMissingRequiredArgs(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"create"}, "expected at least"},
+		{[]string{"show"}, "expected"},
+		{[]string{"get"}, "expected"},
+		{[]string{"put"}, "expected"},
+		{[]string{"move"}, "expected"},
+		{[]string{"delete"}, "expected"},
+		{[]string{"recover"}, "expected"},
+		{[]string{"tag"}, "expected"},
+		{[]string{"tag", "add"}, "expected"},
+		{[]string{"put-archive"}, "expected"},
+	}
+
+	for _, tc := range cases {
+		err := Run(ctx, mgr, tc.args)
+		if err == nil {
+			t.Fatalf("%v: expected error", tc.args)
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%v: expected error to contain %q, got %v", tc.args, tc.want, err)
+		}
+	}
+}
+
+func TestGetMissingObject(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, []string{"get", "missing", "file.txt"})
+	if err == nil {
+		t.Fatalf("expected error for missing object")
+	}
+	if !strings.Contains(err.Error(), "get:") {
+		t.Fatalf("expected get prefix, got %v", err)
+	}
+}
+
+func TestDeleteMissingObject(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, []string{"delete", "missing"})
+	if err == nil {
+		t.Fatalf("expected error for missing object")
+	}
+	if !strings.Contains(err.Error(), "delete:") {
+		t.Fatalf("expected delete prefix, got %v", err)
+	}
+}
+
+func TestShowMissingObject(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, []string{"show", "missing"})
+	if err == nil {
+		t.Fatalf("expected error for missing object")
+	}
+	if !strings.Contains(err.Error(), "show:") {
+		t.Fatalf("expected show prefix, got %v", err)
+	}
+}
+
+func TestMoveMissingObject(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, []string{"move", "missing", "new"})
+	if err == nil {
+		t.Fatalf("expected error for missing object")
+	}
+	if !strings.Contains(err.Error(), "move:") {
+		t.Fatalf("expected move prefix, got %v", err)
+	}
+}
+
+func TestGCInvalidStatus(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, []string{"gc", "--status", "active"})
+	if err == nil {
+		t.Fatalf("expected error for invalid gc status")
+	}
+	if !strings.Contains(err.Error(), "invalid status") {
+		t.Fatalf("expected invalid status error, got %v", err)
+	}
+}
+
+func TestRecoverMissingObject(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, []string{"recover", "missing"})
+	if err == nil {
+		t.Fatalf("expected error for missing object")
+	}
+	if !strings.Contains(err.Error(), "recover:") {
+		t.Fatalf("expected recover prefix, got %v", err)
+	}
+}
+
+func TestCreateInvalidName(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, []string{"create", "../escape"})
+	if err == nil {
+		t.Fatalf("expected error for invalid object name")
+	}
+}

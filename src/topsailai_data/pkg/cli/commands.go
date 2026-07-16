@@ -6,15 +6,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode"
 
 	"golang.org/x/term"
+	apperrors "github.com/topsailai/topsailai_data/pkg/errors"
 	"github.com/topsailai/topsailai_data/pkg/manager"
 	"github.com/topsailai/topsailai_data/pkg/models"
 )
@@ -74,6 +75,7 @@ func runCreate(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fmt.Printf("created object %s at %s\n", obj.ID, obj.Path)
 	return nil
 }
+
 // tarBytes returns a reader that yields a tar archive containing a single
 // regular file with the given name and content.
 func tarBytes(filename string, content []byte) io.Reader {
@@ -134,7 +136,7 @@ func runShow(ctx context.Context, mgr *manager.Manager, args []string) error {
 	return nil
 }
 
-// printObjectMarkdown reads and prints the object's mandatory <id>.md file.
+// printObjectMarkdown reads and prints the object\'s mandatory <id>.md file.
 func printObjectMarkdown(ctx context.Context, mgr *manager.Manager, id models.ObjectID) error {
 	rc, err := mgr.ReadActualFile(ctx, id, string(id)+".md")
 	if err != nil {
@@ -150,7 +152,7 @@ func printObjectMarkdown(ctx context.Context, mgr *manager.Manager, id models.Ob
 		return nil
 	}
 	fmt.Print(string(content))
-	if !bytes.HasSuffix(content, []byte("\n")) {
+	if !bytes.HasSuffix(content, []byte("\\n")) {
 		fmt.Println()
 	}
 	return nil
@@ -295,27 +297,23 @@ func runSearch(ctx context.Context, mgr *manager.Manager, args []string) error {
 // separator. It rejects whitespace and backslash escapes because the search
 // command does not support quoting or escaping.
 func parseSearchQuery(query string) ([]string, error) {
-	if query == "" {
-		return nil, fmt.Errorf("search query cannot be empty")
-	}
-	for _, r := range query {
-		if r == '\\' {
-			return nil, fmt.Errorf("search query cannot contain backslash escapes")
-		}
-		if unicode.IsSpace(r) {
-			return nil, fmt.Errorf("search query cannot contain spaces or tabs")
-		}
-	}
-
-	terms := strings.Split(query, "|")
-	for i, term := range terms {
-		if term == "" {
+	terms, err := manager.ParseSearchQuery(query)
+	if err != nil {
+		// Translate sentinel into plain messages to preserve existing CLI error text.
+		if errors.Is(err, apperrors.ErrInvalidSearchQuery) {
+			if strings.ContainsRune(query, '\\') {
+				return nil, fmt.Errorf("search query cannot contain backslash escapes")
+			}
+			if strings.ContainsRune(query, ' ') || strings.ContainsRune(query, '\t') {
+				return nil, fmt.Errorf("search query cannot contain spaces or tabs")
+			}
 			return nil, fmt.Errorf("search query contains an empty term")
 		}
-		terms[i] = strings.ToLower(term)
+		return nil, err
 	}
 	return terms, nil
 }
+
 // runTag implements the "tag" command.
 func runTag(ctx context.Context, mgr *manager.Manager, args []string) error {
 	if err := requireArgs(args, 3, 3); err != nil {
@@ -597,7 +595,7 @@ func runPutArchive(ctx context.Context, mgr *manager.Manager, args []string) err
 	return nil
 }
 
-// printObject prints a single object's metadata in a human-readable form.
+// printObject prints a single object\'s metadata in a human-readable form.
 func printObject(obj *models.Object) {
 	fmt.Printf("ID:            %s\n", obj.ID)
 	fmt.Printf("Name:          %s\n", obj.Name)
@@ -615,6 +613,7 @@ func printObject(obj *models.Object) {
 	fmt.Printf("Tags:          %s\n", strings.Join(obj.Tags, ", "))
 	fmt.Printf("DataRef:       %s\n", obj.DataRef)
 }
+
 // validateListFormat returns an error if format is not a supported list output format.
 func validateListFormat(format string) error {
 	switch format {
