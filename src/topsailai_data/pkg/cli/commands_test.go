@@ -1473,14 +1473,45 @@ func TestCreateInvalidName(t *testing.T) {
 	}
 }
 
-func TestListTagFlagRejected(t *testing.T) {
+func TestListTagFlagFilters(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	err := Run(ctx, mgr, []string{"list", "--tag", "demo"})
-	if err == nil {
-		t.Fatal("expected error for --tag flag")
+	if err := Run(ctx, mgr, []string{"create", "alpha-obj", "--tag", "alpha"}); err != nil {
+		t.Fatalf("create alpha-obj: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unknown flag") && !strings.Contains(err.Error(), "--tag") {
-		t.Fatalf("expected unknown flag --tag error, got %v", err)
+	if err := Run(ctx, mgr, []string{"create", "beta-obj", "--tag", "beta"}); err != nil {
+		t.Fatalf("create beta-obj: %v", err)
+	}
+
+	var buf bytes.Buffer
+	orig := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(&buf, r)
+		errCh <- err
+	}()
+
+	err := Run(ctx, mgr, []string{"list", "--tag", "alpha", "--format", "json"})
+
+	w.Close()
+	os.Stdout = orig
+	if copyErr := <-errCh; copyErr != nil {
+		t.Fatalf("copy stdout: %v", copyErr)
+	}
+	if err != nil {
+		t.Fatalf("list --tag alpha: %v", err)
+	}
+
+	var results []map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &results); err != nil {
+		t.Fatalf("unmarshal list output: %v\noutput: %s", err, buf.String())
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for tag alpha, got %d", len(results))
+	}
+	if results[0]["id"] != "alpha-obj" {
+		t.Fatalf("expected alpha-obj, got %v", results[0]["id"])
 	}
 }

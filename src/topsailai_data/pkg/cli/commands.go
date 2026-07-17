@@ -241,6 +241,7 @@ func runList(ctx context.Context, mgr *manager.Manager, args []string) error {
 	limit := fs.Int("limit", 0, "maximum number of results to return")
 	format := fs.String("format", "table", "output format: table or json")
 	sort := fs.String("sort", "time:desc", "sort order: time:desc (newest first) or time:asc (oldest first)")
+	tagList := fs.String("tag", "", "comma-separated tags to filter results")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -259,6 +260,7 @@ func runList(ctx context.Context, mgr *manager.Manager, args []string) error {
 		Offset:         *offset,
 		Limit:          *limit,
 		Sort:           *sort,
+		Tags:           parseTagList(*tagList),
 	}
 	objects, err := mgr.ListObjects(ctx, opts)
 	if err != nil {
@@ -266,6 +268,22 @@ func runList(ctx context.Context, mgr *manager.Manager, args []string) error {
 	}
 	printObjectList(objects, *format)
 	return nil
+}
+
+// parseTagList splits a comma-separated tag string into trimmed, non-empty tags.
+func parseTagList(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // runSearch implements the "search" command.

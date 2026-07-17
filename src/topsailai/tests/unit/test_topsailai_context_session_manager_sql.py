@@ -13,7 +13,9 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
-from topsailai.context.session_manager.sql import SessionSQLAlchemy, SessionData
+from sqlalchemy import text
+
+from topsailai.context.session_manager.sql import SessionSQLAlchemy, SessionData, Session
 
 
 class TestSessionSQLAlchemy:
@@ -650,3 +652,149 @@ class TestSessionSQLAlchemy:
         assert sessions[0].task == "task_a"
         assert sessions[1].task == "task_b"
         assert sessions[2].task == "task_c"
+
+
+class TestSessionTokenAccumulation:
+    """Test suite for session token accumulation via accumulate_session_tokens."""
+
+    @pytest.fixture
+    def session_mgr(self):
+        """Create a fresh in-memory session manager for each test."""
+        return SessionSQLAlchemy("sqlite:///:memory:")
+
+    def _create_session(self, session_mgr, session_id="token_session"):
+        """Helper to create a session for token tests."""
+        session_data = SessionData(
+            session_id=session_id,
+            session_name="Token Session",
+            task="Token task",
+        )
+        session_mgr.create_session(session_data)
+
+    def test_token_columns_exist_after_ensure_columns(self, session_mgr):
+        """Test that total_tokens and total_cached_tokens columns exist."""
+        with session_mgr.engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT name FROM pragma_table_info('session')")
+            )
+            column_names = {row[0] for row in result.fetchall()}
+
+        assert "total_tokens" in column_names
+        assert "total_cached_tokens" in column_names
+
+    def test_accumulate_session_tokens_increments_totals(self, session_mgr):
+        """Test accumulate_session_tokens increments totals correctly."""
+        self._create_session(session_mgr)
+
+        result = session_mgr.accumulate_session_tokens(
+            session_id="token_session",
+            current_tokens=100,
+            current_cached_tokens=50,
+        )
+        assert result is True
+
+        # SessionData does not expose token fields; query the ORM model directly.
+        with session_mgr.SessionLocal() as db_session:
+            row = db_session.query(Session).filter(Session.session_id == "token_session").first()
+            assert row.total_tokens == 100
+            assert row.total_cached_tokens == 50
+
+    def test_accumulate_session_tokens_multiple_times(self, session_mgr):
+        """Test multiple accumulations sum as expected."""
+        self._create_session(session_mgr)
+
+        deltas = [
+            (10, 5),
+            (20, 8),
+            (30, 12),
+        ]
+        for tokens, cached in deltas:
+            result = session_mgr.accumulate_session_tokens(
+                session_id="token_session",
+                current_tokens=tokens,
+                current_cached_tokens=cached,
+            )
+            assert result is True
+
+        with session_mgr.SessionLocal() as db_session:
+            row = db_session.query(Session).filter(Session.session_id == "token_session").first()
+            assert row.total_tokens == 60
+            assert row.total_cached_tokens == 25
+
+    def test_accumulate_session_tokens_missing_session(self, session_mgr):
+        """Test accumulate_session_tokens returns False for missing session."""
+        result = session_mgr.accumulate_session_tokens(
+            session_id="missing_session",
+            current_tokens=10,
+            current_cached_tokens=5,
+        )
+        assert result is False
+
+    def test_accumulate_session_tokens_negative_deltas_normalized(self, session_mgr):
+        """Test negative deltas are normalized to zero."""
+        self._create_session(session_mgr)
+
+        result = session_mgr.accumulate_session_tokens(
+            session_id="token_session",
+            current_tokens=-100,
+            current_cached_tokens=-50,
+        )
+        assert result is True
+
+        with session_mgr.SessionLocal() as db_session:
+            row = db_session.query(Session).filter(Session.session_id == "token_session").first()
+            assert row.total_tokens == 0
+            assert row.total_cached_tokens == 0
+
+    def test_accumulate_session_tokens_zero_deltas(self, session_mgr):
+        """Test zero deltas leave totals unchanged."""
+        self._create_session(session_mgr)
+
+        session_mgr.accumulate_session_tokens(
+            session_id="token_session",
+            current_tokens=50,
+            current_cached_tokens=20,
+        )
+        result = session_mgr.accumulate_session_tokens(
+            session_id="token_session",
+            current_tokens=0,
+            current_cached_tokens=0,
+        )
+        assert result is True
+
+        with session_mgr.SessionLocal() as db_session:
+            row = db_session.query(Session).filter(Session.session_id == "token_session").first()
+            assert row.total_tokens == 50
+            assert row.total_cached_tokens == 20
+
+    def test_accumulate_session_tokens_empty_session_id(self, session_mgr):
+        """Test accumulate_session_tokens returns False for empty session_id."""
+        self._create_session(session_mgr)
+
+        result = session_mgr.accumulate_session_tokens(
+            session_id="",
+            current_tokens=10,
+            current_cached_tokens=5,
+        )
+        assert result is False
+
+    def test_accumulate_session_tokens_multiple_agents(self, session_mgr):
+        """Test that multiple agents' deltas accumulate rather than overwrite."""
+        self._create_session(session_mgr)
+
+        # Simulate two agents contributing token deltas independently.
+        session_mgr.accumulate_session_tokens(
+            session_id="token_session",
+            current_tokens=100,
+            current_cached_tokens=40,
+        )
+        session_mgr.accumulate_session_tokens(
+            session_id="token_session",
+            current_tokens=60,
+            current_cached_tokens=20,
+        )
+
+        with session_mgr.SessionLocal() as db_session:
+            row = db_session.query(Session).filter(Session.session_id == "token_session").first()
+            assert row.total_tokens == 160
+            assert row.total_cached_tokens == 60

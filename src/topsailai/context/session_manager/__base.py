@@ -163,6 +163,37 @@ class SessionStorageBase(object):
                 implemented by concrete storage classes.
         """
         raise NotImplementedError
+    def accumulate_session_tokens(
+        self,
+        session_id: str,
+        current_tokens: int,
+        current_cached_tokens: int,
+    ) -> bool:
+        """
+        Atomically add per-agent token deltas to the session totals.
+
+        A single session may be processed by multiple agents, each owning its own
+        TokenStat instance. Callers must therefore pass the *current-agent delta*
+        (``current_tokens`` / ``current_cached_tokens``) rather than an agent-level
+        total. Overwriting the session row with ``TokenStat.total_*`` would lose the
+        contributions of other agents that share the same session.
+
+        Args:
+            session_id (str): The session identifier whose totals should be updated.
+            current_tokens (int): Number of tokens produced by the current agent
+                invocation to add to ``total_tokens``.
+            current_cached_tokens (int): Number of cached tokens produced by the
+                current agent invocation to add to ``total_cached_tokens``.
+
+        Returns:
+            bool: True if the session existed and was updated, False otherwise.
+
+        Raises:
+            NotImplementedError: This is an abstract method that must be
+                implemented by concrete storage classes.
+        """
+        raise NotImplementedError
+
 
     def retrieve_messages(self, session_id:str) -> list[dict]:
         """ retrieve messages by chat_history_manager """

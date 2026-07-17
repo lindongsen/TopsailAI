@@ -21,7 +21,6 @@ from topsailai.utils.print_tool import print_info
 from topsailai.utils import (
     env_tool,
 )
-
 #####################################################################
 # Wrapper: `from openai.types.completion_usage import CompletionUsage`
 # The import time is too long!
@@ -320,6 +319,25 @@ class TokenStat(threading.Thread):
                 if self.current_cached_tokens:
                     self.total_cached_tokens += self.current_cached_tokens
 
+        # A single session may be processed by multiple agents, each owning its
+        # own TokenStat instance. We must accumulate the current agent's deltas
+        # (current_tokens / current_cached_tokens) into the session totals, not
+        # overwrite them with TokenStat.total_*. Overwriting would lose the
+        # contributions of other agents that share the same session.
+        try:
+            # Lazy import to avoid circular imports between context modules.
+            from topsailai.context import ctx_manager
+            session_id = env_tool.get_session_id()
+            if session_id:
+                session_mgr = ctx_manager.get_session_manager()
+                if session_mgr:
+                    session_mgr.accumulate_session_tokens(
+                        session_id=session_id,
+                        current_tokens=self.current_count,
+                        current_cached_tokens=self.current_cached_tokens,
+                    )
+        except Exception as e:
+            logger.warning(f"output_token_stat: failed to accumulate session tokens: {e}")
         # Format and output the statistics
         if env_tool.is_need_print():
             # print one empty line

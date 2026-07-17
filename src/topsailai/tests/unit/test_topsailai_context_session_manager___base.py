@@ -190,6 +190,26 @@ class TestSessionStorageBase(unittest.TestCase):
         
         self.assertIs(storage.chat_history, mock_chat_history)
 
+    def test_accumulate_session_tokens_is_abstract(self):
+        """Test that accumulate_session_tokens is abstract and raises NotImplementedError."""
+        storage = SessionStorageBase()
+
+        with self.assertRaises(NotImplementedError):
+            storage.accumulate_session_tokens(
+                session_id="s1",
+                current_tokens=10,
+                current_cached_tokens=5,
+            )
+
+    def test_accumulate_session_tokens_signature(self):
+        """Test that accumulate_session_tokens accepts the expected keyword arguments."""
+        import inspect
+
+        sig = inspect.signature(SessionStorageBase.accumulate_session_tokens)
+        params = list(sig.parameters.keys())
+
+        self.assertEqual(params, ["self", "session_id", "current_tokens", "current_cached_tokens"])
+
 
 if __name__ == "__main__":
     unittest.main()

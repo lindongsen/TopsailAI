@@ -321,6 +321,69 @@ class TestTokenStat(unittest.TestCase):
         self.assertIn("'first_byte_min_sec': None", logged_msg)
         stat.flag_running = False
 
+    def test_output_token_stat_calls_accumulate_session_tokens(self):
+        """Test output_token_stat calls accumulate_session_tokens when SESSION_ID is set."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        stat.current_count = 100
+        stat.current_cached_tokens = 40
+
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.accumulate_session_tokens.return_value = True
+
+        with patch('topsailai.context.token.env_tool.get_session_id', return_value="session_abc"), \
+             patch('topsailai.context.ctx_manager.get_session_manager', return_value=mock_session_mgr), \
+             patch('topsailai.context.token.print_info'), \
+             patch('topsailai.context.token.logger'):
+            stat.output_token_stat()
+
+        mock_session_mgr.accumulate_session_tokens.assert_called_once_with(
+            session_id="session_abc",
+            current_tokens=100,
+            current_cached_tokens=40,
+        )
+        stat.flag_running = False
+
+    def test_output_token_stat_no_session_id_skips_accumulation(self):
+        """Test output_token_stat skips accumulation when no SESSION_ID is set."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+
+        mock_session_mgr = MagicMock()
+
+        with patch('topsailai.context.token.env_tool.get_session_id', return_value=""), \
+             patch('topsailai.context.ctx_manager.get_session_manager', return_value=mock_session_mgr), \
+             patch('topsailai.context.token.print_info'), \
+             patch('topsailai.context.token.logger'):
+            stat.output_token_stat()
+
+        mock_session_mgr.accumulate_session_tokens.assert_not_called()
+        stat.flag_running = False
+
+    def test_output_token_stat_no_session_manager_skips_accumulation(self):
+        """Test output_token_stat skips accumulation when session manager is None."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+
+        with patch('topsailai.context.token.env_tool.get_session_id', return_value="session_abc"), \
+             patch('topsailai.context.ctx_manager.get_session_manager', return_value=None), \
+             patch('topsailai.context.token.print_info'), \
+             patch('topsailai.context.token.logger'):
+            stat.output_token_stat()
+
+        # No exception should be raised; the method should complete silently.
+        stat.flag_running = False
+
+    def test_output_token_stat_accumulation_failure_logged(self):
+        """Test output_token_stat logs a warning when accumulation fails."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+
+        with patch('topsailai.context.token.env_tool.get_session_id', return_value="session_abc"), \
+             patch('topsailai.context.ctx_manager.get_session_manager', side_effect=RuntimeError("boom")), \
+             patch('topsailai.context.token.print_info'), \
+             patch('topsailai.context.token.logger') as mock_logger:
+            stat.output_token_stat()
+
+        mock_logger.warning.assert_called_once()
+        stat.flag_running = False
+
 
 class TestTokenStatFirstByte(unittest.TestCase):
     """Test cases for TokenStat first-byte timing aggregation."""

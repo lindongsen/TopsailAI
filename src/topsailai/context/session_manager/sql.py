@@ -14,7 +14,7 @@
 
 import threading
 
-from sqlalchemy import create_engine, Column, String, Text, DateTime
+from sqlalchemy import create_engine, Column, String, Text, DateTime, Integer
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql import func as sql_func, text
@@ -50,6 +50,8 @@ class Session(Base):
     project_workspace = Column(Text, nullable=True)
     pwd = Column(Text, nullable=True)
     topsailai_home = Column(Text, nullable=True)
+    total_tokens = Column(Integer, default=0)
+    total_cached_tokens = Column(Integer, default=0)
     create_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
 
 class SessionSQLAlchemy(SessionStorageBase):
@@ -94,13 +96,16 @@ class SessionSQLAlchemy(SessionStorageBase):
         with self.engine.connect() as conn:
             if conn.dialect.name != "sqlite":
                 return
-            for column_name in ("project_workspace", "pwd", "topsailai_home"):
+            for column_name in ("project_workspace", "pwd", "topsailai_home", "total_tokens", "total_cached_tokens"):
                 result = conn.execute(
                     text("SELECT 1 FROM pragma_table_info('session') WHERE name = :col"),
                     {"col": column_name},
                 )
                 if not result.fetchone():
-                    conn.execute(text(f"ALTER TABLE session ADD COLUMN {column_name} TEXT"))
+                    if column_name in ("total_tokens", "total_cached_tokens"):
+                        conn.execute(text(f"ALTER TABLE session ADD COLUMN {column_name} INTEGER DEFAULT 0"))
+                    else:
+                        conn.execute(text(f"ALTER TABLE session ADD COLUMN {column_name} TEXT"))
             conn.commit()
 
     def create_session(self, session_data:SessionData) -> bool:
@@ -430,6 +435,73 @@ class SessionSQLAlchemy(SessionStorageBase):
         except Exception as e:
             db_session.rollback()
             logger.error(f"update_session_name failed: session_id={session_id}, {e}")
+        finally:
+            db_session.close()
+
+    def accumulate_session_tokens(
+        self,
+        session_id: str,
+        current_tokens: int,
+        current_cached_tokens: int,
+    ) -> bool:
+        """
+        Atomically add per-agent token deltas to the session totals.
+
+        A single session may be processed by multiple agents, each owning its own
+        TokenStat instance. This method therefore accumulates the *current-agent
+        delta* (``current_tokens`` / ``current_cached_tokens``) into the session
+        row using an atomic UPDATE, rather than overwriting the row with an
+        agent-level total. Overwriting with ``TokenStat.total_*`` would lose the
+        contributions of other agents that share the same session.
+
+        Args:
+            session_id (str): The session identifier whose totals should be updated.
+            current_tokens (int): Number of tokens produced by the current agent
+                invocation to add to ``total_tokens``.
+            current_cached_tokens (int): Number of cached tokens produced by the
+                current agent invocation to add to ``total_cached_tokens``.
+
+        Returns:
+            bool: True if the session existed and was updated, False otherwise.
+        """
+        if not session_id:
+            return False
+
+        # Normalize negative deltas to zero so a misreported value cannot subtract
+        # from the session total.
+        delta_tokens = max(0, int(current_tokens))
+        delta_cached = max(0, int(current_cached_tokens))
+
+        db_session = self.SessionLocal()
+        try:
+            result = db_session.execute(
+                text(
+                    "UPDATE session SET "
+                    "total_tokens = total_tokens + :tokens, "
+                    "total_cached_tokens = total_cached_tokens + :cached "
+                    "WHERE session_id = :session_id"
+                ),
+                {
+                    "tokens": delta_tokens,
+                    "cached": delta_cached,
+                    "session_id": session_id,
+                },
+            )
+            db_session.commit()
+            if result.rowcount == 1:
+                logger.info(
+                    f"accumulate_session_tokens: session_id={session_id}, "
+                    f"+tokens={delta_tokens}, +cached={delta_cached}"
+                )
+                return True
+            logger.warning(f"accumulate_session_tokens: session not found: session_id={session_id}")
+            return False
+        except Exception as e:
+            db_session.rollback()
+            logger.error(
+                f"accumulate_session_tokens failed: session_id={session_id}, "
+                f"tokens={delta_tokens}, cached={delta_cached}, {e}"
+            )
             return False
         finally:
             db_session.close()
