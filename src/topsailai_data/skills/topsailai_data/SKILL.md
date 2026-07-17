@@ -163,17 +163,18 @@ bin/topsailai_data show hello
 |---------|-------|-------------|
 | `create` | `create <object> [--classify dir1/dir2/...] [--tag t1,t2] [--from <file\|archive\|->]` | Create a new object. Writes a mandatory `<object>.md` marker and optional tags. `--from` accepts a plain file, a tar archive, or `-` for stdin; when omitted, content is read from stdin. If an object with the same name already exists in `ceased` status, the ceased object is purged and the new object is created; `active`, `creating`, and `deleted` objects cause `ErrObjectExists`. |
 | `show` | `show <id>` | Display metadata, the `<object>.md` content, and the folder structure of an object. |
-| `list` | `list [--include-deleted] [--offset n] [--limit n] [--format table|json] [--sort time:desc|time:asc]` | List active objects, optionally paginated and sorted by the time prefix of the object path. Default format is a pipe-separated table; use `json` for machine-readable output. Default sort is `time:desc` (newest first). |
-| `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format table|json] [--sort time:desc|time:asc]` | Search objects by name, tag, or classify path. Use `|` in `<query>` for OR logic (e.g. `foo|bar`). Spaces, tabs, and backslash escapes are not supported. Results are sorted by the time prefix of the object path; default is `time:desc` (newest first). |
+| `list` | `list [--include-deleted] [--offset n] [--limit n] [--format table\|json] [--sort time:desc\|time:asc]` | List active objects, optionally paginated and sorted by the time prefix of the object path. Default format is a pipe-separated table; use `json` for machine-readable output. Default sort is `time:desc` (newest first). |
+| `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format table\|json] [--sort time:desc\|time:asc]` | Search objects by name, tag, or classify path. Use `|` in `<query>` for OR logic (e.g. `foo|bar`). Spaces, tabs, and backslash escapes are not supported. Results are sorted by the time prefix of the object path; default is `time:desc` (newest first). |
 | `tag` | `tag add <id> <tag>` or `tag remove <id> <tag>` | Add or remove an object-specific tag. |
 | `move` | `move <id> <new-classify...>` | Move an active object to a different classify path. The ID and name stay the same. |
 | `delete` | `delete <id>` | Soft-delete an active object. Actual data is removed and metadata transitions to `ceased`. |
-| `recover` | `recover <id> [--resume] [--from <archive\|->]` | Resume or clean up a `creating` object. `--from` accepts a tar archive or `-` for stdin. |
-| `gc` | `gc [--dry-run] [--status creating\|deleted\|ceased]` | Clean up `creating` objects, finalize `deleted` objects to `ceased`, or remove expired `ceased` objects. |
+| `recover` | `recover <id> [--resume] [--from <archive\|->]` | Restore a `deleted` object back to `active`. The object's actual data must still exist, or be re-supplied with `--from`. Returns an error for `creating`, `active`, or `ceased` objects. The `--resume` flag is accepted for compatibility but has no effect. |
+| `gc` | `gc [--dry-run] [--status creating\|deleted\|ceased]` | Clean up `creating` objects, finalize `deleted` objects to `ceased`, or remove `ceased` objects. Default `gc` honors `TOPSAILAI_DATA_CEASED_RETENTION_DAYS`. When `--status ceased` is explicitly provided, all ceased objects are removed immediately. |
 | `get` | `get <id> <object-file>` | Read a single actual-data file to stdout. The raw byte stream is preserved, so this works for binary files such as images, videos, and compiled executables. |
 | `get-archive` | `get-archive <id>` | Output the object's actual data as a tar archive to stdout. |
 | `put` | `put <id> <dest-file> [--from <file\|->]` | Write a single file into the object's actual data. `<dest-file>` is the name inside the object; `--from` accepts a local file or `-` for stdin; when omitted, content is read from stdin. |
 | `put-archive` | `put-archive <id> <archive\|->` | Replace object actual data from a tar archive. Use `-` to read the archive from stdin. |
+
 ### Command examples
 
 Create:
@@ -198,6 +199,7 @@ bin/topsailai_data search <query> [--include-deleted] [--offset 0] [--limit 10] 
 - `search` performs a case-insensitive substring match against object names, tags, and classify paths.
 - Use `|` to separate multiple terms. An object matches if any term matches (OR logic). Example: `search foo|bar` matches objects whose name, tags, or classify path contain `foo` or `bar`.
 - Spaces, tabs, and backslash escapes are not supported in search queries. To match multi-word tags, search for one word at a time.
+
 #### Sorting results
 
 Both `list` and `search` accept a `--sort` option that orders results by the time prefix (`YYYY/MMDD/HHMM`) extracted from each object's path.
@@ -211,7 +213,6 @@ Examples:
 bin/topsailai_data list --sort time:desc
 bin/topsailai_data search work --sort time:asc
 ```
-
 
 Modify tags:
 
@@ -488,8 +489,10 @@ TOPSAILAI_DATA_CEASED_RETENTION_DAYS=30
 - **Always create through the CLI** rather than manually creating folders, so metadata and the mandatory `.md` marker are written consistently.
 - **Creating over a ceased object** purges the ceased object (metadata and actual data) and creates the new object with the same name. Creating over `active`, `creating`, or `deleted` objects still returns `ErrObjectExists`.
 - **Tar archives** are extracted into the object folder. Symbolic links inside tar archives are rejected to prevent directory traversal.
-- **`gc --status deleted`** finalizes `deleted` objects to `ceased` and removes them once the retention window expires.
--- **Deleted/ceased objects** are hidden from normal `list` and `search` unless `--include-deleted` is used. The `show` command, however, always resolves an object by ID and displays its metadata regardless of status. For `deleted` and `ceased` objects the actual-data sections (`--- Markdown ---` and `--- folder structure ---`) are omitted and replaced with a note that actual data is unavailable, because the payload may have been partially or fully removed.
+- **`gc --status deleted`** finalizes `deleted` objects to `ceased`. After finalization, the object is subject to `TOPSAILAI_DATA_CEASED_RETENTION_DAYS` unless `gc --status ceased` is used to remove it immediately.
+- **`gc --status ceased`** removes all `ceased` objects immediately, ignoring the retention window. Default `gc` only removes ceased objects after the retention window expires.
+- **Deleted/ceased objects** are hidden from normal `list` and `search` unless `--include-deleted` is used. The `show` command, however, always resolves an object by ID and displays its metadata regardless of status. For `deleted` and `ceased` objects the actual-data sections (`--- Markdown ---` and `--- folder structure ---`) are omitted and replaced with a note that actual data is unavailable, because the payload may have been partially or fully removed.
+- **`recover`** only restores objects whose status is `deleted` back to `active`. It does not operate on `creating`, `active`, or `ceased` objects.
 - **Avoid manual changes**: do not create or rename object folders manually. Use the CLI so that metadata, the `.md` marker, and tag files stay consistent.
 
 ## See also

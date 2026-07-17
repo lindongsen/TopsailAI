@@ -286,6 +286,113 @@ func parseTagList(s string) []string {
 	return out
 }
 
+// runRecover implements the "recover" command.
+func runRecover(ctx context.Context, mgr *manager.Manager, args []string) error {
+	fs := newFlagSet("recover")
+	from := fs.String("from", "", "tar archive to restore as the object's actual data (use - for stdin)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := requireArgs(fs.Args(), 1, 1); err != nil {
+		return fmt.Errorf("recover: %w", err)
+	}
+	id := models.ObjectID(fs.Args()[0])
+
+	var r io.Reader
+	if *from != "" {
+		in, err := openInput(*from)
+		if err != nil {
+			return fmt.Errorf("recover: open archive: %w", err)
+		}
+		defer in.Close()
+		r = in
+	}
+
+	if err := mgr.RestoreObject(ctx, id, r); err != nil {
+		return fmt.Errorf("recover: %w", err)
+	}
+	fmt.Printf("recovered object %s\n", id)
+	return nil
+}
+
+// runGC implements the "gc" command.
+func runGC(ctx context.Context, mgr *manager.Manager, args []string) error {
+	fs := newFlagSet("gc")
+	dryRun := fs.Bool("dry-run", false, "list candidates without deleting")
+	status := fs.String("status", "", "filter by status: creating, deleted, or ceased")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := requireArgs(fs.Args(), 0, 0); err != nil {
+		return fmt.Errorf("gc: %w", err)
+	}
+
+	filter := strings.ToLower(strings.TrimSpace(*status))
+	switch filter {
+	case "", "creating", "deleted", "ceased":
+	default:
+		return fmt.Errorf("gc: invalid status %q", *status)
+	}
+
+	// Default GC scans creating and ceased objects, honoring retention for ceased.
+	if filter == "" || filter == "ceased" {
+		force := filter == "ceased"
+		if *dryRun {
+			fmt.Println("dry-run: would run GC for ceased objects")
+		} else {
+			if err := mgr.GCObjects(ctx, force); err != nil {
+				return fmt.Errorf("gc: %w", err)
+			}
+			fmt.Println("gc completed for ceased objects")
+		}
+	}
+
+	if filter == "" || filter == "creating" {
+		objects, err := mgr.ListCreatingObjects(ctx)
+		if err != nil {
+			return fmt.Errorf("gc: list creating: %w", err)
+		}
+		if len(objects) == 0 && filter == "creating" {
+			fmt.Println("no creating objects to gc")
+			return nil
+		}
+		for _, obj := range objects {
+			if *dryRun {
+				fmt.Printf("dry-run: would clean up creating object %s at %s\n", obj.ID, obj.Path)
+				continue
+			}
+			if err := mgr.CleanupCreatingObject(ctx, obj.ID); err != nil {
+				return fmt.Errorf("gc: cleanup creating %s: %w", obj.ID, err)
+			}
+			fmt.Printf("cleaned up creating object %s\n", obj.ID)
+		}
+	}
+
+	if filter == "" || filter == "deleted" {
+		objects, err := mgr.ListDeletedObjects(ctx)
+		if err != nil {
+			return fmt.Errorf("gc: list deleted: %w", err)
+		}
+		if len(objects) == 0 && filter == "deleted" {
+			fmt.Println("no deleted objects to gc")
+			return nil
+		}
+		for _, obj := range objects {
+			if *dryRun {
+				fmt.Printf("dry-run: would finalize deleted object %s\n", obj.ID)
+				continue
+			}
+			if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+				fmt.Fprintf(os.Stderr, "gc: finalize %s: %v\n", obj.ID, err)
+				continue
+			}
+			fmt.Printf("finalized deleted object %s\n", obj.ID)
+		}
+	}
+
+	return nil
+}
+
 // runSearch implements the "search" command.
 func runSearch(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("search")
@@ -416,113 +523,6 @@ func runDelete(ctx context.Context, mgr *manager.Manager, args []string) error {
 		return fmt.Errorf("delete: %w", err)
 	}
 	fmt.Printf("deleted object %s\n", id)
-	return nil
-}
-
-// runRecover implements the "recover" command.
-func runRecover(ctx context.Context, mgr *manager.Manager, args []string) error {
-	fs := newFlagSet("recover")
-	resume := fs.Bool("resume", false, "resume creation by writing actual data")
-	from := fs.String("from", "", "tar archive to write when resuming (use - for stdin)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if err := requireArgs(fs.Args(), 1, 1); err != nil {
-		return fmt.Errorf("recover: %w", err)
-	}
-	id := models.ObjectID(fs.Args()[0])
-
-	var r io.Reader
-	if *from != "" {
-		in, err := openInput(*from)
-		if err != nil {
-			return fmt.Errorf("recover: open archive: %w", err)
-		}
-		defer in.Close()
-		r = in
-	}
-
-	if err := mgr.RecoverObject(ctx, id, *resume, r); err != nil {
-		return fmt.Errorf("recover: %w", err)
-	}
-	fmt.Printf("recovered object %s\n", id)
-	return nil
-}
-
-// runGC implements the "gc" command.
-func runGC(ctx context.Context, mgr *manager.Manager, args []string) error {
-	fs := newFlagSet("gc")
-	dryRun := fs.Bool("dry-run", false, "list candidates without deleting")
-	status := fs.String("status", "", "filter by status: creating, deleted, or ceased")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if err := requireArgs(fs.Args(), 0, 0); err != nil {
-		return fmt.Errorf("gc: %w", err)
-	}
-
-	filter := strings.ToLower(strings.TrimSpace(*status))
-	switch filter {
-	case "", "creating", "deleted", "ceased":
-	default:
-		return fmt.Errorf("gc: invalid status %q", *status)
-	}
-
-	// Default GC scans both creating and ceased objects.
-	if filter == "" || filter == "ceased" {
-		if *dryRun {
-			fmt.Println("dry-run: would run GC for ceased objects")
-		} else {
-			if err := mgr.GC(ctx); err != nil {
-				return fmt.Errorf("gc: %w", err)
-			}
-			fmt.Println("gc completed for ceased objects")
-		}
-	}
-
-	if filter == "" || filter == "creating" {
-		objects, err := mgr.ListCreatingObjects(ctx)
-		if err != nil {
-			return fmt.Errorf("gc: list creating: %w", err)
-		}
-		if len(objects) == 0 && filter == "creating" {
-			fmt.Println("no creating objects to gc")
-			return nil
-		}
-		for _, obj := range objects {
-			if *dryRun {
-				fmt.Printf("dry-run: would recover creating object %s at %s\n", obj.ID, obj.Path)
-				continue
-			}
-			if err := mgr.RecoverObject(ctx, obj.ID, false, nil); err != nil {
-				return fmt.Errorf("gc: recover creating %s: %w", obj.ID, err)
-			}
-			fmt.Printf("recovered creating object %s\n", obj.ID)
-		}
-	}
-
-	if filter == "" || filter == "deleted" {
-		objects, err := mgr.ListDeletedObjects(ctx)
-		if err != nil {
-			return fmt.Errorf("gc: list deleted: %w", err)
-		}
-		if len(objects) == 0 && filter == "deleted" {
-			fmt.Println("no deleted objects to gc")
-			return nil
-		}
-		for _, obj := range objects {
-			if *dryRun {
-				fmt.Printf("dry-run: would finalize deleted object %s\n", obj.ID)
-				continue
-			}
-			if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
-				fmt.Fprintf(os.Stderr, "gc: finalize %s: %v\n", obj.ID, err)
-				continue
-			}
-			fmt.Printf("finalized deleted object %s\n", obj.ID)
-		}
-	}
-
 	return nil
 }
 

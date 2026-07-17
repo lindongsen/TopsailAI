@@ -33,7 +33,8 @@ func (s *stubMetadataAdapter) Search(ctx context.Context, terms []string, opts m
 func (s *stubMetadataAdapter) AddTag(ctx context.Context, id models.ObjectID, tag string) error    { return nil }
 func (s *stubMetadataAdapter) RemoveTag(ctx context.Context, id models.ObjectID, tag string) error { return nil }
 func (s *stubMetadataAdapter) Recover(ctx context.Context) ([]*models.Object, error)               { return nil, nil }
-func (s *stubMetadataAdapter) GC(ctx context.Context, retention time.Duration) ([]*models.Object, error) {
+func (s *stubMetadataAdapter) Restore(ctx context.Context, id models.ObjectID) error               { return nil }
+func (s *stubMetadataAdapter) GC(ctx context.Context, retention time.Duration, force bool) ([]*models.Object, error) {
 	return nil, nil
 }
 func (s *stubMetadataAdapter) Close() error { return nil }

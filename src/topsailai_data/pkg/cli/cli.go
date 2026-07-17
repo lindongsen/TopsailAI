@@ -96,7 +96,7 @@ func registeredCommands() []Command {
 		{Name: "tag", Usage: "tag add <id> <tag> | tag remove <id> <tag>", Run: runTag},
 		{Name: "move", Usage: "move <id> [new-classify...]", Run: runMove},
 		{Name: "delete", Usage: "delete <id>", Run: runDelete},
-		{Name: "recover", Usage: "recover <id> [--resume] [--from <archive|->]", Run: runRecover},
+		{Name: "recover", Usage: "recover <id> [--from <archive|->]", Run: runRecover},
 		{Name: "gc", Usage: "gc [--dry-run] [--status creating|deleted|ceased]", Run: runGC},
 		{Name: "get", Usage: "get <id> <object-file>", Run: runGet},
 		{Name: "get-archive", Usage: "get-archive <id>", Run: runGetArchive},

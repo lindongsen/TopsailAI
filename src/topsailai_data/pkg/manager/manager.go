@@ -487,72 +487,30 @@ func isTimePrefix(year, monthDay, hourMinute string) bool {
 	return true
 }
 
-// RecoverObject attempts to resume or clean up a creating object, or restore
-// a soft-deleted object back to active.
+// RestoreObject restores a soft-deleted object back to active.
 //
-// Default behavior (resume=false):
-//   - For creating objects: if actual data already exists, the object is
-//     activated; otherwise the object and any partial data are removed.
-//   - For deleted objects: the object is restored to active. Actual data is
-//     preserved.
-//   - For ceased objects: an error is returned because ceased objects cannot
-//     be recovered.
-//
-// When resume=true:
-//   - If r is provided, it is written as the object's actual data and the
-//     object is activated.
-//   - If r is nil and actual data exists, the object is activated.
-//   - If r is nil and actual data does not exist, an error is returned so the
-//     caller can supply data with --from.
-func (m *Manager) RecoverObject(ctx context.Context, id models.ObjectID, resume bool, r io.Reader) error {
-	// Creating objects are not visible through Get; load via Recover list.
-	creating, err := m.meta.Recover(ctx)
-	if err != nil {
-		return fmt.Errorf("list creating objects: %w", err)
-	}
-	for _, candidate := range creating {
-		if candidate.ID == id {
-			return m.recoverCreatingObject(ctx, candidate, resume, r)
-		}
-	}
-
-	// Not a creating object; resolve through metadata (including deleted/ceased).
+// Only objects whose status is "deleted" can be restored. If r is provided,
+// it is written as the object's actual data before the status is changed. If
+// r is nil, the object is only restored when its actual data still exists.
+func (m *Manager) RestoreObject(ctx context.Context, id models.ObjectID, r io.Reader) error {
 	obj, err := m.meta.Get(ctx, id, true)
 	if err != nil {
 		return err
 	}
 
-	switch obj.Status {
-	case models.ObjectStatusDeleted:
-		objectDir := filepath.Join(m.metaRoot, obj.Path)
-		lock, err := local.AcquireWriteLock(objectDir)
-		if err != nil {
-			return fmt.Errorf("acquire write lock: %w", err)
+	if obj.Status != models.ObjectStatusDeleted {
+		switch obj.Status {
+		case models.ObjectStatusActive:
+			return fmt.Errorf("%w: object %s is already active", errors.ErrObjectExists, id)
+		case models.ObjectStatusCreating:
+			return fmt.Errorf("%w: object %s is still being created; use gc to clean up creating objects", errors.ErrObjectCreating, id)
+		case models.ObjectStatusCeased:
+			return fmt.Errorf("%w: object %s has ceased and cannot be restored", errors.ErrObjectCeased, id)
+		default:
+			return fmt.Errorf("%w: object %s has unexpected status %s", errors.ErrInvalidStatus, id, obj.Status)
 		}
-		defer lock.Release()
-
-		obj.Status = models.ObjectStatusActive
-		obj.DeletedAt = nil
-		obj.UpdatedAt = time.Now()
-		if err := m.meta.Update(ctx, obj); err != nil {
-			return fmt.Errorf("restore deleted object: %w", err)
-		}
-		return nil
-
-	case models.ObjectStatusCeased:
-		return fmt.Errorf("%w: object %s has ceased and cannot be recovered", errors.ErrObjectCeased, id)
-	case models.ObjectStatusActive:
-		return fmt.Errorf("%w: object %s is already active", errors.ErrObjectExists, id)
-	case models.ObjectStatusCreating:
-		// Should not happen because we checked the Recover list above.
-		return fmt.Errorf("%w: object %s is still being created", errors.ErrObjectCreating, id)
-	default:
-		return fmt.Errorf("%w: object %s has unexpected status %s", errors.ErrInvalidStatus, id, obj.Status)
 	}
-}
 
-// recoverCreatingObject resumes or cleans up a single creating object.
-func (m *Manager) recoverCreatingObject(ctx context.Context, obj *models.Object, resume bool, r io.Reader) error {
 	objectDir := filepath.Join(m.metaRoot, obj.Path)
 	lock, err := local.AcquireWriteLock(objectDir)
 	if err != nil {
@@ -560,32 +518,55 @@ func (m *Manager) recoverCreatingObject(ctx context.Context, obj *models.Object,
 	}
 	defer lock.Release()
 
-	// Explicit resume with provided data: write the archive and activate.
-	if resume && r != nil {
+	if r != nil {
 		if _, err := m.actual.WriteArchive(ctx, obj.DataRef, r); err != nil {
-			return fmt.Errorf("recover write actual data: %w", err)
+			return fmt.Errorf("restore write actual data: %w", err)
 		}
-		obj.Status = models.ObjectStatusActive
-		obj.UpdatedAt = time.Now()
-		return m.meta.Update(ctx, obj)
+	} else {
+		exists, err := m.actual.Exists(ctx, obj.DataRef)
+		if err != nil {
+			return fmt.Errorf("restore check actual data: %w", err)
+		}
+		if !exists {
+			return fmt.Errorf("%w: object %s actual data is missing; provide --from to restore", errors.ErrInvalidArgument, id)
+		}
 	}
 
-	exists, err := m.actual.Exists(ctx, obj.DataRef)
+	obj.Status = models.ObjectStatusActive
+	obj.DeletedAt = nil
+	obj.UpdatedAt = time.Now()
+	if err := m.meta.Update(ctx, obj); err != nil {
+		return fmt.Errorf("restore deleted object: %w", err)
+	}
+	return nil
+}
+
+// CleanupCreatingObject removes a single creating object that never became
+// active. It is used by the gc command.
+func (m *Manager) CleanupCreatingObject(ctx context.Context, id models.ObjectID) error {
+	obj, err := m.meta.Get(ctx, id, true)
 	if err != nil {
-		return fmt.Errorf("check actual data: %w", err)
+		return err
 	}
-
-	if exists {
-		obj.Status = models.ObjectStatusActive
-		obj.UpdatedAt = time.Now()
-		return m.meta.Update(ctx, obj)
+	if obj.Status != models.ObjectStatusCreating {
+		return fmt.Errorf("%w: object %s is %s, expected creating", errors.ErrObjectNotActive, id, obj.Status)
 	}
+	return m.cleanupCreatingObject(ctx, obj)
+}
 
-	if resume {
-		return fmt.Errorf("%w: object %s has no actual data; provide --from to resume creation", errors.ErrInvalidArgument, obj.ID)
+// cleanupCreatingObject removes a single creating object that never became
+// active. It is used internally by GC.
+func (m *Manager) cleanupCreatingObject(ctx context.Context, obj *models.Object) error {
+	objectDir := filepath.Join(m.metaRoot, obj.Path)
+	lock, err := local.AcquireWriteLock(objectDir)
+	if err != nil {
+		return fmt.Errorf("acquire write lock: %w", err)
 	}
+	defer lock.Release()
 
-	// Default cleanup: creating object never became active, remove it entirely.
+	// Creating objects are incomplete; remove any partial actual data and the
+	// object folder entirely. They are never auto-activated because creation
+	// should always be atomic through the create command.
 	_ = m.actual.Delete(ctx, obj.DataRef)
 	_ = os.RemoveAll(objectDir)
 	_ = local.RemoveEmptyParents(objectDir, m.metaRoot)
@@ -593,13 +574,30 @@ func (m *Manager) recoverCreatingObject(ctx context.Context, obj *models.Object,
 }
 
 // GC permanently removes ceased objects whose retention period has expired.
+// Use GCObjects with force=true to ignore the retention window.
 func (m *Manager) GC(ctx context.Context) error {
-	candidates, err := m.meta.GC(ctx, m.cfg.CeasedRetentionDuration())
+	return m.GCObjects(ctx, false)
+}
+
+// GCObjects removes objects eligible for garbage collection.
+//
+// When force is false, only creating objects and ceased objects whose
+// retention period has expired are removed. When force is true, all ceased
+// objects are removed immediately.
+func (m *Manager) GCObjects(ctx context.Context, force bool) error {
+	candidates, err := m.meta.GC(ctx, m.cfg.CeasedRetentionDuration(), force)
 	if err != nil {
 		return fmt.Errorf("list gc candidates: %w", err)
 	}
 
 	for _, obj := range candidates {
+		if obj.Status == models.ObjectStatusCreating {
+			if err := m.cleanupCreatingObject(ctx, obj); err != nil {
+				return fmt.Errorf("cleanup creating object %s: %w", obj.ID, err)
+			}
+			continue
+		}
+
 		objectDir := filepath.Join(m.metaRoot, obj.Path)
 		lock, err := local.AcquireWriteLock(objectDir)
 		if err != nil {

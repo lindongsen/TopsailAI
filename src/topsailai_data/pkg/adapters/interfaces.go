@@ -55,12 +55,18 @@ type MetadataAdapter interface {
 	RemoveTag(ctx context.Context, id models.ObjectID, tag string) error
 
 	// Recover lists objects that are in the "creating" state so that a manager
-	// can either resume creation or clean them up.
+	// can clean them up. The recover CLI command no longer resumes creating
+	// objects; this method is retained for the gc command.
 	Recover(ctx context.Context) ([]*models.Object, error)
 
+	// Restore transitions a deleted object back to active.
+	// It is used by the recover CLI command to restore soft-deleted objects.
+	Restore(ctx context.Context, id models.ObjectID) error
+
 	// GC returns objects that are eligible for permanent metadata cleanup, such
-	// as ceased objects whose retention period has expired.
-	GC(ctx context.Context, retention time.Duration) ([]*models.Object, error)
+	// as ceased objects whose retention period has expired. When force is true,
+	// all ceased objects are returned regardless of retention.
+	GC(ctx context.Context, retention time.Duration, force bool) ([]*models.Object, error)
 
 	// Close releases any resources held by the adapter.
 	Close() error

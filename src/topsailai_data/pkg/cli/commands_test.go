@@ -27,7 +27,7 @@ func setupManager(t *testing.T) (*manager.Manager, string, context.Context) {
 		ActualDataAdapter:   "local",
 		ReadLock:            false,
 		IncludeDeleted:      false,
-		CeasedRetentionDays: 0,
+		CeasedRetentionDays: 30,
 		LogLevel:            "ERROR",
 	}
 	mgr, err := manager.New(cfg)
@@ -52,6 +52,30 @@ func captureStdout(t *testing.T, fn func()) string {
 	var buf bytes.Buffer
 	_, _ = buf.ReadFrom(r)
 	return buf.String()
+}
+
+// buildTarArchive creates a tar archive containing the given files.
+func buildTarArchive(t *testing.T, files map[string][]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := tar.NewWriter(&buf)
+	for name, data := range files {
+		hdr := &tar.Header{
+			Name: name,
+			Mode: 0o644,
+			Size: int64(len(data)),
+		}
+		if err := w.WriteHeader(hdr); err != nil {
+			t.Fatalf("write tar header: %v", err)
+		}
+		if _, err := w.Write(data); err != nil {
+			t.Fatalf("write tar body: %v", err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+	return buf.Bytes()
 }
 
 
@@ -297,8 +321,8 @@ func TestCreateFromPlainFile(t *testing.T) {
 	}
 }
 
-func TestRecoverAutoActivate(t *testing.T) {
-	mgr, tmp, ctx := setupManager(t)
+func TestRecoverRestoresDeletedObject(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
 
 	obj, err := mgr.CreateObject(ctx, "recoverable", manager.CreateObjectOptions{
 		Classify: []string{"demo"},
@@ -307,204 +331,215 @@ func TestRecoverAutoActivate(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	// Simulate a crash by reverting the metadata to creating without touching actual data.
-	metaPath := filepath.Join(tmp, obj.Path, "metadata.json")
-	metaBytes, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatalf("read metadata: %v", err)
-	}
-	metaBytes = bytes.ReplaceAll(metaBytes, []byte(`"active"`), []byte(`"creating"`))
-	if err := os.WriteFile(metaPath, metaBytes, 0644); err != nil {
-		t.Fatalf("write metadata: %v", err)
-	}
-
-	if err := Run(ctx, mgr, []string{"recover", string(obj.ID)}); err != nil {
-		t.Fatalf("recover: %v", err)
-	}
-
-	got, err := mgr.GetObject(ctx, obj.ID, false)
-	if err != nil {
-		t.Fatalf("get after recover: %v", err)
-	}
-	if got.Status != models.ObjectStatusActive {
-		t.Fatalf("expected status active, got %s", got.Status)
-	}
-}
-
-func TestRecoverCleanupWhenNoActualData(t *testing.T) {
-	mgr, tmp, ctx := setupManager(t)
-
-	obj, err := mgr.CreateObject(ctx, "orphan", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	// Remove actual data and revert metadata to creating.
-	if err := os.RemoveAll(filepath.Join(tmp, obj.Path, obj.Name+".md")); err != nil {
-		t.Fatalf("remove marker: %v", err)
-	}
-	metaPath := filepath.Join(tmp, obj.Path, "metadata.json")
-	metaBytes, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatalf("read metadata: %v", err)
-	}
-	metaBytes = bytes.ReplaceAll(metaBytes, []byte(`"active"`), []byte(`"creating"`))
-	if err := os.WriteFile(metaPath, metaBytes, 0644); err != nil {
-		t.Fatalf("write metadata: %v", err)
-	}
-
-	if err := Run(ctx, mgr, []string{"recover", string(obj.ID)}); err != nil {
-		t.Fatalf("recover: %v", err)
-	}
-
-	_, err = mgr.GetObject(ctx, obj.ID, false)
-	if err == nil {
-		t.Fatalf("expected object to be gone after cleanup")
-	}
-}
-
-func TestRecoverResumeRequiresFromWhenNoData(t *testing.T) {
-	mgr, _, ctx := setupManager(t)
-
-	obj, err := mgr.CreateObject(ctx, "resume", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	// Revert to creating and remove actual data.
-	metaPath := filepath.Join(mgr.Root(), obj.Path, "metadata.json")
-	metaBytes, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatalf("read metadata: %v", err)
-	}
-	metaBytes = bytes.ReplaceAll(metaBytes, []byte(`"active"`), []byte(`"creating"`))
-	if err := os.WriteFile(metaPath, metaBytes, 0644); err != nil {
-		t.Fatalf("write metadata: %v", err)
-	}
-	if err := os.RemoveAll(filepath.Join(mgr.Root(), obj.Path, obj.Name+".md")); err != nil {
-		t.Fatalf("remove marker: %v", err)
-	}
-
-	err = Run(ctx, mgr, []string{"recover", "--resume", string(obj.ID)})
-	if err == nil {
-		t.Fatalf("expected error when --resume without --from and no actual data")
-	}
-	if !strings.Contains(err.Error(), "from") {
-		t.Fatalf("expected error to mention --from, got %v", err)
-	}
-}
-
-func TestRecoverResumeWithoutFromActivatesExistingData(t *testing.T) {
-	mgr, tmp, ctx := setupManager(t)
-
-	obj, err := mgr.CreateObject(ctx, "resume", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	// Revert metadata to creating while leaving actual data intact.
-	metaPath := filepath.Join(tmp, obj.Path, "metadata.json")
-	metaBytes, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatalf("read metadata: %v", err)
-	}
-	metaBytes = bytes.ReplaceAll(metaBytes, []byte(`"active"`), []byte(`"creating"`))
-	if err := os.WriteFile(metaPath, metaBytes, 0644); err != nil {
-		t.Fatalf("write metadata: %v", err)
-	}
-
-	if err := Run(ctx, mgr, []string{"recover", "--resume", string(obj.ID)}); err != nil {
-		t.Fatalf("recover --resume without --from: %v", err)
-	}
-
-	got, err := mgr.GetObject(ctx, obj.ID, false)
-	if err != nil {
-		t.Fatalf("get after recover: %v", err)
-	}
-	if got.Status != models.ObjectStatusActive {
-		t.Fatalf("expected status active, got %s", got.Status)
-	}
-}
-
-func TestGCDefaultScansCreatingAndCeased(t *testing.T) {
-	mgr, tmp, ctx := setupManager(t)
-
-	// Create an active object.
-	activeObj, err := mgr.CreateObject(ctx, "active", manager.CreateObjectOptions{Classify: []string{"demo"}})
-	if err != nil {
-		t.Fatalf("create active: %v", err)
-	}
-
-	// Create a creating object without actual data (will be cleaned up).
-	creatingObj, err := mgr.CreateObject(ctx, "creating", manager.CreateObjectOptions{Classify: []string{"demo"}})
-	if err != nil {
-		t.Fatalf("create creating: %v", err)
-	}
-	metaPath := filepath.Join(tmp, creatingObj.Path, "metadata.json")
-	metaBytes, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatalf("read metadata: %v", err)
-	}
-	metaBytes = bytes.ReplaceAll(metaBytes, []byte(`"active"`), []byte(`"creating"`))
-	if err := os.WriteFile(metaPath, metaBytes, 0644); err != nil {
-		t.Fatalf("write metadata: %v", err)
-	}
-	if err := os.RemoveAll(filepath.Join(tmp, creatingObj.Path, creatingObj.Name+".md")); err != nil {
-		t.Fatalf("remove marker: %v", err)
-	}
-
-	// Create a ceased object (delete twice: active -> deleted -> ceased).
-	ceasedObj, err := mgr.CreateObject(ctx, "ceased", manager.CreateObjectOptions{Classify: []string{"demo"}})
-	if err != nil {
-		t.Fatalf("create ceased: %v", err)
-	}
-	if err := mgr.DeleteObject(ctx, ceasedObj.ID); err != nil {
+	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if err := mgr.DeleteObject(ctx, ceasedObj.ID); err != nil {
-		t.Fatalf("finalize delete: %v", err)
+
+	if err := Run(ctx, mgr, []string{"recover", string(obj.ID)}); err != nil {
+		t.Fatalf("recover: %v", err)
 	}
 
-	if err := Run(ctx, mgr, []string{"gc"}); err != nil {
-		t.Fatalf("gc: %v", err)
+	got, err := mgr.GetObject(ctx, obj.ID, false)
+	if err != nil {
+		t.Fatalf("get after recover: %v", err)
 	}
-
-	// Active object must remain.
-	if _, err := mgr.GetObject(ctx, activeObj.ID, false); err != nil {
-		t.Fatalf("active object should remain: %v", err)
-	}
-
-	// Creating object without data must be gone.
-	if _, err := mgr.GetObject(ctx, creatingObj.ID, false); err == nil {
-		t.Fatalf("creating object should be cleaned up")
-	}
-
-	// Ceased object must be gone.
-	if _, err := mgr.GetObject(ctx, ceasedObj.ID, true); err == nil {
-		t.Fatalf("ceased object should be cleaned up")
+	if got.Status != models.ObjectStatusActive {
+		t.Fatalf("expected status active, got %s", got.Status)
 	}
 }
 
-func TestCreateClassifySlashPath(t *testing.T) {
+func TestRecoverRejectsNonDeleted(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	if err := Run(ctx, mgr, []string{"create", "slashdoc", "--classify", "photos/2024"}); err != nil {
-		t.Fatalf("create with slash classify: %v", err)
+	cases := []struct {
+		name  string
+		setup func() (models.ObjectID, error)
+	}{
+		{
+			name: "active",
+			setup: func() (models.ObjectID, error) {
+				obj, err := mgr.CreateObject(ctx, "active-obj", manager.CreateObjectOptions{})
+				if err != nil {
+					return "", err
+				}
+				return obj.ID, nil
+			},
+		},
+		{
+			name: "creating",
+			setup: func() (models.ObjectID, error) {
+				obj, err := mgr.CreateObject(ctx, "creating-obj", manager.CreateObjectOptions{})
+				if err != nil {
+					return "", err
+				}
+				metaPath := filepath.Join(mgr.Root(), obj.Path, "metadata.json")
+				metaBytes, err := os.ReadFile(metaPath)
+				if err != nil {
+					return "", err
+				}
+				metaBytes = bytes.ReplaceAll(metaBytes, []byte(`"active"`), []byte(`"creating"`))
+				if err := os.WriteFile(metaPath, metaBytes, 0644); err != nil {
+					return "", err
+				}
+				return obj.ID, nil
+			},
+		},
+		{
+			name: "ceased",
+			setup: func() (models.ObjectID, error) {
+				obj, err := mgr.CreateObject(ctx, "ceased-obj", manager.CreateObjectOptions{})
+				if err != nil {
+					return "", err
+				}
+				if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+					return "", err
+				}
+				if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+					return "", err
+				}
+				return obj.ID, nil
+			},
+		},
 	}
 
-	got, err := mgr.GetObject(ctx, "slashdoc", false)
-	if err != nil {
-		t.Fatalf("get: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id, err := tc.setup()
+			if err != nil {
+				t.Fatalf("setup: %v", err)
+			}
+			if err := Run(ctx, mgr, []string{"recover", string(id)}); err == nil {
+				t.Fatalf("expected error recovering %s object", tc.name)
+			}
+		})
 	}
-	wantSuffix := "photos/2024/slashdoc"
-	if !strings.HasSuffix(got.Path, wantSuffix) {
-		t.Fatalf("expected path to end with %q, got %q", wantSuffix, got.Path)
+}
+
+func TestRecoverRestoresDeletedWithFrom(t *testing.T) {
+	mgr, tmp, ctx := setupManager(t)
+
+	obj, err := mgr.CreateObject(ctx, "restore-from", manager.CreateObjectOptions{
+		Classify: []string{"demo"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	// Write a fresh archive to restore as the object's actual data.
+	archivePath := filepath.Join(tmp, "restore.tar")
+	if err := os.WriteFile(archivePath, buildTarArchive(t, map[string][]byte{
+		"restore-from.md": []byte("restored content"),
+	}), 0644); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+
+	if err := Run(ctx, mgr, []string{"recover", string(obj.ID), "--from", archivePath}); err != nil {
+		t.Fatalf("recover --from: %v", err)
+	}
+
+	got, err := mgr.GetObject(ctx, obj.ID, false)
+	if err != nil {
+		t.Fatalf("get after recover: %v", err)
+	}
+	if got.Status != models.ObjectStatusActive {
+		t.Fatalf("expected status active, got %s", got.Status)
+	}
+}
+
+
+func TestRecoverRejectsActiveObject(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	if err := Run(ctx, mgr, []string{"create", "activeobj"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	err := Run(ctx, mgr, []string{"recover", "activeobj"})
+	if err == nil {
+		t.Fatalf("expected error recovering active object")
+	}
+	if !strings.Contains(err.Error(), "already active") {
+		t.Fatalf("expected already active error, got %v", err)
+	}
+}
+
+func TestRecoverRejectsCeasedObject(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	if err := Run(ctx, mgr, []string{"create", "ceasedobj"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := Run(ctx, mgr, []string{"delete", "ceasedobj"}); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if err := Run(ctx, mgr, []string{"gc", "--status", "deleted"}); err != nil {
+		t.Fatalf("gc deleted: %v", err)
+	}
+
+	err := Run(ctx, mgr, []string{"recover", "ceasedobj"})
+	if err == nil {
+		t.Fatalf("expected error recovering ceased object")
+	}
+	if !strings.Contains(err.Error(), "ceased") {
+		t.Fatalf("expected ceased error, got %v", err)
+	}
+}
+
+func TestRecoverRestoresDeletedWithFromArchive(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	if err := Run(ctx, mgr, []string{"create", "restorearchive"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := Run(ctx, mgr, []string{"delete", "restorearchive"}); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	var tarBuf bytes.Buffer
+	tw := tar.NewWriter(&tarBuf)
+	marker := []byte("restored from archive")
+	hdr := &tar.Header{
+		Name: "restorearchive.md",
+		Mode: 0o644,
+		Size: int64(len(marker)),
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatalf("write header: %v", err)
+	}
+	if _, err := tw.Write(marker); err != nil {
+		t.Fatalf("write body: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+
+	archivePath := filepath.Join(t.TempDir(), "restore.tar")
+	if err := os.WriteFile(archivePath, tarBuf.Bytes(), 0o644); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+
+	if err := Run(ctx, mgr, []string{"recover", "restorearchive", "--from", archivePath}); err != nil {
+		t.Fatalf("recover from archive: %v", err)
+	}
+
+	obj, err := mgr.GetObject(ctx, "restorearchive", false)
+	if err != nil {
+		t.Fatalf("get after recover: %v", err)
+	}
+	if obj.Status != models.ObjectStatusActive {
+		t.Fatalf("expected active, got %s", obj.Status)
+	}
+
+	content, err := os.ReadFile(filepath.Join(mgr.Root(), string(obj.Path), "restorearchive.md"))
+	if err != nil {
+		t.Fatalf("read restored file: %v", err)
+	}
+	if string(content) != string(marker) {
+		t.Fatalf("expected restored content %q, got %q", marker, content)
 	}
 }
 
@@ -530,6 +565,36 @@ func TestGCStatusDeletedFinalizesObjects(t *testing.T) {
 	}
 	if got.Status != models.ObjectStatusCeased {
 		t.Fatalf("expected status ceased, got %s", got.Status)
+	}
+}
+func TestGCStatusCeasedDeletesImmediately(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	obj, err := mgr.CreateObject(ctx, "fresh-ceased", manager.CreateObjectOptions{Classify: []string{"demo"}})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+		t.Fatalf("finalize delete: %v", err)
+	}
+
+	// Default gc should keep the ceased object because retention window has not passed.
+	if err := Run(ctx, mgr, []string{"gc"}); err != nil {
+		t.Fatalf("default gc: %v", err)
+	}
+	if _, err := mgr.GetObject(ctx, obj.ID, true); err != nil {
+		t.Fatalf("ceased object should still exist after default gc: %v", err)
+	}
+
+	// Explicit --status ceased must delete immediately, ignoring retention.
+	if err := Run(ctx, mgr, []string{"gc", "--status", "ceased"}); err != nil {
+		t.Fatalf("gc --status ceased: %v", err)
+	}
+	if _, err := mgr.GetObject(ctx, obj.ID, true); err == nil {
+		t.Fatalf("ceased object should be gone after explicit gc --status ceased")
 	}
 }
 

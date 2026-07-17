@@ -309,6 +309,41 @@ func (a *MetadataAdapter) Search(ctx context.Context, terms []string, opts model
 	return matches[opts.Offset:end], nil
 }
 
+// GC returns objects eligible for permanent cleanup.
+//
+// It returns creating objects (which never became active) and ceased objects.
+// Creating objects are always returned so incomplete objects can be cleaned
+// up. Ceased objects are returned when force is true or when their retention
+// period has expired.
+func (a *MetadataAdapter) GC(ctx context.Context, retention time.Duration, force bool) ([]*models.Object, error) {
+	// Find creating objects using Recover, which locates metadata.json files
+	// directly and does not require the mandatory object marker file.
+	creating, err := a.Recover(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Find ceased objects through the normal scan, which requires the object
+	// marker file and respects the include-deleted flag.
+	objects, err := a.scanObjects(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+
+	var candidates []*models.Object
+	candidates = append(candidates, creating...)
+
+	cutoff := time.Now().Add(-retention)
+	for _, obj := range objects {
+		if obj.Status == models.ObjectStatusCeased {
+			if force || (obj.CeasedAt != nil && obj.CeasedAt.Before(cutoff)) {
+				candidates = append(candidates, obj)
+			}
+		}
+	}
+	return candidates, nil
+}
+
 // matchesSearchTerms reports whether an object's name, tags, or classify path
 // match any of the provided terms. Matching is case-insensitive substring. An
 // empty terms slice matches everything.
@@ -386,25 +421,27 @@ func (a *MetadataAdapter) Recover(ctx context.Context) ([]*models.Object, error)
 	SortObjectsByTimePath(creating, false)
 	return creating, nil
 }
-
-// GC returns ceased objects whose retention period has expired.
-func (a *MetadataAdapter) GC(ctx context.Context, retention time.Duration) ([]*models.Object, error) {
-	objects, err := a.scanObjects(ctx, true)
+// Restore transitions a deleted object back to active.
+func (a *MetadataAdapter) Restore(ctx context.Context, id models.ObjectID) error {
+	obj, objectDir, err := a.findObject(id)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	if obj.Status != models.ObjectStatusDeleted {
+		return fmt.Errorf("%w: object %s is %s, expected deleted", errors.ErrObjectNotActive, id, obj.Status)
 	}
 
-	var candidates []*models.Object
-	cutoff := time.Now().Add(-retention)
-	for _, obj := range objects {
-		if obj.Status != models.ObjectStatusCeased {
-			continue
-		}
-		if obj.CeasedAt != nil && obj.CeasedAt.Before(cutoff) {
-			candidates = append(candidates, obj)
-		}
+	obj.Status = models.ObjectStatusActive
+	obj.DeletedAt = nil
+	obj.UpdatedAt = time.Now()
+	data, err := json.MarshalIndent(obj, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal metadata: %w", err)
 	}
-	return candidates, nil
+	if err := os.WriteFile(a.metadataFile(objectDir), data, 0o644); err != nil {
+		return fmt.Errorf("write metadata: %w", err)
+	}
+	return nil
 }
 
 // AddTag appends a tag to an active object if it is not already present.
@@ -428,7 +465,6 @@ func (a *MetadataAdapter) AddTag(ctx context.Context, id models.ObjectID, tag st
 		return fmt.Errorf("read object tags: %w", err)
 	}
 	effective := mergeTags(inherited, ownTags)
-
 	for _, existing := range effective {
 		if existing == tag {
 			return nil

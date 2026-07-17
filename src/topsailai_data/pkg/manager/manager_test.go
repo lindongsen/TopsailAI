@@ -778,198 +778,122 @@ func TestRemoveInheritedTagFails(t *testing.T) {
 		t.Fatalf("expected ErrInvalidArgument, got %v", err)
 	}
 }
-
-func TestRecoverObject(t *testing.T) {
+func TestRestoreObject(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	// Simulate a creating object by creating metadata directly.
-	now := time.Now()
-	objectPath := buildObjectPathForTest(t, now, nil, "orphan")
-	objectDir := filepath.Join(mgr.Root(), objectPath)
-	if err := os.MkdirAll(objectDir, 0o755); err != nil {
-		t.Fatalf("mkdir object dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(objectDir, "orphan.md"), []byte("data"), 0o644); err != nil {
-		t.Fatalf("write orphan.md failed: %v", err)
-	}
-
-	meta := mgr.meta
-	if err := meta.Create(ctx, &models.Object{
-		ID:        "orphan",
-		Name:      "orphan",
-		Path:      objectPath,
-		Status:    models.ObjectStatusCreating,
-		CreatedAt: now,
-		UpdatedAt: now,
-		DataRef:   objectDir,
-	}); err != nil {
-		t.Fatalf("Create metadata failed: %v", err)
-	}
-
-	if err := mgr.RecoverObject(ctx, "orphan", false, nil); err != nil {
-		t.Fatalf("RecoverObject failed: %v", err)
-	}
-
-	obj, err := mgr.GetObject(ctx, "orphan", false)
-	if err != nil {
-		t.Fatalf("GetObject after recover failed: %v", err)
-	}
-	if obj.Status != models.ObjectStatusActive {
-		t.Fatalf("expected status active, got %q", obj.Status)
-	}
-}
-
-func TestRecoverObjectNotCreating(t *testing.T) {
-	mgr := newTestManager(t)
-	ctx := context.Background()
-
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
-		t.Fatalf("CreateObject failed: %v", err)
-	}
-
-	err := mgr.RecoverObject(ctx, "obj", false, nil)
-	if err == nil {
-		t.Fatal("expected error recovering active object")
-	}
-	if !errors.Is(err, apperrors.ErrObjectExists) {
-		t.Fatalf("expected ErrObjectExists, got %v", err)
-	}
-}
-
-func TestRecoverObjectResumeWithData(t *testing.T) {
-	mgr := newTestManager(t)
-	ctx := context.Background()
-
-	now := time.Now()
-	objectPath := buildObjectPathForTest(t, now, nil, "resume")
-	objectDir := filepath.Join(mgr.Root(), objectPath)
-	if err := os.MkdirAll(objectDir, 0o755); err != nil {
-		t.Fatalf("mkdir object dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(objectDir, "resume.md"), []byte("data"), 0o644); err != nil {
-		t.Fatalf("write resume.md failed: %v", err)
-	}
-
-	meta := mgr.meta
-	if err := meta.Create(ctx, &models.Object{
-		ID:        "resume",
-		Name:      "resume",
-		Path:      objectPath,
-		Status:    models.ObjectStatusCreating,
-		CreatedAt: now,
-		UpdatedAt: now,
-		DataRef:   objectDir,
-	}); err != nil {
-		t.Fatalf("Create metadata failed: %v", err)
-	}
-
-	archive := buildTarArchive(t, map[string][]byte{
-		"resume.md": []byte("resumed data"),
-		"extra.txt": []byte("extra"),
-	})
-
-	if err := mgr.RecoverObject(ctx, "resume", true, bytes.NewReader(archive)); err != nil {
-		t.Fatalf("RecoverObject resume failed: %v", err)
-	}
-
-	obj, err := mgr.GetObject(ctx, "resume", false)
-	if err != nil {
-		t.Fatalf("GetObject after resume failed: %v", err)
-	}
-	if obj.Status != models.ObjectStatusActive {
-		t.Fatalf("expected status active, got %q", obj.Status)
-	}
-}
-
-func TestRecoverObjectResumeNoData(t *testing.T) {
-	mgr := newTestManager(t)
-	ctx := context.Background()
-
-	now := time.Now()
-	objectPath := buildObjectPathForTest(t, now, nil, "resume-no-data")
-	objectDir := filepath.Join(mgr.Root(), objectPath)
-	if err := os.MkdirAll(objectDir, 0o755); err != nil {
-		t.Fatalf("mkdir object dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(objectDir, "resume-no-data.md"), []byte("data"), 0o644); err != nil {
-		t.Fatalf("write resume-no-data.md failed: %v", err)
-	}
-
-	if err := mgr.meta.Create(ctx, &models.Object{
-		ID:        "resume-no-data",
-		Name:      "resume-no-data",
-		Path:      objectPath,
-		Status:    models.ObjectStatusCreating,
-		CreatedAt: now,
-		UpdatedAt: now,
-		DataRef:   objectDir,
-	}); err != nil {
-		t.Fatalf("Create metadata failed: %v", err)
-	}
-
-	// Remove actual data so Exists returns false. The adapter's Delete preserves
-	// the mandatory object marker, so remove it explicitly to simulate no data.
-	if err := mgr.actual.Delete(ctx, objectDir); err != nil {
-		t.Fatalf("delete actual data: %v", err)
-	}
-	if err := os.Remove(filepath.Join(objectDir, "resume-no-data.md")); err != nil {
-		t.Fatalf("remove object marker: %v", err)
-	}
-
-	err := mgr.RecoverObject(ctx, "resume-no-data", true, nil)
-	if err == nil {
-		t.Fatal("expected error resuming without data")
-	}
-	if !errors.Is(err, apperrors.ErrInvalidArgument) {
-		t.Fatalf("expected ErrInvalidArgument, got %v", err)
-	}
-}
-
-func TestGC(t *testing.T) {
-	mgr := newTestManager(t)
-	ctx := context.Background()
-
-	// Create and delete an object so it becomes deleted, then finalize to ceased.
-	obj, err := mgr.CreateObject(ctx, "old", CreateObjectOptions{})
+	obj, err := mgr.CreateObject(ctx, "restore-me", CreateObjectOptions{})
 	if err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
-	if err := mgr.DeleteObject(ctx, "old"); err != nil {
+	if err := mgr.DeleteObject(ctx, "restore-me"); err != nil {
 		t.Fatalf("DeleteObject failed: %v", err)
 	}
-	if err := mgr.DeleteObject(ctx, "old"); err != nil {
+
+	// Object is deleted but actual data still exists because DeleteObject only
+	// marks it deleted on the first call.
+	if err := mgr.RestoreObject(ctx, models.ObjectID("restore-me"), nil); err != nil {
+		t.Fatalf("RestoreObject failed: %v", err)
+	}
+
+	restored, err := mgr.GetObject(ctx, "restore-me", false)
+	if err != nil {
+		t.Fatalf("GetObject after restore failed: %v", err)
+	}
+	if restored.Status != models.ObjectStatusActive {
+		t.Fatalf("expected status active, got %q", restored.Status)
+	}
+	if restored.Path != obj.Path {
+		t.Fatalf("expected path %q after restore, got %q", obj.Path, restored.Path)
+	}
+}
+
+func TestRestoreObjectRejectsNonDeleted(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	creatingPath := buildObjectPathForTest(t, now, nil, "creating-obj")
+	creatingDir := filepath.Join(mgr.Root(), creatingPath)
+	if err := os.MkdirAll(creatingDir, 0o755); err != nil {
+		t.Fatalf("mkdir creating object dir: %v", err)
+	}
+
+	cases := []struct {
+		name  string
+		setup func() error
+		id    string
+	}{
+		{
+			name: "creating",
+			setup: func() error {
+				return mgr.meta.Create(ctx, &models.Object{
+					ID:        "creating-obj",
+					Name:      "creating-obj",
+					Path:      creatingPath,
+					Status:    models.ObjectStatusCreating,
+					CreatedAt: now,
+					UpdatedAt: now,
+					DataRef:   creatingDir,
+				})
+			},
+			id: "creating-obj",
+		},
+		{
+			name: "active",
+			setup: func() error {
+				_, err := mgr.CreateObject(ctx, "active-obj", CreateObjectOptions{})
+				return err
+			},
+			id: "active-obj",
+		},
+		{
+			name: "ceased",
+			setup: func() error {
+				_, err := mgr.CreateObject(ctx, "ceased-obj", CreateObjectOptions{})
+				if err != nil {
+					return err
+				}
+				if err := mgr.DeleteObject(ctx, "ceased-obj"); err != nil {
+					return err
+				}
+				return mgr.DeleteObject(ctx, "ceased-obj")
+			},
+			id: "ceased-obj",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.setup(); err != nil {
+				t.Fatalf("setup failed: %v", err)
+			}
+			err := mgr.RestoreObject(ctx, models.ObjectID(tc.id), nil)
+			if err == nil {
+				t.Fatal("expected error restoring non-deleted object")
+			}
+		})
+	}
+}
+
+func TestRestoreObjectMissingData(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	_, err := mgr.CreateObject(ctx, "no-data", CreateObjectOptions{})
+	if err != nil {
+		t.Fatalf("CreateObject failed: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, "no-data"); err != nil {
+		t.Fatalf("DeleteObject failed: %v", err)
+	}
+	// Finalize to delete actual data, then restore should fail.
+	if err := mgr.DeleteObject(ctx, "no-data"); err != nil {
 		t.Fatalf("DeleteObject finalize failed: %v", err)
 	}
 
-	// Backdate the ceased_at timestamp in metadata.json so GC removes it.
-	objectDir := filepath.Join(mgr.Root(), obj.Path)
-	metaPath := filepath.Join(objectDir, "metadata.json")
-	metaBytes, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatalf("read metadata.json failed: %v", err)
-	}
-	var raw map[string]any
-	if err := json.Unmarshal(metaBytes, &raw); err != nil {
-		t.Fatalf("unmarshal metadata.json failed: %v", err)
-	}
-	oldTime := time.Now().Add(-31 * 24 * time.Hour).UTC().Format(time.RFC3339Nano)
-	raw["CeasedAt"] = oldTime
-	metaBytes, err = json.Marshal(raw)
-	if err != nil {
-		t.Fatalf("marshal metadata.json failed: %v", err)
-	}
-	if err := os.WriteFile(metaPath, metaBytes, 0o644); err != nil {
-		t.Fatalf("write metadata.json failed: %v", err)
-	}
-
-	if err := mgr.GC(ctx); err != nil {
-		t.Fatalf("GC failed: %v", err)
-	}
-
-	_, err = mgr.GetObject(ctx, "old", true)
-	if !errors.Is(err, apperrors.ErrObjectNotFound) {
-		t.Fatalf("expected ErrObjectNotFound after GC, got %v", err)
+	if err := mgr.RestoreObject(ctx, models.ObjectID("no-data"), nil); err == nil {
+		t.Fatal("expected error restoring object without actual data")
 	}
 }
 
@@ -1009,6 +933,40 @@ func TestGCZeroRetention(t *testing.T) {
 	_, err = mgr.GetObject(ctx, "old", true)
 	if !errors.Is(err, apperrors.ErrObjectNotFound) {
 		t.Fatalf("expected ErrObjectNotFound after GC with zero retention, got %v", err)
+	}
+}
+
+func TestGCForceRemovesCeasedImmediately(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	_, err := mgr.CreateObject(ctx, "fresh-ceased", CreateObjectOptions{})
+	if err != nil {
+		t.Fatalf("CreateObject failed: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, "fresh-ceased"); err != nil {
+		t.Fatalf("DeleteObject failed: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, "fresh-ceased"); err != nil {
+		t.Fatalf("DeleteObject finalize failed: %v", err)
+	}
+
+	// Default retention is 30 days, so a non-force GC should keep the object.
+	if err := mgr.GCObjects(ctx, false); err != nil {
+		t.Fatalf("GCObjects(false) failed: %v", err)
+	}
+	_, err = mgr.GetObject(ctx, "fresh-ceased", true)
+	if err != nil {
+		t.Fatalf("expected fresh ceased object to remain without force, got %v", err)
+	}
+
+	// Explicit force GC should remove it regardless of retention window.
+	if err := mgr.GCObjects(ctx, true); err != nil {
+		t.Fatalf("GCObjects(true) failed: %v", err)
+	}
+	_, err = mgr.GetObject(ctx, "fresh-ceased", true)
+	if !errors.Is(err, apperrors.ErrObjectNotFound) {
+		t.Fatalf("expected ErrObjectNotFound after forced GC, got %v", err)
 	}
 }
 
@@ -1217,7 +1175,8 @@ func (e *errorCloseMetadataAdapter) Search(ctx context.Context, terms []string, 
 func (e *errorCloseMetadataAdapter) AddTag(ctx context.Context, id models.ObjectID, tag string) error { return nil }
 func (e *errorCloseMetadataAdapter) RemoveTag(ctx context.Context, id models.ObjectID, tag string) error { return nil }
 func (e *errorCloseMetadataAdapter) Recover(ctx context.Context) ([]*models.Object, error) { return nil, nil }
-func (e *errorCloseMetadataAdapter) GC(ctx context.Context, retention time.Duration) ([]*models.Object, error) {
+func (e *errorCloseMetadataAdapter) Restore(ctx context.Context, id models.ObjectID) error { return nil }
+func (e *errorCloseMetadataAdapter) GC(ctx context.Context, retention time.Duration, force bool) ([]*models.Object, error) {
 	return nil, nil
 }
 func (e *errorCloseMetadataAdapter) Close() error { return errors.New("metadata close error") }
@@ -1334,7 +1293,7 @@ func TestGCRemovesEmptyParents(t *testing.T) {
 	}
 }
 
-func TestRecoverCleanupRemovesEmptyParents(t *testing.T) {
+func TestGCCleanupRemovesEmptyParents(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
@@ -1359,8 +1318,8 @@ func TestRecoverCleanupRemovesEmptyParents(t *testing.T) {
 
 	classifyDir := filepath.Dir(objectDir)
 
-	if err := mgr.RecoverObject(ctx, "orphan", false, nil); err != nil {
-		t.Fatalf("RecoverObject failed: %v", err)
+	if err := mgr.GCObjects(ctx, false); err != nil {
+		t.Fatalf("GCObjects failed: %v", err)
 	}
 
 	if _, err := os.Stat(objectDir); !os.IsNotExist(err) {

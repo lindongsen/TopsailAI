@@ -671,7 +671,7 @@ func TestMetadataAdapterAddAndRemoveTag(t *testing.T) {
 	}
 }
 
-func TestMetadataAdapterRecover(t *testing.T) {
+func TestMetadataAdapterRestore(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	adapter := NewMetadataAdapter(root)
@@ -692,16 +692,70 @@ func TestMetadataAdapterRecover(t *testing.T) {
 		createObjectDir(t, root, obj)
 	}
 
-	create("creating-one", models.ObjectStatusCreating)
+	create("deleted-one", models.ObjectStatusDeleted)
 	create("active-one", models.ObjectStatusActive)
 	create("ceased-one", models.ObjectStatusCeased)
 
-	creating, err := adapter.Recover(ctx)
-	if err != nil {
-		t.Fatalf("Recover failed: %v", err)
+	if err := adapter.Restore(ctx, models.ObjectID("deleted-one")); err != nil {
+		t.Fatalf("Restore failed: %v", err)
 	}
-	if len(creating) != 1 || creating[0].Name != "creating-one" {
-		t.Fatalf("expected only creating-one, got %v", creating)
+	restored, err := adapter.Get(ctx, models.ObjectID("deleted-one"), false)
+	if err != nil {
+		t.Fatalf("Get restored object failed: %v", err)
+	}
+	if restored.Status != models.ObjectStatusActive {
+		t.Fatalf("expected active status, got %v", restored.Status)
+	}
+
+	if err := adapter.Restore(ctx, models.ObjectID("active-one")); err == nil {
+		t.Fatal("expected error restoring active object")
+	}
+	if err := adapter.Restore(ctx, models.ObjectID("ceased-one")); err == nil {
+		t.Fatal("expected error restoring ceased object")
+	}
+}
+
+func TestMetadataAdapterGCForce(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewMetadataAdapter(root)
+	_ = adapter.Init(ctx)
+	defer adapter.Close()
+
+	now := time.Now()
+	create := func(name string, status models.ObjectStatus, ceasedAt *time.Time) {
+		objectPath, _ := BuildObjectPath(now, nil, name)
+		obj := &models.Object{
+			ID:        models.ObjectID(name),
+			Name:      name,
+			Path:      objectPath,
+			Status:    status,
+			CreatedAt: now,
+			UpdatedAt: now,
+			CeasedAt:  ceasedAt,
+		}
+		createObjectDir(t, root, obj)
+	}
+
+	recent := now.Add(-1 * time.Hour)
+	create("recent-ceased", models.ObjectStatusCeased, &recent)
+
+	// Default GC should skip recent ceased object.
+	candidates, err := adapter.GC(ctx, 24*time.Hour, false)
+	if err != nil {
+		t.Fatalf("GC failed: %v", err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("expected no candidates with retention, got %v", candidates)
+	}
+
+	// Force GC should include recent ceased object.
+	candidates, err = adapter.GC(ctx, 24*time.Hour, true)
+	if err != nil {
+		t.Fatalf("GC force failed: %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].Name != "recent-ceased" {
+		t.Fatalf("expected recent-ceased with force, got %v", candidates)
 	}
 }
 
@@ -733,7 +787,7 @@ func TestMetadataAdapterGC(t *testing.T) {
 	create("recent", models.ObjectStatusCeased, &recent)
 	create("active", models.ObjectStatusActive, nil)
 
-	candidates, err := adapter.GC(ctx, 24*time.Hour)
+	candidates, err := adapter.GC(ctx, 24*time.Hour, false)
 	if err != nil {
 		t.Fatalf("GC failed: %v", err)
 	}

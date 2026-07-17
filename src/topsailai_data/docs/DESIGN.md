@@ -343,7 +343,7 @@ Each object folder may contain an advisory lock file named `{object}.lock` (e.g.
 - Read operations (`Get`, `List`, `ReadFile`, `ReadArchive`) do **not** acquire the lock by default, allowing concurrent reads.
 - A caller may force read locking via the CLI flag `--lock` or by setting the environment variable `TOPSAILAI_DATA_READ_LOCK=1`.
 - If the lock file cannot be acquired because another process holds it, the operation returns `ErrObjectLocked` after a configurable timeout.
-- Locks are meaningful only for `active` objects. `gc`, `recover`, and delete-finalization may proceed on `creating` or `deleted` objects without acquiring the lock.
+- Locks are meaningful only for `active` objects. `gc` and delete-finalization may proceed on `creating` or `deleted` objects without acquiring the lock. `recover` operates on `deleted` objects and does not acquire the lock.
 - An `active` object cannot be deleted or moved while another process holds its lock.
 - The lock file is created on first write and removed when the object transitions to `ceased`.
 
@@ -371,15 +371,15 @@ The following table maps each object status to the operations that may be perfor
 
 | Status | Visible in List/Search | Visible in show | Read Actual | Write Actual | Tag | Move | Delete | Allowed Resolution |
 |--------|------------------------|-----------------|-------------|--------------|-----|------|--------|-------------------|
-| `creating` | No | No | No | Yes (during creation) | No | No | No | `recover`, `gc` |
+| `creating` | No | No | No | Yes (during creation) | No | No | No | `gc` |
 | `active` | Yes | Yes | Yes | Yes | Yes | Yes | Yes (soft delete) | — |
-| `deleted` | Only with `--include-deleted` | Yes | Only if data still exists | No | No | No | Yes (retry/finalize) | `delete`, `gc` |
-| `ceased` | Only with `--include-deleted` | Yes | No | No | No | No | No | `gc` (cleanup after retention) |
+| `deleted` | Only with `--include-deleted` | Yes | Only if data still exists | No | No | No | Yes (retry/finalize) | `recover`, `delete`, `gc` |
+| `ceased` | Only with `--include-deleted` | Yes | No | No | No | No | No | `gc` (cleanup after retention, or immediate with `--status ceased`) |
 
-- `creating` objects are invisible to normal `List`, `Get`, and search. They may only be resolved by `recover` (which promotes them to `active` if actual data exists) or `gc` (which removes incomplete metadata and any partial actual data).
+- `creating` objects are invisible to normal `List`, `Get`, and search. They may only be resolved by `gc` (which removes incomplete metadata and any partial actual data).
 - `active` objects support all operations. Write operations acquire the advisory object lock; `Delete` performs a soft delete.
-- `deleted` objects retain metadata but their actual data is removed. `Read` is allowed only if the adapter still holds data; `Delete` re-attempts actual-data removal and finalizes the object to `ceased` on success.
-- `ceased` objects retain only metadata. No actual-data operations are permitted. They are eligible for cleanup by `gc` after `TOPSAILAI_DATA_CEASED_RETENTION_DAYS`.
+- `deleted` objects retain metadata but their actual data is removed. `Read` is allowed only if the adapter still holds data; `Delete` re-attempts actual-data removal and finalizes the object to `ceased` on success. `recover` restores a `deleted` object to `active` if its actual data still exists (or is supplied via `--from`).
+- `ceased` objects retain only metadata. No actual-data operations are permitted. They are eligible for cleanup by `gc` after `TOPSAILAI_DATA_CEASED_RETENTION_DAYS`. When `gc --status ceased` is explicitly requested, all `ceased` objects are removed immediately, ignoring the retention window.
 
 ## 8. CLI Commands
 
@@ -400,8 +400,8 @@ The CLI is named `topsaildata`. Commands include:
 | `get-archive <id>` | Output the actual data archive (tar) of an object. |
 | `put <id> <dest-file> [--from <src-file|->]` | Write a single actual data file to an object. `<dest-file>` is the filename inside the object; the source is read from `--from` or from redirected stdin. |
 | `put-archive <id> <archive>` | Replace object actual data from a tar archive. |
-| `recover <id>` | Attempt to finish a `creating` object if actual data exists; otherwise mark it `ceased`. |
-| `gc [--dry-run] [--status creating|deleted|ceased]` | Scan and clean up objects in the specified status. Default scans `creating` and `ceased`. |
+| `recover <id>` | Restore a `deleted` object to `active`. The object's actual data must still exist, or be supplied with `--from`. Returns an error for `creating`, `active`, or `ceased` objects. |
+| `gc [--dry-run] [--status creating|deleted|ceased]` | Scan and clean up objects in the specified status. Default scans `creating` and `ceased`, honoring `TOPSAILAI_DATA_CEASED_RETENTION_DAYS`. When `--status ceased` is explicitly provided, all ceased objects are removed immediately. |
 
 Search queries are case-insensitive substring matches against object names and tags. Multiple terms separated by `|` are combined with OR semantics: an object matches if any term matches its name or any tag. Queries containing spaces, tabs, or backslash escapes are rejected with a clear error.
 
@@ -542,7 +542,7 @@ The `Manager` is responsible for orchestrating metadata and actual data adapters
    - Return the metadata error wrapped with a cleanup note.
 7. Release the object lock.
 
-Objects in `creating` status are excluded from normal `List`, `Get`, and search results. To resolve a `creating` object, run `recover <id>` to finish creation if actual data exists, or `gc` to remove incomplete metadata and actual data. Re-running `create` with the same name while a `creating` object exists returns `ErrObjectExists` unless `--force` is used.
+Objects in `creating` status are excluded from normal `List`, `Get`, and search results. Run `gc` to remove incomplete metadata and any partial actual data. Re-running `create` with the same name while a `creating` object exists returns `ErrObjectExists` unless `--force` is used.
 
 ### 12.2 Update Actual Data
 
@@ -587,8 +587,28 @@ A background cleanup process or the `gc` command may later remove old `ceased` m
 - Lock acquisition failures return `ErrObjectLocked` immediately without side effects.
 - All cleanup attempts are logged; failures during cleanup do not hide the original error.
 
-## 13. Configuration and Environment Variables
+### 12.6 Recover Object
 
+`recover <id>` restores a `deleted` object back to `active`. It is not used to resume `creating` objects; those are cleaned up by `gc`.
+
+1. Read the existing metadata.
+2. Verify the object status is `deleted`. If the status is `creating`, `active`, or `ceased`, return a clear error.
+3. Verify the object's actual data still exists, or accept a new payload via `--from`. If neither is available, the object cannot be recovered.
+4. Update the metadata status to `active` and set `UpdatedAt` to now.
+5. The object is now visible to normal `List`, `Get`, and search operations.
+
+### 12.7 Garbage Collect Objects
+
+`gc` cleans up objects based on their lifecycle status.
+
+- Default behavior (no `--status` flag): scan `creating` objects and `ceased` objects. Remove `creating` objects and their partial actual data immediately. Remove `ceased` objects only after `TOPSAILAI_DATA_CEASED_RETENTION_DAYS`.
+- `--status creating`: remove all `creating` objects immediately.
+- `--status deleted`: finalize all `deleted` objects to `ceased` after actual data removal succeeds.
+- `--status ceased`: remove all `ceased` objects immediately, ignoring the retention window. Use this when you want to force cleanup before the retention period expires.
+
+`--dry-run` reports what would be removed without making changes.
+
+## 13. Configuration and Environment Variables
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `TOPSAILAI_DATA_ROOT` | yes (local) | none | Root directory for the local adapter. |
