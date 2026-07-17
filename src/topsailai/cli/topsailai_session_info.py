@@ -156,6 +156,8 @@ def _session_to_dict(session: SessionData, home: str) -> dict[str, Any]:
         "project_workspace": str(session.project_workspace) if session.project_workspace else "",
         "pwd": str(session.pwd) if session.pwd else "",
         "topsailai_home": str(session.topsailai_home) if session.topsailai_home else "",
+        "total_tokens": int(session.total_tokens) if getattr(session, "total_tokens", None) is not None else 0,
+        "total_cached_tokens": int(session.total_cached_tokens) if getattr(session, "total_cached_tokens", None) is not None else 0,
         "create_time": create_time_str,
         # Computed metadata
         "status": "Running" if running else "Idle",
@@ -225,6 +227,8 @@ def _format_session(session: SessionData, home: str, color_enabled: bool) -> str
     add_row("Project Workspace", str(session.project_workspace) if session.project_workspace else "(none)")
     add_row("PWD", str(session.pwd) if session.pwd else "(none)")
     add_row("TOPSAILAI_HOME", str(session.topsailai_home) if session.topsailai_home else "(none)")
+    add_row("Total Tokens", str(session.total_tokens) if getattr(session, "total_tokens", None) is not None else "0")
+    add_row("Total Cached Tokens", str(session.total_cached_tokens) if getattr(session, "total_cached_tokens", None) is not None else "0")
 
     task_label = "Task"
     task_label_text = f"{task_label}:".ljust(label_width)

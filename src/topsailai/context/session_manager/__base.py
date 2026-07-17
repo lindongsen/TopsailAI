@@ -18,9 +18,9 @@ class SessionData(object):
     Data container for a single session in the AI engineering framework.
 
     This class holds the essential information about a session, including
-    its unique identifier, associated task, and runtime environment paths.
-    Additional metadata like session name and creation time can be stored
-    as attributes.
+    its unique identifier, associated task, runtime environment paths, and
+    accumulated token usage. Additional metadata like session name and
+    creation time can be stored as attributes.
     """
     def __init__(
         self,
@@ -30,6 +30,8 @@ class SessionData(object):
         project_workspace: str = None,
         pwd: str = None,
         topsailai_home: str = None,
+        total_tokens: int = 0,
+        total_cached_tokens: int = 0,
     ):
         """
         Initialize a SessionData instance.
@@ -42,6 +44,10 @@ class SessionData(object):
             project_workspace (str, optional): Project workspace path at session creation
             pwd (str, optional): Working directory at session creation
             topsailai_home (str, optional): TopsailAI home directory at session creation
+            total_tokens (int, optional): Accumulated token usage for the session.
+                Defaults to 0.
+            total_cached_tokens (int, optional): Accumulated cached token usage for
+                the session. Defaults to 0.
 
         Note:
             Additional attributes like session_name and create_time are
@@ -56,6 +62,8 @@ class SessionData(object):
         self.pwd = pwd
         self.topsailai_home = topsailai_home
         self.create_time = None
+        self.total_tokens = total_tokens
+        self.total_cached_tokens = total_cached_tokens
 
     def __str__(self):
         """Return string representation of SessionData."""

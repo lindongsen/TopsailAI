@@ -214,6 +214,8 @@ class SessionSQLAlchemy(SessionStorageBase):
                     project_workspace=session.project_workspace,
                     pwd=session.pwd,
                     topsailai_home=session.topsailai_home,
+                    total_tokens=session.total_tokens or 0,
+                    total_cached_tokens=session.total_cached_tokens or 0,
                 )
                 session_data.session_name = session.session_name
                 session_data.create_time = session.create_time
@@ -286,6 +288,8 @@ class SessionSQLAlchemy(SessionStorageBase):
                 project_workspace=session.project_workspace,
                 pwd=session.pwd,
                 topsailai_home=session.topsailai_home,
+                total_tokens=session.total_tokens or 0,
+                total_cached_tokens=session.total_cached_tokens or 0,
             )
             session_data.session_name = session.session_name
             session_data.create_time = session.create_time

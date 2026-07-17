@@ -65,6 +65,25 @@ class TestSessionData(unittest.TestCase):
         
         self.assertIsNone(session.create_time)
 
+    def test_init_token_totals_default_to_zero(self):
+        """Test that token total attributes default to 0."""
+        session = SessionData(session_id="s1", task="t1")
+        
+        self.assertEqual(session.total_tokens, 0)
+        self.assertEqual(session.total_cached_tokens, 0)
+
+    def test_init_with_token_totals(self):
+        """Test SessionData initialization with token totals."""
+        session = SessionData(
+            session_id="s1",
+            task="t1",
+            total_tokens=1234,
+            total_cached_tokens=567,
+        )
+        
+        self.assertEqual(session.total_tokens, 1234)
+        self.assertEqual(session.total_cached_tokens, 567)
+
     def test_attributes_are_writable(self):
         """Test that session attributes can be set after initialization."""
         session = SessionData(session_id="s1", task="t1")

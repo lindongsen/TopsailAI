@@ -654,6 +654,77 @@ class TestSessionSQLAlchemy:
         assert sessions[2].task == "task_c"
 
 
+    def test_get_session_returns_token_totals(self, session_mgr):
+        """Test that get_session returns accumulated token totals."""
+        session_data = SessionData(
+            session_id="token_session",
+            session_name="Token Session",
+            task="Token task",
+        )
+        session_mgr.create_session(session_data)
+        session_mgr.accumulate_session_tokens(
+            session_id="token_session",
+            current_tokens=150,
+            current_cached_tokens=75,
+        )
+
+        retrieved = session_mgr.get_session("token_session")
+        assert retrieved.total_tokens == 150
+        assert retrieved.total_cached_tokens == 75
+
+    def test_list_sessions_returns_token_totals(self, session_mgr):
+        """Test that list_sessions returns accumulated token totals."""
+        session_data = SessionData(
+            session_id="token_session",
+            session_name="Token Session",
+            task="Token task",
+        )
+        session_mgr.create_session(session_data)
+        session_mgr.accumulate_session_tokens(
+            session_id="token_session",
+            current_tokens=200,
+            current_cached_tokens=100,
+        )
+
+        sessions = session_mgr.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0].total_tokens == 200
+        assert sessions[0].total_cached_tokens == 100
+
+    def test_token_totals_persist_across_instances(self):
+        """Test that token totals persist when reopening the database."""
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            db_path = tmp.name
+
+        try:
+            mgr1 = SessionSQLAlchemy(f"sqlite:///{db_path}")
+            session_data = SessionData(
+                session_id="persistent_token_session",
+                session_name="Persistent Token Session",
+                task="Persistent token task",
+            )
+            mgr1.create_session(session_data)
+            mgr1.accumulate_session_tokens(
+                session_id="persistent_token_session",
+                current_tokens=300,
+                current_cached_tokens=150,
+            )
+
+            mgr2 = SessionSQLAlchemy(f"sqlite:///{db_path}")
+            retrieved = mgr2.get_session("persistent_token_session")
+            assert retrieved.total_tokens == 300
+            assert retrieved.total_cached_tokens == 150
+
+            sessions = mgr2.list_sessions()
+            assert len(sessions) == 1
+            assert sessions[0].total_tokens == 300
+            assert sessions[0].total_cached_tokens == 150
+        finally:
+            os.unlink(db_path)
+
+
 class TestSessionTokenAccumulation:
     """Test suite for session token accumulation via accumulate_session_tokens."""
 

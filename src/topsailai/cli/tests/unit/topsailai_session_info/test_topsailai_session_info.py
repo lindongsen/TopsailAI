@@ -145,6 +145,8 @@ class TestSessionToDict:
         assert data["status"] == "Idle"
         assert data["is_running"] is False
         assert data["create_time"] == "2026-07-05 10:30:15"
+        assert data["total_tokens"] == 0
+        assert data["total_cached_tokens"] == 0
 
     def test_running_session_dict(self, tmp_path: Path):
         task_dir = tmp_path / si.TASK_SUBDIR
@@ -157,6 +159,20 @@ class TestSessionToDict:
         data = si._session_to_dict(session, str(tmp_path))
         assert data["status"] == "Running"
         assert data["is_running"] is True
+
+    def test_session_dict_with_token_totals(self, tmp_path: Path):
+        session = SessionData(
+            session_id="token123",
+            task="Token task.",
+            session_name="token-session",
+            total_tokens=1234,
+            total_cached_tokens=567,
+        )
+        session.create_time = datetime(2026, 7, 5, 10, 30, 15)
+
+        data = si._session_to_dict(session, str(tmp_path))
+        assert data["total_tokens"] == 1234
+        assert data["total_cached_tokens"] == 567
 
 
 class TestFormatSessionJson:
@@ -188,6 +204,10 @@ class TestFormatSessionJson:
         assert parsed["is_running"] is False
         assert isinstance(parsed["create_time_relative"], str)
 
+        # Token totals default to 0 when not provided
+        assert parsed["total_tokens"] == 0
+        assert parsed["total_cached_tokens"] == 0
+
     def test_json_output_includes_all_expected_keys(self, tmp_path: Path):
         session = SessionData(session_id="json2", task="Task two")
         session.create_time = datetime(2026, 7, 5, 10, 30, 15)
@@ -206,8 +226,26 @@ class TestFormatSessionJson:
             "status",
             "is_running",
             "create_time_relative",
+            "total_tokens",
+            "total_cached_tokens",
         }
         assert set(parsed.keys()) == expected_keys
+
+    def test_json_output_with_nonzero_token_totals(self, tmp_path: Path):
+        session = SessionData(
+            session_id="json3",
+            task="Token task.",
+            session_name="token-session",
+            total_tokens=9999,
+            total_cached_tokens=4444,
+        )
+        session.create_time = datetime(2026, 7, 5, 10, 30, 15)
+
+        output = si._format_session_json(session, str(tmp_path))
+        parsed = json.loads(output)
+
+        assert parsed["total_tokens"] == 9999
+        assert parsed["total_cached_tokens"] == 4444
 
 
 class TestFormatSession:
@@ -234,6 +272,26 @@ class TestFormatSession:
         assert "/workspace/abc" in output
         assert "/workspace/abc/src" in output
         assert "/home/abc/.topsailai" in output
+        assert "Total Tokens" in output
+        assert "Total Cached Tokens" in output
+
+    @patch.object(si, "_supports_color", return_value=False)
+    @patch("shutil.get_terminal_size", return_value=Mock(columns=80))
+    def test_format_session_with_nonzero_token_totals(self, _mock_size, _mock_color, tmp_path: Path):
+        session = SessionData(
+            session_id="token123",
+            task="Token task.",
+            session_name="token-session",
+            total_tokens=1234,
+            total_cached_tokens=567,
+        )
+        session.create_time = datetime(2026, 7, 5, 10, 30, 15)
+
+        output = si._format_session(session, str(tmp_path), False)
+        assert "Total Tokens" in output
+        assert "Total Cached Tokens" in output
+        assert "1234" in output
+        assert "567" in output
 
     @patch.object(si, "_supports_color", return_value=False)
     @patch("shutil.get_terminal_size", return_value=Mock(columns=80))
