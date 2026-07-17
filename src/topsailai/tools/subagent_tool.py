@@ -249,7 +249,8 @@ I am a sub-agent, and my name is ({role_name or agent_name})
             task_id=task_id,
         )
     finally:
-        del task_agent
+        if agent_name not in g_subagents:
+            del task_agent
 
 
 class MainAgent(object):
