@@ -71,7 +71,14 @@ def prompt_selection(
             return ("quit", None)
         try:
             prompt_text = get_prompt()
-            user_input = input(prompt_text).strip()
+            # Some execution wrappers (e.g. uv run) strip ANSI escape
+            # sequences from the prompt argument passed to input(), which
+            # causes literal [32m/[0m markers to be displayed. Print the
+            # colored prompt directly via stdout and call input() with an
+            # empty prompt so the escapes are preserved.
+            sys.stdout.write(prompt_text)
+            sys.stdout.flush()
+            user_input = input("").strip()
             if user_input:
                 try:
                     import readline

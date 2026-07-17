@@ -16,6 +16,7 @@ sys.path.insert(
 )
 
 import cli_topsailai.state as cli_state
+from cli_topsailai.colors import Colors
 from cli_topsailai.core import prompt_selection
 
 
@@ -40,6 +41,42 @@ class TestHandleCommands(unittest.TestCase):
         mock_input.return_value = "q"
         action, value = prompt_selection([], "/task")
         self.assertEqual(action, "quit")
+
+
+    @patch("sys.stdout.flush")
+    @patch("sys.stdout.write")
+    @patch("cli_topsailai.core.input")
+    def test_prompt_written_to_stdout_not_passed_to_input(
+        self, mock_input, mock_write, mock_flush
+    ):
+        """Colored prompt must be written to stdout; input() gets an empty prompt."""
+        mock_input.return_value = "q"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        mock_write.assert_called_once()
+        written = mock_write.call_args[0][0]
+        self.assertIn(Colors.GREEN, written)
+        self.assertIn("[workspace]", written)
+        self.assertIn(Colors.RESET, written)
+        mock_input.assert_called_once_with("")
+        mock_flush.assert_called_once()
+
+    @patch("sys.stdout.flush")
+    @patch("sys.stdout.write")
+    @patch("cli_topsailai.core.input")
+    def test_session_prompt_written_to_stdout(
+        self, mock_input, mock_write, mock_flush
+    ):
+        """Session scope prompt includes the session ID and ANSI codes."""
+        cli_state.current_scope = "session"
+        cli_state.current_session_id = "my-session"
+        mock_input.return_value = "q"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        written = mock_write.call_args[0][0]
+        self.assertIn(Colors.GREEN, written)
+        self.assertIn("[session:my-session]", written)
+        self.assertIn(Colors.RESET, written)
 
     @patch("cli_topsailai.core.input")
     def test_help(self, mock_input):
