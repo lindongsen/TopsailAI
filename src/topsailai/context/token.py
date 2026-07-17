@@ -187,6 +187,7 @@ class TokenStat(threading.Thread):
         total_text_len (int): Total accumulated text length in characters
         current_text_len (int): Text length for the most recent message
         msg_count (int): Number of messages processed
+        total_cached_tokens (int): Total accumulated cached tokens across all messages
         _start_time (int): Timestamp when the thread was started
         _end_time (int): Timestamp when the thread should end (0 for infinite)
         _last_msg_time (int): Timestamp of the last message processed
@@ -238,6 +239,7 @@ class TokenStat(threading.Thread):
         self.msg_count = 0          # Number of messages processed
 
         # From LLM
+        self.total_cached_tokens = 0  # Total cached tokens across all messages
         self.current_cached_tokens = 0
 
         # Thread synchronization and data management
@@ -292,6 +294,7 @@ class TokenStat(threading.Thread):
                 cached_tokens=-1,
                 msg_count=self.msg_count,
                 current_text_len=self.current_text_len,
+                total_cached_tokens=self.total_cached_tokens,
                 total_text_len=self.total_text_len,
                 total_tokens=self.total_count,
                 first_byte_avg_sec=(
@@ -314,6 +317,8 @@ class TokenStat(threading.Thread):
                         cached_tokens=self.current_cached_tokens,
                     )
                 )
+                if self.current_cached_tokens:
+                    self.total_cached_tokens += self.current_cached_tokens
 
         # Format and output the statistics
         if env_tool.is_need_print():

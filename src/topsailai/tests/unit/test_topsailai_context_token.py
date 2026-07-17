@@ -254,6 +254,59 @@ class TestTokenStat(unittest.TestCase):
         self.assertIn("'first_byte_max_sec': 0.201", logged_msg)
         self.assertIn("'first_byte_min_sec': 0.051", logged_msg)
         stat.flag_running = False
+    def test_output_token_stat_accumulates_total_cached_tokens(self):
+        """Test output_token_stat accumulates total_cached_tokens from usage."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        usage = MagicMock()
+        usage.prompt_tokens_details.cached_tokens = 42
+
+        with patch('topsailai.context.token.print_info'), \
+             patch('topsailai.context.token.logger'):
+            stat.output_token_stat(usage)
+
+        self.assertEqual(stat.current_cached_tokens, 42)
+        self.assertEqual(stat.total_cached_tokens, 42)
+        stat.flag_running = False
+
+    def test_output_token_stat_accumulates_total_cached_tokens_multiple(self):
+        """Test total_cached_tokens accumulates across multiple calls."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        with patch('topsailai.context.token.print_info'), \
+             patch('topsailai.context.token.logger'):
+            for cached in [10, 20, 30]:
+                usage = MagicMock()
+                usage.prompt_tokens_details.cached_tokens = cached
+                stat.output_token_stat(usage)
+
+        self.assertEqual(stat.total_cached_tokens, 60)
+        stat.flag_running = False
+
+    def test_output_token_stat_total_cached_tokens_ignores_none(self):
+        """Test total_cached_tokens does not change when cached_tokens is None."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        usage = MagicMock()
+        usage.prompt_tokens_details.cached_tokens = None
+
+        with patch('topsailai.context.token.print_info'), \
+             patch('topsailai.context.token.logger'):
+            stat.output_token_stat(usage)
+
+        self.assertEqual(stat.total_cached_tokens, 0)
+        stat.flag_running = False
+
+    def test_output_token_stat_includes_total_cached_tokens(self):
+        """Test output_token_stat includes total_cached_tokens in logged info."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        stat.total_cached_tokens = 123
+
+        with patch('topsailai.context.token.print_info') as mock_print, \
+             patch('topsailai.context.token.logger'):
+            stat.output_token_stat()
+
+        logged_msg = mock_print.call_args[0][0]
+        self.assertIn("total_cached_tokens", logged_msg)
+        self.assertIn("'total_cached_tokens': 123", logged_msg)
+        stat.flag_running = False
 
     def test_output_token_stat_first_byte_none_when_empty(self):
         """Test output_token_stat reports None first-byte metrics when empty."""
