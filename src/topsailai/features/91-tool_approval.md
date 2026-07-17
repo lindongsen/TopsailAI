@@ -152,7 +152,7 @@ TOPSAILAI_TOOL_APPROVAL_RULES='[
     "match": "cmd_tool-exec_cmd",
     "mode": "require",
     "params": [
-      { "param": "cmd", "op": "contains", "value": "rm -rf" }
+      { "param": "cmd", "op": "regex", "value": "rm\\s.*\\s-rf?\\s.*\\s/\\s" }
     ],
     "timeout": 30,
     "policy": "deny",
