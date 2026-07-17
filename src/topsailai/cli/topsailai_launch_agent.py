@@ -838,6 +838,7 @@ def main():
         sys.exit(1)
 
     item_name = args.item
+    print(f"[TopsailAI-Launcher] Context item: {item_name}")
 
     # 2. Assemble context: _default first, then the specified item
     default_context = context_map.get("_default", [])
