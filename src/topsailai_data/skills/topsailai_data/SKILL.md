@@ -167,8 +167,8 @@ bin/topsailai_data show hello
 | `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format table\|json] [--sort time:desc\|time:asc]` | Search objects by name, tag, or classify path. Use `|` in `<query>` for OR logic (e.g. `foo|bar`). Spaces, tabs, and backslash escapes are not supported. Results are sorted by the time prefix of the object path; default is `time:desc` (newest first). |
 | `tag` | `tag add <id> <tag>` or `tag remove <id> <tag>` | Add or remove an object-specific tag. |
 | `move` | `move <id> <new-classify...>` | Move an active object to a different classify path. The ID and name stay the same. |
-| `delete` | `delete <id>` | Soft-delete an active object. Actual data is removed and metadata transitions to `ceased`. |
-| `recover` | `recover <id> [--resume] [--from <archive\|->]` | Restore a `deleted` object back to `active`. The object's actual data must still exist, or be re-supplied with `--from`. Returns an error for `creating`, `active`, or `ceased` objects. The `--resume` flag is accepted for compatibility but has no effect. |
+| `delete` | `delete <id>` | Soft-delete an active object. Marks the object as `deleted` but preserves actual data so it can be recovered. Finalization removes actual data and transitions the object to `ceased`. |
+| `recover` | `recover <id> [--from <archive\|->]` | Restore a `deleted` object back to `active`. The object's actual data must still exist, or be re-supplied with `--from`. Returns an error for `creating`, `active`, or `ceased` objects. |
 | `gc` | `gc [--dry-run] [--status creating\|deleted\|ceased]` | Clean up `creating` objects, finalize `deleted` objects to `ceased`, or remove `ceased` objects. Default `gc` honors `TOPSAILAI_DATA_CEASED_RETENTION_DAYS`. When `--status ceased` is explicitly provided, all ceased objects are removed immediately. |
 | `get` | `get <id> <object-file>` | Read a single actual-data file to stdout. The raw byte stream is preserved, so this works for binary files such as images, videos, and compiled executables. |
 | `get-archive` | `get-archive <id>` | Output the object's actual data as a tar archive to stdout. |
@@ -233,7 +233,7 @@ Delete and cleanup:
 ```
 bin/topsailai_data delete <id>
 bin/topsailai_data gc [--dry-run] [--status creating|deleted|ceased]
-bin/topsailai_data recover <id> [--resume] [--from <archive|->]
+bin/topsailai_data recover <id> [--from <archive|->]
 ```
 
 Actual data I/O:

@@ -598,26 +598,35 @@ func (m *Manager) GCObjects(ctx context.Context, force bool) error {
 			continue
 		}
 
-		objectDir := filepath.Join(m.metaRoot, obj.Path)
-		lock, err := local.AcquireWriteLock(objectDir)
-		if err != nil {
-			return fmt.Errorf("acquire lock for gc %s: %w", obj.ID, err)
+		if err := m.gcCeasedObject(ctx, obj); err != nil {
+			return err
 		}
-
-		// Remove actual data if any remains.
-		_ = m.actual.Delete(ctx, obj.DataRef)
-
-		// Remove metadata and the entire object folder.
-		if err := os.RemoveAll(objectDir); err != nil {
-			_ = lock.Release()
-			return fmt.Errorf("remove object directory %q: %w", objectDir, err)
-		}
-		_ = lock.Release()
-
-		// Clean up any empty parent directories, stopping at the adapter root.
-		_ = local.RemoveEmptyParents(objectDir, m.metaRoot)
 	}
 
+	return nil
+}
+
+// gcCeasedObject removes a single ceased (or deleted being finalized) object
+// and cleans up empty parent directories. The lock is acquired and released
+// once per object using defer.
+func (m *Manager) gcCeasedObject(ctx context.Context, obj *models.Object) error {
+	objectDir := filepath.Join(m.metaRoot, obj.Path)
+	lock, err := local.AcquireWriteLock(objectDir)
+	if err != nil {
+		return fmt.Errorf("acquire lock for gc %s: %w", obj.ID, err)
+	}
+	defer lock.Release()
+
+	// Remove actual data if any remains.
+	_ = m.actual.Delete(ctx, obj.DataRef)
+
+	// Remove metadata and the entire object folder.
+	if err := os.RemoveAll(objectDir); err != nil {
+		return fmt.Errorf("remove object directory %q: %w", objectDir, err)
+	}
+
+	// Clean up any empty parent directories, stopping at the adapter root.
+	_ = local.RemoveEmptyParents(objectDir, m.metaRoot)
 	return nil
 }
 

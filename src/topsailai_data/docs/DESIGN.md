@@ -43,7 +43,7 @@ This document describes the architecture, core interfaces, file layout conventio
 | Adapter | A pluggable implementation of a storage interface. |
 | Schema version | A monotonically increasing integer that identifies the persistent storage format. Starts at `1`. |
 | Object lock | An advisory lock file (`{object}.lock`) inside an object folder, used to serialize write operations on that object. |
-| Soft delete | A deletion strategy that first marks an object as `deleted`, removes its actual data, and finally marks it as `ceased`. |
+| Soft delete | A deletion strategy that marks an object as `deleted` while preserving its actual data, then later transitions it to `ceased` and removes the actual data. |
 | Status | The lifecycle state of an object: `creating`, `active`, `deleted`, or `ceased`. |
 
 ## 4. Architecture
@@ -341,7 +341,6 @@ Each object folder may contain an advisory lock file named `{object}.lock` (e.g.
 
 - Write operations (`Create`, `Update`, `Delete`, `Move`, `WriteFile`, `WriteArchive`) acquire the object lock by default before modifying the object folder or metadata.
 - Read operations (`Get`, `List`, `ReadFile`, `ReadArchive`) do **not** acquire the lock by default, allowing concurrent reads.
-- A caller may force read locking via the CLI flag `--lock` or by setting the environment variable `TOPSAILAI_DATA_READ_LOCK=1`.
 - If the lock file cannot be acquired because another process holds it, the operation returns `ErrObjectLocked` after a configurable timeout.
 - Locks are meaningful only for `active` objects. `gc` and delete-finalization may proceed on `creating` or `deleted` objects without acquiring the lock. `recover` operates on `deleted` objects and does not acquire the lock.
 - An `active` object cannot be deleted or moved while another process holds its lock.
@@ -353,14 +352,15 @@ Deletion follows a soft-delete lifecycle with four states: `creating`, `active`,
 
 In the local adapter:
 
-1. `delete <id>` first creates a marker file `{object}.deleted` (e.g. `xyz.deleted`) inside the object folder. The object's metadata status is updated to `deleted`.
-2. The actual data is then removed via the actual-data adapter (`Delete`).
-3. After actual data removal succeeds, the marker is renamed or replaced to `{object}.ceased` (e.g. `xyz.ceased`) and the metadata status is updated to `ceased`.
+1. `delete <id>` first creates a marker file `{object}.deleted` (e.g. `xyz.deleted`) inside the object folder. The object's metadata status is updated to `deleted`. Actual data is preserved so the object can be restored with `recover`.
+2. The object remains in `deleted` status until it is finalized. Finalization can happen explicitly through `gc --status deleted`, implicitly when `delete <id>` is run again, or when the retention/cleanup policy triggers.
+3. During finalization, the actual data is removed via the actual-data adapter (`Delete`).
+4. After actual data removal succeeds, the marker is renamed or replaced to `{object}.ceased` (e.g. `xyz.ceased`) and the metadata status is updated to `ceased`.
 
 In database adapters:
 
-1. Update the `objects.status` column from `active` to `deleted`.
-2. Delete the actual data via the actual-data adapter.
+1. Update the `objects.status` column from `active` to `deleted`. Actual data is preserved for recovery.
+2. Finalize the object by deleting the actual data via the actual-data adapter.
 3. Update `objects.status` from `deleted` to `ceased`.
 
 Objects with status `deleted` or `ceased` are excluded from normal `List` and `Get` results. A dedicated `--include-deleted` flag or `TOPSAILAI_DATA_INCLUDE_DELETED=1` environment variable may be used to inspect them.
@@ -373,12 +373,12 @@ The following table maps each object status to the operations that may be perfor
 |--------|------------------------|-----------------|-------------|--------------|-----|------|--------|-------------------|
 | `creating` | No | No | No | Yes (during creation) | No | No | No | `gc` |
 | `active` | Yes | Yes | Yes | Yes | Yes | Yes | Yes (soft delete) | — |
-| `deleted` | Only with `--include-deleted` | Yes | Only if data still exists | No | No | No | Yes (retry/finalize) | `recover`, `delete`, `gc` |
+| `deleted` | Only with `--include-deleted` | Yes | Yes | No | No | No | Yes (finalize) | `recover`, `delete`, `gc` |
 | `ceased` | Only with `--include-deleted` | Yes | No | No | No | No | No | `gc` (cleanup after retention, or immediate with `--status ceased`) |
 
 - `creating` objects are invisible to normal `List`, `Get`, and search. They may only be resolved by `gc` (which removes incomplete metadata and any partial actual data).
-- `active` objects support all operations. Write operations acquire the advisory object lock; `Delete` performs a soft delete.
-- `deleted` objects retain metadata but their actual data is removed. `Read` is allowed only if the adapter still holds data; `Delete` re-attempts actual-data removal and finalizes the object to `ceased` on success. `recover` restores a `deleted` object to `active` if its actual data still exists (or is supplied via `--from`).
+- `active` objects support all operations. Write operations acquire the advisory object lock; `Delete` performs a soft delete that preserves actual data.
+- `deleted` objects retain metadata and actual data. `Read` is allowed; `recover` restores the object to `active` without requiring `--from`. `Delete` finalizes the object by removing actual data and transitioning it to `ceased`. `gc --status deleted` finalizes all `deleted` objects.
 - `ceased` objects retain only metadata. No actual-data operations are permitted. They are eligible for cleanup by `gc` after `TOPSAILAI_DATA_CEASED_RETENTION_DAYS`. When `gc --status ceased` is explicitly requested, all `ceased` objects are removed immediately, ignoring the retention window.
 
 ## 8. CLI Commands
@@ -391,22 +391,22 @@ The CLI is named `topsaildata`. Commands include:
 | `show <id>` | Display metadata of an object. For `active` objects also display the markdown content and folder structure; for `deleted` or `ceased` objects only metadata is shown. |
 | `update <id>` | Update an object's metadata or tags. |
 | `move <id> <new-classify...>` | Move an object to a different classify path. The ID and name do not change. |
-| `delete <id>` | Soft-delete an object and its actual data. |
-| `list [--tag tag1,tag2,...] [--include-deleted] [--offset n] [--limit n] [--format table|json]` | List objects, optionally filtered by tag. |
-| `search <query> [--include-deleted] [--offset n] [--limit n] [--format table|json]` | Search objects by name or tag. Use `|` in `<query>` for OR logic (e.g. `foo|bar`). Spaces, tabs, and backslash escapes are not supported. |
+| `delete <id>` | Soft-delete an active object. Marks the object as `deleted` but preserves actual data so it can be recovered. |
+| `list [--include-deleted] [--offset n] [--limit n] [--format table|json]` | List active objects, optionally paginated. |
+| `search <query> [--include-deleted] [--offset n] [--limit n] [--format table|json]` | Search objects by name, tag, or classify path. Use `|` in `<query>` for OR logic (e.g. `foo|bar`). Spaces, tabs, and backslash escapes are not supported. |
 | `tag add <id> <tag>` | Add a tag to an object. |
 | `tag remove <id> <tag>` | Remove a tag from an object. |
 | `get <id> <object-file>` | Read a single actual data file from an object. |
 | `get-archive <id>` | Output the actual data archive (tar) of an object. |
 | `put <id> <dest-file> [--from <src-file|->]` | Write a single actual data file to an object. `<dest-file>` is the filename inside the object; the source is read from `--from` or from redirected stdin. |
 | `put-archive <id> <archive>` | Replace object actual data from a tar archive. |
-| `recover <id>` | Restore a `deleted` object to `active`. The object's actual data must still exist, or be supplied with `--from`. Returns an error for `creating`, `active`, or `ceased` objects. |
+| `recover <id>` | Restore a `deleted` object to `active`. The object's actual data must still exist. Returns an error for `creating`, `active`, or `ceased` objects. |
 | `gc [--dry-run] [--status creating|deleted|ceased]` | Scan and clean up objects in the specified status. Default scans `creating` and `ceased`, honoring `TOPSAILAI_DATA_CEASED_RETENTION_DAYS`. When `--status ceased` is explicitly provided, all ceased objects are removed immediately. |
 
-Search queries are case-insensitive substring matches against object names and tags. Multiple terms separated by `|` are combined with OR semantics: an object matches if any term matches its name or any tag. Queries containing spaces, tabs, or backslash escapes are rejected with a clear error.
+Search queries are case-insensitive substring matches against object names, tags, and classify paths. Multiple terms separated by `|` are combined with OR semantics: an object matches if any term matches its name, tags, or classify path. Queries containing spaces, tabs, or backslash escapes are rejected with a clear error.
 
 All commands support interactive mode when invoked without inline arguments.
-Read commands accept an optional `--lock` flag to force advisory locking. Write commands always acquire the object lock by default.
+Write commands always acquire the object lock by default.
 
 ## 9. Error Handling
 
@@ -430,7 +430,7 @@ Errors are wrapped with context using `fmt.Errorf("...: %w", err)` so callers ca
 - A tag file with only comments or empty lines contributes no tags.
 - Duplicate tags in the same file or across inherited and object tags are deduplicated.
 - Creating an object whose path already exists returns `ErrObjectExists`.
-- Deleting an object removes both metadata and actual data.
+- Deleting an active object marks it as `deleted` and preserves actual data; finalization removes actual data and transitions the object to `ceased`.
 - Scanning stops at object boundaries; nested `object.md` files are ignored.
 - Classify tags are inherited recursively; closer tag files override or augment more distant ones, with deduplication.
 - Moving an object updates its `Path` but preserves its `ID` and `Name`.
@@ -563,12 +563,20 @@ A background cleanup process or the `gc` command may later remove old `ceased` m
 3. Mark the object as `deleted`:
    - Local adapter: create `xyz.deleted` and update the local index/status.
    - Database adapter: update `objects.status` to `'deleted'`.
-4. Delete the actual data via the actual-data adapter using the `DataRef`.
-5. If actual-data deletion fails, the object remains in `deleted` status and can be retried later. Log the error. Running `delete <id>` on an already `deleted` object re-attempts actual-data deletion and proceeds to `ceased` if successful. The `gc` command may also finalize stale `deleted` objects whose actual data is already gone.
-6. After actual data is removed, mark the object as `ceased`:
+4. Release the object lock.
+
+Actual data is preserved so the object can be restored with `recover`.
+
+### 12.3.1 Finalize Deleted Object
+
+1. Read the existing metadata to obtain the `DataRef`.
+2. Acquire the object lock (write mode).
+3. Delete the actual data via the actual-data adapter using the `DataRef`.
+4. If actual-data deletion fails, the object remains in `deleted` status and can be retried later. Log the error. Running `delete <id>` on an already `deleted` object re-attempts actual-data deletion and proceeds to `ceased` if successful. The `gc` command may also finalize stale `deleted` objects whose actual data is already gone.
+5. After actual data is removed, mark the object as `ceased`:
    - Local adapter: rename `xyz.deleted` to `xyz.ceased` and remove the object from the active index.
    - Database adapter: update `objects.status` to `'ceased'`.
-7. Release the object lock.
+6. Release the object lock.
 
 ### 12.4 Move Object
 
@@ -589,13 +597,14 @@ A background cleanup process or the `gc` command may later remove old `ceased` m
 
 ### 12.6 Recover Object
 
-`recover <id>` restores a `deleted` object back to `active`. It is not used to resume `creating` objects; those are cleaned up by `gc`.
+1. Verify the object status is `deleted`; only `deleted` objects may be recovered.
+2. Acquire the object lock (write mode).
+3. Mark the object as `active`:
+   - Local adapter: remove `xyz.deleted` and update the local index/status.
+   - Database adapter: update `objects.status` to `'active'`.
+4. Release the object lock.
 
-1. Read the existing metadata.
-2. Verify the object status is `deleted`. If the status is `creating`, `active`, or `ceased`, return a clear error.
-3. Verify the object's actual data still exists, or accept a new payload via `--from`. If neither is available, the object cannot be recovered.
-4. Update the metadata status to `active` and set `UpdatedAt` to now.
-5. The object is now visible to normal `List`, `Get`, and search operations.
+Actual data is preserved during soft delete, so recovery restores the object to `active` without rewriting data.
 
 ### 12.7 Garbage Collect Objects
 
