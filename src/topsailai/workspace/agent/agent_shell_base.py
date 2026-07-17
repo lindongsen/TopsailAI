@@ -305,6 +305,12 @@ class AgentChat(AgentChatBase):
                 total_tokens, total_cached_tokens = _get_session_token_totals(
                     self.ctx_runtime_data.session_id, self.ai_agent
                 )
+                # Cache hit rate: cached tokens / total tokens. Guard against
+                # zero or missing totals so we never divide by zero.
+                if total_tokens:
+                    cache_hit_rate = f"{total_cached_tokens / total_tokens * 100:.3f}%"
+                else:
+                    cache_hit_rate = "N/A"
                 print()
                 print(SPLIT_LINE)
                 print(f"[{self.agent_name}] have scheduled tasks [{curr_count}] times")
@@ -314,6 +320,7 @@ class AgentChat(AgentChatBase):
                 print(f"elapsed_time        : {end_time-start_time}")
                 print(f"total_tokens        : {total_tokens}")
                 print(f"total_cached_tokens : {total_cached_tokens}")
+                print(f"cache_hit_rate      : {cache_hit_rate}")
                 sys.stdout.flush()
 
             if env_tool.is_debug_mode() or env_tool.EnvReaderInstance.check_bool("TOPSAILAI_PRINT_TOOL_STAT", True):

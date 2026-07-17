@@ -484,5 +484,92 @@ class TestGetSessionTokenTotals(unittest.TestCase):
         self.assertEqual(result, (55, 22))
 
 
+
+class TestCacheHitRate(unittest.TestCase):
+    """Test cases for cache hit rate display in the per-turn summary."""
+
+    def _make_agent_chat(self, mock_env_tool, mock_lock_tool, mock_get_hooks):
+        from topsailai.workspace.agent.agent_shell_base import AgentChat
+
+        mock_get_hooks.return_value = []
+        mock_env_tool.EnvReaderInstance.get.return_value = None
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = lambda key, default: {
+            "TOPSAILAI_INTERACTIVE_MODE": False,
+            "TOPSAILAI_NEED_SYMBOL_FOR_ANSWER": False,
+            "TOPSAILAI_ENABLE_SESSION_LOCK": False,
+        }.get(key, default)
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_env_tool.is_debug_mode.return_value = False
+        mock_env_tool.is_need_print.return_value = True
+
+        mock_lock_tool.ctxm_void.return_value.__enter__ = MagicMock(return_value={})
+        mock_lock_tool.ctxm_void.return_value.__exit__ = MagicMock(return_value=False)
+
+        hook_instruction = MagicMock()
+        ctx_rt_aiagent = MagicMock()
+        ctx_rt_instruction = MagicMock()
+        mock_ai_agent = MagicMock()
+        ctx_rt_aiagent.ai_agent = mock_ai_agent
+        ctx_rt_aiagent.ctx_runtime_data = MagicMock()
+        ctx_rt_aiagent.ctx_runtime_data.session_id = "session-001"
+
+        return AgentChat(
+            hook_instruction=hook_instruction,
+            ctx_rt_aiagent=ctx_rt_aiagent,
+            ctx_rt_instruction=ctx_rt_instruction,
+        )
+
+    @patch("topsailai.workspace.agent.agent_shell_base.input_message")
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
+    @patch("topsailai.workspace.agent.agent_shell_base._get_session_token_totals")
+    @patch("builtins.print")
+    def test_cache_hit_rate_displayed(
+        self, mock_print, mock_get_totals, mock_get_agent_step_call,
+        mock_task_tool, mock_lock_tool, mock_env_tool, mock_set_ai_agent,
+        mock_get_hooks, mock_input_message
+    ):
+        """Cache hit rate is printed with 3 decimal places after the first turn."""
+        mock_get_totals.return_value = (1000, 250)
+        mock_input_message.return_value = "continue"
+
+        agent_chat = self._make_agent_chat(mock_env_tool, mock_lock_tool, mock_get_hooks)
+        agent_chat.ai_agent.run.return_value = "Response"
+
+        agent_chat.run(message="Hello", times=2)
+
+        printed = "\n".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+        self.assertIn("cache_hit_rate      : 25.000%", printed)
+
+    @patch("topsailai.workspace.agent.agent_shell_base.input_message")
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
+    @patch("topsailai.workspace.agent.agent_shell_base._get_session_token_totals")
+    @patch("builtins.print")
+    def test_cache_hit_rate_zero_total_tokens(
+        self, mock_print, mock_get_totals, mock_get_agent_step_call,
+        mock_task_tool, mock_lock_tool, mock_env_tool, mock_set_ai_agent,
+        mock_get_hooks, mock_input_message
+    ):
+        """Cache hit rate shows N/A when total_tokens is zero."""
+        mock_get_totals.return_value = (0, 0)
+        mock_input_message.return_value = "continue"
+
+        agent_chat = self._make_agent_chat(mock_env_tool, mock_lock_tool, mock_get_hooks)
+        agent_chat.ai_agent.run.return_value = "Response"
+
+        agent_chat.run(message="Hello", times=2)
+
+        printed = "\n".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+        self.assertIn("cache_hit_rate      : N/A", printed)
+
 if __name__ == "__main__":
     unittest.main()
