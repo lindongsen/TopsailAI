@@ -26,3 +26,12 @@ Lessons:
 (1) Use a dedicated exception class (`HeavyTaskError`) for control-flow errors that must propagate through generic catch-all handlers;
 (2) Generic hook callers should explicitly re-raise domain-specific exceptions rather than swallowing them;
 (3) Any termination signal that crosses a layer boundary must be treated as part of the API contract, not as an internal invariant.
+
+## Respect existing control flow and obtain explicit approval before behavioral changes
+
+When implementing a display-only feature (cache hit rate), a previous change moved the summary block outside the `while` loop and deleted `self.last_message = answer`, altering behavior beyond the user's request and was committed without explicit approval. The user rejected it with "改动太多了".
+
+Lessons:
+1. A "small display change" must not silently restructure control flow or remove state mutations.
+2. Before committing any change that affects when/how output is produced or mutates object state, obtain the user's explicit approval.
+3. When the user says a change is too large, stop and revert to the minimal version rather than iterating on top of the rejected approach.
