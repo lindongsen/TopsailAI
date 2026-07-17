@@ -168,9 +168,25 @@ class TestSessionStorageBase(unittest.TestCase):
     def test_clean_sessions_raises_not_implemented(self):
         """Test that clean_sessions raises NotImplementedError."""
         storage = SessionStorageBase()
-        
+
         with self.assertRaises(NotImplementedError):
             storage.clean_sessions(3600)
+
+    def test_get_session_token_totals_is_abstract(self):
+        """Test that get_session_token_totals is abstract and raises NotImplementedError."""
+        storage = SessionStorageBase()
+
+        with self.assertRaises(NotImplementedError):
+            storage.get_session_token_totals("s1")
+
+    def test_get_session_token_totals_signature(self):
+        """Test that get_session_token_totals accepts the expected keyword arguments."""
+        import inspect
+
+        sig = inspect.signature(SessionStorageBase.get_session_token_totals)
+        params = list(sig.parameters.keys())
+
+        self.assertEqual(params, ["self", "session_id"])
 
     def test_get_messages_by_session_raises_not_implemented(self):
         self.assertEqual(SessionStorageBase.tb_session, "session")

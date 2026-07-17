@@ -401,5 +401,88 @@ class TestAgentChatRunEdgeCases(unittest.TestCase):
         self.assertTrue(callable(getattr(AgentChat, 'run')))
 
 
+class TestGetSessionTokenTotals(unittest.TestCase):
+    """Test cases for _get_session_token_totals helper."""
+
+    @patch("topsailai.context.ctx_manager.get_session_manager")
+    def test_get_session_token_totals_from_session_storage(self, mock_get_session_manager):
+        """When session_id is set and storage has totals, return DB values."""
+        from topsailai.workspace.agent.agent_shell_base import _get_session_token_totals
+
+        mock_storage = MagicMock()
+        mock_storage.get_session_token_totals.return_value = (1234, 567)
+        mock_get_session_manager.return_value = mock_storage
+
+        mock_ai_agent = MagicMock()
+
+        result = _get_session_token_totals("session-001", mock_ai_agent)
+
+        self.assertEqual(result, (1234, 567))
+        mock_storage.get_session_token_totals.assert_called_once_with("session-001")
+
+    @patch("topsailai.context.ctx_manager.get_session_manager")
+    def test_get_session_token_totals_missing_session_falls_back(self, mock_get_session_manager):
+        """When session_id is set but storage returns None, fall back to TokenStat."""
+        from topsailai.workspace.agent.agent_shell_base import _get_session_token_totals
+
+        mock_storage = MagicMock()
+        mock_storage.get_session_token_totals.return_value = None
+        mock_get_session_manager.return_value = mock_storage
+
+        mock_token_stat = MagicMock()
+        mock_token_stat.total_tokens = 42
+        mock_token_stat.total_cached_tokens = 7
+        mock_ai_agent = MagicMock()
+        mock_ai_agent.llm_model.tokenStat = mock_token_stat
+
+        result = _get_session_token_totals("session-001", mock_ai_agent)
+
+        self.assertEqual(result, (42, 7))
+
+    def test_get_session_token_totals_no_session_id_falls_back(self):
+        """When session_id is empty, fall back to TokenStat."""
+        from topsailai.workspace.agent.agent_shell_base import _get_session_token_totals
+
+        mock_token_stat = MagicMock()
+        mock_token_stat.total_tokens = 99
+        mock_token_stat.total_cached_tokens = 11
+        mock_ai_agent = MagicMock()
+        mock_ai_agent.llm_model.tokenStat = mock_token_stat
+
+        result = _get_session_token_totals("", mock_ai_agent)
+
+        self.assertEqual(result, (99, 11))
+
+    def test_get_session_token_totals_no_token_stat_defaults_to_zero(self):
+        """When no session and no TokenStat values are available, return zeros."""
+        from topsailai.workspace.agent.agent_shell_base import _get_session_token_totals
+
+        mock_ai_agent = MagicMock()
+        mock_ai_agent.llm_model.tokenStat = MagicMock()
+        del mock_ai_agent.llm_model.tokenStat.total_tokens
+        del mock_ai_agent.llm_model.tokenStat.total_cached_tokens
+
+        result = _get_session_token_totals("", mock_ai_agent)
+
+        self.assertEqual(result, (0, 0))
+
+    @patch("topsailai.context.ctx_manager.get_session_manager")
+    def test_get_session_token_totals_storage_exception_falls_back(self, mock_get_session_manager):
+        """When storage read raises, fall back to TokenStat."""
+        from topsailai.workspace.agent.agent_shell_base import _get_session_token_totals
+
+        mock_get_session_manager.side_effect = RuntimeError("db down")
+
+        mock_token_stat = MagicMock()
+        mock_token_stat.total_tokens = 55
+        mock_token_stat.total_cached_tokens = 22
+        mock_ai_agent = MagicMock()
+        mock_ai_agent.llm_model.tokenStat = mock_token_stat
+
+        result = _get_session_token_totals("session-001", mock_ai_agent)
+
+        self.assertEqual(result, (55, 22))
+
+
 if __name__ == "__main__":
     unittest.main()

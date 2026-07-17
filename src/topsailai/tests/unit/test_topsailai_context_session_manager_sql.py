@@ -798,3 +798,48 @@ class TestSessionTokenAccumulation:
             row = db_session.query(Session).filter(Session.session_id == "token_session").first()
             assert row.total_tokens == 160
             assert row.total_cached_tokens == 60
+
+    def test_get_session_token_totals_returns_values(self, session_mgr):
+        """Test get_session_token_totals reads accumulated totals."""
+        self._create_session(session_mgr)
+        session_mgr.accumulate_session_tokens(
+            session_id="token_session",
+            current_tokens=100,
+            current_cached_tokens=50,
+        )
+
+        totals = session_mgr.get_session_token_totals("token_session")
+
+        assert totals == (100, 50)
+
+    def test_get_session_token_totals_multiple_accumulations(self, session_mgr):
+        """Test get_session_token_totals reflects multiple accumulations."""
+        self._create_session(session_mgr)
+        session_mgr.accumulate_session_tokens(
+            session_id="token_session",
+            current_tokens=80,
+            current_cached_tokens=30,
+        )
+        session_mgr.accumulate_session_tokens(
+            session_id="token_session",
+            current_tokens=20,
+            current_cached_tokens=10,
+        )
+
+        totals = session_mgr.get_session_token_totals("token_session")
+
+        assert totals == (100, 40)
+
+    def test_get_session_token_totals_missing_session(self, session_mgr):
+        """Test get_session_token_totals returns None for missing session."""
+        totals = session_mgr.get_session_token_totals("missing_session")
+
+        assert totals is None
+
+    def test_get_session_token_totals_empty_session_id(self, session_mgr):
+        """Test get_session_token_totals returns None for empty session_id."""
+        self._create_session(session_mgr)
+
+        totals = session_mgr.get_session_token_totals("")
+
+        assert totals is None

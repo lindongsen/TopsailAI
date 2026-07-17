@@ -505,3 +505,40 @@ class SessionSQLAlchemy(SessionStorageBase):
             return False
         finally:
             db_session.close()
+
+    def get_session_token_totals(self, session_id: str) -> tuple[int, int] | None:
+        """
+        Retrieve the accumulated token totals for a session.
+
+        Returns the ``total_tokens`` and ``total_cached_tokens`` values stored in
+        the session row. These totals are accumulated from per-agent deltas via
+        ``accumulate_session_tokens()`` and therefore reflect the combined token
+        usage of all agents that have processed the session.
+
+        Args:
+            session_id (str): The session identifier whose totals should be read.
+
+        Returns:
+            tuple[int, int] | None: A tuple of ``(total_tokens, total_cached_tokens)``
+                if the session exists, otherwise ``None``.
+        """
+        if not session_id:
+            return None
+
+        db_session = self.SessionLocal()
+        try:
+            session = db_session.query(Session).filter(Session.session_id == session_id).first()
+            if not session:
+                logger.warning(f"get_session_token_totals: session not found: session_id={session_id}")
+                return None
+
+            return (
+                session.total_tokens if session.total_tokens is not None else 0,
+                session.total_cached_tokens if session.total_cached_tokens is not None else 0,
+            )
+        except Exception as e:
+            db_session.rollback()
+            logger.error(f"get_session_token_totals failed: session_id={session_id}, {e}")
+            return None
+        finally:
+            db_session.close()

@@ -194,6 +194,29 @@ class SessionStorageBase(object):
         """
         raise NotImplementedError
 
+    def get_session_token_totals(self, session_id: str) -> tuple[int, int] | None:
+        """
+        Retrieve the accumulated token totals for a session.
+
+        Returns the ``total_tokens`` and ``total_cached_tokens`` values stored in
+        session storage. These totals are accumulated from per-agent deltas via
+        ``accumulate_session_tokens()`` and therefore reflect the combined token
+        usage of all agents that have processed the session.
+
+        Args:
+            session_id (str): The session identifier whose totals should be read.
+
+        Returns:
+            tuple[int, int] | None: A tuple of ``(total_tokens, total_cached_tokens)``
+                if the session exists, otherwise ``None``.
+
+        Raises:
+            NotImplementedError: This is an abstract method that must be
+                implemented by concrete storage classes.
+        """
+        raise NotImplementedError
+
+
 
     def retrieve_messages(self, session_id:str) -> list[dict]:
         """ retrieve messages by chat_history_manager """

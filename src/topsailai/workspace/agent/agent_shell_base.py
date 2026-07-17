@@ -44,6 +44,47 @@ from topsailai.workspace.print_tool import (
 )
 
 
+def _get_session_token_totals(session_id: str, ai_agent) -> tuple[int, int]:
+    """
+    Resolve total token counts for the end-of-run summary.
+
+    When a session id is available, read the accumulated totals from session
+    storage. The session row aggregates per-agent deltas contributed by every
+    agent that processed the session, so it is the authoritative source.
+
+    When no session id is available, or when reading from storage fails, fall
+    back to the current agent's TokenStat totals.
+
+    Args:
+        session_id (str): The current session id, if any.
+        ai_agent: The AI agent instance whose TokenStat should be used as fallback.
+
+    Returns:
+        tuple[int, int]: ``(total_tokens, total_cached_tokens)``.
+    """
+    if session_id:
+        try:
+            # Lazy import to avoid circular imports between workspace and context.
+            from topsailai.context import ctx_manager
+            session_mgr = ctx_manager.get_session_manager()
+            totals = session_mgr.get_session_token_totals(session_id)
+            if totals is not None:
+                return totals
+        except Exception as e:
+            logger.debug(f"_get_session_token_totals: failed to read from session storage: {e}")
+
+    # Fallback: use the current agent's TokenStat totals.
+    token_stat = getattr(ai_agent, "llm_model", None)
+    if token_stat:
+        token_stat = getattr(token_stat, "tokenStat", None)
+    if token_stat:
+        return (
+            getattr(token_stat, "total_tokens", 0) or 0,
+            getattr(token_stat, "total_cached_tokens", 0) or 0,
+        )
+    return 0, 0
+
+
 class AgentChat(AgentChatBase):
 
     @decorator_tee_output_by_session(need_delete_log_files=True)
@@ -261,13 +302,18 @@ class AgentChat(AgentChatBase):
             end_time = int(time.time())
 
             if env_tool.is_need_print():
+                total_tokens, total_cached_tokens = _get_session_token_totals(
+                    self.ctx_runtime_data.session_id, self.ai_agent
+                )
                 print()
                 print(SPLIT_LINE)
                 print(f"[{self.agent_name}] have scheduled tasks [{curr_count}] times")
-                print(f"session         : {self.ctx_runtime_data.session_id}")
-                print(f"start_time      : {time_tool.parse_time_seconds(start_time)}")
-                print(f"end_time(now)   : {time_tool.parse_time_seconds(end_time)}")
-                print(f"elapsed_time    : {end_time-start_time}")
+                print(f"session             : {self.ctx_runtime_data.session_id}")
+                print(f"start_time          : {time_tool.parse_time_seconds(start_time)}")
+                print(f"end_time(now)       : {time_tool.parse_time_seconds(end_time)}")
+                print(f"elapsed_time        : {end_time-start_time}")
+                print(f"total_tokens        : {total_tokens}")
+                print(f"total_cached_tokens : {total_cached_tokens}")
                 sys.stdout.flush()
 
             if env_tool.is_debug_mode() or env_tool.EnvReaderInstance.check_bool("TOPSAILAI_PRINT_TOOL_STAT", True):
