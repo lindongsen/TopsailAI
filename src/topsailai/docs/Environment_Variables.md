@@ -114,7 +114,7 @@ export TOPSAILAI_STREAM_PROGRESS=dots
 |----------|---------|-------------|
 | `SYSTEM_PROMPT` | `""` | One file or content used to extend system prompts. |
 | `SYSTEM_PROMPT_EXTRA_FILES` | `""` | Multiple files split by `,` used to extend system prompts. |
-| `ENV_PROMPT` | `""` | One file or content describing the current environmental information. |
+| `ENV_PROMPT` | `""` | One file or content describing the current environmental information. When set, its content is appended after the auto-generated environment prompt, which already includes `CurrentDate`, `SystemInfo`, `ProjectWorkspace`, `PWD`, and the current `EventsFile` path. |
 | `PURE_SYSTEM_PROMPT` | `0` | Pure system prompt will only have the working mode. `1` = enabled. |
 
 ## Context Management

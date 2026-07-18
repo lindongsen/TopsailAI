@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 from topsailai.events.backends.base import EventBackend
-from topsailai.events.backends.file import FileEventBackend
+from topsailai.events.backends.file import FileEventBackend, get_default_events_file_path
 from topsailai.events.backends.db import DBEventBackend
 from topsailai.events.backends.webhook import WebhookEventBackend
 
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 __all__ = [
     "EventBackend",
     "FileEventBackend",
+    "get_default_events_file_path",
     "DBEventBackend",
     "WebhookEventBackend",
     "create_backend",

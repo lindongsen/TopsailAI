@@ -26,6 +26,24 @@ from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
 logger = logging.getLogger(__name__)
 
 
+def get_default_events_file_path() -> str:
+    """
+    Return the default session-aware events file path.
+
+    The path follows the same convention as ``FileEventBackend``:
+    ``{session_id}.{pid}.session.events`` when a session id is available,
+    otherwise ``topsailai.{pid}.session.events``, located under
+    ``FOLDER_WORKSPACE_TASK``.
+    """
+    session_id = env_tool.get_session_id()
+    pid = os.getpid()
+    if session_id:
+        filename = f"{session_id}.{pid}.session.events"
+    else:
+        filename = f"topsailai.{pid}.session.events"
+    return os.path.join(FOLDER_WORKSPACE_TASK, filename)
+
+
 class FileEventBackend(EventBackend):
     """
     Append-only JSONL backend for events.
@@ -66,13 +84,7 @@ class FileEventBackend(EventBackend):
 
     @staticmethod
     def _resolve_default_path() -> str:
-        session_id = env_tool.get_session_id()
-        pid = os.getpid()
-        if session_id:
-            filename = f"{session_id}.{pid}.session.events"
-        else:
-            filename = f"topsailai.{pid}.session.events"
-        return os.path.join(FOLDER_WORKSPACE_TASK, filename)
+        return get_default_events_file_path()
 
     @staticmethod
     def _resolve_retention_days() -> int:

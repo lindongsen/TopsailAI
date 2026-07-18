@@ -140,6 +140,31 @@ class CurrentProject(_Base):
         )
 
 
+class CurrentEvents(_Base):
+    """
+    Prompt generator for the current execution's events file location.
+
+    The events file records execution events such as tool calls. Its path is
+    resolved at runtime using the unified helper from the events module.
+    """
+
+    @property
+    def prompt(self) -> str:
+        """
+        Generate prompt with the events file path.
+
+        Returns:
+            str: Formatted string containing the events file path and a note
+                 about locating historical tool call details.
+        """
+        from topsailai.events.backends import get_default_events_file_path
+        events_file = get_default_events_file_path()
+        return (
+            f"EventsFile={events_file}\n"
+            f"You can find detailed historical tool call records in this events file.\n"
+        )
+
+
 def get_prompt_file_path(relative_path:str) -> str:
     file_path = relative_path
     if not os.path.exists(file_path):
@@ -157,8 +182,9 @@ def generate_prompt_for_env() -> str:
     """
     Generate a comprehensive environment prompt for AI context.
 
-    This function combines date, system information, and optional
-    custom environment prompts into a single formatted string.
+    This function combines date, system information, project information,
+    the current events file location, and optional custom environment prompts
+    into a single formatted string.
 
     The custom environment prompt can be provided via the ENV_PROMPT
     environment variable, which can be either:
@@ -185,6 +211,7 @@ def generate_prompt_for_env() -> str:
             CurrentDate().prompt,
             CurrentSystem().prompt,
             CurrentProject().prompt,
+            CurrentEvents().prompt,
             env_prompt,
         ]
     )

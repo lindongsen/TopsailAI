@@ -293,6 +293,9 @@ TOPSAILAI_CHAT_INTERACTIVE_MODE=0
 # SYSTEM_PROMPT_EXTRA_FILES=""
 
 # one file or content. Describe the current environmental information.
+# When provided, its content is appended to the auto-generated environment
+# prompt, which already includes CurrentDate, SystemInfo, ProjectWorkspace,
+# PWD, and the current EventsFile path.
 # ENV_PROMPT=""
 
 # =============================================================================
