@@ -281,8 +281,8 @@ class TestContextSelection(unittest.TestCase):
 
             inputs = [
                 "y",              # Configure context now?
-                "",               # Accept default for _default context prompt
-                "project.yaml",   # _default context file
+                "",               # Accept default for _ context prompt
+                "project.yaml",   # _ context file
                 "",               # Finish context files
                 "n",              # Add another item?
             ]
@@ -296,7 +296,7 @@ class TestContextSelection(unittest.TestCase):
             stderr_output = self._stderr.getvalue()
             self.assertIn("Context Setup", stderr_output)
             settings = launcher.load_yaml(settings_path)
-            self.assertEqual(settings["context"]["_default"], ["project.yaml"])
+            self.assertEqual(settings["context"]["_"], ["project.yaml"])
 
     def test_empty_context_in_non_tty_warns_and_continues(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -333,7 +333,102 @@ class TestContextSelection(unittest.TestCase):
         self.assertIn("MEMO_ONLY", output)
         # The merged value of SHARED should come from the item.
         self.assertIn("[item] SHARED=memo", output)
-        self.assertIn("[default] TOPSAILAI_INTERACTIVE_MODE=1", output)
+        self.assertIn("[base] TOPSAILAI_INTERACTIVE_MODE=1", output)
+
+    def test_format_item_config_underscore_merges_with_default(self):
+        context_map = {
+            "_default": ["default.yaml"],
+            "_": ["underscore.yaml"],
+            "memo": ["memo.yaml"],
+        }
+        env_map = {
+            "_default": {"SHARED": "default", "DEFAULT_ONLY": "x"},
+            "_": {"SHARED": "underscore"},
+            "memo": {"MEMO_ONLY": "y"},
+        }
+        output = launcher._format_item_config("memo", context_map, env_map)
+
+        # Both base item context file lists are merged.
+        self.assertIn("underscore.yaml", output)
+        self.assertIn("default.yaml", output)
+        self.assertIn("DEFAULT_ONLY=x", output)
+        # "_" environment variables override "_default" for duplicate keys.
+        self.assertIn("SHARED=underscore", output)
+
+    def test_only_underscore_item_uses_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            self._write_settings(
+                tmpdir,
+                context={"_": ["project.yaml"]},
+                environment={"_": {"TOPSAILAI_INTERACTIVE_MODE": "1"}},
+            )
+
+            exit_code = self._run_main(
+                ["topsailai_launch_agent.py", "--dry-run"]
+            )
+
+            self.assertEqual(exit_code, 0)
+            stderr_output = self._stderr.getvalue()
+            self.assertNotIn("Multiple context items", stderr_output)
+            stdout_output = self._stdout.getvalue()
+            self.assertIn("test-driver", stdout_output)
+
+    def test_underscore_merges_with_default_context(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            self._write_settings(
+                tmpdir,
+                context={
+                    "_default": ["default.yaml"],
+                    "_": ["underscore.yaml"],
+                    "memo": ["memo.yaml"],
+                },
+                environment={
+                    "_default": {"TOPSAILAI_INTERACTIVE_MODE": "1"},
+                    "_": {"OVERRIDE": "underscore"},
+                    "memo": {"TOPSAILAI_AGENT_DRIVER": "memo-driver"},
+                },
+            )
+
+            exit_code = self._run_main(
+                ["topsailai_launch_agent.py", "--item", "memo", "--dry-run"]
+            )
+
+            self.assertEqual(exit_code, 0)
+            stdout_output = self._stdout.getvalue()
+            self.assertIn("memo-driver", stdout_output)
+            # "_" environment variables override "_default" for duplicate keys.
+            self.assertIn("OVERRIDE=underscore", stdout_output)
+            # Context files are merged into the context message file, not printed
+            # in dry-run output; the merged env keys confirm both base items were
+            # processed.
+            self.assertIn("OVERRIDE", stdout_output)
+            self.assertIn("TOPSAILAI_INTERACTIVE_MODE", stdout_output)
+
+    def test_underscore_overrides_default_env(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            self._write_settings(
+                tmpdir,
+                context={
+                    "_default": ["project.yaml"],
+                    "_": [],
+                },
+                environment={
+                    "_default": {"SHARED": "default", "DEFAULT_ONLY": "x"},
+                    "_": {"SHARED": "underscore"},
+                },
+            )
+
+            exit_code = self._run_main(
+                ["topsailai_launch_agent.py", "--dry-run"]
+            )
+
+            self.assertEqual(exit_code, 0)
+            stdout_output = self._stdout.getvalue()
+            self.assertIn("SHARED=underscore", stdout_output)
+            self.assertIn("DEFAULT_ONLY=x", stdout_output)
 
 
 if __name__ == "__main__":

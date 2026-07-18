@@ -86,7 +86,7 @@ class TestAgentDriverResolution(unittest.TestCase):
     def _command_line_section(self, output):
         """Return only the 'Command line:' section from dry-run output."""
         marker = "\nCommand line:\n"
-        env_marker = "\nEnvironment variables (merged from _default and item):"
+        env_marker = "\nEnvironment variables (merged from base and item):"
         start = output.find(marker)
         if start == -1:
             return ""
@@ -187,6 +187,71 @@ class TestAgentDriverResolution(unittest.TestCase):
             cmd_section = self._command_line_section(self._stdout.getvalue())
             self.assertIn("os-env-driver", cmd_section)
 
+
+    def test_underscore_base_env_overrides_default_base_env(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            settings_dir = os.path.join(tmpdir, ".topsailai")
+            os.makedirs(settings_dir, exist_ok=True)
+            settings_path = os.path.join(settings_dir, "settings.yaml")
+            with open(settings_path, "w", encoding="utf-8") as f:
+                f.write('ai_agent_driver: "settings-driver"\n')
+                f.write('workspace: "."\n')
+                f.write('context:\n')
+                f.write('  _default:\n')
+                f.write('    - "project.yaml"\n')
+                f.write('  _:\n')
+                f.write('    - "project.yaml"\n')
+                f.write('  default:\n')
+                f.write('    - "project.yaml"\n')
+                f.write('environment:\n')
+                f.write('  _default:\n')
+                f.write('    TOPSAILAI_AGENT_DRIVER: "default-env-driver"\n')
+                f.write('  _:\n')
+                f.write('    TOPSAILAI_AGENT_DRIVER: "underscore-env-driver"\n')
+                f.write('  default:\n')
+                f.write('    DUMMY: "1"\n')
+            project_path = os.path.join(tmpdir, "project.yaml")
+            with open(project_path, "w", encoding="utf-8") as f:
+                f.write("# dummy project file\n")
+
+            exit_code = self._run_main(["topsailai_launch_agent.py", "--dry-run"])
+
+            self.assertEqual(exit_code, 0)
+            cmd_section = self._command_line_section(self._stdout.getvalue())
+            self.assertIn("underscore-env-driver", cmd_section)
+            self.assertNotIn("default-env-driver", cmd_section)
+            self.assertNotIn("settings-driver", cmd_section)
+
+    def test_underscore_base_env_used_when_no_default_base_env(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            settings_dir = os.path.join(tmpdir, ".topsailai")
+            os.makedirs(settings_dir, exist_ok=True)
+            settings_path = os.path.join(settings_dir, "settings.yaml")
+            with open(settings_path, "w", encoding="utf-8") as f:
+                f.write('ai_agent_driver: "settings-driver"\n')
+                f.write('workspace: "."\n')
+                f.write('context:\n')
+                f.write('  _:\n')
+                f.write('    - "project.yaml"\n')
+                f.write('  default:\n')
+                f.write('    - "project.yaml"\n')
+                f.write('environment:\n')
+                f.write('  _:\n')
+                f.write('    TOPSAILAI_AGENT_DRIVER: "underscore-env-driver"\n')
+                f.write('  default:\n')
+                f.write('    DUMMY: "1"\n')
+            project_path = os.path.join(tmpdir, "project.yaml")
+            with open(project_path, "w", encoding="utf-8") as f:
+                f.write("# dummy project file\n")
+
+            exit_code = self._run_main(["topsailai_launch_agent.py", "--dry-run"])
+
+            self.assertEqual(exit_code, 0)
+            cmd_section = self._command_line_section(self._stdout.getvalue())
+            self.assertIn("underscore-env-driver", cmd_section)
+            self.assertNotIn("settings-driver", cmd_section)
 
 if __name__ == "__main__":
     unittest.main()

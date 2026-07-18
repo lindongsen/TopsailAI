@@ -203,18 +203,18 @@ Launch an AI agent driver based on a local `.topsailai/settings.yaml` configurat
 
 - Reads `.topsailai/settings.yaml` from the current working directory.
 - Selects a configured context item via `--item`, or automatically chooses one based on the `context` section (see below).
-- Merges environment variables in the order: system environment → `_default` → item-specific values.
-- Reads the configured context files (`_default` first, then item-specific files) and appends a workspace folder tree to `TOPSAILAI_CONTEXT_USER_MESSAGE`.
+- Merges environment variables in the order: system environment → `_` (基础配置, base configuration) → `_default` (legacy backward compatibility) → item-specific values.
+- Reads the configured context files (`_` first, then `_default` for legacy compatibility, then item-specific files) and appends a workspace folder tree to `TOPSAILAI_CONTEXT_USER_MESSAGE`.
 - Writes the assembled context message to a temporary file under `{workspace}/.tmp/` to avoid exceeding environment-variable size limits.
 - Launches the configured `ai_agent_driver` using `os.system` by default, or `subprocess.run` when `--subprocess` is passed.
 - Cleans up the temporary context file on exit, uncaught exceptions, and `SIGINT`/`SIGTERM`.
 
 **Context item selection (when `--item` is omitted):**
 
-- If the `context` section is completely empty (not even `_default`), the launcher enters an interactive setup in TTY mode to help you configure context files, then continues. In non-TTY mode it prints a warning and continues without context files.
-- If only `_default` is configured, `_default` is used automatically.
-- If exactly one non-default item is configured, that item is used automatically.
-- If multiple non-default items are configured, a numbered list is shown with each item's full configuration (context files and environment variables). The `default` item is pre-selected if it exists; otherwise you must choose one.
+- If the `context` section is completely empty (not even `_`), the launcher enters an interactive setup in TTY mode to help you configure context files, then continues. In non-TTY mode it prints a warning and continues without context files.
+- If only `_` is configured, `_` is used automatically.
+- If exactly one non-base item is configured, that item is used automatically.
+- If multiple non-base items are configured, a numbered list is shown with each item's full configuration (context files and environment variables). The `default` item is pre-selected if it exists; otherwise you must choose one.
 
 **Common options:**
 
@@ -227,12 +227,10 @@ Launch an AI agent driver based on a local `.topsailai/settings.yaml` configurat
 **Driver resolution priority:**
 
 1. `--driver` CLI argument
-2. `TOPSAILAI_AGENT_DRIVER` from the selected item or `_default` environment section
+2. `TOPSAILAI_AGENT_DRIVER` from the selected item or `_` (基础配置, base configuration; `_default` is still supported for backward compatibility) environment section
 3. `ai_agent_driver` field in `settings.yaml`
 4. `TOPSAILAI_AGENT_DRIVER` from the OS environment
-
 If `.topsailai/settings.yaml` is missing, the launcher asks how to proceed:
-
 - In an interactive terminal (TTY), you are prompted to choose:
   - `[r] Run with the default agent driver` — uses the built-in default
     configuration (`ai_agent_driver: ai-team-flow-dev`) and launches the

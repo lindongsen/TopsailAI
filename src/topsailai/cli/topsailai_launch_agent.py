@@ -36,6 +36,37 @@ if PWD:
     os.chdir(PWD)
 # Global reference to the temporary context message file, used for cleanup on exit.
 _CONTEXT_MESSAGE_FILE = None
+# Names treated as the shared base configuration (基础配置). "_" is the preferred alias;
+# "_default" is kept for backward compatibility.
+BASE_ITEM_NAMES = ("_", "_default")
+
+
+def _is_base_item(name):
+    """Return True if the item name is a base/shared configuration key."""
+    return name in BASE_ITEM_NAMES
+
+
+def _get_base_context(context_map):
+    """Return the merged base context file list.
+
+    Both "_default" and "_" are treated as base keys. If both are present,
+    "_default" files come first and "_" files are appended afterward.
+    """
+    default_context = list(context_map.get("_default", []) or [])
+    underscore_context = list(context_map.get("_", []) or [])
+    return default_context + underscore_context
+
+
+def _get_base_env(env_map):
+    """Return the merged base environment variables.
+
+    "_default" variables are applied first, then "_" variables override them.
+    """
+    default_env = dict(env_map.get("_default", {}) or {})
+    underscore_env = dict(env_map.get("_", {}) or {})
+    merged = dict(default_env)
+    merged.update(underscore_env)
+    return merged
 
 
 def _cleanup_context_file():
@@ -77,12 +108,12 @@ DEFAULT_CONFIG = {
     "ai_agent_driver": "ai-team-flow-dev",
     "workspace": ".",
     "context": {
-        "_default": [],
+        "_": [],
         "default": [],
         "memo": [],
     },
     "environment": {
-        "_default": {
+        "_": {
             "TOPSAILAI_INTERACTIVE_MODE": "1",
         },
         "default": {},
@@ -100,7 +131,7 @@ CONFIG_TEMPLATE = """# AI Agent TopsailAI-Launcher Configuration
 # AI Agent driver path or command.
 # Resolution order (first match wins):
 #   1. --driver CLI argument
-#   2. TOPSAILAI_AGENT_DRIVER environment variable from this file (item-specific or _default)
+#   2. TOPSAILAI_AGENT_DRIVER environment variable from this file (item-specific or _)
 #   3. ai_agent_driver field below
 #   4. TOPSAILAI_AGENT_DRIVER from the OS environment
 ai_agent_driver: "ai-team-flow-dev"
@@ -109,22 +140,23 @@ ai_agent_driver: "ai-team-flow-dev"
 workspace: "."
 
 # Context configuration: each item corresponds to a set of context files.
-# _default is the base context shared by all items; item-specific files are
-# appended after _default files. Paths are relative to `workspace` unless
-# they start with `/`.
+# "_" is the 基础配置 (base configuration) shared by all items; item-specific
+# files are appended after the 基础配置 files. Paths are relative to `workspace`
+# unless they start with `/`.
 #
-# IMPORTANT: `context._default` is currently empty. Fill it with the files
+# IMPORTANT: `context._` is currently empty. Fill it with the files
 # you want every agent run to receive (e.g. project.yaml, docs, features).
 context:
-  _default: []
+  _: []
   default: []
   memo: []
 
 # Environment variable configuration: each item can define its own variables.
-# _default variables are applied first, then item-specific variables override
-# them. System environment variables are inherited and can be overridden here.
+# "_" variables are the 基础配置 (base configuration) and are applied first,
+# then item-specific variables override them. System environment variables are
+# inherited and can be overridden here.
 environment:
-  _default:
+  _:
     TOPSAILAI_INTERACTIVE_MODE: "1"
   default: {}
   memo:
@@ -181,7 +213,7 @@ INTERACTIVE_CONFIG_TEMPLATE = """# AI Agent TopsailAI-Launcher Configuration
 # AI Agent driver path or command.
 # Resolution order (first match wins):
 #   1. --driver CLI argument
-#   2. TOPSAILAI_AGENT_DRIVER environment variable from this file (item-specific or _default)
+#   2. TOPSAILAI_AGENT_DRIVER environment variable from this file (item-specific or _)
 #   3. ai_agent_driver field below
 #   4. TOPSAILAI_AGENT_DRIVER from the OS environment
 ai_agent_driver: {ai_agent_driver}
@@ -190,24 +222,25 @@ ai_agent_driver: {ai_agent_driver}
 workspace: {workspace}
 
 # Context configuration: each item corresponds to a set of context files.
-# _default is the base context shared by all items; item-specific files are
-# appended after _default files. Paths are relative to `workspace` unless
-# they start with `/`.
+# "_" is the 基础配置 (base configuration) shared by all items; item-specific
+# files are appended after the 基础配置 files. Paths are relative to `workspace`
+# unless they start with `/`.
 #
-# IMPORTANT: `context._default` is currently empty. Fill it with the files
+# IMPORTANT: `context._` is currently empty. Fill it with the files
 # you want every agent run to receive (e.g. project.yaml, docs, features).
 context:
-  _default:{context_default}
+  _:{context_default}
   default: []
 
 # Environment variable configuration: each item can define its own variables.
-# _default variables are applied first, then item-specific variables override
-# them. System environment variables are inherited and can be overridden here.
+# "_" variables are the 基础配置 (base configuration) and are applied first,
+# then item-specific variables override them. System environment variables are
+# inherited and can be overridden here.
 #
 # TOPSAILAI_INTERACTIVE_MODE enables interactive behavior in the agent driver.
 # Set to "1" to enable, "0" to disable.
 environment:
-  _default:
+  _:
     TOPSAILAI_INTERACTIVE_MODE: "1"
 {extra_env}  default: {{}}
 """
@@ -221,7 +254,6 @@ def _prompt(question, default=""):
     except EOFError:
         answer = ""
     return answer.strip() or default
-
 
 def _prompt_yn(question, default=True):
     """Prompt the user for a yes/no answer."""
@@ -272,7 +304,7 @@ def _run_interactive_setup(settings_path):
         file=sys.stderr,
     )
     context_default = []
-    if _prompt_yn("Would you like to add context files for the '_default' item now?", default=True):
+    if _prompt_yn("Would you like to add context files for the '_' item now?", default=True):
         context_default = _prompt_list(
             "Enter context file paths one per line (empty line to finish):"
         )
@@ -283,7 +315,7 @@ def _run_interactive_setup(settings_path):
         file=sys.stderr,
     )
     extra_env = {}
-    if _prompt_yn("Would you like to add extra environment variables for the '_default' item now?", default=False):
+    if _prompt_yn("Would you like to add extra environment variables for the '_' item now?", default=False):
         extra_env = {}
         print("Enter KEY=VALUE pairs one per line (empty line to finish):")
         while True:
@@ -390,9 +422,11 @@ def load_yaml(path):
         return yaml.safe_load(f)
 
 
+
+
 def print_available_items(context_map):
-    """Print the list of available items in the configuration (excluding _default)."""
-    items = [k for k in context_map.keys() if k != "_default"]
+    """Print the list of available items in the configuration (excluding base items)."""
+    items = [k for k in context_map.keys() if not _is_base_item(k)]
     if not items:
         print("No items configured in context section.")
         return
@@ -404,38 +438,38 @@ def print_available_items(context_map):
 
 
 def _get_context_items(context_map):
-    """Return non-_default context item names in their configured order."""
-    return [k for k in context_map.keys() if k != "_default"]
+    """Return non-base context item names in their configured order."""
+    return [k for k in context_map.keys() if not _is_base_item(k)]
 
 
 def _format_item_config(item_name, context_map, env_map):
     """Return a human-readable summary of an item's effective configuration.
 
-    The summary merges the `_default` context files and environment variables
+    The summary merges the `_`/`_default` context files and environment variables
     with the item-specific values so the user sees exactly what will be used
     for each option.
     """
-    default_context = list(context_map.get("_default", []) or [])
+    base_context = _get_base_context(context_map)
     item_context = list(context_map.get(item_name, []) or [])
-    merged_context = default_context + item_context
+    merged_context = base_context + item_context
 
-    default_env = dict(env_map.get("_default", {}) or {})
+    base_env = _get_base_env(env_map)
     item_env = dict(env_map.get(item_name, {}) or {})
-    merged_env = dict(default_env)
+    merged_env = dict(base_env)
     merged_env.update(item_env)
 
     lines = [f"{item_name}"]
     if merged_context:
         lines.append("    context files:")
         for path in merged_context:
-            prefix = "      [default] " if path in default_context and path not in item_context else "      "
+            prefix = "      [base] " if path in base_context and path not in item_context else "      "
             lines.append(f"{prefix}- {path}")
     else:
         lines.append("    context files: (none)")
     if merged_env:
         lines.append("    environment variables:")
         for key, value in sorted(merged_env.items()):
-            source = "[default]" if key in default_env and key not in item_env else "[item]"
+            source = "[base]" if key in base_env and key not in item_env else "[item]"
             lines.append(f"      {source} {key}={value}")
     else:
         lines.append("    environment variables: (none)")
@@ -445,15 +479,15 @@ def _format_item_config(item_name, context_map, env_map):
 def _select_context_item(context_map, env_map):
     """Select a context item based on configuration and interactivity.
 
-    - 0 non-_default items: use _default.
-    - 1 non-_default item: use it automatically.
-    - 2+ non-_default items: prompt interactively; "default" is the default
+    - 0 non-base items: use the base item name if present, otherwise None.
+    - 1 non-base item: use it automatically.
+    - 2+ non-base items: prompt interactively; "default" is the default
       choice when configured. In non-interactive mode, "default" is used if
       present, otherwise the launcher exits with an error.
     """
     items = _get_context_items(context_map)
     if len(items) <= 1:
-        return items[0] if items else "_default"
+        return items[0] if items else "_"
 
     if not sys.stdin.isatty():
         if "default" in items:
@@ -521,10 +555,10 @@ def _run_context_setup(settings_path, settings):
     settings["environment"] = settings.get("environment") or {}
     context_map = settings["context"]
     env_map = settings["environment"]
-    if "_default" not in context_map:
-        context_map["_default"] = []
-    if "_default" not in env_map:
-        env_map["_default"] = {"TOPSAILAI_INTERACTIVE_MODE": "1"}
+    if "_" not in context_map:
+        context_map["_"] = []
+    if "_" not in env_map:
+        env_map["_"] = {"TOPSAILAI_INTERACTIVE_MODE": "1"}
 
     print(
         "Context files are injected into every agent run. "
@@ -532,9 +566,9 @@ def _run_context_setup(settings_path, settings):
         file=sys.stderr,
     )
     if _prompt_yn(
-        "Would you like to add files to the '_default' context now?", default=True
+        "Would you like to add files to the '_' context now?", default=True
     ):
-        context_map["_default"] = _prompt_list(
+        context_map["_"] = _prompt_list(
             "Enter context file paths one per line (empty line to finish):"
         )
 
@@ -543,7 +577,7 @@ def _run_context_setup(settings_path, settings):
         default=False,
     ):
         item_name = _prompt("Context item name")
-        if not item_name or item_name == "_default":
+        if not item_name or _is_base_item(item_name):
             print("Invalid item name. Skipping.", file=sys.stderr)
             continue
         context_map[item_name] = _prompt_list(
@@ -587,7 +621,6 @@ def _run_context_setup(settings_path, settings):
         f"\nConfiguration saved to: {settings_path}",
         file=sys.stderr,
     )
-
 
 
 def _load_gitignore_patterns(workspace):
@@ -803,9 +836,9 @@ def main():
                 )
 
         if settings_from_default:
-            args.item = "_default"
+            args.item = "_"
         elif len(non_default_items) <= 1:
-            args.item = non_default_items[0] if non_default_items else "_default"
+            args.item = non_default_items[0] if non_default_items else "_"
         else:
             args.item = _select_context_item(
                 context_map, settings.get("environment", {}) or {}
@@ -813,14 +846,14 @@ def main():
     env_map = settings.get("environment", {}) or {}
     # Resolve driver with the following priority:
     # 1. --driver CLI argument
-    # 2. TOPSAILAI_AGENT_DRIVER from settings.environment (item-specific or _default)
+    # 2. TOPSAILAI_AGENT_DRIVER from settings.environment (item-specific or base)
     # 3. ai_agent_driver from settings.yaml
     # 4. TOPSAILAI_AGENT_DRIVER from the OS environment
-    default_env = env_map.get("_default", {})
-    item_env = env_map.get(args.item, {}) if args.item != "_default" else {}
+    base_env = _get_base_env(env_map)
+    item_env = env_map.get(args.item, {}) if not _is_base_item(args.item) else {}
     settings_env_driver = item_env.get(
         "TOPSAILAI_AGENT_DRIVER"
-    ) or default_env.get("TOPSAILAI_AGENT_DRIVER")
+    ) or base_env.get("TOPSAILAI_AGENT_DRIVER")
 
     ai_agent_driver = (
         args.driver
@@ -840,17 +873,17 @@ def main():
     item_name = args.item
     print(f"[TopsailAI-Launcher] Context item: {item_name}")
 
-    # 2. Assemble context: _default first, then the specified item
-    default_context = context_map.get("_default", [])
-    item_context = context_map.get(item_name, []) if item_name != "_default" else []
+    # 2. Assemble context: base items first, then the specified item
+    base_context = _get_base_context(context_map)
+    item_context = context_map.get(item_name, []) if not _is_base_item(item_name) else []
 
-    if item_name != "_default" and item_name not in context_map:
+    if not _is_base_item(item_name) and item_name not in context_map:
         print(f"Error: Item '{item_name}' not found in context section", file=sys.stderr)
         print("\n", file=sys.stderr)
         print_available_items(context_map)
         sys.exit(1)
 
-    merged_context = list(default_context)
+    merged_context = list(base_context)
     merged_context.extend(item_context)
 
     # Convert relative paths to absolute paths based on workspace
@@ -864,14 +897,14 @@ def main():
     # 2.5 Read context file contents and format them
     context_content = _read_context_file_blocks(abs_context)
 
-    # 3. Assemble environment variables: system env <- _default <- item (latter overrides former)
-    default_env = env_map.get("_default", {})
-    item_env = env_map.get(item_name, {}) if item_name != "_default" else {}
+    # 3. Assemble environment variables: system env <- base <- item (latter overrides former)
+    base_env = _get_base_env(env_map)
+    item_env = env_map.get(item_name, {}) if not _is_base_item(item_name) else {}
 
     os.environ["TOPSAILAI_PROJECT_WORKSPACE"] = workspace
 
     merged_env = os.environ.copy()
-    merged_env.update(default_env)
+    merged_env.update(base_env)
     merged_env.update(item_env)
 
     # 3.5 Append context file contents and workspace folder structure to TOPSAILAI_CONTEXT_USER_MESSAGE
@@ -919,7 +952,7 @@ def main():
     print(f"[TopsailAI-Launcher] Command: {' '.join(cmd)}")
     print(f"[TopsailAI-Launcher] Workspace: {workspace}")
     print(
-        f"[TopsailAI-Launcher] Merged env keys: {sorted(set(list(default_env.keys()) + list(item_env.keys())))}"
+        f"[TopsailAI-Launcher] Merged env keys: {sorted(set(list(base_env.keys()) + list(item_env.keys())))}"
     )
 
     # In dry-run mode, only print the details and exit without execution
@@ -927,8 +960,8 @@ def main():
         print("\n--- Dry Run Mode (no actual execution) ---")
         print(f"\nCommand line:\n  {' '.join(shlex.quote(c) for c in cmd)}")
         print(f"\nWorking directory:\n  {workspace}")
-        print("\nEnvironment variables (merged from _default and item):")
-        config_env_keys = sorted(set(list(default_env.keys()) + list(item_env.keys())))
+        print("\nEnvironment variables (merged from base and item):")
+        config_env_keys = sorted(set(list(base_env.keys()) + list(item_env.keys())))
         for key in config_env_keys:
             print(f"  {key}={merged_env.get(key, '')}")
         sys.exit(0)
