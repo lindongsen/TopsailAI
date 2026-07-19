@@ -21,6 +21,7 @@ import argparse
 import atexit
 import copy
 import json
+import dataclasses
 import os
 import shlex
 import signal
@@ -67,6 +68,188 @@ def _get_base_env(env_map):
     merged = dict(default_env)
     merged.update(underscore_env)
     return merged
+
+
+@dataclasses.dataclass(frozen=True)
+class ContextSource:
+    """A single context source: either a file path or a shell command."""
+
+    type: str  # "file" or "command"
+    value: str  # file path or command string
+    shell: bool = True
+    timeout: float = 30.0
+    label: str = ""
+    on_error: str = "include"  # "include", "skip", or "abort"
+    cwd: str = ""
+    environ: dict = dataclasses.field(default_factory=dict)
+
+
+def _normalize_context_source(source, workspace=""):
+    """Convert a raw context entry into a ContextSource object.
+
+    Supports:
+      - plain string -> file path
+      - dict with type == "command" -> command source
+      - dict with type == "file"   -> file source
+    """
+    if isinstance(source, str):
+        return ContextSource(type="file", value=source)
+
+    if not isinstance(source, dict):
+        raise ValueError(
+            f"Invalid context source type: {type(source).__name__!r}. "
+            "Expected a string or a dict."
+        )
+
+    source_type = source.get("type", "file")
+    if source_type not in ("file", "command"):
+        raise ValueError(
+            f"Invalid context source type: {source_type!r}. "
+            "Expected 'file' or 'command'."
+        )
+
+    if source_type == "file":
+        value = source.get("path") or source.get("value") or source.get("file")
+        if not value:
+            raise ValueError("File context source must specify a path.")
+        return ContextSource(
+            type="file",
+            value=value,
+            label=source.get("label", ""),
+        )
+
+    command = source.get("command") or source.get("value")
+    if not command:
+        raise ValueError("Command context source must specify a command.")
+
+    timeout = source.get("timeout", 30)
+    try:
+        timeout = float(timeout)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid command timeout: {timeout!r}") from exc
+
+    on_error = source.get("on_error", "include")
+    if on_error not in ("include", "skip", "abort"):
+        raise ValueError(
+            f"Invalid on_error value: {on_error!r}. "
+            "Expected 'include', 'skip', or 'abort'."
+        )
+
+    cwd = source.get("cwd", workspace)
+    return ContextSource(
+        type="command",
+        value=command,
+        shell=bool(source.get("shell", True)),
+        timeout=timeout,
+        label=source.get("label", ""),
+        on_error=on_error,
+        cwd=cwd,
+        environ=dict(source.get("environ", {}) or {}),
+    )
+
+
+def _execute_context_command(source, workspace):
+    """Execute a command context source and return its formatted output block."""
+    command = source.value
+    label = source.label or command
+    cwd = source.cwd or workspace
+
+    env = os.environ.copy()
+    env.update(source.environ)
+
+    try:
+        result = subprocess.run(
+            command if source.shell else shlex.split(command),
+            shell=source.shell,
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=source.timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        message = (
+            f"Command timed out after {source.timeout}s:\n"
+            f"  {command}\n"
+            f"Partial stdout before timeout:\n{exc.stdout or ''}"
+        )
+        if source.on_error == "abort":
+            raise RuntimeError(message) from exc
+        if source.on_error == "skip":
+            print(
+                f"Warning: Skipping command context '{label}' due to timeout.",
+                file=sys.stderr,
+            )
+            return ""
+        return (
+            f"> Command: {label} > START\n"
+            f"Error: {message}\n"
+            f"> Command: {label} > END"
+        )
+    except OSError as exc:
+        message = f"Failed to execute command '{command}': {exc}"
+        if source.on_error == "abort":
+            raise RuntimeError(message) from exc
+        if source.on_error == "skip":
+            print(
+                f"Warning: Skipping command context '{label}' due to execution error.",
+                file=sys.stderr,
+            )
+            return ""
+        return (
+            f"> Command: {label} > START\n"
+            f"Error: {message}\n"
+            f"> Command: {label} > END"
+        )
+
+    if result.returncode != 0:
+        if source.on_error == "abort":
+            raise RuntimeError(
+                f"Command '{command}' exited with code {result.returncode}.\n"
+                f"stderr:\n{result.stderr}"
+            )
+        if source.on_error == "skip":
+            print(
+                f"Warning: Skipping command context '{label}' due to non-zero exit code {result.returncode}.",
+                file=sys.stderr,
+            )
+            return ""
+        output = (
+            f"Warning: command exited with code {result.returncode}.\n"
+            f"stderr:\n{result.stderr}\n"
+            f"stdout:\n{result.stdout}"
+        )
+    else:
+        output = result.stdout
+
+    return f"> Command: {label} > START\n{output}\n> Command: {label} > END"
+
+
+def _read_context_blocks(sources, workspace):
+    """Read each context source and return formatted blocks."""
+    blocks = []
+    for source in sources:
+        if source.type == "command":
+            block = _execute_context_command(source, workspace)
+            if block:
+                blocks.append(block)
+            continue
+
+        # File source
+        path = source.value
+        if not os.path.isabs(path):
+            path = os.path.join(workspace, path)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except (OSError, UnicodeDecodeError) as exc:
+            print(
+                f"Warning: Failed to read context file '{path}': {exc}",
+                file=sys.stderr,
+            )
+            continue
+        blocks.append(f"> File: {path} > START\n{content}\n> File: {path} > END")
+    return "\n\n".join(blocks)
 
 
 def _cleanup_context_file():
@@ -139,12 +322,21 @@ ai_agent_driver: "ai-team-flow-dev"
 # Working directory for the launched driver.
 workspace: "."
 
-# Context configuration: each item corresponds to a set of context files.
-# "_" is the 基础配置 (base configuration) shared by all items; item-specific
-# files are appended after the 基础配置 files. Paths are relative to `workspace`
-# unless they start with `/`.
+# Context configuration: each item corresponds to a set of context sources.
+# Each source is either a file path (string) or a dict describing a command
+# whose stdout will be captured and included as context.
 #
-# IMPORTANT: `context._` is currently empty. Fill it with the files
+# "_" is the 基础配置 (base configuration) shared by all items; item-specific
+# sources are appended after the 基础配置 sources. File paths are relative to
+# `workspace` unless they start with `/`.
+#
+# Command source example:
+#   - type: command
+#     command: "git log --oneline -10"
+#     timeout: 5
+#     label: "recent-commits"
+#
+# IMPORTANT: `context._` is currently empty. Fill it with the sources
 # you want every agent run to receive (e.g. project.yaml, docs, features).
 context:
   _: []
@@ -181,11 +373,36 @@ def _yaml_quote(value):
 
 
 def _render_yaml_list(items, base_indent=2):
-    """Render a list of strings as an inline [] or a YAML block list."""
+    """Render a list of context sources as an inline [] or a YAML block list.
+
+    Each item may be a plain string (file path) or a dict (command source).
+    """
     if not items:
         return " []"
     spaces = " " * (base_indent + 2)
-    return "\n" + "\n".join(f"{spaces}- {_yaml_quote(item)}" for item in items)
+    lines = []
+    for item in items:
+        if isinstance(item, dict):
+            lines.append(f"{spaces}- type: command")
+            for key in ("command", "shell", "timeout", "label", "on_error", "cwd"):
+                if key in item:
+                    value = item[key]
+                    if isinstance(value, bool):
+                        rendered = "true" if value else "false"
+                    elif isinstance(value, (int, float)):
+                        rendered = str(value)
+                    else:
+                        rendered = _yaml_quote(value)
+                    lines.append(f"{spaces}  {key}: {rendered}")
+            if item.get("environ"):
+                lines.append(f"{spaces}  environ:")
+                env_spaces = " " * (base_indent + 4)
+                for env_key, env_value in item["environ"].items():
+                    lines.append(f"{env_spaces}{env_key}: {_yaml_quote(env_value)}")
+        else:
+            lines.append(f"{spaces}- {_yaml_quote(item)}")
+    return "\n" + "\n".join(lines)
+
 
 def _render_env_lines(env_vars, base_indent=2):
     """Render extra environment variables as indented YAML lines.
@@ -221,12 +438,21 @@ ai_agent_driver: {ai_agent_driver}
 # Working directory for the launched driver.
 workspace: {workspace}
 
-# Context configuration: each item corresponds to a set of context files.
-# "_" is the 基础配置 (base configuration) shared by all items; item-specific
-# files are appended after the 基础配置 files. Paths are relative to `workspace`
-# unless they start with `/`.
+# Context configuration: each item corresponds to a set of context sources.
+# Each source is either a file path (string) or a dict describing a command
+# whose stdout will be captured and included as context.
 #
-# IMPORTANT: `context._` is currently empty. Fill it with the files
+# "_" is the 基础配置 (base configuration) shared by all items; item-specific
+# sources are appended after the 基础配置 sources. File paths are relative to
+# `workspace` unless they start with `/`.
+#
+# Command source example:
+#   - type: command
+#     command: "git log --oneline -10"
+#     timeout: 5
+#     label: "recent-commits"
+#
+# IMPORTANT: `context._` is currently empty. Fill it with the sources
 # you want every agent run to receive (e.g. project.yaml, docs, features).
 context:
   _:{context_default}
@@ -277,6 +503,28 @@ def _prompt_list(question):
         values.append(line)
     return values
 
+
+def _prompt_context_sources(question):
+    """Prompt the user for context sources until an empty line is entered.
+
+    Lines starting with 'command:' are converted to command source dictionaries.
+    Other lines are treated as file paths.
+    """
+    print(question)
+    values = []
+    while True:
+        line = _prompt("", default="")
+        if not line:
+            break
+        if line.startswith("command:"):
+            values.append({
+                "type": "command",
+                "command": line[len("command:"):].strip(),
+            })
+        else:
+            values.append(line)
+    return values
+
 def _run_interactive_setup(settings_path):
     """Guide the user through creating a minimal settings.yaml interactively."""
     print(
@@ -299,14 +547,15 @@ def _run_interactive_setup(settings_path):
     )
 
     print(
-        "\nContext files are injected into every agent run. "
-        "Paths are relative to the workspace unless they start with '/'.",
+        "\nContext sources are injected into every agent run. "
+        "Paths are relative to the workspace unless they start with '/'. "
+        "You can also add command sources by typing 'command: <shell command>'.",
         file=sys.stderr,
     )
     context_default = []
-    if _prompt_yn("Would you like to add context files for the '_' item now?", default=True):
-        context_default = _prompt_list(
-            "Enter context file paths one per line (empty line to finish):"
+    if _prompt_yn("Would you like to add context sources for the '_' item now?", default=True):
+        context_default = _prompt_context_sources(
+            "Enter context file paths or 'command: <shell command>' one per line (empty line to finish):"
         )
 
     print(
@@ -445,9 +694,9 @@ def _get_context_items(context_map):
 def _format_item_config(item_name, context_map, env_map):
     """Return a human-readable summary of an item's effective configuration.
 
-    The summary merges the `_`/`_default` context files and environment variables
-    with the item-specific values so the user sees exactly what will be used
-    for each option.
+    The summary merges the `_`/`_default` context sources and environment
+    variables with the item-specific values so the user sees exactly what
+    will be used for each option.
     """
     base_context = _get_base_context(context_map)
     item_context = list(context_map.get(item_name, []) or [])
@@ -458,14 +707,27 @@ def _format_item_config(item_name, context_map, env_map):
     merged_env = dict(base_env)
     merged_env.update(item_env)
 
+    def _source_label(source):
+        if isinstance(source, dict):
+            label = source.get("label") or source.get("command", "")
+            return f"command: {label}"
+        return str(source)
+
+    def _is_base_source(source):
+        if isinstance(source, dict):
+            return any(
+                source == base for base in base_context
+            ) and source not in item_context
+        return source in base_context and source not in item_context
+
     lines = [f"{item_name}"]
     if merged_context:
-        lines.append("    context files:")
-        for path in merged_context:
-            prefix = "      [base] " if path in base_context and path not in item_context else "      "
-            lines.append(f"{prefix}- {path}")
+        lines.append("    context sources:")
+        for source in merged_context:
+            prefix = "      [base] " if _is_base_source(source) else "      "
+            lines.append(f"{prefix}- {_source_label(source)}")
     else:
-        lines.append("    context files: (none)")
+        lines.append("    context sources: (none)")
     if merged_env:
         lines.append("    environment variables:")
         for key, value in sorted(merged_env.items()):
@@ -748,21 +1010,6 @@ def _scan_workspace_files(workspace):
     walk(workspace)
     return "> " + workspace + "\n" + "\n".join(entries)
 
-def _read_context_file_blocks(context_paths):
-    """Read each context file and return formatted blocks."""
-    blocks = []
-    for path in context_paths:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
-        except (OSError, UnicodeDecodeError) as exc:
-            print(
-                f"Warning: Failed to read context file '{path}': {exc}",
-                file=sys.stderr,
-            )
-            continue
-        blocks.append(f"> File: {path} > START\n{content}\n> File: {path} > END")
-    return "\n\n".join(blocks)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -886,17 +1133,22 @@ def main():
     merged_context = list(base_context)
     merged_context.extend(item_context)
 
-    # Convert relative paths to absolute paths based on workspace
-    abs_context = []
+    # Normalize sources and resolve relative file paths against workspace.
+    normalized_context = []
     for ctx in merged_context:
-        if os.path.isabs(ctx):
-            abs_context.append(ctx)
-        else:
-            abs_context.append(os.path.join(workspace, ctx))
+        source = _normalize_context_source(ctx, workspace)
+        if source.type == "file" and not os.path.isabs(source.value):
+            source = dataclasses.replace(
+                source, value=os.path.join(workspace, source.value)
+            )
+        normalized_context.append(source)
 
-    # 2.5 Read context file contents and format them
-    context_content = _read_context_file_blocks(abs_context)
-
+    # 2.5 Read context source contents and format them (skipped in dry-run mode
+    # so commands are not actually executed).
+    if args.dry_run:
+        context_content = ""
+    else:
+        context_content = _read_context_blocks(normalized_context, workspace)
     # 3. Assemble environment variables: system env <- base <- item (latter overrides former)
     base_env = _get_base_env(env_map)
     item_env = env_map.get(item_name, {}) if not _is_base_item(item_name) else {}
@@ -960,6 +1212,22 @@ def main():
         print("\n--- Dry Run Mode (no actual execution) ---")
         print(f"\nCommand line:\n  {' '.join(shlex.quote(c) for c in cmd)}")
         print(f"\nWorking directory:\n  {workspace}")
+        print("\nContext sources (base + selected item):")
+        if normalized_context:
+            for source in normalized_context:
+                if source.type == "command":
+                    label = source.label or source.value
+                    shell_str = "true" if source.shell else "false"
+                    print(
+                        f"  [command] {label}\n"
+                        f"    command: {source.value}\n"
+                        f"    shell: {shell_str}, timeout: {source.timeout}s, "
+                        f"on_error: {source.on_error}"
+                    )
+                else:
+                    print(f"  [file] {source.value}")
+        else:
+            print("  (none)")
         print("\nEnvironment variables (merged from base and item):")
         config_env_keys = sorted(set(list(base_env.keys()) + list(item_env.keys())))
         for key in config_env_keys:

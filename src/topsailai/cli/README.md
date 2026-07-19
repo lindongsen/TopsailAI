@@ -176,13 +176,13 @@ The `topsailai.py` stream watcher discovers session and task stdout/stderr files
 - **Agent2LLM inject messages**: runtime messages consumed by a running agent before its next LLM call.
   - Filename format: `{session_id}.{pid}.session.agent2llm_inject_messages.jsonl`
   - Written by `topsailai_session_add_agent2llm_message.py` and the `/ctx.btw` command.
-
 - **Named pipes**: used for process-level messaging (`/send`).
   - Filename format: `{session_id}.{pid}.session.pipe`
 
 Legacy filename formats are still accepted for backward compatibility:
 
 - Generic `{name}.{pid}.stdout` / `{name}.{pid}.stderr`
+
 ### Sending messages to a running session
 
 When you use `/send` in the stream watcher, the target session PID is resolved in this order:
@@ -204,17 +204,53 @@ Launch an AI agent driver based on a local `.topsailai/settings.yaml` configurat
 - Reads `.topsailai/settings.yaml` from the current working directory.
 - Selects a configured context item via `--item`, or automatically chooses one based on the `context` section (see below).
 - Merges environment variables in the order: system environment → `_` (基础配置, base configuration) → `_default` (legacy backward compatibility) → item-specific values.
-- Reads the configured context files (`_` first, then `_default` for legacy compatibility, then item-specific files) and appends a workspace folder tree to `TOPSAILAI_CONTEXT_USER_MESSAGE`.
+- Reads the configured context sources (`_` first, then `_default` for legacy compatibility, then item-specific sources). Each source is either a file path or a command whose stdout is captured.
+- Appends a workspace folder tree to `TOPSAILAI_CONTEXT_USER_MESSAGE`.
 - Writes the assembled context message to a temporary file under `{workspace}/.tmp/` to avoid exceeding environment-variable size limits.
 - Launches the configured `ai_agent_driver` using `os.system` by default, or `subprocess.run` when `--subprocess` is passed.
 - Cleans up the temporary context file on exit, uncaught exceptions, and `SIGINT`/`SIGTERM`.
 
 **Context item selection (when `--item` is omitted):**
 
-- If the `context` section is completely empty (not even `_`), the launcher enters an interactive setup in TTY mode to help you configure context files, then continues. In non-TTY mode it prints a warning and continues without context files.
+- If the `context` section is completely empty (not even `_`), the launcher enters an interactive setup in TTY mode to help you configure context sources, then continues. In non-TTY mode it prints a warning and continues without context sources.
 - If only `_` is configured, `_` is used automatically.
 - If exactly one non-base item is configured, that item is used automatically.
-- If multiple non-base items are configured, a numbered list is shown with each item's full configuration (context files and environment variables). The `default` item is pre-selected if it exists; otherwise you must choose one.
+- If multiple non-base items are configured, a numbered list is shown with each item's full configuration (context sources and environment variables). The `default` item is pre-selected if it exists; otherwise you must choose one.
+
+**Context sources:**
+
+Each entry in a context list is one of:
+
+- A plain string — treated as a file path (relative to the workspace).
+- A mapping with `type: command` — the command is executed and its stdout is included as context.
+
+Example:
+
+```yaml
+context:
+  _:
+    - "README.md"
+    - type: command
+      command: "git status --short"
+      label: "git-status"
+    - type: command
+      command: "git log --oneline -10"
+      label: "recent-commits"
+      timeout: 5
+```
+
+Supported command source fields:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `command` | string | required | The command to execute. |
+| `type` | string | required | Must be `command`. |
+| `shell` | boolean | `true` | Whether to run the command through a shell. |
+| `timeout` | number | `30` | Maximum seconds to wait for the command. |
+| `label` | string | command string | Title shown in dry-run and context block headers. |
+| `cwd` | string | workspace | Working directory for the command. |
+| `environ` | mapping | `{}` | Extra environment variables for this command only. |
+| `on_error` | string | `include` | What to do on failure: `include`, `skip`, or `abort`. |
 
 **Common options:**
 
@@ -230,6 +266,7 @@ Launch an AI agent driver based on a local `.topsailai/settings.yaml` configurat
 2. `TOPSAILAI_AGENT_DRIVER` from the selected item or `_` (基础配置, base configuration; `_default` is still supported for backward compatibility) environment section
 3. `ai_agent_driver` field in `settings.yaml`
 4. `TOPSAILAI_AGENT_DRIVER` from the OS environment
+
 If `.topsailai/settings.yaml` is missing, the launcher asks how to proceed:
 - In an interactive terminal (TTY), you are prompted to choose:
   - `[r] Run with the default agent driver` — uses the built-in default
@@ -245,6 +282,7 @@ If `.topsailai/settings.yaml` is missing, the launcher asks how to proceed:
 You can still override the driver with `--driver` or the
 `TOPSAILAI_AGENT_DRIVER` environment variable when running with the default
 configuration.
+
 ### `topsailai_session_add_message` vs `topsailai_session_add_agent2llm_message`
 
 These two commands append messages to a session, but they target different conversation layers and have different lifecycles.
@@ -267,7 +305,6 @@ When watching a session in `topsailai.py`, you can inject messages through three
 | `/ctx.add_msg` | `user2agent` context | Calls `topsailai_session_add_message` to append to the session message store | Only after the agent restarts; not visible to a running agent |
 
 Use `/send` for urgent process-level messages, `/ctx.btw` for extra instructions you want the current agent to pick up on the fly, and `/ctx.add_msg` for context that should persist until the next agent run.
-
 ### Runtime scope (dual-pane UI)
 
 When you choose to watch a session in `topsailai.py`, the CLI enters **runtime scope** and streams the selected log file. If the terminal supports it, a two-pane curses UI is used:

@@ -76,7 +76,47 @@ environment:
 
 - `_` is the base configuration shared by all items.
 - `_default` is still supported for backward compatibility.
-- Context file paths are relative to `workspace` unless they start with `/`.
+- Context sources are either file paths (strings) or command sources (dicts).
+- File paths are relative to `workspace` unless they start with `/`.
+
+### Command Context Sources
+
+A command context source runs a shell command and captures its stdout as context content.
+
+```yaml
+context:
+  _:
+    - "README.md"
+    - type: command
+      command: "git log --oneline -10"
+      timeout: 5
+      label: "recent-commits"
+    - type: command
+      command: "git status --short"
+      shell: true
+      label: "git-status"
+```
+
+Supported fields for command sources:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `type` | string | required | Must be `command`. |
+| `command` | string | required | The command to execute. |
+| `shell` | bool | `true` | Whether to run the command through a shell. |
+| `timeout` | number | `30` | Maximum execution time in seconds. |
+| `label` | string | command string | Label used in the formatted context block. |
+| `on_error` | string | `include` | Behavior when the command fails or times out: `include` (include error message), `skip` (skip the block), or `abort` (raise an error). |
+| `cwd` | string | `workspace` | Working directory for the command. |
+| `environ` | dict | `{}` | Extra environment variables for this command only. |
+
+Command output is formatted as:
+
+```text
+> Command: <label> > START
+<stdout>
+> Command: <label> > END
+```
 
 ## Examples
 
@@ -101,3 +141,4 @@ topsailai_launch_agent --setup
 
 - A temporary context message file is written under `{workspace}/.tmp/` and cleaned up on exit, uncaught exceptions, and `SIGINT`/`SIGTERM`.
 - The launcher changes to the configured `workspace` before running the driver.
+- In `--dry-run` mode, command context sources are listed but not executed.
