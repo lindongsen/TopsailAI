@@ -185,8 +185,8 @@ bin/topsailai_data show hello
 |---------|-------|-------------|
 | `create` | `create <object> [--classify dir1/dir2/...] [--tag t1,t2] [--from <file\|archive\|->]` | Create a new object. Writes a mandatory `<object>.md` marker and optional tags. `--from` accepts a plain file, a tar archive, or `-` for stdin; when omitted, content is read from stdin. If an object with the same name already exists in `ceased` status, the ceased object is purged and the new object is created; `active`, `creating`, and `deleted` objects cause `ErrObjectExists`. |
 | `show` | `show <id>` | Display metadata, the `<object>.md` content, and the folder structure of an object. |
-| `list` | `list [--include-deleted] [--offset n] [--limit n] [--format table\|json] [--sort time:desc\|time:asc]` | List active objects, optionally paginated and sorted by the time prefix of the object path. Default format is a pipe-separated table; use `json` for machine-readable output. Default sort is `time:desc` (newest first). |
-| `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format table\|json] [--sort time:desc\|time:asc]` | Search objects by name, tag, or classify path. Use `|` in `<query>` for OR logic (e.g. `foo\|bar`). Spaces, tabs, and backslash escapes are not supported. Results are sorted by the time prefix of the object path; default is `time:desc` (newest first). |
+| `list` | `list [--include-deleted] [--offset n] [--limit n] [--format yaml\|json] [--sort time:desc\|time:asc]` | List active objects, optionally paginated and sorted by the time prefix of the object path. Default format is YAML; use `json` for machine-readable output. Default sort is `time:desc` (newest first). |
+| `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format yaml\|json] [--sort time:desc\|time:asc]` | Search objects by name, tag, or classify path. Use `|` in `<query>` for OR logic (e.g. `foo\|bar`). Spaces, tabs, and backslash escapes are not supported. Results are sorted by the time prefix of the object path; default is `time:desc` (newest first). |
 | `tag` | `tag add <id> <tag>` or `tag remove <id> <tag>` | Add or remove an object-specific tag. |
 | `move` | `move <id> <new-classify...>` | Move an active object to a different classify path. The ID and name stay the same. |
 | `delete` | `delete <id>` | Soft-delete an active object. Marks the object as `deleted` but preserves actual data so it can be recovered. Finalization removes actual data and transitions the object to `ceased`. |
@@ -212,8 +212,8 @@ Read metadata:
 
 ```
 bin/topsailai_data show <id>
-bin/topsailai_data list [--include-deleted] [--offset 0] [--limit 10] [--format table|json]
-bin/topsailai_data search <query> [--include-deleted] [--offset 0] [--limit 10] [--format table|json]
+bin/topsailai_data list [--include-deleted] [--offset 0] [--limit 10] [--format yaml|json]
+bin/topsailai_data search <query> [--include-deleted] [--offset 0] [--limit 10] [--format yaml|json]
 ```
 
 #### Search query syntax
@@ -289,16 +289,24 @@ Avoid piping `get` output through tools that interpret or re-encode the stream (
 
 ### Output format
 
-`list` supports two output formats selected with `--format table|json`.
+`list` and `search` support two output formats selected with `--format yaml|json`. The default format is YAML.
 
-`--format table` (default) prints a pipe-separated table with a header row and one row per object. Values are not truncated, so long paths or tag lists are shown in full:
+`--format yaml` (default) prints the result as a YAML array. Each object is represented with snake_case keys:
 
-```text
-| ID    | NAME  | STATUS | PATH                 | TAGS       | CREATED AT           | UPDATED AT           |
-| hello | hello | active | 2026/0714/2323/hello | quickstart | 2026-07-14T23:23:00Z | 2026-07-14T23:23:00Z |
+```yaml
+- id: hello
+  name: hello
+  path: 2026/0714/2323/hello
+  status: active
+  tags:
+    - quickstart
+  created_at: 2026-07-14T23:23:00Z
+  updated_at: 2026-07-14T23:23:00Z
+  schema_version: 1
+  data_ref: 2026/0714/2323/hello
 ```
 
-Use `--offset` and `--limit` to paginate. When no objects match, `list` prints `No objects found`.
+Use `--offset` and `--limit` to paginate. When no objects match, `list` and `search` print an empty YAML array (`[]`).
 
 `--format json` prints the full result as a pretty-printed JSON array:
 

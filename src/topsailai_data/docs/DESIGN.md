@@ -392,8 +392,8 @@ The CLI is named `topsaildata`. Commands include:
 | `update <id>` | Update an object's metadata or tags. |
 | `move <id> <new-classify...>` | Move an object to a different classify path. The ID and name do not change. |
 | `delete <id>` | Soft-delete an active object. Marks the object as `deleted` but preserves actual data so it can be recovered. |
-| `list [--include-deleted] [--offset n] [--limit n] [--format table|json]` | List active objects, optionally paginated. |
-| `search <query> [--include-deleted] [--offset n] [--limit n] [--format table|json]` | Search objects by name, tag, or classify path. Use `|` in `<query>` for OR logic (e.g. `foo|bar`). Spaces, tabs, and backslash escapes are not supported. |
+| `list [--include-deleted] [--offset n] [--limit n] [--format yaml|json]` | List active objects, optionally paginated. The default output format is YAML; use `--format json` for machine-readable JSON. |
+| `search <query> [--include-deleted] [--offset n] [--limit n] [--format yaml|json]` | Search objects by name, tag, or classify path. Use `|` in `<query>` for OR logic (e.g. `foo|bar`). Spaces, tabs, and backslash escapes are not supported. The default output format is YAML; use `--format json` for machine-readable JSON. |
 | `tag add <id> <tag>` | Add a tag to an object. |
 | `tag remove <id> <tag>` | Remove a tag from an object. |
 | `get <id> <object-file>` | Read a single actual data file from an object. |

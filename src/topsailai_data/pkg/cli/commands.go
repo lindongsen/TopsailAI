@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"golang.org/x/term"
+	"gopkg.in/yaml.v3"
 	apperrors "github.com/topsailai/topsailai_data/pkg/errors"
 	"github.com/topsailai/topsailai_data/pkg/manager"
 	"github.com/topsailai/topsailai_data/pkg/models"
@@ -239,7 +240,7 @@ func runList(ctx context.Context, mgr *manager.Manager, args []string) error {
 	includeDeleted := fs.Bool("include-deleted", false, "include deleted and ceased objects")
 	offset := fs.Int("offset", 0, "number of results to skip")
 	limit := fs.Int("limit", 0, "maximum number of results to return")
-	format := fs.String("format", "table", "output format: table or json")
+	format := fs.String("format", "yaml", "output format: yaml or json")
 	sort := fs.String("sort", "time:desc", "sort order: time:desc (newest first) or time:asc (oldest first)")
 	tagList := fs.String("tag", "", "comma-separated tags to filter results")
 	if err := fs.Parse(args); err != nil {
@@ -399,7 +400,7 @@ func runSearch(ctx context.Context, mgr *manager.Manager, args []string) error {
 	includeDeleted := fs.Bool("include-deleted", false, "include deleted and ceased objects")
 	offset := fs.Int("offset", 0, "number of results to skip")
 	limit := fs.Int("limit", 0, "maximum number of results to return")
-	format := fs.String("format", "table", "output format: table or json")
+	format := fs.String("format", "yaml", "output format: yaml or json")
 	sort := fs.String("sort", "time:desc", "sort order: time:desc (newest first) or time:asc (oldest first)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -654,10 +655,10 @@ func printObject(obj *models.Object) {
 // validateListFormat returns an error if format is not a supported list output format.
 func validateListFormat(format string) error {
 	switch format {
-	case "table", "json":
+	case "yaml", "json":
 		return nil
 	default:
-		return fmt.Errorf("unsupported format %q (expected table or json)", format)
+		return fmt.Errorf("unsupported format %q (expected yaml or json)", format)
 	}
 }
 
@@ -680,7 +681,7 @@ func printObjectList(objects []*models.Object, format string) {
 	case "json":
 		printObjectListJSON(objects)
 	default:
-		printObjectListTable(objects)
+		printObjectListYAML(objects)
 	}
 }
 
@@ -722,51 +723,45 @@ func printObjectListJSON(objects []*models.Object) {
 	_ = enc.Encode(items)
 }
 
-// printObjectListTable prints objects as a pipe-separated table without truncation.
-func printObjectListTable(objects []*models.Object) {
-	if len(objects) == 0 {
-		fmt.Println("No objects found")
-		return
-	}
+// listObjectYAML is the YAML representation of an object used by list/search output.
+type listObjectYAML struct {
+	ID            string    `yaml:"id"`
+	Name          string    `yaml:"name"`
+	Path          string    `yaml:"path"`
+	Status        string    `yaml:"status"`
+	Tags          []string  `yaml:"tags"`
+	CreatedAt     time.Time `yaml:"created_at"`
+	UpdatedAt     time.Time `yaml:"updated_at"`
+	SchemaVersion int       `yaml:"schema_version"`
+	DataRef       string    `yaml:"data_ref"`
+}
 
-	headers := []string{"ID", "NAME", "STATUS", "PATH", "TAGS", "CREATED AT", "UPDATED AT"}
-	rows := make([][]string, 0, len(objects))
+// printObjectListYAML prints objects as a pretty-printed YAML list.
+func printObjectListYAML(objects []*models.Object) {
+	items := make([]listObjectYAML, 0, len(objects))
 	for _, obj := range objects {
-		rows = append(rows, []string{
-			string(obj.ID),
-			obj.Name,
-			string(obj.Status),
-			obj.Path,
-			strings.Join(obj.Tags, ","),
-			obj.CreatedAt.Format(time.RFC3339),
-			obj.UpdatedAt.Format(time.RFC3339),
+		tags := obj.Tags
+		if tags == nil {
+			tags = []string{}
+		}
+		items = append(items, listObjectYAML{
+			ID:            string(obj.ID),
+			Name:          obj.Name,
+			Path:          obj.Path,
+			Status:        string(obj.Status),
+			Tags:          tags,
+			CreatedAt:     obj.CreatedAt,
+			UpdatedAt:     obj.UpdatedAt,
+			SchemaVersion: obj.SchemaVersion,
+			DataRef:       obj.DataRef,
 		})
 	}
-
-	widths := make([]int, len(headers))
-	for i, h := range headers {
-		widths[i] = len(h)
+	out, err := yaml.Marshal(items)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to marshal yaml: %v\n", err)
+		return
 	}
-	for _, row := range rows {
-		for i, cell := range row {
-			if len(cell) > widths[i] {
-				widths[i] = len(cell)
-			}
-		}
-	}
-
-	printRow := func(cells []string) {
-		parts := make([]string, len(cells))
-		for i, cell := range cells {
-			parts[i] = fmt.Sprintf(" %-*s ", widths[i], cell)
-		}
-		fmt.Println("|" + strings.Join(parts, "|") + "|")
-	}
-
-	printRow(headers)
-	for _, row := range rows {
-		printRow(row)
-	}
+	_, _ = os.Stdout.Write(out)
 }
 
 // isTarBytes reports whether buf looks like a tar archive by inspecting its

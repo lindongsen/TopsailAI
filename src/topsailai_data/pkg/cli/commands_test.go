@@ -771,15 +771,14 @@ func TestListOutputFormatAndPagination(t *testing.T) {
 			t.Fatalf("list: %v", err)
 		}
 	})
-	if !strings.Contains(out, "| ID   | NAME | STATUS | PATH                     | TAGS | CREATED AT                | UPDATED AT                |") &&
-		!strings.Contains(out, "| ID    | NAME  | STATUS | PATH                      | TAGS | CREATED AT                | UPDATED AT                |") {
-		t.Fatalf("list output missing pipe-separated header: %s", out)
+	if !strings.Contains(out, "id:") {
+		t.Fatalf("list output missing YAML id field: %s", out)
 	}
 	if !strings.Contains(out, "obj1") || !strings.Contains(out, "obj5") {
 		t.Fatalf("list output missing objects: %s", out)
 	}
-	if !strings.Contains(out, "|") {
-		t.Fatalf("list table should use | separators: %s", out)
+	if strings.Contains(out, "|") {
+		t.Fatalf("list output should not use table separators: %s", out)
 	}
 
 	// Test offset/limit.
@@ -788,9 +787,11 @@ func TestListOutputFormatAndPagination(t *testing.T) {
 			t.Fatalf("list offset/limit: %v", err)
 		}
 	})
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 3 { // header + 2 data rows
-		t.Fatalf("expected 3 lines, got %d: %s", len(lines), out)
+	if !strings.Contains(out, "obj2") || !strings.Contains(out, "obj3") {
+		t.Fatalf("offset/limit output missing expected objects: %s", out)
+	}
+	if strings.Contains(out, "obj1") || strings.Contains(out, "obj5") {
+		t.Fatalf("offset/limit output should not contain out-of-range objects: %s", out)
 	}
 }
 
@@ -844,8 +845,8 @@ func TestListEmpty(t *testing.T) {
 	if strings.Contains(out, "|") {
 		t.Fatalf("empty list should not print table: %s", out)
 	}
-	if !strings.Contains(out, "No objects found") {
-		t.Fatalf("empty list should print friendly message: %s", out)
+	if strings.TrimSpace(out) != "[]" {
+		t.Fatalf("empty list yaml should be [], got %s", out)
 	}
 
 	out = captureStdout(t, func() {
@@ -1409,7 +1410,7 @@ func TestHelpPrintsUsage(t *testing.T) {
 func TestInvalidListFormat(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	err := Run(ctx, mgr, []string{"list", "--format", "xml"})
+	err := Run(ctx, mgr, []string{"list", "--format", "table"})
 	if err == nil {
 		t.Fatalf("expected error for invalid list format")
 	}
