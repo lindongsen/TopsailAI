@@ -1,23 +1,58 @@
-# AI Agent driver path or command
+# AI Agent driver path or command.
+# This value tells the launcher which driver executable to use when starting an agent.
+# It can be overridden by the --driver CLI argument or by the TOPSAILAI_AGENT_DRIVER
+# environment variable. Resolution order (highest to lowest priority):
+#   1. --driver CLI argument
+#   2. TOPSAILAI_AGENT_DRIVER from the selected item or "_" (base configuration)
+#   3. This ai_agent_driver field
+#   4. TOPSAILAI_AGENT_DRIVER from the OS environment
 ai_agent_driver: "topsailai_agent_chats"
 
-# Working directory (relative paths will be resolved based on the current directory)
+# Working directory used when launching the agent.
+# Relative paths are resolved based on the current directory at launch time.
 workspace: "."
 
-# Context configuration: each item corresponds to a set of context files
-# "_" is the 基础配置 (base configuration) shared by all items
+# Context configuration: each top-level item corresponds to a set of context sources.
+# The launcher merges sources in the following order:
+#   1. "_" (基础配置, base configuration) — always loaded first
+#   2. "_default" — legacy backward compatibility, loaded after "_"
+#   3. The selected item (e.g., "default" or "topsailai")
+#
+# Each source entry is one of:
+#   - A plain string: treated as a file path relative to the workspace.
+#   - A mapping with type: command: the command is executed and its stdout is included.
+#
+# Supported fields for command sources:
+#   command  (string, required)  The command to execute.
+#   type     (string, required)  Must be "command".
+#   shell    (boolean)           Whether to run through a shell. Default: true.
+#   timeout  (number)            Maximum seconds to wait. Default: 30.
+#   label    (string)            Title shown in dry-run/context headers. Default: command string.
+#   cwd      (string)            Working directory for the command. Default: workspace.
+#   environ  (mapping)           Extra environment variables for this command only. Default: {}.
+#   on_error (string)            What to do on failure: "include", "skip", or "abort". Default: "include".
 context:
+  # Base configuration shared by all items.
   _:
     - "README.md"
     - "LEARN.md"
+  # Default item: no extra context sources.
   default: []
+  # Item used when launching the topsailai CLI agent.
   topsailai:
     - "topsailai.md"
 
-# Environment variable configuration: each item can define its own environment variables
-# "_" is the 基础配置 (base configuration) shared by all items
+# Environment variable configuration: each item can define its own environment variables.
+# Variables are merged in the same order as context sources:
+#   1. OS environment
+#   2. "_" (base configuration)
+#   3. "_default" (legacy backward compatibility)
+#   4. The selected item
+# Later values override earlier ones.
 environment:
+  # Base environment shared by all items.
   _:
     TOPSAILAI_INTERACTIVE_MODE: "1"
+  # Item-specific environment for the topsailai CLI agent.
   topsailai:
     TOPSAILAI_AGENT_DRIVER: "ai-team-flow-dev"

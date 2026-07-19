@@ -137,6 +137,44 @@ def format_file_table(files: List[dict]) -> str:
     return captured.getvalue()
 
 
+def print_simple_table(headers: List[str], rows: List[List[str]]) -> None:
+    """Print a generic table with the given headers and rows.
+
+    Column widths are calculated from the headers and row data. Each row must
+    contain the same number of cells as ``headers``.
+    """
+    if not rows:
+        print(f"{Colors.YELLOW}[WARN] No data to display.{Colors.RESET}")
+        return
+
+    widths = [len(str(h)) for h in headers]
+    for row in rows:
+        for idx, cell in enumerate(row):
+            if idx >= len(widths):
+                widths.append(0)
+            widths[idx] = max(widths[idx], len(str(cell)))
+
+    sep_parts = ["-" * (w + 2) for w in widths]
+    sep = f"{Colors.CYAN}+".join(sep_parts) + Colors.RESET
+
+    header_cells = [
+        f"{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE} {str(headers[i]):^{widths[i]}} "
+        for i in range(len(headers))
+    ]
+    header = f"{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE}|".join(header_cells) + Colors.RESET
+
+    print(f"+{sep}+")
+    print(f"|{header}|")
+    print(f"+{sep}+")
+    for row in rows:
+        row_cells = []
+        for idx, width in enumerate(widths):
+            cell = str(row[idx]) if idx < len(row) else ""
+            row_cells.append(f" {cell:<{width}} ")
+        print(f"|{'|'.join(row_cells)}|")
+    print(f"+{sep}+")
+
+
 def format_command_table(commands: List[dict]) -> str:
     """Return a formatted table of YAML commands as a string."""
     lines = []

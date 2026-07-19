@@ -353,7 +353,18 @@ From this list you can:
 - Use `/refresh` to reload the list.
 - Use `/clean` to remove expired files.
 - Use `/send <number> [message]` to send a message to a running session.
+- Use `cd doc` to enter the documentation scope and list usage docs.
 - Use `q` to quit.
+
+You can also run the CLI in non-interactive documentation mode:
+
+```bash
+# List all usage documentation files and exit
+./topsailai.py --list-docs
+
+# Read a specific usage documentation file and exit
+./topsailai.py --read-doc topsailai.md
+```
 
 The prompt `[workspace]>` indicates that the CLI is in workspace scope (the task list). Choosing a session switches to `[session:<session_id>]>` scope.
 
@@ -368,9 +379,20 @@ When the CLI is showing the workspace task list (`[workspace]>`), the following 
 | `/refresh` | Reload the workspace task list. |
 | `/clean` | Remove expired files from the task directory. |
 | `/send <number> [message]` | Send a message to the running session associated with the selected entry. |
+| `cd doc` | Enter doc scope and list usage documentation files under `docs/usage/`. |
 | `/help` | Show available commands. |
 | `q` | Quit the CLI. |
 
+## Doc Scope Commands
+
+When the CLI is showing the documentation list (`[doc]>`), the following commands are available:
+
+| Command | Description |
+|---|---|
+| `<number>` | Read the selected usage documentation file. |
+| `/refresh` | Re-scan the `docs/usage/` directory and refresh the list. |
+| `/help` | Show available commands. |
+| `q`, `quit`, or `cd` | Return to workspace scope. |
 #### Multi-line input
 
 When `/send` or `/ctx.btw` is used without a message argument, the input pane temporarily expands to about one third of the terminal height so you can type or paste multiple lines. Finish with `Ctrl+D` (EOF). Cancel with `Esc`.

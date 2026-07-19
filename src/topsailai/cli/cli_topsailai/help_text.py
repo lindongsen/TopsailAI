@@ -113,10 +113,16 @@ def print_help(
             "scopes": ["project"],
         },
         {
+            "cmd": "<number>",
+            "desc": "Read the selected usage documentation file.",
+            "example": "Example: 3",
+            "scopes": ["doc"],
+        },
+        {
             "cmd": "/refresh",
             "desc": "Re-scan the task directory and refresh the file list.",
             "example": "",
-            "scopes": ["workspace", "project"],
+            "scopes": ["workspace", "project", "doc"],
         },
         {
             "cmd": "/session <number>",
@@ -172,8 +178,14 @@ def print_help(
             "scopes": ["workspace"],
         },
         {
+            "cmd": "cd doc  or  cd docs  or  cd usage",
+            "desc": "Enter doc scope to list usage documentation files under docs/usage/.",
+            "example": "",
+            "scopes": ["workspace"],
+        },
+        {
             "cmd": "q  or  quit  or  cd",
-            "desc": "Exit the current scope. From session, runtime, or project scope, return to workspace scope.",
+            "desc": "Exit the current scope. From session, runtime, project, or doc scope, return to workspace scope.",
             "example": "",
         },
         {

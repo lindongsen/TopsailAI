@@ -19,10 +19,11 @@ running = True
 _child_processes: Set["subprocess.Popen"] = set()
 
 # YAML command support
-# Current interactive scope: "workspace", "project", "session", or "runtime".
+# Current interactive scope: "workspace", "project", "session", "runtime", or "doc".
 # "project" lists recent sessions that have a non-empty project_workspace.
 # "runtime" is used while streaming a session log so that scope-aware
 # commands such as /ctx.btw can target the watched session.
+# "doc" lists usage documentation files under docs/usage/.
 current_scope = "workspace"
 
 # Active session identifier when current_scope is "session" or "runtime".
@@ -33,3 +34,9 @@ yaml_commands: List[Dict[str, Any]] = []
 
 # Command history manager instance.
 history_manager: Optional["HistoryManager"] = None  # type: ignore[name-defined]
+
+# Doc scope state.
+# List of discovered usage documentation files, refreshed on scope entry.
+discovered_docs: List[Any] = []
+# Filename of the documentation file currently being viewed.
+current_doc_filename: Optional[str] = None

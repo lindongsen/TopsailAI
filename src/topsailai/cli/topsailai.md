@@ -23,3 +23,7 @@ references:
 
 - enter one session
 
+## Scope: doc
+
+- usage documentation list
+- read usage documentation

@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 
 import cli_topsailai.state as state
 from cli_topsailai.colors import Colors
+from cli_topsailai.doc_scope import (
+    build_doc_list,
+    get_usage_docs_dir,
+    print_doc_table,
+    read_doc_file,
+)
 
 __version__ = "0.1.0"
 
@@ -38,8 +44,11 @@ def get_prompt() -> str:
         return (
             f"\n{Colors.GREEN}[session:{state.current_session_id}]{Colors.RESET}> "
         )
+    if state.current_scope == "doc" and state.current_doc_filename:
+        return f"\n{Colors.GREEN}[doc:{state.current_doc_filename}]{Colors.RESET}> "
+    if state.current_scope == "doc":
+        return f"\n{Colors.GREEN}[doc]{Colors.RESET}> "
     return f"\n{Colors.GREEN}[workspace]{Colors.RESET}> "
-
 
 def prompt_selection(
     files: List[dict], task_dir: str
@@ -99,8 +108,9 @@ def prompt_selection(
             lower_input = user_input.lower()
 
             if lower_input in ("q", "quit", "exit"):
+                if state.current_scope == "doc":
+                    return ("leave_scope", None)
                 return ("quit", None)
-
             if lower_input in ("r", "refresh", "/refresh"):
                 return ("refresh", None)
 
@@ -150,6 +160,17 @@ def prompt_selection(
                     if "{args}" not in instruction.get("cmd", ""):
                         return ("help_cmd", instruction)
 
+            # Scope switching: cd doc enters the documentation scope.
+            cd_match = re.match(r"^/?cd\s+(.+)$", user_input)
+            if cd_match:
+                target = cd_match.group(1).strip().lower()
+                if target in ("doc", "docs", "usage"):
+                    return ("enter_doc", None)
+
+
+            # Bare cd returns to workspace scope from doc scope.
+            if state.current_scope == "doc" and lower_input in ("cd", "/cd"):
+                return ("leave_scope", None)
             # Project scope: cd {session_id|number} enters session scope using
             # the displayed entries, matching the behavior of bare numbers.
             if state.current_scope == "project":
@@ -248,9 +269,16 @@ def prompt_selection(
                     )
                     continue
                 return ("resume", parts[1].strip())
-
             try:
                 selected = int(user_input)
+                if state.current_scope == "doc":
+                    if 1 <= selected <= len(files):
+                        return ("read_doc", selected - 1)
+                    print(
+                        f"{Colors.RED}[ERROR] Invalid number. "
+                        f"Please enter 1-{len(files)}.{Colors.RESET}"
+                    )
+                    continue
                 if 1 <= selected <= len(files):
                     if state.current_scope == "project":
                         session_id = files[selected - 1].get("session_id")
@@ -284,7 +312,6 @@ def prompt_selection(
             print(f"\n{Colors.YELLOW}[INFO] Exiting...{Colors.RESET}")
             cleanup_children()
             return ("quit", None)
-
 
 def main(argv: Optional[List[str]] = None) -> None:
     """Main entry point for the TopsailAI CLI."""
@@ -325,6 +352,20 @@ def main(argv: Optional[List[str]] = None) -> None:
         metavar="N",
         help="number of recent log lines to echo on startup in runtime mode (default: 100)",
     )
+    parser.add_argument(
+        "--list-docs",
+        action="store_true",
+        dest="list_docs",
+        help="list usage documentation files and exit",
+    )
+    parser.add_argument(
+        "--read-doc",
+        type=str,
+        default=None,
+        dest="read_doc",
+        metavar="NAME",
+        help="read a usage documentation file by name and exit",
+    )
 
     # Be tolerant of unknown arguments so tests that invoke main() with
     # arbitrary fake argv do not crash. Only help/version trigger an exit.
@@ -334,6 +375,17 @@ def main(argv: Optional[List[str]] = None) -> None:
         sys.exit(0)
     if args.version:
         print(f"{parser.prog} {__version__}")
+        sys.exit(0)
+    if args.list_docs:
+        docs = build_doc_list()
+        print_doc_table(docs)
+        sys.exit(0)
+    if args.read_doc:
+        content = read_doc_file(args.read_doc)
+        if content is None:
+            print(f"Usage doc not found: {args.read_doc}")
+            sys.exit(1)
+        print(content)
         sys.exit(0)
 
     # Heavy imports are deferred until after --help / --version are handled.
@@ -412,24 +464,37 @@ def main(argv: Optional[List[str]] = None) -> None:
                 f"\n{Colors.YELLOW}[WARN] No sessions with project_workspace found.{Colors.RESET}"
             )
 
+    doc_entries: List[Dict[str, Any]] = []
+
+    def _refresh_doc() -> None:
+        nonlocal doc_entries
+        doc_entries = build_doc_list()
+        if doc_entries:
+            print_doc_table(doc_entries)
+        else:
+            print(
+                f"\n{Colors.YELLOW}[WARN] No usage documentation files found.{Colors.RESET}"
+            )
+
     if state.current_scope == "project":
         _refresh_project()
+    elif state.current_scope == "doc":
+        _refresh_doc()
     else:
         if log_files:
             print_table(log_files)
         else:
             print(f"\n{Colors.YELLOW}[WARN] No .stdout log files found in:{Colors.RESET}")
             print(f"  {task_dir}")
-    print(
-        f"\n  {Colors.DIM}Type {Colors.YELLOW}/help{Colors.DIM} "
-        f"for available commands{Colors.RESET}"
-    )
 
     try:
         while state.running:
-            active_items = (
-                project_entries if state.current_scope == "project" else log_files
-            )
+            if state.current_scope == "project":
+                active_items = project_entries
+            elif state.current_scope == "doc":
+                active_items = doc_entries
+            else:
+                active_items = log_files
             previous_scope = state.current_scope
             action, value = prompt_selection(active_items, task_dir)
 
@@ -437,6 +502,8 @@ def main(argv: Optional[List[str]] = None) -> None:
                 if state.current_scope != previous_scope:
                     if state.current_scope == "project":
                         _refresh_project()
+                    elif state.current_scope == "doc":
+                        _refresh_doc()
                     elif state.current_scope == "workspace":
                         _refresh_workspace()
                 continue
@@ -447,6 +514,8 @@ def main(argv: Optional[List[str]] = None) -> None:
             if action == "refresh":
                 if state.current_scope == "project":
                     _refresh_project()
+                elif state.current_scope == "doc":
+                    _refresh_doc()
                 else:
                     _refresh_workspace()
                 continue
@@ -540,6 +609,41 @@ def main(argv: Optional[List[str]] = None) -> None:
                 print(
                     f"\n{Colors.GREEN}[INFO] Entered session scope: {value}{Colors.RESET}"
                 )
+                continue
+
+            if action == "enter_doc":
+                state.current_scope = "doc"
+                state.current_doc_filename = None
+                print(
+                    f"\n{Colors.GREEN}[INFO] Entered doc scope. Usage docs under {get_usage_docs_dir()}{Colors.RESET}"
+                )
+                _refresh_doc()
+                continue
+
+            if action == "read_doc":
+                selected_doc = doc_entries[value]
+                filename = selected_doc["filename"]
+                state.current_doc_filename = filename
+                content = read_doc_file(filename)
+                if content is None:
+                    print(
+                        f"\n{Colors.RED}[ERROR] Could not read usage doc: {filename}{Colors.RESET}"
+                    )
+                else:
+                    print(f"\n{Colors.CYAN}{'=' * 80}{Colors.RESET}")
+                    print(f"{Colors.BOLD}{Colors.CYAN}  {filename}{Colors.RESET}")
+                    print(f"{Colors.CYAN}{'=' * 80}{Colors.RESET}")
+                    print(content)
+                continue
+
+            if action == "leave_scope":
+                if state.current_scope == "doc":
+                    state.current_scope = "workspace"
+                    state.current_doc_filename = None
+                    print(
+                        f"\n{Colors.GREEN}[INFO] Returned to workspace scope.{Colors.RESET}"
+                    )
+                    _refresh_workspace()
                 continue
 
             if action == "watch":
