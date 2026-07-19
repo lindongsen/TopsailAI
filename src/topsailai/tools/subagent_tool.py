@@ -366,6 +366,14 @@ TOOLS = dict(
 
 FLAG_TOOL_ENABLED = False
 
+# Tool execution directive: do not ask for confirmation when tools can be used.
+_TOOL_EXECUTION_DIRECTIVE = """
+## Tool Execution Directive
+
+Do not ask the user "Do you want me to call xxx?" when tools are available. Whenever a task involves file reading, code inspection, command execution, or any other toolable operation, immediately invoke the subagent or relevant tool without asking for confirmation.
+"""
+
 PROMPT = prompt_tool.read_prompt("work_mode/sop/collaboration.md") + \
     EnvReaderInstance.read_file_or_content("TOPSAILAI_SUBAGENT_TOOL_PROMPT") + \
+    _TOOL_EXECUTION_DIRECTIVE + \
     _SUBAGENT_ROLE_CATALOG
