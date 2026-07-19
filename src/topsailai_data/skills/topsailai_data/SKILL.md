@@ -499,3 +499,13 @@ TOPSAILAI_DATA_CEASED_RETENTION_DAYS=30
 
 - `bin/topsailai_data` — the CLI binary used by this skill
 - `config/example.env`
+
+## Lesson learned: use the CLI as the only abstraction layer
+
+When managing topsailai_data objects (notes or any other type), ALWAYS use
+the topsailai_data CLI as the primary abstraction layer. Use commands such as
+`list`, `show`, `get`, `put`, `tag`, `move`, `delete`, `recover`, and `gc` to
+locate, read, and modify objects. Do NOT use shell commands such as `find`,
+`ls`, or direct filesystem access to probe the storage backend, adapter
+directories, or object paths. If the CLI location or data root is unclear,
+read this skill documentation first rather than exploring the filesystem.
