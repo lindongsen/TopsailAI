@@ -137,6 +137,28 @@ bin/topsailai_data create note < /path/to/note.md
 
 Only use `stdin` when the data is generated in memory and has no corresponding file.
 
+> **Warning: when using `stdin`, provide all parameters on the command line.**
+>
+> Commands that read content from `stdin` (for example `create <object> -`, `put <id> <file> --from -`, or `put-archive <id> -`) still require every positional argument and flag to be passed explicitly on the command line.
+>
+> Because `stdin` is occupied by the content stream, the CLI cannot interactively prompt for missing values such as the object name, classify path, or tags. If a required parameter is omitted, the command will block waiting for input and appear to hang.
+>
+> Correct (all parameters are present):
+>
+> ```
+> echo "inline content" | bin/topsailai_data create note --tag quickstart
+> echo "attachment data" | bin/topsailai_data put note attachment.txt --from -
+> tar -cf - ./files | bin/topsailai_data put-archive note -
+> ```
+>
+> Incorrect (missing parameters cause the CLI to hang):
+>
+> ```
+> echo "inline content" | bin/topsailai_data create
+> echo "attachment data" | bin/topsailai_data put note --from -
+> tar -cf - ./files | bin/topsailai_data put-archive
+> ```
+
 ## Skill layout
 
 ```text
@@ -164,7 +186,7 @@ bin/topsailai_data show hello
 | `create` | `create <object> [--classify dir1/dir2/...] [--tag t1,t2] [--from <file\|archive\|->]` | Create a new object. Writes a mandatory `<object>.md` marker and optional tags. `--from` accepts a plain file, a tar archive, or `-` for stdin; when omitted, content is read from stdin. If an object with the same name already exists in `ceased` status, the ceased object is purged and the new object is created; `active`, `creating`, and `deleted` objects cause `ErrObjectExists`. |
 | `show` | `show <id>` | Display metadata, the `<object>.md` content, and the folder structure of an object. |
 | `list` | `list [--include-deleted] [--offset n] [--limit n] [--format table\|json] [--sort time:desc\|time:asc]` | List active objects, optionally paginated and sorted by the time prefix of the object path. Default format is a pipe-separated table; use `json` for machine-readable output. Default sort is `time:desc` (newest first). |
-| `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format table\|json] [--sort time:desc\|time:asc]` | Search objects by name, tag, or classify path. Use `|` in `<query>` for OR logic (e.g. `foo|bar`). Spaces, tabs, and backslash escapes are not supported. Results are sorted by the time prefix of the object path; default is `time:desc` (newest first). |
+| `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format table\|json] [--sort time:desc\|time:asc]` | Search objects by name, tag, or classify path. Use `|` in `<query>` for OR logic (e.g. `foo\|bar`). Spaces, tabs, and backslash escapes are not supported. Results are sorted by the time prefix of the object path; default is `time:desc` (newest first). |
 | `tag` | `tag add <id> <tag>` or `tag remove <id> <tag>` | Add or remove an object-specific tag. |
 | `move` | `move <id> <new-classify...>` | Move an active object to a different classify path. The ID and name stay the same. |
 | `delete` | `delete <id>` | Soft-delete an active object. Marks the object as `deleted` but preserves actual data so it can be recovered. Finalization removes actual data and transitions the object to `ceased`. |
