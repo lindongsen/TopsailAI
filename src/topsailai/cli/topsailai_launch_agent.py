@@ -967,15 +967,31 @@ def _is_ignored(rel_path, name, is_dir, patterns):
             ignored = not negation
     return ignored
 
-
-def _scan_workspace_files(workspace):
+def _scan_workspace_files(workspace, project_folder=None):
     """Scan workspace and return folder structure as a tree string.
+
+    If ``project_folder`` is provided and is a child of ``workspace`` (or
+    equals it), only that folder is scanned. This lets the agent focus on the
+    active project when ``TOPSAILAI_PROJECT_FOLDER`` is set.
 
     Symbolic links are not followed: symlinked files are listed as leaf
     entries and symlinked directories are not recursed into.
     """
     workspace = os.path.abspath(workspace)
-    patterns = _load_gitignore_patterns(workspace)
+    if project_folder:
+        project_folder = os.path.abspath(project_folder)
+        # Only accept the project folder if it is the workspace itself or a
+        # descendant of the workspace.
+        if project_folder == workspace or project_folder.startswith(
+            workspace + os.sep
+        ):
+            scan_root = project_folder
+        else:
+            scan_root = workspace
+    else:
+        scan_root = workspace
+
+    patterns = _load_gitignore_patterns(scan_root)
 
     entries = []
 
@@ -990,7 +1006,7 @@ def _scan_workspace_files(workspace):
             if name == ".git":
                 continue
             full_path = os.path.join(current_dir, name)
-            rel_path = os.path.relpath(full_path, workspace).replace("\\", "/")
+            rel_path = os.path.relpath(full_path, scan_root).replace("\\", "/")
             is_symlink = os.path.islink(full_path)
             is_dir = os.path.isdir(full_path) and not is_symlink
             if _is_ignored(rel_path, name, is_dir, patterns):
@@ -1007,8 +1023,8 @@ def _scan_workspace_files(workspace):
                 walk(full_path, prefix + extension)
 
     entries.append(".")
-    walk(workspace)
-    return "> " + workspace + "\n" + "\n".join(entries)
+    walk(scan_root)
+    return "> " + scan_root + "\n" + "\n".join(entries)
 
 
 def main():
@@ -1159,9 +1175,15 @@ def main():
     merged_env.update(base_env)
     merged_env.update(item_env)
 
-    # 3.5 Append context file contents and workspace folder structure to TOPSAILAI_CONTEXT_USER_MESSAGE
+    # 3.5 Append context file contents and workspace folder structure to
+    # TOPSAILAI_CONTEXT_USER_MESSAGE. When TOPSAILAI_PROJECT_FOLDER is set
+    # (either in the OS environment or in the merged environment), restrict
+    # the scanned folder tree to that project folder.
     original_user_message = merged_env.get("TOPSAILAI_CONTEXT_USER_MESSAGE", "")
-    folder_structure = _scan_workspace_files(workspace)
+    project_folder = merged_env.get("TOPSAILAI_PROJECT_FOLDER") or os.environ.get(
+        "TOPSAILAI_PROJECT_FOLDER"
+    )
+    folder_structure = _scan_workspace_files(workspace, project_folder)
 
     message_parts = []
     if context_content:

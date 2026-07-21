@@ -15,6 +15,32 @@ Launch an AI agent driver based on a local `.topsailai/settings.yaml` configurat
 
 Reads `.topsailai/settings.yaml` from the current working directory, resolves the agent driver, merges environment variables, reads configured context files, appends a workspace folder tree to `TOPSAILAI_CONTEXT_USER_MESSAGE`, and launches the configured driver.
 
+## Project Folder Scoping
+
+When `TOPSAILAI_PROJECT_FOLDER` is set, the workspace folder tree appended to `TOPSAILAI_CONTEXT_USER_MESSAGE` is scoped to that folder instead of the entire workspace.
+
+This variable is read from the merged environment with the following priority:
+
+1. The selected item's environment section in `.topsailai/settings.yaml`.
+2. The base `_` environment section in `.topsailai/settings.yaml`.
+3. The OS environment (`os.environ`).
+
+If `TOPSAILAI_PROJECT_FOLDER` points to a directory inside the workspace, only that directory is scanned. If it points outside the workspace, the launcher falls back to scanning the whole workspace.
+
+Example configuration:
+
+```yaml
+environment:
+  _:
+    TOPSAILAI_PROJECT_FOLDER: "./src/my-service"
+```
+
+Or via the OS environment:
+
+```bash
+TOPSAILAI_PROJECT_FOLDER=./src/my-service topsailai_launch_agent
+```
+
 ## Invocation
 
 ```bash

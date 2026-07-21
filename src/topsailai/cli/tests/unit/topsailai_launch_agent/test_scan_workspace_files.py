@@ -58,6 +58,64 @@ class TestScanWorkspaceFiles(unittest.TestCase):
             self.assertIn("sub", tree)
             self.assertIn("nested.txt", tree)
 
+    def test_project_folder_child_restricts_scan(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = os.path.join(tmpdir, "workspace")
+            project = os.path.join(workspace, "project-a")
+            other = os.path.join(workspace, "project-b")
+            os.makedirs(project)
+            os.makedirs(other)
+            with open(os.path.join(project, "in-project.txt"), "w", encoding="utf-8") as f:
+                f.write("a\n")
+            with open(os.path.join(other, "in-other.txt"), "w", encoding="utf-8") as f:
+                f.write("b\n")
+
+            tree = launcher._scan_workspace_files(workspace, project)
+            self.assertIn("project-a", tree)
+            self.assertIn("in-project.txt", tree)
+            self.assertNotIn("project-b", tree)
+            self.assertNotIn("in-other.txt", tree)
+            self.assertIn("> " + project, tree)
+
+    def test_project_folder_equal_to_workspace_scans_workspace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sub = os.path.join(tmpdir, "sub")
+            os.makedirs(sub)
+            with open(os.path.join(sub, "nested.txt"), "w", encoding="utf-8") as f:
+                f.write("nested\n")
+
+            tree = launcher._scan_workspace_files(tmpdir, tmpdir)
+            self.assertIn("sub", tree)
+            self.assertIn("nested.txt", tree)
+            self.assertIn("> " + tmpdir, tree)
+
+    def test_project_folder_outside_workspace_falls_back(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = os.path.join(tmpdir, "workspace")
+            outside = os.path.join(tmpdir, "outside")
+            os.makedirs(workspace)
+            os.makedirs(outside)
+            with open(os.path.join(workspace, "inside.txt"), "w", encoding="utf-8") as f:
+                f.write("inside\n")
+            with open(os.path.join(outside, "outside.txt"), "w", encoding="utf-8") as f:
+                f.write("outside\n")
+
+            tree = launcher._scan_workspace_files(workspace, outside)
+            self.assertIn("inside.txt", tree)
+            self.assertNotIn("outside.txt", tree)
+            self.assertIn("> " + workspace, tree)
+
+    def test_project_folder_none_scans_workspace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sub = os.path.join(tmpdir, "sub")
+            os.makedirs(sub)
+            with open(os.path.join(sub, "nested.txt"), "w", encoding="utf-8") as f:
+                f.write("nested\n")
+
+            tree = launcher._scan_workspace_files(tmpdir, None)
+            self.assertIn("sub", tree)
+            self.assertIn("nested.txt", tree)
+
 
 if __name__ == "__main__":
     unittest.main()
