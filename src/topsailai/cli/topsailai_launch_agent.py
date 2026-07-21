@@ -1003,7 +1003,10 @@ def _scan_workspace_files(workspace, project_folder=None):
 
         visible_items = []
         for name in items:
-            if name == ".git":
+            # Skip hidden files and directories by default (names starting
+            # with a dot). This keeps the generated context tree focused on
+            # project-visible content.
+            if name.startswith("."):
                 continue
             full_path = os.path.join(current_dir, name)
             rel_path = os.path.relpath(full_path, scan_root).replace("\\", "/")

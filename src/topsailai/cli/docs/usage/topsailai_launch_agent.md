@@ -41,6 +41,10 @@ Or via the OS environment:
 TOPSAILAI_PROJECT_FOLDER=./src/my-service topsailai_launch_agent
 ```
 
+## Hidden Files
+
+Files and directories whose names start with `.` are excluded from the generated folder tree by default. This includes entries such as `.git`, `.venv`, `.env`, and `.tmp`. Only non-hidden project content is included in `TOPSAILAI_CONTEXT_USER_MESSAGE`.
+
 ## Invocation
 
 ```bash

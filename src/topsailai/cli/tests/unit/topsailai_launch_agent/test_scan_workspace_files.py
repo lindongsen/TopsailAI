@@ -117,5 +117,25 @@ class TestScanWorkspaceFiles(unittest.TestCase):
             self.assertIn("nested.txt", tree)
 
 
+    def test_hidden_files_and_directories_are_excluded(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            visible_dir = os.path.join(tmpdir, "visible")
+            hidden_dir = os.path.join(tmpdir, ".hidden")
+            os.makedirs(visible_dir)
+            os.makedirs(hidden_dir)
+            with open(os.path.join(visible_dir, "visible.txt"), "w", encoding="utf-8") as f:
+                f.write("visible\n")
+            with open(os.path.join(hidden_dir, "hidden.txt"), "w", encoding="utf-8") as f:
+                f.write("hidden\n")
+            with open(os.path.join(tmpdir, ".hidden-file"), "w", encoding="utf-8") as f:
+                f.write("hidden\n")
+
+            tree = launcher._scan_workspace_files(tmpdir)
+            self.assertIn("visible", tree)
+            self.assertIn("visible.txt", tree)
+            self.assertNotIn(".hidden", tree)
+            self.assertNotIn("hidden.txt", tree)
+            self.assertNotIn(".hidden-file", tree)
+
 if __name__ == "__main__":
     unittest.main()
