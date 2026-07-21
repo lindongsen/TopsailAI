@@ -229,6 +229,7 @@ class TestTaskDataMethods(TestCase):
         self.assertIsInstance(result, str)
         self.assertIn(f'task_id: {_expected_task_id("test_session", "test_task")}', result)
         self.assertIn('status: working', result)
+        self.assertIn('now: 2026-04-19', result)
         self.assertIn('---', result)
 
 

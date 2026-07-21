@@ -100,11 +100,12 @@ class TaskData(object):
         Generate a YAML-formatted manifest containing task metadata.
 
         Returns:
-            str: YAML string containing task_id and status
+            str: YAML string containing task_id, status and now
         """
         return f"""---
 task_id: {self.task_id}
 status: {self.status}
+now: {time_tool.get_current_date(with_t=True)}
 ---
 """
 
