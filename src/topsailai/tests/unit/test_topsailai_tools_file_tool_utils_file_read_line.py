@@ -357,6 +357,50 @@ class TestReadFileLines:
             assert "-" in line
             assert ":" not in line  # No ':' marker
 
+    def test_leading_dash_not_counted_as_content(self, tmp_path):
+        """Verify the first '-' after the line number is the separator.
+
+        A line that contains only three dashes must be rendered as
+        ``109----`` (line 109, separator '-', content '---'), not as a
+        line with four dashes.
+        """
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("aaa\n---\nbbb\n")
+
+        result = read_file_lines(str(test_file), 1, 3)
+        lines = result.split("\n")
+
+        assert len(lines) == 3
+        assert lines[0] == "1-aaa"
+        assert lines[1] == "2----"
+        assert lines[2] == "3-bbb"
+
+    def test_leading_dash_with_context(self, tmp_path):
+        """Verify separator semantics in read_file_with_context."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("aaa\n---\nbbb\n")
+
+        result = read_file_with_context(str(test_file), r"^---$", context_num=1)
+        lines = result.split("\n")
+
+        assert len(lines) == 3
+        assert lines[0] == "1-aaa"
+        assert lines[1] == "2:---"
+        assert lines[2] == "3-bbb"
+
+    def test_leading_dash_around_line(self, tmp_path):
+        """Verify separator semantics in read_file_around_line."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("aaa\n---\nbbb\n")
+
+        result = read_file_around_line(str(test_file), 2, context_num=1)
+        lines = result.split("\n")
+
+        assert len(lines) == 3
+        assert lines[0] == "1-aaa"
+        assert lines[1] == "2:---"
+        assert lines[2] == "3-bbb"
+
     def test_start_num_zero(self, tmp_path):
         """Test start_num=0 is treated as 1."""
         test_file = tmp_path / "test.txt"

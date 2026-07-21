@@ -20,6 +20,14 @@ def read_file_with_context(
 
     Provide line numbers and context lines around matches.
 
+    Output format:
+        Each output line is formatted as ``{line_number}{marker}{content}``.
+        ``line_number`` is the 1-based line number. ``marker`` is ``:`` for
+        matching lines and ``-`` for context lines. The marker is the first
+        character after the number and is NOT part of the file content.
+        For example, ``109----`` means line 109 contains ``---`` (three
+        dashes), not four.
+
     Args:
         file_path (str): Path to the file to read
         pattern (str): Regular expression pattern to search for
@@ -44,6 +52,7 @@ def read_file_with_context(
     Note:
         - Line numbers are 1-based (start from 1)
         - Matches are marked with ':' while context lines use '-'
+        - The first '-' or ':' after the line number is the separator, not part of the content
         - Context lines are deduplicated when matches are close together
         - Uses safe_decode for proper text handling
     """
@@ -130,6 +139,14 @@ def read_file_around_line(
     This function provides context around a specific line, similar to viewing
     a section of a file with line numbers.
 
+    Output format:
+        Each output line is formatted as ``{line_number}{marker}{content}``.
+        ``line_number`` is the 1-based line number. ``marker`` is ``:`` for
+        the target line and ``-`` for surrounding context lines. The marker
+        is the first character after the number and is NOT part of the file
+        content. For example, ``109----`` means line 109 contains ``---``
+        (three dashes), not four.
+
     Args:
         file_path (str): Path to the file to read
         line_number (int): The 1-based line number to center the view around
@@ -153,6 +170,7 @@ def read_file_around_line(
     Note:
         - Line numbers are 1-based (start from 1)
         - The target line is marked with ':' while other lines use '-'
+        - The first '-' or ':' after the line number is the separator, not part of the content
         - Automatically handles edge cases (beginning/end of file)
         - Uses safe_decode for proper text handling
     """
@@ -204,8 +222,15 @@ def read_file_around_line(
 
 def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> str:
     """Read specific lines from a file and return them as a string.
+
     This function reads a range of lines from a file using 1-based line numbering.
-    Print line number with output lines, format is "{number}-{line_content}"
+
+    Output format:
+        Each output line is formatted as ``{line_number}-{content}``.
+        ``line_number`` is the 1-based line number. The first ``-`` after the
+        number is the separator and is NOT part of the file content. For
+        example, ``109----`` means line 109 contains ``---`` (three dashes),
+        not four.
 
     Args:
         file_path (str): The path to the file to read from
