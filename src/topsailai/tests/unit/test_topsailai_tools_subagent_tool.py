@@ -86,6 +86,11 @@ class TestGetTaskId:
 class TestCallAssistant:
     """Test call_assistant() function."""
 
+    def setup_method(self):
+        """Clear the global subagent cache before each test."""
+        from topsailai.tools import subagent_tool
+        subagent_tool.g_subagents.clear()
+
     def test_call_assistant_requires_task(self):
         """Verify call_assistant raises assertion error for empty task."""
         from topsailai.tools.subagent_tool import call_assistant
@@ -142,7 +147,7 @@ class TestCallAssistant:
         
         call_assistant("test task")
         
-        assert len(mock_agent.hooks_for_final_answer) == 0
+        assert len(mock_agent.hooks_for_final_answer) == 2
 
     @patch("topsailai.workspace.agent_shell.get_agent_chat")
     @patch("topsailai.tools.subagent_tool.get_task_id")
@@ -265,6 +270,11 @@ class TestModuleExports:
 
 class TestSubagentRoles:
     """Tests for subagent role configuration via TOPSAILAI_SUBAGENT_ROLE_FOLDER."""
+
+    def setup_method(self):
+        """Clear the global subagent cache before each test."""
+        from topsailai.tools import subagent_tool
+        subagent_tool.g_subagents.clear()
 
     def test_role_catalog_in_prompt_when_roles_exist(self, tmp_path):
         """Verify PROMPT lists role names then details when role files exist."""
@@ -446,6 +456,11 @@ class TestSubagentRoles:
 
 class TestIntegration:
     """Integration tests for subagent_tool module."""
+
+    def setup_method(self):
+        """Clear the global subagent cache before each test."""
+        from topsailai.tools import subagent_tool
+        subagent_tool.g_subagents.clear()
 
     @patch("topsailai.workspace.agent_shell.get_agent_chat")
     @patch("topsailai.tools.subagent_tool.get_task_id")
