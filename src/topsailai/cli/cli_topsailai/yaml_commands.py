@@ -504,6 +504,12 @@ def handle_yaml_command(
 
         print_warning(f"Internal command not implemented: {cmd}")
         return "yaml_handled"
+    # Validate that /git commands provide a subcommand.
+    if cmd == "/git {args}":
+        args = variables.get("args", "").strip()
+        if not args:
+            print_error("Usage: /git <subcommand> [args...]")
+            return "yaml_handled"
 
     if "{project_workspace}" in shell and state.current_session_id and state.current_scope in ("session", "runtime"):
         session_id = state.current_session_id

@@ -390,5 +390,144 @@ class TestGitDiffCommand(unittest.TestCase):
         mock_print_error.assert_called_once()
         self.assertIn("Failed to resolve project workspace", mock_print_error.call_args[0][0])
 
+
+
+class TestGitCommand(unittest.TestCase):
+    """Tests for the flexible /git session-scope command."""
+
+    def tearDown(self):
+        cli_state.yaml_commands = []
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+
+    def _git_instruction(self):
+        return {
+            "cmd": "/git {args}",
+            "scopes": ["session"],
+            "shell": "git -C '{project_workspace}' {args}",
+            "use_os_system": 1,
+        }
+
+    def test_git_status_matches_in_session_scope(self):
+        """/git status must match in session scope and extract args."""
+        cli_state.current_scope = "session"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [self._git_instruction()]
+        result = match_yaml_command("/git status", "/task")
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0].get("cmd"), "/git {args}")
+        self.assertEqual(result[1].get("args"), "status")
+
+    def test_git_diff_cached_matches_in_session_scope(self):
+        """/git diff --cached must match and preserve all arguments."""
+        cli_state.current_scope = "session"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [self._git_instruction()]
+        result = match_yaml_command("/git diff --cached", "/task")
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0].get("cmd"), "/git {args}")
+        self.assertEqual(result[1].get("args"), "diff --cached")
+
+    def test_git_log_oneline_matches_in_session_scope(self):
+        """/git log --oneline -10 must match and preserve all arguments."""
+        cli_state.current_scope = "session"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [self._git_instruction()]
+        result = match_yaml_command("/git log --oneline -10", "/task")
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0].get("cmd"), "/git {args}")
+        self.assertEqual(result[1].get("args"), "log --oneline -10")
+
+    def test_git_does_not_match_in_workspace_scope(self):
+        """/git must not match in workspace scope."""
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = [self._git_instruction()]
+        self.assertIsNone(match_yaml_command("/git status", "/task"))
+
+    @patch("cli_topsailai.yaml_commands.subprocess.run")
+    @patch("cli_topsailai.yaml_commands.os.system")
+    def test_git_status_resolves_project_workspace(
+        self, mock_os_system, mock_subprocess_run
+    ):
+        """handle_yaml_command resolves project_workspace and runs git status via os.system."""
+        cli_state.current_scope = "session"
+        cli_state.current_session_id = "s1"
+        mock_subprocess_run.return_value = subprocess.CompletedProcess(
+            args=["topsailai_session_info", "--json", "s1"],
+            returncode=0,
+            stdout=json.dumps({"project_workspace": "/workspace/project"}),
+            stderr="",
+        )
+
+        instruction = self._git_instruction()
+        variables = {"session_id": "s1", "task_dir": "/task", "args": "status"}
+        result = handle_yaml_command(instruction, variables)
+
+        self.assertEqual(result, "yaml_handled")
+        mock_subprocess_run.assert_called_once_with(
+            ["topsailai_session_info", "--json", "s1"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        mock_os_system.assert_called_once()
+        called_cmd = mock_os_system.call_args[0][0]
+        self.assertIn("git", called_cmd)
+        self.assertIn("-C", called_cmd)
+        self.assertIn("/workspace/project", called_cmd)
+        self.assertIn("status", called_cmd)
+
+    @patch("cli_topsailai.yaml_commands.subprocess.run")
+    @patch("cli_topsailai.yaml_commands.os.system")
+    def test_git_diff_cached_resolves_project_workspace(
+        self, mock_os_system, mock_subprocess_run
+    ):
+        """handle_yaml_command resolves project_workspace and runs git diff --cached via os.system."""
+        cli_state.current_scope = "session"
+        cli_state.current_session_id = "s1"
+        mock_subprocess_run.return_value = subprocess.CompletedProcess(
+            args=["topsailai_session_info", "--json", "s1"],
+            returncode=0,
+            stdout=json.dumps({"project_workspace": "/workspace/project"}),
+            stderr="",
+        )
+
+        instruction = self._git_instruction()
+        variables = {"session_id": "s1", "task_dir": "/task", "args": "diff --cached"}
+        result = handle_yaml_command(instruction, variables)
+
+        self.assertEqual(result, "yaml_handled")
+        mock_os_system.assert_called_once()
+        called_cmd = mock_os_system.call_args[0][0]
+        self.assertIn("git", called_cmd)
+        self.assertIn("-C", called_cmd)
+        self.assertIn("/workspace/project", called_cmd)
+        self.assertIn("diff --cached", called_cmd)
+
+    @patch("cli_topsailai.yaml_commands.subprocess.run")
+    @patch("cli_topsailai.yaml_commands.print_error")
+    def test_git_missing_args_prints_usage(
+        self, mock_print_error, mock_subprocess_run
+    ):
+        """/git with no subcommand must print usage and not run os.system."""
+        cli_state.current_scope = "session"
+        cli_state.current_session_id = "s1"
+        mock_subprocess_run.return_value = subprocess.CompletedProcess(
+            args=["topsailai_session_info", "--json", "s1"],
+            returncode=0,
+            stdout=json.dumps({"project_workspace": "/workspace/project"}),
+            stderr="",
+        )
+
+        instruction = self._git_instruction()
+        variables = {"session_id": "s1", "task_dir": "/task", "args": ""}
+        result = handle_yaml_command(instruction, variables)
+
+        self.assertEqual(result, "yaml_handled")
+        mock_print_error.assert_called_once()
+        self.assertIn("Usage: /git", mock_print_error.call_args[0][0])
+
 if __name__ == "__main__":
     unittest.main()
