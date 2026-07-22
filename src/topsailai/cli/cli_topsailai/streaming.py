@@ -167,6 +167,7 @@ def stream_file(
     log_files: Optional[List[dict]] = None,
     default_session_id: Optional[str] = None,
     default_stdout_path: Optional[str] = None,
+    default_pid: Optional[int] = None,
     runtime_raw: bool = False,
     tail_lines: int = 100,
 ) -> None:
@@ -197,6 +198,9 @@ def stream_file(
         log_files: Current list of discovered log files.
         default_session_id: Session ID associated with the watched file.
         default_stdout_path: Exact stdout path for the watched session.
+        default_pid: PID from the watched file's filename.  For task stdout
+            entries this is the child task PID, which is the PID that opens
+            the session's named pipe.
         runtime_raw: Use the simple curses-free raw streaming mode.
         tail_lines: Number of recent log lines to echo on startup.
     """
@@ -214,6 +218,7 @@ def stream_file(
                 log_files or [],
                 default_session_id,
                 default_stdout_path,
+                default_pid,
                 tail_lines=tail_lines,
             )
         elif _can_use_curses():
@@ -223,6 +228,7 @@ def stream_file(
                 log_files or [],
                 default_session_id,
                 default_stdout_path,
+                default_pid,
             )
         else:
             _stream_file_legacy(
@@ -231,6 +237,7 @@ def stream_file(
                 log_files or [],
                 default_session_id,
                 default_stdout_path,
+                default_pid,
             )
     finally:
         state.current_scope = previous_scope
@@ -243,6 +250,7 @@ def _run_curses_ui(
     log_files: List[dict],
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
+    default_pid: Optional[int] = None,
 ) -> None:
     """Run the two-pane curses UI for streaming."""
     from cli_topsailai.tui import CursesStreamUI
@@ -259,6 +267,7 @@ def _run_curses_ui(
         log_files=log_files,
         default_session_id=default_session_id,
         default_stdout_path=default_stdout_path,
+        default_pid=default_pid,
         command_handler=command_handler,
     )
     real_handler = _build_stream_command_handler(
@@ -267,9 +276,9 @@ def _run_curses_ui(
         log_files,
         default_session_id,
         default_stdout_path,
+        default_pid,
     )
     ui.run()
-
 
 class _CursesOutputCapture:
     """Capture stdout/stderr writes and forward them to a curses UI."""
@@ -316,6 +325,7 @@ def _build_stream_command_handler(
     log_files: List[dict],
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
+    default_pid: Optional[int] = None,
 ) -> Any:
     """Build the command callback used by the curses UI."""
 
@@ -334,6 +344,7 @@ def _build_stream_command_handler(
                     log_files,
                     default_session_id,
                     default_stdout_path,
+                    default_pid,
                     input_provider=_multi_line_input_provider,
                 )
             else:
@@ -343,6 +354,7 @@ def _build_stream_command_handler(
                     log_files,
                     default_session_id,
                     default_stdout_path,
+                    default_pid,
                     input_provider=_multi_line_input_provider,
                     output_callback=ui.append_status,
                     input_callback=ui.read_multi_line_blocking,
@@ -358,6 +370,7 @@ def _prompt_send_as_message(
     log_files: List[dict],
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
+    default_pid: Optional[int] = None,
     input_provider: Optional[Callable[[str], Optional[str]]] = None,
     output_callback: Optional[Callable[[str], None]] = None,
     input_callback: Optional[Callable[[str], Optional[str]]] = None,
@@ -392,6 +405,7 @@ def _prompt_send_as_message(
             log_files,
             default_session_id,
             default_stdout_path,
+            default_pid,
             input_provider=input_provider,
         )
         return True
@@ -411,7 +425,6 @@ def _prompt_send_as_message(
 
 def _tail_file(path: str, tail_lines: int, raw_mode: bool = False) -> None:
     """Print the most recent ``tail_lines`` lines of ``path`` to stdout.
-
     When ``raw_mode`` is True the TTY is in raw mode (``ONLCR`` is disabled),
     so newlines are translated to ``\\r\\n`` to avoid stair-stepped output.
     """
@@ -899,6 +912,7 @@ def _dispatch_input(
     log_files: List[dict],
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
+    default_pid: Optional[int] = None,
 ) -> bool:
     """Handle a single raw-mode user command.
 
@@ -920,6 +934,7 @@ def _dispatch_input(
             log_files,
             default_session_id,
             default_stdout_path,
+            default_pid,
         )
         return True
     return _prompt_send_as_message(
@@ -928,11 +943,11 @@ def _dispatch_input(
         log_files,
         default_session_id,
         default_stdout_path,
+        default_pid,
         input_provider=None,
         output_callback=None,
         input_callback=None,
     )
-
 
 def _stream_file_raw(
     filepath: str,
@@ -940,6 +955,7 @@ def _stream_file_raw(
     log_files: List[dict],
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
+    default_pid: Optional[int] = None,
     tail_lines: int = 100,
 ) -> None:
     """Raw curses-free stream implementation used when ``--runtime-raw`` is set."""
@@ -1022,6 +1038,7 @@ def _stream_file_raw(
                                         log_files,
                                         default_session_id,
                                         default_stdout_path,
+                                        default_pid,
                                     )
                                 finally:
                                     if keep_running:
@@ -1052,13 +1069,13 @@ def _stream_file_raw(
 
     print(f"\n{Colors.CYAN}[INFO] Streaming stopped.{Colors.RESET}")
 
-
 def _stream_file_legacy(
     filepath: str,
     task_dir: str,
     log_files: List[dict],
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
+    default_pid: Optional[int] = None,
 ) -> None:
     """Legacy single-pane stream implementation for non-TTY environments."""
 
@@ -1117,6 +1134,7 @@ def _stream_file_legacy(
                                     log_files,
                                     default_session_id,
                                     default_stdout_path,
+                                    default_pid,
                                 )
                                 continue
                             _prompt_send_as_message(
@@ -1125,6 +1143,7 @@ def _stream_file_legacy(
                                 log_files,
                                 default_session_id,
                                 default_stdout_path,
+                                default_pid,
                                 input_provider=None,
                                 output_callback=None,
                                 input_callback=None,
@@ -1142,13 +1161,13 @@ def _stream_file_legacy(
 
     print(f"\n{Colors.CYAN}[INFO] Streaming stopped.{Colors.RESET}")
 
-
 def _handle_stream_command(
     cmd_line: str,
     task_dir: str,
     log_files: List[dict],
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
+    default_pid: Optional[int] = None,
     input_provider: Optional[Callable[[str], Optional[str]]] = None,
 ) -> None:
     """
@@ -1175,6 +1194,7 @@ def _handle_stream_command(
             log_files,
             default_session_id,
             default_stdout_path,
+            default_pid,
             input_provider=input_provider,
         )
         return
@@ -1199,13 +1219,13 @@ def _handle_stream_command(
         f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
     )
 
-
 def _handle_stream_send(
     cmd_line: str,
     task_dir: str,
     log_files: List[dict],
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
+    default_pid: Optional[int] = None,
     input_provider: Optional[Callable[[str], Optional[str]]] = None,
 ) -> None:
     """
@@ -1234,9 +1254,12 @@ def _handle_stream_send(
             return
 
     send_message_to_session(
-        default_session_id, message, task_dir, stdout_path=default_stdout_path
+        default_session_id,
+        message,
+        task_dir,
+        stdout_path=default_stdout_path,
+        pid=default_pid,
     )
-
 
 def _read_multiline_input_for_send() -> Optional[str]:
     """
@@ -1389,23 +1412,6 @@ def send_message_to_session(
                 f"{Colors.RED}[ERROR] No stdout file found for session '{session_id}'.{Colors.RESET}"
             )
             return False
-    elif stdout_path.endswith(".task.stdout"):
-        # Task stdout files use the child task PID in the filename
-        # ({session_id}.{pid}[.{other}].task.stdout), not the session PID.
-        # Resolve the canonical session stdout file for the same session so
-        # the named pipe path uses the session process PID.
-        task_session_id, _ = _parse_stdout_filename(os.path.basename(stdout_path))
-        resolved_session_id = (
-            task_session_id if task_session_id is not None else session_id
-        )
-        resolved_stdout = _find_session_stdout_file(task_dir, resolved_session_id)
-        if resolved_stdout is None:
-            print(
-                f"{Colors.RED}[ERROR] No session stdout file found for session "
-                f"'{resolved_session_id}'.{Colors.RESET}"
-            )
-            return False
-        stdout_path = resolved_stdout
     elif not os.path.isfile(stdout_path):
         print(
             f"{Colors.RED}[ERROR] Stdout file not found: {stdout_path}.{Colors.RESET}"
@@ -1417,6 +1423,7 @@ def send_message_to_session(
     #   2. PID embedded in the stdout filename.
     #   3. PID from scanning open files (lsof / fuser).
     pipe_path: Optional[str] = None
+    candidate_pipe: Optional[str] = None
 
     if pid is not None:
         candidate_pipe = _build_pipe_path(task_dir, session_id, pid)
@@ -1438,9 +1445,11 @@ def send_message_to_session(
                 pipe_path = candidate_pipe
 
     if pipe_path is None:
+        if candidate_pipe is None:
+            candidate_pipe = _build_pipe_path(task_dir, session_id, 0)
         print(
             f"{Colors.RED}[ERROR] Session '{session_id}' does not appear to be running "
-            f"(no process owns its stdout file).{Colors.RESET}"
+            f"(no process owns its stdout file): {candidate_pipe}.{Colors.RESET}"
         )
         return False
 
@@ -1463,7 +1472,7 @@ def send_message_to_session(
                     if time.monotonic() >= deadline:
                         print(
                             f"{Colors.RED}[ERROR] Timed out waiting for session to open "
-                            f"the pipe for reading.{Colors.RESET}"
+                            f"the pipe for reading: {pipe_path}.{Colors.RESET}"
                         )
                         return False
                     time.sleep(0.1)
@@ -1486,7 +1495,6 @@ def send_message_to_session(
                 os.close(fd)
             except OSError:
                 pass
-
 
 def handle_send_command(
     user_input: str, task_dir: str, log_files: List[dict]

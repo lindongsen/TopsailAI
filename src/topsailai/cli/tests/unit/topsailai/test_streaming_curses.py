@@ -65,6 +65,7 @@ class TestStreamFileCursesPath(unittest.TestCase):
                 log_files=[],
                 default_session_id="s1",
                 default_stdout_path="/tmp/tasks/s1.123.session.stdout",
+                default_pid=123,
             )
         finally:
             os.unlink(path)
@@ -76,6 +77,7 @@ class TestStreamFileCursesPath(unittest.TestCase):
             [],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            123,
         )
         self.assertEqual(cli_state.current_scope, "workspace")
         self.assertIsNone(cli_state.current_session_id)
@@ -93,6 +95,7 @@ class TestStreamFileCursesPath(unittest.TestCase):
                 log_files=[],
                 default_session_id="s1",
                 default_stdout_path="/tmp/tasks/s1.123.session.stdout",
+                default_pid=123,
             )
         finally:
             os.unlink(path)
@@ -104,6 +107,7 @@ class TestStreamFileCursesPath(unittest.TestCase):
             [],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            123,
         )
         self.assertEqual(cli_state.current_scope, "workspace")
         self.assertIsNone(cli_state.current_session_id)
@@ -126,6 +130,7 @@ class TestRunCursesUi(unittest.TestCase):
             [{"filename": "s1.stdout"}],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            default_pid=123,
         )
 
         call_kwargs = mock_ui_cls.call_args.kwargs
@@ -136,6 +141,7 @@ class TestRunCursesUi(unittest.TestCase):
         self.assertEqual(
             call_kwargs["default_stdout_path"], "/tmp/tasks/s1.123.session.stdout"
         )
+        self.assertEqual(call_kwargs["default_pid"], 123)
         self.assertTrue(callable(call_kwargs["command_handler"]))
         mock_build_handler.assert_called_once_with(
             mock_ui,
@@ -143,6 +149,7 @@ class TestRunCursesUi(unittest.TestCase):
             [{"filename": "s1.stdout"}],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            123,
         )
         mock_ui.run.assert_called_once_with()
 
@@ -162,6 +169,7 @@ class TestRunCursesUi(unittest.TestCase):
             [],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            default_pid=123,
         )
 
         command_handler = mock_ui_cls.call_args.kwargs["command_handler"]
@@ -270,6 +278,7 @@ class TestBuildStreamCommandHandler(unittest.TestCase):
             [{"filename": "s1.stdout"}],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            default_pid=123,
         )
 
     @patch("cli_topsailai.streaming._handle_stream_command")
@@ -297,6 +306,7 @@ class TestBuildStreamCommandHandler(unittest.TestCase):
         self.assertEqual(args[0][1], "/tmp/tasks")
         self.assertEqual(args[0][3], "s1")
         self.assertEqual(args[0][4], "/tmp/tasks/s1.123.session.stdout")
+        self.assertEqual(args[0][5], 123)
         self.assertIsNotNone(args[1]["input_provider"])
 
     @patch("cli_topsailai.streaming._handle_stream_command")
@@ -372,6 +382,7 @@ class TestPromptSendAsMessage(unittest.TestCase):
             [{"filename": "s1.stdout"}],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            default_pid=123,
             input_provider=None,
             output_callback=None,
             input_callback=lambda prompt: "y",
@@ -383,6 +394,7 @@ class TestPromptSendAsMessage(unittest.TestCase):
             [{"filename": "s1.stdout"}],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            123,
             input_provider=None,
         )
 
@@ -394,6 +406,7 @@ class TestPromptSendAsMessage(unittest.TestCase):
             [],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            default_pid=123,
             input_callback=lambda prompt: "YES",
         )
         self.assertTrue(result)
@@ -409,6 +422,7 @@ class TestPromptSendAsMessage(unittest.TestCase):
             [],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            default_pid=123,
             input_callback=lambda prompt: "n",
             output_callback=output,
         )
@@ -426,6 +440,7 @@ class TestPromptSendAsMessage(unittest.TestCase):
             [],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            default_pid=123,
             input_callback=lambda prompt: "",
             output_callback=output,
         )
@@ -441,6 +456,7 @@ class TestPromptSendAsMessage(unittest.TestCase):
             [],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            default_pid=123,
             input_callback=lambda prompt: None,
         )
         self.assertFalse(result)
@@ -456,6 +472,7 @@ class TestPromptSendAsMessage(unittest.TestCase):
             [],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            default_pid=123,
         )
         self.assertTrue(result)
         mock_input.assert_called_once_with("Send as message? [y/N]: ")
@@ -465,6 +482,7 @@ class TestPromptSendAsMessage(unittest.TestCase):
             [],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            123,
             input_provider=None,
         )
 

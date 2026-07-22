@@ -101,7 +101,7 @@ class TestDispatchRawInput(unittest.TestCase):
         for cmd in ("q", "quit", "exit", "QUIT"):
             with self.subTest(cmd=cmd):
                 result = _dispatch_input(
-                    cmd, "/task", [], "s1", "/task/s.log"
+                    cmd, "/task", [], "s1", "/task/s.log", default_pid=None
                 )
                 self.assertFalse(result)
 
@@ -109,25 +109,25 @@ class TestDispatchRawInput(unittest.TestCase):
         for cmd in ("cd", "/cd", "CD"):
             with self.subTest(cmd=cmd):
                 result = _dispatch_input(
-                    cmd, "/task", [], "s1", "/task/s.log"
+                    cmd, "/task", [], "s1", "/task/s.log", default_pid=None
                 )
                 self.assertFalse(result)
 
     @patch("cli_topsailai.streaming._handle_stream_command")
     def test_slash_command_delegates(self, mock_handle):
         result = _dispatch_input(
-            "/send hello", "/task", [], "s1", "/task/s.log"
+            "/send hello", "/task", [], "s1", "/task/s.log", default_pid=None
         )
         self.assertTrue(result)
         mock_handle.assert_called_once_with(
-            "/send hello", "/task", [], "s1", "/task/s.log"
+            "/send hello", "/task", [], "s1", "/task/s.log", None
         )
 
     @patch("cli_topsailai.streaming._prompt_send_as_message")
     def test_unknown_command_prompts_send_as_message(self, mock_prompt):
         mock_prompt.return_value = True
         result = _dispatch_input(
-            "what", "/task", [], "s1", "/task/s.log"
+            "what", "/task", [], "s1", "/task/s.log", default_pid=None
         )
         self.assertTrue(result)
         mock_prompt.assert_called_once_with(
@@ -136,6 +136,7 @@ class TestDispatchRawInput(unittest.TestCase):
             [],
             "s1",
             "/task/s.log",
+            None,
             input_provider=None,
             output_callback=None,
             input_callback=None,
@@ -171,7 +172,7 @@ class TestStreamFileRaw(unittest.TestCase):
             mock_select.side_effect = [([sys.stdin], [], []), ([], [], [])]
             mock_read.return_value = "q"
 
-            _stream_file_raw(path, tmpdir, [], "s1", path, tail_lines=1)
+            _stream_file_raw(path, tmpdir, [], "s1", path, default_pid=1234, tail_lines=1)
 
             mock_run.assert_called_once_with(
                 ["tail", "-n", "1", path], check=False
@@ -198,10 +199,10 @@ class TestStreamFileRaw(unittest.TestCase):
             mock_select.side_effect = [([sys.stdin], [], []), ([], [], [])]
             mock_read.side_effect = ["/send hello", "q"]
 
-            _stream_file_raw(path, tmpdir, [], "s1", path, tail_lines=1)
+            _stream_file_raw(path, tmpdir, [], "s1", path, default_pid=1234, tail_lines=1)
 
             mock_handle.assert_called_once_with(
-                "/send hello", tmpdir, [], "s1", path
+                "/send hello", tmpdir, [], "s1", path, 1234
             )
 
     @patch("cli_topsailai.streaming.subprocess.run")
@@ -226,7 +227,7 @@ class TestStreamFileRaw(unittest.TestCase):
             mock_read.side_effect = ["hello", "q"]
             mock_prompt.return_value = True
 
-            _stream_file_raw(path, tmpdir, [], "s1", path, tail_lines=1)
+            _stream_file_raw(path, tmpdir, [], "s1", path, default_pid=1234, tail_lines=1)
 
             mock_prompt.assert_called_once_with(
                 "hello",
@@ -234,6 +235,7 @@ class TestStreamFileRaw(unittest.TestCase):
                 [],
                 "s1",
                 path,
+                1234,
                 input_provider=None,
                 output_callback=None,
                 input_callback=None,
@@ -258,14 +260,14 @@ class TestStreamFileRaw(unittest.TestCase):
             with patch(
                 "cli_topsailai.streaming.time.sleep", side_effect=stop_running
             ):
-                _stream_file_raw(path, tmpdir, [], "s1", path, tail_lines=1)
+                _stream_file_raw(path, tmpdir, [], "s1", path, default_pid=1234, tail_lines=1)
 
             self.assertFalse(cli_state.running)
 
     def test_file_not_found_prints_error(self):
         with patch("builtins.print") as mock_print:
             _stream_file_raw(
-                "/nonexistent/path.log", "/task", [], "s1", "/task/s.log"
+                "/nonexistent/path.log", "/task", [], "s1", "/task/s.log", default_pid=None
             )
         printed = [call[0][0] for call in mock_print.call_args_list]
         self.assertTrue(
@@ -284,10 +286,11 @@ class TestHandleStreamSendRestored(unittest.TestCase):
             [],
             "s1",
             "/task/s1.1234.session.stdout",
+            default_pid=1234,
         )
         mock_send.assert_called_once_with(
             "s1", "hello world", "/task",
-            stdout_path="/task/s1.1234.session.stdout"
+            stdout_path="/task/s1.1234.session.stdout", pid=1234
         )
 
     @patch("cli_topsailai.streaming.send_message_to_session")
@@ -299,11 +302,12 @@ class TestHandleStreamSendRestored(unittest.TestCase):
             [],
             "s1",
             "/task/s1.1234.session.stdout",
+            default_pid=1234,
         )
         mock_read.assert_called_once()
         mock_send.assert_called_once_with(
             "s1", "line1\nline2", "/task",
-            stdout_path="/task/s1.1234.session.stdout"
+            stdout_path="/task/s1.1234.session.stdout", pid=1234
         )
 
     def test_missing_session_prints_error(self):
@@ -314,6 +318,7 @@ class TestHandleStreamSendRestored(unittest.TestCase):
                 [],
                 None,
                 "/task/s1.1234.session.stdout",
+                default_pid=1234,
             )
         printed = [call[0][0] for call in mock_print.call_args_list]
         self.assertTrue(
@@ -358,6 +363,7 @@ class TestPromptSendAsMessageRaw(unittest.TestCase):
             [],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            default_pid=123,
         )
         self.assertTrue(result)
         mock_input.assert_called_once_with("Send as message? [y/N]: ")
@@ -367,6 +373,7 @@ class TestPromptSendAsMessageRaw(unittest.TestCase):
             [],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            123,
             input_provider=None,
         )
 
@@ -399,6 +406,7 @@ class TestPromptSendAsMessageRaw(unittest.TestCase):
             [],
             "s1",
             "/tmp/tasks/s1.123.session.stdout",
+            default_pid=123,
         )
         self.assertFalse(result)
         mock_handle.assert_not_called()

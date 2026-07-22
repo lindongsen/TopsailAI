@@ -61,6 +61,9 @@ class CursesStreamUI:
         log_files: Current list of discovered log files.
         default_session_id: Session ID associated with the watched file.
         default_stdout_path: Exact stdout path for the watched session.
+        default_pid: PID from the watched file's filename.  For task stdout
+            entries this is the child task PID, which is the PID that opens
+            the session's named pipe.
         command_handler: Callback invoked when the user presses Enter.
             Receives the entered command string and should return ``True``
             to keep the UI running or ``False`` to exit.
@@ -73,6 +76,7 @@ class CursesStreamUI:
         log_files: List[dict],
         default_session_id: Optional[str],
         default_stdout_path: Optional[str],
+        default_pid: Optional[int],
         command_handler: Callable[[str], bool],
     ) -> None:
         self.filepath = filepath
@@ -80,8 +84,8 @@ class CursesStreamUI:
         self.log_files = log_files
         self.session_id = default_session_id
         self.stdout_path = default_stdout_path
+        self.default_pid = default_pid
         self.command_handler = command_handler
-
         self._lines: List[str] = []
         self._input_buffer = ""
         # Cursor position within _input_buffer (0 = before first character).

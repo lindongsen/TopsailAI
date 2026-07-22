@@ -160,9 +160,9 @@ class TestCursesStreamUI(unittest.TestCase):
             log_files=[],
             default_session_id="s1",
             default_stdout_path="/tmp/tasks/s1.123.session.stdout",
+            default_pid=123,
             command_handler=command_handler or (lambda _: True),
         )
-
     def _poll_input_with_key(self, ui, key):
         """Simulate a single key press by wiring get_wch and invoking _poll_input."""
         ui.stdscr.get_wch.return_value = key

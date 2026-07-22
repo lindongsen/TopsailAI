@@ -655,6 +655,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                 selected_file = active_entries[value]
                 session_id = selected_file.get("session_id")
                 stdout_path = selected_file.get("path")
+                file_pid = selected_file.get("pid")
                 if session_id == "(temp)":
                     session_id = "topsailai"
                 runtime_raw = not args.runtime_tui
@@ -664,6 +665,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     log_files=log_files,
                     default_session_id=session_id,
                     default_stdout_path=stdout_path,
+                    default_pid=file_pid,
                     runtime_raw=runtime_raw,
                     tail_lines=args.tail_lines,
                 )
