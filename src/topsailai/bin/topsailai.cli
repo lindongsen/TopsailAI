@@ -8,6 +8,13 @@
 
 BASE_NAME=$(basename "$0")
 
+# Environments
+
+# agent
+if [[ "${BASE_NAME}" =~ ^topsailai_agent* ]]; then
+  export TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS=1
+fi
+
 CWD=$(dirname "$(readlink -f $0)")
 cd "${CWD}/../"
 
