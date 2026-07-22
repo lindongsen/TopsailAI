@@ -77,6 +77,13 @@ instructions:
     desc: "Switch to root workspace scope"
     example: "cd"
     shell: ""
+  - cmd: "/git.status"
+    scopes:
+      - session
+    desc: "Show git status for the project workspace of the current session"
+    example: ""
+    shell: "git -C '{project_workspace}' status"
+
 
   # After entering a specific session `/cd {session_id}`, these instructions can be executed
 

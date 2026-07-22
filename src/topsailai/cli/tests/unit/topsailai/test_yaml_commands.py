@@ -3,10 +3,13 @@
 Unit tests for YAML command loading in cli_topsailai.
 """
 
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(
     0,
@@ -16,7 +19,11 @@ sys.path.insert(
 )
 
 import cli_topsailai.state as cli_state
-from cli_topsailai.yaml_commands import load_yaml_commands, match_yaml_command
+from cli_topsailai.yaml_commands import (
+    handle_yaml_command,
+    load_yaml_commands,
+    match_yaml_command,
+)
 
 
 class TestYamlCommands(unittest.TestCase):
@@ -111,6 +118,138 @@ class TestMatchYamlCommand(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result[0].get("cmd"), "/ctx.btw")
         self.assertEqual(result[1].get("message"), "hello world")
+
+
+class TestGitStatusCommand(unittest.TestCase):
+    """Tests for the /git.status session-scope command."""
+
+    def tearDown(self):
+        cli_state.yaml_commands = []
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+
+    def _git_status_instruction(self):
+        return {
+            "cmd": "/git.status",
+            "scopes": ["session"],
+            "shell": "git -C '{project_workspace}' status",
+        }
+
+    def test_git_status_matches_in_session_scope(self):
+        """/git.status must match in session scope."""
+        cli_state.current_scope = "session"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [self._git_status_instruction()]
+        result = match_yaml_command("/git.status", "/task")
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0].get("cmd"), "/git.status")
+
+    def test_git_status_does_not_match_in_workspace_scope(self):
+        """/git.status must not match in workspace scope."""
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = [self._git_status_instruction()]
+        self.assertIsNone(match_yaml_command("/git.status", "/task"))
+
+    @patch("cli_topsailai.yaml_commands.subprocess.run")
+    @patch("cli_topsailai.process.run_external_command")
+    def test_git_status_resolves_project_workspace(
+        self, mock_run_external, mock_subprocess_run
+    ):
+        """handle_yaml_command resolves project_workspace and runs git status."""
+        cli_state.current_scope = "session"
+        cli_state.current_session_id = "s1"
+        mock_subprocess_run.return_value = subprocess.CompletedProcess(
+            args=["topsailai_session_info", "--json", "s1"],
+            returncode=0,
+            stdout=json.dumps({"project_workspace": "/workspace/project"}),
+            stderr="",
+        )
+
+        instruction = self._git_status_instruction()
+        variables = {"session_id": "s1", "task_dir": "/task"}
+        result = handle_yaml_command(instruction, variables)
+
+        self.assertEqual(result, "yaml_handled")
+        mock_subprocess_run.assert_called_once_with(
+            ["topsailai_session_info", "--json", "s1"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        mock_run_external.assert_called_once()
+        called_cmd_list = mock_run_external.call_args[0][0]
+        self.assertEqual(called_cmd_list, ["git", "-C", "/workspace/project", "status"])
+
+    @patch("cli_topsailai.yaml_commands.subprocess.run")
+    @patch("cli_topsailai.yaml_commands.print_error")
+    def test_git_status_missing_project_workspace(
+        self, mock_print_error, mock_subprocess_run
+    ):
+        """handle_yaml_command errors when project_workspace is missing."""
+        cli_state.current_scope = "session"
+        cli_state.current_session_id = "s1"
+        mock_subprocess_run.return_value = subprocess.CompletedProcess(
+            args=["topsailai_session_info", "--json", "s1"],
+            returncode=0,
+            stdout=json.dumps({"project_workspace": ""}),
+            stderr="",
+        )
+
+        instruction = self._git_status_instruction()
+        variables = {"session_id": "s1", "task_dir": "/task"}
+        result = handle_yaml_command(instruction, variables)
+
+        self.assertEqual(result, "yaml_handled")
+        mock_print_error.assert_called_once()
+        self.assertIn("no project workspace", mock_print_error.call_args[0][0])
+
+    @patch("cli_topsailai.yaml_commands.subprocess.run")
+    @patch("cli_topsailai.yaml_commands.print_error")
+    def test_git_status_session_info_nonzero_exit(
+        self, mock_print_error, mock_subprocess_run
+    ):
+        """handle_yaml_command errors when topsailai_session_info fails."""
+        cli_state.current_scope = "session"
+        cli_state.current_session_id = "s1"
+        mock_subprocess_run.return_value = subprocess.CompletedProcess(
+            args=["topsailai_session_info", "--json", "s1"],
+            returncode=1,
+            stdout="",
+            stderr="not found",
+        )
+
+        instruction = self._git_status_instruction()
+        variables = {"session_id": "s1", "task_dir": "/task"}
+        result = handle_yaml_command(instruction, variables)
+
+        self.assertEqual(result, "yaml_handled")
+        mock_print_error.assert_called_once()
+        self.assertIn("Failed to resolve project workspace", mock_print_error.call_args[0][0])
+
+    @patch("cli_topsailai.yaml_commands.subprocess.run")
+    @patch("cli_topsailai.yaml_commands.print_error")
+    def test_git_status_session_info_invalid_json(
+        self, mock_print_error, mock_subprocess_run
+    ):
+        """handle_yaml_command errors when topsailai_session_info returns invalid JSON."""
+        cli_state.current_scope = "session"
+        cli_state.current_session_id = "s1"
+        mock_subprocess_run.return_value = subprocess.CompletedProcess(
+            args=["topsailai_session_info", "--json", "s1"],
+            returncode=0,
+            stdout="not-json",
+            stderr="",
+        )
+
+        instruction = self._git_status_instruction()
+        variables = {"session_id": "s1", "task_dir": "/task"}
+        result = handle_yaml_command(instruction, variables)
+
+        self.assertEqual(result, "yaml_handled")
+        mock_print_error.assert_called_once()
+        self.assertIn("Failed to resolve project workspace", mock_print_error.call_args[0][0])
 
 
 if __name__ == "__main__":

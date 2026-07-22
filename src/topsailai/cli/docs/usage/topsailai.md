@@ -72,6 +72,7 @@ The CLI has five scopes, derived from the original design notes in `../../topsai
 | `/send [message]` | Send a message to the running session through its named pipe. Omit the message for multi-line input (finish with `Ctrl+D`). |
 | `/ctx.btw [message]` | Inject a by-the-way message into the `agent2llm` runtime context of the watched session. |
 | `/ctx.add_msg [message]` | Add a persistent message to the `user2agent` context (visible after the agent restarts). |
+| `/git.status` | Show `git status` for the project workspace of the current session. |
 | `/help` | Show available commands. |
 | `q`, `quit` | Leave runtime scope and return to the file list. |
 

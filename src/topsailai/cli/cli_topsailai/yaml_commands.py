@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
+import subprocess
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -502,6 +504,30 @@ def handle_yaml_command(
 
         print_warning(f"Internal command not implemented: {cmd}")
         return "yaml_handled"
+
+    if "{project_workspace}" in shell and state.current_session_id and state.current_scope in ("session", "runtime"):
+        session_id = state.current_session_id
+        try:
+            result = subprocess.run(
+                ["topsailai_session_info", "--json", session_id],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                print_error(f"Failed to resolve project workspace for session '{session_id}'.")
+                return "yaml_handled"
+            info = json.loads(result.stdout)
+            project_workspace = info.get("project_workspace", "")
+            if not project_workspace:
+                print_error(f"Session '{session_id}' has no project workspace.")
+                return "yaml_handled"
+            variables = dict(variables)
+            variables["project_workspace"] = project_workspace
+        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+            print_error(f"Failed to resolve project workspace for session '{session_id}'.")
+            return "yaml_handled"
 
     try:
         shell_cmd = shell

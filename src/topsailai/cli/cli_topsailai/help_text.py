@@ -173,6 +173,12 @@ def print_help(
             "scopes": ["workspace"],
         },
         {
+            "cmd": "/git.status",
+            "desc": "Show git status for the project workspace of the current session.",
+            "example": "",
+            "scopes": ["session"],
+        },
+        {
             "cmd": "/clean [<number> [<number>...]]",
             "desc": "Clean up .stdout files. Without arguments: deletes idle files older than 3 days. With numbers: deletes the specified files by their list number.",
             "example": "Example: /clean 3 5 7",
