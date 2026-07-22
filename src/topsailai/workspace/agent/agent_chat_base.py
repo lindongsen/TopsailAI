@@ -223,6 +223,10 @@ class AgentChatBase(object):
 
             # heavy task
             if _answer and self.heavy_task.is_heavy_task():
+                # Persist the Agent2LLM summary to the User2Agent session
+                # before the fatal HeavyTaskError can terminate the run.
+                ctx_runtime_data.add_session_message(ROLE_ASSISTANT, _answer)
+
                 self.heavy_task.block_heavy_task()
                 _msg = MessageData(
                     MessageData.ROLE_USER,
@@ -230,8 +234,6 @@ class AgentChatBase(object):
                 )
                 logger.warning("Heavy Task Trigger")
                 self.ai_agent.append_message(_msg.to_dict())
-
-            return
 
         # add hooks
         self.ai_agent.hooks_after_init_prompt.append(hook_after_init_prompt)
