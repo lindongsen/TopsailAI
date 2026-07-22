@@ -114,7 +114,7 @@ def print_help(
         },
         {
             "cmd": "<number>",
-            "desc": "Read the selected usage documentation file.",
+            "desc": "Read the selected documentation file.",
             "example": "Example: 3",
             "scopes": ["doc"],
         },
@@ -131,6 +131,12 @@ def print_help(
             "scopes": ["workspace"],
         },
         {
+            "cmd": "/clean [<number> [<number>...]]",
+            "desc": "Clean up .stdout files. Without arguments: deletes idle files older than 3 days. With numbers: deletes the specified files by their list number.",
+            "example": "Example: /clean 3 5 7",
+            "scopes": ["workspace"],
+        },
+        {
             "cmd": "/agent <number|folder>",
             "desc": "Launch an agent. In workspace scope, `agent` or `/agent` (no arguments) runs the YAML-configured agent command. `agent <number|folder>` or `/agent <number|folder>` changes to the selected project workspace folder and launches topsailai_launch_agent; the number refers to the log file list in workspace scope or the project session list in project scope, and an absolute/relative folder path can also be used.",
             "example": "Example: agent  or  /agent  or  /agent 3  or  /agent /path/to/project",
@@ -141,12 +147,6 @@ def print_help(
             "desc": "Resume an idle session in its project workspace. The selected session must not be running. You will be prompted to choose an agent driver (default: topsailai_agent_plan_tasks).",
             "example": "Example: /resume 3",
             "scopes": ["project"],
-        },
-        {
-            "cmd": "/clean [<number> [<number>...]]",
-            "desc": "Clean up .stdout files. Without arguments: deletes idle files older than 3 days. With numbers: deletes the specified files by their list number.",
-            "example": "Example: /clean 3 5 7",
-            "scopes": ["workspace"],
         },
         {
             "cmd": "/send [session_id_or_index] [message...]",
@@ -178,8 +178,8 @@ def print_help(
             "scopes": ["workspace"],
         },
         {
-            "cmd": "cd doc  or  cd docs  or  cd usage",
-            "desc": "Enter doc scope to list usage documentation files under docs/usage/.",
+            "cmd": "cd doc  or  cd docs  or  cd <folder>",
+            "desc": "Enter doc scope to list documentation files under docs/ (grouped by single-level subfolders such as usage/ and memo/). The folder name can also be used as a shortcut (e.g., cd usage or cd memo).",
             "example": "",
             "scopes": ["workspace"],
         },

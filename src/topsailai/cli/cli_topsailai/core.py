@@ -21,11 +21,10 @@ import cli_topsailai.state as state
 from cli_topsailai.colors import Colors
 from cli_topsailai.doc_scope import (
     build_doc_list,
-    get_usage_docs_dir,
+    get_docs_dir,
     print_doc_table,
-    read_doc_file,
+    resolve_doc,
 )
-
 __version__ = "0.1.0"
 
 def setup_signal_handlers() -> None:
@@ -164,7 +163,7 @@ def prompt_selection(
             cd_match = re.match(r"^/?cd\s+(.+)$", user_input)
             if cd_match:
                 target = cd_match.group(1).strip().lower()
-                if target in ("doc", "docs", "usage"):
+                if target in ("doc", "docs", "usage", "memo"):
                     return ("enter_doc", None)
 
 
@@ -356,7 +355,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--list-docs",
         action="store_true",
         dest="list_docs",
-        help="list usage documentation files and exit",
+        help="list documentation files and exit",
     )
     parser.add_argument(
         "--read-doc",
@@ -364,7 +363,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         default=None,
         dest="read_doc",
         metavar="NAME",
-        help="read a usage documentation file by name and exit",
+        help="read a documentation file by folder/name.md or name and exit",
     )
 
     # Be tolerant of unknown arguments so tests that invoke main() with
@@ -381,11 +380,17 @@ def main(argv: Optional[List[str]] = None) -> None:
         print_doc_table(docs)
         sys.exit(0)
     if args.read_doc:
-        content = read_doc_file(args.read_doc)
-        if content is None:
-            print(f"Usage doc not found: {args.read_doc}")
+        result = resolve_doc(args.read_doc)
+        if result["status"] == "not_found":
+            print(f"Doc not found: {args.read_doc}")
             sys.exit(1)
-        print(content)
+        if result["status"] == "conflict":
+            print(f"Ambiguous doc name: {args.read_doc}")
+            print("Please use the precise folder/document.md format:")
+            for option in result["options"]:
+                print(f"  {option}")
+            sys.exit(1)
+        print(result["content"])
         sys.exit(0)
 
     # Heavy imports are deferred until after --help / --version are handled.
@@ -473,9 +478,8 @@ def main(argv: Optional[List[str]] = None) -> None:
             print_doc_table(doc_entries)
         else:
             print(
-                f"\n{Colors.YELLOW}[WARN] No usage documentation files found.{Colors.RESET}"
+                f"\n{Colors.YELLOW}[WARN] No documentation files found.{Colors.RESET}"
             )
-
     if state.current_scope == "project":
         _refresh_project()
     elif state.current_scope == "doc":
@@ -615,25 +619,32 @@ def main(argv: Optional[List[str]] = None) -> None:
                 state.current_scope = "doc"
                 state.current_doc_filename = None
                 print(
-                    f"\n{Colors.GREEN}[INFO] Entered doc scope. Usage docs under {get_usage_docs_dir()}{Colors.RESET}"
+                    f"\n{Colors.GREEN}[INFO] Entered doc scope. Docs under {get_docs_dir()}{Colors.RESET}"
                 )
                 _refresh_doc()
                 continue
 
             if action == "read_doc":
                 selected_doc = doc_entries[value]
-                filename = selected_doc["filename"]
-                state.current_doc_filename = filename
-                content = read_doc_file(filename)
-                if content is None:
-                    print(
-                        f"\n{Colors.RED}[ERROR] Could not read usage doc: {filename}{Colors.RESET}"
-                    )
-                else:
+                rel_path = selected_doc["rel_path"]
+                state.current_doc_filename = rel_path
+                result = resolve_doc(rel_path)
+                if result["status"] == "ok":
                     print(f"\n{Colors.CYAN}{'=' * 80}{Colors.RESET}")
-                    print(f"{Colors.BOLD}{Colors.CYAN}  {filename}{Colors.RESET}")
+                    print(f"{Colors.BOLD}{Colors.CYAN}  {result['rel_path']}{Colors.RESET}")
                     print(f"{Colors.CYAN}{'=' * 80}{Colors.RESET}")
-                    print(content)
+                    print(result["content"])
+                elif result["status"] == "conflict":
+                    print(
+                        f"\n{Colors.YELLOW}[WARN] '{rel_path}' matches multiple docs. "
+                        f"Please use the exact folder/document.md format:{Colors.RESET}"
+                    )
+                    for option in result["options"]:
+                        print(f"  - {option}")
+                else:
+                    print(
+                        f"\n{Colors.RED}[ERROR] Doc not found: {rel_path}{Colors.RESET}"
+                    )
                 continue
 
             if action == "leave_scope":
