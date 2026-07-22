@@ -41,12 +41,13 @@ topsailai
 
 ## Scopes
 
-The CLI has four scopes, derived from the original design notes in `../../topsailai.md`:
+The CLI has five scopes, derived from the original design notes in `../../topsailai.md`. Run `scopes` from workspace scope to display these introductions and each scope's available actions:
 
-- **`[workspace]`** — default scope. Lists discovered `.stdout`/`.stderr` log files.
-- **`[project]`** — lists recent sessions that recorded a project workspace. Enter with `cd project`.
-- **`[session:<id>]`** — focused scope for one session. Enter with `/cd <session_id>` or by selecting a file in project scope.
-- **`[runtime:<id>]`** — active while streaming a log file.
+- **`[workspace]`** — the default task-watcher scope. It lists discovered session and task logs and provides actions to watch logs, retrieve context, clean or refresh files, send messages, launch agents, and enter other scopes.
+- **`[runtime:<id>]`** — the live log-streaming scope entered after selecting a workspace log. It provides `/send`, `/ctx.btw`, help, and commands for leaving the stream.
+- **`[project]`** — a navigation scope listing recent sessions with recorded project workspaces and running status. It provides session selection, context retrieval, refresh, agent launch and resume actions, and return to workspace scope.
+- **`[session:<id>]`** — a focused scope for one session. It provides context retrieval and streaming, runtime messaging, agent2llm and persistent context injection, configured session commands, and return to workspace scope.
+- **`[doc]`** — a browser for Markdown documentation grouped under `docs/`. It provides numbered document reading, list refresh, help, and return to workspace scope.
 
 ## Workspace / Project Commands
 
@@ -60,6 +61,7 @@ The CLI has four scopes, derived from the original design notes in `../../topsai
 | `/clean [<number>...]` | Delete idle `.stdout` files older than 3 days, or delete specific files by number. |
 | `/send <number> [message]` | Send a message to the running session associated with the selected entry. |
 | `cd project` | Switch to project scope. |
+| `scopes` | Display detailed introductions and available actions for all five scopes (workspace scope only). |
 | `q`, `quit`, `exit`, `cd` | Exit current scope or quit the CLI. |
 | `/help [<keyword>]` | Show available commands, optionally filtered by keyword. |
 

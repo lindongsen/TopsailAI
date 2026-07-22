@@ -70,6 +70,48 @@ def print_instruction_help(instruction: Dict[str, Any]) -> None:
     print()
 
 
+def print_scopes() -> None:
+    """Display detailed introductions for every interactive CLI scope."""
+    width = 80
+    scopes = [
+        (
+            "workspace",
+            "The default task-watcher scope. It lists discovered session and task log files so you can monitor and manage work across the current TopsailAI home.",
+            "Select a numbered log, retrieve session context, refresh or clean the task list, send messages, launch agents, enter project or doc scope, and show help.",
+        ),
+        (
+            "runtime",
+            "The live log-streaming scope entered after selecting a workspace log file. It follows output for the watched session or task while keeping session messaging available.",
+            "Send process messages with /send, inject agent2llm context with /ctx.btw, show help, or leave the stream with q or quit.",
+        ),
+        (
+            "project",
+            "A navigation scope that lists recent sessions with recorded project workspaces, including their running or idle status.",
+            "Select or cd to a session, retrieve session context, refresh the list, launch or resume an agent in a project workspace, show help, or use cd to return to workspace scope.",
+        ),
+        (
+            "session",
+            "A focused scope for one session ID, used to inspect its context and interact with that session without selecting it repeatedly.",
+            "Retrieve or stream session data, send runtime messages, add agent2llm or persistent context messages, use configured session commands, show help, or use cd to return to workspace scope.",
+        ),
+        (
+            "doc",
+            "A documentation browser for Markdown files grouped under the single-level folders in docs/.",
+            "Select a numbered document to read it, refresh the documentation list, show help, or use q, quit, or cd to return to workspace scope.",
+        ),
+    ]
+
+    cprint("=" * width, color=Colors.CYAN, bold=True)
+    cprint("  TopsailAI - Scope Guide", color=Colors.CYAN, bold=True)
+    cprint("=" * width, color=Colors.CYAN, bold=True)
+    for name, introduction, actions in scopes:
+        print(f"\n  {colored(name, Colors.YELLOW, bold=True)}")
+        print(f"      {colored(introduction, Colors.WHITE)}")
+        print(f"      {colored('Available actions: ' + actions, Colors.WHITE, dim=True)}")
+    cprint("=" * width, color=Colors.CYAN)
+    print()
+
+
 def print_help(
     yaml_commands: Optional[List[Dict[str, Any]]],
     current_scope: str,
@@ -170,6 +212,12 @@ def print_help(
             "cmd": "/help [<keyword>]",
             "desc": "Display this help message with all available commands. Use /help <keyword> to search commands by name, alias, or description.",
             "example": "Example: /help ctx",
+        },
+        {
+            "cmd": "scopes",
+            "desc": "Display detailed introductions and available actions for all CLI scopes.",
+            "example": "",
+            "scopes": ["workspace"],
         },
         {
             "cmd": "cd project",

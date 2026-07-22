@@ -136,6 +136,9 @@ def prompt_selection(
             if lower_input in ("/stream", "stream"):
                 return ("stream", None)
 
+            if state.current_scope == "workspace" and lower_input == "scopes":
+                return ("scopes", None)
+
             if lower_input in ("/help", "help"):
                 return ("help", None)
 
@@ -397,7 +400,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     from cli_topsailai.cleaning import clean_by_numbers, clean_expired_files
     from cli_topsailai.completer import setup_tab_completion
     from cli_topsailai.formatting import print_header, print_table
-    from cli_topsailai.help_text import print_help, print_instruction_help
+    from cli_topsailai.help_text import print_help, print_instruction_help, print_scopes
     from cli_topsailai.history import HistoryManager, load_readline_history
     from cli_topsailai.log_files import discover_log_files
     from cli_topsailai.paths import get_topsailai_home
@@ -526,6 +529,10 @@ def main(argv: Optional[List[str]] = None) -> None:
 
             if action == "help":
                 print_help(state.yaml_commands, state.current_scope, keyword=value)
+                continue
+
+            if action == "scopes":
+                print_scopes()
                 continue
 
             if action == "help_cmd":

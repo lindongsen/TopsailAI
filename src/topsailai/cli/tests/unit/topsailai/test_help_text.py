@@ -16,7 +16,7 @@ sys.path.insert(
     ),
 )
 
-from cli_topsailai.help_text import print_help, print_instruction_help
+from cli_topsailai.help_text import print_help, print_instruction_help, print_scopes
 
 
 class TestPrintHelp(unittest.TestCase):
@@ -32,6 +32,14 @@ class TestPrintHelp(unittest.TestCase):
         self.assertIn("Available Commands", output)
         self.assertIn("/help", output)
         self.assertIn("/refresh", output)
+        self.assertIn("scopes", output)
+
+    def test_print_scopes_describes_all_scopes_and_actions(self):
+        output = self._capture(print_scopes)
+        self.assertIn("Scope Guide", output)
+        for scope in ("workspace", "runtime", "project", "session", "doc"):
+            self.assertIn(scope, output)
+        self.assertEqual(output.count("Available actions:"), 5)
 
     def test_print_help_project_scope_shows_session_number(self):
         output = self._capture(print_help, [], "project")

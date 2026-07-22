@@ -79,6 +79,25 @@ class TestHandleCommands(unittest.TestCase):
         self.assertIn(Colors.RESET, written)
 
     @patch("cli_topsailai.core.input")
+    def test_scopes_in_workspace(self, mock_input):
+        mock_input.return_value = "scopes"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "scopes")
+        self.assertIsNone(value)
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_scopes_is_not_available_outside_workspace(self, mock_input, mock_print):
+        cli_state.current_scope = "session"
+        cli_state.current_session_id = "s1"
+        mock_input.side_effect = ["scopes", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("Unknown command" in str(call) for call in mock_print.call_args_list)
+        )
+
+    @patch("cli_topsailai.core.input")
     def test_help(self, mock_input):
         mock_input.return_value = "help"
         action, value = prompt_selection([], "/task")
