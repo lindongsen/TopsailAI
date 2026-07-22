@@ -413,15 +413,17 @@ class TestPromptBase(unittest.TestCase):
 
         mock_hook.add_session_message.assert_called()
 
+    @patch("topsailai.ai_base.prompt_base.is_use_tool_calls")
     @patch("topsailai.ai_base.prompt_base.count_tokens")
     @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
     @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
-    def test_call_hooks_ctx_history_threshold_exceeded(self, mock_generate_prompt, mock_get_managers, mock_count_tokens):
+    def test_call_hooks_ctx_history_threshold_exceeded(self, mock_generate_prompt, mock_get_managers, mock_count_tokens, mock_is_use_tool_calls):
         """Test link_messages called when threshold exceeded."""
         from topsailai.ai_base.prompt_base import PromptBase
 
         mock_generate_prompt.return_value = "env_prompt"
         mock_get_managers.return_value = []
+        mock_is_use_tool_calls.return_value = False
 
         pb = PromptBase(system_prompt="test")
         mock_hook = MagicMock()
@@ -435,6 +437,31 @@ class TestPromptBase(unittest.TestCase):
             pb.add_user_message(f"message {i}")
 
         mock_hook.link_messages.assert_called()
+
+    @patch("topsailai.ai_base.prompt_base.is_use_tool_calls")
+    @patch("topsailai.ai_base.prompt_base.count_tokens")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_call_hooks_ctx_history_skips_link_when_tool_calls_enabled(self, mock_generate_prompt, mock_get_managers, mock_count_tokens, mock_is_use_tool_calls):
+        """Test link_messages is skipped when native tool calls are enabled."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+        mock_is_use_tool_calls.return_value = True
+
+        pb = PromptBase(system_prompt="test")
+        mock_hook = MagicMock()
+        pb.hooks_ctx_history.append(mock_hook)
+
+        # Mock count_tokens to return high value
+        mock_count_tokens.return_value = 1500000
+
+        # Add enough messages to trigger threshold
+        for i in range(50):
+            pb.add_user_message(f"message {i}")
+
+        mock_hook.link_messages.assert_not_called()
 
     # =========================================================================
     # Group D: Session Management Tests
@@ -1025,6 +1052,28 @@ class TestPromptBase(unittest.TestCase):
 
         self.assertEqual(len(pb.messages), initial_count + 1)
         self.assertEqual(pb.messages[-1]["content"], "test")
+
+    def test_threshold_context_history_is_exceeded_with_tool_calls_enabled(self):
+        """Test is_exceeded returns False when native tool calls are enabled."""
+        from topsailai.ai_base.prompt_base import ThresholdContextHistory
+        from topsailai.utils.env_tool import ctxm_set_env
+
+        threshold = ThresholdContextHistory()
+        messages = [{"role": "user", "content": f"message {i}"} for i in range(100)]
+
+        with ctxm_set_env({"TOPSAILAI_USE_TOOL_CALLS": "1"}):
+            self.assertFalse(threshold.is_exceeded(messages))
+
+    def test_threshold_context_history_is_exceeded_without_tool_calls(self):
+        """Test is_exceeded returns True when threshold exceeded and tool calls disabled."""
+        from topsailai.ai_base.prompt_base import ThresholdContextHistory
+        from topsailai.utils.env_tool import ctxm_set_env
+
+        threshold = ThresholdContextHistory()
+        messages = [{"role": "user", "content": f"message {i}"} for i in range(100)]
+
+        with ctxm_set_env({"TOPSAILAI_USE_TOOL_CALLS": "0"}):
+            self.assertTrue(threshold.is_exceeded(messages))
 
 
 if __name__ == "__main__":

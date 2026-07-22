@@ -357,8 +357,52 @@ class TestContextManager(unittest.TestCase):
 
         self.assertNotEqual(messages[0]["content"], large_content)
 
+    @patch('topsailai.context.chat_history_manager.__base.is_use_tool_calls')
+    @patch('topsailai.context.chat_history_manager.__base.json_tool')
+    @patch('topsailai.context.chat_history_manager.__base.format_tool')
+    def test_link_messages_skips_archiving_when_tool_calls_enabled(self, mock_format_tool, mock_json_tool, mock_is_use_tool_calls):
+        """Test that link_messages returns early when native tool calls are enabled."""
+        mock_format_tool.to_list.side_effect = lambda x: x if isinstance(x, list) else [x]
+        mock_json_tool.json_load.return_value = [{"step_name": "action", "raw_text": "x" * 2000}]
+        mock_is_use_tool_calls.return_value = True
+
+        large_content = json.dumps([{"step_name": "action", "raw_text": "x" * 2000}])
+        messages = [
+            {"role": "assistant", "content": large_content},
+        ]
+        self.manager.add_message = MagicMock()
+        self.manager.link_messages(messages, index_start=0, index_end=-1, max_size=100)
+
+        self.manager.add_message.assert_not_called()
+        self.assertEqual(messages[0]["content"], large_content)
+
+    @patch('topsailai.context.chat_history_manager.__base.is_use_tool_calls')
+    @patch('topsailai.context.chat_history_manager.__base.get_session_id')
+    @patch('topsailai.context.chat_history_manager.__base.count_tokens')
+    @patch('topsailai.context.chat_history_manager.__base.logger')
+    @patch('topsailai.context.chat_history_manager.__base.json_tool')
+    @patch('topsailai.context.chat_history_manager.__base.format_tool')
+    def test_link_messages_archives_large_content_when_tool_calls_disabled(self, mock_format_tool, mock_json_tool, mock_logger, mock_count_tokens, mock_get_session_id, mock_is_use_tool_calls):
+        """Test that link_messages still archives large content when native tool calls are disabled."""
+        mock_format_tool.to_list.side_effect = lambda x: x if isinstance(x, list) else [x]
+        mock_json_tool.json_load.return_value = [{"step_name": "action", "raw_text": "x" * 2000}]
+        mock_json_tool.json_dump.side_effect = lambda x, **kwargs: json.dumps(x)
+        mock_get_session_id.return_value = "test_session"
+        mock_count_tokens.return_value = 100
+        mock_is_use_tool_calls.return_value = False
+
+        large_content = json.dumps([{"step_name": "action", "raw_text": "x" * 2000}])
+        messages = [
+            {"role": "assistant", "content": large_content},
+        ]
+        self.manager.add_message = MagicMock()
+        self.manager.link_messages(messages, index_start=0, index_end=-1, max_size=100)
+
+        self.manager.add_message.assert_called()
+        self.assertNotEqual(messages[0]["content"], large_content)
+
     def test_retrieve_message_returns_content(self):
-        """Test that retrieve_message returns message content."""
+        """Test that retrieve_message returns the message content."""
         mock_msg = MagicMock()
         mock_msg.message = "Test message content"
         self.manager.get_message = MagicMock(return_value=mock_msg)

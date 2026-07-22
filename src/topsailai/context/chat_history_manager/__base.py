@@ -17,6 +17,7 @@ from topsailai.utils.hash_tool import md5sum
 from topsailai.utils import json_tool
 from topsailai.utils import format_tool
 from topsailai.utils.thread_local_tool import get_session_id
+from topsailai.utils.env_tool import is_use_tool_calls
 from topsailai.utils.time_tool import get_current_date
 from topsailai.context.token import count_tokens
 from topsailai.ai_base.constants import (
@@ -329,6 +330,12 @@ class ContextManager(MessageStorageBase):
             index_end (int, optional): Ending index for processing. Defaults to -11.
             max_size (int, optional): Maximum size threshold for archiving. Defaults to 1024.
         """
+        # Native tool calls require an intact tool_calls/tool_call_id pairing.
+        # Archiving (linking) breaks that pairing and causes provider errors
+        # such as "No tool call found for function call output with call_id".
+        if is_use_tool_calls():
+            logger.warning("[LinkMessages] skipped: native tool calls are enabled")
+            return
         # Process messages in the specified range
         # Handle negative index_end by converting to positive index
         end_idx = (len(messages) + index_end + 1) if index_end < 0 else index_end

@@ -242,6 +242,67 @@ class TestContextRuntimeAIAgent(unittest.TestCase):
         self.assertEqual(self.mock_ai_agent.messages, [existing])
 
 
+    @patch("topsailai.workspace.context.agent.is_use_tool_calls")
+    def test_drop_orphaned_tool_messages_disabled_returns_original(self, mock_is_use_tool_calls):
+        """Test _drop_orphaned_tool_messages returns original list when tool calls disabled."""
+        mock_is_use_tool_calls.return_value = False
+        messages = [
+            {"role": "assistant", "content": "result", "tool_call_id": "call_1"},
+        ]
+        result = self.agent_class._drop_orphaned_tool_messages(messages)
+        self.assertEqual(result, messages)
+        self.assertIs(result, messages)
+
+    @patch("topsailai.workspace.context.agent.is_use_tool_calls")
+    def test_drop_orphaned_tool_messages_drops_orphans(self, mock_is_use_tool_calls):
+        """Test orphaned tool messages are dropped when tool calls enabled."""
+        mock_is_use_tool_calls.return_value = True
+        messages = [
+            {"role": "assistant", "content": "thinking"},
+            {"role": "tool", "content": "result", "tool_call_id": "call_1"},
+        ]
+        result = self.agent_class._drop_orphaned_tool_messages(messages)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["role"], "assistant")
+
+    @patch("topsailai.workspace.context.agent.is_use_tool_calls")
+    def test_drop_orphaned_tool_messages_keeps_matched_tools(self, mock_is_use_tool_calls):
+        """Test non-orphaned tool messages are kept when tool calls enabled."""
+        mock_is_use_tool_calls.return_value = True
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "call_1", "function": {"name": "fn"}}],
+            },
+            {"role": "tool", "content": "result", "tool_call_id": "call_1"},
+        ]
+        result = self.agent_class._drop_orphaned_tool_messages(messages)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[1]["role"], "tool")
+
+    @patch("topsailai.workspace.context.agent.is_use_tool_calls")
+    def test_drop_orphaned_tool_messages_handles_object_style_tool_calls(self, mock_is_use_tool_calls):
+        """Test tool_calls entries with object-style ids are handled."""
+        mock_is_use_tool_calls.return_value = True
+
+        class FakeToolCall:
+            def __init__(self, tc_id):
+                self.id = tc_id
+
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [FakeToolCall("call_obj_1")],
+            },
+            {"role": "tool", "content": "result", "tool_call_id": "call_obj_1"},
+            {"role": "tool", "content": "orphan", "tool_call_id": "call_obj_2"},
+        ]
+        result = self.agent_class._drop_orphaned_tool_messages(messages)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[1]["tool_call_id"], "call_obj_1")
+
 
 class TestContextRuntimeUtilsEdgeCases(unittest.TestCase):
     """Test suite for edge cases in ContextRuntimeUtils."""
