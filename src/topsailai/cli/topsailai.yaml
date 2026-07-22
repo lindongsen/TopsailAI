@@ -84,6 +84,7 @@ instructions:
     desc: "Show git status for the project workspace of the current session"
     example: ""
     shell: "git -C '{project_workspace}' status"
+    use_os_system: 1
 
   - cmd: "/git.diff"
     scopes:
@@ -91,6 +92,7 @@ instructions:
     desc: "Show git diff for the project workspace of the current session"
     example: ""
     shell: "git -C '{project_workspace}' diff"
+    use_os_system: 1
 
 
   # After entering a specific session `/cd {session_id}`, these instructions can be executed

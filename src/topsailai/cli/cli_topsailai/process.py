@@ -69,6 +69,34 @@ def launch_independent_process(cmd_list: List[str], **kwargs: Any) -> subprocess
     return subprocess.Popen(cmd_list, **popen_kwargs)
 
 
+def run_os_system_command(shell_cmd: str, cmd_env: Dict[str, str]) -> int:
+    """Execute a shell command via os.system with temporary environment overrides.
+
+    Temporarily applies ``cmd_env`` values to ``os.environ`` so the shell
+    command sees the requested environment, then restores the original values.
+
+    Args:
+        shell_cmd: The shell command string to execute.
+        cmd_env: Environment variables to apply during execution.
+
+    Returns:
+        The exit code returned by ``os.system``.
+    """
+    old_env: Dict[str, Optional[str]] = {}
+    try:
+        for key, value in cmd_env.items():
+            old_env[key] = os.environ.get(key)
+            os.environ[key] = value
+        exit_code = os.system(shell_cmd)
+    finally:
+        for key, old_value in old_env.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
+    return exit_code
+
+
 def run_external_command(
     cmd_list: List[str],
     cmd_env: Dict[str, str],
@@ -88,19 +116,7 @@ def run_external_command(
     if use_os_system:
         shell_cmd = " ".join(shlex.quote(arg) for arg in cmd_list)
         print_info(f"Executing (os.system): {shell_cmd} ...")
-        # Merge cmd_env into os.environ temporarily for os.system()
-        old_env = {}
-        try:
-            for key, value in cmd_env.items():
-                old_env[key] = os.environ.get(key)
-                os.environ[key] = value
-            exit_code = os.system(shell_cmd)
-        finally:
-            for key, old_value in old_env.items():
-                if old_value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = old_value
+        exit_code = run_os_system_command(shell_cmd, cmd_env)
         if exit_code != 0:
             print_error(f"Command exited with code {exit_code}.")
         print_success("Execution completed.")

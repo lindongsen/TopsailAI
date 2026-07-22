@@ -133,6 +133,7 @@ class TestGitStatusCommand(unittest.TestCase):
             "cmd": "/git.status",
             "scopes": ["session"],
             "shell": "git -C '{project_workspace}' status",
+            "use_os_system": 1,
         }
 
     def test_git_status_matches_in_session_scope(self):
@@ -152,11 +153,11 @@ class TestGitStatusCommand(unittest.TestCase):
         self.assertIsNone(match_yaml_command("/git.status", "/task"))
 
     @patch("cli_topsailai.yaml_commands.subprocess.run")
-    @patch("cli_topsailai.process.run_external_command")
+    @patch("cli_topsailai.yaml_commands.os.system")
     def test_git_status_resolves_project_workspace(
-        self, mock_run_external, mock_subprocess_run
+        self, mock_os_system, mock_subprocess_run
     ):
-        """handle_yaml_command resolves project_workspace and runs git status."""
+        """handle_yaml_command resolves project_workspace and runs git status via os.system."""
         cli_state.current_scope = "session"
         cli_state.current_session_id = "s1"
         mock_subprocess_run.return_value = subprocess.CompletedProcess(
@@ -178,9 +179,12 @@ class TestGitStatusCommand(unittest.TestCase):
             check=False,
             timeout=30,
         )
-        mock_run_external.assert_called_once()
-        called_cmd_list = mock_run_external.call_args[0][0]
-        self.assertEqual(called_cmd_list, ["git", "-C", "/workspace/project", "status"])
+        mock_os_system.assert_called_once()
+        called_cmd = mock_os_system.call_args[0][0]
+        self.assertIn("git", called_cmd)
+        self.assertIn("-C", called_cmd)
+        self.assertIn("/workspace/project", called_cmd)
+        self.assertIn("status", called_cmd)
 
     @patch("cli_topsailai.yaml_commands.subprocess.run")
     @patch("cli_topsailai.yaml_commands.print_error")
@@ -265,6 +269,7 @@ class TestGitDiffCommand(unittest.TestCase):
             "cmd": "/git.diff",
             "scopes": ["session"],
             "shell": "git -C \'{project_workspace}\' diff",
+            "use_os_system": 1,
         }
 
     def test_git_diff_matches_in_session_scope(self):
@@ -282,13 +287,12 @@ class TestGitDiffCommand(unittest.TestCase):
         cli_state.current_session_id = None
         cli_state.yaml_commands = [self._git_diff_instruction()]
         self.assertIsNone(match_yaml_command("/git.diff", "/task"))
-
     @patch("cli_topsailai.yaml_commands.subprocess.run")
-    @patch("cli_topsailai.process.run_external_command")
+    @patch("cli_topsailai.yaml_commands.os.system")
     def test_git_diff_resolves_project_workspace(
-        self, mock_run_external, mock_subprocess_run
+        self, mock_os_system, mock_subprocess_run
     ):
-        """handle_yaml_command resolves project_workspace and runs git diff."""
+        """handle_yaml_command resolves project_workspace and runs git diff via os.system."""
         cli_state.current_scope = "session"
         cli_state.current_session_id = "s1"
         mock_subprocess_run.return_value = subprocess.CompletedProcess(
@@ -310,9 +314,12 @@ class TestGitDiffCommand(unittest.TestCase):
             check=False,
             timeout=30,
         )
-        mock_run_external.assert_called_once()
-        called_cmd_list = mock_run_external.call_args[0][0]
-        self.assertEqual(called_cmd_list, ["git", "-C", "/workspace/project", "diff"])
+        mock_os_system.assert_called_once()
+        called_cmd = mock_os_system.call_args[0][0]
+        self.assertIn("git", called_cmd)
+        self.assertIn("-C", called_cmd)
+        self.assertIn("/workspace/project", called_cmd)
+        self.assertIn("diff", called_cmd)
 
     @patch("cli_topsailai.yaml_commands.subprocess.run")
     @patch("cli_topsailai.yaml_commands.print_error")
