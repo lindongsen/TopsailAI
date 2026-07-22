@@ -86,6 +86,7 @@ def customize_for_llm():
         model_name = os.getenv("OPENAI_MODEL", "").lower()
         for _key in [
             "minimax",
+            "gpt",
         ]:
             if not model_name:
                 break

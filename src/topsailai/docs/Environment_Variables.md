@@ -225,7 +225,7 @@ For team agents, the effective offset is resolved in this order:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TOPSAILAI_USE_TOOL_CALLS` | `0` | Give tools to chat. `0` = tool prompt only. |
+| `TOPSAILAI_USE_TOOL_CALLS` | `0` | Give tools to chat. `0` = tool prompt only. Automatically set to `1` when `OPENAI_MODEL` starts with `minimax` or `gpt` (case-insensitive), unless this variable is already set explicitly. |
 | `TOPSAILAI_ENABLE_PARALLEL_TOOL_CALLS` | `0` | Enable parallel tool calls. `1` = enabled. |
 | `TOPSAILAI_DISABLED_TOOLS` | `""` | Internal tools to disable (prefixes separated by `;`). Example: `agent_tool;story_tool`. |
 | `TOPSAILAI_ENABLED_TOOLS` | `""` | Internal tools to enable (prefixes separated by `;`). Takes precedence over `DISABLED_TOOLS`. Use `+` as key declaration, `*` for all. Example: `file_tool;+` or `*`. |
