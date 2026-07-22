@@ -40,6 +40,7 @@ context:
   default: []
   # Item used when launching the topsailai CLI agent.
   topsailai:
+    - docs/README.md
     - "topsailai.md"
 
 # Environment variable configuration: each item can define its own environment variables.
