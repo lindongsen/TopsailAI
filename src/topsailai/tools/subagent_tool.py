@@ -231,6 +231,7 @@ I am a sub-agent, and my name is ({role_name or agent_name})
             agent_name=agent_name,
             need_set_agent_name_to_thread_local=False,
             need_project_workspace_lock=False,
+            need_print_session=False,
         )
         g_subagents[agent_name] = task_agent
 
