@@ -84,9 +84,14 @@ def customize_for_llm():
     # case: TOPSAILAI_USE_TOOL_CALLS
     if _env_topsailai_use_tool_calls is None:
         model_name = os.getenv("OPENAI_MODEL", "").lower()
+        prefixes = os.getenv(
+            "TOPSAILAI_USE_TOOL_CALLS_MODEL_PREFIXES",
+            "minimax,gpt",
+        )
         for _key in [
-            "minimax",
-            "gpt",
+            p.strip().lower()
+            for p in prefixes.split(",")
+            if p.strip()
         ]:
             if not model_name:
                 break

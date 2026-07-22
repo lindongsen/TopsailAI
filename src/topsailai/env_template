@@ -446,9 +446,14 @@ TOPSAILAI_FLAG_DUMP_MESSAGES=0
 # =============================================================================
 
 # Give 'tools' to chat, 0 for tool_prompt only.
-# Automatically set to 1 when OPENAI_MODEL starts with 'minimax' or 'gpt' (case-insensitive),
-# unless this variable is already set explicitly.
+# Automatically set to 1 when OPENAI_MODEL starts with one of the prefixes in
+# TOPSAILAI_USE_TOOL_CALLS_MODEL_PREFIXES (case-insensitive), unless this
+# variable is already set explicitly.
 TOPSAILAI_USE_TOOL_CALLS=0
+
+# Comma-separated list of model-name prefixes that automatically enable
+# tool calls. Default: minimax,gpt. Empty entries are ignored. Case-insensitive.
+TOPSAILAI_USE_TOOL_CALLS_MODEL_PREFIXES=minimax,gpt
 
 # parallel_tool_calls
 TOPSAILAI_ENABLE_PARALLEL_TOOL_CALLS=0
