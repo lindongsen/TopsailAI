@@ -56,6 +56,9 @@ Skill Summary
 Overview Content
 <<< [SKILL_OVERVIEW_END:{SkillFolder}]
 ```
+
+- If a skill's `SKILL_OVERVIEW_START~SKILL_OVERVIEW_END` block is already present in the context, that skill has been pre-loaded. Do not reload the full overview.
+- The `## folder content` section lists the skill's folder structure. Files not shown there may be read on demand.
 """
 
 
