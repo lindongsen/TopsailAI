@@ -159,7 +159,13 @@ def input_one_line(tips: str = "", hook: HookInstruction = None) -> str:
 
     message = ""
     while True:
-        message = _input(tips)
+        try:
+            message = _input(tips)
+        except EOFError:
+            # Pipe-based input may signal end-of-input with an EOF marker.
+            # Treat it as empty input so the loop can reprompt instead of
+            # aborting the session.
+            message = ""
         message = message.strip()
         if not message:
             continue

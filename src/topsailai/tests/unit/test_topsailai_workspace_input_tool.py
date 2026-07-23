@@ -222,6 +222,17 @@ class TestInputOneLine(unittest.TestCase):
 
     @patch("topsailai.workspace.input_tool.input")
     @patch("topsailai.workspace.input_tool.hook_message")
+    def test_eof_error_continues_loop(self, mock_hook_message, mock_input):
+        """Test that EOFError from pipe input is treated as empty input."""
+        from topsailai.workspace.input_tool import input_one_line
+        mock_input.side_effect = [EOFError(), "valid input"]
+        mock_hook_message.return_value = False
+        result = input_one_line(">>> ", self.mock_hook)
+        self.assertEqual(result, "valid input")
+        self.assertEqual(mock_input.call_count, 2)
+
+    @patch("topsailai.workspace.input_tool.input")
+    @patch("topsailai.workspace.input_tool.hook_message")
     def test_default_tips_used(self, mock_hook_message, mock_input):
         """Test that default INPUT_TIPS is used when tips is empty."""
         from topsailai.workspace.input_tool import input_one_line, INPUT_TIPS
@@ -230,8 +241,6 @@ class TestInputOneLine(unittest.TestCase):
         result = input_one_line("", self.mock_hook)
         self.assertEqual(result, "test")
         mock_input.assert_called_once_with(INPUT_TIPS)
-
-
 class TestInputMultiLine(unittest.TestCase):
     """Test cases for input_multi_line function."""
 
