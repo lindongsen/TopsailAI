@@ -35,6 +35,7 @@ topsailai
 |--------|-------------|
 | `-h`, `--help` | Show help message and exit. |
 | `--version` | Show program version and exit. |
+| `-w`, `--workspace` | Display the workspace task list and exit without entering interactive mode. |
 | `-r`, `--runtime-raw` | Use the raw curses-free streaming mode (default). |
 | `--tui`, `--runtime-tui` | Use the two-pane curses UI when watching a log. |
 | `--tail-lines N` | Number of recent log lines to echo on startup in runtime mode (default: 100). |

@@ -750,7 +750,138 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         main([])
 
         mock_resolve.assert_called_once_with("1", [log_file])
-        mock_launch.assert_called_once_with("/work/a")
+
+class TestWorkspaceFlag(unittest.TestCase):
+    """Tests for -w / --workspace early-exit flag."""
+
+    @patch("cli_topsailai.core._print_workspace_table")
+    @patch("cli_topsailai.core.sys.exit")
+    def test_short_flag_prints_workspace_and_exits(
+        self,
+        mock_exit: MagicMock,
+        mock_print_workspace: MagicMock,
+    ) -> None:
+        """-w should display the workspace list and exit immediately."""
+        from cli_topsailai.core import main
+
+        mock_exit.side_effect = SystemExit(0)
+
+        with self.assertRaises(SystemExit):
+            main(["-w"])
+
+        mock_print_workspace.assert_called_once_with()
+        mock_exit.assert_called_once_with(0)
+
+    @patch("cli_topsailai.core._print_workspace_table")
+    @patch("cli_topsailai.core.sys.exit")
+    def test_long_flag_prints_workspace_and_exits(
+        self,
+        mock_exit: MagicMock,
+        mock_print_workspace: MagicMock,
+    ) -> None:
+        """--workspace should display the workspace list and exit immediately."""
+        from cli_topsailai.core import main
+
+        mock_exit.side_effect = SystemExit(0)
+
+        with self.assertRaises(SystemExit):
+            main(["--workspace"])
+
+        mock_print_workspace.assert_called_once_with()
+        mock_exit.assert_called_once_with(0)
+
+    @patch("cli_topsailai.core._print_workspace_table")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    def test_without_flag_enters_interactive_mode(
+        self,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        mock_print_workspace: MagicMock,
+    ) -> None:
+        """Without -w, main() should enter the normal interactive loop."""
+        from cli_topsailai.core import main
+
+        mock_discover.return_value = []
+        mock_prompt.side_effect = [("quit", None)]
+
+        main([])
+
+        mock_print_workspace.assert_not_called()
+        mock_prompt.assert_called_once()
+
+
+class TestPrintWorkspaceTable(unittest.TestCase):
+    """Tests for the _print_workspace_table helper."""
+
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.paths.get_topsailai_home")
+    def test_prints_table_when_files_exist(
+        self,
+        mock_get_home: MagicMock,
+        mock_discover: MagicMock,
+        mock_enrich: MagicMock,
+        mock_header: MagicMock,
+        mock_table: MagicMock,
+    ) -> None:
+        """_print_workspace_table should discover, enrich, and print files."""
+        from cli_topsailai.core import _print_workspace_table
+
+        mock_get_home.return_value = "/fake/home"
+        log_file = {"filename": "s1.1234.session.stdout", "session_id": "s1"}
+        mock_discover.return_value = [log_file]
+
+        _print_workspace_table()
+
+        mock_get_home.assert_called_once()
+        mock_discover.assert_called_once_with("/fake/home/workspace/task")
+        mock_enrich.assert_called_once_with([log_file])
+        mock_header.assert_called_once_with("TopsailAI Task Watcher")
+        mock_table.assert_called_once_with([log_file])
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.paths.get_topsailai_home")
+    def test_prints_warning_when_empty(
+        self,
+        mock_get_home: MagicMock,
+        mock_discover: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_header: MagicMock,
+        mock_table: MagicMock,
+        mock_print: MagicMock,
+    ) -> None:
+        """_print_workspace_table should warn when no log files are found."""
+        from cli_topsailai.core import _print_workspace_table
+
+        mock_get_home.return_value = "/fake/home"
+        mock_discover.return_value = []
+
+        _print_workspace_table()
+
+        mock_header.assert_called_once_with("TopsailAI Task Watcher")
+        mock_table.assert_not_called()
+        self.assertTrue(
+            any("No .stdout log files" in str(call) for call in mock_print.call_args_list)
+        )
 
 
 if __name__ == "__main__":

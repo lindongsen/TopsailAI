@@ -315,6 +315,33 @@ def prompt_selection(
             cleanup_children()
             return ("quit", None)
 
+def _print_workspace_table() -> None:
+    """Print the workspace task list and return.
+
+    This helper is used by the ``-w`` / ``--workspace`` flag to display the
+    same table that normally appears at the ``[workspace]>`` prompt without
+    entering interactive mode.
+    """
+    from cli_topsailai.formatting import print_header, print_table
+    from cli_topsailai.log_files import discover_log_files
+    from cli_topsailai.paths import get_topsailai_home
+    from cli_topsailai.session_info import enrich_files_with_session_names
+
+    topsailai_home = get_topsailai_home()
+    task_dir = os.path.join(topsailai_home, "workspace", "task")
+
+    print_header("TopsailAI Task Watcher")
+    print(f"{Colors.DIM}HOME: {topsailai_home}{Colors.RESET}")
+    print(f"{Colors.DIM}DIR:  {task_dir}{Colors.RESET}")
+
+    log_files = discover_log_files(task_dir)
+    enrich_files_with_session_names(log_files)
+    if log_files:
+        print_table(log_files)
+    else:
+        print(f"\n{Colors.YELLOW}[WARN] No .stdout log files found in:{Colors.RESET}")
+        print(f"  {task_dir}")
+
 def main(argv: Optional[List[str]] = None) -> None:
     """Main entry point for the TopsailAI CLI."""
     parser = argparse.ArgumentParser(
@@ -333,6 +360,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         action="store_true",
         dest="version",
         help="show program's version number and exit",
+    )
+    parser.add_argument(
+        "-w", "--workspace",
+        action="store_true",
+        dest="workspace",
+        help="display the workspace task list and exit",
     )
     parser.add_argument(
         "-r", "--runtime-raw",
@@ -377,6 +410,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         sys.exit(0)
     if args.version:
         print(f"{parser.prog} {__version__}")
+        sys.exit(0)
+    if args.workspace:
+        _print_workspace_table()
         sys.exit(0)
     if args.list_docs:
         docs = build_doc_list()
@@ -483,6 +519,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             print(
                 f"\n{Colors.YELLOW}[WARN] No documentation files found.{Colors.RESET}"
             )
+
     if state.current_scope == "project":
         _refresh_project()
     elif state.current_scope == "doc":
@@ -493,7 +530,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         else:
             print(f"\n{Colors.YELLOW}[WARN] No .stdout log files found in:{Colors.RESET}")
             print(f"  {task_dir}")
-
     try:
         while state.running:
             if state.current_scope == "project":
