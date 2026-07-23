@@ -48,10 +48,10 @@ def get_hooks_runtime(key:str, content) -> list[str]:
                 return [
                     "topsailai.ai_base.llm_hooks.hook_after_chat.minimax"
                 ]
-            elif '|tool_calls_section_begin|' in content:
-                return [
-                    "topsailai.ai_base.llm_hooks.hook_after_chat.kimi"
-                ]
+            #elif '|tool_calls_section_begin|' in content:
+            #    return [
+            #        "topsailai.ai_base.llm_hooks.hook_after_chat.kimi"
+            #    ]
 
     return []
 

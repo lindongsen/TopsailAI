@@ -73,6 +73,71 @@ local filesystem under a configurable root directory.
   metadata or actual-data adapters (e.g. postgres, s3) are enabled through
   environment variables.
 
+### Example: one object per project with multiple Markdown notes
+
+For simple project-oriented note management, model each project as exactly one
+object. Store all notes for that project as Markdown files inside the object's
+actual data instead of creating one object per note.
+
+Use a stable project code as the object ID, place all project objects under the
+same classify path, and use the mandatory same-name Markdown file as the
+project index or home page:
+
+```text
+Object ID: project-a
+Classify: projects
+
+project-a/
+├── project-a.md
+├── overview.md
+├── decisions.md
+├── deployment.md
+├── design/
+│   ├── architecture.md
+│   └── database.md
+└── meetings/
+    ├── 2026-07-20.md
+    └── 2026-07-23.md
+```
+
+Create one object for each project:
+
+```
+bin/topsailai_data create project-a --classify projects
+bin/topsailai_data create project-b --classify projects
+bin/topsailai_data create project-c --classify projects
+```
+
+Add or replace an individual project note with `put`. When the source already
+exists as a file, always use `--from`:
+
+```
+bin/topsailai_data put project-a overview.md --from ./notes/overview.md
+bin/topsailai_data put project-a design/architecture.md --from ./notes/architecture.md
+bin/topsailai_data put project-a meetings/2026-07-23.md --from ./notes/2026-07-23.md
+```
+
+Inspect the project and read a specific note through the CLI:
+
+```
+bin/topsailai_data show project-a
+bin/topsailai_data get project-a design/architecture.md
+```
+
+In this model:
+
+- One project equals one object ID.
+- The classify path can remain simply `projects`; the object ID distinguishes
+  projects.
+- The mandatory `<object>.md` file is the project's index or home page.
+- Other Markdown files and subdirectories contain the project's notes.
+- Tags describe the project as a whole, such as `active`, `paused`, or
+  `archived`; they should not describe individual files.
+- `search` locates project objects by object name, classify path, or object
+  tags. It does not index each internal Markdown file as a separate object.
+- Use `show` to inspect a project's file tree and `get` when the project ID and
+  note path are known.
+
 If the request is about general file-system operations outside the
 `topsailai_data` root, or about editing the source code of topsailai_data
 itself, use the appropriate development tools instead of this skill.
