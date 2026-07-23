@@ -34,12 +34,19 @@ def convert_to_list_dict(content: str) -> list[dict]:
     # Pattern to match kimi function calls with flexible whitespace
     # Matches:  <|tool_calls_section_begin|>   <|tool_call_begin|>  functions.tool_name:id  <|tool_call_argument_begin|>  {json_args}  <|tool_call_end|>    <|tool_calls_section_end|>
     # Whitespace around markers is now optional/variable using \s*
-    #
+#
     # IMPORTANT: The JSON arguments may contain nested {} structures (e.g., Go code with struct{}, if{}, func(){}).
     # Using non-greedy .*? between markers, then extract JSON by finding balanced braces.
     pattern = r'\s*<\|tool_call_begin\|>\s*functions\.([\w-]+):(\w+)\s*<\|tool_call_argument_begin\|>\s*(.+?)\s*<\|tool_call_end\|>'
 
     matches = re.findall(pattern, content, re.DOTALL)
+
+    # Fallback: Kimi sometimes omits the closing tags <|tool_call_end|><|tool_calls_section_end|>.
+    # If no matches found and content looks like a Kimi tool-call block, append the missing tail and retry.
+    if not matches and '<|tool_calls_section_begin|>' in content:
+        tail = '<|tool_call_end|><|tool_calls_section_end|>'
+        if not content.rstrip().endswith(tail):
+            matches = re.findall(pattern, content + tail, re.DOTALL)
 
     for match in matches:
         tool_name = match[0].strip()
