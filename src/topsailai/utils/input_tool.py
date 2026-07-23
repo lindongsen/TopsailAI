@@ -601,6 +601,7 @@ def _spawn_terminal_input_subprocess(
     history_file: str | None = None,
     completion_file: str | None = None,
     max_entries: int | None = None,
+    output: TextIO | None = None,
 ) -> tuple[subprocess.Popen | None, int]:
     """Spawn a helper process that reads a terminal line and forwards it.
 
@@ -650,6 +651,14 @@ def _spawn_terminal_input_subprocess(
 
     if max_entries is None:
         max_entries = get_history_load_max_entries()
+
+    if output is None:
+        output = sys.stdout
+
+    if prompt:
+        output.write(prompt)
+        output.flush()
+        prompt = ""
 
     read_fd, write_fd = os.pipe()
 
