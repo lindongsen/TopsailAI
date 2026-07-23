@@ -421,6 +421,7 @@ func (a *MetadataAdapter) Recover(ctx context.Context) ([]*models.Object, error)
 	SortObjectsByTimePath(creating, false)
 	return creating, nil
 }
+
 // Restore transitions a deleted object back to active.
 func (a *MetadataAdapter) Restore(ctx context.Context, id models.ObjectID) error {
 	obj, objectDir, err := a.findObject(id)

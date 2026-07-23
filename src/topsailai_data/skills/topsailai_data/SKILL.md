@@ -38,7 +38,7 @@ description: |
 ## When to use
 
 Use this skill when the user intends to manage data objects through the
-`topsailai_data` CLI. The tool stores **metadata** (name, path, tags, status) and
+`topsailai_data` CLI. The tool stores **metadata** (name, path, description, tags, status) and
 **actual data** (files, archives) through independent adapters. The current
 implementation focuses on the **local adapter**, which keeps everything on the
 local filesystem under a configurable root directory.
@@ -49,7 +49,7 @@ local filesystem under a configurable root directory.
 |--------|----------------------|
 | Create objects | "create an object", "add a note", "store a document", "create X under classify Y" |
 | Read/query objects | "list my objects", "show object X", "search for X", "find objects tagged Y" |
-| Update objects/tags | "update object X", "add tag Y to X", "remove tag Y from X" |
+| Update objects/tags | "update object X", "update object X description", "add tag Y to X", "remove tag Y from X" |
 | Move objects | "move object X to path Y", "reclassify object X" |
 | Delete objects | "delete object X", "remove object X", "clean up topsailai_data" |
 | Recover/gc | "recover object X", "run gc", "clean up creating/ceased objects" |
@@ -253,7 +253,7 @@ The `bin/` directory holds the executable. Helper shell scripts are intentionall
 ```
 export TOPSAILAI_DATA_ROOT=./data
 make build
-bin/topsailai_data create hello --tag quickstart
+bin/topsailai_data create hello --description "A hello object" --tag quickstart
 bin/topsailai_data list
 bin/topsailai_data show hello
 ```
@@ -262,8 +262,9 @@ bin/topsailai_data show hello
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `create` | `create <object> [--classify dir1/dir2/...] [--tag t1,t2] [--from <file\|archive\|->]` | Create a new object. Writes a mandatory `<object>.md` marker and optional tags. `--from` accepts a plain file, a tar archive, or `-` for stdin; when omitted, content is read from stdin. If an object with the same name already exists in `ceased` status, the ceased object is purged and the new object is created; `active`, `creating`, and `deleted` objects cause `ErrObjectExists`. |
+| `create` | `create <object> [--classify dir1/dir2/...] [--description <text>] [--tag t1,t2] [--from <file\|archive\|->]` | Create a new object. Writes a mandatory `<object>.md` marker and optional tags. `--description` sets the object description; if omitted, the CLI attempts to read it from YAML frontmatter in the `<object>.md` content. `--from` accepts a plain file, a tar archive, or `-` for stdin; when omitted, content is read from stdin. If an object with the same name already exists in `ceased` status, the ceased object is purged and the new object is created; `active`, `creating`, and `deleted` objects cause `ErrObjectExists`. |
 | `show` | `show <id>` | Display metadata, the `<object>.md` content, and the folder structure of an object. |
+| `update` | `update <id> [--description <text>]` | Update an active object's metadata. Currently supports updating the description. Pass an empty value (`--description ""`) to clear the description. |
 | `list` | `list [--include-deleted] [--offset n] [--limit n] [--format yaml\|json] [--sort time:desc\|time:asc]` | List active objects, optionally paginated and sorted by the time prefix of the object path. Default format is YAML; use `json` for machine-readable output. Default sort is `time:desc` (newest first). |
 | `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format yaml\|json] [--sort time:desc\|time:asc]` | Search objects by name, tag, or classify path. Use `|` in `<query>` for OR logic (e.g. `foo\|bar`). Spaces, tabs, and backslash escapes are not supported. Results are sorted by the time prefix of the object path; default is `time:desc` (newest first). |
 | `tag` | `tag add <id> <tag>` or `tag remove <id> <tag>` | Add or remove an object-specific tag. |
@@ -281,10 +282,17 @@ bin/topsailai_data show hello
 Create:
 
 ```
-bin/topsailai_data create note --classify work/2026 --tag work,important
-bin/topsailai_data create report --from report.md
+bin/topsailai_data create note --classify work/2026 --description "Work notes for 2026" --tag work,important
+bin/topsailai_data create report --description "Monthly report" --from report.md
 bin/topsailai_data create bundle --from bundle.tar
 echo "inline content" | bin/topsailai_data create inline-note
+```
+
+Update metadata:
+
+```
+bin/topsailai_data update <id> --description "Updated description"
+bin/topsailai_data update <id> --description ""  # clear description
 ```
 
 Read metadata:
@@ -376,6 +384,7 @@ Avoid piping `get` output through tools that interpret or re-encode the stream (
 - id: hello
   name: hello
   path: 2026/0714/2323/hello
+  description: A hello object
   status: active
   tags:
     - quickstart
@@ -395,6 +404,7 @@ Use `--offset` and `--limit` to paginate. When no objects match, `list` and `sea
     "id": "hello",
     "name": "hello",
     "path": "2026/0714/2323/hello",
+    "description": "A hello object",
     "status": "active",
     "tags": ["quickstart"],
     "created_at": "2026-07-14T23:23:00Z",
@@ -418,6 +428,7 @@ The first section lists the object's stored metadata. All timestamps are formatt
 | `ID` | Stable object identifier. In the local adapter this equals the object name. |
 | `Name` | Object name (the folder name). |
 | `Path` | Full relative path from the root to the object folder. |
+| `Description` | Optional object description. |
 | `Status` | Lifecycle status: `creating`, `active`, `deleted`, or `ceased`. |
 | `SchemaVersion` | Persistent storage format version of the object record. |
 | `CreatedAt` | Object creation timestamp. |
@@ -449,6 +460,7 @@ no additional files
 ID:            hello
 Name:          hello
 Path:          2026/0714/2323/hello
+Description:   A hello object
 Status:        active
 SchemaVersion: 1
 CreatedAt:     2026-07-14T23:23:00+08:00

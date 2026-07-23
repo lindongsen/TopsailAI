@@ -151,17 +151,19 @@ func TestMetadataAdapterUpdate(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	objectPath, _ := BuildObjectPath(now, nil, name)
 	obj := &models.Object{
-		ID:        models.ObjectID(name),
-		Name:      name,
-		Path:      objectPath,
-		Status:    models.ObjectStatusActive,
-		CreatedAt: now,
-		UpdatedAt: now,
-		Tags:      []string{"old"},
+		ID:          models.ObjectID(name),
+		Name:        name,
+		Path:        objectPath,
+		Status:      models.ObjectStatusActive,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Tags:        []string{"old"},
+		Description: "initial description",
 	}
 	createObjectDir(t, root, obj)
 
 	obj.Tags = []string{"new"}
+	obj.Description = "updated description"
 	if err := adapter.Update(ctx, obj); err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -173,8 +175,54 @@ func TestMetadataAdapterUpdate(t *testing.T) {
 	if len(got.Tags) != 1 || got.Tags[0] != "new" {
 		t.Fatalf("tags not updated: %v", got.Tags)
 	}
+	if got.Description != "updated description" {
+		t.Fatalf("description not updated: got %q, want %q", got.Description, "updated description")
+	}
 	if !got.UpdatedAt.After(now) {
 		t.Fatal("UpdatedAt was not advanced")
+	}
+}
+
+func TestMetadataAdapterDescriptionRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewMetadataAdapter(root)
+	_ = adapter.Init(ctx)
+	defer adapter.Close()
+
+	name := "desc-roundtrip"
+	now := time.Now().Truncate(time.Second)
+	objectPath, _ := BuildObjectPath(now, nil, name)
+	obj := &models.Object{
+		ID:          models.ObjectID(name),
+		Name:        name,
+		Path:        objectPath,
+		Status:      models.ObjectStatusActive,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Description: "round-trip description",
+	}
+	createObjectDir(t, root, obj)
+
+	got, err := adapter.Get(ctx, obj.ID, false)
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	if got.Description != obj.Description {
+		t.Fatalf("description round-trip mismatch: got %q, want %q", got.Description, obj.Description)
+	}
+
+	obj.Description = ""
+	if err := adapter.Update(ctx, obj); err != nil {
+		t.Fatalf("Update clearing description failed: %v", err)
+	}
+
+	got, err = adapter.Get(ctx, obj.ID, false)
+	if err != nil {
+		t.Fatalf("Get after clear failed: %v", err)
+	}
+	if got.Description != "" {
+		t.Fatalf("description should be empty after update, got %q", got.Description)
 	}
 }
 

@@ -89,10 +89,11 @@ func runInteractive(ctx context.Context, mgr *manager.Manager) error {
 
 func registeredCommands() []Command {
 	return []Command{
-		{Name: "create", Usage: "create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--from <path|->]", Run: runCreate},
+		{Name: "create", Usage: "create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--description <text>] [--from <path|->]", Run: runCreate},
 		{Name: "show", Usage: "show <id>", Run: runShow},
 		{Name: "list", Usage: "list [--tag tag1,tag2] [--include-deleted] [--offset n] [--limit n] [--format yaml|json] [--sort time:asc|time:desc]", Run: runList},
 		{Name: "search", Usage: "search <query> [--include-deleted] [--offset n] [--limit n] [--format yaml|json] [--sort time:asc|time:desc] (use | for OR; spaces/tabs and backslash escapes are not supported)", Run: runSearch},
+		{Name: "update", Usage: "update <id> [--description <text>]", Run: runUpdate},
 		{Name: "tag", Usage: "tag add <id> <tag> | tag remove <id> <tag>", Run: runTag},
 		{Name: "move", Usage: "move <id> <new-classify...>", Run: runMove},
 		{Name: "delete", Usage: "delete <id>", Run: runDelete},

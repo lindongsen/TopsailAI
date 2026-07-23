@@ -45,6 +45,9 @@ type Object struct {
 	Name string
 	// Path is the full relative path of the object folder from the root.
 	Path string
+	// Description is a short human-readable summary of the object. It may be
+	// supplied explicitly or extracted from YAML frontmatter in object.md.
+	Description string
 	// Tags is the merged set of inherited classify tags and object-specific tags.
 	Tags []string
 	// Status is the current lifecycle state.

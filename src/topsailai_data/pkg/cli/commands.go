@@ -14,11 +14,12 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/term"
-	"gopkg.in/yaml.v3"
+	"github.com/spf13/pflag"
 	apperrors "github.com/topsailai/topsailai_data/pkg/errors"
 	"github.com/topsailai/topsailai_data/pkg/manager"
 	"github.com/topsailai/topsailai_data/pkg/models"
+	"golang.org/x/term"
+	"gopkg.in/yaml.v3"
 )
 
 // runCreate implements the "create" command.
@@ -26,6 +27,7 @@ func runCreate(ctx context.Context, mgr *manager.Manager, args []string) error {
 	fs := newFlagSet("create")
 	classify := fs.String("classify", "", "comma-separated classify directories after the time prefix")
 	tags := fs.String("tag", "", "comma-separated tags for the object")
+	description := fs.String("description", "", "object description")
 	from := fs.String("from", "", "local file or tar archive to use as initial actual data (use - for stdin); default is stdin when stdin is redirected")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -37,8 +39,9 @@ func runCreate(ctx context.Context, mgr *manager.Manager, args []string) error {
 
 	name := remaining[0]
 	opts := manager.CreateObjectOptions{
-		Classify: flattenClassifyArgs(splitList(*classify)),
-		Tags:     splitList(*tags),
+		Classify:    flattenClassifyArgs(splitList(*classify)),
+		Tags:        splitList(*tags),
+		Description: *description,
 	}
 
 	var r io.ReadCloser
@@ -285,6 +288,43 @@ func parseTagList(s string) []string {
 		}
 	}
 	return out
+}
+
+// runUpdate implements the "update" command.
+func runUpdate(ctx context.Context, mgr *manager.Manager, args []string) error {
+	fs := newFlagSet("update")
+	description := fs.String("description", "", "new object description")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := requireArgs(fs.Args(), 1, 1); err != nil {
+		return fmt.Errorf("update: %w", err)
+	}
+	id := models.ObjectID(fs.Args()[0])
+
+	opts := manager.UpdateObjectOptions{}
+	if *description != "" || hasFlag(fs, "description") {
+		opts.Description = description
+	}
+
+	obj, err := mgr.UpdateObject(ctx, id, opts)
+	if err != nil {
+		return fmt.Errorf("update: %w", err)
+	}
+	fmt.Printf("updated object %s\n", obj.ID)
+	return nil
+}
+
+// hasFlag reports whether the named flag was explicitly provided on the
+// command line.
+func hasFlag(fs *pflag.FlagSet, name string) bool {
+	found := false
+	fs.Visit(func(f *pflag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
 }
 
 // runRecover implements the "recover" command.
@@ -638,6 +678,7 @@ func printObject(obj *models.Object) {
 	fmt.Printf("ID:            %s\n", obj.ID)
 	fmt.Printf("Name:          %s\n", obj.Name)
 	fmt.Printf("Path:          %s\n", obj.Path)
+	fmt.Printf("Description:   %s\n", obj.Description)
 	fmt.Printf("Status:        %s\n", obj.Status)
 	fmt.Printf("SchemaVersion: %d\n", obj.SchemaVersion)
 	fmt.Printf("CreatedAt:     %s\n", obj.CreatedAt.Format(time.RFC3339))
@@ -690,6 +731,7 @@ type listObjectJSON struct {
 	ID            string    `json:"id"`
 	Name          string    `json:"name"`
 	Path          string    `json:"path"`
+	Description   string    `json:"description"`
 	Status        string    `json:"status"`
 	Tags          []string  `json:"tags"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -710,6 +752,7 @@ func printObjectListJSON(objects []*models.Object) {
 			ID:            string(obj.ID),
 			Name:          obj.Name,
 			Path:          obj.Path,
+			Description:   obj.Description,
 			Status:        string(obj.Status),
 			Tags:          tags,
 			CreatedAt:     obj.CreatedAt,
@@ -728,6 +771,7 @@ type listObjectYAML struct {
 	ID            string    `yaml:"id"`
 	Name          string    `yaml:"name"`
 	Path          string    `yaml:"path"`
+	Description   string    `yaml:"description"`
 	Status        string    `yaml:"status"`
 	Tags          []string  `yaml:"tags"`
 	CreatedAt     time.Time `yaml:"created_at"`
@@ -748,6 +792,7 @@ func printObjectListYAML(objects []*models.Object) {
 			ID:            string(obj.ID),
 			Name:          obj.Name,
 			Path:          obj.Path,
+			Description:   obj.Description,
 			Status:        string(obj.Status),
 			Tags:          tags,
 			CreatedAt:     obj.CreatedAt,

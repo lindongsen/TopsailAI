@@ -1,11 +1,12 @@
 package cli
 
 import (
-	"encoding/json"
 	"archive/tar"
-	"fmt"
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/topsailai/topsailai_data/pkg/config"
+	apperrors "github.com/topsailai/topsailai_data/pkg/errors"
 	"github.com/topsailai/topsailai_data/pkg/manager"
 	"github.com/topsailai/topsailai_data/pkg/models"
 )
@@ -78,7 +80,6 @@ func buildTarArchive(t *testing.T, files map[string][]byte) []byte {
 	return buf.Bytes()
 }
 
-
 func TestNoArgsPrintsUsage(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
@@ -99,7 +100,7 @@ func TestNoArgsPrintsUsage(t *testing.T) {
 func TestCreateAndShow(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	if err := Run(ctx, mgr, []string{"create", "hello", "--classify", "demo", "--tag", "a,b"}); err != nil {
+	if err := Run(ctx, mgr, []string{"create", "hello", "--classify", "demo", "--tag", "a,b", "--description", "Hello description"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
@@ -126,6 +127,9 @@ func TestCreateAndShow(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "Name:          hello") {
 		t.Fatalf("show output missing name: %s", out)
+	}
+	if !strings.Contains(out, "Description:   Hello description") {
+		t.Fatalf("show output missing description: %s", out)
 	}
 	if !strings.Contains(out, "Status:        active") {
 		t.Fatalf("show output missing active status: %s", out)
@@ -450,7 +454,6 @@ func TestRecoverRestoresDeletedWithFrom(t *testing.T) {
 	}
 }
 
-
 func TestRecoverRejectsActiveObject(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
@@ -759,8 +762,9 @@ func TestListOutputFormatAndPagination(t *testing.T) {
 	for i := 1; i <= 5; i++ {
 		name := fmt.Sprintf("obj%d", i)
 		if _, err := mgr.CreateObject(ctx, name, manager.CreateObjectOptions{
-			Classify: []string{"demo"},
-			Tags:     []string{fmt.Sprintf("tag%d", i)},
+			Description: fmt.Sprintf("description%d", i),
+			Classify:    []string{"demo"},
+			Tags:        []string{fmt.Sprintf("tag%d", i)},
 		}); err != nil {
 			t.Fatalf("create %s: %v", name, err)
 		}
@@ -773,6 +777,9 @@ func TestListOutputFormatAndPagination(t *testing.T) {
 	})
 	if !strings.Contains(out, "id:") {
 		t.Fatalf("list output missing YAML id field: %s", out)
+	}
+	if !strings.Contains(out, "description: description1") {
+		t.Fatalf("list output missing YAML description field: %s", out)
 	}
 	if !strings.Contains(out, "obj1") || !strings.Contains(out, "obj5") {
 		t.Fatalf("list output missing objects: %s", out)
@@ -799,8 +806,9 @@ func TestListFormatJSON(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
 	if _, err := mgr.CreateObject(ctx, "jsonobj", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-		Tags:     []string{"alpha", "beta"},
+		Description: "JSON description",
+		Classify:    []string{"demo"},
+		Tags:        []string{"alpha", "beta"},
 	}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -823,6 +831,9 @@ func TestListFormatJSON(t *testing.T) {
 	}
 	if results[0]["name"] != "jsonobj" {
 		t.Fatalf("expected name jsonobj, got %v", results[0]["name"])
+	}
+	if results[0]["description"] != "JSON description" {
+		t.Fatalf("expected description JSON description, got %v", results[0]["description"])
 	}
 	if results[0]["status"] != "active" {
 		t.Fatalf("expected status active, got %v", results[0]["status"])
@@ -1579,5 +1590,92 @@ func TestListTagFlagFilters(t *testing.T) {
 	}
 	if results[0]["id"] != "alpha-obj" {
 		t.Fatalf("expected alpha-obj, got %v", results[0]["id"])
+	}
+}
+
+func TestUpdateDescriptionActiveObject(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	if err := Run(ctx, mgr, []string{"create", "updatable"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := Run(ctx, mgr, []string{"update", "updatable", "--description", "new description"}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	obj, err := mgr.GetObject(ctx, "updatable", false)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if obj.Description != "new description" {
+		t.Fatalf("expected description %q, got %q", "new description", obj.Description)
+	}
+}
+
+func TestUpdateDescriptionClearWithEmptyString(t *testing.T) {
+	mgr, tmp, ctx := setupManager(t)
+
+	// Create the object from a plain file that contains YAML frontmatter with a
+	// description. The CLI wraps the file content as {name}.md.
+	src := filepath.Join(tmp, "with-frontmatter.md")
+	content := []byte("---\ndescription: from frontmatter\n---\n\nbody\n")
+	if err := os.WriteFile(src, content, 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	if err := Run(ctx, mgr, []string{"create", "frontmatter-obj", "--from", src}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	obj, err := mgr.GetObject(ctx, "frontmatter-obj", false)
+	if err != nil {
+		t.Fatalf("get after create: %v", err)
+	}
+	if obj.Description != "from frontmatter" {
+		t.Fatalf("expected frontmatter description, got %q", obj.Description)
+	}
+
+	if err := Run(ctx, mgr, []string{"update", "frontmatter-obj", "--description", ""}); err != nil {
+		t.Fatalf("update with empty description: %v", err)
+	}
+
+	obj, err = mgr.GetObject(ctx, "frontmatter-obj", false)
+	if err != nil {
+		t.Fatalf("get after update: %v", err)
+	}
+	if obj.Description != "" {
+		t.Fatalf("expected empty description, got %q", obj.Description)
+	}
+}
+
+func TestUpdateDescriptionRejectsNonActive(t *testing.T) {
+	cases := []struct {
+		name       string
+		deleteRuns int
+	}{
+		{name: "deleted", deleteRuns: 1},
+		{name: "ceased", deleteRuns: 2},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, _, ctx := setupManager(t)
+			id := tc.name + "-cli-update-obj"
+
+			if err := Run(ctx, mgr, []string{"create", id}); err != nil {
+				t.Fatalf("create: %v", err)
+			}
+			for i := 0; i < tc.deleteRuns; i++ {
+				if err := Run(ctx, mgr, []string{"delete", id}); err != nil {
+					t.Fatalf("delete run %d: %v", i+1, err)
+				}
+			}
+
+			err := Run(ctx, mgr, []string{"update", id, "--description", "should fail"})
+			if !errors.Is(err, apperrors.ErrObjectNotActive) {
+				t.Fatalf("expected ErrObjectNotActive, got %v", err)
+			}
+		})
 	}
 }

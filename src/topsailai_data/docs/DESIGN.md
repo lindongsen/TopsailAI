@@ -4,7 +4,7 @@
 
 `topsailai_data` is a Go-based data management system that unifies access to heterogeneous storage backends through a single CLI. Data is split into two categories:
 
-- **Metadata**: descriptive information about a data object. For this project, metadata consists of **object identity** (the object name and stable ID), **path**, **time** (creation and update timestamps), **status**, and **tags**.
+- **Metadata**: descriptive information about a data object. For this project, metadata consists of **object identity** (the object name and stable ID), **path**, **description**, **time** (creation and update timestamps), **status**, and **tags**.
 - **Actual data**: the payload itself, which may be plain text or arbitrary files. The mandatory `object.md` file inside an object folder is the primary actual-data carrier.
 
 The system is built around adapter interfaces. Both metadata and actual data can be backed by independent adapters, allowing combinations such as local-only, database + local files, database + S3, and future backends.
@@ -38,7 +38,7 @@ This document describes the architecture, core interfaces, file layout conventio
 | Classify | A directory level used for organization after the time prefix. A classify path is the sequence of directories between the time prefix and the object folder. |
 | Classify tag file | An optional `{classify}.tags` file inside a classify directory. Tags apply recursively to all objects under that classify directory. |
 | Classify tag | A tag stored in the `classify_tag` relation table or a `{classify}.tags` file, inherited by all objects under the associated classify path. |
-| Metadata | The set `{object ID, object name, path, creation time, update time, status, tags}` that describes an object. |
+| Metadata | The set `{object ID, object name, path, description, creation time, update time, status, tags}` that describes an object. |
 | Actual data | The payload associated with an object. The `object.md` file is the primary actual-data carrier; additional files and sub-directories inside the object folder are also actual data. |
 | Adapter | A pluggable implementation of a storage interface. |
 | Schema version | A monotonically increasing integer that identifies the persistent storage format. Starts at `1`. |
@@ -83,7 +83,7 @@ The `Manager` orchestrates metadata and actual data operations. It does not know
 
 Two interfaces are defined:
 
-- `MetadataAdapter`: stores and retrieves object metadata (ID, name, path, time, tags, and the opaque `DataRef`).
+- `MetadataAdapter`: stores and retrieves object metadata (ID, name, path, description, time, tags, and the opaque `DataRef`).
 - `ActualDataAdapter`: stores and retrieves object payloads.
 
 Both adapters operate on a stable object identifier (`ObjectID`) produced by the manager. Adapters are configured independently, so a deployment may use a local metadata adapter with an S3 actual-data adapter in the future.
@@ -106,6 +106,7 @@ type Object struct {
     ID            ObjectID
     Name          string
     Path          string
+    Description   string
     Tags          []string
     Status        ObjectStatus
     SchemaVersion int
@@ -118,12 +119,21 @@ type Object struct {
 - `ID`: stable, opaque identifier. In the local adapter it equals the object name; in database adapters it is typically the same value stored as the primary key.
 - `Name`: the object name, equal to the object folder name.
 - `Path`: the full relative path of the object folder, e.g. `2026/0714/2323/xyz` or `2026/0714/2323/projects/demo/xyz`.
+- `Description`: a short human-readable summary of the object. It may be supplied explicitly or extracted automatically from YAML frontmatter in `{name}.md`.
 - `Tags`: merged set of inherited tags and object-specific tags.
 - `Status`: lifecycle state. New objects start as `creating`, transition to `active` once actual data is written, and are removed through `deleted` to `ceased`.
 - `SchemaVersion`: persistent storage format version of this object record. Starts at `1` and is updated on migration.
 - `CreatedAt`: creation timestamp, used to generate the time path.
 - `UpdatedAt`: last modification timestamp. Required in the model and in database adapters. In the local file-system adapter it is not persisted separately; the adapter returns `CreatedAt` or the file modification time, never a zero value.
 - `DataRef`: opaque reference returned by the actual-data adapter. The metadata adapter stores it but does not interpret it.
+
+#### Description and YAML frontmatter fallback
+
+When an object is created without an explicit description, or when an object with an empty existing description is updated without an explicit description, the manager attempts to populate `Description` from the YAML frontmatter at the beginning of `{name}.md`. The extraction is best-effort:
+
+- Only a leading `--- ... ---` block is considered.
+- A bounded prefix of the file (first 8 KiB) is read for efficiency.
+- If the frontmatter is missing, malformed, lacks a `description` key, or the value is not a string, the field is left empty and the operation continues normally.
 
 ### 5.2 ObjectID
 
@@ -387,9 +397,9 @@ The CLI is named `topsaildata`. Commands include:
 
 | Command | Purpose |
 |---------|---------|
-| `create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--from <path|->]` | Create a new object. Optional classify directories may follow the time prefix. |
+| `create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--description <text>] [--from <path|->]` | Create a new object. Optional classify directories may follow the time prefix. If no description is given, the manager tries to read it from YAML frontmatter in `{object}.md`. |
 | `show <id>` | Display metadata of an object. For `active` objects also display the markdown content and folder structure; for `deleted` or `ceased` objects only metadata is shown. |
-| `update <id>` | Update an object's metadata or tags. |
+| `update <id> [--description <text>]` | Update an object's metadata. Currently supports updating the description; `--description ""` clears it. |
 | `move <id> <new-classify...>` | Move an object to a different classify path. The ID and name do not change. |
 | `delete <id>` | Soft-delete an active object. Marks the object as `deleted` but preserves actual data so it can be recovered. |
 | `list [--include-deleted] [--offset n] [--limit n] [--format yaml|json]` | List active objects, optionally paginated. The default output format is YAML; use `--format json` for machine-readable JSON. |
@@ -450,6 +460,7 @@ A database-backed metadata adapter implements the same `MetadataAdapter` interfa
 | `object_id` | string, primary key | Stable ID. In local adapter terms this equals the object name. |
 | `name` | string, not null | Object name, same as `object_id` in the local adapter. |
 | `path` | string, not null, unique | Full relative path, e.g. `2026/0714/2323/xyz`. |
+| `description` | string | Optional human-readable summary. |
 | `created_at` | timestamp, not null | Creation time. |
 | `updated_at` | timestamp, not null | Last update time. |
 | `status` | enum('creating','active','deleted','ceased'), not null default 'active' | Object lifecycle status. |
@@ -696,4 +707,4 @@ Integration tests verify CLI commands against a temporary root directory configu
 
 ## 18. Summary
 
-`topsailai_data` separates metadata from actual data through adapter interfaces, enabling flexible backend combinations. The local adapter uses a time-based directory layout, mandatory `object.md` files as actual-data carriers, optional tag files, and recursive classify tag inheritance. Object boundaries are detected by the presence of a same-named `.md` file, and scanning stops at those boundaries. The metadata model includes `ID`, `Name`, `Path`, `CreatedAt`, `UpdatedAt`, `Status`, `SchemaVersion`, and `Tags`, with `ObjectID` stable across moves. A database metadata adapter can implement the same interface using an `objects` table, an `object_tags` table, and a `classify_tag` relationship table. The design prioritizes extensibility, clear conventions, and testability.
+`topsailai_data` separates metadata from actual data through adapter interfaces, enabling flexible backend combinations. The local adapter uses a time-based directory layout, mandatory `object.md` files as actual-data carriers, optional tag files, and recursive classify tag inheritance. Object boundaries are detected by the presence of a same-named `.md` file, and scanning stops at those boundaries. The metadata model includes `ID`, `Name`, `Path`, `Description`, `CreatedAt`, `UpdatedAt`, `Status`, `SchemaVersion`, and `Tags`, with `ObjectID` stable across moves. A database metadata adapter can implement the same interface using an `objects` table, an `object_tags` table, and a `classify_tag` relationship table. The design prioritizes extensibility, clear conventions, and testability.

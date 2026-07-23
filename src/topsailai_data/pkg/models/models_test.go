@@ -48,6 +48,7 @@ func TestObjectClone(t *testing.T) {
 		DeletedAt:     &deletedAt,
 		CeasedAt:      &ceasedAt,
 		DataRef:       "ref",
+		Description:   "test description",
 	}
 
 	cloned := original.Clone()
@@ -63,6 +64,9 @@ func TestObjectClone(t *testing.T) {
 	}
 	if cloned.DataRef != original.DataRef {
 		t.Fatalf("DataRef mismatch")
+	}
+	if cloned.Description != original.Description {
+		t.Fatalf("Description mismatch")
 	}
 
 	// Mutate clone tags and verify original is unchanged.

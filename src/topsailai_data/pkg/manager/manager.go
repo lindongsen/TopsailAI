@@ -17,6 +17,7 @@ import (
 	"github.com/topsailai/topsailai_data/pkg/config"
 	"github.com/topsailai/topsailai_data/pkg/errors"
 	"github.com/topsailai/topsailai_data/pkg/models"
+	"gopkg.in/yaml.v3"
 )
 
 // Manager combines a MetadataAdapter and an ActualDataAdapter to implement the
@@ -114,9 +115,10 @@ func (m *Manager) Close() error {
 
 // CreateObjectOptions controls optional behavior for CreateObject.
 type CreateObjectOptions struct {
-	Classify []string
-	Tags     []string
-	Data     io.Reader
+	Description string
+	Classify    []string
+	Tags        []string
+	Data        io.Reader
 }
 
 // CreateObject creates a new object, writes optional initial actual data, and
@@ -162,6 +164,7 @@ func (m *Manager) CreateObject(ctx context.Context, name string, opts CreateObje
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		DataRef:       objectDir,
+		Description:   opts.Description,
 	}
 
 	// Step 1: create metadata in creating state.
@@ -206,6 +209,15 @@ func (m *Manager) CreateObject(ctx context.Context, name string, opts CreateObje
 	// Step 6: promote to active.
 	obj.Status = models.ObjectStatusActive
 	obj.UpdatedAt = time.Now()
+
+	// If description is empty, try to extract it from the marker file's YAML
+	// frontmatter. This is best-effort; failures are ignored.
+	if obj.Description == "" {
+		if extracted := extractDescriptionFromMarkdown(markerPath); extracted != "" {
+			obj.Description = extracted
+		}
+	}
+
 	if err := m.meta.Update(ctx, obj); err != nil {
 		return nil, fmt.Errorf("activate object: %w", err)
 	}
@@ -229,6 +241,63 @@ func (m *Manager) GetObject(ctx context.Context, id models.ObjectID, includeDele
 		defer lock.Release()
 	}
 	return m.meta.Get(ctx, id, includeDeleted)
+}
+
+// UpdateObjectOptions controls which metadata fields to update.
+type UpdateObjectOptions struct {
+	Description *string
+}
+
+// UpdateObject updates mutable metadata fields of an active object.
+func (m *Manager) UpdateObject(ctx context.Context, id models.ObjectID, opts UpdateObjectOptions) (*models.Object, error) {
+	obj, err := m.GetObject(ctx, id, true)
+	if err != nil {
+		return nil, err
+	}
+	if obj.Status != models.ObjectStatusActive {
+		return nil, fmt.Errorf("cannot update object %q: %w", id, errors.ErrObjectNotActive)
+	}
+
+	objectDir, err := m.objectDir(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	lock, err := local.AcquireWriteLock(objectDir)
+	if err != nil {
+		return nil, fmt.Errorf("acquire write lock: %w", err)
+	}
+	defer lock.Release()
+
+	// Re-read under lock to avoid stale state.
+	obj, err = m.meta.Get(ctx, id, true)
+	if err != nil {
+		return nil, err
+	}
+	if obj.Status != models.ObjectStatusActive {
+		return nil, fmt.Errorf("cannot update object %q: %w", id, errors.ErrObjectNotActive)
+	}
+
+	updated := false
+	if opts.Description != nil {
+		obj.Description = *opts.Description
+		updated = true
+	} else if obj.Description == "" {
+		// Description was not provided; try to extract it from the marker file's
+		// YAML frontmatter. This is best-effort; failures are ignored.
+		markerPath := filepath.Join(objectDir, string(id)+".md")
+		if extracted := extractDescriptionFromMarkdown(markerPath); extracted != "" {
+			obj.Description = extracted
+			updated = true
+		}
+	}
+	if updated {
+		obj.UpdatedAt = time.Now()
+		if err := m.meta.Update(ctx, obj); err != nil {
+			return nil, fmt.Errorf("update metadata: %w", err)
+		}
+	}
+
+	return obj, nil
 }
 
 // ListObjects returns a paginated list of active objects.
@@ -709,4 +778,51 @@ func (l *lockedReadCloser) Close() error {
 		err = lockErr
 	}
 	return err
+}
+
+// extractDescriptionFromMarkdown attempts to read a YAML frontmatter block
+// from the beginning of path and return the value of the "description" key.
+// Any error (missing frontmatter, invalid YAML, missing key, non-string value)
+// results in an empty string.
+func extractDescriptionFromMarkdown(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	const maxFrontmatterSize = 8 * 1024
+	buf := make([]byte, maxFrontmatterSize)
+	n, err := f.Read(buf)
+	if err != nil && err != io.EOF {
+		return ""
+	}
+	content := strings.ReplaceAll(string(buf[:n]), "\r\n", "\n")
+
+	if !strings.HasPrefix(content, "---\n") {
+		return ""
+	}
+	frontmatterContent := content[4:]
+	end := strings.Index(frontmatterContent, "\n---\n")
+	if end < 0 && strings.HasSuffix(frontmatterContent, "\n---") {
+		end = len(frontmatterContent) - len("\n---")
+	}
+	if end < 0 {
+		return ""
+	}
+	frontmatter := frontmatterContent[:end+1]
+
+	var meta map[string]interface{}
+	if err := yaml.Unmarshal([]byte(frontmatter), &meta); err != nil {
+		return ""
+	}
+	v, ok := meta["description"]
+	if !ok {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(s)
 }

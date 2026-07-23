@@ -807,6 +807,169 @@ func TestRestoreObject(t *testing.T) {
 		t.Fatalf("expected path %q after restore, got %q", obj.Path, restored.Path)
 	}
 }
+func TestUpdateObject(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	obj, err := mgr.CreateObject(ctx, "update-desc", CreateObjectOptions{Description: "initial"})
+	if err != nil {
+		t.Fatalf("CreateObject failed: %v", err)
+	}
+	if obj.Description != "initial" {
+		t.Fatalf("expected initial description, got %q", obj.Description)
+	}
+
+	newDesc := "updated"
+	updated, err := mgr.UpdateObject(ctx, "update-desc", UpdateObjectOptions{Description: &newDesc})
+	if err != nil {
+		t.Fatalf("UpdateObject failed: %v", err)
+	}
+	if updated.Description != "updated" {
+		t.Fatalf("expected updated description, got %q", updated.Description)
+	}
+
+	got, err := mgr.GetObject(ctx, "update-desc", false)
+	if err != nil {
+		t.Fatalf("GetObject failed: %v", err)
+	}
+	if got.Description != "updated" {
+		t.Fatalf("expected persisted updated description, got %q", got.Description)
+	}
+}
+
+func TestUpdateObjectClearsDescription(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	if _, err := mgr.CreateObject(ctx, "yaml-clear", CreateObjectOptions{
+		Description: "initial",
+	}); err != nil {
+		t.Fatalf("CreateObject failed: %v", err)
+	}
+
+	frontmatter := "---\ndescription: yaml desc\n---\nbody\n"
+	if err := mgr.WriteActualFile(ctx, "yaml-clear", "yaml-clear.md", strings.NewReader(frontmatter)); err != nil {
+		t.Fatalf("WriteActualFile failed: %v", err)
+	}
+
+	empty := ""
+	updated, err := mgr.UpdateObject(ctx, "yaml-clear", UpdateObjectOptions{Description: &empty})
+	if err != nil {
+		t.Fatalf("UpdateObject failed: %v", err)
+	}
+	if updated.Description != "" {
+		t.Fatalf("expected empty description, got %q", updated.Description)
+	}
+
+	got, err := mgr.GetObject(ctx, "yaml-clear", false)
+	if err != nil {
+		t.Fatalf("GetObject failed: %v", err)
+	}
+	if got.Description != "" {
+		t.Fatalf("expected persisted empty description, got %q", got.Description)
+	}
+}
+
+func TestUpdateObjectRejectsNonActive(t *testing.T) {
+	cases := []struct {
+		name       string
+		deleteRuns int
+	}{
+		{name: "deleted", deleteRuns: 1},
+		{name: "ceased", deleteRuns: 2},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr := newTestManager(t)
+			ctx := context.Background()
+			id := models.ObjectID(tc.name + "-update-obj")
+
+			if _, err := mgr.CreateObject(ctx, string(id), CreateObjectOptions{}); err != nil {
+				t.Fatalf("CreateObject failed: %v", err)
+			}
+			for i := 0; i < tc.deleteRuns; i++ {
+				if err := mgr.DeleteObject(ctx, id); err != nil {
+					t.Fatalf("DeleteObject run %d failed: %v", i+1, err)
+				}
+			}
+
+			desc := "should fail"
+			_, err := mgr.UpdateObject(ctx, id, UpdateObjectOptions{Description: &desc})
+			if !errors.Is(err, apperrors.ErrObjectNotActive) {
+				t.Fatalf("expected ErrObjectNotActive, got %v", err)
+			}
+		})
+	}
+}
+
+func TestExtractDescriptionFromMarkdown(t *testing.T) {
+	cases := []struct {
+		name     string
+		content  string
+		expected string
+	}{
+		{
+			name:     "valid frontmatter",
+			content:  "---\ndescription: yaml desc\n---\nbody\n",
+			expected: "yaml desc",
+		},
+		{
+			name:     "missing frontmatter",
+			content:  "# heading\nbody\n",
+			expected: "",
+		},
+		{
+			name:     "malformed yaml",
+			content:  "---\ndescription: [unclosed\n---\nbody\n",
+			expected: "",
+		},
+		{
+			name:     "missing description key",
+			content:  "---\ntitle: note\n---\nbody\n",
+			expected: "",
+		},
+		{
+			name:     "non-string description",
+			content:  "---\ndescription: 123\n---\nbody\n",
+			expected: "",
+		},
+		{
+			name:     "empty file",
+			content:  "",
+			expected: "",
+		},
+		{
+			name:     "crlf line endings",
+			content:  "---\r\ndescription: crlf desc\r\n---\r\nbody\r\n",
+			expected: "crlf desc",
+		},
+		{
+			name:     "closing delimiter must occupy complete line",
+			content:  "---\ndescription: invalid delimiter\n---invalid\nbody\n",
+			expected: "",
+		},
+		{
+			name:     "closing delimiter at eof",
+			content:  "---\ndescription: eof delimiter\n---",
+			expected: "eof delimiter",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			path := filepath.Join(tmp, "note.md")
+			if err := os.WriteFile(path, []byte(tc.content), 0644); err != nil {
+				t.Fatalf("write test file: %v", err)
+			}
+			got := extractDescriptionFromMarkdown(path)
+			if got != tc.expected {
+				t.Fatalf("expected %q, got %q", tc.expected, got)
+			}
+		})
+	}
+}
 
 func TestRestoreObjectRejectsNonDeleted(t *testing.T) {
 	mgr := newTestManager(t)
@@ -1157,14 +1320,16 @@ func buildObjectPathForTest(t *testing.T, tm time.Time, classify []string, name 
 // errorCloseMetadataAdapter is a minimal metadata adapter that returns an error on Close.
 type errorCloseMetadataAdapter struct{}
 
-func (e *errorCloseMetadataAdapter) Init(ctx context.Context) error { return nil }
+func (e *errorCloseMetadataAdapter) Init(ctx context.Context) error                       { return nil }
 func (e *errorCloseMetadataAdapter) Create(ctx context.Context, obj *models.Object) error { return nil }
 func (e *errorCloseMetadataAdapter) Get(ctx context.Context, id models.ObjectID, includeDeleted bool) (*models.Object, error) {
 	return nil, apperrors.ErrObjectNotFound
 }
 func (e *errorCloseMetadataAdapter) Update(ctx context.Context, obj *models.Object) error { return nil }
 func (e *errorCloseMetadataAdapter) Delete(ctx context.Context, id models.ObjectID) error { return nil }
-func (e *errorCloseMetadataAdapter) FinalizeDelete(ctx context.Context, id models.ObjectID) error { return nil }
+func (e *errorCloseMetadataAdapter) FinalizeDelete(ctx context.Context, id models.ObjectID) error {
+	return nil
+}
 func (e *errorCloseMetadataAdapter) Purge(ctx context.Context, id models.ObjectID) error { return nil }
 func (e *errorCloseMetadataAdapter) List(ctx context.Context, opts models.ListOptions) ([]*models.Object, error) {
 	return nil, nil
@@ -1172,10 +1337,18 @@ func (e *errorCloseMetadataAdapter) List(ctx context.Context, opts models.ListOp
 func (e *errorCloseMetadataAdapter) Search(ctx context.Context, terms []string, opts models.ListOptions) ([]*models.Object, error) {
 	return nil, nil
 }
-func (e *errorCloseMetadataAdapter) AddTag(ctx context.Context, id models.ObjectID, tag string) error { return nil }
-func (e *errorCloseMetadataAdapter) RemoveTag(ctx context.Context, id models.ObjectID, tag string) error { return nil }
-func (e *errorCloseMetadataAdapter) Recover(ctx context.Context) ([]*models.Object, error) { return nil, nil }
-func (e *errorCloseMetadataAdapter) Restore(ctx context.Context, id models.ObjectID) error { return nil }
+func (e *errorCloseMetadataAdapter) AddTag(ctx context.Context, id models.ObjectID, tag string) error {
+	return nil
+}
+func (e *errorCloseMetadataAdapter) RemoveTag(ctx context.Context, id models.ObjectID, tag string) error {
+	return nil
+}
+func (e *errorCloseMetadataAdapter) Recover(ctx context.Context) ([]*models.Object, error) {
+	return nil, nil
+}
+func (e *errorCloseMetadataAdapter) Restore(ctx context.Context, id models.ObjectID) error {
+	return nil
+}
 func (e *errorCloseMetadataAdapter) GC(ctx context.Context, retention time.Duration, force bool) ([]*models.Object, error) {
 	return nil, nil
 }
@@ -1203,7 +1376,9 @@ func (e *errorCloseActualDataAdapter) Move(ctx context.Context, oldRef string, n
 	return newRef, nil
 }
 func (e *errorCloseActualDataAdapter) Delete(ctx context.Context, ref string) error { return nil }
-func (e *errorCloseActualDataAdapter) Exists(ctx context.Context, ref string) (bool, error) { return true, nil }
+func (e *errorCloseActualDataAdapter) Exists(ctx context.Context, ref string) (bool, error) {
+	return true, nil
+}
 func (e *errorCloseActualDataAdapter) Close() error { return errors.New("actual close error") }
 
 var _ adapters.ActualDataAdapter = (*errorCloseActualDataAdapter)(nil)
