@@ -79,16 +79,27 @@ For simple project-oriented note management, model each project as exactly one
 object. Store all notes for that project as Markdown files inside the object's
 actual data instead of creating one object per note.
 
-Use a stable project code as the object ID, place all project objects under the
-same classify path, and use the mandatory same-name Markdown file as the
-project index or home page:
+Name every project object with its workspace and project names so IDs remain
+clear and globally unique:
 
 ```text
-Object ID: project-a
+project--{workspace-name}--{project-name}
+```
+
+Use exactly two hyphens (`--`) between components. Keep each component stable,
+lowercase, and concise. For example, the `skill-hub` project in the `qrew`
+workspace uses `project--qrew--skill-hub`; do not use only `skill-hub` as its
+object ID.
+
+Place all project objects under the same classify path, and use the mandatory
+same-name Markdown file as the project index or home page:
+
+```text
+Object ID: project--qrew--skill-hub
 Classify: projects
 
-project-a/
-├── project-a.md
+project--qrew--skill-hub/
+├── project--qrew--skill-hub.md
 ├── overview.md
 ├── decisions.md
 ├── deployment.md
@@ -103,32 +114,35 @@ project-a/
 Create one object for each project:
 
 ```
-bin/topsailai_data create project-a --classify projects
-bin/topsailai_data create project-b --classify projects
-bin/topsailai_data create project-c --classify projects
+bin/topsailai_data create project--qrew--data-hub --classify projects
+bin/topsailai_data create project--qrew--qguard --classify projects
+bin/topsailai_data create project--qrew--skill-hub --classify projects
 ```
 
 Add or replace an individual project note with `put`. When the source already
 exists as a file, always use `--from`:
 
 ```
-bin/topsailai_data put project-a overview.md --from ./notes/overview.md
-bin/topsailai_data put project-a design/architecture.md --from ./notes/architecture.md
-bin/topsailai_data put project-a meetings/2026-07-23.md --from ./notes/2026-07-23.md
+bin/topsailai_data put project--qrew--skill-hub overview.md --from ./notes/overview.md
+bin/topsailai_data put project--qrew--skill-hub design/architecture.md --from ./notes/architecture.md
+bin/topsailai_data put project--qrew--skill-hub meetings/2026-07-23.md --from ./notes/2026-07-23.md
 ```
 
 Inspect the project and read a specific note through the CLI:
 
 ```
-bin/topsailai_data show project-a
-bin/topsailai_data get project-a design/architecture.md
+bin/topsailai_data show project--qrew--skill-hub
+bin/topsailai_data get project--qrew--skill-hub design/architecture.md
 ```
 
 In this model:
 
 - One project equals one object ID.
-- The classify path can remain simply `projects`; the object ID distinguishes
-  projects.
+- Every project object ID follows
+  `project--{workspace-name}--{project-name}` with exactly two hyphens between
+  components.
+- The classify path can remain simply `projects`; the workspace-scoped object
+  ID distinguishes projects and prevents collisions between workspaces.
 - The mandatory `<object>.md` file is the project's index or home page.
 - Other Markdown files and subdirectories contain the project's notes.
 - Tags describe the project as a whole, such as `active`, `paused`, or
