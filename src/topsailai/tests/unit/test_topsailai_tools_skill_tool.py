@@ -158,6 +158,44 @@ class TestCallSkill(unittest.TestCase):
             if os.path.exists(output_file):
                 os.remove(output_file)
 
+    @patch('topsailai.tools.skill_tool.exec_cmd')
+    @patch('topsailai.tools.skill_tool.skill_hook.SkillHookHandler')
+    @patch('topsailai.tools.skill_tool.lock_tool.ctxm_void')
+    @patch('topsailai.tools.skill_tool.get_skills_from_cache')
+    @patch('topsailai.tools.skill_tool.get_call_skill_timeout')
+    @patch('topsailai.tools.skill_tool.format_tool.parse_str_to_dict')
+    @patch('topsailai.tools.skill_tool.env_tool.EnvReaderInstance.get')
+    def test_call_skill_with_stdin_text(
+        self, mock_env_get, mock_parse_dict, mock_timeout,
+        mock_get_skills, mock_ctxm, mock_hook, mock_exec_cmd
+    ):
+        """Test skill execution with stdin_text forwarded to subprocess input"""
+        from topsailai.tools.skill_tool import call_skill
+
+        mock_env_get.return_value = None
+        mock_parse_dict.return_value = {}
+        mock_timeout.return_value = 120
+        mock_get_skills.return_value = [SimpleNamespace(folder=self.test_folder)]
+        mock_ctxm.return_value.__enter__ = MagicMock(return_value={})
+        mock_ctxm.return_value.__exit__ = MagicMock(return_value=False)
+        mock_hook_instance = MagicMock()
+        mock_hook_instance.need_lock_session = False
+        mock_hook_instance.need_refresh_session = False
+        mock_hook.return_value = mock_hook_instance
+        mock_exec_cmd.return_value = (0, 'output', '')
+
+        result = call_skill(
+            self.test_folder,
+            self.test_script,
+            '',
+            stdin_text='hello from stdin',
+        )
+
+        self.assertIsNotNone(result)
+        call_kwargs = mock_exec_cmd.call_args[1]
+        self.assertIn('input', call_kwargs)
+        self.assertEqual(call_kwargs['input'], b'hello from stdin')
+
     @patch('topsailai.tools.skill_tool.get_skills_from_cache')
     def test_call_skill_output_file_must_be_absolute_path(self, mock_get_skills):
         """Test that output_file must be an absolute path"""

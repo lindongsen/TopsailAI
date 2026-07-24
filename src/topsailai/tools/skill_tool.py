@@ -68,6 +68,7 @@ def call_skill(
         timeout:int=120,
         output_file:str=None,
         environ:str=None,
+        stdin_text:str|None=None,
     ):
     """Can only execute scripts that exist in the skill-folder, cannot execute other command lines!
 
@@ -85,6 +86,10 @@ def call_skill(
                            The result may be truncated due to the content being too long.
                            You can output it to a file and then process the large text.
         environ (str, optional): JSON str, dict, environment variables.
+        stdin_text (str, optional): Text data to pass to the skill script via stdin.
+                           When provided, the text is encoded as UTF-8 and forwarded
+                           as the subprocess input. Useful for piping data such as
+                           `topsailai_data put xxx yyy --from -`.
 
     Returns:
         tuple: (return_code, stdout, stderr) where stdout and stderr are strings.
@@ -186,6 +191,10 @@ def call_skill(
     hook_handler.handle_before_call_skill()
 
     result = None
+    exec_kwargs = {}
+    if stdin_text is not None:
+        exec_kwargs["input"] = stdin_text.encode("utf-8")
+
     with ctxm_tool() as data:
         if isinstance(data, lock_tool.YieldData):
             if hook_handler.need_lock_session and data.get("session_id"):
@@ -198,6 +207,7 @@ def call_skill(
             timeout=int(timeout),
             cwd=skill_folder,
             env_info=environ_d,
+            **exec_kwargs,
         )
         hook_handler.data_agent_refresh_session.tool_result = result
 
