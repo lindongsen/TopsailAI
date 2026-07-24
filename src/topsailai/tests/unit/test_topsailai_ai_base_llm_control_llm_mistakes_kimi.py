@@ -7,10 +7,13 @@ import pytest
 
 from topsailai.ai_base.llm_control.llm_mistakes.kimi import (
     _get_current_model_name,
+    _insert_newline_before_think_tag,
     _is_kimi_model,
     _strip_trailing_garbage,
+    fix_kimi_action_newline_before_think_tag,
     fix_kimi_trailing_garbage,
     MISTAKES,
+    THINK_TAG,
 )
 
 
@@ -189,6 +192,101 @@ class TestFixKimiTrailingGarbage:
         assert result[2]["raw_text"] == '{"tool_call": "yyy"}'
 
 
+class TestInsertNewlineBeforeThinkTag:
+    """Tests for _insert_newline_before_think_tag function."""
+
+    def test_inserts_newline_before_think_tag(self):
+        """A single think tag gets a newline prepended."""
+        text = 'action content' + THINK_TAG
+        result = _insert_newline_before_think_tag(text)
+        assert result == 'action content\n' + THINK_TAG
+
+    def test_inserts_newline_before_multiple_think_tags(self):
+        """Every occurrence of the think tag gets a newline prepended."""
+        text = 'a' + THINK_TAG + 'b' + THINK_TAG
+        result = _insert_newline_before_think_tag(text)
+        assert result == 'a\n' + THINK_TAG + 'b\n' + THINK_TAG
+
+    def test_no_think_tag_unchanged(self):
+        """Text without the think tag is returned unchanged."""
+        text = 'action content'
+        result = _insert_newline_before_think_tag(text)
+        assert result == text
+
+    def test_think_tag_at_start(self):
+        """Think tag at the start of text gets a newline prepended."""
+        text = THINK_TAG + 'action content'
+        result = _insert_newline_before_think_tag(text)
+        assert result == THINK_TAG + 'action content'
+
+    def test_idempotent(self):
+        """Running twice does not insert extra newlines before the tag."""
+        text = 'action content' + THINK_TAG
+        result1 = _insert_newline_before_think_tag(text)
+        result2 = _insert_newline_before_think_tag(result1)
+        assert result2 == 'action content\n\n' + THINK_TAG
+
+
+class TestFixKimiActionNewlineBeforeThinkTag:
+    """Tests for fix_kimi_action_newline_before_think_tag function."""
+
+    def test_non_kimi_model(self, monkeypatch):
+        """Non-Kimi model returns None."""
+        monkeypatch.setenv("OPENAI_MODEL", "gpt-4")
+        message = [{"step_name": "action", "raw_text": 'content' + THINK_TAG}]
+        result = fix_kimi_action_newline_before_think_tag(message)
+        assert result is None
+
+    def test_kimi_model_inserts_newline(self, monkeypatch):
+        """Kimi model inserts newline before think tag in action items."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [{"step_name": "action", "raw_text": 'content' + THINK_TAG}]
+        result = fix_kimi_action_newline_before_think_tag(message)
+        assert result is not None
+        assert result[0]["raw_text"] == 'content\n' + THINK_TAG
+
+    def test_non_action_item(self, monkeypatch):
+        """Non-action items are skipped."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [{"step_name": "thought", "raw_text": 'content' + THINK_TAG}]
+        result = fix_kimi_action_newline_before_think_tag(message)
+        assert result is None
+
+    def test_non_string_raw_text(self, monkeypatch):
+        """Non-string raw_text is skipped."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [{"step_name": "action", "raw_text": {"key": "value"}}]
+        result = fix_kimi_action_newline_before_think_tag(message)
+        assert result is None
+
+    def test_non_list_message(self, monkeypatch):
+        """Non-list message returns None."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        result = fix_kimi_action_newline_before_think_tag('content' + THINK_TAG)
+        assert result is None
+
+    def test_no_think_tag_in_action(self, monkeypatch):
+        """Action without think tag returns None."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [{"step_name": "action", "raw_text": 'content'}]
+        result = fix_kimi_action_newline_before_think_tag(message)
+        assert result is None
+
+    def test_multiple_items_some_fixed(self, monkeypatch):
+        """Multiple items, only action items with think tag are fixed."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [
+            {"step_name": "thought", "raw_text": 'thought' + THINK_TAG},
+            {"step_name": "action", "raw_text": 'action1' + THINK_TAG},
+            {"step_name": "action", "raw_text": 'action2'},
+        ]
+        result = fix_kimi_action_newline_before_think_tag(message)
+        assert result is not None
+        assert result[0]["raw_text"] == 'thought' + THINK_TAG
+        assert result[1]["raw_text"] == 'action1\n' + THINK_TAG
+        assert result[2]["raw_text"] == 'action2'
+
+
 class TestMistakesDict:
     """Tests for MISTAKES dictionary."""
 
@@ -196,5 +294,12 @@ class TestMistakesDict:
         assert "fix_kimi_trailing_garbage" in MISTAKES
         assert MISTAKES["fix_kimi_trailing_garbage"] == fix_kimi_trailing_garbage
 
+    def test_contains_fix_kimi_action_newline_before_think_tag(self):
+        assert "fix_kimi_action_newline_before_think_tag" in MISTAKES
+        assert (
+            MISTAKES["fix_kimi_action_newline_before_think_tag"]
+            == fix_kimi_action_newline_before_think_tag
+        )
+
     def test_mistakes_length(self):
-        assert len(MISTAKES) == 1
+        assert len(MISTAKES) == 2

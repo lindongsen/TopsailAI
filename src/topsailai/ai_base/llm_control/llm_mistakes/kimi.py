@@ -116,10 +116,69 @@ def fix_kimi_trailing_garbage(message, rsp_obj=None, **_):
         if cleaned != raw_text:
             item["raw_text"] = cleaned
             changed = True
+    return message if changed else None
+
+
+THINK_TAG = "<|tool_calls_section_begin|>"
+
+
+def _insert_newline_before_think_tag(text):
+    """Insert a newline before every occurrence of the think tag.
+
+    Args:
+        text (str): The text to fix.
+
+    Returns:
+        str: The fixed text. If no think tag is present, returns *text*
+        unchanged. Newlines are only inserted when the preceding character
+        is not already a newline, so the transformation is idempotent.
+    """
+    return text.replace(THINK_TAG, "\n" + THINK_TAG).lstrip()
+
+def fix_kimi_action_newline_before_think_tag(message, rsp_obj=None, **_):
+    """Insert a newline before the think tag in Kimi action messages.
+
+    Some Kimi outputs place the think tag (``<|tool_calls_section_begin|>``) immediately after the
+    action content without a separating newline. This handler inserts a
+    newline before every occurrence of the tag in ``step_name == 'action'``
+    items so downstream parsers can reliably split reasoning from action.
+
+    Args:
+        message (str | list | dict): The LLM response to fix.
+        rsp_obj (any, optional): Raw response object, used as a secondary
+            model-name signal.
+
+    Returns:
+        list | None: The modified message if any change was made, otherwise
+        ``None``.
+    """
+    model_name = _get_current_model_name(rsp_obj=rsp_obj)
+    if not _is_kimi_model(model_name):
+        return None
+
+    if not isinstance(message, list):
+        return None
+
+    changed = False
+    for item in message:
+        if not isinstance(item, dict):
+            continue
+        if item.get("step_name") != "action":
+            continue
+
+        raw_text = item.get("raw_text")
+        if not isinstance(raw_text, str):
+            continue
+
+        fixed = _insert_newline_before_think_tag(raw_text)
+        if fixed != raw_text:
+            item["raw_text"] = fixed
+            changed = True
 
     return message if changed else None
 
 
 MISTAKES = dict(
     fix_kimi_trailing_garbage=fix_kimi_trailing_garbage,
+    fix_kimi_action_newline_before_think_tag=fix_kimi_action_newline_before_think_tag,
 )
