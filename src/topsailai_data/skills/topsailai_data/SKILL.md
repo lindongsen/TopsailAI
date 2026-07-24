@@ -156,6 +156,35 @@ If the request is about general file-system operations outside the
 `topsailai_data` root, or about editing the source code of topsailai_data
 itself, use the appropriate development tools instead of this skill.
 
+## Object Markdown frontmatter
+
+Every `{name}.md` document inside an object SHOULD include a YAML frontmatter
+block with at least two fields:
+
+- `name`: the document name, usually matching the file name without the `.md`
+  extension. This is the canonical identifier of the document within the object.
+- `description`: a concise summary of the document's purpose and contents.
+
+The meaning and style of these fields follow the same convention as the
+`SKILL.md` frontmatter of this skill: `name` names the artifact, and
+`description` explains what it is for and when to use it.
+
+Example:
+
+```yaml
+---
+name: architecture
+description: |
+  High-level architecture decisions for the skill-hub project.
+  Use this document to understand service boundaries and data flow.
+---
+```
+
+The CLI uses `description` as the object description when creating an object
+from `--from <file>` if no `--description` flag is provided. A well-formed
+frontmatter therefore makes objects self-describing and improves `list`,
+`search`, and `show` output.
+
 ## Build
 
 From the project root:
@@ -266,7 +295,7 @@ bin/topsailai_data show hello
 | `show` | `show <id>` | Display metadata, the `<object>.md` content, and the folder structure of an object. |
 | `update` | `update <id> [--description <text>]` | Update an active object's metadata. Currently supports updating the description. Pass an empty value (`--description ""`) to clear the description. |
 | `list` | `list [--include-deleted] [--offset n] [--limit n] [--format yaml\|json] [--sort time:desc\|time:asc]` | List active objects, optionally paginated and sorted by the time prefix of the object path. Default format is YAML; use `json` for machine-readable output. Default sort is `time:desc` (newest first). |
-| `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format yaml\|json] [--sort time:desc\|time:asc]` | Search objects by name, tag, or classify path. Use `|` in `<query>` for OR logic (e.g. `foo\|bar`). Spaces, tabs, and backslash escapes are not supported. Results are sorted by the time prefix of the object path; default is `time:desc` (newest first). |
+| `search` | `search <query> [--include-deleted] [--offset n] [--limit n] [--format yaml\|json] [--sort time:desc\|time:asc]` | Search objects by name, tag, or classify path. Use `\|` in `<query>` for OR logic (e.g. `foo\|bar`). Spaces, tabs, and backslash escapes are not supported. Results are sorted by the time prefix of the object path; default is `time:desc` (newest first). |
 | `tag` | `tag add <id> <tag>` or `tag remove <id> <tag>` | Add or remove an object-specific tag. |
 | `move` | `move <id> <new-classify...>` | Move an active object to a different classify path. The ID and name stay the same. |
 | `delete` | `delete <id>` | Soft-delete an active object. Marks the object as `deleted` but preserves actual data so it can be recovered. Finalization removes actual data and transitions the object to `ceased`. |
