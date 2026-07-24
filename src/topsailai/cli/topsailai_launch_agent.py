@@ -1255,6 +1255,24 @@ def main():
         f"[TopsailAI-Launcher] Merged env keys: {sorted(set(list(base_env.keys()) + list(item_env.keys())))}"
     )
 
+    # 5.1 Print context token count using topsailai_count_tokens.
+    # This is informational only; failures are intentionally ignored.
+    if _CONTEXT_MESSAGE_FILE:
+        try:
+            token_count = subprocess.check_output(
+                ["topsailai_count_tokens", _CONTEXT_MESSAGE_FILE],
+                text=True,
+                timeout=30,
+            ).strip()
+            print(
+                f"[TopsailAI-Launcher] Context token count: {token_count}"
+            )
+        except Exception as exc:
+            print(
+                f"[TopsailAI-Launcher] Warning: Failed to count context tokens: {exc}",
+                file=sys.stderr,
+            )
+
     # In dry-run mode, only print the details and exit without execution
     if args.dry_run:
         print("\n--- Dry Run Mode (no actual execution) ---")
