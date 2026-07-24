@@ -1,0 +1,8 @@
+topsailai.thought
+I need to run a quick shell command.
+
+topsailai.action
+{"tool_call": "cmd_tool-exec_cmd", "tool_args": {"cmd": "echo hello"}}
+
+topsailai.final_answer
+The command has been executed.
