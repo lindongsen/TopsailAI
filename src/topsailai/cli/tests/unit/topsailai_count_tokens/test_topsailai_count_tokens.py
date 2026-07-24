@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests for topsailai_count_tokens.py."""
 
+import io
 import os
 import sys
 from pathlib import Path
@@ -247,4 +248,58 @@ class TestCountTokensCLI:
         captured = capsys.readouterr()
         assert code == 0
         assert captured.out.strip() == "2"
+        assert captured.err == ""
+
+    def test_count_from_stdin(self, capsys):
+        """Passing '-' as a positional argument reads from stdin."""
+        stdin = io.StringIO("hello world")
+        with patch.object(sys, "stdin", stdin):
+            with patch.object(
+                sys, "argv", ["topsailai_count_tokens", "-"]
+            ):
+                code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        assert captured.out.strip() == "2 -"
+        assert captured.err == ""
+
+    def test_count_stdin_mixed_with_files(self, tmp_path, capsys):
+        """'-' can be combined with regular file arguments."""
+        file_path = tmp_path / "sample.txt"
+        file_path.write_text("another sample", encoding="utf-8")
+        stdin = io.StringIO("hello world")
+
+        with patch.object(sys, "stdin", stdin):
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "topsailai_count_tokens",
+                    "-",
+                    str(file_path),
+                ],
+            ):
+                code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        lines = captured.out.strip().split("\n")
+        assert len(lines) == 2
+        assert lines[0] == "2 -"
+        assert lines[1] == f"2 {file_path}"
+        assert captured.err == ""
+
+    def test_count_empty_stdin(self, capsys):
+        """Empty stdin input produces a token count of zero."""
+        stdin = io.StringIO("")
+        with patch.object(sys, "stdin", stdin):
+            with patch.object(
+                sys, "argv", ["topsailai_count_tokens", "-"]
+            ):
+                code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        assert captured.out.strip() == "0 -"
         assert captured.err == ""

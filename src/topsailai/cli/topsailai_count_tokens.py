@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "files",
         nargs="*",
-        help="Paths to files whose content will be counted.",
+        help="Paths to files whose content will be counted. Use '-' to read from stdin.",
     )
     parser.add_argument(
         "--encoding",
@@ -65,6 +65,13 @@ def read_file(path: str) -> str:
     """Read text from a file using UTF-8 encoding."""
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
+
+
+def read_input(path: str) -> str:
+    """Read text from a file or stdin when path is '-'."""
+    if path == "-":
+        return sys.stdin.read()
+    return read_file(path)
 
 
 def count_file(path: str, encoding: str) -> int:
@@ -110,6 +117,11 @@ def main() -> int:
 
     exit_code = 0
     for path in args.files:
+        if path == "-":
+            text = sys.stdin.read()
+            token_count = count_tokens(text, encoding_name=args.encoding)
+            print(f"{token_count} -")
+            continue
         resolved = resolve_path(path)
         if not os.path.isfile(resolved):
             print(f"Error: file not found: {path}", file=sys.stderr)
