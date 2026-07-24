@@ -1,6 +1,7 @@
 """Log file cleanup helpers for the TopsailAI CLI."""
 
 import os
+import sys
 import time
 from typing import List
 
@@ -167,8 +168,10 @@ def clean_expired_files(task_dir: str, files: List[dict]) -> int:
         f"Are you sure you want to delete these {len(expired_files)} file(s)? [y/N]: "
         f"{Colors.RESET}"
     )
+    sys.stdout.write(confirm_prompt)
+    sys.stdout.flush()
     try:
-        confirm = input(confirm_prompt).strip().lower()
+        confirm = input("").strip().lower()
     except (EOFError, KeyboardInterrupt):
         cprint("\n[INFO] Clean cancelled.", color=Colors.YELLOW)
         return 0
@@ -292,8 +295,10 @@ def clean_by_numbers(task_dir: str, files: List[dict], indices: List[int]) -> in
         f"Are you sure you want to delete these {len(valid_files)} file(s)? [y/N]: "
         f"{Colors.RESET}"
     )
+    sys.stdout.write(confirm_prompt)
+    sys.stdout.flush()
     try:
-        confirm = input(confirm_prompt).strip().lower()
+        confirm = input("").strip().lower()
     except (EOFError, KeyboardInterrupt):
         cprint("\n[INFO] Clean cancelled.", color=Colors.YELLOW)
         return 0
