@@ -455,3 +455,46 @@ class TestFormatResponseXmlFunctionCall:
         assert len(result) == 1
         assert result[0]["step_name"] == "thought"
         assert "just a thought" in result[0]["raw_text"]
+
+
+class TestFormatResponseActionWithFinalAnswer:
+    """Test suite for action_with_final_answer fixer in topsailai. format."""
+
+    def test_format_response_topsailai_action_and_final_answer(self):
+        """Verify final_answer is converted to thought when action exists."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        text = (
+            "topsailai.action\n"
+            "{\"tool_call\": \"file_tool-read_file\", \"tool_args\": {\"files\": [\"/tmp/1.txt\"]}}\n"
+            "topsailai.final_answer\n"
+            "I will read the file first."
+        )
+        result = format_response(text)
+        assert len(result) == 2
+        assert result[0]["step_name"] == "action"
+        assert '"tool_call": "file_tool-read_file"' in result[0]["raw_text"]
+        assert '"tool_args": {"files": [\"/tmp/1.txt\"]}' in result[0]["raw_text"]
+        assert result[1]["step_name"] == "thought"
+        assert "read the file first" in result[1]["raw_text"]
+
+    def test_format_response_topsailai_thought_action_and_final_answer(self):
+        """Verify final text is merged into existing thought when action exists."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        text = (
+            "topsailai.thought\n"
+            "Let me check the file.\n"
+            "topsailai.action\n"
+            "{\"tool_call\": \"file_tool-read_file\", \"tool_args\": {\"files\": [\"/tmp/1.txt\"]}}\n"
+            "topsailai.final_answer\n"
+            "I will read the file first."
+        )
+        result = format_response(text)
+        assert len(result) == 2
+        assert result[0]["step_name"] == "thought"
+        assert "check the file" in result[0]["raw_text"]
+        assert "read the file first" in result[0]["raw_text"]
+        assert result[1]["step_name"] == "action"
+        assert '"tool_call": "file_tool-read_file"' in result[1]["raw_text"]
+        assert '"tool_args": {"files": [\"/tmp/1.txt\"]}' in result[1]["raw_text"]

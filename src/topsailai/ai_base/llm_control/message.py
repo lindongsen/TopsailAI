@@ -456,8 +456,16 @@ def format_response(response, rsp_obj=None, messages=None):
                 if isinstance(new_response, list) and len(new_response) == 1 and isinstance(new_response[0], dict):
                     if isinstance(response, list) and len(response) == 1 and isinstance(response[0], dict):
                         response[0] = new_response[0]
-            response = new_response
-
+                if isinstance(response, list):
+                    # Mutate the original list in-place because early returns in the try
+                    # block have already captured the response reference as the return value.
+                    response.clear()
+                    if isinstance(new_response, list):
+                        response.extend(new_response)
+                    else:
+                        response.append(new_response)
+                else:
+                    response = new_response
     # hook after chat
     new_response = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", response)
     if new_response and new_response != response:
