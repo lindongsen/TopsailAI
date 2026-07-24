@@ -1679,3 +1679,104 @@ func TestUpdateDescriptionRejectsNonActive(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateFromObjectMDFile(t *testing.T) {
+	mgr, tmp, ctx := setupManager(t)
+
+	content := []byte("# Hello from object.md\n\nThis is the marker content.\n")
+	src := filepath.Join(tmp, "hello.md")
+	if err := os.WriteFile(src, content, 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	if err := Run(ctx, mgr, []string{"create", "hello", "--from", src}); err != nil {
+		t.Fatalf("create from object.md: %v", err)
+	}
+
+	obj, err := mgr.GetObject(ctx, "hello", false)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if obj.Status != models.ObjectStatusActive {
+		t.Fatalf("expected status active, got %s", obj.Status)
+	}
+
+	rc, err := mgr.ReadActualFile(ctx, "hello", "hello.md")
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read marker content: %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("expected marker %q, got %q", content, got)
+	}
+}
+
+func TestCreateFromObjectMDFileWithFrontmatter(t *testing.T) {
+	mgr, tmp, ctx := setupManager(t)
+
+	content := []byte("---\ndescription: from frontmatter\n---\n\nbody\n")
+	src := filepath.Join(tmp, "front.md")
+	if err := os.WriteFile(src, content, 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	if err := Run(ctx, mgr, []string{"create", "front", "--from", src}); err != nil {
+		t.Fatalf("create from object.md with frontmatter: %v", err)
+	}
+
+	obj, err := mgr.GetObject(ctx, "front", false)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if obj.Description != "from frontmatter" {
+		t.Fatalf("expected frontmatter description, got %q", obj.Description)
+	}
+
+	rc, err := mgr.ReadActualFile(ctx, "front", "front.md")
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read marker content: %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("expected marker %q, got %q", content, got)
+	}
+}
+
+func TestPutObjectMDFile(t *testing.T) {
+	mgr, tmp, ctx := setupManager(t)
+
+	if err := Run(ctx, mgr, []string{"create", "note"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	content := []byte("# Updated marker\n")
+	src := filepath.Join(tmp, "note.md")
+	if err := os.WriteFile(src, content, 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	if err := Run(ctx, mgr, []string{"put", "note", "note.md", "--from", src}); err != nil {
+		t.Fatalf("put object.md: %v", err)
+	}
+
+	rc, err := mgr.ReadActualFile(ctx, "note", "note.md")
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read marker content: %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("expected marker %q, got %q", content, got)
+	}
+}

@@ -1533,3 +1533,50 @@ func TestDeleteObjectRetainsMetadataAndParents(t *testing.T) {
 		t.Fatalf("classify directory should be retained: %v", err)
 	}
 }
+
+func TestCreateObjectWithMarkerTar(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	markerContent := []byte("---\ndescription: tar desc\n---\n\nmarker body\n")
+	archive := buildTarArchive(t, map[string][]byte{
+		"markerobj.md": markerContent,
+		"extra.txt":    []byte("extra data"),
+	})
+
+	obj, err := mgr.CreateObject(ctx, "markerobj", CreateObjectOptions{
+		Data: bytes.NewReader(archive),
+	})
+	if err != nil {
+		t.Fatalf("CreateObject with marker tar failed: %v", err)
+	}
+	if obj.Description != "tar desc" {
+		t.Fatalf("expected description from marker frontmatter, got %q", obj.Description)
+	}
+
+	rc, err := mgr.ReadActualFile(ctx, "markerobj", "markerobj.md")
+	if err != nil {
+		t.Fatalf("ReadActualFile marker failed: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read marker failed: %v", err)
+	}
+	if !bytes.Equal(got, markerContent) {
+		t.Fatalf("expected marker %q, got %q", markerContent, got)
+	}
+
+	rc2, err := mgr.ReadActualFile(ctx, "markerobj", "extra.txt")
+	if err != nil {
+		t.Fatalf("ReadActualFile extra failed: %v", err)
+	}
+	defer rc2.Close()
+	got2, err := io.ReadAll(rc2)
+	if err != nil {
+		t.Fatalf("read extra failed: %v", err)
+	}
+	if string(got2) != "extra data" {
+		t.Fatalf("expected extra data, got %q", got2)
+	}
+}
