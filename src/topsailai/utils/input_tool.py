@@ -657,8 +657,9 @@ def _spawn_terminal_input_subprocess(
 
     if prompt:
         output.write(prompt)
+        output.write("\n")
         output.flush()
-        prompt = "\n"
+        prompt = ""
 
     read_fd, write_fd = os.pipe()
 
