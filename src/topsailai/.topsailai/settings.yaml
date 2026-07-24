@@ -44,3 +44,7 @@ environment:
 
   memo:
     TOPSAILAI_AGENT_DRIVER: "topsailai_agent_chats"
+
+  llm_mistake:
+    TOPSAILAI_USE_TOOL_CALLS: "1"
+
