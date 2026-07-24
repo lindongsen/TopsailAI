@@ -314,14 +314,26 @@ I am Main-Agent(Manager)
         )
         if self.use_tool_map:
             self.plan_agent_kwargs["tool_map"] = self.tool_map
-
         # agent
         from topsailai.workspace.agent_shell import get_agent_chat
+        # print available members before creating the plan agent
+        self._print_members()
         # plan agent
         self.plan_agent = get_agent_chat(**self.plan_agent_kwargs)
-        self.run = self.plan_agent.run
 
-        return
+    def run(self, *args, **kwargs):
+        """Run the main agent, printing available subagent members before each input prompt."""
+        kwargs.setdefault("func_print_pre_input_message", self._print_members)
+        return self.plan_agent.run(*args, **kwargs)
+
+    def _print_members(self):
+        """Print the list of available subagent members."""
+        if not _SUBAGENT_ROLES:
+            return
+        print("\nAvailable subagent members:")
+        for name in sorted(_SUBAGENT_ROLES):
+            print(f"  - {name}")
+        print()
 
     @property
     def tool_map(self) -> dict:
