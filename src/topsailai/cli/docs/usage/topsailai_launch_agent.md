@@ -148,7 +148,7 @@ Supported fields for command sources:
 | `shell` | bool | `true` | Whether to run the command through a shell. |
 | `timeout` | number | `30` | Maximum execution time in seconds. |
 | `label` | string | command string | Label used in the formatted context block. |
-| `on_error` | string | `include` | Behavior when the command fails or times out: `include` (include error message), `skip` (skip the block), or `abort` (raise an error). |
+| `on_error` | string | `abort` | Behavior when the command fails or times out: `include` (include error message), `skip` (skip the block), or `abort` (raise an error). |
 | `cwd` | string | `workspace` | Working directory for the command. |
 | `environ` | dict | `{}` | Extra environment variables for this command only. |
 

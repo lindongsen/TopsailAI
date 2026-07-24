@@ -79,7 +79,7 @@ class ContextSource:
     shell: bool = True
     timeout: float = 30.0
     label: str = ""
-    on_error: str = "include"  # "include", "skip", or "abort"
+    on_error: str = "abort"  # "include", "skip", or "abort"
     cwd: str = ""
     environ: dict = dataclasses.field(default_factory=dict)
 
@@ -128,7 +128,7 @@ def _normalize_context_source(source, workspace=""):
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Invalid command timeout: {timeout!r}") from exc
 
-    on_error = source.get("on_error", "include")
+    on_error = source.get("on_error", "abort")
     if on_error not in ("include", "skip", "abort"):
         raise ValueError(
             f"Invalid on_error value: {on_error!r}. "

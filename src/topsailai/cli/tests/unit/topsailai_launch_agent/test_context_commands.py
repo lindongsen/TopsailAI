@@ -39,7 +39,7 @@ class TestNormalizeContextSource(unittest.TestCase):
         self.assertEqual(source.value, "echo hi")
         self.assertTrue(source.shell)
         self.assertEqual(source.timeout, 30.0)
-        self.assertEqual(source.on_error, "include")
+        self.assertEqual(source.on_error, "abort")
 
     def test_command_dict_all_fields(self):
         source = launcher._normalize_context_source({
