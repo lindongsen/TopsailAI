@@ -304,6 +304,82 @@ def format_response_finally(response, rsp_obj=None, messages=None):
                 update_response_item(item)
     return response
 
+def _parse_xml_function_call(response: str) -> list | None:
+    """
+    Parse XML-like function-call blocks of the form:
+
+        <function=tool-name>
+        <parameter=key>value</parameter>
+        </function>
+
+    Leading text before the first <function=...> tag is preserved as a
+    ``thought`` step.  If a parameter value is a JSON object string, its
+    keys are merged into ``tool_args`` so that nested dictionaries like
+    ``{"task": "...", "role": "..."}`` become top-level arguments.
+
+    Returns ``None`` if no ``<function=...>`` block is found.
+    """
+    if not isinstance(response, str):
+        return None
+
+    start_idx = response.find("<function=")
+    if start_idx < 0:
+        return None
+
+    func_tag_end = response.find(">", start_idx)
+    if func_tag_end < 0:
+        return None
+
+    tool_call = response[start_idx + len("<function="):func_tag_end].strip()
+    if not tool_call:
+        return None
+
+    close_tag = "</function>"
+    close_idx = response.find(close_tag, func_tag_end)
+    if close_idx < 0:
+        return None
+
+    leading_text = response[:start_idx].strip()
+    inner = response[func_tag_end + 1:close_idx]
+
+    tool_args = {}
+    param_start = 0
+    while True:
+        ps = inner.find("<parameter=", param_start)
+        if ps < 0:
+            break
+        pe = inner.find(">", ps)
+        if pe < 0:
+            break
+        key = inner[ps + len("<parameter="):pe].strip()
+        if not key:
+            break
+        end_tag = "</parameter>"
+        es = inner.find(end_tag, pe)
+        if es < 0:
+            break
+        value = inner[pe + 1:es]
+        try:
+            parsed_value = simplejson.loads(value, strict=False)
+        except Exception:
+            parsed_value = value
+        if isinstance(parsed_value, dict):
+            tool_args.update(parsed_value)
+        else:
+            tool_args[key] = parsed_value
+        param_start = es + len(end_tag)
+
+    result = []
+    if leading_text:
+        result.append({"step_name": "thought", "raw_text": leading_text})
+    result.append({
+        "step_name": "action",
+        "tool_call": tool_call,
+        "tool_args": tool_args,
+    })
+    return result
+
+
 def format_response(response, rsp_obj=None, messages=None):
     """
     Format response to a standardized list format for internal use.
@@ -313,6 +389,7 @@ def format_response(response, rsp_obj=None, messages=None):
     - Already formatted lists/dictionaries
     - JSON strings
     - TopsailAI format strings
+    - XML-like function-call blocks (<function=...><parameter=...>...)
 
     Args:
         response: The response to format. Can be list, dict, or string.
@@ -352,6 +429,10 @@ def format_response(response, rsp_obj=None, messages=None):
                         value_name="raw_text",
                     )
                     return response
+
+            xml_parsed = _parse_xml_function_call(response)
+            if xml_parsed is not None:
+                return xml_parsed
 
             response = json_tool.to_json_str(response)
             response = _to_list(simplejson.loads(response))

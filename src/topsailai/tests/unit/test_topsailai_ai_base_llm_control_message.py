@@ -348,3 +348,110 @@ class TestFixLlmMistakes:
 
         result = fix_llm_mistakes(response)
         assert result[0].get("step_name") == "thought"
+
+
+class TestParseXmlFunctionCall:
+    """Test suite for _parse_xml_function_call helper."""
+
+    def test_parse_xml_function_call_with_leading_text(self):
+        """Verify leading text is preserved as thought and tool call is extracted."""
+        from topsailai.ai_base.llm_control.message import _parse_xml_function_call
+
+        text = (
+            "The subagent response was truncated.\n"
+            "<function=subagent_tool-call_assistant>\n"
+            '<parameter=task>{"task": "do it", "role": "km1-tester"}</parameter>\n'
+            "</function>"
+        )
+        result = _parse_xml_function_call(text)
+        assert result == [
+            {"step_name": "thought", "raw_text": "The subagent response was truncated."},
+            {
+                "step_name": "action",
+                "tool_call": "subagent_tool-call_assistant",
+                "tool_args": {"task": "do it", "role": "km1-tester"},
+            },
+        ]
+
+    def test_parse_xml_function_call_no_leading_text(self):
+        """Verify tool call is extracted when there is no leading text."""
+        from topsailai.ai_base.llm_control.message import _parse_xml_function_call
+
+        text = (
+            "<function=file_tool-read_file>\n"
+            '<parameter=files>["/tmp/1.txt"]</parameter>\n'
+            "</function>"
+        )
+        result = _parse_xml_function_call(text)
+        assert result == [
+            {
+                "step_name": "action",
+                "tool_call": "file_tool-read_file",
+                "tool_args": {"files": ["/tmp/1.txt"]},
+            },
+        ]
+
+    def test_parse_xml_function_call_no_function_block(self):
+        """Verify None is returned when no function block exists."""
+        from topsailai.ai_base.llm_control.message import _parse_xml_function_call
+
+        assert _parse_xml_function_call("just some text") is None
+        assert _parse_xml_function_call("{\"step_name\": \"action\"}") is None
+
+    def test_parse_xml_function_call_unclosed_tag(self):
+        """Verify None is returned for unclosed function tags."""
+        from topsailai.ai_base.llm_control.message import _parse_xml_function_call
+
+        assert _parse_xml_function_call("<function=foo>\n<parameter=a>1</parameter>") is None
+
+    def test_parse_xml_function_call_non_dict_parameter(self):
+        """Verify non-JSON-dict parameter values are stored under their key."""
+        from topsailai.ai_base.llm_control.message import _parse_xml_function_call
+
+        text = (
+            "<function=echo>\n"
+            "<parameter=message>hello world</parameter>\n"
+            "</function>"
+        )
+        result = _parse_xml_function_call(text)
+        assert result == [
+            {
+                "step_name": "action",
+                "tool_call": "echo",
+                "tool_args": {"message": "hello world"},
+            },
+        ]
+
+
+class TestFormatResponseXmlFunctionCall:
+    """Test suite for format_response XML function-call handling."""
+
+    def test_format_response_xml_function_call_with_nested_json(self):
+        """Verify reported LLM output is parsed into thought + action."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        text = (
+            "The subagent response was truncated/errored. Let me directly read the file using shell command since I need to see its contents.\n"
+            "<function=subagent_tool-call_assistant>\n"
+            '<parameter=task>{"task": "Execute the following shell command and return the full output:\\n\\n'
+            "cat /work/2026/qrew/sop/sop-update-qguard-proxy-in-qrew-test.md\\n\\n"
+            'If the file does not exist, report that clearly.", "role": "km1-tester"}</parameter>\n'
+            "</function>"
+        )
+        result = format_response(text)
+        assert len(result) == 2
+        assert result[0]["step_name"] == "thought"
+        assert "truncated/errored" in result[0]["raw_text"]
+        assert result[1]["step_name"] == "action"
+        assert result[1]["tool_call"] == "subagent_tool-call_assistant"
+        assert result[1]["tool_args"]["role"] == "km1-tester"
+        assert "cat /work/2026/qrew/sop" in result[1]["tool_args"]["task"]
+
+    def test_format_response_plain_text_unchanged(self):
+        """Verify plain text without function block still falls back to thought."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        result = format_response("just a thought")
+        assert len(result) == 1
+        assert result[0]["step_name"] == "thought"
+        assert "just a thought" in result[0]["raw_text"]
