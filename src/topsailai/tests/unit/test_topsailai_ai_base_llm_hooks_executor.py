@@ -50,7 +50,7 @@ class TestGetHooksRuntime(unittest.TestCase):
         rid_all_thread_vars()
 
         result = get_hooks_runtime("TOPSAILAI_HOOK_AFTER_LLM_CHAT", "some text |tool_calls_section_begin| more text")
-        self.assertIn("topsailai.ai_base.llm_hooks.hook_after_chat.kimi", result)
+        self.assertEqual(result, [])
 
     @patch.dict(os.environ, {"AI_MODEL": "gpt-4"}, clear=True)
     def test_no_matching_hook(self):

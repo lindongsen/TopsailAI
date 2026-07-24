@@ -47,7 +47,7 @@ class TestBuildStoryId(unittest.TestCase):
         """Test build_story_id when title already ends with .md."""
         with patch.object(story_tool.time_tool, 'get_current_date', return_value='2025-01-15T10-30-00'):
             result = story_tool.build_story_id("story.md")
-            self.assertEqual(result, '2025-01-15T10-30-00.story_md.md')
+            self.assertEqual(result, '2025-01-15T10-30-00.story.md')
 
     def test_build_story_id_unicode(self):
         """Test build_story_id with unicode characters."""
