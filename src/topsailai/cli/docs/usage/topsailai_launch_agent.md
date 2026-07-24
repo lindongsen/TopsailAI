@@ -68,6 +68,18 @@ topsailai_launch_agent
 | `--dry-run` | Print the resolved command, working directory, and merged environment variables without executing. |
 | `--subprocess` | Use `subprocess.run()` instead of `os.system()` (default). |
 | `--setup` | Force the guided interactive setup to create `.topsailai/settings.yaml` when it is missing. |
+| `--scan <folder>` | Scan the specified folder and print its tree structure, then exit. Reuses the same ignore rules and formatting as the workspace scan. |
+
+## Scanning a Folder
+
+Use `--scan <folder>` to preview the folder tree that would be generated for a given directory. This option does not launch an agent driver; it only prints the tree and exits.
+
+```bash
+./topsailai_launch_agent.py --scan ./src/topsailai/cli
+topsailai_launch_agent --scan ./src/topsailai/cli
+```
+
+The output uses the same ignore rules and tree formatting as the workspace scan appended to `TOPSAILAI_CONTEXT_USER_MESSAGE`. Hidden files and directories are excluded, and `.gitignore` patterns are respected.
 
 ## Context Item Selection
 
@@ -165,6 +177,9 @@ topsailai_launch_agent --subprocess
 
 # Force interactive setup
 topsailai_launch_agent --setup
+
+# Scan a folder and print its tree structure
+topsailai_launch_agent --scan ./src/topsailai/cli
 ```
 
 ## Notes

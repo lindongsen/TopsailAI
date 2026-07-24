@@ -137,5 +137,40 @@ class TestScanWorkspaceFiles(unittest.TestCase):
             self.assertNotIn("hidden.txt", tree)
             self.assertNotIn(".hidden-file", tree)
 
+
+class TestScanFolder(unittest.TestCase):
+    """Verify the --scan CLI helper behavior."""
+
+    def test_scan_folder_prints_tree(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sub = os.path.join(tmpdir, "sub")
+            os.makedirs(sub)
+            with open(os.path.join(sub, "nested.txt"), "w", encoding="utf-8") as f:
+                f.write("nested\n")
+
+            import io
+            captured = io.StringIO()
+            original_stdout = sys.stdout
+            try:
+                sys.stdout = captured
+                launcher._scan_folder(tmpdir)
+            finally:
+                sys.stdout = original_stdout
+
+            output = captured.getvalue()
+            self.assertIn("> " + tmpdir, output)
+            self.assertIn("sub", output)
+            self.assertIn("nested.txt", output)
+
+    def test_scan_folder_rejects_non_directory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            not_a_dir = os.path.join(tmpdir, "not-a-dir.txt")
+            with open(not_a_dir, "w", encoding="utf-8") as f:
+                f.write("content\n")
+
+            with self.assertRaises(SystemExit) as ctx:
+                launcher._scan_folder(not_a_dir)
+            self.assertEqual(ctx.exception.code, 1)
+
 if __name__ == "__main__":
     unittest.main()

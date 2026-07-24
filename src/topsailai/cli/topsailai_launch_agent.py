@@ -967,6 +967,20 @@ def _is_ignored(rel_path, name, is_dir, patterns):
             ignored = not negation
     return ignored
 
+
+def _scan_folder(folder):
+    """Scan a specific folder and print its tree structure.
+
+    This reuses the same scanning logic used for agent context so that the
+    output is consistent with the workspace folder tree shown to the agent.
+    """
+    folder = os.path.abspath(folder)
+    if not os.path.isdir(folder):
+        print(f"Error: --scan target is not a directory: {folder}", file=sys.stderr)
+        sys.exit(1)
+    print(_scan_workspace_files(folder, folder))
+
+
 def _scan_workspace_files(workspace, project_folder=None):
     """Scan workspace and return folder structure as a tree string.
 
@@ -1065,7 +1079,16 @@ def main():
         dest="setup",
         help="Force the guided interactive setup to create .topsailai/settings.yaml when it is missing",
     )
+    parser.add_argument(
+        "--scan",
+        default=None,
+        metavar="FOLDER",
+        help="Scan the specified folder and print its tree structure, then exit",
+    )
     args = parser.parse_args()
+    if args.scan is not None:
+        _scan_folder(args.scan)
+        return
 
     # 1. Locate and parse .topsailai/settings.yaml in the current working directory
     settings_path = os.path.join(os.getcwd(), ".topsailai", "settings.yaml")
