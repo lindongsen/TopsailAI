@@ -369,7 +369,7 @@ These variables are for runtime use only and should not be set manually.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TOPSAILAI_ENABLE_TOOL_STAT` | `1` | Enable tool call statistics. `1` = enabled. |
+| `TOPSAILAI_ENABLE_TOOL_STAT` | `1` | Enable tool call statistics. `1` = enabled. The task completion frontmatter field `tool_call_count` depends on this setting and is `0` when disabled. |
 | `TOPSAILAI_PRINT_TOOL_STAT` | `1` | When `1`, print/log JSON-exported tool-call statistics at the end of each agent turn. When `0`, tool-call statistics are still printed if debug mode is active. Set to `0` to suppress when not in debug mode. |
 | `TOPSAILAI_LLM_SLOW_CHAT_THRESHOLD` | `60` | Threshold in seconds for detecting slow LLM chats. |
 | `TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT` | `180` | Threshold in seconds for the first chunk of a streaming LLM response. If the first chunk takes longer than this value, a warning is logged. Set to `0` to disable the warning. |

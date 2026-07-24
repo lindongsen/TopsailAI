@@ -250,6 +250,18 @@ class AgentChat(AgentChatBase):
                     # task
                     if task:
                         task.result = answer
+                        try:
+                            if env_tool.EnvReaderInstance.check_bool(
+                                "TOPSAILAI_ENABLE_TOOL_STAT", True
+                            ):
+                                task.tool_call_count = tool_stat.get_agent_tool_stat(
+                                    self.ai_agent
+                                ).total_calls
+                            else:
+                                task.tool_call_count = 0
+                        except Exception as e:
+                            logger.debug("Failed to read task tool call count: %s", e)
+                            task.tool_call_count = 0
 
             except agent_exception.AgentEndProcess:
                 self.last_message = self.messages[-1]

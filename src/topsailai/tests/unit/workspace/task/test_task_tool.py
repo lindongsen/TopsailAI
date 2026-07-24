@@ -165,18 +165,27 @@ class TestTaskDataManifest(unittest.TestCase):
     """Test cases for TaskData.manifest property."""
 
     def test_manifest_format(self):
-        """Test manifest returns valid YAML format."""
+        """Test manifest returns valid YAML format with a zero call count."""
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
                 mock_time.get_current_date.return_value = "2026-04-19T10:00:00"
-                
+
                 task = TaskData("task_003")
                 manifest = task.manifest
-                
+
                 self.assertIn("---", manifest)
                 self.assertIn(f"task_id: {task.task_id}", manifest)
                 self.assertIn("status: initializing", manifest)
+                self.assertIn("tool_call_count: 0", manifest)
+                self.assertLess(
+                    manifest.index("status: initializing"),
+                    manifest.index("tool_call_count: 0"),
+                )
+                self.assertLess(
+                    manifest.index("tool_call_count: 0"),
+                    manifest.index("now: 2026-04-19T10:00:00"),
+                )
 
     def test_manifest_updates_with_status(self):
         """Test manifest reflects current status."""
@@ -184,13 +193,24 @@ class TestTaskDataManifest(unittest.TestCase):
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
                 mock_time.get_current_date.return_value = "2026-04-19T10:00:00"
-                
+
                 task = TaskData("task_004")
                 task.status = TaskData.TASK_STATUS_WORKING
                 manifest = task.manifest
-                
+
                 self.assertIn("status: working", manifest)
 
+    def test_manifest_updates_with_tool_call_count(self):
+        """Test manifest reflects the recorded tool call count."""
+        with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
+            with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
+                mock_env.get_session_id.return_value = None
+                mock_time.get_current_date.return_value = "2026-04-19T10:00:00"
+
+                task = TaskData("task_004_count")
+                task.tool_call_count = 5
+
+                self.assertIn("tool_call_count: 5", task.manifest)
 
 class TestTaskDataMethods(unittest.TestCase):
     """Test cases for TaskData conversion methods."""

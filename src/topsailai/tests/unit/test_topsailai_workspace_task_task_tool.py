@@ -229,9 +229,22 @@ class TestTaskDataMethods(TestCase):
         self.assertIsInstance(result, str)
         self.assertIn(f'task_id: {_expected_task_id("test_session", "test_task")}', result)
         self.assertIn('status: working', result)
+        self.assertIn('tool_call_count: 0', result)
         self.assertIn('now: 2026-04-19', result)
         self.assertIn('---', result)
 
+    @patch('topsailai.workspace.task.task_tool.env_tool')
+    @patch('topsailai.workspace.task.task_tool.time_tool')
+    @patch('topsailai.workspace.task.task_tool.FOLDER_WORKSPACE_TASK', '/tmp/tasks')
+    def test_manifest_returns_tool_call_count(self, mock_time, mock_env):
+        """Verify manifest returns a nonzero tool call count."""
+        mock_env.get_session_id.return_value = "test_session"
+        mock_time.get_current_date.return_value = "2026-04-19"
+
+        task = TaskData("test_task_count")
+        task.tool_call_count = 5
+
+        self.assertIn('tool_call_count: 5', task.manifest)
 
 class TestTaskUtilMethods(TestCase):
     """Test cases for TaskUtil class methods."""

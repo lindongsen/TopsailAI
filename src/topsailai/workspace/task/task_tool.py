@@ -68,6 +68,7 @@ class TaskData(object):
         session_id: Session identifier associated with the task
         session_messages: List of messages in the session
         status: Current status of the task
+        tool_call_count: Total number of recorded tool calls for the task
         result: Result of the task execution (if available)
     """
     TASK_STATUS_INITING = "initializing"
@@ -90,6 +91,7 @@ class TaskData(object):
         self.session_messages = []
 
         self.status = self.TASK_STATUS_INITING
+        self.tool_call_count = 0
 
         # result
         self.result = None
@@ -100,11 +102,12 @@ class TaskData(object):
         Generate a YAML-formatted manifest containing task metadata.
 
         Returns:
-            str: YAML string containing task_id, status and now
+            str: YAML string containing task_id, status, tool_call_count and now
         """
         return f"""---
 task_id: {self.task_id}
 status: {self.status}
+tool_call_count: {self.tool_call_count}
 now: {time_tool.get_current_date(with_t=True)}
 ---
 """
