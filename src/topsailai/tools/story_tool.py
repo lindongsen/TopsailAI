@@ -31,6 +31,8 @@ Use story_tool to save content.
 
 def build_story_id(s:str):
     s = s.strip()
+    if s.lower().endswith(".md"):
+        s = s[:-3]
     now = time_tool.get_current_date(with_t=True)
 
     if not s:
