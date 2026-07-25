@@ -35,6 +35,7 @@ from .message import (
 )
 from .exception import (
     ModelServiceError,
+    LLMServiceSpecialResponseError,
 )
 from .content_endpoint import (
     ContentSender,
@@ -323,6 +324,13 @@ class LLMModelBase(object):
         if not rsp_content:
             raise TypeError("null of response")
 
+        # special responses that should trigger a retry
+        special_responses = self._get_special_responses_for_retry()
+        if special_responses and rsp_content in special_responses:
+            raise LLMServiceSpecialResponseError(
+                f"LLM returned a special response that requires retry: {rsp_content!r}"
+            )
+
         # exceed max tokens
         txt_content = str(rsp_content)
         max_tokens = self.max_tokens
@@ -337,6 +345,20 @@ class LLMModelBase(object):
                 ):
                     raise ModelServiceError(error_msg, repetition_result)
         return
+
+    def _get_special_responses_for_retry(self):
+        """Parse TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY into a list of exact-match strings."""
+        raw = EnvReaderInstance.get("TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY", default="[]")
+        if not raw or not raw.strip():
+            return []
+        try:
+            parsed = simplejson.loads(raw.strip())
+        except Exception:
+            logger.warning("invalid JSON in TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY: %s", raw)
+            return []
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if item is not None]
+        return []
 
     def format_null_response_content(self, rsp_obj, rsp_content:str) -> str:
         if rsp_content:

@@ -45,6 +45,7 @@ from .constants import (
 from .llm_control.exception import (
     JsonError,
     ModelServiceError,
+    LLMServiceSpecialResponseError,
 )
 from .llm_control.message import (
     get_response_message,
@@ -676,6 +677,10 @@ class LLMModel(LLMModelBase):
                 ]:
                     if key in e_str:
                         sec = 1
+
+                # special responses (e.g. "服务器繁忙") should retry quickly
+                if isinstance(e, LLMServiceSpecialResponseError):
+                    sec = 3
 
                 print_error(f"!!! [{i}] {LLM_KEYWORD_SERVICE}: {e}")
                 print_error(f"blocking chat {sec}s ...")

@@ -13,6 +13,9 @@ from topsailai.ai_base.llm_control.base_class import (
     parse_model_settings,
     LLMModelBase,
 )
+from topsailai.ai_base.llm_control.exception import (
+    LLMServiceSpecialResponseError,
+)
 
 
 class TestParseModelSettings:
@@ -72,7 +75,7 @@ class TestLLMModelBase:
     def test_init_default_values(self, monkeypatch):
         """Test initialization with default values."""
         monkeypatch.delenv("MAX_TOKENS", raising=False)
-        
+
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
                 return "test-model"
@@ -92,7 +95,7 @@ class TestLLMModelBase:
     def test_init_with_model_name(self, monkeypatch):
         """Test initialization with custom model_name."""
         monkeypatch.delenv("MAX_TOKENS", raising=False)
-        
+
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
                 return "test-model"
@@ -109,7 +112,7 @@ class TestLLMModelBase:
     def test_init_with_max_tokens(self, monkeypatch):
         """Test initialization with custom max_tokens."""
         monkeypatch.delenv("MAX_TOKENS", raising=False)
-        
+
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
                 return "test-model"
@@ -126,7 +129,7 @@ class TestLLMModelBase:
     def test_init_with_temperature(self, monkeypatch):
         """Test initialization with custom temperature."""
         monkeypatch.delenv("MAX_TOKENS", raising=False)
-        
+
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
                 return "test-model"
@@ -143,7 +146,7 @@ class TestLLMModelBase:
     def test_init_with_top_p(self, monkeypatch):
         """Test initialization with custom top_p."""
         monkeypatch.delenv("MAX_TOKENS", raising=False)
-        
+
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
                 return "test-model"
@@ -160,7 +163,7 @@ class TestLLMModelBase:
     def test_init_with_frequency_penalty(self, monkeypatch):
         """Test initialization with custom frequency_penalty."""
         monkeypatch.delenv("MAX_TOKENS", raising=False)
-        
+
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
                 return "test-model"
@@ -177,7 +180,7 @@ class TestLLMModelBase:
     def test_build_parameters_for_chat(self, monkeypatch):
         """Test build_parameters_for_chat method."""
         monkeypatch.delenv("MAX_TOKENS", raising=False)
-        
+
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
                 return "test-model"
@@ -195,7 +198,7 @@ class TestLLMModelBase:
             top_p=0.9,
             frequency_penalty=0.1
         )
-        
+
         messages = [{"role": "user", "content": "Hello"}]
         params = model.build_parameters_for_chat(messages)
         assert params["model"] == "gpt-4"
@@ -207,7 +210,7 @@ class TestLLMModelBase:
     def test_get_llm_models_empty_settings(self, monkeypatch):
         """Test get_llm_models with empty settings."""
         monkeypatch.delenv("MAX_TOKENS", raising=False)
-        
+
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
                 return "test-model"
@@ -232,7 +235,7 @@ class TestLLMModelBaseEdgeCases:
     def test_init_with_negative_max_tokens(self, monkeypatch):
         """Test initialization with negative max_tokens."""
         monkeypatch.delenv("MAX_TOKENS", raising=False)
-        
+
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
                 return "test-model"
@@ -249,7 +252,7 @@ class TestLLMModelBaseEdgeCases:
     def test_init_with_zero_temperature(self, monkeypatch):
         """Test initialization with zero temperature."""
         monkeypatch.delenv("MAX_TOKENS", raising=False)
-        
+
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
                 return "test-model"
@@ -266,7 +269,7 @@ class TestLLMModelBaseEdgeCases:
     def test_init_with_max_top_p(self, monkeypatch):
         """Test initialization with maximum top_p value."""
         monkeypatch.delenv("MAX_TOKENS", raising=False)
-        
+
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
                 return "test-model"
@@ -283,7 +286,7 @@ class TestLLMModelBaseEdgeCases:
     def test_build_parameters_preserves_stream(self, monkeypatch):
         """Test build_parameters_for_chat preserves stream parameter."""
         monkeypatch.delenv("MAX_TOKENS", raising=False)
-        
+
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
                 return "test-model"
@@ -301,3 +304,75 @@ class TestLLMModelBaseEdgeCases:
 
         params = model.build_parameters_for_chat(messages, stream=False)
         assert params["stream"] is False
+
+
+class TestLLMModelBaseSpecialResponses:
+    """Tests for special-response retry detection."""
+
+    @pytest.fixture
+    def test_model(self, monkeypatch):
+        """Return a minimal LLMModelBase subclass instance."""
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
+
+        class TestModel(LLMModelBase):
+            def get_model_name(self, default=""):
+                return "test-model"
+            def get_llm_model(self, api_key=None, api_base=None):
+                return MagicMock()
+            def get_response_message(self, response):
+                return MagicMock()
+            def chat(self, *args, **kwargs):
+                pass
+
+        return TestModel()
+
+    @patch.dict(os.environ, {"TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY": '["服务器繁忙，请稍后再试。", "服务繁忙"]'}, clear=False)
+    def test_check_response_content_exact_match_raises(self, test_model):
+        """Exact match should raise LLMServiceSpecialResponseError."""
+        with pytest.raises(LLMServiceSpecialResponseError) as exc_info:
+            test_model.check_response_content(MagicMock(), "服务器繁忙，请稍后再试。")
+        assert "服务器繁忙，请稍后再试。" in str(exc_info.value)
+
+    @patch.dict(os.environ, {"TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY": '["服务器繁忙，请稍后再试。"]'}, clear=False)
+    def test_check_response_content_non_match_passes(self, test_model):
+        """Non-matching content should not raise."""
+        # A normal structured response should pass through unchanged.
+        test_model.check_response_content(MagicMock(), '{"action": "think", "content": "ok"}')
+
+    @patch.dict(os.environ, {"TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY": '["服务器繁忙"]'}, clear=False)
+    def test_check_response_content_whitespace_stripped(self, test_model):
+        """Whitespace around the response should be stripped before matching."""
+        with pytest.raises(LLMServiceSpecialResponseError):
+            test_model.check_response_content(MagicMock(), "  服务器繁忙  \n")
+
+    @patch.dict(os.environ, {"TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY": '["服务器繁忙"]'}, clear=False)
+    def test_check_response_content_partial_match_passes(self, test_model):
+        """Partial match should not raise; only exact full match counts."""
+        test_model.check_response_content(MagicMock(), "服务器繁忙，请稍后再试。")
+
+    @patch.dict(os.environ, {"TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY": "not-json"}, clear=False)
+    def test_get_special_responses_invalid_json_returns_empty(self, test_model, caplog):
+        """Invalid JSON config should log a warning and disable matching."""
+        with caplog.at_level("WARNING"):
+            result = test_model._get_special_responses_for_retry()
+        assert result == []
+        assert "invalid JSON" in caplog.text
+
+    def test_get_special_responses_empty_unset(self, test_model, monkeypatch):
+        """Empty or unset env var should return an empty list."""
+        monkeypatch.delenv("TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY", raising=False)
+        assert test_model._get_special_responses_for_retry() == []
+
+        monkeypatch.setenv("TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY", "")
+        assert test_model._get_special_responses_for_retry() == []
+
+    @patch.dict(os.environ, {"TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY": '{"not": "a list"}'}, clear=False)
+    def test_get_special_responses_non_list_returns_empty(self, test_model):
+        """Non-list JSON should return an empty list."""
+        assert test_model._get_special_responses_for_retry() == []
+
+    @patch.dict(os.environ, {"TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY": '[" a ", null, "b"]'}, clear=False)
+    def test_get_special_responses_filters_and_strips(self, test_model):
+        """Items should be stringified, stripped, and nulls filtered out."""
+        result = test_model._get_special_responses_for_retry()
+        assert result == ["a", "b"]

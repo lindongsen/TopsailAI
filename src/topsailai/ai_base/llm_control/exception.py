@@ -11,3 +11,8 @@ class JsonError(Exception):
 
 class ModelServiceError(Exception):
     pass
+
+
+class LLMServiceSpecialResponseError(ModelServiceError):
+    """Raised when the LLM returns a configured special response that should be retried."""
+    pass
