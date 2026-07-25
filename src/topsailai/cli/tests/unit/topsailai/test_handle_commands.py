@@ -673,6 +673,17 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         self.assertEqual(action, "agent")
         self.assertEqual(value, "/path/to/project")
 
+    @patch("cli_topsailai.core.input")
+    def test_slash_agent_with_args_in_workspace_uses_explicit_branch_with_real_yaml(self, mock_input):
+        """'/agent <folder>' with real YAML loaded must use explicit branch, not YAML."""
+        from cli_topsailai.yaml_commands import load_yaml_commands
+
+        cli_state.yaml_commands = load_yaml_commands()
+        mock_input.return_value = "/agent /path/to/project"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "agent")
+        self.assertEqual(value, "/path/to/project")
+
     @patch("cli_topsailai.project_scope.launch_agent_in_folder")
     @patch("cli_topsailai.project_scope.resolve_agent_folder")
     @patch("cli_topsailai.core.prompt_selection")
@@ -709,10 +720,10 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         mock_prompt.side_effect = [("agent", "/work/a"), ("quit", None)]
         mock_resolve.return_value = "/work/a"
 
-        main([])
+        main(["--agent-mode", "tmux"])
 
         mock_resolve.assert_called_once_with("/work/a", [log_file])
-        mock_launch.assert_called_once_with("/work/a")
+        mock_launch.assert_called_once_with("/work/a", agent_mode="tmux")
 
     @patch("cli_topsailai.project_scope.launch_agent_in_folder")
     @patch("cli_topsailai.project_scope.resolve_agent_folder")
@@ -750,10 +761,117 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         mock_prompt.side_effect = [("agent", "1"), ("quit", None)]
         mock_resolve.return_value = "/work/a"
 
-        main([])
+        main(["--agent-mode", "raw"])
 
         mock_resolve.assert_called_once_with("1", [log_file])
+        mock_launch.assert_called_once_with("/work/a", agent_mode="raw")
 
+    @patch("cli_topsailai.project_scope.launch_agent_in_folder")
+    @patch("cli_topsailai.project_scope.resolve_agent_folder")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    def test_agent_default_mode_is_dtach(
+        self,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        mock_resolve: MagicMock,
+        mock_launch: MagicMock,
+    ) -> None:
+        """Without --agent-mode, main() defaults to dtach and forwards it."""
+        from cli_topsailai.core import main
+
+        log_file = {
+            "filename": "s1.1234.session.stdout",
+            "path": "/task/s1.1234.session.stdout",
+            "session_id": "s1",
+            "project_workspace": "/work/a",
+        }
+        mock_discover.return_value = [log_file]
+        mock_prompt.side_effect = [("agent", "/work/a"), ("quit", None)]
+        mock_resolve.return_value = "/work/a"
+
+        main([])
+
+        mock_launch.assert_called_once_with("/work/a", agent_mode="dtach")
+
+
+
+class TestResumeCommand(unittest.TestCase):
+    """Tests for resume command forwarding agent_mode."""
+
+    def setUp(self):
+        cli_state.current_scope = "project"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+        cli_state.history_manager = None
+
+    def tearDown(self):
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+        cli_state.history_manager = None
+        cli_state._child_processes.clear()
+
+    @patch("cli_topsailai.project_scope.build_project_list")
+    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    def test_resume_forwards_agent_mode(
+        self,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        mock_resume: MagicMock,
+        mock_build_project_list: MagicMock,
+    ) -> None:
+        from cli_topsailai.core import main
+
+        log_file = {
+            "filename": "s1.1234.session.stdout",
+            "path": "/task/s1.1234.session.stdout",
+            "session_id": "s1",
+            "project_workspace": "/work/a",
+            "ctime": 1710000000,
+            "mtime": 1710000000,
+        }
+        project_entry = {
+            "no": 1,
+            "session_id": "s1",
+            "project_workspace": "/work/a",
+            "status": "Idle",
+        }
+        mock_discover.return_value = [log_file]
+        mock_build_project_list.return_value = [project_entry]
+        mock_prompt.side_effect = [("resume", "1"), ("quit", None)]
+
+        main(["--agent-mode", "tmux"])
+
+        mock_resume.assert_called_once()
+        _, kwargs = mock_resume.call_args
+        self.assertEqual(kwargs.get("agent_mode"), "tmux")
 class TestWorkspaceFlag(unittest.TestCase):
     """Tests for -w / --workspace early-exit flag."""
 

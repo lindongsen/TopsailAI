@@ -490,7 +490,15 @@ def main(argv: Optional[List[str]] = None) -> None:
         metavar="NAME",
         help="read a documentation file by folder/name.md or name and exit",
     )
-
+    parser.add_argument(
+        "--agent-mode",
+        type=str,
+        choices=["raw", "dtach", "tmux"],
+        default="dtach",
+        dest="agent_mode",
+        metavar="MODE",
+        help="how to launch agent processes: raw (direct), dtach, or tmux (default: dtach)",
+    )
     # Be tolerant of unknown arguments so tests that invoke main() with
     # arbitrary fake argv do not crash. Only help/version trigger an exit.
     args, _ = parser.parse_known_args(argv)
@@ -778,7 +786,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                         f"Use /agent {{number}} or /agent {{folder}}.{Colors.RESET}"
                     )
                     continue
-                launch_agent_in_folder(folder)
+                launch_agent_in_folder(folder, agent_mode=args.agent_mode)
                 continue
 
             if action == "resume":
@@ -787,7 +795,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                         f"\n{Colors.RED}[ERROR] /resume is only available in project scope.{Colors.RESET}"
                     )
                     continue
-                resume_session(value, project_entries)
+                resume_session(value, project_entries, agent_mode=args.agent_mode)
                 continue
 
             if action == "session":

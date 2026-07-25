@@ -27,3 +27,8 @@ references:
 
 - usage documentation list
 - read usage documentation
+
+## Command Design Convention
+
+- Interactive parameters use option flags, for example `--agent-mode`.
+- Non-interactive parameters use subcommands, for example `project list`.

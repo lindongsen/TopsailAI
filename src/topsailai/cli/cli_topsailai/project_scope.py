@@ -425,27 +425,65 @@ def _build_dtach_socket_path() -> str:
     return os.path.join(task_dir, f"{timestamp}.dtach")
 
 
-def _wrap_command_with_dtach(command: str) -> str:
-    """Wrap *command* with dtach if the dtach binary is available.
+def _generate_agent_session_name() -> str:
+    """Return a unique session name for tmux-based agent launches."""
+    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S.%f")
+    return f"topsailai-{timestamp}"
 
-    If ``dtach`` is not found in ``PATH``, *command* is returned unchanged.
-    The dtach socket is placed under ``{TOPSAILAI_HOME}/workspace/task/``
-    with a timestamped filename.
+
+def _wrap_command_for_agent_mode(command: str, mode: str) -> str:
+    """Wrap *command* according to the requested agent launch mode.
+
+    Supported modes:
+
+    - ``raw``: return *command* unchanged.
+    - ``dtach``: wrap with ``dtach -A {socket} {command}`` when ``dtach`` is
+      available in ``PATH``; otherwise fall back to *command* unchanged.
+    - ``tmux``: wrap with ``tmux new-session -s {name} {command}``.  Requires
+      ``tmux`` to be available in ``PATH``; raises ``RuntimeError`` if it is
+      not.
+
+    Args:
+        command: The command to wrap.
+        mode: Launch mode, one of ``"raw"``, ``"dtach"`` or ``"tmux"``.
+
+    Returns:
+        The wrapped command string.
+
+    Raises:
+        RuntimeError: If *mode* is ``"tmux"`` and ``tmux`` is not installed.
+        ValueError: If *mode* is not one of the supported values.
     """
-    if shutil.which("dtach") is None:
+    if mode == "raw":
         return command
-    socket_path = _build_dtach_socket_path()
-    return f"dtach -A {shlex.quote(socket_path)} {command}"
+
+    if mode == "dtach":
+        if shutil.which("dtach") is None:
+            return command
+        socket_path = _build_dtach_socket_path()
+        return f"dtach -A {shlex.quote(socket_path)} {command}"
+
+    if mode == "tmux":
+        if shutil.which("tmux") is None:
+            raise RuntimeError(
+                "tmux is not installed or not found in PATH. "
+                "Install tmux to use --agent-mode tmux, or choose raw/dtach."
+            )
+        session_name = _generate_agent_session_name()
+        return f"tmux new-session -s {shlex.quote(session_name)} {command}"
+
+    raise ValueError(f"Unsupported agent launch mode: {mode!r}")
 
 
-def launch_agent_in_folder(folder: str) -> None:
+def launch_agent_in_folder(folder: str, agent_mode: str = "dtach") -> None:
     """Change to *folder* and launch ``topsailai_launch_agent`` via os.system.
 
-    When the ``dtach`` tool is available in ``PATH``, the launcher is wrapped
-    as ``dtach -A {socket} topsailai_launch_agent`` so the agent runs inside
-    a dtach session.  The socket is placed under
-    ``{TOPSAILAI_HOME}/workspace/task/`` with a timestamped filename.  If
-    ``dtach`` is not available, the launcher is invoked unchanged.
+    The launch mode is controlled by *agent_mode*:
+
+    - ``raw``: invoke ``topsailai_launch_agent`` directly.
+    - ``dtach`` (default): wrap with ``dtach -A {socket}`` when ``dtach`` is
+      available; fall back to raw otherwise.
+    - ``tmux``: wrap with ``tmux new-session -s {name}``; requires ``tmux``.
 
     The launcher reads ``TOPSAILAI_PWD`` at import time and uses it to decide
     its working directory, so both the process working directory and the
@@ -455,6 +493,8 @@ def launch_agent_in_folder(folder: str) -> None:
 
     Args:
         folder: Target project workspace folder.
+        agent_mode: How to launch the agent: ``"raw"``, ``"dtach"`` or
+            ``"tmux"``.  Defaults to ``"dtach"``.
     """
     original_cwd = os.getcwd()
     target_folder = os.path.abspath(folder)
@@ -469,9 +509,10 @@ def launch_agent_in_folder(folder: str) -> None:
         for key in env_keys:
             os.environ[key] = target_folder
         print(
-            f"{Colors.GREEN}[INFO] Launching agent in {target_folder} ...{Colors.RESET}"
+            f"{Colors.GREEN}[INFO] Launching agent in {target_folder} "
+            f"(mode: {agent_mode}) ...{Colors.RESET}"
         )
-        command = _wrap_command_with_dtach("topsailai_launch_agent")
+        command = _wrap_command_for_agent_mode("topsailai_launch_agent", agent_mode)
         os.system(command)
     except OSError as exc:
         print(
@@ -491,19 +532,23 @@ def launch_agent_in_folder(folder: str) -> None:
                 f"{Colors.RED}[ERROR] Failed to restore working directory '{original_cwd}': {exc}{Colors.RESET}"
             )
 
-
-def launch_agent_driver(folder: str, driver: str, session_id: str) -> None:
+def launch_agent_driver(
+    folder: str, driver: str, session_id: str, agent_mode: str = "dtach"
+) -> None:
     """Change to *folder* and launch *driver* directly with *session_id* set.
+
+    The launch mode is controlled by *agent_mode*:
+
+    - ``raw``: invoke *driver* directly.
+    - ``dtach`` (default): wrap with ``dtach -A {socket}`` when ``dtach`` is
+      available; fall back to raw otherwise.
+    - ``tmux``: wrap with ``tmux new-session -s {name}``; requires ``tmux``.
 
     The process working directory and the ``TOPSAILAI_PWD``/``PWD``
     environment variables are set to the target folder so the driver reads
     ``.topsailai/settings.yaml`` from the correct project workspace.
     ``TOPSAILAI_SESSION_ID`` is set to *session_id* so the resumed agent
     continues the existing session instead of generating a new one.
-
-    When ``dtach`` is available in ``PATH``, the driver is wrapped as
-    ``dtach -A {socket} {driver}`` so it runs inside a detachable session.
-    If ``dtach`` is not available, the driver is invoked unchanged.
 
     The original working directory and environment values are restored
     after the driver returns.
@@ -512,6 +557,8 @@ def launch_agent_driver(folder: str, driver: str, session_id: str) -> None:
         folder: Target project workspace folder.
         driver: Agent driver command to execute.
         session_id: Session ID to resume.
+        agent_mode: How to launch the driver: ``"raw"``, ``"dtach"`` or
+            ``"tmux"``.  Defaults to ``"dtach"``.
     """
     original_cwd = os.getcwd()
     target_folder = os.path.abspath(folder)
@@ -528,9 +575,9 @@ def launch_agent_driver(folder: str, driver: str, session_id: str) -> None:
         os.environ["TOPSAILAI_SESSION_ID"] = session_id
         print(
             f"{Colors.GREEN}[INFO] Launching driver '{driver}' in {target_folder} "
-            f"for session '{session_id}' ...{Colors.RESET}"
+            f"for session '{session_id}' (mode: {agent_mode}) ...{Colors.RESET}"
         )
-        command = _wrap_command_with_dtach(driver)
+        command = _wrap_command_for_agent_mode(driver, agent_mode)
         os.system(command)
     except OSError as exc:
         print(
@@ -549,7 +596,6 @@ def launch_agent_driver(folder: str, driver: str, session_id: str) -> None:
             print(
                 f"{Colors.RED}[ERROR] Failed to restore working directory '{original_cwd}': {exc}{Colors.RESET}"
             )
-
 
 def _prompt_for_driver() -> str:
     """Prompt the user to select an agent driver for resuming a session.
@@ -619,7 +665,9 @@ def _resolve_session_entry(
     return entries[idx]
 
 
-def resume_session(arg: str, entries: List[Dict[str, Any]]) -> None:
+def resume_session(
+    arg: str, entries: List[Dict[str, Any]], agent_mode: str = "dtach"
+) -> None:
     """Resume an idle session by launching an agent driver in its workspace.
 
     The selected session must not be running.  If it is, a message is printed
@@ -628,9 +676,14 @@ def resume_session(arg: str, entries: List[Dict[str, Any]]) -> None:
     launched directly in the session's project workspace with
     ``TOPSAILAI_SESSION_ID`` set to the session ID.
 
+    The launch mode is controlled by *agent_mode* (``raw``, ``dtach`` or
+    ``tmux``).  See ``launch_agent_driver`` for details.
+
     Args:
         arg: User-provided argument, expected to be a 1-based entry number.
         entries: Current project scope entries.
+        agent_mode: How to launch the driver: ``"raw"``, ``"dtach"`` or
+            ``"tmux"``.  Defaults to ``"dtach"``.
     """
     entry = _resolve_session_entry(arg, entries)
     if entry is None:
@@ -664,6 +717,6 @@ def resume_session(arg: str, entries: List[Dict[str, Any]]) -> None:
     driver = _prompt_for_driver()
     print(
         f"{Colors.GREEN}[INFO] Resuming session '{session_id}' with driver '{driver}' "
-        f"in {project_workspace} ...{Colors.RESET}"
+        f"in {project_workspace} (mode: {agent_mode}) ...{Colors.RESET}"
     )
-    launch_agent_driver(project_workspace, driver, session_id)
+    launch_agent_driver(project_workspace, driver, session_id, agent_mode=agent_mode)

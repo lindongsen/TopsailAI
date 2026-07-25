@@ -608,24 +608,34 @@ class TestBuildDtachSocketPath(unittest.TestCase):
         )
 
 
-class TestWrapCommandWithDtach(unittest.TestCase):
-    """Tests for _wrap_command_with_dtach."""
+class TestWrapCommandForAgentMode(unittest.TestCase):
+    """Tests for _wrap_command_for_agent_mode."""
+
+    def test_raw_mode_returns_command_unchanged(self):
+        result = project_scope._wrap_command_for_agent_mode(
+            "topsailai_launch_agent", "raw"
+        )
+        self.assertEqual(result, "topsailai_launch_agent")
 
     @patch("cli_topsailai.project_scope.shutil.which")
-    def test_no_dtach_returns_command_unchanged(self, mock_which):
+    def test_dtach_mode_without_dtach_falls_back_to_raw(self, mock_which):
         mock_which.return_value = None
-        result = project_scope._wrap_command_with_dtach("topsailai_launch_agent")
+        result = project_scope._wrap_command_for_agent_mode(
+            "topsailai_launch_agent", "dtach"
+        )
         self.assertEqual(result, "topsailai_launch_agent")
         mock_which.assert_called_once_with("dtach")
 
     @patch("cli_topsailai.project_scope._build_dtach_socket_path")
     @patch("cli_topsailai.project_scope.shutil.which")
-    def test_dtach_available_wraps_command(
+    def test_dtach_mode_wraps_with_dtach(
         self, mock_which, mock_build_socket
     ):
         mock_which.return_value = "/usr/bin/dtach"
         mock_build_socket.return_value = "/home/user/.topsailai/workspace/task/20260707T221748.169974.dtach"
-        result = project_scope._wrap_command_with_dtach("topsailai_launch_agent")
+        result = project_scope._wrap_command_for_agent_mode(
+            "topsailai_launch_agent", "dtach"
+        )
         expected = (
             "dtach -A "
             + shlex.quote("/home/user/.topsailai/workspace/task/20260707T221748.169974.dtach")
@@ -635,12 +645,14 @@ class TestWrapCommandWithDtach(unittest.TestCase):
 
     @patch("cli_topsailai.project_scope._build_dtach_socket_path")
     @patch("cli_topsailai.project_scope.shutil.which")
-    def test_dtach_quotes_socket_path_with_spaces(
+    def test_dtach_mode_quotes_socket_path_with_spaces(
         self, mock_which, mock_build_socket
     ):
         mock_which.return_value = "/usr/bin/dtach"
         mock_build_socket.return_value = "/home/user/weird path/task/20260707T221748.169974.dtach"
-        result = project_scope._wrap_command_with_dtach("topsailai_launch_agent")
+        result = project_scope._wrap_command_for_agent_mode(
+            "topsailai_launch_agent", "dtach"
+        )
         self.assertTrue(result.startswith("dtach -A "))
         self.assertIn(
             shlex.quote("/home/user/weird path/task/20260707T221748.169974.dtach"),
@@ -648,16 +660,47 @@ class TestWrapCommandWithDtach(unittest.TestCase):
         )
         self.assertIn(" topsailai_launch_agent", result)
 
+    @patch("cli_topsailai.project_scope._generate_agent_session_name")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    def test_tmux_mode_wraps_with_tmux(self, mock_which, mock_generate_name):
+        mock_which.return_value = "/usr/bin/tmux"
+        mock_generate_name.return_value = "topsailai-20260707T221748.169974"
+        result = project_scope._wrap_command_for_agent_mode(
+            "topsailai_launch_agent", "tmux"
+        )
+        expected = (
+            "tmux new-session -s "
+            + shlex.quote("topsailai-20260707T221748.169974")
+            + " topsailai_launch_agent"
+        )
+        self.assertEqual(result, expected)
 
-class TestLaunchAgentInFolderWithDtach(unittest.TestCase):
-    """Integration tests for launch_agent_in_folder with dtach wrapping."""
+    @patch("cli_topsailai.project_scope.shutil.which")
+    def test_tmux_mode_without_tmux_raises_runtime_error(self, mock_which):
+        mock_which.return_value = None
+        with self.assertRaises(RuntimeError) as ctx:
+            project_scope._wrap_command_for_agent_mode(
+                "topsailai_launch_agent", "tmux"
+            )
+        self.assertIn("tmux is not installed", str(ctx.exception))
+
+    def test_unsupported_mode_raises_value_error(self):
+        with self.assertRaises(ValueError) as ctx:
+            project_scope._wrap_command_for_agent_mode(
+                "topsailai_launch_agent", "unsupported"
+            )
+        self.assertIn("Unsupported agent launch mode", str(ctx.exception))
+
+
+class TestLaunchAgentInFolderWithMode(unittest.TestCase):
+    """Integration tests for launch_agent_in_folder with mode wrapping."""
 
     @patch("cli_topsailai.project_scope._build_dtach_socket_path")
     @patch("cli_topsailai.project_scope.shutil.which")
     @patch("cli_topsailai.project_scope.os.system")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_launches_with_dtach_when_available(
+    def test_default_dtach_uses_dtach_when_available(
         self, mock_getcwd, mock_chdir, mock_system, mock_which, mock_build_socket
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
@@ -673,13 +716,40 @@ class TestLaunchAgentInFolderWithDtach(unittest.TestCase):
     @patch("cli_topsailai.project_scope.os.system")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
-    def test_launches_without_dtach_when_unavailable(
+    def test_default_dtach_falls_back_to_raw_when_dtach_unavailable(
         self, mock_getcwd, mock_chdir, mock_system, mock_which
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
         project_scope.launch_agent_in_folder("/work/project-a")
         mock_system.assert_called_once_with("topsailai_launch_agent")
 
+    @patch("cli_topsailai.project_scope._generate_agent_session_name")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_tmux_mode_wraps_with_tmux(
+        self, mock_getcwd, mock_chdir, mock_system, mock_which, mock_generate_name
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.return_value = "/usr/bin/tmux"
+        mock_generate_name.return_value = "topsailai-20260707T221748.169974"
+        project_scope.launch_agent_in_folder("/work/project-a", agent_mode="tmux")
+        mock_system.assert_called_once()
+        called_command = mock_system.call_args[0][0]
+        self.assertTrue(called_command.startswith("tmux new-session -s "))
+        self.assertIn("topsailai_launch_agent", called_command)
+
+    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_raw_mode_invokes_command_directly(
+        self, mock_getcwd, mock_chdir, mock_system, mock_which
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        project_scope.launch_agent_in_folder("/work/project-a", agent_mode="raw")
+        mock_system.assert_called_once_with("topsailai_launch_agent")
 
 class TestLoadProjectWorkspaceLookup(unittest.TestCase):
     """Tests for load_project_workspace_lookup."""
@@ -883,6 +953,38 @@ class TestLaunchAgentDriver(unittest.TestCase):
         self.assertTrue(called_command.startswith("dtach -A "))
         self.assertIn("topsailai_agent_plan_tasks", called_command)
 
+    @patch("cli_topsailai.project_scope._generate_agent_session_name")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_tmux_mode_wraps_driver_with_tmux(
+        self, mock_getcwd, mock_chdir, mock_system, mock_which, mock_generate_name
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.return_value = "/usr/bin/tmux"
+        mock_generate_name.return_value = "topsailai-20260707T221748.169974"
+        project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123", agent_mode="tmux"
+        )
+        mock_system.assert_called_once()
+        called_command = mock_system.call_args[0][0]
+        self.assertTrue(called_command.startswith("tmux new-session -s "))
+        self.assertIn("topsailai_agent_plan_tasks", called_command)
+
+    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_raw_mode_invokes_driver_directly(
+        self, mock_getcwd, mock_chdir, mock_system, mock_which
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        project_scope.launch_agent_driver(
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-123", agent_mode="raw"
+        )
+        mock_system.assert_called_once_with("topsailai_agent_plan_tasks")
+
     @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
     @patch("cli_topsailai.project_scope.os.system")
     @patch("cli_topsailai.project_scope.os.chdir")
@@ -900,7 +1002,6 @@ class TestLaunchAgentDriver(unittest.TestCase):
         self.assertEqual(os.environ.get("PWD"), original_pwd)
         self.assertEqual(os.environ.get("TOPSAILAI_PWD"), original_topsailai_pwd)
         self.assertEqual(os.environ.get("TOPSAILAI_SESSION_ID"), original_session_id)
-
 
 class TestResumeSession(unittest.TestCase):
     """Tests for resume_session."""
@@ -925,10 +1026,10 @@ class TestResumeSession(unittest.TestCase):
     ):
         mock_prompt.return_value = "topsailai_agent_plan_tasks"
         entries = [self._make_entry("s-idle", "Idle", "/work/project-a")]
-        project_scope.resume_session("1", entries)
+        project_scope.resume_session("1", entries, agent_mode="dtach")
         mock_prompt.assert_called_once()
         mock_launch.assert_called_once_with(
-            "/work/project-a", "topsailai_agent_plan_tasks", "s-idle"
+            "/work/project-a", "topsailai_agent_plan_tasks", "s-idle", agent_mode="dtach"
         )
         output = mock_stdout.getvalue()
         self.assertIn("Resuming session 's-idle'", output)
@@ -942,9 +1043,9 @@ class TestResumeSession(unittest.TestCase):
     ):
         mock_prompt.return_value = "ai-team-flow-dev"
         entries = [self._make_entry("s-idle", "Idle", "/work/project-a")]
-        project_scope.resume_session("1", entries)
+        project_scope.resume_session("1", entries, agent_mode="tmux")
         mock_launch.assert_called_once_with(
-            "/work/project-a", "ai-team-flow-dev", "s-idle"
+            "/work/project-a", "ai-team-flow-dev", "s-idle", agent_mode="tmux"
         )
         output = mock_stdout.getvalue()
         self.assertIn("ai-team-flow-dev", output)
@@ -956,7 +1057,7 @@ class TestResumeSession(unittest.TestCase):
         self, mock_stdout, mock_prompt, mock_launch
     ):
         entries = [self._make_entry("s-running", "Running", "/work/project-a")]
-        project_scope.resume_session("1", entries)
+        project_scope.resume_session("1", entries, agent_mode="raw")
         mock_prompt.assert_not_called()
         mock_launch.assert_not_called()
         output = mock_stdout.getvalue()
@@ -967,7 +1068,7 @@ class TestResumeSession(unittest.TestCase):
     @patch("sys.stdout", new_callable=io.StringIO)
     def test_resume_invalid_number(self, mock_stdout, mock_prompt, mock_launch):
         entries = [self._make_entry("s-idle", "Idle", "/work/project-a")]
-        project_scope.resume_session("5", entries)
+        project_scope.resume_session("5", entries, agent_mode="raw")
         mock_prompt.assert_not_called()
         mock_launch.assert_not_called()
         output = mock_stdout.getvalue()
@@ -983,10 +1084,10 @@ class TestResumeSession(unittest.TestCase):
         mock_lookup.return_value = {"s-idle": "/work/from-history"}
         mock_prompt.return_value = "topsailai_agent_plan_tasks"
         entries = [self._make_entry("s-idle", "Idle", "")]
-        project_scope.resume_session("1", entries)
+        project_scope.resume_session("1", entries, agent_mode="dtach")
         mock_lookup.assert_called_once()
         mock_launch.assert_called_once_with(
-            "/work/from-history", "topsailai_agent_plan_tasks", "s-idle"
+            "/work/from-history", "topsailai_agent_plan_tasks", "s-idle", agent_mode="dtach"
         )
 
     @patch("cli_topsailai.project_scope.launch_agent_driver")
