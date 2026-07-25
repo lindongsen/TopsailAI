@@ -85,6 +85,56 @@ def _try_handle_project_subcommand(argv: Optional[List[str]]) -> Optional[int]:
     return 1
 
 
+
+def _warn_deprecated(old_flag: str, new_cmd: str) -> None:
+    """Print a deprecation warning for a legacy CLI option."""
+    print(
+        f"{Colors.YELLOW}[WARN] {old_flag} is deprecated and will be removed in a future release. "
+        f"Use '{new_cmd}' instead.{Colors.RESET}",
+        file=sys.stderr,
+    )
+
+
+def _handle_workspace_subcommand(_args: argparse.Namespace) -> int:
+    """Handle the non-interactive ``workspace`` subcommand."""
+    _print_workspace_table()
+    return 0
+
+
+def _handle_docs_list_subcommand(_args: argparse.Namespace) -> int:
+    """Handle the non-interactive ``docs list`` subcommand."""
+    docs = build_doc_list()
+    print_doc_table(docs)
+    return 0
+
+
+def _handle_docs_read_subcommand(args: argparse.Namespace) -> int:
+    """Handle the non-interactive ``docs read <name>`` subcommand."""
+    name = args.name
+    result = resolve_doc(name)
+    if result["status"] == "not_found":
+        print(f"Doc not found: {name}")
+        return 1
+    if result["status"] == "conflict":
+        print(f"Ambiguous doc name: {name}")
+        print("Please use the precise folder/document.md format:")
+        for option in result["options"]:
+            print(f"  {option}")
+        return 1
+    print(result["content"])
+    return 0
+
+
+def _handle_project_subcommand(args: argparse.Namespace) -> int:
+    """Delegate project subcommands to the existing handler."""
+    argv = ["project", args.project_subcommand]
+    if args.project_path is not None:
+        argv.append(args.project_path)
+    if args.project_name is not None:
+        argv.append(args.project_name)
+    code = _try_handle_project_subcommand(argv)
+    return 0 if code is None else code
+
 def setup_signal_handlers() -> None:
     """Register SIGINT/SIGTERM handlers for graceful shutdown."""
     from cli_topsailai.process import signal_handler
@@ -451,12 +501,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="show program's version number and exit",
     )
     parser.add_argument(
-        "-w", "--workspace",
-        action="store_true",
-        dest="workspace",
-        help="display the workspace task list and exit",
-    )
-    parser.add_argument(
         "-r", "--runtime-raw",
         action="store_true",
         dest="runtime_raw",
@@ -477,20 +521,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="number of recent log lines to echo on startup in runtime mode (default: 100)",
     )
     parser.add_argument(
-        "--list-docs",
-        action="store_true",
-        dest="list_docs",
-        help="list documentation files and exit",
-    )
-    parser.add_argument(
-        "--read-doc",
-        type=str,
-        default=None,
-        dest="read_doc",
-        metavar="NAME",
-        help="read a documentation file by folder/name.md or name and exit",
-    )
-    parser.add_argument(
         "--agent-mode",
         type=str,
         choices=["raw", "dtach", "tmux"],
@@ -499,44 +529,126 @@ def main(argv: Optional[List[str]] = None) -> None:
         metavar="MODE",
         help="how to launch agent processes: raw (direct), dtach, or tmux (default: dtach)",
     )
+    # Deprecated non-interactive options. They are kept for backward
+    # compatibility and route to the new subcommand behavior with a warning.
+    parser.add_argument(
+        "-w", "--workspace",
+        action="store_true",
+        dest="workspace",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--list-docs",
+        action="store_true",
+        dest="list_docs",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--read-doc",
+        type=str,
+        default=None,
+        dest="read_doc",
+        metavar="NAME",
+        help=argparse.SUPPRESS,
+    )
+
+    subparsers = parser.add_subparsers(dest="command", help="non-interactive commands")
+
+    workspace_parser = subparsers.add_parser(
+        "workspace",
+        help="display the workspace task list and exit",
+        add_help=False,
+    )
+    workspace_parser.set_defaults(func=_handle_workspace_subcommand)
+
+    docs_parser = subparsers.add_parser(
+        "docs",
+        help="documentation commands",
+        add_help=False,
+    )
+    docs_subparsers = docs_parser.add_subparsers(dest="docs_command")
+    docs_list_parser = docs_subparsers.add_parser(
+        "list",
+        help="list documentation files and exit",
+        add_help=False,
+    )
+    docs_list_parser.set_defaults(func=_handle_docs_list_subcommand)
+    docs_read_parser = docs_subparsers.add_parser(
+        "read",
+        help="read a documentation file by folder/name.md or name and exit",
+        add_help=False,
+    )
+    docs_read_parser.add_argument("name", help="documentation file name")
+    docs_read_parser.set_defaults(func=_handle_docs_read_subcommand)
+
+    project_parser = subparsers.add_parser(
+        "project",
+        help="manage the project list",
+        add_help=False,
+    )
+    project_subparsers = project_parser.add_subparsers(dest="project_subcommand")
+    project_list_parser = project_subparsers.add_parser(
+        "list",
+        help="list managed projects",
+        add_help=False,
+    )
+    project_list_parser.set_defaults(func=_handle_project_subcommand)
+    project_add_parser = project_subparsers.add_parser(
+        "add",
+        help="add a project to the managed list",
+        add_help=False,
+    )
+    project_add_parser.add_argument("project_path", help="project path")
+    project_add_parser.add_argument(
+        "project_name",
+        nargs="?",
+        default=None,
+        help="optional project name",
+    )
+    project_add_parser.set_defaults(func=_handle_project_subcommand)
+    project_del_parser = project_subparsers.add_parser(
+        "del",
+        help="remove a project from the managed list",
+        add_help=False,
+    )
+    project_del_parser.add_argument("project_path", help="project path")
+    project_del_parser.set_defaults(func=_handle_project_subcommand)
+
     # Be tolerant of unknown arguments so tests that invoke main() with
     # arbitrary fake argv do not crash. Only help/version trigger an exit.
-    args, _ = parser.parse_known_args(argv)
+    args, remainder = parser.parse_known_args(argv)
+
     if args.help:
         parser.print_help()
-        print("\nProject management commands:")
-        print("  topsailai project add <path> [name]  Add a project to the managed list")
-        print("  topsailai project del <path>           Remove a project from the managed list")
-        print("  topsailai project list                 List managed projects")
+        print("\nGlobal options:")
+        print("  -r, --runtime-raw        Use raw curses-free mode in runtime scope")
+        print("  --tui, --runtime-tui     Use the two-pane curses UI in runtime scope")
+        print("  --tail-lines N           Number of recent log lines on runtime startup")
+        print("  --agent-mode MODE        raw | dtach | tmux")
         sys.exit(0)
     if args.version:
         print(f"{parser.prog} {__version__}")
         sys.exit(0)
-    if args.workspace:
-        _print_workspace_table()
-        sys.exit(0)
-    if args.list_docs:
-        docs = build_doc_list()
-        print_doc_table(docs)
-        sys.exit(0)
-    if args.read_doc:
-        result = resolve_doc(args.read_doc)
-        if result["status"] == "not_found":
-            print(f"Doc not found: {args.read_doc}")
-            sys.exit(1)
-        if result["status"] == "conflict":
-            print(f"Ambiguous doc name: {args.read_doc}")
-            print("Please use the precise folder/document.md format:")
-            for option in result["options"]:
-                print(f"  {option}")
-            sys.exit(1)
-        print(result["content"])
-        sys.exit(0)
 
-    # Non-interactive project management subcommands (e.g. project add/del).
-    project_exit_code = _try_handle_project_subcommand(argv)
-    if project_exit_code is not None:
-        sys.exit(project_exit_code)
+    # Backward-compatible deprecated options.
+    if args.workspace:
+        _warn_deprecated("--workspace", "topsailai workspace")
+        sys.exit(_handle_workspace_subcommand(args))
+    if args.list_docs:
+        _warn_deprecated("--list-docs", "topsailai docs list")
+        sys.exit(_handle_docs_list_subcommand(args))
+    if args.read_doc:
+        _warn_deprecated("--read-doc", "topsailai docs read <name>")
+        sys.exit(_handle_docs_read_subcommand(args))
+
+    # Non-interactive subcommand dispatch.
+    if getattr(args, "func", None):
+        sys.exit(args.func(args))
+
+    # No recognized subcommand: ignore any unknown positional arguments and
+    # start the interactive session. This preserves the pre-refactor behavior
+    # where pytest-injected sys.argv identifiers did not cause a crash.
+    _ = remainder
 
     # Heavy imports are deferred until after --help / --version are handled.
     from cli_topsailai.cleaning import clean_by_numbers, clean_expired_files
