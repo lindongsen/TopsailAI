@@ -541,28 +541,32 @@ def main(argv: Optional[List[str]] = None) -> None:
             dest="version",
             help="show program's version number and exit",
         )
-        help_parser.add_argument(
+        interactive_group = help_parser.add_argument_group(
+            title="interactive mode options",
+            description="these options only apply when no subcommand is given",
+        )
+        interactive_group.add_argument(
             "--tui", "--runtime-tui",
             action="store_true",
             dest="runtime_tui",
-            help=argparse.SUPPRESS,
+            help="use the two-pane curses UI when watching a log",
         )
-        help_parser.add_argument(
+        interactive_group.add_argument(
             "--tail-lines",
             type=int,
             default=100,
             dest="tail_lines",
             metavar="N",
-            help=argparse.SUPPRESS,
+            help="number of recent log lines to echo on startup in runtime mode (default: 100)",
         )
-        help_parser.add_argument(
+        interactive_group.add_argument(
             "--agent-mode",
             type=str,
             choices=["raw", "dtach", "tmux"],
             default="dtach",
             dest="agent_mode",
             metavar="MODE",
-            help=argparse.SUPPRESS,
+            help="agent launch mode: raw, dtach, or tmux (default: dtach)",
         )
         subparsers = help_parser.add_subparsers(dest="subcommand", help="non-interactive commands")
         subparsers.add_parser(
@@ -627,32 +631,34 @@ def main(argv: Optional[List[str]] = None) -> None:
         dest="version",
         help="show program's version number and exit",
     )
-    # Interactive-only options. These are intentionally suppressed from the
-    # top-level help because they only affect the default interactive mode
-    # (no subcommand). They remain available for backward compatibility when
-    # starting the CLI without a subcommand.
-    parser.add_argument(
+    # Interactive-only options. They are shown in the top-level help but only
+    # affect the default interactive mode (no subcommand).
+    interactive_group = parser.add_argument_group(
+        title="interactive mode options",
+        description="these options only apply when no subcommand is given",
+    )
+    interactive_group.add_argument(
         "--tui", "--runtime-tui",
         action="store_true",
         dest="runtime_tui",
-        help=argparse.SUPPRESS,
+        help="use the two-pane curses UI when watching a log",
     )
-    parser.add_argument(
+    interactive_group.add_argument(
         "--tail-lines",
         type=int,
         default=100,
         dest="tail_lines",
         metavar="N",
-        help=argparse.SUPPRESS,
+        help="number of recent log lines to echo on startup in runtime mode (default: 100)",
     )
-    parser.add_argument(
+    interactive_group.add_argument(
         "--agent-mode",
         type=str,
         choices=["raw", "dtach", "tmux"],
         default="dtach",
         dest="agent_mode",
         metavar="MODE",
-        help=argparse.SUPPRESS,
+        help="agent launch mode: raw, dtach, or tmux (default: dtach)",
     )
 
     subparsers = parser.add_subparsers(dest="subcommand", help="non-interactive commands")
