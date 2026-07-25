@@ -122,3 +122,8 @@ The original high-level scope outline is preserved in `../../topsailai.md`:
 - project — project workspace
 - session — enter one session
 - doc — usage documentation list and read usage documentation
+
+## Command Design Convention
+
+- Interactive parameters use option flags, for example `--agent-mode`.
+- Non-interactive parameters use subcommands, for example `project list`.

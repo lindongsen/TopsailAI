@@ -127,10 +127,12 @@ def _handle_docs_read_subcommand(args: argparse.Namespace) -> int:
 def _handle_project_subcommand(args: argparse.Namespace) -> int:
     """Delegate project subcommands to the existing handler."""
     argv = ["project", args.project_subcommand]
-    if args.project_path is not None:
-        argv.append(args.project_path)
-    if args.project_name is not None:
-        argv.append(args.project_name)
+    project_path = getattr(args, "project_path", None)
+    project_name = getattr(args, "project_name", None)
+    if project_path is not None:
+        argv.append(project_path)
+    if project_name is not None:
+        argv.append(project_name)
     code = _try_handle_project_subcommand(argv)
     return 0 if code is None else code
 
@@ -484,6 +486,130 @@ def _print_workspace_table() -> None:
 def main(argv: Optional[List[str]] = None) -> None:
     """Main entry point for the TopsailAI CLI."""
     global _project_scope_mode
+    if argv is None:
+        argv = []
+
+    _TOP_LEVEL_COMMANDS = {"workspace", "docs", "project"}
+    _TOP_LEVEL_OPTIONS = {
+        "-h", "--help", "--version", "-w", "--workspace",
+        "--list-docs", "--read-doc", "--tui", "--runtime-tui",
+    }
+
+    # Detect an unknown top-level subcommand before argparse tries to parse
+    # it. argparse exits on invalid subcommand choices, and the broad
+    # ``except SystemExit`` below would swallow that and start the interactive
+    # session instead of reporting the error.
+    first_positional: Optional[str] = None
+    skip_next = False
+    for i, arg in enumerate(argv):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg.startswith("-"):
+            if arg in ("--read-doc", "--tail-lines", "--agent-mode"):
+                skip_next = True
+            continue
+        first_positional = arg
+        break
+
+    if (
+        first_positional is not None
+        and first_positional not in _TOP_LEVEL_COMMANDS
+        and not first_positional.startswith("-")
+    ):
+        print(
+            f"{Colors.RED}[ERROR] invalid subcommand: {first_positional}{Colors.RESET}",
+            file=sys.stderr,
+        )
+        # Build a minimal parser just to print help. We cannot reuse the full
+        # parser here because calling print_help() on it would require all
+        # subparser setup to be duplicated or complete before this check.
+        help_parser = argparse.ArgumentParser(
+            prog="topsailai.py",
+            description="TopsailAI interactive CLI",
+            add_help=False,
+        )
+        help_parser.add_argument(
+            "-h", "--help",
+            action="store_true",
+            dest="help",
+            help="show this help message and exit",
+        )
+        help_parser.add_argument(
+            "--version",
+            action="store_true",
+            dest="version",
+            help="show program's version number and exit",
+        )
+        help_parser.add_argument(
+            "--tui", "--runtime-tui",
+            action="store_true",
+            dest="runtime_tui",
+            help=argparse.SUPPRESS,
+        )
+        help_parser.add_argument(
+            "--tail-lines",
+            type=int,
+            default=100,
+            dest="tail_lines",
+            metavar="N",
+            help=argparse.SUPPRESS,
+        )
+        help_parser.add_argument(
+            "--agent-mode",
+            type=str,
+            choices=["raw", "dtach", "tmux"],
+            default="dtach",
+            dest="agent_mode",
+            metavar="MODE",
+            help=argparse.SUPPRESS,
+        )
+        subparsers = help_parser.add_subparsers(dest="command", help="non-interactive commands")
+        subparsers.add_parser(
+            "workspace",
+            help="display the workspace task list and exit",
+            add_help=False,
+        )
+        docs_parser = subparsers.add_parser(
+            "docs",
+            help="documentation commands",
+            add_help=False,
+        )
+        docs_subparsers = docs_parser.add_subparsers(dest="docs_command")
+        docs_subparsers.add_parser(
+            "list",
+            help="list documentation files and exit",
+            add_help=False,
+        )
+        docs_subparsers.add_parser(
+            "read",
+            help="read a documentation file by folder/name.md or name and exit",
+            add_help=False,
+        )
+        project_parser = subparsers.add_parser(
+            "project",
+            help="manage the project list",
+            add_help=False,
+        )
+        project_subparsers = project_parser.add_subparsers(dest="project_subcommand")
+        project_subparsers.add_parser(
+            "list",
+            help="list managed projects",
+            add_help=False,
+        )
+        project_subparsers.add_parser(
+            "add",
+            help="add a project to the managed list",
+            add_help=False,
+        )
+        project_subparsers.add_parser(
+            "del",
+            help="remove a project from the managed list",
+            add_help=False,
+        )
+        help_parser.print_help()
+        sys.exit(1)
+
     parser = argparse.ArgumentParser(
         prog="topsailai.py",
         description="TopsailAI interactive CLI",
@@ -501,7 +627,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         dest="version",
         help="show program's version number and exit",
     )
-
     # Interactive-only options. These are intentionally suppressed from the
     # top-level help because they only affect the default interactive mode
     # (no subcommand). They remain available for backward compatibility when
@@ -558,26 +683,22 @@ def main(argv: Optional[List[str]] = None) -> None:
     workspace_parser = subparsers.add_parser(
         "workspace",
         help="display the workspace task list and exit",
-        add_help=False,
     )
     workspace_parser.set_defaults(func=_handle_workspace_subcommand)
 
     docs_parser = subparsers.add_parser(
         "docs",
         help="documentation commands",
-        add_help=False,
     )
     docs_subparsers = docs_parser.add_subparsers(dest="docs_command")
     docs_list_parser = docs_subparsers.add_parser(
         "list",
         help="list documentation files and exit",
-        add_help=False,
     )
     docs_list_parser.set_defaults(func=_handle_docs_list_subcommand)
     docs_read_parser = docs_subparsers.add_parser(
         "read",
         help="read a documentation file by folder/name.md or name and exit",
-        add_help=False,
     )
     docs_read_parser.add_argument("name", help="documentation file name")
     docs_read_parser.set_defaults(func=_handle_docs_read_subcommand)
@@ -585,19 +706,16 @@ def main(argv: Optional[List[str]] = None) -> None:
     project_parser = subparsers.add_parser(
         "project",
         help="manage the project list",
-        add_help=False,
     )
     project_subparsers = project_parser.add_subparsers(dest="project_subcommand")
     project_list_parser = project_subparsers.add_parser(
         "list",
         help="list managed projects",
-        add_help=False,
     )
     project_list_parser.set_defaults(func=_handle_project_subcommand)
     project_add_parser = project_subparsers.add_parser(
         "add",
         help="add a project to the managed list",
-        add_help=False,
     )
     project_add_parser.add_argument("project_path", help="project path")
     project_add_parser.add_argument(
@@ -610,7 +728,6 @@ def main(argv: Optional[List[str]] = None) -> None:
     project_del_parser = project_subparsers.add_parser(
         "del",
         help="remove a project from the managed list",
-        add_help=False,
     )
     project_del_parser.add_argument("project_path", help="project path")
     project_del_parser.set_defaults(func=_handle_project_subcommand)
@@ -619,9 +736,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     # arbitrary fake argv do not crash. Only help/version trigger an exit.
     try:
         args, remainder = parser.parse_known_args(argv)
-    except SystemExit:
-        # argparse may exit on invalid subcommand choices when pytest passes
-        # its own positional arguments. Treat this as an interactive run.
+    except SystemExit as exc:
+        # Let --help exits propagate so subcommand help is shown. For other
+        # argparse errors (e.g. invalid choices) fall back to interactive mode
+        # so pytest's own positional arguments do not crash the CLI.
+        if exc.code == 0:
+            raise
         args = argparse.Namespace(
             help=False,
             version=False,
@@ -1065,3 +1185,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         cleanup_children()
 
     print(f"\n{Colors.CYAN}Goodbye!{Colors.RESET}\n")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

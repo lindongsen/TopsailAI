@@ -1654,6 +1654,7 @@ class TestMainEntryPoint(unittest.TestCase):
         topsailai_path = os.path.join(project_root, "topsailai.py")
 
         home = mock_home.return_value
+        original_argv = sys.argv
         try:
             os.makedirs(os.path.join(home, "workspace", "task"), exist_ok=True)
             cli_state.running = True
@@ -1663,9 +1664,11 @@ class TestMainEntryPoint(unittest.TestCase):
             # project root rather than a similarly-named package elsewhere on
             # sys.path (e.g. src/topsailai from the agent codebase).
             sys.modules.pop("topsailai", None)
+            sys.argv = ["topsailai.py"]
             runpy.run_path(topsailai_path, run_name="__main__")
             mock_signal.assert_called()
         finally:
+            sys.argv = original_argv
             shutil.rmtree(home, ignore_errors=True)
 
 

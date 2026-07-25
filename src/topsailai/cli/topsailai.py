@@ -6,7 +6,9 @@ The interactive task watcher implementation has been moved into the
 invocations (``python topsailai.py``) continue to work.
 """
 
+import sys
+
 from cli_topsailai.core import main
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
