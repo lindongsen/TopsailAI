@@ -564,7 +564,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             metavar="MODE",
             help=argparse.SUPPRESS,
         )
-        subparsers = help_parser.add_subparsers(dest="command", help="non-interactive commands")
+        subparsers = help_parser.add_subparsers(dest="subcommand", help="non-interactive commands")
         subparsers.add_parser(
             "workspace",
             help="display the workspace task list and exit",
@@ -655,7 +655,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         help=argparse.SUPPRESS,
     )
 
-    subparsers = parser.add_subparsers(dest="command", help="non-interactive commands")
+    subparsers = parser.add_subparsers(dest="subcommand", help="non-interactive commands")
 
     # Deprecated non-interactive options. They are kept for backward
     # compatibility and route to the new subcommand behavior with a warning.
@@ -762,24 +762,26 @@ def main(argv: Optional[List[str]] = None) -> None:
         _warn_deprecated("--read-doc", "topsailai docs read <name>")
         sys.exit(_handle_docs_read_subcommand(args))
 
-    # Non-interactive subcommand dispatch.
-    if getattr(args, "func", None):
-        sys.exit(args.func(args))
-
-    # Unknown subcommand: if a positional argument remains and no recognized
-    # subcommand was selected, report it clearly and show help.
-    if remainder:
-        unknown = remainder[0]
-        print(
-            f"{Colors.RED}[ERROR] invalid subcommand: {unknown}{Colors.RESET}",
-            file=sys.stderr,
-        )
-        parser.print_help()
+    # Fail-safe: any subcommand (valid or invalid) must be handled and must
+    # never fall through to the interactive loop. Interactive mode is only
+    # entered when no subcommand and no non-interactive flags are present.
+    if args.subcommand is not None:
+        if getattr(args, "func", None):
+            sys.exit(args.func(args))
+        # Subcommand provided but no handler selected (e.g. ``docs`` or
+        # ``project`` without a nested subcommand): print the relevant help.
+        if args.subcommand == "docs":
+            docs_parser.print_help()
+        elif args.subcommand == "project":
+            project_parser.print_help()
+        elif args.subcommand == "workspace":
+            workspace_parser.print_help()
+        else:
+            parser.print_help()
         sys.exit(1)
 
-    # No recognized subcommand and no unknown positional arguments: start the
-    # interactive session. This preserves the pre-refactor behavior where
-    # pytest-injected sys.argv identifiers did not cause a crash.
+    # No recognized subcommand and no non-interactive flags: start the
+    # interactive session.
     # Heavy imports are deferred until after --help / --version are handled.
     from cli_topsailai.cleaning import clean_by_numbers, clean_expired_files
     from cli_topsailai.completer import setup_tab_completion
