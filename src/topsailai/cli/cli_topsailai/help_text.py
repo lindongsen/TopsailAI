@@ -86,8 +86,8 @@ def print_scopes() -> None:
         ),
         (
             "project",
-            "A navigation scope that lists recent sessions with recorded project workspaces, including their running or idle status.",
-            "Select or cd to a session, retrieve session context, refresh the list, launch or resume an agent in a project workspace, show help, or use cd to return to workspace scope.",
+            "A navigation scope that lists recent sessions with recorded project workspaces, including their running or idle status. It also supports an independently managed project list via the p command.",
+            "Select or cd to a session, retrieve session context, refresh the list, launch or resume an agent in a project workspace, switch between recent sessions (r) and managed projects (p), manage projects with p/p add/p del, show help, or use cd to return to workspace scope.",
         ),
         (
             "session",
@@ -198,7 +198,7 @@ def print_help(
         },
         {
             "cmd": "/agent <number|folder>",
-            "desc": "Launch an agent. In workspace scope, `agent` or `/agent` (no arguments) runs the YAML-configured agent command. `agent <number|folder>` or `/agent <number|folder>` changes to the selected project workspace folder and launches topsailai_launch_agent; the number refers to the log file list in workspace scope or the project session list in project scope, and an absolute/relative folder path can also be used.",
+            "desc": "Launch an agent. In workspace scope, `agent` or `/agent` (no arguments) runs the YAML-configured agent command. `agent <number|folder>` or `/agent <number|folder>` changes to the selected project workspace folder and launches topsailai_launch_agent; the number refers to the log file list in workspace scope, the project session list in project scope, or the managed project list when it is active. An absolute/relative folder path can also be used.",
             "example": "Example: agent  or  /agent  or  /agent 3  or  /agent /path/to/project",
             "scopes": ["workspace", "project"],
         },
@@ -206,6 +206,30 @@ def print_help(
             "cmd": "/resume <number>",
             "desc": "Resume an idle session in its project workspace. The selected session must not be running. You will be prompted to choose an agent driver (default: topsailai_agent_plan_tasks).",
             "example": "Example: /resume 3",
+            "scopes": ["project"],
+        },
+        {
+            "cmd": "p  or  projects",
+            "desc": "Switch to the managed project list in project scope. The list is stored in .projects.jsonl under TOPSAILAI_HOME and is sorted oldest-first.",
+            "example": "Example: p",
+            "scopes": ["project"],
+        },
+        {
+            "cmd": "r  or  recent",
+            "desc": "Switch back to the recent session/project list in project scope. This is the default view when entering project scope.",
+            "example": "Example: r",
+            "scopes": ["project"],
+        },
+        {
+            "cmd": "p add [path] [name]",
+            "desc": "Add a project to the managed project list. The path must exist and be a directory. If path or name is omitted, you will be prompted interactively.",
+            "example": "Example: p add /work/my-project my-project",
+            "scopes": ["project"],
+        },
+        {
+            "cmd": "p del <number>",
+            "desc": "Delete the managed project at the displayed row number. You will be asked for y/N confirmation. Only the registry entry is removed; the project folder on disk is not deleted.",
+            "example": "Example: p del 2",
             "scopes": ["project"],
         },
         {

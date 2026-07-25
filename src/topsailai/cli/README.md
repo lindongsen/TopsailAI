@@ -456,6 +456,38 @@ Display the most recent project/workspace entries recorded in `.project_history.
 
 A session is considered running when a `*.session.stdout` file exists under `{TOPSAILAI_HOME}/workspace/task/` for that session ID and the embedded PID is still alive. If multiple stdout files exist for the same session, the most recently modified file is used.
 
+## Project Scope Commands
+
+When the CLI is showing the project scope (`[project]>`), the following commands are available:
+
+| Command | Description |
+|---|---|
+| `<number>` | Watch the selected session log file. |
+| `/session <number>` | Retrieve the full session context for the selected entry. |
+| `/refresh` | Reload the project session list. |
+| `/agent <number|folder>` | Launch an agent in the selected project workspace. |
+| `/resume <number>` | Resume the selected running session. |
+| `r` or `recent` | Show the recent session/project list (default view). |
+| `p` or `projects` | Switch to the managed project list. |
+| `p add [path] [name]` | Add a project to the managed project list. |
+| `p del <number>` | Delete the managed project at the displayed row number. |
+| `/help` | Show available commands. |
+| `q`, `quit`, or `cd` | Return to workspace scope. |
+
+### Managed Project List
+
+The managed project list is stored independently from session history in `{TOPSAILAI_HOME}/.projects.jsonl`. Each line is a JSON object:
+
+```json
+{"name": "my-project", "path": "/work/my-project", "created_at": "2026-07-25T08:09:58", "updated_at": "2026-07-25T08:09:58"}
+```
+
+- `r` / `recent` displays the recent session/project list, which is the default view when entering project scope.
+- `p` / `projects` displays the managed list sorted oldest-first by creation time.
+- `p add` resolves the path to an absolute path and rejects non-existent directories or duplicate paths.
+- `p del <number>` asks for `y/N` confirmation and only removes the registry entry; it does not delete the project folder on disk.
+- When the managed project list is active, `agent <number>` launches an agent in the selected project's folder.
+
 ## Modification Rule
 
 When a user asks to modify a script but does not explicitly specify which script to change, do not guess. You must ask the user to clarify the exact script before making any edits.

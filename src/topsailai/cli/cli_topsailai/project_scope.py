@@ -23,6 +23,10 @@ if TYPE_CHECKING:
 from cli_topsailai.colors import Colors
 from cli_topsailai.log_files import _find_session_stdout_file, _get_pid_from_stdout_path
 from cli_topsailai.paths import get_topsailai_home
+from cli_topsailai.projects import (
+    build_managed_project_list as _build_managed_project_list,
+    print_project_table as _print_managed_project_table,
+)
 
 
 # Maximum number of concurrent running-status checks per refresh.
@@ -316,6 +320,29 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
     )
 
 
+def build_managed_project_list() -> List[Dict[str, Any]]:
+    """Build the user-managed project list.
+
+    This is a thin wrapper around :func:`cli_topsailai.projects.build_managed_project_list`
+    so callers only need to import from ``project_scope``.
+
+    Returns:
+        Numbered list of managed project dictionaries.
+    """
+    return _build_managed_project_list()
+
+
+def print_managed_project_table(entries: List[Dict[str, Any]]) -> None:
+    """Print the user-managed project list.
+
+    This is a thin wrapper around :func:`cli_topsailai.projects.print_project_table`.
+
+    Args:
+        entries: Numbered managed project list.
+    """
+    _print_managed_project_table(entries)
+
+
 def refresh_project_list(
     entries: List[Dict[str, Any]], limit: int = 10
 ) -> List[Dict[str, Any]]:
@@ -336,10 +363,10 @@ def resolve_agent_folder(arg: str, entries: List[Dict[str, Any]]) -> Optional[st
 
     If *arg* is a number, it is mapped to the project workspace of the
     corresponding entry in *entries* (1-based index).  Project scope entries
-    provide ``project_workspace`` directly; workspace log file entries provide
-    ``session_id`` and the project workspace is resolved from
-    ``.project_history.jsonl``.  Otherwise *arg* is returned as-is so it can be
-    used as a direct folder path.
+    provide ``project_workspace`` directly; managed project entries provide
+    ``path`` directly; workspace log file entries provide ``session_id`` and
+    the project workspace is resolved from ``.project_history.jsonl``.
+    Otherwise *arg* is returned as-is so it can be used as a direct folder path.
 
     Args:
         arg: User-provided argument, either a list number or a folder path.
@@ -361,6 +388,9 @@ def resolve_agent_folder(arg: str, entries: List[Dict[str, Any]]) -> Optional[st
         if 0 <= idx < len(entries):
             entry = entries[idx]
             folder = entry.get("project_workspace", "")
+            if folder:
+                return folder
+            folder = entry.get("path", "")
             if folder:
                 return folder
             session_id = entry.get("session_id", "")

@@ -25,7 +25,19 @@ from cli_topsailai.doc_scope import (
     print_doc_table,
     resolve_doc,
 )
+from cli_topsailai.projects import (
+    add_project,
+    delete_project_by_index,
+    load_projects,
+    print_project_table,
+)
+
 __version__ = "0.1.0"
+
+# Tracks whether the project scope is showing session-based projects
+# ("sessions") or the managed project list ("managed").
+_project_scope_mode: str = "sessions"
+
 
 def setup_signal_handlers() -> None:
     """Register SIGINT/SIGTERM handlers for graceful shutdown."""
@@ -103,16 +115,20 @@ def prompt_selection(
 
             if not user_input:
                 continue
-
             lower_input = user_input.lower()
 
             if lower_input in ("q", "quit", "exit"):
                 if state.current_scope == "doc":
                     return ("leave_scope", None)
                 return ("quit", None)
+
+            # Project scope: r/recent shows recent session/project history.
+            # This must be checked before the global r/refresh binding.
+            if state.current_scope == "project" and lower_input in ("r", "recent"):
+                return ("show_recent_projects", None)
+
             if lower_input in ("r", "refresh", "/refresh"):
                 return ("refresh", None)
-
             if lower_input.startswith("/clean") or lower_input.startswith("clean"):
                 parts = user_input.split()
                 if len(parts) == 1:
@@ -203,6 +219,31 @@ def prompt_selection(
                         continue
                     # Non-numeric argument is treated as a literal session ID.
                     return ("enter_session", arg)
+
+            # Managed project list commands (project scope only).
+            if state.current_scope == "project":
+                if lower_input in ("p", "projects"):
+                    return ("show_managed_projects", None)
+                if lower_input in ("r", "recent"):
+                    return ("show_recent_projects", None)
+                if lower_input.startswith("p ") or lower_input.startswith("/p "):
+                    parts = user_input.split(None, 2)
+                    subcmd = parts[1].lower() if len(parts) > 1 else ""
+                    if subcmd == "add":
+                        args = parts[2] if len(parts) > 2 else ""
+                        return ("add_managed_project", args)
+                    if subcmd == "del":
+                        if len(parts) < 3:
+                            print(
+                                f"{Colors.RED}[ERROR] Usage: p del <number>{Colors.RESET}"
+                            )
+                            continue
+                        return ("delete_managed_project", parts[2].strip())
+                    print(
+                        f"{Colors.RED}[ERROR] Unknown project sub-command: "
+                        f"'{subcmd}'. Use p add or p del.{Colors.RESET}"
+                    )
+                    continue
 
             # Try YAML command matching first
             yaml_match = match_yaml_command(user_input, task_dir)
@@ -344,6 +385,7 @@ def _print_workspace_table() -> None:
 
 def main(argv: Optional[List[str]] = None) -> None:
     """Main entry point for the TopsailAI CLI."""
+    global _project_scope_mode
     parser = argparse.ArgumentParser(
         prog="topsailai.py",
         description="TopsailAI interactive CLI",
@@ -442,8 +484,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     from cli_topsailai.paths import get_topsailai_home
     from cli_topsailai.process import cleanup_children
     from cli_topsailai.project_scope import (
+        build_managed_project_list,
         build_project_list,
         launch_agent_in_folder,
+        print_managed_project_table,
         print_project_table,
         resolve_agent_folder,
         resume_session,
@@ -489,6 +533,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     log_files = discover_log_files(task_dir, on_item=_print_refresh_item)
     enrich_files_with_session_names(log_files)
     project_entries: List[Dict[str, Any]] = []
+    managed_project_entries: List[Dict[str, Any]] = []
+    doc_entries: List[Dict[str, Any]] = []
 
     def _refresh_workspace() -> None:
         nonlocal log_files
@@ -497,6 +543,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         log_files = discover_log_files(task_dir, on_item=_print_refresh_item)
         enrich_files_with_session_names(log_files)
         print_table(log_files)
+
+    def _refresh_managed_projects() -> None:
+        nonlocal managed_project_entries
+        managed_project_entries = build_managed_project_list()
+        print_managed_project_table(managed_project_entries)
 
     def _refresh_project() -> None:
         nonlocal project_entries
@@ -508,19 +559,64 @@ def main(argv: Optional[List[str]] = None) -> None:
                 f"\n{Colors.YELLOW}[WARN] No sessions with project_workspace found.{Colors.RESET}"
             )
 
-    doc_entries: List[Dict[str, Any]] = []
+    def _refresh_project_scope() -> None:
+        """Refresh whichever project-scope view is currently active."""
+        if _project_scope_mode == "managed":
+            _refresh_managed_projects()
+        else:
+            _refresh_project()
+
+    def _handle_add_managed_project(args_str: str) -> None:
+        """Parse arguments and add a managed project, prompting when needed."""
+        global _project_scope_mode
+        parts = args_str.strip().split(None, 1)
+        if not parts:
+            raw_path = input("Project path: ").strip()
+        else:
+            raw_path = parts[0].strip()
+        if not raw_path:
+            print(f"{Colors.RED}[ERROR] Project path is required.{Colors.RESET}")
+            return
+        name = parts[1].strip() if len(parts) > 1 else None
+        if not name:
+            name = input("Project name (optional): ").strip() or None
+        if add_project(raw_path, name=name):
+            print(f"{Colors.GREEN}[INFO] Project added.{Colors.RESET}")
+            _project_scope_mode = "managed"
+            _refresh_managed_projects()
+        else:
+            print(f"{Colors.RED}[ERROR] Failed to add project.{Colors.RESET}")
+
+    def _handle_delete_managed_project(args_str: str) -> None:
+        """Delete a managed project by its displayed row number."""
+        global _project_scope_mode
+        args_str = args_str.strip()
+        if not args_str:
+            print(
+                f"{Colors.RED}[ERROR] Missing project number. Usage: p del <number>{Colors.RESET}"
+            )
+            return
+        try:
+            index = int(args_str)
+        except ValueError:
+            print(
+                f"{Colors.RED}[ERROR] Invalid project number: '{args_str}'.{Colors.RESET}"
+            )
+            return
+        if delete_project_by_index(index):
+            print(f"{Colors.GREEN}[INFO] Project deleted.{Colors.RESET}")
+            _project_scope_mode = "managed"
+            _refresh_managed_projects()
+        else:
+            print(f"{Colors.RED}[ERROR] Failed to delete project.{Colors.RESET}")
 
     def _refresh_doc() -> None:
         nonlocal doc_entries
         doc_entries = build_doc_list()
-        if doc_entries:
-            print_doc_table(doc_entries)
-        else:
-            print(
-                f"\n{Colors.YELLOW}[WARN] No documentation files found.{Colors.RESET}"
-            )
+        print_doc_table(doc_entries)
 
     if state.current_scope == "project":
+        _project_scope_mode = "sessions"
         _refresh_project()
     elif state.current_scope == "doc":
         _refresh_doc()
@@ -533,7 +629,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     try:
         while state.running:
             if state.current_scope == "project":
-                active_items = project_entries
+                active_items = (
+                    managed_project_entries
+                    if _project_scope_mode == "managed"
+                    else project_entries
+                )
             elif state.current_scope == "doc":
                 active_items = doc_entries
             else:
@@ -544,6 +644,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             if action == "yaml_handled":
                 if state.current_scope != previous_scope:
                     if state.current_scope == "project":
+                        _project_scope_mode = "sessions"
                         _refresh_project()
                     elif state.current_scope == "doc":
                         _refresh_doc()
@@ -556,7 +657,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
             if action == "refresh":
                 if state.current_scope == "project":
-                    _refresh_project()
+                    _refresh_project_scope()
                 elif state.current_scope == "doc":
                     _refresh_doc()
                 else:
@@ -606,11 +707,14 @@ def main(argv: Optional[List[str]] = None) -> None:
                 continue
 
             if action == "agent":
-                active_entries = (
-                    project_entries
-                    if state.current_scope == "project"
-                    else log_files
-                )
+                if state.current_scope == "project":
+                    active_entries = (
+                        managed_project_entries
+                        if _project_scope_mode == "managed"
+                        else project_entries
+                    )
+                else:
+                    active_entries = log_files
                 folder = resolve_agent_folder(value, active_entries)
                 if folder is None:
                     print(
@@ -631,6 +735,12 @@ def main(argv: Optional[List[str]] = None) -> None:
                 continue
 
             if action == "session":
+                if state.current_scope == "project" and _project_scope_mode == "managed":
+                    print(
+                        f"\n{Colors.YELLOW}[INFO] /session is not available for managed projects. "
+                        f"Use /agent {{number}} to launch an agent.{Colors.RESET}"
+                    )
+                    continue
                 active_entries = (
                     project_entries
                     if state.current_scope == "project"
@@ -701,6 +811,12 @@ def main(argv: Optional[List[str]] = None) -> None:
                 continue
 
             if action == "watch":
+                if state.current_scope == "project" and _project_scope_mode == "managed":
+                    print(
+                        f"\n{Colors.YELLOW}[INFO] Watching a log file is not available for managed projects. "
+                        f"Use /agent {{number}} to launch an agent.{Colors.RESET}"
+                    )
+                    continue
                 active_entries = (
                     project_entries
                     if state.current_scope == "project"
@@ -725,9 +841,27 @@ def main(argv: Optional[List[str]] = None) -> None:
                 )
                 print(f"\n{Colors.DIM}Refreshing list...{Colors.RESET}")
                 if state.current_scope == "project":
-                    _refresh_project()
+                    _refresh_project_scope()
                 else:
                     _refresh_workspace()
+                continue
+
+            if action == "show_managed_projects":
+                _project_scope_mode = "managed"
+                _refresh_managed_projects()
+                continue
+
+            if action == "show_recent_projects":
+                _project_scope_mode = "sessions"
+                _refresh_project()
+                continue
+
+            if action == "add_managed_project":
+                _handle_add_managed_project(value)
+                continue
+
+            if action == "delete_managed_project":
+                _handle_delete_managed_project(value)
                 continue
     except KeyboardInterrupt:
         print(f"\n{Colors.YELLOW}[INFO] Interrupted by user.{Colors.RESET}")

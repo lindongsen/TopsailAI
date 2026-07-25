@@ -15,8 +15,10 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+import cli_topsailai.state as cli_state
 from cli_topsailai import project_scope
 from cli_topsailai.colors import Colors
+from cli_topsailai.core import prompt_selection
 
 
 class MockCompletedProcess:
@@ -1003,5 +1005,155 @@ class TestResumeSession(unittest.TestCase):
         self.assertIn("no project workspace", output)
 
 
+
+
+class TestManagedProjectWrappers(unittest.TestCase):
+    """Tests for managed-project helpers in project_scope."""
+
+    def tearDown(self):
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+        cli_state.history_manager = None
+        cli_state._child_processes.clear()
+
+    @patch("cli_topsailai.project_scope._build_managed_project_list")
+    def test_build_managed_project_list_wrapper(self, mock_build):
+        mock_build.return_value = [
+            {"no": 1, "name": "a", "path": "/work/a", "created_at": "2026-07-25T08:00:00"},
+        ]
+        entries = project_scope.build_managed_project_list()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["name"], "a")
+        mock_build.assert_called_once_with()
+
+    @patch("sys.stdout", new_callable=io.StringIO)
+    @patch("cli_topsailai.project_scope._print_managed_project_table")
+    def test_print_managed_project_table_wrapper(self, mock_print_table, mock_stdout):
+        entries = [
+            {"no": 1, "name": "a", "path": "/work/a", "created_at": "2026-07-25T08:00:00"},
+        ]
+        project_scope.print_managed_project_table(entries)
+        mock_print_table.assert_called_once_with(entries)
+
+
+class TestResolveAgentFolderManaged(unittest.TestCase):
+    """Tests for resolve_agent_folder with managed project entries."""
+
+    def test_resolve_managed_project_by_number(self):
+        entries = [
+            {"no": 1, "name": "a", "path": "/work/a"},
+            {"no": 2, "name": "b", "path": "/work/b"},
+        ]
+        folder = project_scope.resolve_agent_folder("2", entries)
+        self.assertEqual(folder, "/work/b")
+
+    def test_resolve_managed_project_uses_path(self):
+        entries = [
+            {"no": 1, "name": "a", "path": "/work/managed"},
+        ]
+        folder = project_scope.resolve_agent_folder("1", entries)
+        self.assertEqual(folder, "/work/managed")
+
+    def test_resolve_project_workspace_takes_precedence_over_path(self):
+        entries = [
+            {"no": 1, "name": "a", "path": "/work/managed", "project_workspace": "/work/session"},
+        ]
+        folder = project_scope.resolve_agent_folder("1", entries)
+        self.assertEqual(folder, "/work/session")
+
+    def test_resolve_managed_project_invalid_number(self):
+        entries = [{"no": 1, "name": "a", "path": "/work/a"}]
+        folder = project_scope.resolve_agent_folder("5", entries)
+        self.assertIsNone(folder)
+
+
+class TestPromptSelectionManagedProjects(unittest.TestCase):
+    """Tests for prompt_selection handling of managed project commands."""
+
+    def setUp(self):
+        cli_state.current_scope = "project"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+        cli_state.history_manager = None
+
+    def tearDown(self):
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+        cli_state.history_manager = None
+        cli_state._child_processes.clear()
+
+    @patch("cli_topsailai.core.input")
+    def test_p_shows_managed_projects(self, mock_input):
+        mock_input.return_value = "p"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "show_managed_projects")
+
+    @patch("cli_topsailai.core.input")
+    def test_projects_alias_shows_managed_projects(self, mock_input):
+        mock_input.return_value = "projects"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "show_managed_projects")
+
+    @patch("cli_topsailai.core.input")
+    def test_r_shows_recent_projects(self, mock_input):
+        mock_input.return_value = "r"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "show_recent_projects")
+
+    @patch("cli_topsailai.core.input")
+    def test_recent_alias_shows_recent_projects(self, mock_input):
+        mock_input.return_value = "recent"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "show_recent_projects")
+
+    @patch("cli_topsailai.core.input")
+    def test_p_add_with_args(self, mock_input):
+        mock_input.return_value = "p add /work/my-project my-project"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "add_managed_project")
+        self.assertEqual(value, "/work/my-project my-project")
+
+    @patch("cli_topsailai.core.input")
+    def test_p_add_without_args(self, mock_input):
+        mock_input.return_value = "p add"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "add_managed_project")
+        self.assertEqual(value, "")
+
+    @patch("cli_topsailai.core.input")
+    def test_p_del_with_number(self, mock_input):
+        mock_input.return_value = "p del 2"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "delete_managed_project")
+        self.assertEqual(value, "2")
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_p_del_without_number_shows_usage(self, mock_input, mock_print):
+        mock_input.side_effect = ["p del", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("Usage: p del <number>" in str(call) for call in mock_print.call_args_list)
+        )
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_p_unknown_subcommand_shows_error(self, mock_input, mock_print):
+        mock_input.side_effect = ["p foo", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("Unknown project sub-command" in str(call) for call in mock_print.call_args_list)
+        )
+
+    @patch("cli_topsailai.core.input")
+    def test_agent_number_in_project_managed_mode(self, mock_input):
+        mock_input.return_value = "agent 2"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "agent")
+        self.assertEqual(value, "2")
 if __name__ == "__main__":
     unittest.main()
