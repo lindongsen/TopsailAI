@@ -1,0 +1,10 @@
+[
+  {
+    "step_name": "thought",
+    "raw_text": "I have finished checking the available context."
+  },
+  {
+    "step_name": "final_answer",
+    "raw_text": "The requested analysis is complete."
+  }
+]</thinking>
