@@ -109,3 +109,13 @@ MISTAKES = dict(
 ```
 
 After adding the fixer, verify it through `format_response()` end-to-end, not only by calling the fixer directly. Unit tests should cover both the fixer in isolation and the full `format_response()` path for the affected response format.
+
+
+## Diagnosing `parsing response` Failures from `topsailai.log.ec`
+
+Search `topsailai.log.ec` for `parsing response` and ignore entries whose tail contains `(unit-test:)`. Inspect the raw LLM response enclosed between `>>>` and `<<<`.
+
+- If the parsing error is immediately followed by an `LLM Mistake` log, the system recognized a repairable pattern and will attempt recovery.
+- If no `LLM Mistake` log follows, no repair method matched and the response will fail to parse.
+
+Use this distinction to decide whether to add a new mistake fixer or improve an existing one.
