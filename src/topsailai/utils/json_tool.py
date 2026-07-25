@@ -32,6 +32,42 @@ def convert_code_block_to_json_str(content:str):
         return content[:-3]
     return None
 
+def _extract_first_balanced_json(content: str) -> str | None:
+    """Extract balanced JSON when the content starts with an object or array."""
+    content = content.strip()
+    if not content or content[0] not in "{[":
+        return None
+
+    closing_chars = {"{": "}", "[": "]"}
+    stack = []
+    in_string = False
+    escaped = False
+
+    for index, char in enumerate(content):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char in closing_chars:
+            stack.append(closing_chars[char])
+        elif char in "}]":
+            if not stack or char != stack.pop():
+                return None
+            if not stack:
+                candidate = content[:index + 1]
+                if safe_json_load(candidate) is not None:
+                    return candidate
+                return None
+
+    return None
+
 def fix_llm_mistakes_on_json(content):
     """Fix common JSON formatting mistakes made by language models.
 
@@ -53,9 +89,15 @@ def fix_llm_mistakes_on_json(content):
         return content
 
     content = content.strip()
-
-    if safe_json_load(content):
+    if not content:
         return content
+
+    if safe_json_load(content) is not None:
+        return content
+
+    extracted_content = _extract_first_balanced_json(content)
+    if extracted_content is not None:
+        return extracted_content
 
     # case: startswith '{', endswith '\n}'
     for _char_start, _char_end in [

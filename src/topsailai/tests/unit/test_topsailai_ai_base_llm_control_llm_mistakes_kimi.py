@@ -4,6 +4,7 @@ Unit tests for topsailai.ai_base.llm_control.llm_mistakes.kimi
 
 import os
 import pytest
+from unittest.mock import MagicMock, patch
 
 from topsailai.ai_base.llm_control.llm_mistakes.kimi import (
     _get_current_model_name,
@@ -303,3 +304,34 @@ class TestMistakesDict:
 
     def test_mistakes_length(self):
         assert len(MISTAKES) == 2
+
+
+class TestGetCurrentModelNameThreadLocal:
+    """Additional coverage for _get_current_model_name thread-local agent resolution."""
+
+    def test_thread_local_agent_llm_model(self):
+        """Model name is resolved from thread-local agent's llm_model."""
+        from topsailai.ai_base.llm_control.llm_mistakes import kimi
+
+        fake_llm_model = MagicMock()
+        fake_llm_model.model_name = "Kimi-Custom"
+        fake_agent = MagicMock()
+        fake_agent.llm_model = fake_llm_model
+
+        with patch.object(kimi, "get_agent_object", return_value=fake_agent):
+            result = kimi._get_current_model_name()
+            assert result == "Kimi-Custom"
+
+    def test_thread_local_agent_without_llm_model_falls_back_to_env(self, monkeypatch):
+        """When agent lacks llm_model, fall back to OPENAI_MODEL env var."""
+        from topsailai.ai_base.llm_control.llm_mistakes import kimi
+
+        fake_agent = MagicMock()
+        fake_agent.llm_model = None
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-Fallback")
+
+        with patch.object(kimi, "get_agent_object", return_value=fake_agent):
+            result = kimi._get_current_model_name()
+            assert result == "Kimi-Fallback"
+
+

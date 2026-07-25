@@ -1,0 +1,11 @@
+[
+  {
+    "step_name": "thought",
+    "raw_text": "I have enough information to answer."
+  },
+  {
+    "step_name": "final_answer",
+    "raw_text": "The operation completed successfully."
+  }
+]
+<think>This trailing block should not be part of the parsed JSON response.</think>

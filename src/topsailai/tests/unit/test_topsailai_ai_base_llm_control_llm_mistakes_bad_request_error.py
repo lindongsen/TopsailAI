@@ -209,3 +209,23 @@ class TestEdgeCases:
         # Function checks d.get("type"), not d["error"].get("type"), so this returns None
         result = check_mistake1(message)
         assert result is None
+
+
+class TestNestedTypeInsideError:
+    """Additional coverage for nested type inside error object."""
+
+    def test_nested_type_inside_error_does_not_raise(self):
+        """Nested type inside error dict is not detected; function returns None."""
+        from topsailai.ai_base.llm_control.llm_mistakes.bad_request_error import check_mistake1
+
+        message = [
+            {
+                "error": {
+                    "type": "BadRequestError",
+                    "code": 400,
+                    "message": "bad request",
+                }
+            }
+        ]
+        result = check_mistake1(message)
+        assert result is None

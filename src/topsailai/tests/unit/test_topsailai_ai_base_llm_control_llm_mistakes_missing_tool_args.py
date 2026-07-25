@@ -332,3 +332,18 @@ class TestMistakesDict:
     def test_mistakes_length(self):
         """Test MISTAKES has exactly 2 entries."""
         assert len(MISTAKES) == 2
+
+
+class TestFixMistake2ListRawTextWithoutClosingTag:
+    """Additional coverage for fix_mistake2 list input without closing </action> tag."""
+
+    def test_list_raw_text_with_open_action_no_close(self):
+        """List with raw_text containing <action> but no </action> returns None."""
+        from topsailai.ai_base.llm_control.llm_mistakes.missing_tool_args import fix_mistake2
+
+        message = [{
+            "step_name": "action",
+            "raw_text": '<action>\n{"tool_call": "xxx"}',
+        }]
+        result = fix_mistake2(message)
+        assert result is None
