@@ -737,25 +737,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     try:
         args, remainder = parser.parse_known_args(argv)
     except SystemExit as exc:
-        # Let --help exits propagate so subcommand help is shown. For other
-        # argparse errors (e.g. invalid choices) fall back to interactive mode
-        # so pytest's own positional arguments do not crash the CLI.
+        # Let --help exits propagate so subcommand help is shown. Re-raise
+        # argparse errors (e.g. invalid choices, missing required arguments)
+        # so malformed CLI usage exits with the proper code instead of
+        # falling back to interactive mode.
         if exc.code == 0:
             raise
-        args = argparse.Namespace(
-            help=False,
-            version=False,
-            runtime_tui=False,
-            tail_lines=100,
-            agent_mode="dtach",
-            workspace=False,
-            list_docs=False,
-            read_doc=None,
-            command=None,
-            docs_command=None,
-            project_subcommand=None,
-        )
-        remainder = []
+        raise
     if args.help:
         parser.print_help()
         sys.exit(0)
