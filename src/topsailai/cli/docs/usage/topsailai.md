@@ -35,12 +35,15 @@ topsailai
 
 ## Options
 
+These options apply only to the default interactive mode (no subcommand). They control the runtime/watch behavior when you start the CLI interactively.
+
 | Option | Description |
 |--------|-------------|
 | `-h`, `--help` | Show help message and exit. |
 | `--version` | Show program version and exit. |
 | `--tui`, `--runtime-tui` | Use the two-pane curses UI when watching a log. |
 | `--tail-lines N` | Number of recent log lines to echo on startup in runtime mode (default: 100). |
+| `--agent-mode MODE` | raw \| dtach \| tmux |
 
 ## Scopes
 

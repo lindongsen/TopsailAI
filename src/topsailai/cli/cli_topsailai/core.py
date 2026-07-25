@@ -501,11 +501,16 @@ def main(argv: Optional[List[str]] = None) -> None:
         dest="version",
         help="show program's version number and exit",
     )
+
+    # Interactive-only options. These are intentionally suppressed from the
+    # top-level help because they only affect the default interactive mode
+    # (no subcommand). They remain available for backward compatibility when
+    # starting the CLI without a subcommand.
     parser.add_argument(
         "--tui", "--runtime-tui",
         action="store_true",
         dest="runtime_tui",
-        help="use the two-pane curses UI when entering the runtime scope",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--tail-lines",
@@ -513,7 +518,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         default=100,
         dest="tail_lines",
         metavar="N",
-        help="number of recent log lines to echo on startup in runtime mode (default: 100)",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--agent-mode",
@@ -522,8 +527,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         default="dtach",
         dest="agent_mode",
         metavar="MODE",
-        help="how to launch agent processes: raw (direct), dtach, or tmux (default: dtach)",
+        help=argparse.SUPPRESS,
     )
+
+    subparsers = parser.add_subparsers(dest="command", help="non-interactive commands")
+
     # Deprecated non-interactive options. They are kept for backward
     # compatibility and route to the new subcommand behavior with a warning.
     parser.add_argument(
@@ -546,8 +554,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         metavar="NAME",
         help=argparse.SUPPRESS,
     )
-
-    subparsers = parser.add_subparsers(dest="command", help="non-interactive commands")
 
     workspace_parser = subparsers.add_parser(
         "workspace",
@@ -632,10 +638,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         remainder = []
     if args.help:
         parser.print_help()
-        print("\nGlobal options:")
-        print("  --tui, --runtime-tui     Use the two-pane curses UI in runtime scope")
-        print("  --tail-lines N           Number of recent log lines on runtime startup")
-        print("  --agent-mode MODE        raw | dtach | tmux")
         sys.exit(0)
     if args.version:
         print(f"{parser.prog} {__version__}")
