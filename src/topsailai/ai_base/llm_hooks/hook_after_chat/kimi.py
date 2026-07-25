@@ -56,31 +56,16 @@ def convert_to_list_dict(content: str) -> list[dict]:
         # The JSON args are captured between <|tool_call_argument_begin|> and <|tool_call_end|>
         # We need to extract the JSON object from potentially nested content
         raw_args = match[2].strip()
+        argument_end = "<|tool_call_argument_end|>"
+        if argument_end in raw_args:
+            raw_args = raw_args.split(argument_end, 1)[0].strip()
 
-        # Try to parse the raw content as JSON directly first
-        json_str = None
+        # Parse the first complete JSON value so repeated output after the arguments is ignored.
         try:
-            # Try parsing the whole thing as JSON
-            parsed = json.loads(raw_args)
-            json_str = raw_args
+            parsed, _ = json.JSONDecoder().raw_decode(raw_args)
             tool_args = parsed
         except json.JSONDecodeError:
-            # If direct parsing fails, try to extract JSON object by finding balanced braces
-            # Find the first { and last } to extract the JSON object
-            first_brace = raw_args.find('{')
-            last_brace = raw_args.rfind('}')
-            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-                potential_json = raw_args[first_brace:last_brace + 1]
-                try:
-                    tool_args = json.loads(potential_json)
-                    json_str = potential_json
-                except json.JSONDecodeError:
-                    tool_args = {}
-            else:
-                tool_args = {}
-
-        if json_str is None:
-            json_str = raw_args
+            continue
 
         result.append({
             "step_name": "action",

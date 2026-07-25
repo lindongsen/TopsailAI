@@ -9,6 +9,7 @@ Purpose: Test Kimi LLM hook - convert kimi format to standard format
 
 import pytest
 from topsailai.ai_base.llm_control.exception import ModelServiceError
+from topsailai.ai_base.llm_control.message import format_response
 from topsailai.ai_base.llm_hooks.hook_after_chat.kimi import (
     convert_to_list_dict,
     hook_execute,
@@ -53,13 +54,12 @@ class TestConvertToListDict:
         assert len(result) == 0
 
     def test_invalid_json_args(self):
-        """Test handling of invalid JSON in tool arguments"""
+        """Test invalid JSON does not become a tool call with empty arguments"""
         content = '<|tool_calls_section_begin|><|tool_call_begin|>functions.test_tool:1<|tool_call_argument_begin|>{invalid json}<|tool_call_end|><|tool_calls_section_end|>'
-        result = convert_to_list_dict(content)
-        
-        assert len(result) == 1
-        assert result[0]["tool_call"] == "test_tool"
-        assert result[0]["tool_args"] == {}
+
+        assert convert_to_list_dict(content) == []
+        with pytest.raises(ModelServiceError):
+            hook_execute(content)
 
     def test_empty_content(self):
         """Test with empty content string"""
@@ -78,6 +78,35 @@ class TestConvertToListDict:
         
         assert len(result) == 1
         assert result[0]["tool_call"] == "file-readonly-tool"
+
+    @pytest.mark.parametrize(
+        "tail",
+        [
+            "<|tool_call_end|><|tool_calls_section_end|>",
+            "<|tool_call_argument_end|><|tool_call_end|>",
+            "",
+            '\n{"tool_args":{"ignored":true},"tool_call":"cmd_tool-exec_cmd"}',
+        ],
+    )
+    def test_preserves_arguments_for_supported_kimi_tails(self, tail, monkeypatch):
+        """Test complete, argument-end, missing-tail, and repeated-output formats"""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        arguments = {"nested": {"items": [1, {"value": 'quoted "{text}"'}]}}
+        content = (
+            "<|tool_calls_section_begin|><|tool_call_begin|>"
+            "functions.cmd_tool-exec_cmd:23<|tool_call_argument_begin|>"
+            '{"cmd":"run","timeout":120,"nested":{"items":[1,{"value":"quoted \\\"{text}\\\""}]}}'
+            f"{tail}"
+        )
+
+        result = format_response(content)
+
+        assert result == [{
+            "step_name": "action",
+            "tool_call": "cmd_tool-exec_cmd",
+            "tool_args": {"cmd": "run", "timeout": 120, **arguments},
+        }]
+
 
 
 class TestHookExecute:
