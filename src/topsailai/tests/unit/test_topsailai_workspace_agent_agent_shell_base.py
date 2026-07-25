@@ -103,6 +103,144 @@ class TestAgentChatRun(unittest.TestCase):
 
         self.assertEqual(mock_task.tool_call_count, 5)
         mock_tool_stat.get_agent_tool_stat.assert_called_once_with(self.mock_ai_agent)
+
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.tool_stat")
+    @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
+    def test_run_lazy_warning_when_tool_stat_enabled_and_zero_calls(
+        self, mock_get_agent_step_call, mock_task_tool, mock_lock_tool,
+        mock_tool_stat, mock_env_tool, mock_set_ai_agent, mock_get_hooks
+    ):
+        """When tool-stat is enabled and no tool calls were made, append the warning."""
+        from topsailai.workspace.agent.agent_shell_base import (
+            AgentChat,
+            LAZY_EXECUTION_WARNING,
+        )
+
+        mock_get_hooks.return_value = []
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = lambda key, default: {
+            "TOPSAILAI_INTERACTIVE_MODE": False,
+            "TOPSAILAI_NEED_SYMBOL_FOR_ANSWER": False,
+            "TOPSAILAI_ENABLE_SESSION_LOCK": False,
+            "TOPSAILAI_ENABLE_TOOL_STAT": True,
+        }.get(key, default)
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_env_tool.is_debug_mode.return_value = False
+        mock_lock_tool.ctxm_void.return_value.__enter__ = MagicMock(return_value={})
+        mock_lock_tool.ctxm_void.return_value.__exit__ = MagicMock(return_value=False)
+        mock_task = mock_task_tool.TaskUtil.return_value
+        mock_task.manifest = "---\nstatus: done\n---\n"
+        mock_task.tool_call_count = 0
+        mock_task_tool.ctxm_process_task.return_value.__enter__ = MagicMock(return_value=None)
+        mock_task_tool.ctxm_process_task.return_value.__exit__ = MagicMock(return_value=False)
+        mock_tool_stat.get_agent_tool_stat.return_value.total_calls = 0
+        self.mock_ai_agent.run.return_value = "Test response"
+
+        agent_chat = AgentChat(
+            hook_instruction=self.hook_instruction,
+            ctx_rt_aiagent=self.ctx_rt_aiagent,
+            ctx_rt_instruction=self.ctx_rt_instruction,
+        )
+
+        result = agent_chat.run(message="Hello", times=1, task_id="task-id")
+
+        self.assertIn(LAZY_EXECUTION_WARNING, result)
+        self.assertIn("!!! CRITICAL SYSTEM WARNING !!!", result)
+
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.tool_stat")
+    @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
+    def test_run_no_lazy_warning_when_tool_calls_present(
+        self, mock_get_agent_step_call, mock_task_tool, mock_lock_tool,
+        mock_tool_stat, mock_env_tool, mock_set_ai_agent, mock_get_hooks
+    ):
+        """When tool-stat is enabled and tool calls were made, do not append the warning."""
+        from topsailai.workspace.agent.agent_shell_base import (
+            AgentChat,
+            LAZY_EXECUTION_WARNING,
+        )
+
+        mock_get_hooks.return_value = []
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = lambda key, default: {
+            "TOPSAILAI_INTERACTIVE_MODE": False,
+            "TOPSAILAI_NEED_SYMBOL_FOR_ANSWER": False,
+            "TOPSAILAI_ENABLE_SESSION_LOCK": False,
+            "TOPSAILAI_ENABLE_TOOL_STAT": True,
+        }.get(key, default)
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_env_tool.is_debug_mode.return_value = False
+        mock_lock_tool.ctxm_void.return_value.__enter__ = MagicMock(return_value={})
+        mock_lock_tool.ctxm_void.return_value.__exit__ = MagicMock(return_value=False)
+        mock_task = mock_task_tool.TaskUtil.return_value
+        mock_task.manifest = "---\nstatus: done\n---\n"
+        mock_task.tool_call_count = 3
+        mock_task_tool.ctxm_process_task.return_value.__enter__ = MagicMock(return_value=None)
+        mock_task_tool.ctxm_process_task.return_value.__exit__ = MagicMock(return_value=False)
+        mock_tool_stat.get_agent_tool_stat.return_value.total_calls = 3
+        self.mock_ai_agent.run.return_value = "Test response"
+
+        agent_chat = AgentChat(
+            hook_instruction=self.hook_instruction,
+            ctx_rt_aiagent=self.ctx_rt_aiagent,
+            ctx_rt_instruction=self.ctx_rt_instruction,
+        )
+
+        result = agent_chat.run(message="Hello", times=1, task_id="task-id")
+
+        self.assertNotIn(LAZY_EXECUTION_WARNING, result)
+
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.tool_stat")
+    @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
+    def test_run_no_lazy_warning_when_tool_stat_disabled(
+        self, mock_get_agent_step_call, mock_task_tool, mock_lock_tool,
+        mock_tool_stat, mock_env_tool, mock_set_ai_agent, mock_get_hooks
+    ):
+        """When tool-stat is disabled, do not append the warning even with zero calls."""
+        from topsailai.workspace.agent.agent_shell_base import (
+            AgentChat,
+            LAZY_EXECUTION_WARNING,
+        )
+
+        mock_get_hooks.return_value = []
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = lambda key, default: {
+            "TOPSAILAI_INTERACTIVE_MODE": False,
+            "TOPSAILAI_NEED_SYMBOL_FOR_ANSWER": False,
+            "TOPSAILAI_ENABLE_SESSION_LOCK": False,
+            "TOPSAILAI_ENABLE_TOOL_STAT": False,
+        }.get(key, default)
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_env_tool.is_debug_mode.return_value = False
+        mock_lock_tool.ctxm_void.return_value.__enter__ = MagicMock(return_value={})
+        mock_lock_tool.ctxm_void.return_value.__exit__ = MagicMock(return_value=False)
+        mock_task = mock_task_tool.TaskUtil.return_value
+        mock_task.manifest = "---\nstatus: done\n---\n"
+        mock_task.tool_call_count = 0
+        mock_task_tool.ctxm_process_task.return_value.__enter__ = MagicMock(return_value=None)
+        mock_task_tool.ctxm_process_task.return_value.__exit__ = MagicMock(return_value=False)
+        self.mock_ai_agent.run.return_value = "Test response"
+
+        agent_chat = AgentChat(
+            hook_instruction=self.hook_instruction,
+            ctx_rt_aiagent=self.ctx_rt_aiagent,
+            ctx_rt_instruction=self.ctx_rt_instruction,
+        )
+
+        result = agent_chat.run(message="Hello", times=1, task_id="task-id")
+
+        self.assertNotIn(LAZY_EXECUTION_WARNING, result)
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
     @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
     @patch("topsailai.workspace.agent.agent_chat_base.env_tool")

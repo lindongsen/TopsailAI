@@ -85,6 +85,18 @@ def _get_session_token_totals(session_id: str, ai_agent) -> tuple[int, int]:
     return 0, 0
 
 
+# Warning appended to the final answer when a task completes with tool-stat
+# enabled but zero recorded tool calls. This is a strong, obvious system alert
+# so that users and callers notice potential lazy execution.
+LAZY_EXECUTION_WARNING = (
+    "\n\n---\n\n"
+    "!!! CRITICAL SYSTEM WARNING !!!\n"
+    "The task completed with ZERO tool calls. "
+    "This may indicate lazy execution: the agent produced a final answer without "
+    "verifying facts, reading files, or invoking any tools. "
+    "Please review the result carefully before trusting it."
+)
+
 class AgentChat(AgentChatBase):
 
     @decorator_tee_output_by_session(need_delete_log_files=True)
@@ -285,6 +297,13 @@ class AgentChat(AgentChatBase):
                 # task
                 if task:
                     answer = task.manifest + answer
+                    if (
+                        env_tool.EnvReaderInstance.check_bool(
+                            "TOPSAILAI_ENABLE_TOOL_STAT", True
+                        )
+                        and task.tool_call_count == 0
+                    ):
+                        answer += LAZY_EXECUTION_WARNING
                     need_save_answer = True
                     only_save_final = True
 
