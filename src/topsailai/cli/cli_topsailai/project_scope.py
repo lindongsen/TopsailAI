@@ -439,9 +439,12 @@ def _wrap_command_for_agent_mode(command: str, mode: str) -> str:
     - ``raw``: return *command* unchanged.
     - ``dtach``: wrap with ``dtach -A {socket} {command}`` when ``dtach`` is
       available in ``PATH``; otherwise fall back to *command* unchanged.
-    - ``tmux``: wrap with ``tmux new-session -s {name} {command}``.  Requires
-      ``tmux`` to be available in ``PATH``; raises ``RuntimeError`` if it is
-      not.
+    - ``tmux``: wrap with ``tmux new-session -e KEY=VALUE ... -s {name}
+      {command}``.  Requires ``tmux`` to be available in ``PATH``; raises
+      ``RuntimeError`` if it is not.  Environment variables set by the
+      caller (``TOPSAILAI_SESSION_ID``, ``TOPSAILAI_PWD`` and ``PWD``) are
+      forwarded explicitly so the tmux session sees the same environment as
+      raw and dtach modes.
 
     Args:
         command: The command to wrap.
@@ -470,7 +473,18 @@ def _wrap_command_for_agent_mode(command: str, mode: str) -> str:
                 "Install tmux to use --agent-mode tmux, or choose raw/dtach."
             )
         session_name = _generate_agent_session_name()
-        return f"tmux new-session -s {shlex.quote(session_name)} {command}"
+        env_vars = {
+            key: os.environ.get(key)
+            for key in ("TOPSAILAI_SESSION_ID", "TOPSAILAI_PWD", "PWD")
+            if os.environ.get(key) is not None
+        }
+        env_args = " ".join(
+            f"-e {shlex.quote(f'{key}={value}')}" for key, value in env_vars.items()
+        )
+        env_part = f" {env_args}" if env_args else ""
+        return (
+            f"tmux new-session{env_part} -s {shlex.quote(session_name)} {command}"
+        )
 
     raise ValueError(f"Unsupported agent launch mode: {mode!r}")
 

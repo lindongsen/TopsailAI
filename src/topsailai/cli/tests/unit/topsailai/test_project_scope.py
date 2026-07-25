@@ -660,6 +660,15 @@ class TestWrapCommandForAgentMode(unittest.TestCase):
         )
         self.assertIn(" topsailai_launch_agent", result)
 
+    @patch.dict(
+        os.environ,
+        {
+            "TOPSAILAI_SESSION_ID": "s-123",
+            "TOPSAILAI_PWD": "/work/project-a",
+            "PWD": "/work/project-a",
+        },
+        clear=False,
+    )
     @patch("cli_topsailai.project_scope._generate_agent_session_name")
     @patch("cli_topsailai.project_scope.shutil.which")
     def test_tmux_mode_wraps_with_tmux(self, mock_which, mock_generate_name):
@@ -669,7 +678,11 @@ class TestWrapCommandForAgentMode(unittest.TestCase):
             "topsailai_launch_agent", "tmux"
         )
         expected = (
-            "tmux new-session -s "
+            "tmux new-session"
+            " -e TOPSAILAI_SESSION_ID=s-123"
+            " -e TOPSAILAI_PWD=/work/project-a"
+            " -e PWD=/work/project-a"
+            " -s "
             + shlex.quote("topsailai-20260707T221748.169974")
             + " topsailai_launch_agent"
         )
@@ -723,6 +736,14 @@ class TestLaunchAgentInFolderWithMode(unittest.TestCase):
         project_scope.launch_agent_in_folder("/work/project-a")
         mock_system.assert_called_once_with("topsailai_launch_agent")
 
+    @patch.dict(
+        os.environ,
+        {
+            "TOPSAILAI_PWD": "/work/project-a",
+            "PWD": "/work/project-a",
+        },
+        clear=False,
+    )
     @patch("cli_topsailai.project_scope._generate_agent_session_name")
     @patch("cli_topsailai.project_scope.shutil.which")
     @patch("cli_topsailai.project_scope.os.system")
@@ -734,10 +755,14 @@ class TestLaunchAgentInFolderWithMode(unittest.TestCase):
         mock_getcwd.return_value = "/TopsailAI/cli"
         mock_which.return_value = "/usr/bin/tmux"
         mock_generate_name.return_value = "topsailai-20260707T221748.169974"
+        os.environ.pop("TOPSAILAI_SESSION_ID", None)
         project_scope.launch_agent_in_folder("/work/project-a", agent_mode="tmux")
         mock_system.assert_called_once()
         called_command = mock_system.call_args[0][0]
-        self.assertTrue(called_command.startswith("tmux new-session -s "))
+        self.assertTrue(called_command.startswith("tmux new-session"))
+        self.assertIn("-e TOPSAILAI_PWD=/work/project-a", called_command)
+        self.assertIn("-e PWD=/work/project-a", called_command)
+        self.assertNotIn("TOPSAILAI_SESSION_ID", called_command)
         self.assertIn("topsailai_launch_agent", called_command)
 
     @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
@@ -953,6 +978,15 @@ class TestLaunchAgentDriver(unittest.TestCase):
         self.assertTrue(called_command.startswith("dtach -A "))
         self.assertIn("topsailai_agent_plan_tasks", called_command)
 
+    @patch.dict(
+        os.environ,
+        {
+            "TOPSAILAI_SESSION_ID": "s-123",
+            "TOPSAILAI_PWD": "/work/project-a",
+            "PWD": "/work/project-a",
+        },
+        clear=False,
+    )
     @patch("cli_topsailai.project_scope._generate_agent_session_name")
     @patch("cli_topsailai.project_scope.shutil.which")
     @patch("cli_topsailai.project_scope.os.system")
@@ -969,7 +1003,10 @@ class TestLaunchAgentDriver(unittest.TestCase):
         )
         mock_system.assert_called_once()
         called_command = mock_system.call_args[0][0]
-        self.assertTrue(called_command.startswith("tmux new-session -s "))
+        self.assertTrue(called_command.startswith("tmux new-session"))
+        self.assertIn("-e TOPSAILAI_SESSION_ID=s-123", called_command)
+        self.assertIn("-e TOPSAILAI_PWD=/work/project-a", called_command)
+        self.assertIn("-e PWD=/work/project-a", called_command)
         self.assertIn("topsailai_agent_plan_tasks", called_command)
 
     @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
