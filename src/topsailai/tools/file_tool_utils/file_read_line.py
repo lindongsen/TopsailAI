@@ -5,9 +5,66 @@
   Purpose:
 '''
 
+import io
 import re
+from collections import deque
+from contextlib import contextmanager
 
-from topsailai.utils import text_tool
+import chardet
+
+
+_ENCODING_SAMPLE_SIZE = 32768
+
+
+@contextmanager
+def _open_text_stream(file_path: str):
+    """Open a file and yield a line iterator with sampled encoding detection.
+
+    Reads a small byte sample from the start of the file to detect the
+    encoding, then rewinds and yields an ``io.TextIOWrapper`` that decodes
+    incrementally. This avoids loading or decoding the entire file when the
+    caller only needs a small window of lines.
+    """
+    fd = open(file_path, 'rb')
+    try:
+        sample = fd.read(_ENCODING_SAMPLE_SIZE)
+        encoding = _detect_encoding(sample)
+        fd.seek(0)
+        wrapper = io.TextIOWrapper(fd, encoding=encoding, errors='replace')
+        try:
+            yield wrapper
+        finally:
+            wrapper.close()
+    finally:
+        fd.close()
+
+
+def _detect_encoding(sample_bytes: bytes) -> str:
+    """Detect text encoding from a byte sample.
+
+    Falls back to utf-8 when detection fails or returns nothing.
+    """
+    if not sample_bytes:
+        return 'utf-8'
+    detected = chardet.detect(sample_bytes)
+    encoding = detected.get('encoding')
+    if not encoding:
+        return 'utf-8'
+    return encoding
+
+
+def _strip_line_ending(line: str) -> str:
+    """Remove trailing line ending characters from a line.
+
+    ``io.TextIOWrapper`` with universal newlines keeps the line ending
+    character(s) in the yielded string. This helper strips them so the
+    output matches the previous ``splitlines()`` behavior.
+    """
+    if line.endswith('\r\n'):
+        return line[:-2]
+    if line.endswith('\n') or line.endswith('\r'):
+        return line[:-1]
+    return line
 
 
 def read_file_with_context(
@@ -35,7 +92,7 @@ def read_file_with_context(
         case_sensitive (bool, optional): Whether the search should be case sensitive. Defaults to False.
 
     Returns:
-        str: Formatted output with line numbers and context.
+        str: Formatted output with line numbers.
              Returns empty string if file doesn't exist or no matches found.
 
     Example:
@@ -54,72 +111,51 @@ def read_file_with_context(
         - Matches are marked with ':' while context lines use '-'
         - The first '-' or ':' after the line number is the separator, not part of the content
         - Context lines are deduplicated when matches are close together
-        - Uses safe_decode for proper text handling
+        - Uses streaming decoding to avoid loading the entire file into memory
     """
     context_num = int(context_num)
     if isinstance(case_sensitive, str):
-        if case_sensitive.lower() == "true":
-            case_sensitive = True
-        else:
-            case_sensitive = False
+        case_sensitive = case_sensitive.lower() == "true"
+
     try:
-        # Read file content
-        with open(file_path, 'rb') as fd:
-            raw_content = fd.read()
-
-        # Decode content safely
-        content = text_tool.safe_decode(raw_content)
-        if not content:
-            return ""
-
-        # Split into lines
-        lines = content.splitlines()
-        if not lines:
-            return ""
-
-        # Compile regex pattern
         flags = 0 if case_sensitive else re.IGNORECASE
         try:
             regex = re.compile(pattern, flags)
         except re.error as e:
             return f"Error: Invalid regex pattern '{pattern}': {e}"
 
-        # Find all matching lines
-        matches = []
-        for i, line in enumerate(lines):
-            if regex.search(line):
-                matches.append(i)
+        result = {}
+        with _open_text_stream(file_path) as wrapper:
+            if context_num <= 0:
+                for line_num, line in enumerate(wrapper, start=1):
+                    line = _strip_line_ending(line)
+                    if regex.search(line):
+                        result[line_num] = f"{line_num}:{line}"
+            else:
+                pre_window = deque(maxlen=context_num)
+                post_remaining = 0
+                for line_num, line in enumerate(wrapper, start=1):
+                    line = _strip_line_ending(line)
+                    is_match = regex.search(line)
+                    if is_match:
+                        for ln, l in pre_window:
+                            result[ln] = f"{ln}-{l}"
+                        result[line_num] = f"{line_num}:{line}"
+                        post_remaining = context_num
+                        pre_window.clear()
+                    elif post_remaining > 0:
+                        result[line_num] = f"{line_num}-{line}"
+                        post_remaining -= 1
 
-        if not matches:
+                    if not is_match:
+                        pre_window.append((line_num, line))
+
+        if not result:
             return ""
 
-        # Collect lines to display (with context)
-        lines_to_show = set()
-
-        for match_idx in matches:
-            # Add context lines before match
-            start = max(0, match_idx - context_num)
-            # Add context lines after match
-            end = min(len(lines), match_idx + context_num + 1)
-
-            # Add all lines in this range
-            for i in range(start, end):
-                lines_to_show.add(i)
-
-        # Sort line numbers
-        sorted_lines = sorted(lines_to_show)
-
-        # Build output
-        output_lines = []
-        for line_num in sorted_lines:
-            line_content = lines[line_num]
-            # Check if this line is a match
-            is_match = line_num in matches
-            # Format: line_number:content for matches, line_number-content for context
-            marker = ":" if is_match else "-"
-            output_lines.append(f"{line_num + 1}{marker}{line_content}")
-
-        return "\n".join(output_lines)
+        return "\n".join(
+            result[line_num] for line_num in sorted(result)
+        )
 
     except FileNotFoundError:
         return f"Error: File not found: {file_path}"
@@ -172,43 +208,42 @@ def read_file_around_line(
         - The target line is marked with ':' while other lines use '-'
         - The first '-' or ':' after the line number is the separator, not part of the content
         - Automatically handles edge cases (beginning/end of file)
-        - Uses safe_decode for proper text handling
+        - Uses streaming decoding to avoid loading the entire file into memory
     """
     line_number = int(line_number)
     context_num = int(context_num)
+    target_idx = line_number - 1
+
     try:
-        # Read file content
-        with open(file_path, 'rb') as fd:
-            raw_content = fd.read()
-
-        # Decode content safely
-        content = text_tool.safe_decode(raw_content)
-        if not content:
-            return ""
-
-        # Split into lines
-        lines = content.splitlines()
-        if not lines:
-            return ""
-
-        # Convert to 0-based index
-        target_idx = line_number - 1
-
-        # Validate line number
-        if target_idx < 0 or target_idx >= len(lines):
-            return f"Error: Line number {line_number} is out of range (file has {len(lines)} lines)"
-
-        # Calculate range with context
-        start_idx = max(0, target_idx - context_num)
-        end_idx = min(len(lines), target_idx + context_num + 1)
-
-        # Build output
         output_lines = []
-        for i in range(start_idx, end_idx):
-            line_content = lines[i]
-            # Mark the target line with ':', others with '-'
-            marker = ":" if i == target_idx else "-"
-            output_lines.append(f"{i + 1}{marker}{line_content}")
+        total_lines = 0
+
+        with _open_text_stream(file_path) as wrapper:
+            if context_num <= 0:
+                for line_num, line in enumerate(wrapper, start=1):
+                    total_lines = line_num
+                    line = _strip_line_ending(line)
+                    if line_num == line_number:
+                        output_lines.append(f"{line_num}:{line}")
+                        break
+            else:
+                start_idx = max(0, target_idx - context_num)
+                end_idx = target_idx + context_num + 1
+                for line_num, line in enumerate(wrapper, start=1):
+                    total_lines = line_num
+                    line = _strip_line_ending(line)
+                    idx = line_num - 1
+                    if idx >= end_idx:
+                        break
+                    if idx >= start_idx:
+                        marker = ":" if idx == target_idx else "-"
+                        output_lines.append(f"{line_num}{marker}{line}")
+
+        if total_lines == 0:
+            return ""
+
+        if target_idx < 0 or target_idx >= total_lines:
+            return f"Error: Line number {line_number} is out of range (file has {total_lines} lines)"
 
         return "\n".join(output_lines)
 
@@ -258,45 +293,28 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> st
         if not start_num:
             start_num = 1
 
-        # Validate range: start_num must be <= end_num when both are non-zero
         if end_num != 0 and start_num > end_num:
             return f"Error: Invalid range: start_num ({start_num}) > end_num ({end_num})"
 
-        # Read file content
-        with open(file_path, 'rb') as fd:
-            raw_content = fd.read()
-
-        # Decode content safely
-        content = text_tool.safe_decode(raw_content)
-        if not content:
-            return ""
-
-        # Split into lines
-        lines = content.splitlines()
-        if not lines:
-            return ""
-
-        # Convert 1-based line numbers to 0-based indices
         start_idx = start_num - 1
-        if end_num:
-            end_idx = end_num  # slice end is exclusive, so end_num gives us correct slice
-        else:
-            end_idx = len(lines)
-
-        # Validate start_idx is within bounds
-        if start_idx >= len(lines):
-            return ""
-
-        # Get the slice of lines
-        result_lines = lines[start_idx:end_idx]
-        if not result_lines:
-            return ""
-
-        # Build output with actual line numbers and '-' marker
         output_lines = []
-        for i, line_content in enumerate(result_lines):
-            actual_line_num = start_num + i
-            output_lines.append(f"{actual_line_num}-{line_content}")
+        total_lines = 0
+
+        with _open_text_stream(file_path) as wrapper:
+            for line_num, line in enumerate(wrapper, start=1):
+                total_lines = line_num
+                line = _strip_line_ending(line)
+                idx = line_num - 1
+                if end_num and idx >= end_num:
+                    break
+                if idx >= start_idx:
+                    output_lines.append(f"{line_num}-{line}")
+
+        if total_lines == 0:
+            return ""
+
+        if start_idx >= total_lines:
+            return ""
 
         return "\n".join(output_lines)
     except FileNotFoundError:

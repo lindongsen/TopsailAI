@@ -452,3 +452,71 @@ class TestTools:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestLargeFileStreaming:
+    """Test streaming behavior with large files."""
+
+    def test_read_file_around_line_large_line_number(self, tmp_path):
+        """Early-stop should make reading a window near EOF fast and correct."""
+        test_file = tmp_path / "large.txt"
+        total = 1_000_000
+        with open(test_file, "w", encoding="utf-8") as fd:
+            for i in range(1, total + 1):
+                fd.write(f"line{i}\n")
+
+        result = read_file_around_line(str(test_file), total, context_num=2)
+        lines = result.split("\n")
+
+        assert len(lines) == 3
+        assert f"{total - 2}-line{total - 2}" in lines[0]
+        assert f"{total - 1}-line{total - 1}" in lines[1]
+        assert f"{total}:line{total}" in lines[2]
+
+    def test_read_file_lines_large_file_end_window(self, tmp_path):
+        """Reading a small range near the end of a large file should work."""
+        test_file = tmp_path / "large.txt"
+        total = 1_000_000
+        with open(test_file, "w", encoding="utf-8") as fd:
+            for i in range(1, total + 1):
+                fd.write(f"line{i}\n")
+
+        result = read_file_lines(str(test_file), total - 2, total)
+        lines = result.split("\n")
+
+        assert len(lines) == 3
+        assert f"{total - 2}-line{total - 2}" in lines[0]
+        assert f"{total - 1}-line{total - 1}" in lines[1]
+        assert f"{total}-line{total}" in lines[2]
+
+    def test_read_file_with_context_large_file_rolling_window(self, tmp_path):
+        """Rolling-window regex search should find matches in a large file."""
+        test_file = tmp_path / "large.txt"
+        total = 1_000_000
+        target = 999_998
+        with open(test_file, "w", encoding="utf-8") as fd:
+            for i in range(1, total + 1):
+                fd.write(f"line{i}\n")
+
+        result = read_file_with_context(
+            str(test_file), f"line{target}", context_num=2
+        )
+        lines = result.split("\n")
+
+        assert len(lines) == 5
+        assert f"{target - 2}-line{target - 2}" in lines[0]
+        assert f"{target - 1}-line{target - 1}" in lines[1]
+        assert f"{target}:line{target}" in lines[2]
+        assert f"{target + 1}-line{target + 1}" in lines[3]
+        assert f"{target + 2}-line{target + 2}" in lines[4]
+
+    def test_read_file_with_context_no_match_large_file(self, tmp_path):
+        """Rolling-window search with no match should return empty quickly."""
+        test_file = tmp_path / "large.txt"
+        total = 1_000_000
+        with open(test_file, "w", encoding="utf-8") as fd:
+            for i in range(1, total + 1):
+                fd.write(f"line{i}\n")
+
+        result = read_file_with_context(str(test_file), "NOT_IN_FILE", context_num=2)
+        assert result == ""
