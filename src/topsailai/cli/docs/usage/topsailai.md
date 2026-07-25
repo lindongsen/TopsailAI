@@ -5,6 +5,10 @@ ProjectFolder: /TopsailAI/src/topsailai/cli
 ProjectRootFolder: /TopsailAI/src/topsailai
 ProjectCode: TOPSAILAI
 programming_language: python
+references:
+  - topsailai.py
+  - cli_topsailai/
+  - topsailai.yaml
 ---
 
 # topsailai
@@ -35,8 +39,6 @@ topsailai
 |--------|-------------|
 | `-h`, `--help` | Show help message and exit. |
 | `--version` | Show program version and exit. |
-| `-w`, `--workspace` | Display the workspace task list and exit without entering interactive mode. |
-| `-r`, `--runtime-raw` | Use the raw curses-free streaming mode (default). |
 | `--tui`, `--runtime-tui` | Use the two-pane curses UI when watching a log. |
 | `--tail-lines N` | Number of recent log lines to echo on startup in runtime mode (default: 100). |
 
@@ -58,33 +60,55 @@ The CLI has five scopes, derived from the original design notes in `../../topsai
 | `/refresh` | Re-scan the task directory and refresh the list. |
 | `/session <number\|session_id>` | Retrieve full context messages for a session. |
 | `/agent [<number\|folder>]` | Launch an agent. With no argument, run the YAML-configured agent command. With an argument, change to the selected folder and run `topsailai_launch_agent`. |
-| `/resume <number>` | Resume an idle session in its project workspace (project scope only). |
-| `/clean [<number>...]` | Delete idle `.stdout` files older than 3 days, or delete specific files by number. |
+| `/resume <number>` | Resume the selected running session. |
 | `/send <number> [message]` | Send a message to the running session associated with the selected entry. |
-| `cd project` | Switch to project scope. |
-| `scopes` | Display detailed introductions and available actions for all five scopes (workspace scope only). |
-| `q`, `quit`, `exit`, `cd` | Exit current scope or quit the CLI. |
-| `/help [<keyword>]` | Show available commands, optionally filtered by keyword. |
+| `/clean` | Remove expired files from the task directory. |
+| `cd doc` | Enter doc scope and list usage documentation files under `docs/usage/`. |
+| `scopes` | Display detailed introductions and available actions for each scope. |
+| `/help` | Show available commands. |
+| `q` | Quit the CLI. |
 
-## Session / Runtime Commands
+## Runtime Commands
 
 | Command | Description |
 |---------|-------------|
-| `/send [message]` | Send a message to the running session through its named pipe. Omit the message for multi-line input (finish with `Ctrl+D`). |
-| `/ctx.btw [message]` | Inject a by-the-way message into the `agent2llm` runtime context of the watched session. |
-| `/ctx.add_msg [message]` | Add a persistent message to the `user2agent` context (visible after the agent restarts). |
-| `/git.status` | Alias for `/git status`. Show `git status` for the project workspace of the current session. |
-| `/git.diff` | Alias for `/git diff`. Show `git diff` for the project workspace of the current session. |
-| `/git <subcommand> [args...]` | Run an arbitrary git command in the project workspace of the current session. Examples: `/git status`, `/git diff --cached`, `/git log --oneline -10`. |
-| `/help` | Show available commands. |
-| `q`, `quit` | Leave runtime scope and return to the file list. |
+| `/send [message]` | Send a message to the running session through its named pipe. If no message is given, the input pane expands for multi-line input. |
+| `/ctx.btw [message]` | Inject a by-the-way message into the `agent2llm` context of the watched session. If no message is given, the input pane expands for multi-line input. |
+| `/help` | Show the list of available streaming commands. |
+| `q` or `quit` | Leave runtime scope and return to the file list. |
 
-## Notes
+## Subcommands
 
-- Running sessions are highlighted in green in the file list.
-- Temporary sessions (session id `topsailai`) are displayed as `(temp)`.
-- The dual-pane UI requires the `curses` module; on Windows install `windows-curses`.
-- `Ctrl+C` exits gracefully and cleans up child processes.
+| Command | Description |
+|---------|-------------|
+| `workspace` | Display the workspace task list and exit without entering interactive mode. |
+| `docs list` | List all usage documentation files and exit. |
+| `docs read <name>` | Read a specific usage documentation file and exit. |
+| `project add <path> [name]` | Add a project to the managed project list. |
+| `project del <path>` | Remove a project from the managed project list. |
+| `project list` | Display all managed projects. |
+
+## Examples
+
+```bash
+# Start the interactive CLI
+./topsailai.py
+
+# Display the workspace task list without entering interactive mode
+./topsailai.py workspace
+
+# List all usage documentation files
+./topsailai.py docs list
+
+# Read a specific usage documentation file
+./topsailai.py docs read topsailai.md
+
+# Add the current directory to the managed project list
+./topsailai.py project add .
+
+# List managed projects
+./topsailai.py project list
+```
 
 ## Historical Reference
 
@@ -94,3 +118,4 @@ The original high-level scope outline is preserved in `../../topsailai.md`:
 - runtime — stream log of one session
 - project — project workspace
 - session — enter one session
+- doc — usage documentation list and read usage documentation

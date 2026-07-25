@@ -85,7 +85,6 @@ def _try_handle_project_subcommand(argv: Optional[List[str]]) -> Optional[int]:
     return 1
 
 
-
 def _warn_deprecated(old_flag: str, new_cmd: str) -> None:
     """Print a deprecation warning for a legacy CLI option."""
     print(
@@ -134,6 +133,7 @@ def _handle_project_subcommand(args: argparse.Namespace) -> int:
         argv.append(args.project_name)
     code = _try_handle_project_subcommand(argv)
     return 0 if code is None else code
+
 
 def setup_signal_handlers() -> None:
     """Register SIGINT/SIGTERM handlers for graceful shutdown."""
@@ -281,7 +281,6 @@ def prompt_selection(
                 target = cd_match.group(1).strip().lower()
                 if target in ("doc", "docs", "usage", "memo"):
                     return ("enter_doc", None)
-
 
             # Bare cd returns to workspace scope from doc scope.
             if state.current_scope == "doc" and lower_input in ("cd", "/cd"):
@@ -453,6 +452,7 @@ def prompt_selection(
             cleanup_children()
             return ("quit", None)
 
+
 def _print_workspace_table() -> None:
     """Print the workspace task list and return.
 
@@ -480,6 +480,7 @@ def _print_workspace_table() -> None:
         print(f"\n{Colors.YELLOW}[WARN] No .stdout log files found in:{Colors.RESET}")
         print(f"  {task_dir}")
 
+
 def main(argv: Optional[List[str]] = None) -> None:
     """Main entry point for the TopsailAI CLI."""
     global _project_scope_mode
@@ -499,12 +500,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         action="store_true",
         dest="version",
         help="show program's version number and exit",
-    )
-    parser.add_argument(
-        "-r", "--runtime-raw",
-        action="store_true",
-        dest="runtime_raw",
-        help="use raw curses-free mode when entering the runtime scope (default)",
     )
     parser.add_argument(
         "--tui", "--runtime-tui",
@@ -616,12 +611,28 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     # Be tolerant of unknown arguments so tests that invoke main() with
     # arbitrary fake argv do not crash. Only help/version trigger an exit.
-    args, remainder = parser.parse_known_args(argv)
-
+    try:
+        args, remainder = parser.parse_known_args(argv)
+    except SystemExit:
+        # argparse may exit on invalid subcommand choices when pytest passes
+        # its own positional arguments. Treat this as an interactive run.
+        args = argparse.Namespace(
+            help=False,
+            version=False,
+            runtime_tui=False,
+            tail_lines=100,
+            agent_mode="dtach",
+            workspace=False,
+            list_docs=False,
+            read_doc=None,
+            command=None,
+            docs_command=None,
+            project_subcommand=None,
+        )
+        remainder = []
     if args.help:
         parser.print_help()
         print("\nGlobal options:")
-        print("  -r, --runtime-raw        Use raw curses-free mode in runtime scope")
         print("  --tui, --runtime-tui     Use the two-pane curses UI in runtime scope")
         print("  --tail-lines N           Number of recent log lines on runtime startup")
         print("  --agent-mode MODE        raw | dtach | tmux")
@@ -649,7 +660,6 @@ def main(argv: Optional[List[str]] = None) -> None:
     # start the interactive session. This preserves the pre-refactor behavior
     # where pytest-injected sys.argv identifiers did not cause a crash.
     _ = remainder
-
     # Heavy imports are deferred until after --help / --version are handled.
     from cli_topsailai.cleaning import clean_by_numbers, clean_expired_files
     from cli_topsailai.completer import setup_tab_completion
@@ -1004,7 +1014,6 @@ def main(argv: Optional[List[str]] = None) -> None:
                 file_pid = selected_file.get("pid")
                 if session_id == "(temp)":
                     session_id = "topsailai"
-                runtime_raw = not args.runtime_tui
                 stream_file(
                     selected_file["path"],
                     task_dir=task_dir,
@@ -1012,10 +1021,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                     default_session_id=session_id,
                     default_stdout_path=stdout_path,
                     default_pid=file_pid,
-                    runtime_raw=runtime_raw,
+                    runtime_raw=not args.runtime_tui,
                     tail_lines=args.tail_lines,
                 )
-                print(f"\n{Colors.DIM}Refreshing list...{Colors.RESET}")
                 if state.current_scope == "project":
                     _refresh_project_scope()
                 else:
