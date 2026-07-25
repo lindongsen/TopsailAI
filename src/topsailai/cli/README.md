@@ -488,6 +488,32 @@ The managed project list is stored independently from session history in `{TOPSA
 - `p del <number>` asks for `y/N` confirmation and only removes the registry entry; it does not delete the project folder on disk.
 - When the managed project list is active, `agent <number>` launches an agent in the selected project's folder.
 
+### Non-interactive project management
+
+You can also manage the project list directly from the shell without entering the interactive CLI:
+
+| Command | Description |
+|---|---|
+| `topsailai project add <path> [name]` | Add `<path>` to `.projects.jsonl`. The path is expanded (`~`) and resolved to an absolute path. Duplicate paths are rejected. |
+| `topsailai project del <path>` | Remove `<path>` from `.projects.jsonl`. The path is expanded and resolved before matching. Only the registry entry is removed. |
+| `topsailai project list` | Display all managed projects with row number, name, path, and creation time. |
+
+Examples:
+
+```bash
+# Add a project by absolute path
+topsailai project add /work/my-project my-project
+
+# Add the current directory (name defaults to the folder name)
+topsailai project add .
+
+# Remove a project by path
+topsailai project del /work/my-project
+
+# List managed projects
+topsailai project list
+```
+
 ## Modification Rule
 
 When a user asks to modify a script but does not explicitly specify which script to change, do not guess. You must ask the user to clarify the exact script before making any edits.

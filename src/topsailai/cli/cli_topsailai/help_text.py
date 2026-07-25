@@ -233,6 +233,24 @@ def print_help(
             "scopes": ["project"],
         },
         {
+            "cmd": "project add <path> [name]",
+            "desc": "Non-interactive: add a project path to the managed project list stored in .projects.jsonl under TOPSAILAI_HOME. Duplicate paths are rejected.",
+            "example": "Example: topsailai project add /work/my-project my-project",
+            "scopes": ["cli"],
+        },
+        {
+            "cmd": "project del <path>",
+            "desc": "Non-interactive: remove a project path from the managed project list. Only the registry entry is removed; the project folder on disk is not deleted.",
+            "example": "Example: topsailai project del /work/my-project",
+            "scopes": ["cli"],
+        },
+        {
+            "cmd": "project list",
+            "desc": "Non-interactive: list all managed projects stored in .projects.jsonl under TOPSAILAI_HOME. Output includes row number, name, path, and creation time.",
+            "example": "Example: topsailai project list",
+            "scopes": ["cli"],
+        },
+        {
             "cmd": "/send [session_id_or_index] [message...]",
             "desc": "Send a message to a running session through its named pipe. In session scope, omit the session id. If no message is provided, enter multi-line input mode (finish with EOF). While streaming a log, /send defaults to the watched session.",
             "example": "Example: /send 1 hello  or  /send my-session hello  or  while streaming: /send hello",

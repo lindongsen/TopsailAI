@@ -27,7 +27,9 @@ from cli_topsailai.doc_scope import (
 )
 from cli_topsailai.projects import (
     add_project,
+    build_managed_project_list,
     delete_project_by_index,
+    delete_project_by_path,
     load_projects,
     print_project_table,
 )
@@ -37,6 +39,50 @@ __version__ = "0.1.0"
 # Tracks whether the project scope is showing session-based projects
 # ("sessions") or the managed project list ("managed").
 _project_scope_mode: str = "sessions"
+
+
+def _try_handle_project_subcommand(argv: Optional[List[str]]) -> Optional[int]:
+    """Handle non-interactive ``project add|del|list`` CLI invocations.
+
+    Returns an exit code when the subcommand is recognized and processed,
+    otherwise ``None`` so normal interactive startup continues.
+    """
+    if argv is None:
+        argv = sys.argv[1:]
+    if len(argv) < 1 or argv[0].lower() != "project":
+        return None
+    subcmd = argv[1].lower() if len(argv) > 1 else ""
+    if subcmd == "list":
+        projects = build_managed_project_list()
+        if not projects:
+            print(
+                f"{Colors.YELLOW}[WARN] No managed projects found.{Colors.RESET}"
+            )
+            return 0
+        print_project_table(projects)
+        return 0
+    if subcmd not in ("add", "del"):
+        print(
+            f"{Colors.RED}[ERROR] Unknown project subcommand: {subcmd!r}. "
+            f"Use: topsailai project add <path> [name], "
+            f"topsailai project del <path>, or topsailai project list{Colors.RESET}"
+        )
+        return 1
+    if len(argv) < 3:
+        print(
+            f"{Colors.RED}[ERROR] Usage: topsailai project {subcmd} <path>{Colors.RESET}"
+        )
+        return 1
+    raw_path = argv[2]
+    if subcmd == "add":
+        name = " ".join(argv[3:]).strip() or None
+        if add_project(raw_path, name=name):
+            print(f"{Colors.GREEN}[INFO] Project added: {raw_path}{Colors.RESET}")
+            return 0
+        return 1
+    if delete_project_by_path(raw_path):
+        return 0
+    return 1
 
 
 def setup_signal_handlers() -> None:
@@ -60,6 +106,7 @@ def get_prompt() -> str:
     if state.current_scope == "doc":
         return f"\n{Colors.GREEN}[doc]{Colors.RESET}> "
     return f"\n{Colors.GREEN}[workspace]{Colors.RESET}> "
+
 
 def prompt_selection(
     files: List[dict], task_dir: str
@@ -449,6 +496,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     args, _ = parser.parse_known_args(argv)
     if args.help:
         parser.print_help()
+        print("\nProject management commands:")
+        print("  topsailai project add <path> [name]  Add a project to the managed list")
+        print("  topsailai project del <path>           Remove a project from the managed list")
+        print("  topsailai project list                 List managed projects")
         sys.exit(0)
     if args.version:
         print(f"{parser.prog} {__version__}")
@@ -473,6 +524,11 @@ def main(argv: Optional[List[str]] = None) -> None:
             sys.exit(1)
         print(result["content"])
         sys.exit(0)
+
+    # Non-interactive project management subcommands (e.g. project add/del).
+    project_exit_code = _try_handle_project_subcommand(argv)
+    if project_exit_code is not None:
+        sys.exit(project_exit_code)
 
     # Heavy imports are deferred until after --help / --version are handled.
     from cli_topsailai.cleaning import clean_by_numbers, clean_expired_files

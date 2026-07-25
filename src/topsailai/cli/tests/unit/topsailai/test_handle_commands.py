@@ -4,7 +4,9 @@ Unit tests for command handling in cli_topsailai.
 """
 
 import os
+import io
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -15,9 +17,10 @@ sys.path.insert(
     ),
 )
 
+import cli_topsailai.projects as projects
 import cli_topsailai.state as cli_state
 from cli_topsailai.colors import Colors
-from cli_topsailai.core import prompt_selection
+from cli_topsailai.core import _try_handle_project_subcommand, prompt_selection
 
 
 class TestHandleCommands(unittest.TestCase):
@@ -882,6 +885,145 @@ class TestPrintWorkspaceTable(unittest.TestCase):
         self.assertTrue(
             any("No .stdout log files" in str(call) for call in mock_print.call_args_list)
         )
+
+
+
+class TestProjectSubcommand(unittest.TestCase):
+    """Tests for non-interactive ``topsailai project add|del <path>`` handling."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.projects_path = os.path.join(self.tmp.name, ".projects.jsonl")
+
+    def _patch_path(self):
+        return patch(
+            "cli_topsailai.projects._get_projects_path",
+            return_value=self.projects_path,
+        )
+
+    def _load_projects(self):
+        """Load projects directly from the temp registry file."""
+        return projects.load_projects()
+
+    def test_unrelated_argv_returns_none(self):
+        """Non-project arguments must not be handled here."""
+        self.assertIsNone(_try_handle_project_subcommand(["--workspace"]))
+
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_list_empty_registry(self, mock_stdout):
+        """``project list`` with no entries prints an empty list and exits 0."""
+        with self._patch_path():
+            code = _try_handle_project_subcommand(["project", "list"])
+        self.assertEqual(code, 0)
+        self.assertIn("No managed projects", mock_stdout.getvalue())
+
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_list_shows_managed_projects(self, mock_stdout):
+        """``project list`` displays stored projects with row numbers."""
+        project_dir = os.path.join(self.tmp.name, "listed-project")
+        os.makedirs(project_dir)
+        with self._patch_path():
+            _try_handle_project_subcommand(["project", "add", project_dir, "Listed"])
+            code = _try_handle_project_subcommand(["project", "list"])
+        self.assertEqual(code, 0)
+        output = mock_stdout.getvalue()
+        self.assertIn("Listed", output)
+        self.assertIn(project_dir, output)
+
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_unknown_subcommand_prints_error(self, mock_stdout):
+        """Unknown project subcommands report an error and exit 1."""
+        code = _try_handle_project_subcommand(["project", "foo"])
+        self.assertEqual(code, 1)
+        self.assertIn("Unknown project subcommand", mock_stdout.getvalue())
+
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_add_missing_path_prints_usage(self, mock_stdout):
+        """``project add`` without a path must report usage and exit 1."""
+        code = _try_handle_project_subcommand(["project", "add"])
+        self.assertEqual(code, 1)
+        self.assertIn("Usage: topsailai project add <path>", mock_stdout.getvalue())
+
+    def test_add_valid_path(self):
+        """``project add <path>`` adds the project and exits 0."""
+        project_dir = os.path.join(self.tmp.name, "my-project")
+        os.makedirs(project_dir)
+        with self._patch_path():
+            code = _try_handle_project_subcommand(["project", "add", project_dir])
+            loaded = self._load_projects()
+        self.assertEqual(code, 0)
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0]["path"], project_dir)
+
+    def test_add_with_name(self):
+        """``project add <path> <name>`` stores the provided name."""
+        project_dir = os.path.join(self.tmp.name, "my-project")
+        os.makedirs(project_dir)
+        with self._patch_path():
+            code = _try_handle_project_subcommand(
+                ["project", "add", project_dir, "My Project"]
+            )
+            loaded = self._load_projects()
+        self.assertEqual(code, 0)
+        self.assertEqual(loaded[0]["name"], "My Project")
+
+    def test_add_rejects_duplicate_path(self):
+        """Adding the same resolved path twice must reject the duplicate."""
+        project_dir = os.path.join(self.tmp.name, "my-project")
+        os.makedirs(project_dir)
+        with self._patch_path():
+            self.assertEqual(
+                _try_handle_project_subcommand(["project", "add", project_dir]), 0
+            )
+            code = _try_handle_project_subcommand(["project", "add", project_dir])
+            loaded = self._load_projects()
+        self.assertEqual(code, 1)
+        self.assertEqual(len(loaded), 1)
+
+    def test_add_resolves_relative_path(self):
+        """Relative paths are resolved to absolute paths before storage."""
+        project_dir = os.path.join(self.tmp.name, "rel-project")
+        os.makedirs(project_dir)
+        with self._patch_path():
+            with patch.dict(os.environ, {"PWD": self.tmp.name}):
+                code = _try_handle_project_subcommand(
+                    ["project", "add", "rel-project"]
+                )
+            loaded = self._load_projects()
+        self.assertEqual(code, 0)
+        self.assertEqual(loaded[0]["path"], project_dir)
+
+    def test_del_existing_path(self):
+        """``project del <path>`` removes the matching project."""
+        project_dir = os.path.join(self.tmp.name, "to-delete")
+        os.makedirs(project_dir)
+        with self._patch_path():
+            _try_handle_project_subcommand(["project", "add", project_dir])
+            code = _try_handle_project_subcommand(["project", "del", project_dir])
+            loaded = self._load_projects()
+        self.assertEqual(code, 0)
+        self.assertEqual(loaded, [])
+
+    def test_del_missing_path(self):
+        """``project del <path>`` for an unknown path exits 1."""
+        with self._patch_path():
+            code = _try_handle_project_subcommand(
+                ["project", "del", "/does/not/exist"]
+            )
+        self.assertEqual(code, 1)
+
+    def test_del_resolves_relative_path(self):
+        """Relative paths are resolved before matching for deletion."""
+        project_dir = os.path.join(self.tmp.name, "rel-project")
+        os.makedirs(project_dir)
+        with self._patch_path():
+            _try_handle_project_subcommand(["project", "add", project_dir])
+            with patch.dict(os.environ, {"PWD": self.tmp.name}):
+                code = _try_handle_project_subcommand(["project", "del", "rel-project"])
+            loaded = self._load_projects()
+        self.assertEqual(code, 0)
+        self.assertEqual(loaded, [])
 
 
 if __name__ == "__main__":

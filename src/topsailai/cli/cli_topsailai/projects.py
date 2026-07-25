@@ -33,10 +33,29 @@ def _get_projects_path() -> str:
     """Return the absolute path to ``.projects.jsonl`` under TOPSAILAI_HOME."""
     return os.path.join(get_topsailai_home(), ".projects.jsonl")
 
-
 def _now_iso() -> str:
     """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _resolve_project_path(raw_path: str) -> Optional[str]:
+    """Expand and normalize a user-provided project path.
+
+    Supports ``~`` and environment variables. Relative paths are resolved
+    against ``$PWD`` when it is set so that shell working-directory context
+    is honored. Returns an absolute path string or ``None`` if the path
+    cannot be resolved.
+    """
+    if not raw_path:
+        return None
+    expanded = os.path.expandvars(os.path.expanduser(raw_path.strip()))
+    if not os.path.isabs(expanded):
+        cwd = os.environ.get("PWD", os.getcwd())
+        expanded = os.path.join(cwd, expanded)
+    try:
+        return os.path.abspath(expanded)
+    except OSError:
+        return None
 
 
 def load_projects() -> List[Dict[str, Any]]:
@@ -65,7 +84,6 @@ def load_projects() -> List[Dict[str, Any]]:
                     projects.append(project)
     except OSError:
         return []
-
     projects.sort(key=lambda p: p.get("created_at", ""))
     return projects
 
@@ -109,19 +127,23 @@ def save_projects(projects: List[Dict[str, Any]]) -> bool:
         return False
 
 
-def _resolve_project_path(raw_path: str) -> Optional[str]:
-    """Expand and normalize a user-provided project path.
+def has_project_path(raw_path: str) -> bool:
+    """Check whether a project with the given path already exists.
 
-    Supports ``~`` and environment variables. Returns an absolute path string
-    or ``None`` if the path cannot be resolved.
+    The path is expanded and normalized before comparison so that relative
+    paths, ``~`` references, and environment variables resolve consistently.
+
+    Args:
+        raw_path: User-provided project folder path.
+
+    Returns:
+        ``True`` if a project with the resolved path exists, ``False``
+        otherwise (including when the path cannot be resolved).
     """
-    if not raw_path:
-        return None
-    expanded = os.path.expandvars(os.path.expanduser(raw_path.strip()))
-    try:
-        return os.path.abspath(expanded)
-    except OSError:
-        return None
+    path = _resolve_project_path(raw_path)
+    if path is None:
+        return False
+    return any(p.get("path") == path for p in load_projects())
 
 
 def add_project(raw_path: str, name: Optional[str] = None) -> bool:
@@ -217,6 +239,45 @@ def delete_project_by_index(index: int) -> bool:
         )
         return False
     return True
+
+
+def delete_project_by_path(raw_path: str) -> bool:
+    """Delete a managed project by its path.
+
+    The path is expanded and normalized before comparison. Only the registry
+    entry is deleted; the project folder on disk is left untouched.
+
+    Args:
+        raw_path: User-provided project folder path.
+
+    Returns:
+        ``True`` if the project was deleted, ``False`` otherwise.
+    """
+    path = _resolve_project_path(raw_path)
+    if path is None:
+        print(
+            f"{Colors.RED}[ERROR] Invalid project path: {raw_path!r}.{Colors.RESET}"
+        )
+        return False
+
+    projects = load_projects()
+    for idx, project in enumerate(projects):
+        if project.get("path") == path:
+            del projects[idx]
+            if not save_projects(projects):
+                print(
+                    f"{Colors.RED}[ERROR] Failed to save project list.{Colors.RESET}"
+                )
+                return False
+            print(
+                f"{Colors.GREEN}[INFO] Deleted project: {path}{Colors.RESET}"
+            )
+            return True
+
+    print(
+        f"{Colors.YELLOW}[WARN] Project not found: {path}{Colors.RESET}"
+    )
+    return False
 
 
 def build_managed_project_list() -> List[Dict[str, Any]]:
