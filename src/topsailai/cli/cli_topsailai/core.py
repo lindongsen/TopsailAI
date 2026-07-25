@@ -656,10 +656,20 @@ def main(argv: Optional[List[str]] = None) -> None:
     if getattr(args, "func", None):
         sys.exit(args.func(args))
 
-    # No recognized subcommand: ignore any unknown positional arguments and
-    # start the interactive session. This preserves the pre-refactor behavior
-    # where pytest-injected sys.argv identifiers did not cause a crash.
-    _ = remainder
+    # Unknown subcommand: if a positional argument remains and no recognized
+    # subcommand was selected, report it clearly and show help.
+    if remainder:
+        unknown = remainder[0]
+        print(
+            f"{Colors.RED}[ERROR] invalid subcommand: {unknown}{Colors.RESET}",
+            file=sys.stderr,
+        )
+        parser.print_help()
+        sys.exit(1)
+
+    # No recognized subcommand and no unknown positional arguments: start the
+    # interactive session. This preserves the pre-refactor behavior where
+    # pytest-injected sys.argv identifiers did not cause a crash.
     # Heavy imports are deferred until after --help / --version are handled.
     from cli_topsailai.cleaning import clean_by_numbers, clean_expired_files
     from cli_topsailai.completer import setup_tab_completion
