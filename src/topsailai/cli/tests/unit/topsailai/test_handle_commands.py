@@ -726,6 +726,7 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         mock_resolve.assert_called_once_with("1", [log_file])
         mock_launch.assert_called_once_with("/work/a", agent_mode="raw")
 
+    @patch("cli_topsailai.core._detect_agent_mode")
     @patch("cli_topsailai.project_scope.launch_agent_in_folder")
     @patch("cli_topsailai.project_scope.resolve_agent_folder")
     @patch("cli_topsailai.core.prompt_selection")
@@ -736,7 +737,7 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
     @patch("cli_topsailai.history.HistoryManager")
     @patch("cli_topsailai.history.load_readline_history")
     @patch("cli_topsailai.completer.setup_tab_completion")
-    def test_agent_default_mode_is_dtach(
+    def test_agent_default_mode_is_auto_detected(
         self,
         _mock_setup_tab: MagicMock,
         _mock_load_history: MagicMock,
@@ -748,8 +749,9 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         mock_prompt: MagicMock,
         mock_resolve: MagicMock,
         mock_launch: MagicMock,
+        mock_detect: MagicMock,
     ) -> None:
-        """Without --agent-mode, main() defaults to dtach and forwards it."""
+        """Without --agent-mode, main() auto-detects and forwards the mode."""
         from cli_topsailai.core import main
 
         log_file = {
@@ -761,11 +763,12 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         mock_discover.return_value = [log_file]
         mock_prompt.side_effect = [("agent", "/work/a"), ("quit", None)]
         mock_resolve.return_value = "/work/a"
+        mock_detect.return_value = "dtach"
 
         main([])
 
+        mock_detect.assert_called_once_with()
         mock_launch.assert_called_once_with("/work/a", agent_mode="dtach")
-
 
 
 class TestResumeCommand(unittest.TestCase):

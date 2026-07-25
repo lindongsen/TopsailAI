@@ -12,6 +12,7 @@ import os
 import re
 import signal
 import sys
+import shutil
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -83,6 +84,58 @@ def _try_handle_project_subcommand(argv: Optional[List[str]]) -> Optional[int]:
     if delete_project_by_path(raw_path):
         return 0
     return 1
+
+def _detect_agent_mode() -> str:
+    """Auto-select the best available agent launch mode.
+
+    Preference order: tmux > dtach > raw.  This mirrors the user's mental
+    model (prefer terminal multiplexers, but fall back to raw mode when
+    neither is installed).
+    """
+    if shutil.which("tmux"):
+        return "tmux"
+    if shutil.which("dtach"):
+        return "dtach"
+    return "raw"
+
+
+def _preprocess_agent_mode(argv: List[str]) -> List[str]:
+    """Normalize ``--agent-mode`` so it can be used without a value.
+
+    When ``--agent-mode`` is passed alone, argparse with ``nargs="?"`` would
+    consume the next positional token (e.g. a subcommand) as the value.  To
+    avoid ambiguity, we rewrite the argument list so that a bare
+    ``--agent-mode`` becomes ``--agent-mode=auto`` and explicit values are
+    preserved.
+    """
+    result: List[str] = []
+    valid_modes = {"raw", "dtach", "tmux"}
+    subcommands = {"workspace", "docs", "project"}
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--agent-mode":
+            if i + 1 < len(argv):
+                next_arg = argv[i + 1]
+                if next_arg.startswith("-") or next_arg in subcommands:
+                    result.append("--agent-mode=auto")
+                elif next_arg in valid_modes:
+                    result.append(f"--agent-mode={next_arg}")
+                    i += 1
+                else:
+                    # Could be an invalid explicit value or a positional arg.
+                    # Preserve it and let argparse validate the choice.
+                    result.append(f"--agent-mode={next_arg}")
+                    i += 1
+            else:
+                result.append("--agent-mode=auto")
+        elif arg.startswith("--agent-mode="):
+            result.append(arg)
+        else:
+            result.append(arg)
+        i += 1
+    return result
+
 
 
 def _warn_deprecated(old_flag: str, new_cmd: str) -> None:
@@ -562,11 +615,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         interactive_group.add_argument(
             "--agent-mode",
             type=str,
-            choices=["raw", "dtach", "tmux"],
-            default="dtach",
+            choices=["raw", "dtach", "tmux", "auto"],
+            default="auto",
+            const="auto",
+            nargs="?",
             dest="agent_mode",
             metavar="MODE",
-            help="agent launch mode: raw, dtach, or tmux (default: dtach)",
+            help="agent launch mode: raw, dtach, tmux, or auto (default: auto; auto prefers tmux, then dtach, then raw)",
         )
         subparsers = help_parser.add_subparsers(dest="subcommand", help="non-interactive commands")
         subparsers.add_parser(
@@ -654,11 +709,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     interactive_group.add_argument(
         "--agent-mode",
         type=str,
-        choices=["raw", "dtach", "tmux"],
-        default="dtach",
+        choices=["raw", "dtach", "tmux", "auto"],
+        default="auto",
+        const="auto",
+        nargs="?",
         dest="agent_mode",
         metavar="MODE",
-        help="agent launch mode: raw, dtach, or tmux (default: dtach)",
+        help="agent launch mode: raw, dtach, tmux, or auto (default: auto; auto prefers tmux, then dtach, then raw)",
     )
 
     subparsers = parser.add_subparsers(dest="subcommand", help="non-interactive commands")
@@ -740,6 +797,10 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     # Be tolerant of unknown arguments so tests that invoke main() with
     # arbitrary fake argv do not crash. Only help/version trigger an exit.
+    # Normalize bare --agent-mode so it does not consume a following
+    # subcommand or positional argument as its value.
+    argv = _preprocess_agent_mode(argv)
+
     try:
         args, remainder = parser.parse_known_args(argv)
     except SystemExit as exc:
@@ -750,6 +811,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         if exc.code == 0:
             raise
         raise
+    # Resolve auto-detection now that argparse has validated the choice.
+    if args.agent_mode == "auto":
+        args.agent_mode = _detect_agent_mode()
+
     if args.help:
         parser.print_help()
         sys.exit(0)
