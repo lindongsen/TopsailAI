@@ -253,7 +253,7 @@ def update_response_item(item:dict) -> dict:
                     else:
                         item_generic = _item
             if item_tool_call:
-                print_error(f"{LLM_KEYWORD_MISTAKE}: TOPSAILAI_HOOK_AFTER_LLM_CHAT, action content format is unexpected")
+                print_error(f"{LLM_KEYWORD_MISTAKE}: TOPSAILAI_HOOK_AFTER_LLM_CHAT, action content format is unexpected, current=[{item}], target=[{item_tool_call}]")
                 # {'step_name': 'action', 'tool_call': ..., 'tool_args': ...}
                 item.update(item_tool_call)
             elif item_generic:
