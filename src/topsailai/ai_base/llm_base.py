@@ -241,6 +241,144 @@ class LLMModel(LLMModelBase):
         return result[0]
 
 
+    def _truncate_event_payload(self, payload, max_bytes):
+        """Truncate an event payload so its JSON representation fits ``max_bytes``.
+
+        Truncation is applied defensively without mutating caller state: the
+        payload is copied before any modification. Large ``raw_response`` and
+        ``content`` fields are reduced first; if the payload is still too large,
+        a minimal fallback record is returned.
+        """
+        import json
+
+        try:
+            data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+        except Exception:
+            return {"_error": "payload not serializable"}
+
+        if len(data.encode("utf-8")) <= max_bytes:
+            return payload
+
+        # Copy so the caller's dict is never mutated.
+        payload = dict(payload)
+
+        # First drop the raw response, which is usually the largest part.
+        if "raw_response" in payload:
+            payload["raw_response"] = {"_truncated": True}
+            data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+            if len(data.encode("utf-8")) <= max_bytes:
+                return payload
+
+        # Then truncate textual content.
+        if isinstance(payload.get("content"), str):
+            payload["content"] = payload["content"][: max_bytes // 10]
+            data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+            if len(data.encode("utf-8")) <= max_bytes:
+                return payload
+
+        # Then truncate tool-call arguments.
+        if payload.get("tool_calls"):
+            payload["tool_calls"] = [
+                dict(tc) for tc in payload["tool_calls"]
+            ]
+            for tc in payload["tool_calls"]:
+                func = tc.get("function") or {}
+                if isinstance(func.get("arguments"), str):
+                    func["arguments"] = func["arguments"][: max_bytes // 10]
+                tc["function"] = func
+            data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+            if len(data.encode("utf-8")) <= max_bytes:
+                return payload
+
+        # Final fallback: keep only safe metadata.
+        return {
+            "_truncated": True,
+            "model": payload.get("model"),
+            "is_stream": payload.get("is_stream"),
+            "content_length": len(payload.get("content", "") or ""),
+            "tool_call_count": len(payload.get("tool_calls") or []),
+        }
+
+    def _record_llm_response_event(self, response, is_stream=False, sampled_chunks=None):
+        """Record a raw LLM response event if response-event recording is enabled.
+
+        This is a safe hook: any exception is swallowed and no shared state is
+        mutated, so recording failures can never break the LLM call.
+        """
+        try:
+            enabled = env_tool.EnvReaderInstance.check_bool(
+                "TOPSAILAI_LLM_RESPONSE_EVENTS_ENABLED",
+                default=True,
+            )
+            if not enabled:
+                return
+
+            max_payload_bytes = env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_LLM_RESPONSE_EVENTS_MAX_PAYLOAD_BYTES",
+                default=100000,
+                formatter=int,
+            )
+            if max_payload_bytes is None or max_payload_bytes <= 0:
+                max_payload_bytes = 100000
+
+            include_raw = env_tool.EnvReaderInstance.check_bool(
+                "TOPSAILAI_LLM_RESPONSE_EVENTS_INCLUDE_RAW",
+                default=True,
+            )
+
+            message = self.get_response_message(response)
+            content = getattr(message, "content", None) or ""
+
+            tool_calls = None
+            raw_tool_calls = getattr(message, "tool_calls", None)
+            if raw_tool_calls:
+                tool_calls = []
+                for tc in raw_tool_calls:
+                    function = getattr(tc, "function", None)
+                    tool_calls.append({
+                        "id": getattr(tc, "id", None),
+                        "type": getattr(tc, "type", "function"),
+                        "function": {
+                            "name": getattr(function, "name", None) if function else None,
+                            "arguments": getattr(function, "arguments", None) if function else None,
+                        },
+                    })
+
+            payload = {
+                "model": self.model_name,
+                "is_stream": is_stream,
+                "content": content,
+                "tool_calls": tool_calls,
+            }
+
+            if include_raw:
+                raw_response = None
+                try:
+                    if hasattr(response, "to_dict"):
+                        raw_response = response.to_dict()
+                    elif hasattr(response, "model_dump"):
+                        raw_response = response.model_dump()
+                    else:
+                        raw_response = {"_repr": repr(response)}
+                except Exception:
+                    raw_response = {"_error": "failed to serialize raw response"}
+                payload["raw_response"] = raw_response
+
+            if sampled_chunks:
+                payload["sampled_chunks"] = sampled_chunks
+
+            payload = self._truncate_event_payload(payload, max_payload_bytes)
+
+            from topsailai.events import record_event
+            record_event(
+                "llm.response.raw",
+                payload=payload,
+                source="ai_base.llm_base",
+            )
+        except Exception:
+            # Safe hook: never re-raise; never mutate shared state.
+            pass
+
     @_state_visualizer.visualize_state(VisualizationState.THINKING)
     def call_llm_model(self, messages, tools=None, tool_choice="auto"):
         """
@@ -279,6 +417,8 @@ class LLMModel(LLMModelBase):
         self.check_response_content(rsp_obj=response, rsp_content=full_content)
 
         self.send_content(full_content)
+
+        self._record_llm_response_event(response, is_stream=False)
 
         return (response, full_content)
 
@@ -409,6 +549,15 @@ class LLMModel(LLMModelBase):
 
         first_byte_ms = None
 
+        stream_chunk_sample = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_LLM_RESPONSE_EVENTS_STREAM_CHUNK_SAMPLE",
+            default=0,
+            formatter=int,
+        )
+        if stream_chunk_sample is None or stream_chunk_sample < 0:
+            stream_chunk_sample = 0
+        sampled_chunks = [] if stream_chunk_sample > 0 else None
+
         for chunk in self.iter_stream_with_first_byte_timeout(
             response,
             first_byte_timeout,
@@ -426,6 +575,19 @@ class LLMModel(LLMModelBase):
                 pass
             if delta_obj is None:
                 continue
+            if sampled_chunks is not None and len(sampled_chunks) < stream_chunk_sample:
+                try:
+                    chunk_data = None
+                    if hasattr(chunk, "to_dict"):
+                        chunk_data = chunk.to_dict()
+                    elif hasattr(chunk, "model_dump"):
+                        chunk_data = chunk.model_dump()
+                    else:
+                        chunk_data = {"_repr": repr(chunk)}
+                    sampled_chunks.append(chunk_data)
+                except Exception:
+                    pass
+
 
             # Record first-byte timing on the first chunk that carries content
             # or tool-call data. This measures the time from stream start to the
@@ -504,6 +666,8 @@ class LLMModel(LLMModelBase):
 
         full_content = self.fix_response_content(rsp_obj=response_ccm, rsp_content=full_content)
         self.check_response_content(rsp_obj=response_ccm, rsp_content=full_content)
+
+        self._record_llm_response_event(response_ccm, is_stream=True, sampled_chunks=sampled_chunks)
 
         return (response_ccm, full_content)
 

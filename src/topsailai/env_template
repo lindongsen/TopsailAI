@@ -104,6 +104,23 @@ TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT=180
 # automatically retry the request. Otherwise (default), only a warning is logged.
 TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE=0
 
+# =============================================================================
+# LLM Response Event Recording
+# =============================================================================
+# Enable recording of raw LLM responses into the events subsystem.
+# 1 = enabled, 0 = disabled. When disabled, the hook returns immediately with
+# no serialization or event allocation.
+TOPSAILAI_LLM_RESPONSE_EVENTS_ENABLED=1
+# Maximum size in bytes for the JSON-encoded event payload. Responses exceeding
+# this limit are progressively truncated.
+TOPSAILAI_LLM_RESPONSE_EVENTS_MAX_PAYLOAD_BYTES=100000
+# Include the raw provider response object in the event payload.
+# 1 = include, 0 = omit.
+TOPSAILAI_LLM_RESPONSE_EVENTS_INCLUDE_RAW=1
+# Number of stream chunks to sample into the event payload. 0 disables sampling.
+# Positive values keep the first N and last N chunks.
+TOPSAILAI_LLM_RESPONSE_EVENTS_STREAM_CHUNK_SAMPLE=0
+
 # JSON list of exact response strings that should be treated as transient
 # LLM-service errors and trigger a retry. Example:
 # TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY='["服务器繁忙，请稍后再试。", "服务繁忙"]'

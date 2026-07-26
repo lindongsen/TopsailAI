@@ -5,13 +5,14 @@ This module contains unit tests for the LLMModel class which provides
 OpenAI-compatible LLM interaction capabilities.
 """
 
+import json
 import unittest
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import openai
 
+
 class TestLLMModelGetModelName(unittest.TestCase):
-    """Test cases for LLMModel.get_model_name method."""
 
     def setUp(self):
         """Set up test fixtures."""
@@ -1004,8 +1005,336 @@ class TestLLMModelErrorHandling(unittest.TestCase):
             model.chat(self.messages)
 
 
-if __name__ == "__main__":
-    unittest.main()
+
+
+class TestLLMModelResponseEvents(unittest.TestCase):
+    """Test cases for LLM raw response event recording."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.messages = [{"role": "user", "content": "Event test"}]
+
+    def _create_mock_model(self):
+        """Create a mock LLMModel with all required attributes."""
+        from topsailai.ai_base.llm_base import LLMModel
+        model = LLMModel()
+        model.models = []
+        model.model = MagicMock()
+        model.tokenStat = MagicMock()
+        model.model_config = {"api_key": "test-key"}
+        model.model_name = "test-model"
+        model.temperature = 0.7
+        model.max_tokens = 4096
+        model.top_p = 1.0
+        model.frequency_penalty = 0.0
+        model.content_senders = []
+        model.hooks = {}
+        return model
+
+    def _make_env_side_effects(self, enabled=True, max_payload_bytes=100000, include_raw=True, stream_chunk_sample=0):
+        """Return side-effect callables for EnvReaderInstance mocks."""
+        def check_bool_side_effect(name, default=None):
+            if name == "TOPSAILAI_LLM_RESPONSE_EVENTS_ENABLED":
+                return enabled
+            if name == "TOPSAILAI_LLM_RESPONSE_EVENTS_INCLUDE_RAW":
+                return include_raw
+            return default
+
+        def get_side_effect(name, default=None, formatter=None):
+            if name == "TOPSAILAI_LLM_RESPONSE_EVENTS_MAX_PAYLOAD_BYTES":
+                return max_payload_bytes
+            if name == "TOPSAILAI_LLM_RESPONSE_EVENTS_STREAM_CHUNK_SAMPLE":
+                return stream_chunk_sample
+            return default
+
+        return check_bool_side_effect, get_side_effect
+
+    def _make_response_message(self, content="", tool_calls=None):
+        """Create a mock response message."""
+        message = MagicMock()
+        message.content = content
+        message.tool_calls = tool_calls
+        return message
+
+    @patch("topsailai.events.record_event")
+    @patch("topsailai.ai_base.llm_base.get_response_message")
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_response_event_disabled_emits_nothing(
+        self, mock_base_init, mock_logger, mock_format, mock_env_tool,
+        mock_get_msg, mock_record_event
+    ):
+        """When recording is disabled, no event is emitted."""
+        check_bool, get = self._make_env_side_effects(enabled=False)
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = check_bool
+        mock_env_tool.EnvReaderInstance.get.side_effect = get
+
+        mock_message = self._make_response_message(content="Hello")
+        mock_get_msg.return_value = mock_message
+        mock_format.return_value = ["Hello"]
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message = mock_message
+
+        model = self._create_mock_model()
+        model.model.create.return_value = mock_response
+
+        result = model.call_llm_model(self.messages)
+
+        self.assertEqual(result[1], "Hello")
+        mock_record_event.assert_not_called()
+
+    @patch("topsailai.events.record_event")
+    @patch("topsailai.ai_base.llm_base.get_response_message")
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_response_event_non_streaming_records_payload(
+        self, mock_base_init, mock_logger, mock_format, mock_env_tool,
+        mock_get_msg, mock_record_event
+    ):
+        """Non-streaming response emits llm.response.raw with correct payload."""
+        check_bool, get = self._make_env_side_effects()
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = check_bool
+        mock_env_tool.EnvReaderInstance.get.side_effect = get
+
+        mock_message = self._make_response_message(content="Hello world")
+        mock_get_msg.return_value = mock_message
+        mock_format.return_value = ["Hello world"]
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message = mock_message
+        mock_response.to_dict.return_value = {"id": "resp_1", "object": "chat.completion"}
+
+        model = self._create_mock_model()
+        model.model.create.return_value = mock_response
+
+        result = model.call_llm_model(self.messages)
+
+        self.assertEqual(result[1], "Hello world")
+        mock_record_event.assert_called_once()
+        args, kwargs = mock_record_event.call_args
+        self.assertEqual(args[0], "llm.response.raw")
+        self.assertEqual(kwargs["source"], "ai_base.llm_base")
+        payload = kwargs["payload"]
+        self.assertEqual(payload["model"], "test-model")
+        self.assertEqual(payload["is_stream"], False)
+        self.assertEqual(payload["content"], "Hello world")
+        self.assertIn("raw_response", payload)
+        self.assertEqual(payload["raw_response"]["id"], "resp_1")
+
+    @patch("topsailai.events.record_event")
+    @patch("topsailai.ai_base.llm_base.get_response_message")
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_response_event_streaming_emits_once_after_trunk(
+        self, mock_base_init, mock_logger, mock_env_tool,
+        mock_get_msg, mock_record_event
+    ):
+        """Streaming emits exactly one event after the full trunk is received."""
+        check_bool, get = self._make_env_side_effects()
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = check_bool
+        mock_env_tool.EnvReaderInstance.get.side_effect = get
+
+        mock_chunk1 = MagicMock()
+        mock_chunk1.choices = [MagicMock()]
+        mock_chunk1.choices[0].delta.content = "Hello "
+        mock_chunk1.choices[0].delta.tool_calls = None
+
+        mock_chunk2 = MagicMock()
+        mock_chunk2.choices = [MagicMock()]
+        mock_chunk2.choices[0].delta.content = "world"
+        mock_chunk2.choices[0].delta.tool_calls = None
+
+        mock_response = iter([mock_chunk1, mock_chunk2])
+
+        model = self._create_mock_model()
+        model.model.create.return_value = mock_response
+
+        # _record_llm_response_event calls get_response_message on the rebuilt
+        # ChatCompletionMessage; configure it to return a message whose content
+        # matches the assembled trunk.
+        mock_get_msg.return_value = self._make_response_message(content="Hello world")
+
+        result = model.call_llm_model_by_stream(self.messages)
+
+        self.assertEqual(result[1], "Hello world")
+        mock_record_event.assert_called_once()
+        args, kwargs = mock_record_event.call_args
+        self.assertEqual(args[0], "llm.response.raw")
+        payload = kwargs["payload"]
+        self.assertEqual(payload["is_stream"], True)
+        self.assertEqual(payload["content"], "Hello world")
+
+    @patch("topsailai.events.record_event")
+    @patch("topsailai.ai_base.llm_base.get_response_message")
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_response_event_hook_failure_does_not_break_llm_call(
+        self, mock_base_init, mock_logger, mock_format, mock_env_tool,
+        mock_get_msg, mock_record_event
+    ):
+        """A recording exception must not propagate to the caller."""
+        check_bool, get = self._make_env_side_effects()
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = check_bool
+        mock_env_tool.EnvReaderInstance.get.side_effect = get
+
+        mock_record_event.side_effect = RuntimeError("event backend down")
+
+        mock_message = self._make_response_message(content="Safe")
+        mock_get_msg.return_value = mock_message
+        mock_format.return_value = ["Safe"]
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message = mock_message
+
+        model = self._create_mock_model()
+        model.model.create.return_value = mock_response
+
+        result = model.call_llm_model(self.messages)
+
+        self.assertEqual(result[1], "Safe")
+        mock_record_event.assert_called_once()
+
+    @patch("topsailai.events.record_event")
+    @patch("topsailai.ai_base.llm_base.get_response_message")
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_response_event_detects_tool_calls_from_message(
+        self, mock_base_init, mock_logger, mock_format, mock_env_tool,
+        mock_get_msg, mock_record_event
+    ):
+        """Tool calls are extracted from message.tool_calls, not env flags."""
+        check_bool, get = self._make_env_side_effects()
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = check_bool
+        mock_env_tool.EnvReaderInstance.get.side_effect = get
+
+        mock_function = MagicMock()
+        mock_function.name = "test_func"
+        mock_function.arguments = '{"arg": "value"}'
+
+        mock_tool_call = MagicMock()
+        mock_tool_call.id = "call_123"
+        mock_tool_call.type = "function"
+        mock_tool_call.function = mock_function
+
+        mock_message = self._make_response_message(content="", tool_calls=[mock_tool_call])
+        mock_get_msg.return_value = mock_message
+        mock_format.return_value = [""]
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message = mock_message
+
+        model = self._create_mock_model()
+        model.model.create.return_value = mock_response
+
+        model.call_llm_model(self.messages)
+
+        payload = mock_record_event.call_args[1]["payload"]
+        self.assertEqual(len(payload["tool_calls"]), 1)
+        self.assertEqual(payload["tool_calls"][0]["id"], "call_123")
+        self.assertEqual(payload["tool_calls"][0]["function"]["name"], "test_func")
+        self.assertEqual(payload["tool_calls"][0]["function"]["arguments"], '{"arg": "value"}')
+
+    @patch("topsailai.events.record_event")
+    @patch("topsailai.ai_base.llm_base.get_response_message")
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_response_event_truncates_oversized_payload(
+        self, mock_base_init, mock_logger, mock_format, mock_env_tool,
+        mock_get_msg, mock_record_event
+    ):
+        """Large payloads are truncated to fit the configured byte limit."""
+        check_bool, get = self._make_env_side_effects(max_payload_bytes=200)
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = check_bool
+        mock_env_tool.EnvReaderInstance.get.side_effect = get
+
+        large_content = "x" * 10000
+        mock_message = self._make_response_message(content=large_content)
+        mock_get_msg.return_value = mock_message
+        mock_format.return_value = [large_content]
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message = mock_message
+        mock_response.to_dict.return_value = {"content": large_content}
+
+        model = self._create_mock_model()
+        model.model.create.return_value = mock_response
+
+        model.call_llm_model(self.messages)
+
+        payload = mock_record_event.call_args[1]["payload"]
+        import json
+        serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+        self.assertLessEqual(len(serialized.encode("utf-8")), 200)
+        self.assertTrue(payload.get("_truncated") or len(payload.get("content", "")) < 10000)
+
+    @patch("topsailai.events.record_event")
+    @patch("topsailai.ai_base.llm_base.get_response_message")
+    @patch("topsailai.ai_base.llm_base.env_tool")
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_response_event_no_api_key_or_non_serializable_leakage(
+        self, mock_base_init, mock_logger, mock_format, mock_env_tool,
+        mock_get_msg, mock_record_event
+    ):
+        """Raw response serialization must remain JSON-safe and not crash."""
+        check_bool, get = self._make_env_side_effects()
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = check_bool
+        mock_env_tool.EnvReaderInstance.get.side_effect = get
+
+        mock_message = self._make_response_message(content="OK")
+        mock_get_msg.return_value = mock_message
+        mock_format.return_value = ["OK"]
+
+        class NonSerializable:
+            def __repr__(self):
+                return "<non-serializable-client>"
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message = mock_message
+        mock_response.to_dict.return_value = {
+            "id": "resp_1",
+            "api_key": "secret-key-must-not-leak",
+            "client": NonSerializable(),
+        }
+
+        model = self._create_mock_model()
+        model.model.create.return_value = mock_response
+
+        # The LLM call must succeed even though the raw response contains a
+        # non-serializable object.
+        result = model.call_llm_model(self.messages)
+        self.assertEqual(result, (mock_response, "OK"))
+
+        payload = mock_record_event.call_args[1]["payload"]
+        raw = payload["raw_response"]
+        serialized = json.dumps(raw, ensure_ascii=False, separators=(",", ":"), default=str)
+        # The non-serializable object must be converted to a string, not kept as
+        # a live object reference in the recorded payload.
+        self.assertIsInstance(serialized, str)
+        self.assertIn("<non-serializable-client>", serialized)
+        # The raw payload itself must be JSON-serializable (no live objects).
+        json.dumps(raw, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
 
 
 class TestLLMModelChatAgentRuntimeInput(unittest.TestCase):
@@ -1127,3 +1456,7 @@ class TestLLMModelChatAgentRuntimeInput(unittest.TestCase):
         mock_get_input.assert_called_once()
         mock_get_with_timeout.assert_not_called()
         mock_builtin.assert_called_once_with(">>> LLM Retry [yes/no] ")
+
+
+if __name__ == "__main__":
+    unittest.main()

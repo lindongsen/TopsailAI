@@ -161,6 +161,10 @@ All configuration is read from environment variables via `events/config.py::Even
 | `TOPSAILAI_EVENTS_FILE_MAX_COUNT` | `0` | Maximum number of event files to keep. `0` = unlimited. |
 | `TOPSAILAI_EVENTS_FILE_DELETE_ON_EXIT` | `0` | Delete the current process's events file on shutdown. |
 | `TOPSAILAI_EVENTS_FILE_FSYNC` | `1` | Call `os.fsync()` after each file write. |
+| `TOPSAILAI_LLM_RESPONSE_EVENTS_ENABLED` | `1` | Enable raw LLM response event recording. `1` = enabled, `0` = disabled. |
+| `TOPSAILAI_LLM_RESPONSE_EVENTS_MAX_PAYLOAD_BYTES` | `100000` | Maximum size in bytes for the JSON-encoded event payload. Responses exceeding this limit are progressively truncated. |
+| `TOPSAILAI_LLM_RESPONSE_EVENTS_INCLUDE_RAW` | `1` | Include the raw provider response object in the event payload. `1` = include, `0` = omit. |
+| `TOPSAILAI_LLM_RESPONSE_EVENTS_STREAM_CHUNK_SAMPLE` | `0` | Number of stream chunks to sample into the event payload. `0` disables sampling. Positive values keep the first N and last N chunks. |
 
 ---
 
@@ -231,7 +235,24 @@ def chat_with_llm(prompt: str) -> str:
     return "hello"
 ```
 
-Emits `llm.request.start`, `llm.response.success`, or `llm.response.error`.
+#### LLM Raw Response Events
+
+When `TOPSAILAI_LLM_RESPONSE_EVENTS_ENABLED=1`, raw LLM responses are recorded
+as `llm.response.raw` events from within `ai_base/llm_base.py`. The event is
+emitted after the full response (or the complete stream trunk) has been received,
+so streaming responses produce exactly one event per LLM call rather than one
+per chunk.
+
+The recording hook is isolated in a `try/except` block and never re-raises, so
+any failure in serialization or event buffering cannot affect the original LLM
+call. Tool calls are detected by inspecting the response object itself
+(`message.tool_calls`) rather than relying on environment variables.
+
+See `docs/Environment_Variables.md` for configuration variables:
+`TOPSAILAI_LLM_RESPONSE_EVENTS_ENABLED`,
+`TOPSAILAI_LLM_RESPONSE_EVENTS_MAX_PAYLOAD_BYTES`,
+`TOPSAILAI_LLM_RESPONSE_EVENTS_INCLUDE_RAW`, and
+`TOPSAILAI_LLM_RESPONSE_EVENTS_STREAM_CHUNK_SAMPLE`.
 
 ### 8.3 Custom Backend Adapter
 
@@ -261,6 +282,7 @@ class MyBackend(EventBackend):
 
 | File | Function | Decorator | Event Types |
 |------|----------|-----------|-------------|
+| `ai_base/llm_base.py` | `LLMModel.call_llm_model*` | inline safe hook | `llm.response.raw` |
 | `ai_base/agent_types/tool.py` | `exec_tool_func()` | `@record_tool_call_events` (innermost) | `tool_call.start`, `tool_call.end` |
 
 Decorator stack on `exec_tool_func` (outer → inner):

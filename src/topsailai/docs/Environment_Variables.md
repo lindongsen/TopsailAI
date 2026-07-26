@@ -375,6 +375,10 @@ These variables are for runtime use only and should not be set manually.
 | `TOPSAILAI_LLM_SLOW_CHAT_THRESHOLD` | `60` | Threshold in seconds for detecting slow LLM chats. |
 | `TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT` | `180` | Threshold in seconds for the first chunk of a streaming LLM response. If the first chunk takes longer than this value, a warning is logged. Set to `0` to disable the warning. |
 | `TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE` | `0` | When set to a truthy value (`1`, `true`, `yes`, `on`, `enabled`), raise `openai.APITimeoutError` if the first chunk of a streaming LLM response exceeds `TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT`. The outer chat retry loop will then automatically retry the request. Otherwise (default), only a warning is logged. |
+| `TOPSAILAI_LLM_RESPONSE_EVENTS_ENABLED` | `1` | Enable recording of raw LLM responses into the events subsystem. `1` = enabled, `0` = disabled. When disabled, the hook returns immediately with no serialization or event allocation. |
+| `TOPSAILAI_LLM_RESPONSE_EVENTS_MAX_PAYLOAD_BYTES` | `100000` | Maximum size in bytes for the JSON-encoded event payload. Responses exceeding this limit are progressively truncated: first `raw_response` and `sampled_chunks`, then message content and tool-call arguments, finally falling back to a minimal marker. |
+| `TOPSAILAI_LLM_RESPONSE_EVENTS_INCLUDE_RAW` | `1` | Include the raw provider response object (`response.to_dict()`) in the event payload. `1` = include, `0` = omit. The raw response is never leaked when serialization fails. |
+| `TOPSAILAI_LLM_RESPONSE_EVENTS_STREAM_CHUNK_SAMPLE` | `0` | Number of stream chunks to sample into the event payload. `0` disables chunk sampling. Positive values keep the first N and last N chunks. Sampling only occurs when response event recording is enabled. |
 
 ## Event Module Configuration
 
