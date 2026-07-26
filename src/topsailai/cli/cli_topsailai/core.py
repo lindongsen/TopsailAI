@@ -41,6 +41,55 @@ __version__ = "0.1.0"
 # ("sessions") or the managed project list ("managed").
 _project_scope_mode: str = "sessions"
 
+# Match ANSI escape sequences (e.g. "\033[32m") so they can be marked as
+# non-printing when a prompt is passed to readline-based input().
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+# readline non-printing marker bytes.  Wrapping ANSI escape sequences with
+# these prevents readline from counting invisible color codes when computing
+# cursor position and backspace boundaries.
+_RL_PROMPT_START_IGNORE = "\x01"
+_RL_PROMPT_END_IGNORE = "\x02"
+
+
+def _make_readline_safe_prompt(prompt: str) -> str:
+    """Wrap ANSI escape sequences so readline ignores them for width calculations.
+
+    Without these markers readline treats invisible color codes as visible
+    characters, which causes backspace to cross the prompt boundary and
+    produces cursor/line-wrap glitches.
+    """
+    return _ANSI_ESCAPE_RE.sub(
+        lambda m: f"{_RL_PROMPT_START_IGNORE}{m.group(0)}{_RL_PROMPT_END_IGNORE}",
+        prompt,
+    )
+
+
+def _read_input_with_prompt(prompt: str) -> str:
+    """Read a line, using readline when possible so the prompt is protected.
+
+    In an interactive TTY with readline available, the prompt is passed
+    directly to ``input()`` after wrapping ANSI escapes with readline's
+    non-printing markers.  This lets the terminal line editor know the
+    visible prompt length, so backspace stops at the prompt boundary.
+
+    When readline is unavailable or stdin is not a TTY, the prompt is printed
+    explicitly and ``input()`` is called with an empty prompt, preserving the
+    previous fallback behavior.
+    """
+    try:
+        import readline
+    except (NameError, ImportError):
+        readline = None
+
+    if readline is not None and sys.stdin.isatty():
+        return input(_make_readline_safe_prompt(prompt)).strip()
+
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    return input("").strip()
+
+
 
 def _try_handle_project_subcommand(
     argv: Optional[List[str]], agent_mode: str = "dtach"
@@ -267,14 +316,14 @@ def prompt_selection(
             return ("quit", None)
         try:
             prompt_text = get_prompt()
-            # Some execution wrappers (e.g. uv run) strip ANSI escape
-            # sequences from the prompt argument passed to input(), which
-            # causes literal [32m/[0m markers to be displayed. Print the
-            # colored prompt directly via stdout and call input() with an
-            # empty prompt so the escapes are preserved.
-            sys.stdout.write(prompt_text)
-            sys.stdout.flush()
-            user_input = input("").strip()
+            # In an interactive TTY, pass the colored prompt to readline via
+            # input() after wrapping ANSI escapes with RL_PROMPT_START_IGNORE
+            # / RL_PROMPT_END_IGNORE markers.  This tells readline the visible
+            # prompt length so backspace stops at the prompt boundary instead
+            # of erasing it.  When readline is unavailable or stdin is not a
+            # TTY, the prompt is printed explicitly and input() is called with
+            # an empty prompt as a fallback.
+            user_input = _read_input_with_prompt(prompt_text)
             if user_input:
                 try:
                     import readline
