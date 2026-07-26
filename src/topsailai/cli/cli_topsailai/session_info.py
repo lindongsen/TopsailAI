@@ -8,6 +8,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Tuple
 
+from cli_topsailai.colors import Colors
 from cli_topsailai.project_scope import load_project_workspace_lookup
 
 # Timeout for each external session-info lookup, in seconds.
@@ -264,9 +265,11 @@ def _fetch_session_names(session_ids: List[str]) -> dict[str, str]:
     results: dict[str, str] = {}
     max_workers = min(_MAX_SESSION_INFO_WORKERS, len(session_ids))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_id = {
-            executor.submit(_get_session_info, sid): sid for sid in session_ids
-        }
+        future_to_id = {}
+        for sid in session_ids:
+            print(f"{Colors.DIM}Querying session info for session: {sid}{Colors.RESET}")
+            sys.stdout.flush()
+            future_to_id[executor.submit(_get_session_info, sid)] = sid
         for future in as_completed(future_to_id):
             session_id = future_to_id[future]
             try:

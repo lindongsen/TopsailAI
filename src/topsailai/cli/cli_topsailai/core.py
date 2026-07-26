@@ -1009,6 +1009,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     sys.stdout.flush()
     log_files = discover_log_files(task_dir, on_item=_print_refresh_item)
     enrich_files_with_session_names(log_files)
+    enrich_running_unnamed_sessions(log_files)
     project_entries: List[Dict[str, Any]] = []
     managed_project_entries: List[Dict[str, Any]] = []
     doc_entries: List[Dict[str, Any]] = []
