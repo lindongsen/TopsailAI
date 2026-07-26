@@ -676,8 +676,12 @@ class TestWrapCommandForAgentMode(unittest.TestCase):
             "TOPSAILAI_SESSION_ID": "s-123",
             "TOPSAILAI_PWD": "/work/project-a",
             "PWD": "/work/project-a",
+            "PATH": "/usr/local/bin:/usr/bin",
+            "HOME": "/home/user",
+            "SHELL": "/bin/bash",
+            "USER": "user",
         },
-        clear=False,
+        clear=True,
     )
     @patch("cli_topsailai.project_scope._generate_agent_session_name")
     @patch("cli_topsailai.project_scope.shutil.which")
@@ -687,16 +691,19 @@ class TestWrapCommandForAgentMode(unittest.TestCase):
         result = project_scope._wrap_command_for_agent_mode(
             "topsailai_launch_agent", "tmux"
         )
-        expected = (
-            "tmux new-session"
-            " -e TOPSAILAI_SESSION_ID=s-123"
-            " -e TOPSAILAI_PWD=/work/project-a"
-            " -e PWD=/work/project-a"
-            " -s "
-            + shlex.quote("topsailai-20260707T221748.169974")
-            + " topsailai_launch_agent"
+        self.assertTrue(result.startswith("tmux new-session"))
+        self.assertIn("-e TOPSAILAI_SESSION_ID=s-123", result)
+        self.assertIn("-e TOPSAILAI_PWD=/work/project-a", result)
+        self.assertIn("-e PWD=/work/project-a", result)
+        self.assertIn("-e PATH=/usr/local/bin:/usr/bin", result)
+        self.assertIn("-e HOME=/home/user", result)
+        self.assertIn("-e SHELL=/bin/bash", result)
+        self.assertIn("-e USER=user", result)
+        self.assertIn(
+            " -s " + shlex.quote("topsailai-20260707T221748.169974") + " ",
+            result,
         )
-        self.assertEqual(result, expected)
+        self.assertIn(" topsailai_launch_agent", result)
 
     @patch("cli_topsailai.project_scope.shutil.which")
     def test_tmux_mode_without_tmux_raises_runtime_error(self, mock_which):

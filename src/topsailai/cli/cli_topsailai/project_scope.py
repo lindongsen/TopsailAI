@@ -479,13 +479,22 @@ def _wrap_command_for_agent_mode(command: str, mode: str) -> str:
                 "Install tmux to use --agent-mode tmux, or choose raw/dtach."
             )
         session_name = _generate_agent_session_name()
+
+        # tmux starts a fresh session environment; explicitly forward all
+        # TopsailAI-related variables and essential shell variables so the
+        # agent sees the same environment as raw/dtach modes.
+        forwarded_keys = set(
+            key for key in os.environ.keys() if key.startswith("TOPSAILAI_")
+        )
+        forwarded_keys.update(("PATH", "HOME", "SHELL", "USER", "PWD"))
         env_vars = {
-            key: os.environ.get(key)
-            for key in ("TOPSAILAI_SESSION_ID", "TOPSAILAI_PWD", "PWD")
+            key: os.environ[key]
+            for key in forwarded_keys
             if os.environ.get(key) is not None
         }
         env_args = " ".join(
-            f"-e {shlex.quote(f'{key}={value}')}" for key, value in env_vars.items()
+            f"-e {shlex.quote(f'{key}={value}')}"
+            for key, value in env_vars.items()
         )
         env_part = f" {env_args}" if env_args else ""
         return (
