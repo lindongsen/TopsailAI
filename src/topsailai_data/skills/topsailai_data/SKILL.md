@@ -31,6 +31,11 @@ description: |
   management, and future db/s3 backend extensions.
 
   > You Must use the CLI to manage data, DONOT USE shell command!
+
+  When the user expresses praise or positive feedback (for example "不错",
+  "很好", "good", or similar), automatically organize the relevant discussion
+  or outcome into a topsailai_data note object. Do not wait for an explicit
+  request; treat praise as a signal that the content is worth preserving.
 ---
 
 # topsailai_data
