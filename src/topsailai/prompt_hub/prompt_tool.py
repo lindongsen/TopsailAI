@@ -99,9 +99,9 @@ class PromptHubExtractor(object):
         read_prompt("security/file.md")
         + read_prompt("context/file.md")
         + read_prompt("context/preparation.md")
+        + read_prompt("context/final.md")
         + read_prompt("search/text.md")
     ) if not is_only_pure_system_prompt() else ""
-
     # task management
     prompt_task = (
         read_prompt("task/control.md")

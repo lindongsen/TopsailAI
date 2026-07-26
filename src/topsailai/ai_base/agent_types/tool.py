@@ -22,15 +22,30 @@ from topsailai.utils.thread_tool import (
 )
 from topsailai.utils.thread_local_tool import (
     get_agent_name,
+    get_agent_object,
     get_agent_runtime_input,
 )
 from topsailai.utils import (
     print_tool,
     env_tool,
 )
+from topsailai.utils.json_tool import (
+    json_load,
+    to_json_str,
+)
 from topsailai.events import record_tool_call_events
 from topsailai.ai_base.constants import (
     LLM_KEYWORD_MISTAKE,
+    ROLE_ASSISTANT,
+    ROLE_TOOL,
+    ROLE_USER,
+    STEP_NAME_ACTION,
+    STEP_NAME_FINAL_ANSWER,
+    STEP_NAME_INQUIRY,
+    STEP_NAME_OBSERVATION,
+    STEP_NAME_THOUGHT,
+    MSG_KEY_RAW_TEXT,
+    MSG_KEY_STEP_NAME,
 )
 from topsailai.ai_base.tool_approval import (
     with_tool_approval,
@@ -316,20 +331,183 @@ class StepCallTool(StepCallBase):
             return
         return
 
+    def _parse_message_content(self, message: dict):
+        """Parse message content into a list of step dicts.
+
+        Supports content stored as a list, a single dict, or a JSON string.
+        Returns an empty list for unsupported formats.
+        """
+        content = message.get("content")
+        if isinstance(content, list):
+            return content
+        if isinstance(content, dict):
+            return [content]
+        if isinstance(content, str):
+            parsed = json_load(content)
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict):
+                return [parsed]
+        return []
+
+    def _is_mergeable_thought_message(self, message: dict) -> tuple[bool, str]:
+        """Check whether a message is a standalone thought/inquiry step.
+
+        Returns (True, raw_text) when the message is an assistant message whose
+        content contains exactly one step with step_name ``thought`` or
+        ``inquiry``. Otherwise returns (False, "").
+        """
+        if not isinstance(message, dict):
+            return False, ""
+        if message.get("role") != ROLE_ASSISTANT:
+            return False, ""
+        # A message that carries tool_calls is not a pure thought/inquiry.
+        if message.get("tool_calls"):
+            return False, ""
+        steps = self._parse_message_content(message)
+        if len(steps) != 1:
+            return False, ""
+        step = steps[0]
+        if not isinstance(step, dict):
+            return False, ""
+        step_name = step.get(MSG_KEY_STEP_NAME)
+        if step_name not in (STEP_NAME_THOUGHT, STEP_NAME_INQUIRY):
+            return False, ""
+        raw_text = step.get(MSG_KEY_RAW_TEXT, "")
+        return True, raw_text
+
+    def _has_intervening_executable_messages(
+        self, messages: list, start_idx: int, end_idx: int
+    ) -> bool:
+        """Return True if action/observation/tool messages exist between start and end.
+
+        A user-role message whose step_name is ``observation`` is ignored, because
+        such observations are human-provided context and should not block merging
+        of preceding assistant reasoning into the final answer.
+        """
+        executable_steps = {STEP_NAME_ACTION, STEP_NAME_OBSERVATION}
+        for idx in range(start_idx + 1, end_idx):
+            msg = messages[idx]
+            if msg.get("role") == ROLE_TOOL:
+                return True
+            if msg.get("role") == ROLE_USER:
+                steps = self._parse_message_content(msg)
+                if (
+                    len(steps) == 1
+                    and isinstance(steps[0], dict)
+                    and steps[0].get(MSG_KEY_STEP_NAME) == STEP_NAME_OBSERVATION
+                ):
+                    continue
+                # Any other user-role message blocks the merge.
+                return True
+            inner_steps = self._parse_message_content(msg)
+            for step in inner_steps:
+                if isinstance(step, dict) and step.get(MSG_KEY_STEP_NAME) in executable_steps:
+                    return True
+        return False
+
+    def _merge_preceding_thoughts_into_final(self):
+        """Merge standalone thought/inquiry messages into the final_answer thought.
+
+        This is a fallback for LLMs that split reasoning and the final answer
+        across separate assistant messages. The nearest two preceding assistant
+        messages (``messages[-3]`` and ``messages[-2]``) are inspected. If they
+        contain only a single ``thought`` or ``inquiry`` step and no executable
+        messages intervene, their raw_text is prepended to the ``thought`` step
+        of the final_answer message (``messages[-1]``). If the final_answer does
+        not already contain a thought step, a new thought step is inserted at the
+        front of its content.
+
+        Original messages are preserved; only the final_answer message content
+        is mutated in place.
+        """
+        agent = get_agent_object()
+        if agent is None or not hasattr(agent, "messages"):
+            return
+        messages = agent.messages
+        if len(messages) < 2:
+            return
+
+        final_msg = messages[-1]
+        if final_msg.get("role") != ROLE_ASSISTANT:
+            return
+
+        final_steps = self._parse_message_content(final_msg)
+        thought_step = None
+        for step in final_steps:
+            if isinstance(step, dict) and step.get(MSG_KEY_STEP_NAME) == STEP_NAME_THOUGHT:
+                thought_step = step
+                break
+
+        merge_texts = []
+        # Inspect messages[-3] and messages[-2] in index order.
+        candidate_offsets = (-3, -2)
+        for offset in candidate_offsets:
+            if abs(offset) > len(messages):
+                continue
+            idx = len(messages) + offset
+            candidate_msg = messages[idx]
+            is_mergeable, raw_text = self._is_mergeable_thought_message(candidate_msg)
+            if not is_mergeable:
+                continue
+            if self._has_intervening_executable_messages(messages, idx, len(messages) - 1):
+                continue
+            merge_texts.append((idx, raw_text))
+
+        if not merge_texts:
+            return
+
+        merged_content = "\n\n".join(text for _, text in merge_texts)
+
+        if thought_step is not None:
+            original_text = thought_step.get(MSG_KEY_RAW_TEXT, "")
+            thought_step[MSG_KEY_RAW_TEXT] = merged_content + "\n\n" + original_text
+        else:
+            new_thought = {
+                MSG_KEY_STEP_NAME: STEP_NAME_THOUGHT,
+                MSG_KEY_RAW_TEXT: merged_content,
+            }
+            final_steps.insert(0, new_thought)
+
+        final_msg["content"] = to_json_str(final_steps)
+        logger.info(
+            "Merged preceding thought/inquiry from messages %s into final_answer thought",
+            [idx for idx, _ in merge_texts],
+        )
+
     def complete_final(self, step:dict, **_):
         """
         Handle the final answer step.
 
         This method is called when the agent has completed its task and received
-        a final answer. It extracts the raw text from the step and sets the
-        appropriate completion code.
+        a final answer. It extracts the raw text from the step, merges any
+        standalone preceding thought/inquiry messages into the final_answer
+        thought, and sets the appropriate completion code.
 
         Args:
             step (dict): The final step dictionary containing the raw text result.
             **_ : Additional keyword arguments (ignored).
         """
         # Handle final answer step - complete the task
-        self.result = step["raw_text"]
+        try:
+            self._merge_preceding_thoughts_into_final()
+        except Exception as e:
+            logger.warning(
+                "Failed to merge preceding thought/inquiry into final_answer: %s",
+                e,
+                exc_info=True,
+            )
+        self.result = step.get(MSG_KEY_RAW_TEXT, "")
+        # Prefer the raw_text from the final_answer step in the mutated message
+        # in case the step representation differs from the original response.
+        agent = get_agent_object()
+        if agent is not None and hasattr(agent, "messages") and agent.messages:
+            final_msg = agent.messages[-1]
+            final_steps = self._parse_message_content(final_msg)
+            for s in final_steps:
+                if isinstance(s, dict) and s.get(MSG_KEY_STEP_NAME) == STEP_NAME_FINAL_ANSWER:
+                    self.result = s.get(MSG_KEY_RAW_TEXT, self.result)
+                    break
         self.code = self.CODE_TASK_FINAL
         return
 

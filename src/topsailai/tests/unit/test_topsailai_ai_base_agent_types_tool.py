@@ -334,5 +334,220 @@ class TestStepCallToolInteractiveInputTimeout(unittest.TestCase):
         mock_builtin.assert_called_once()
 
 
+
+
+class TestStepCallToolMergePrecedingThoughts(unittest.TestCase):
+    """Tests for the fallback that merges standalone thought/inquiry messages
+    into the final_answer thought step.
+    """
+
+    def setUp(self):
+        """Create a StepCallTool instance and stub agent object."""
+        from topsailai.ai_base.agent_types.tool import StepCallTool
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
+        rid_all_thread_vars()
+        self.instance = StepCallTool()
+        self.agent = MagicMock()
+        self.agent.messages = []
+
+    def tearDown(self):
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
+        rid_all_thread_vars()
+
+    def _make_message(self, role, steps, tool_calls=None):
+        """Helper to build a message dict with JSON-encoded content."""
+        from topsailai.utils.json_tool import to_json_str
+        return {
+            "role": role,
+            "content": to_json_str(steps),
+            "tool_calls": tool_calls,
+        }
+
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_object")
+    def test_merge_single_thought_into_final_answer(self, mock_get_agent):
+        """A standalone thought in messages[-2] is merged into final_answer."""
+        from topsailai.ai_base.agent_types.tool import StepCallTool
+        from topsailai.utils.json_tool import json_load
+
+        self.agent.messages = [
+            self._make_message("assistant", [{"step_name": "thought", "raw_text": "Reasoning A"}]),
+            self._make_message("assistant", [{"step_name": "final_answer", "raw_text": "Answer"}]),
+        ]
+        mock_get_agent.return_value = self.agent
+
+        self.instance.complete_final({"raw_text": "Answer"})
+
+        final_steps = json_load(self.agent.messages[-1]["content"])
+        self.assertEqual(len(final_steps), 2)
+        self.assertEqual(final_steps[0]["step_name"], "thought")
+        self.assertIn("Reasoning A", final_steps[0]["raw_text"])
+        self.assertEqual(final_steps[1]["step_name"], "final_answer")
+        self.assertEqual(self.instance.result, "Answer")
+        self.assertEqual(self.instance.code, self.instance.CODE_TASK_FINAL)
+
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_object")
+    def test_merge_inquiry_into_final_answer(self, mock_get_agent):
+        """A standalone inquiry in messages[-2] is merged into final_answer."""
+        from topsailai.utils.json_tool import json_load
+
+        self.agent.messages = [
+            self._make_message("assistant", [{"step_name": "inquiry", "raw_text": "Need clarification"}]),
+            self._make_message("assistant", [{"step_name": "final_answer", "raw_text": "Answer"}]),
+        ]
+        mock_get_agent.return_value = self.agent
+
+        self.instance.complete_final({"raw_text": "Answer"})
+
+        final_steps = json_load(self.agent.messages[-1]["content"])
+        self.assertEqual(final_steps[0]["step_name"], "thought")
+        self.assertIn("Need clarification", final_steps[0]["raw_text"])
+
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_object")
+    def test_merge_both_minus_three_and_minus_two_in_order(self, mock_get_agent):
+        """Both messages[-3] and messages[-2] are merged in message order."""
+        from topsailai.utils.json_tool import json_load
+
+        self.agent.messages = [
+            self._make_message("assistant", [{"step_name": "thought", "raw_text": "First"}]),
+            self._make_message("assistant", [{"step_name": "inquiry", "raw_text": "Second"}]),
+            self._make_message("assistant", [{"step_name": "final_answer", "raw_text": "Answer"}]),
+        ]
+        mock_get_agent.return_value = self.agent
+
+        self.instance.complete_final({"raw_text": "Answer"})
+
+        final_steps = json_load(self.agent.messages[-1]["content"])
+        thought_text = final_steps[0]["raw_text"]
+        self.assertLess(thought_text.find("First"), thought_text.find("Second"))
+
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_object")
+    def test_no_merge_when_message_contains_action(self, mock_get_agent):
+        """Messages containing action steps are not merged."""
+        from topsailai.utils.json_tool import json_load
+
+        self.agent.messages = [
+            self._make_message("assistant", [{"step_name": "action", "raw_text": "do something"}]),
+            self._make_message("assistant", [{"step_name": "final_answer", "raw_text": "Answer"}]),
+        ]
+        mock_get_agent.return_value = self.agent
+
+        self.instance.complete_final({"raw_text": "Answer"})
+
+        final_steps = json_load(self.agent.messages[-1]["content"])
+        self.assertEqual(len(final_steps), 1)
+        self.assertEqual(final_steps[0]["step_name"], "final_answer")
+
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_object")
+    def test_no_merge_for_archive_placeholder(self, mock_get_agent):
+        """Archive placeholder messages are not merged."""
+        from topsailai.utils.json_tool import json_load
+
+        self.agent.messages = [
+            self._make_message("assistant", [{"step_name": "archive", "raw_text": "retrieve_msg by msg_id=abc"}]),
+            self._make_message("assistant", [{"step_name": "final_answer", "raw_text": "Answer"}]),
+        ]
+        mock_get_agent.return_value = self.agent
+
+        self.instance.complete_final({"raw_text": "Answer"})
+
+        final_steps = json_load(self.agent.messages[-1]["content"])
+        self.assertEqual(len(final_steps), 1)
+
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_object")
+    def test_no_merge_when_role_is_not_assistant(self, mock_get_agent):
+        """Non-assistant candidate messages are ignored."""
+        from topsailai.utils.json_tool import json_load
+
+        self.agent.messages = [
+            self._make_message("user", [{"step_name": "thought", "raw_text": "User thought"}]),
+            self._make_message("assistant", [{"step_name": "final_answer", "raw_text": "Answer"}]),
+        ]
+        mock_get_agent.return_value = self.agent
+
+        self.instance.complete_final({"raw_text": "Answer"})
+
+        final_steps = json_load(self.agent.messages[-1]["content"])
+        self.assertEqual(len(final_steps), 1)
+
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_object")
+    def test_no_merge_when_intervening_executable_message(self, mock_get_agent):
+        """Candidate separated by an assistant observation is not merged."""
+        from topsailai.utils.json_tool import json_load
+
+        self.agent.messages = [
+            self._make_message("assistant", [{"step_name": "thought", "raw_text": "Old"}]),
+            self._make_message("assistant", [{"step_name": "observation", "raw_text": "result"}]),
+            self._make_message("assistant", [{"step_name": "final_answer", "raw_text": "Answer"}]),
+        ]
+        mock_get_agent.return_value = self.agent
+
+        self.instance.complete_final({"raw_text": "Answer"})
+
+        final_steps = json_load(self.agent.messages[-1]["content"])
+        self.assertEqual(len(final_steps), 1)
+
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_object")
+    def test_merge_ignores_user_role_observation(self, mock_get_agent):
+        """User-role observation between candidate and final_answer does not block merge."""
+        from topsailai.utils.json_tool import json_load
+
+        self.agent.messages = [
+            self._make_message("assistant", [{"step_name": "thought", "raw_text": "Reasoning"}]),
+            self._make_message("user", [{"step_name": "observation", "raw_text": "user context"}]),
+            self._make_message("assistant", [{"step_name": "final_answer", "raw_text": "Answer"}]),
+        ]
+        mock_get_agent.return_value = self.agent
+
+        self.instance.complete_final({"raw_text": "Answer"})
+
+        final_steps = json_load(self.agent.messages[-1]["content"])
+        self.assertEqual(len(final_steps), 2)
+        self.assertEqual(final_steps[0]["step_name"], "thought")
+        self.assertIn("Reasoning", final_steps[0]["raw_text"])
+        self.assertEqual(final_steps[1]["step_name"], "final_answer")
+
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_object")
+    def test_no_merge_when_user_role_task_intervenes(self, mock_get_agent):
+        """User-role message with step_name other than observation still blocks merge."""
+        from topsailai.utils.json_tool import json_load
+
+        self.agent.messages = [
+            self._make_message("assistant", [{"step_name": "thought", "raw_text": "Reasoning"}]),
+            self._make_message("user", [{"step_name": "task", "raw_text": "Do this"}]),
+            self._make_message("assistant", [{"step_name": "final_answer", "raw_text": "Answer"}]),
+        ]
+        mock_get_agent.return_value = self.agent
+
+        self.instance.complete_final({"raw_text": "Answer"})
+
+        final_steps = json_load(self.agent.messages[-1]["content"])
+        self.assertEqual(len(final_steps), 1)
+        self.assertEqual(final_steps[0]["step_name"], "final_answer")
+
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_object")
+    def test_no_merge_when_message_has_tool_calls(self, mock_get_agent):
+        """Assistant messages carrying tool_calls are not treated as pure thought."""
+        from topsailai.utils.json_tool import json_load
+
+        self.agent.messages = [
+            {
+                "role": "assistant",
+                "content": '[{"step_name": "thought", "raw_text": "Reasoning"}]',
+                "tool_calls": [{"id": "call_1"}],
+            },
+            self._make_message("assistant", [{"step_name": "final_answer", "raw_text": "Answer"}]),
+        ]
+        mock_get_agent.return_value = self.agent
+
+        self.instance.complete_final({"raw_text": "Answer"})
+
+        final_steps = json_load(self.agent.messages[-1]["content"])
+        self.assertEqual(len(final_steps), 1)
+
+    def test_complete_final_without_agent_object(self):
+        """complete_final works normally when no agent object is available."""
+        self.instance.complete_final({"raw_text": "Answer"})
+        self.assertEqual(self.instance.result, "Answer")
+        self.assertEqual(self.instance.code, self.instance.CODE_TASK_FINAL)
 if __name__ == "__main__":
     unittest.main()
