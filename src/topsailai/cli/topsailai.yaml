@@ -81,6 +81,7 @@ instructions:
   - cmd: "/git.status"
     scopes:
       - session
+      - runtime
     desc: "Show git status for the project workspace of the current session"
     example: ""
     shell: "git -C '{project_workspace}' status"
@@ -89,6 +90,7 @@ instructions:
   - cmd: "/git.diff"
     scopes:
       - session
+      - runtime
     desc: "Show git diff for the project workspace of the current session"
     example: ""
     shell: "git -C '{project_workspace}' diff"
@@ -96,6 +98,7 @@ instructions:
   - cmd: "/git {args}"
     scopes:
       - session
+      - runtime
     desc: "Run an arbitrary git command in the project workspace of the current session"
     example: "/git status  or  /git diff --cached  or  /git log --oneline -10"
     shell: "git -C '{project_workspace}' {args}"

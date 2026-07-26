@@ -42,6 +42,7 @@ from cli_topsailai.paths import get_topsailai_home
 from cli_topsailai.process import register_process, unregister_process
 from cli_topsailai import yaml_commands
 import cli_topsailai.state as state
+from cli_topsailai import help_text
 
 
 def _debug_input(msg: str) -> None:
@@ -1334,7 +1335,8 @@ def _handle_stream_command(
     Execute a command entered while streaming a log file.
 
     Supports ``/send`` (defaulting to the watched session), ``/ctx.btw``
-    (inject an agent2llm message), and ``/help``.
+    (inject an agent2llm message), ``/help``, and any YAML-defined command
+    that is available in the ``runtime`` scope.
 
     Args:
         input_provider: Optional callable used to collect multi-line input
@@ -1364,15 +1366,16 @@ def _handle_stream_command(
         return
 
     if cmd == "/help":
-        print(
-            "Available commands:\n"
-            "  /send [message]      - Send a message to the watched session\n"
-            "  /ctx.btw [message]   - Inject an agent2llm message\n"
-            "  Up/Down arrows       - Recall previous/next runtime message\n"
-            "  /help                - Show this help message\n"
-            "  q / quit / exit      - Stop streaming\n"
-            "  cd or /cd            - Return to workspace scope"
-        )
+        keyword = parts[1].strip() if len(parts) > 1 else None
+        help_text.print_help(state.yaml_commands, state.current_scope, keyword=keyword)
+        return
+
+    # Delegate any other slash command to the YAML command engine so that
+    # scope-aware instructions such as /git.status work in runtime scope.
+    matched = yaml_commands.match_yaml_command(cmd_line, task_dir)
+    if matched is not None:
+        instruction, variables = matched
+        yaml_commands.handle_yaml_command(instruction, variables)
         return
 
     print(

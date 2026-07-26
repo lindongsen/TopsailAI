@@ -176,19 +176,19 @@ def print_help(
             "cmd": "/git.status",
             "desc": "Alias for '/git status'. Show git status for the project workspace of the current session.",
             "example": "",
-            "scopes": ["session"],
+            "scopes": ["session", "runtime"],
         },
         {
             "cmd": "/git.diff",
             "desc": "Alias for '/git diff'. Show git diff for the project workspace of the current session.",
             "example": "",
-            "scopes": ["session"],
+            "scopes": ["session", "runtime"],
         },
         {
             "cmd": "/git <subcommand> [args...]",
             "desc": "Run an arbitrary git command in the project workspace of the current session.",
             "example": "Example: /git status  or  /git diff --cached  or  /git log --oneline -10",
-            "scopes": ["session"],
+            "scopes": ["session", "runtime"],
         },
         {
             "cmd": "/clean [<number> [<number>...]]",

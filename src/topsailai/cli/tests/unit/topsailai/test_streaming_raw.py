@@ -23,6 +23,7 @@ from cli_topsailai.streaming import (
     _build_runtime_prompt,
     _dispatch_input,
     _extract_session_id_from_path,
+    _handle_stream_command,
     _handle_stream_ctx_btw,
     _handle_stream_send,
     _prompt_send_as_message,
@@ -608,3 +609,146 @@ class TestReadInputLineTtyHistory(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHandleStreamCommandYamlDispatch(unittest.TestCase):
+    """Tests that runtime-scope slash commands are delegated to the YAML engine."""
+
+    def setUp(self):
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = []
+
+    def tearDown(self):
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+
+    @patch("cli_topsailai.streaming.help_text.print_help")
+    def test_help_command_prints_help_for_current_scope(self, mock_print_help):
+        """/help in runtime scope must list YAML commands available in runtime."""
+        _handle_stream_command("/help", "/task", [], "s1", "/tmp/s1.stdout")
+        mock_print_help.assert_called_once_with(
+            cli_state.yaml_commands, "runtime", keyword=None
+        )
+
+    @patch("cli_topsailai.streaming.help_text.print_help")
+    def test_help_with_keyword_prints_filtered_help(self, mock_print_help):
+        """/help git in runtime scope must filter help by keyword."""
+        _handle_stream_command("/help git", "/task", [], "s1", "/tmp/s1.stdout")
+        mock_print_help.assert_called_once_with(
+            cli_state.yaml_commands, "runtime", keyword="git"
+        )
+
+    @patch("cli_topsailai.yaml_commands.handle_yaml_command")
+    @patch("cli_topsailai.yaml_commands.match_yaml_command")
+    def test_git_status_delegates_to_yaml_engine(
+        self, mock_match, mock_handle
+    ):
+        """/git.status in runtime scope must match and execute the YAML instruction."""
+        instruction = {
+            "cmd": "/git.status",
+            "scopes": ["session", "runtime"],
+            "shell": "git -C '{project_workspace}' status",
+            "use_os_system": 1,
+        }
+        variables = {"session_id": "s1", "task_dir": "/task"}
+        mock_match.return_value = (instruction, variables)
+        mock_handle.return_value = "yaml_handled"
+
+        _handle_stream_command("/git.status", "/task", [], "s1", "/tmp/s1.stdout")
+
+        mock_match.assert_called_once_with("/git.status", "/task")
+        mock_handle.assert_called_once_with(instruction, variables)
+
+    @patch("cli_topsailai.yaml_commands.handle_yaml_command")
+    @patch("cli_topsailai.yaml_commands.match_yaml_command")
+    def test_git_diff_delegates_to_yaml_engine(
+        self, mock_match, mock_handle
+    ):
+        """/git.diff in runtime scope must match and execute the YAML instruction."""
+        instruction = {
+            "cmd": "/git.diff",
+            "scopes": ["session", "runtime"],
+            "shell": "git -C '{project_workspace}' diff",
+            "use_os_system": 1,
+        }
+        variables = {"session_id": "s1", "task_dir": "/task"}
+        mock_match.return_value = (instruction, variables)
+        mock_handle.return_value = "yaml_handled"
+
+        _handle_stream_command("/git.diff", "/task", [], "s1", "/tmp/s1.stdout")
+
+        mock_match.assert_called_once_with("/git.diff", "/task")
+        mock_handle.assert_called_once_with(instruction, variables)
+
+    @patch("cli_topsailai.yaml_commands.handle_yaml_command")
+    @patch("cli_topsailai.yaml_commands.match_yaml_command")
+    def test_git_with_args_delegates_to_yaml_engine(
+        self, mock_match, mock_handle
+    ):
+        """/git log --oneline in runtime scope must match and execute the YAML instruction."""
+        instruction = {
+            "cmd": "/git {args}",
+            "scopes": ["session", "runtime"],
+            "shell": "git -C '{project_workspace}' {args}",
+            "use_os_system": 1,
+        }
+        variables = {"session_id": "s1", "task_dir": "/task", "args": "log --oneline"}
+        mock_match.return_value = (instruction, variables)
+        mock_handle.return_value = "yaml_handled"
+
+        _handle_stream_command(
+            "/git log --oneline", "/task", [], "s1", "/tmp/s1.stdout"
+        )
+
+        mock_match.assert_called_once_with("/git log --oneline", "/task")
+        mock_handle.assert_called_once_with(instruction, variables)
+
+    @patch("cli_topsailai.yaml_commands.handle_yaml_command")
+    @patch("cli_topsailai.yaml_commands.match_yaml_command")
+    @patch("builtins.print")
+    def test_unknown_slash_command_prints_error(
+        self, mock_print, mock_match, mock_handle
+    ):
+        """An unmatched slash command in runtime scope must still print an error."""
+        mock_match.return_value = None
+
+        _handle_stream_command("/unknown", "/task", [], "s1", "/tmp/s1.stdout")
+
+        mock_match.assert_called_once_with("/unknown", "/task")
+        mock_handle.assert_not_called()
+        printed = " ".join(str(call) for call in mock_print.call_args_list)
+        self.assertIn("Unknown streaming command", printed)
+
+    @patch("cli_topsailai.yaml_commands.handle_yaml_command")
+    @patch("cli_topsailai.yaml_commands.match_yaml_command")
+    def test_send_command_takes_precedence_over_yaml_matching(
+        self, mock_match, mock_handle
+    ):
+        """/send must be handled by the dedicated send path, not the YAML engine."""
+        with patch(
+            "cli_topsailai.streaming._handle_stream_send"
+        ) as mock_send:
+            _handle_stream_command(
+                "/send hello", "/task", [], "s1", "/tmp/s1.stdout"
+            )
+            mock_send.assert_called_once()
+            mock_match.assert_not_called()
+            mock_handle.assert_not_called()
+
+    @patch("cli_topsailai.yaml_commands.handle_yaml_command")
+    @patch("cli_topsailai.yaml_commands.match_yaml_command")
+    def test_ctx_btw_command_takes_precedence_over_yaml_matching(
+        self, mock_match, mock_handle
+    ):
+        """/ctx.btw must be handled by the dedicated context path, not the YAML engine."""
+        with patch(
+            "cli_topsailai.streaming._handle_stream_ctx_btw"
+        ) as mock_ctx:
+            _handle_stream_command(
+                "/ctx.btw note", "/task", [], "s1", "/tmp/s1.stdout"
+            )
+            mock_ctx.assert_called_once()
+            mock_match.assert_not_called()
+            mock_handle.assert_not_called()
