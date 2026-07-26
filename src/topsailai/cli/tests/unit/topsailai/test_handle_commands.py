@@ -970,7 +970,7 @@ class TestPrintWorkspaceTable(unittest.TestCase):
 
 
 class TestProjectSubcommand(unittest.TestCase):
-    """Tests for non-interactive ``topsailai project add|del <path>`` handling."""
+    """Tests for non-interactive ``topsailai project`` subcommands."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -1105,6 +1105,55 @@ class TestProjectSubcommand(unittest.TestCase):
             loaded = self._load_projects()
         self.assertEqual(code, 0)
         self.assertEqual(loaded, [])
+
+    @patch("cli_topsailai.project_scope.launch_agent_in_folder")
+    def test_launch_folder_reuses_agent_launcher(self, mock_launch):
+        """``project launch <folder>`` uses the project-scope agent launcher."""
+        code = _try_handle_project_subcommand(
+            ["project", "launch", "/work/project-a"], agent_mode="tmux"
+        )
+        self.assertEqual(code, 0)
+        mock_launch.assert_called_once_with("/work/project-a", agent_mode="tmux")
+
+    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.project_scope.build_project_list")
+    def test_resume_session_reuses_project_scope_resume(self, mock_build, mock_resume):
+        """``project resume <session>`` resolves and resumes that session."""
+        mock_build.return_value = [{"session_id": "session-a", "status": "Idle"}]
+        mock_resume.return_value = True
+        code = _try_handle_project_subcommand(
+            ["project", "resume", "session-a"], agent_mode="dtach"
+        )
+        self.assertEqual(code, 0)
+        mock_build.assert_called_once_with(limit=None, session_id="session-a")
+        mock_resume.assert_called_once_with("1", mock_build.return_value, agent_mode="dtach")
+
+    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.project_scope.build_project_list")
+    @patch("sys.stdout", new_callable=io.StringIO)
+    def test_resume_unknown_session_returns_error(
+        self, mock_stdout, mock_build, mock_resume
+    ):
+        """``project resume`` rejects a session that cannot be found."""
+        mock_build.return_value = []
+        code = _try_handle_project_subcommand(
+            ["project", "resume", "missing-session"], agent_mode="raw"
+        )
+        self.assertEqual(code, 1)
+        mock_resume.assert_not_called()
+        self.assertIn("Session not found", mock_stdout.getvalue())
+
+    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.project_scope.build_project_list")
+    def test_resume_running_session_uses_existing_rejection(self, mock_build, mock_resume):
+        """Running-session rejection remains delegated to ``resume_session``."""
+        mock_build.return_value = [{"session_id": "session-running", "status": "Running"}]
+        mock_resume.return_value = False
+        code = _try_handle_project_subcommand(
+            ["project", "resume", "session-running"], agent_mode="raw"
+        )
+        self.assertEqual(code, 1)
+        mock_resume.assert_called_once_with("1", mock_build.return_value, agent_mode="raw")
 
 
 if __name__ == "__main__":

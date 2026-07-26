@@ -42,8 +42,10 @@ __version__ = "0.1.0"
 _project_scope_mode: str = "sessions"
 
 
-def _try_handle_project_subcommand(argv: Optional[List[str]]) -> Optional[int]:
-    """Handle non-interactive ``project add|del|list`` CLI invocations.
+def _try_handle_project_subcommand(
+    argv: Optional[List[str]], agent_mode: str = "dtach"
+) -> Optional[int]:
+    """Handle non-interactive project CLI invocations.
 
     Returns an exit code when the subcommand is recognized and processed,
     otherwise ``None`` so normal interactive startup continues.
@@ -62,26 +64,45 @@ def _try_handle_project_subcommand(argv: Optional[List[str]]) -> Optional[int]:
             return 0
         print_project_table(projects)
         return 0
-    if subcmd not in ("add", "del"):
+    if subcmd not in ("add", "del", "launch", "resume"):
         print(
             f"{Colors.RED}[ERROR] Unknown project subcommand: {subcmd!r}. "
             f"Use: topsailai project add <path> [name], "
-            f"topsailai project del <path>, or topsailai project list{Colors.RESET}"
+            f"topsailai project del <path>, topsailai project list, "
+            f"topsailai project launch <folder>, or "
+            f"topsailai project resume <session>{Colors.RESET}"
         )
         return 1
     if len(argv) < 3:
+        argument = "session" if subcmd == "resume" else "path"
         print(
-            f"{Colors.RED}[ERROR] Usage: topsailai project {subcmd} <path>{Colors.RESET}"
+            f"{Colors.RED}[ERROR] Usage: topsailai project {subcmd} "
+            f"<{argument}>{Colors.RESET}"
         )
         return 1
-    raw_path = argv[2]
+
+    target = argv[2]
+    if subcmd == "launch":
+        from cli_topsailai.project_scope import launch_agent_in_folder
+
+        launch_agent_in_folder(target, agent_mode=agent_mode)
+        return 0
+    if subcmd == "resume":
+        from cli_topsailai.project_scope import build_project_list, resume_session
+
+        entries = build_project_list(limit=None, session_id=target)
+        if not entries:
+            print(f"{Colors.RED}[ERROR] Session not found: {target}{Colors.RESET}")
+            return 1
+        resumed = resume_session("1", entries, agent_mode=agent_mode)
+        return 0 if resumed else 1
     if subcmd == "add":
         name = " ".join(argv[3:]).strip() or None
-        if add_project(raw_path, name=name):
-            print(f"{Colors.GREEN}[INFO] Project added: {raw_path}{Colors.RESET}")
+        if add_project(target, name=name):
+            print(f"{Colors.GREEN}[INFO] Project added: {target}{Colors.RESET}")
             return 0
         return 1
-    if delete_project_by_path(raw_path):
+    if delete_project_by_path(target):
         return 0
     return 1
 
@@ -182,11 +203,14 @@ def _handle_project_subcommand(args: argparse.Namespace) -> int:
     argv = ["project", args.project_subcommand]
     project_path = getattr(args, "project_path", None)
     project_name = getattr(args, "project_name", None)
+    session_id = getattr(args, "session_id", None)
     if project_path is not None:
         argv.append(project_path)
+    if session_id is not None:
+        argv.append(session_id)
     if project_name is not None:
         argv.append(project_name)
-    code = _try_handle_project_subcommand(argv)
+    code = _try_handle_project_subcommand(argv, agent_mode=args.agent_mode)
     return 0 if code is None else code
 
 
@@ -666,6 +690,16 @@ def main(argv: Optional[List[str]] = None) -> None:
             help="remove a project from the managed list",
             add_help=False,
         )
+        project_subparsers.add_parser(
+            "launch",
+            help="launch an agent in a project folder",
+            add_help=False,
+        )
+        project_subparsers.add_parser(
+            "resume",
+            help="resume an idle project session",
+            add_help=False,
+        )
         help_parser.print_help()
         sys.exit(1)
 
@@ -794,6 +828,18 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     project_del_parser.add_argument("project_path", help="project path")
     project_del_parser.set_defaults(func=_handle_project_subcommand)
+    project_launch_parser = project_subparsers.add_parser(
+        "launch",
+        help="launch an agent in a project folder",
+    )
+    project_launch_parser.add_argument("project_path", help="project folder")
+    project_launch_parser.set_defaults(func=_handle_project_subcommand)
+    project_resume_parser = project_subparsers.add_parser(
+        "resume",
+        help="resume an idle project session",
+    )
+    project_resume_parser.add_argument("session_id", help="session ID")
+    project_resume_parser.set_defaults(func=_handle_project_subcommand)
 
     # Be tolerant of unknown arguments so tests that invoke main() with
     # arbitrary fake argv do not crash. Only help/version trigger an exit.

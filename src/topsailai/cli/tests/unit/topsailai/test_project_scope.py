@@ -123,6 +123,16 @@ class TestBuildProjectList(unittest.TestCase):
         self.assertIn("5", call_args)
 
     @patch("cli_topsailai.project_scope.subprocess.run")
+    def test_build_project_list_filters_by_session_without_limit(self, mock_run):
+        """A direct session lookup passes its ID and omits the list limit."""
+        mock_run.return_value = MockCompletedProcess(stdout="[]")
+        project_scope.build_project_list(limit=None, session_id="session-a")
+
+        call_args = mock_run.call_args[0][0]
+        self.assertIn("session-a", call_args)
+        self.assertNotIn("--limit", call_args)
+
+    @patch("cli_topsailai.project_scope.subprocess.run")
     def test_build_project_list_empty_output(self, mock_run):
         mock_run.return_value = MockCompletedProcess(stdout="")
         entries = project_scope.build_project_list(limit=10)

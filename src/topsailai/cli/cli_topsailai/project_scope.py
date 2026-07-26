@@ -157,13 +157,16 @@ def load_project_workspace_lookup() -> Dict[str, str]:
     return lookup
 
 
-def build_project_list(limit: int = 10) -> List[Dict[str, Any]]:
+def build_project_list(
+    limit: Optional[int] = 10, session_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """Build the list of recent sessions with a project workspace.
 
-    Runs ``ai_list_sessions.py --json --has-project --sort desc --limit N`` and
-    parses the JSON output.  The database returns entries newest-first, so the
-    list is reversed before rendering so the oldest entry appears at the top of
-    the project scope table and the newest entry appears at the bottom.
+    Runs ``ai_list_sessions.py --json --has-project --sort desc`` with an
+    optional session ID and limit, then parses the JSON output.  The database
+    returns entries newest-first, so the list is reversed before rendering so
+    the oldest entry appears at the top of the project scope table and the
+    newest entry appears at the bottom.
 
     Each entry is enriched with a ``status`` field (``Running`` or ``Idle``)
     by scanning ``{TOPSAILAI_HOME}/workspace/task/`` for the most recent
@@ -171,7 +174,8 @@ def build_project_list(limit: int = 10) -> List[Dict[str, Any]]:
     Status checks run concurrently in a thread pool.
 
     Args:
-        limit: Maximum number of sessions to return (default 10).
+        limit: Maximum number of sessions to return, or ``None`` for no limit.
+        session_id: Optional exact session ID to retrieve.
 
     Returns:
         List of session dictionaries with keys ``no``, ``session_id``,
@@ -186,9 +190,11 @@ def build_project_list(limit: int = 10) -> List[Dict[str, Any]]:
         "--has-project",
         "--sort",
         "desc",
-        "--limit",
-        str(limit),
     ]
+    if session_id:
+        cmd.append(session_id)
+    if limit is not None:
+        cmd.extend(["--limit", str(limit)])
 
     try:
         result = subprocess.run(
@@ -681,7 +687,7 @@ def _resolve_session_entry(
 
 def resume_session(
     arg: str, entries: List[Dict[str, Any]], agent_mode: str = "dtach"
-) -> None:
+) -> bool:
     """Resume an idle session by launching an agent driver in its workspace.
 
     The selected session must not be running.  If it is, a message is printed
@@ -698,25 +704,28 @@ def resume_session(
         entries: Current project scope entries.
         agent_mode: How to launch the driver: ``"raw"``, ``"dtach"`` or
             ``"tmux"``.  Defaults to ``"dtach"``.
+
+    Returns:
+        ``True`` when the resume is launched, otherwise ``False``.
     """
     entry = _resolve_session_entry(arg, entries)
     if entry is None:
-        return
+        return False
 
     session_id = entry.get("session_id", "")
     if not session_id:
         print(
             f"{Colors.RED}[ERROR] Selected entry has no session ID.{Colors.RESET}"
         )
-        return
+        return False
 
     status = entry.get("status") or "Idle"
     if status == "Running":
         print(
-            f"{Colors.YELLOW}[INFO] Session '{session_id}' is already running. "
-            f"Use /send or enter the session instead.{Colors.RESET}"
+            f"{Colors.RED}[ERROR] Session '{session_id}' is already running and "
+            f"cannot be resumed.{Colors.RESET}"
         )
-        return
+        return False
 
     project_workspace = entry.get("project_workspace", "")
     if not project_workspace:
@@ -726,7 +735,7 @@ def resume_session(
         print(
             f"{Colors.RED}[ERROR] Selected session has no project workspace.{Colors.RESET}"
         )
-        return
+        return False
 
     driver = _prompt_for_driver()
     print(
@@ -734,3 +743,4 @@ def resume_session(
         f"in {project_workspace} (mode: {agent_mode}) ...{Colors.RESET}"
     )
     launch_agent_driver(project_workspace, driver, session_id, agent_mode=agent_mode)
+    return True

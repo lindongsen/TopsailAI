@@ -490,13 +490,15 @@ The managed project list is stored independently from session history in `{TOPSA
 
 ### Non-interactive project management
 
-You can also manage the project list directly from the shell without entering the interactive CLI:
+You can also manage projects and project sessions directly from the shell without entering the interactive CLI:
 
 | Command | Description |
 |---|---|
 | `topsailai project add <path> [name]` | Add `<path>` to `.projects.jsonl`. The path is expanded (`~`) and resolved to an absolute path. Duplicate paths are rejected. |
 | `topsailai project del <path>` | Remove `<path>` from `.projects.jsonl`. The path is expanded and resolved before matching. Only the registry entry is removed. |
 | `topsailai project list` | Display all managed projects with row number, name, path, and creation time. |
+| `topsailai project launch <folder>` | Launch an agent in `<folder>` using the same behavior as the project-scope `/agent <folder>` command. |
+| `topsailai project resume <session>` | Resume an idle session using the same behavior as project-scope `/resume`; running sessions are rejected. |
 
 Examples:
 
@@ -512,6 +514,12 @@ topsailai project del /work/my-project
 
 # List managed projects
 topsailai project list
+
+# Launch an agent in a project folder
+topsailai project launch /work/my-project
+
+# Resume an idle session
+topsailai project resume my-session
 ```
 
 ## Modification Rule
