@@ -116,6 +116,37 @@ class TestAutoConfiguration(unittest.TestCase):
                 launcher.DEFAULT_CONFIG["ai_agent_driver"], stdout_output
             )
 
+    def test_missing_settings_in_tty_times_out_and_uses_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            settings_path = os.path.join(tmpdir, ".topsailai", "settings.yaml")
+
+            # Simulate a timeout by returning the default value from the timed prompt.
+            def _fake_timed_prompt(question, default="", timeout=10.0):
+                return default
+
+            sys.argv = ["topsailai_launch_agent.py", "--dry-run"]
+            with mock.patch("sys.stdout", self._stdout), mock.patch(
+                "sys.stderr", self._stderr
+            ), mock.patch("sys.stdin.isatty", return_value=True), mock.patch(
+                "topsailai_launch_agent._timed_prompt",
+                side_effect=_fake_timed_prompt,
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    launcher.main()
+
+            self.assertEqual(cm.exception.code, 0)
+            self.assertFalse(os.path.isfile(settings_path))
+            stderr_output = self._stderr.getvalue()
+            self.assertIn("Choose how to proceed", stderr_output)
+            self.assertNotIn("Interactive Setup", stderr_output)
+            self.assertNotIn("Configuration saved to", stderr_output)
+            stdout_output = self._stdout.getvalue()
+            self.assertIn(
+                launcher.DEFAULT_CONFIG["ai_agent_driver"], stdout_output
+            )
+
+
     def test_missing_settings_in_tty_chooses_setup(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             os.chdir(tmpdir)

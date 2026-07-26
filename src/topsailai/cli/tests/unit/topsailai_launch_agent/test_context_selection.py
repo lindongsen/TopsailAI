@@ -315,6 +315,55 @@ class TestContextSelection(unittest.TestCase):
             stderr_output = self._stderr.getvalue()
             self.assertIn("context is empty", stderr_output)
 
+    def test_empty_context_in_tty_times_out_and_uses_default(self):
+        """When the empty-context prompt times out, default to configuring context."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            settings_path = self._write_settings(
+                tmpdir,
+                context={},
+                environment={},
+            )
+            project_path = os.path.join(tmpdir, "project.yaml")
+            with open(project_path, "w", encoding="utf-8") as f:
+                f.write("# dummy project file\n")
+
+            # Simulate a timeout by returning the default value from the timed prompt.
+            def _fake_timed_prompt_yn(question, default=True, timeout=10.0):
+                return default
+
+            sys.argv = ["topsailai_launch_agent.py", "--dry-run"]
+            with mock.patch("sys.stdout", self._stdout), mock.patch(
+                "sys.stderr", self._stderr
+            ), mock.patch("sys.stdin.isatty", return_value=True), mock.patch(
+                "topsailai_launch_agent._timed_prompt_yn",
+                side_effect=_fake_timed_prompt_yn,
+            ), mock.patch(
+                "topsailai_launch_agent._prompt_list",
+                return_value=["project.yaml"],
+            ), mock.patch(
+                "topsailai_launch_agent._prompt_yn", side_effect=[True, False]
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    launcher.main()
+
+            self.assertEqual(cm.exception.code, 0)
+            stderr_output = self._stderr.getvalue()
+            self.assertIn("Context Setup", stderr_output)
+            settings = launcher.load_yaml(settings_path)
+            self.assertEqual(settings["context"]["_"], ["project.yaml"])
+
+    def test_timed_input_returns_default_on_timeout(self):
+        """_timed_input returns the default value when input does not arrive in time."""
+        with mock.patch("sys.stdin.isatty", return_value=True):
+            with mock.patch("threading.Thread.join", return_value=None):
+                with mock.patch("threading.Thread.is_alive", return_value=True):
+                    result = launcher._timed_input(
+                        "prompt: ", default="fallback", timeout=0.01
+                    )
+        self.assertEqual(result, "fallback")
+
+
     def test_format_item_config_shows_merged_default_and_item_values(self):
         context_map = {
             "_default": ["project.yaml"],

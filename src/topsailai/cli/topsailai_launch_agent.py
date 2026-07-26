@@ -27,6 +27,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 # DONOT REMOVE THIS
@@ -471,7 +472,6 @@ environment:
 {extra_env}  default: {{}}
 """
 
-
 def _prompt(question, default=""):
     """Prompt the user for a single line of input."""
     suffix = f" [{default}]" if default else ""
@@ -480,6 +480,54 @@ def _prompt(question, default=""):
     except EOFError:
         answer = ""
     return answer.strip() or default
+
+
+def _timed_input(prompt, default="", timeout=10.0):
+    """Read a line from stdin with a timeout.
+
+    If no input is received within ``timeout`` seconds, ``default`` is
+    returned. This works in both TTY and non-TTY environments, but it
+    always returns ``default`` immediately when stdin is not a TTY so
+    non-interactive callers do not block.
+    """
+    if not sys.stdin.isatty():
+        return default
+
+    result = [default]
+
+    def _reader():
+        try:
+            result[0] = input(prompt)
+        except EOFError:
+            pass
+
+    thread = threading.Thread(target=_reader, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        print(f"\nTimeout after {timeout}s, using default: {default!r}", file=sys.stderr)
+    return result[0]
+
+
+def _timed_prompt(question, default="", timeout=10.0):
+    """Prompt the user for a single line of input with a timeout."""
+    suffix = f" [{default}]" if default else ""
+    answer = _timed_input(
+        f"{question}{suffix}: ", default=default, timeout=timeout
+    )
+    return answer.strip() or default
+
+
+def _timed_prompt_yn(question, default=True, timeout=10.0):
+    """Prompt the user for a yes/no answer with a timeout."""
+    default_text = "Y/n" if default else "y/N"
+    answer = _timed_prompt(question, default_text, timeout=timeout).lower()
+    if answer in ("y", "yes"):
+        return True
+    if answer in ("n", "no"):
+        return False
+    return default
+
 
 def _prompt_yn(question, default=True):
     """Prompt the user for a yes/no answer."""
@@ -640,7 +688,9 @@ def _handle_missing_settings(settings_path, args):
             "  [s] Run guided setup to create .topsailai/settings.yaml",
             file=sys.stderr,
         )
-        choice = _prompt("Your choice", default="r").lower()
+        choice = _timed_prompt(
+            "Your choice", default="r", timeout=args.select_timeout
+        ).lower()
         if choice in ("s", "setup"):
             _run_interactive_setup(settings_path)
             return load_yaml(settings_path), False
@@ -738,13 +788,14 @@ def _format_item_config(item_name, context_map, env_map):
     return "\n".join(lines)
 
 
-def _select_context_item(context_map, env_map):
+def _select_context_item(context_map, env_map, timeout=10.0):
     """Select a context item based on configuration and interactivity.
 
     - 0 non-base items: use the base item name if present, otherwise None.
     - 1 non-base item: use it automatically.
-    - 2+ non-base items: prompt interactively; "default" is the default
-      choice when configured. In non-interactive mode, "default" is used if
+    - 2+ non-base items: prompt interactively with a timeout; "default" is
+      the default choice when configured. If the prompt times out, the
+      default item is used. In non-interactive mode, "default" is used if
       present, otherwise the launcher exits with an error.
     """
     items = _get_context_items(context_map)
@@ -786,7 +837,9 @@ def _select_context_item(context_map, env_map):
     )
 
     while True:
-        answer = _prompt(prompt_text, default=default_item or "")
+        answer = _timed_prompt(
+            prompt_text, default=default_item or "", timeout=timeout
+        )
         if answer in items:
             return answer
         try:
@@ -799,7 +852,6 @@ def _select_context_item(context_map, env_map):
             f"Invalid selection. Please enter a number 1-{len(items)} or an item name.",
             file=sys.stderr,
         )
-
 
 def _run_context_setup(settings_path, settings):
     """Guide the user through configuring context when it is empty."""
@@ -1080,6 +1132,13 @@ def main():
         help="Force the guided interactive setup to create .topsailai/settings.yaml when it is missing",
     )
     parser.add_argument(
+        "--select-timeout",
+        type=float,
+        default=10.0,
+        metavar="SECONDS",
+        help="Timeout in seconds for interactive context selection prompts (default: 10)",
+    )
+    parser.add_argument(
         "--scan",
         default=None,
         metavar="FOLDER",
@@ -1109,9 +1168,10 @@ def main():
 
         if not context_map:
             if sys.stdin.isatty():
-                if _prompt_yn(
+                if _timed_prompt_yn(
                     "No context is configured. Would you like to configure context now?",
                     default=True,
+                    timeout=args.select_timeout,
                 ):
                     _run_context_setup(settings_path, settings)
                     settings = load_yaml(settings_path)
@@ -1130,7 +1190,9 @@ def main():
             args.item = non_default_items[0] if non_default_items else "_"
         else:
             args.item = _select_context_item(
-                context_map, settings.get("environment", {}) or {}
+                context_map,
+                settings.get("environment", {}) or {},
+                timeout=args.select_timeout,
             )
     env_map = settings.get("environment", {}) or {}
     # Resolve driver with the following priority:
