@@ -258,23 +258,34 @@ class StepCallTool(StepCallBase):
 
         This method prompts the user for input when the agent is running in interactive mode.
         It continues to prompt until valid input is provided. If not in interactive mode
-        or not running in the main thread, it returns an automatic message directing
-        the user to either provide input or output a final answer.
+        or not running in the main thread, it returns an automatic observation message
+        directing the agent to either provide input or output a final answer.
 
         Returns:
-            str: User input string or an automatic guidance message.
+            str | dict: User input string, or an observation dict with frontmatter
+                separating time, warning, and hint when running non-interactively.
         """
         if not self.flag_interactive or not is_main_thread():
-            _auto_msg = ""
+            now = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+            warning = ""
 
             # case: no tool_call has been executed.
             if agent_ctx.get_count_of_action_for_current_agent() == 0:
-                _auto_msg += f"[{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}] No tool_call has been executed. "
+                warning = "No tool_call has been executed."
 
             # default
-            _auto_msg += "If you are sure that user information is required or task is finished, output `final_answer`. Otherwise, continue executing"
+            hint = "If you are sure that user information is required or task is finished, output `final_answer`. Otherwise, continue executing."
 
-            return _auto_msg
+            raw_text_parts = ["---", f'time: "{now}"']
+            if warning:
+                raw_text_parts.append(f'warning: "{warning}"')
+            raw_text_parts.extend([f'hint: "{hint}"', "---"])
+            raw_text = "\n".join(raw_text_parts)
+
+            return {
+                "step_name": STEP_NAME_OBSERVATION,
+                "raw_text": raw_text,
+            }
 
         while True:
             input_func = get_agent_runtime_input()
