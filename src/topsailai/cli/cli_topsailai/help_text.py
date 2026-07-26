@@ -82,7 +82,7 @@ def print_scopes() -> None:
         (
             "runtime",
             "The live log-streaming scope entered after selecting a workspace log file. It follows output for the watched session or task while keeping session messaging available.",
-            "Send process messages with /send, inject agent2llm context with /ctx.btw, show help, or leave the stream with q or quit.",
+            "Send process messages with /send, inject agent2llm context with /ctx.btw, recall previous and next runtime messages with the Up/Down arrow keys, show help, or leave the stream with q or quit.",
         ),
         (
             "project",
@@ -266,6 +266,12 @@ def print_help(
             "cmd": "<free-form text>",
             "desc": "While streaming a log, any input that is not a recognized command prompts 'Send as message? [y/N]'. Answering yes sends the input to the watched session via /send.",
             "example": "Example: hello  (then answer y to send it)",
+            "scopes": ["runtime"],
+        },
+        {
+            "cmd": "Up / Down arrows",
+            "desc": "While streaming a log, press Up to recall the previous runtime message and Down to move to the next newer message. When at the newest end, Down returns to an empty prompt.",
+            "example": "",
             "scopes": ["runtime"],
         },
         {

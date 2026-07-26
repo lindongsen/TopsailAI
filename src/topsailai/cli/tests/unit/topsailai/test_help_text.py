@@ -121,6 +121,12 @@ class TestPrintHelp(unittest.TestCase):
         output = self._capture(print_help, [], "workspace", keyword="xyznonexistent")
         self.assertIn("No commands found matching 'xyznonexistent'", output)
 
+    def test_print_help_runtime_scope_mentions_arrow_keys(self):
+        output = self._capture(print_help, [], "runtime")
+        self.assertIn("Up / Down arrows", output)
+        self.assertIn("recall the previous runtime message", output)
+
+
 
 class TestPrintInstructionHelp(unittest.TestCase):
     """Tests for print_instruction_help."""

@@ -283,9 +283,8 @@ class HistoryManager:
         for entry in self.entries:
             if entry.get("scope") != scope:
                 continue
-            if scope == "session" and session_id is not None:
-                if entry.get("session_id") != session_id:
-                    continue
+            if session_id is not None and entry.get("session_id") != session_id:
+                continue
             text = entry.get("text", "")
             if text:
                 results.append(text)

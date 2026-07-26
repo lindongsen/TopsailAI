@@ -272,6 +272,10 @@ class TestBuildStreamCommandHandler(unittest.TestCase):
     def setUp(self):
         self.ui = MagicMock()
         self.ui.read_multi_line_blocking.return_value = "multi-line message"
+        self.alive_patcher = patch(
+            "cli_topsailai.streaming._is_session_alive", return_value=True
+        )
+        self.alive_patcher.start()
         self.handler = _build_stream_command_handler(
             self.ui,
             "/tmp/tasks",
@@ -280,6 +284,9 @@ class TestBuildStreamCommandHandler(unittest.TestCase):
             "/tmp/tasks/s1.123.session.stdout",
             default_pid=123,
         )
+
+    def tearDown(self):
+        self.alive_patcher.stop()
 
     @patch("cli_topsailai.streaming._handle_stream_command")
     def test_quit_returns_false(self, mock_handle):
@@ -370,6 +377,20 @@ class TestBuildStreamCommandHandler(unittest.TestCase):
             sys.stdout = original_stdout
             sys.stderr = original_stderr
 
+    @patch("cli_topsailai.streaming._is_session_alive", return_value=False)
+    @patch("cli_topsailai.streaming._handle_stream_command")
+    def test_dead_session_returns_false(self, mock_handle, mock_alive):
+        handler = _build_stream_command_handler(
+            self.ui,
+            "/tmp/tasks",
+            [{"filename": "s1.stdout"}],
+            "s1",
+            "/tmp/tasks/s1.123.session.stdout",
+            default_pid=123,
+        )
+        result = handler("/send hello")
+        self.assertFalse(result)
+        mock_handle.assert_called_once()
 
 class TestPromptSendAsMessage(unittest.TestCase):
     """Tests for the yes/no prompt that sends unrecognized input as /send."""

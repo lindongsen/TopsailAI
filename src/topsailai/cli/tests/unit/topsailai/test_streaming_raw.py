@@ -4,6 +4,7 @@ Unit tests for the raw runtime streaming mode in cli_topsailai.streaming.
 """
 
 import io
+import json
 import os
 import sys
 import tempfile
@@ -460,6 +461,124 @@ class TestReadInputLineTty(unittest.TestCase):
         result, _ = self._run_tty_input("中\x1b[Da\r".encode("utf-8"))
         self.assertEqual(result, "a中")
 
+
+
+
+class TestRuntimeHistory(unittest.TestCase):
+    """Tests for runtime-scope history persistence and recall."""
+
+    def setUp(self):
+        self._orig_history_manager = getattr(cli_state, "history_manager", None)
+        cli_state.history_manager = MagicMock()
+        cli_state.history_manager.filter_entries.return_value = []
+
+    def tearDown(self):
+        cli_state.history_manager = self._orig_history_manager
+
+    def test_append_runtime_history_delegates_to_manager(self):
+        from cli_topsailai.streaming import _append_runtime_history
+
+        _append_runtime_history("/send hello", "s1")
+        cli_state.history_manager.append.assert_called_once_with(
+            "runtime", "s1", "/send hello"
+        )
+
+    def test_append_runtime_history_ignores_empty_text(self):
+        from cli_topsailai.streaming import _append_runtime_history
+
+        _append_runtime_history("", "s1")
+        cli_state.history_manager.append.assert_not_called()
+
+    def test_load_runtime_history_returns_newest_first(self):
+        from cli_topsailai.streaming import _load_runtime_history
+
+        cli_state.history_manager.filter_entries.return_value = [
+            "/send first",
+            "/send second",
+        ]
+        result = _load_runtime_history("s1")
+        self.assertEqual(result, ["/send second", "/send first"])
+        cli_state.history_manager.filter_entries.assert_called_once_with(
+            "runtime", "s1"
+        )
+
+    def test_persist_runtime_command_inserts_at_front(self):
+        from cli_topsailai.streaming import _persist_runtime_command
+
+        history: List[str] = []
+        _persist_runtime_command("/send hello", "s1", history)
+        self.assertEqual(history, ["/send hello"])
+        cli_state.history_manager.append.assert_called_once_with(
+            "runtime", "s1", "/send hello"
+        )
+
+    def test_persist_runtime_command_skips_consecutive_duplicate(self):
+        from cli_topsailai.streaming import _persist_runtime_command
+
+        history: List[str] = ["/send hello"]
+        cli_state.history_manager.append.reset_mock()
+        _persist_runtime_command("/send hello", "s1", history)
+        self.assertEqual(history, ["/send hello"])
+        cli_state.history_manager.append.assert_not_called()
+
+    def test_persist_runtime_command_allows_non_consecutive_duplicate(self):
+        from cli_topsailai.streaming import _persist_runtime_command
+
+        history: List[str] = ["/send hello"]
+        _persist_runtime_command("/send world", "s1", history)
+        _persist_runtime_command("/send hello", "s1", history)
+        self.assertEqual(history, ["/send hello", "/send world", "/send hello"])
+
+
+class TestReadInputLineTtyHistory(unittest.TestCase):
+    """Tests for Up/Down arrow history recall in the raw TTY editor."""
+
+    def _run_tty_input(self, input_bytes, prompt="", history=None):
+        stdout = io.StringIO()
+        stdin_buffer = io.BytesIO(input_bytes)
+        mock_stdin = MagicMock()
+        mock_stdin.isatty.return_value = True
+        mock_stdin.fileno.return_value = 0
+        mock_stdin.buffer = stdin_buffer
+
+        with patch("cli_topsailai.streaming.sys.stdin", mock_stdin), \
+             patch("cli_topsailai.streaming.sys.stdout", stdout), \
+             patch("cli_topsailai.streaming.termios") as mock_termios, \
+             patch("cli_topsailai.streaming.tty") as mock_tty:
+            mock_termios.tcgetattr.return_value = []
+            return _read_input_line_tty(
+                prompt, already_raw=True, session_id="s1", history=history
+            )
+
+    def test_up_arrow_recalls_previous_message(self):
+        result = self._run_tty_input(
+            b"\x1b[A\r", history=["/send hello", "/send world"]
+        )
+        self.assertEqual(result, "/send hello")
+
+    def test_up_then_down_arrow_returns_to_empty_prompt(self):
+        result = self._run_tty_input(
+            b"\x1b[A\x1b[B\r", history=["/send hello"]
+        )
+        self.assertEqual(result, "")
+
+    def test_down_arrow_at_newest_stays_empty(self):
+        result = self._run_tty_input(
+            b"\x1b[B\r", history=["/send hello"]
+        )
+        self.assertEqual(result, "")
+
+    def test_up_arrow_beyond_oldest_clamps(self):
+        result = self._run_tty_input(
+            b"\x1b[A\x1b[A\x1b[A\r", history=["/send hello", "/send world"]
+        )
+        self.assertEqual(result, "/send world")
+
+    def test_typing_after_recall_appends_to_recalled_text(self):
+        result = self._run_tty_input(
+            b"\x1b[Ax\r", history=["/send hello"]
+        )
+        self.assertEqual(result, "/send hellox")
 
 if __name__ == "__main__":
     unittest.main()

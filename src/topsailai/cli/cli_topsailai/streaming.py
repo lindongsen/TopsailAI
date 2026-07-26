@@ -57,6 +57,81 @@ def _extract_session_id_from_path(path: str) -> Optional[str]:
     return session_id
 
 
+def _append_runtime_history(text: str, session_id: Optional[str] = None) -> None:
+    """Persist a runtime-scope command/message to the shared history manager."""
+    manager = getattr(state, "history_manager", None)
+    if manager is None or not text:
+        return
+    try:
+        manager.append("runtime", session_id or "", text)
+    except Exception:
+        pass
+
+
+def _load_runtime_history(session_id: Optional[str]) -> List[str]:
+    """Load persisted runtime history for *session_id*, newest-first."""
+    manager = getattr(state, "history_manager", None)
+    if manager is None:
+        return []
+    try:
+        return list(reversed(manager.filter_entries("runtime", session_id)))
+    except Exception:
+        return []
+
+
+def _persist_runtime_command(
+    text: str, session_id: Optional[str], runtime_history: List[str]
+) -> None:
+    """Persist a non-empty, non-duplicate runtime command to history.
+
+    *runtime_history* is updated in place so the in-memory list stays in sync
+    with the persisted file.  The list is kept newest-first.
+    """
+    if not text:
+        return
+    if runtime_history and runtime_history[0] == text:
+        return
+    runtime_history.insert(0, text)
+    _append_runtime_history(text, session_id)
+
+
+def _is_session_alive(
+    stdout_path: Optional[str] = None, pid: Optional[int] = None
+) -> bool:
+    """Return True if the watched session still appears to be alive.
+
+    A session is considered alive when its stdout file still exists (if
+    provided) and its PID is still running (if provided).  If neither
+    identifier is available we cannot make a determination and return True.
+    """
+    if stdout_path is not None and not os.path.exists(stdout_path):
+        return False
+    if pid is not None and pid > 0:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except Exception:
+            return False
+    return True
+
+
+def _maybe_exit_on_dead_session(
+    stdout_path: Optional[str] = None, pid: Optional[int] = None
+) -> bool:
+    """Check session liveness and print a message if it has exited.
+
+    Returns True when the session is still alive; False when it has exited
+    and the caller should leave runtime scope.
+    """
+    if _is_session_alive(stdout_path, pid):
+        return True
+    print("\n[session has exited, leaving runtime scope]")
+    return False
+
+
 def stream_sessions(
     command: List[str],
     env: Optional[Dict[str, str]] = None,
@@ -359,7 +434,7 @@ def _build_stream_command_handler(
                     output_callback=ui.append_status,
                     input_callback=ui.read_multi_line_blocking,
                 )
-        return True
+        return _maybe_exit_on_dead_session(default_stdout_path, default_pid)
 
     return handler
 
@@ -489,7 +564,12 @@ def _char_display_width(ch: str) -> int:
     return 1
 
 
-def _read_input_line(prompt: str = "", already_raw: bool = False) -> Optional[str]:
+def _read_input_line(
+    prompt: str = "",
+    already_raw: bool = False,
+    session_id: Optional[str] = None,
+    history: Optional[List[str]] = None,
+) -> Optional[str]:
     """Read a single line from stdin, returning None on EOF/KeyboardInterrupt.
 
     In an interactive terminal we put the TTY into raw mode and implement a
@@ -503,17 +583,28 @@ def _read_input_line(prompt: str = "", already_raw: bool = False) -> Optional[st
     raw mode (``already_raw=True``).  In all other cases we keep the original
     ``input()`` behaviour so that existing tests and non-raw callers continue
     to work.
+
+    When ``history`` is provided, Up/Down arrow keys cycle through previous
+    and next entries.  The list is expected newest-first; index -1 means the
+    user is editing a fresh line.
     """
     try:
         if not sys.stdin.isatty() or not already_raw:
             print(prompt, end="", flush=True)
             return input().strip()
-        return _read_input_line_tty(prompt, already_raw=already_raw)
+        return _read_input_line_tty(
+            prompt, already_raw=already_raw, session_id=session_id, history=history
+        )
     except (EOFError, KeyboardInterrupt):
         return None
 
 
-def _read_input_line_tty(prompt: str, already_raw: bool = False) -> Optional[str]:
+def _read_input_line_tty(
+    prompt: str,
+    already_raw: bool = False,
+    session_id: Optional[str] = None,
+    history: Optional[List[str]] = None,
+) -> Optional[str]:
     """TTY-aware line editor using raw byte reads.
 
     Puts the terminal into raw mode so keystrokes are available one byte at a
@@ -523,6 +614,9 @@ def _read_input_line_tty(prompt: str, already_raw: bool = False) -> Optional[str
 
     When ``already_raw`` is True the caller manages the TTY mode and this
     function only reads and interprets keystrokes.
+
+    When ``history`` is provided, Up/Down arrow keys recall previous and next
+    entries.  The list is expected newest-first; index -1 means a fresh line.
     """
     _debug_input(f"_read_input_line_tty start prompt={prompt!r} already_raw={already_raw}")
     if termios is None or tty is None:
@@ -549,6 +643,8 @@ def _read_input_line_tty(prompt: str, already_raw: bool = False) -> Optional[str
 
     buffer: List[str] = []
     cursor = 0
+    history_index = -1
+    history_list: List[str] = list(history) if history else []
 
     def display_width(chars: List[str]) -> int:
         return sum(_char_display_width(c) for c in chars)
@@ -649,6 +745,23 @@ def _read_input_line_tty(prompt: str, already_raw: bool = False) -> Optional[str
             return None
         return data[0]
 
+    def recall_history(direction: int) -> None:
+        """Recall previous (direction=1) or next (direction=-1) history entry."""
+        nonlocal history_index, buffer, cursor
+        if not history_list:
+            return
+        new_index = history_index + direction
+        new_index = max(-1, min(new_index, len(history_list) - 1))
+        if new_index == history_index:
+            return
+        history_index = new_index
+        if history_index == -1:
+            buffer = []
+        else:
+            buffer = list(history_list[history_index])
+        cursor = len(buffer)
+        redraw()
+
     try:
         if not already_raw:
             tty.setraw(fd)
@@ -742,7 +855,12 @@ def _read_input_line_tty(prompt: str, already_raw: bool = False) -> Optional[str
                             del buffer[cursor]
                             _debug_input(f"Delete cursor={cursor} buffer={''.join(buffer)!r}")
                             redraw()
-                    # up/down (A/B) ignored
+                    elif seq2 == 0x41:  # 'A' up arrow
+                        _debug_input("Up arrow")
+                        recall_history(1)
+                    elif seq2 == 0x42:  # 'B' down arrow
+                        _debug_input("Down arrow")
+                        recall_history(-1)
                 elif seq1 == 0x4F:  # 'O'
                     seq2 = read_byte()
                     _debug_input(f"ESC O seq2={seq2}")
@@ -762,6 +880,12 @@ def _read_input_line_tty(prompt: str, already_raw: bool = False) -> Optional[str
                     elif seq2 == 0x46:  # end
                         cursor = len(buffer)
                         redraw()
+                    elif seq2 == 0x41:  # 'A' up arrow
+                        _debug_input("SS3 Up arrow")
+                        recall_history(1)
+                    elif seq2 == 0x42:  # 'B' down arrow
+                        _debug_input("SS3 Down arrow")
+                        recall_history(-1)
                 continue
 
             # Ignore other control characters
@@ -808,6 +932,7 @@ def _read_input_line_tty(prompt: str, already_raw: bool = False) -> Optional[str
 
             buffer.insert(cursor, char)
             cursor += 1
+            history_index = -1
             _debug_input(f"Inserted char={char!r} cursor={cursor} buffer={''.join(buffer)!r}")
             redraw()
     finally:
@@ -979,6 +1104,7 @@ def _stream_file_raw(
     old_settings = None
     raw_mode_active = False
     original_stdout = sys.stdout
+    runtime_history: List[str] = []
 
     try:
         try:
@@ -997,6 +1123,8 @@ def _stream_file_raw(
                 _tail_file(filepath, tail_lines, raw_mode=True)
             else:
                 _tail_file(filepath, tail_lines)
+
+            runtime_history = _load_runtime_history(default_session_id)
 
             with open(filepath, "rb") as f:
                 f.seek(0, 2)
@@ -1018,7 +1146,10 @@ def _stream_file_raw(
                             readable, _, _ = select.select([sys.stdin], [], [], 0.05)
                             if readable:
                                 cmd_line = _read_input_line(
-                                    prompt, already_raw=raw_mode_active
+                                    prompt,
+                                    already_raw=raw_mode_active,
+                                    session_id=default_session_id,
+                                    history=runtime_history,
                                 )
                                 if cmd_line is None:
                                     break
@@ -1042,11 +1173,18 @@ def _stream_file_raw(
                                     )
                                 finally:
                                     if keep_running:
+                                        _persist_runtime_command(
+                                            cmd_line, default_session_id, runtime_history
+                                        )
                                         _enter_raw_tty_for_input(
                                             fd,
                                             original_stdout,
                                             raw_mode_active,
                                         )
+                                if keep_running and not _maybe_exit_on_dead_session(
+                                    default_stdout_path, default_pid
+                                ):
+                                    break
                                 if not keep_running:
                                     break
                         else:
@@ -1089,6 +1227,7 @@ def _stream_file_legacy(
 
     session_label = default_session_id or "(temp)"
     prompt = f"[runtime:{session_label}]> "
+    runtime_history: List[str] = _load_runtime_history(default_session_id)
 
     try:
         subprocess.run(["tail", "-n", "100", filepath], check=False)
@@ -1111,7 +1250,11 @@ def _stream_file_legacy(
                     if sys.stdin.isatty():
                         readable, _, _ = select.select([sys.stdin], [], [], 0.05)
                         if readable:
-                            cmd_line = _read_input_line(prompt)
+                            cmd_line = _read_input_line(
+                                prompt,
+                                session_id=default_session_id,
+                                history=runtime_history,
+                            )
                             if cmd_line is None:
                                 break
                             if not cmd_line:
@@ -1136,18 +1279,25 @@ def _stream_file_legacy(
                                     default_stdout_path,
                                     default_pid,
                                 )
-                                continue
-                            _prompt_send_as_message(
-                                cmd_line,
-                                task_dir,
-                                log_files,
-                                default_session_id,
-                                default_stdout_path,
-                                default_pid,
-                                input_provider=None,
-                                output_callback=None,
-                                input_callback=None,
+                            else:
+                                _prompt_send_as_message(
+                                    cmd_line,
+                                    task_dir,
+                                    log_files,
+                                    default_session_id,
+                                    default_stdout_path,
+                                    default_pid,
+                                    input_provider=None,
+                                    output_callback=None,
+                                    input_callback=None,
+                                )
+                            _persist_runtime_command(
+                                cmd_line, default_session_id, runtime_history
                             )
+                            if not _maybe_exit_on_dead_session(
+                                default_stdout_path, default_pid
+                            ):
+                                break
                     else:
                         time.sleep(0.05)
     except FileNotFoundError:
@@ -1160,6 +1310,7 @@ def _stream_file_legacy(
         print(f"{Colors.RED}[ERROR] Failed to stream file: {e}{Colors.RESET}")
 
     print(f"\n{Colors.CYAN}[INFO] Streaming stopped.{Colors.RESET}")
+
 
 def _handle_stream_command(
     cmd_line: str,
@@ -1208,6 +1359,7 @@ def _handle_stream_command(
             "Available commands:\n"
             "  /send [message]      - Send a message to the watched session\n"
             "  /ctx.btw [message]   - Inject an agent2llm message\n"
+            "  Up/Down arrows       - Recall previous/next runtime message\n"
             "  /help                - Show this help message\n"
             "  q / quit / exit      - Stop streaming\n"
             "  cd or /cd            - Return to workspace scope"
@@ -1260,7 +1412,6 @@ def _handle_stream_send(
         stdout_path=default_stdout_path,
         pid=default_pid,
     )
-
 def _read_multiline_input_for_send() -> Optional[str]:
     """
     Read multi-line input until a standalone 'EOF' line is entered.
