@@ -22,6 +22,7 @@ _DEBUG_INPUT = os.environ.get("TOPSAILAI_DEBUG_INPUT")
 
 from cli_topsailai.colors import (
     Colors,
+    colored,
     print_error,
     print_info,
     print_success,
@@ -1074,6 +1075,19 @@ def _dispatch_input(
         input_callback=None,
     )
 
+
+def _build_runtime_prompt(session_id: Optional[str]) -> str:
+    """Build the colored runtime-scope input prompt.
+
+    The prompt text matches the curses UI (``[runtime:<session_id>]>``) but
+    is wrapped in ANSI cyan so it is colored in raw and legacy streaming
+    modes.  Curses mode applies its own color pair and does not use this
+    helper.
+    """
+    display = session_id or "(temp)"
+    return colored(f"[runtime:{display}]> ", color=Colors.CYAN)
+
+
 def _stream_file_raw(
     filepath: str,
     task_dir: str,
@@ -1084,7 +1098,6 @@ def _stream_file_raw(
     tail_lines: int = 100,
 ) -> None:
     """Raw curses-free stream implementation used when ``--runtime-raw`` is set."""
-
     filename = os.path.basename(filepath)
     print_header(f"Streaming: {filename}")
     print(
@@ -1092,9 +1105,7 @@ def _stream_file_raw(
         f"type '/send [message]' to send a message, "
         f"'/ctx.btw [message]' to inject an agent2llm message, or Ctrl+C to exit.{Colors.RESET}\n"
     )
-    session_label = default_session_id or "(temp)"
-    prompt = f"[runtime:{session_label}]> "
-
+    prompt = _build_runtime_prompt(default_session_id)
     fd = None
     if sys.stdin.isatty():
         try:
@@ -1105,7 +1116,6 @@ def _stream_file_raw(
     raw_mode_active = False
     original_stdout = sys.stdout
     runtime_history: List[str] = []
-
     try:
         try:
             if fd is not None and termios is not None and tty is not None:
@@ -1225,8 +1235,7 @@ def _stream_file_legacy(
         f"'/ctx.btw [message]' to inject an agent2llm message, or Ctrl+C to exit.{Colors.RESET}\n"
     )
 
-    session_label = default_session_id or "(temp)"
-    prompt = f"[runtime:{session_label}]> "
+    prompt = _build_runtime_prompt(default_session_id)
     runtime_history: List[str] = _load_runtime_history(default_session_id)
 
     try:

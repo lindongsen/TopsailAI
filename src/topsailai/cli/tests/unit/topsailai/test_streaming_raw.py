@@ -20,6 +20,7 @@ sys.path.insert(
 
 import cli_topsailai.state as cli_state
 from cli_topsailai.streaming import (
+    _build_runtime_prompt,
     _dispatch_input,
     _extract_session_id_from_path,
     _handle_stream_ctx_btw,
@@ -30,7 +31,6 @@ from cli_topsailai.streaming import (
     _stream_file_raw,
     _tail_file,
 )
-
 class TestExtractSessionIdFromPath(unittest.TestCase):
     """Tests for _extract_session_id_from_path."""
 
@@ -47,6 +47,26 @@ class TestExtractSessionIdFromPath(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestBuildRuntimePrompt(unittest.TestCase):
+    """Tests for _build_runtime_prompt."""
+
+    def test_named_session_is_cyan(self):
+        prompt = _build_runtime_prompt("my-session")
+        self.assertIn("[runtime:my-session]>", prompt)
+        self.assertIn("\033[36m", prompt)
+        self.assertIn("\033[0m", prompt)
+
+    def test_temp_session_uses_temp_label(self):
+        prompt = _build_runtime_prompt(None)
+        self.assertIn("[runtime:(temp)]>", prompt)
+        self.assertIn("\033[36m", prompt)
+        self.assertIn("\033[0m", prompt)
+
+    def test_prompt_content_unchanged(self):
+        prompt = _build_runtime_prompt("abc-123")
+        plain = prompt.replace("\033[36m", "").replace("\033[0m", "")
+        self.assertEqual(plain, "[runtime:abc-123]> ")
+
 class TestTailFile(unittest.TestCase):
     """Tests for _tail_file."""
 
@@ -62,7 +82,6 @@ class TestTailFile(unittest.TestCase):
             )
         finally:
             os.unlink(path)
-
     @patch("cli_topsailai.streaming.subprocess.run")
     def test_falls_back_to_python_tail(self, mock_run):
         mock_run.side_effect = FileNotFoundError("tail not found")
@@ -96,7 +115,6 @@ class TestReadInputLine(unittest.TestCase):
 
 
 class TestDispatchRawInput(unittest.TestCase):
-    """Tests for _dispatch_input."""
 
     def test_quit_exits(self):
         for cmd in ("q", "quit", "exit", "QUIT"):
@@ -178,6 +196,10 @@ class TestStreamFileRaw(unittest.TestCase):
             mock_run.assert_called_once_with(
                 ["tail", "-n", "1", path], check=False
             )
+            prompt = mock_read.call_args[0][0]
+            self.assertIn("[runtime:s1]>", prompt)
+            self.assertIn("\033[36m", prompt)
+            self.assertIn("\033[0m", prompt)
 
     @patch("cli_topsailai.streaming.subprocess.run")
     @patch("cli_topsailai.streaming.sys.stdin.isatty", return_value=True)
@@ -205,6 +227,10 @@ class TestStreamFileRaw(unittest.TestCase):
             mock_handle.assert_called_once_with(
                 "/send hello", tmpdir, [], "s1", path, 1234
             )
+            prompt = mock_read.call_args[0][0]
+            self.assertIn("[runtime:s1]>", prompt)
+            self.assertIn("\033[36m", prompt)
+            self.assertIn("\033[0m", prompt)
 
     @patch("cli_topsailai.streaming.subprocess.run")
     @patch("cli_topsailai.streaming.sys.stdin.isatty", return_value=True)
