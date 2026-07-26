@@ -420,5 +420,229 @@ class TestEnrichFilesWithProjectWorkspace(unittest.TestCase):
         self.assertEqual(mock_lookup.call_count, 2)
 
 
+
+
+class TestIsPidAlive(unittest.TestCase):
+    """Tests for _is_pid_alive."""
+
+    @patch("cli_topsailai.session_info.os.path.isdir")
+    @patch("cli_topsailai.session_info.os.kill")
+    @patch.object(session_info.sys, "platform", "linux")
+    def test_linux_prefers_proc_directory(self, mock_kill, mock_isdir):
+        """On Linux, /proc/{pid} existence is checked first."""
+        mock_isdir.side_effect = lambda path: path in ("/proc", "/proc/1234")
+        self.assertTrue(session_info._is_pid_alive(1234))
+        mock_isdir.assert_any_call("/proc")
+        mock_isdir.assert_any_call("/proc/1234")
+        mock_kill.assert_not_called()
+
+    @patch("cli_topsailai.session_info.os.path.isdir")
+    @patch("cli_topsailai.session_info.os.kill")
+    @patch.object(session_info.sys, "platform", "linux")
+    def test_linux_proc_missing_falls_back_to_os_kill(
+        self, mock_kill, mock_isdir
+    ):
+        """When /proc/{pid} does not exist, os.kill is not called on Linux."""
+        mock_isdir.side_effect = lambda path: path == "/proc"
+        self.assertFalse(session_info._is_pid_alive(1234))
+        mock_kill.assert_not_called()
+
+    @patch("cli_topsailai.session_info.os.path.isdir")
+    @patch("cli_topsailai.session_info.os.kill")
+    @patch.object(session_info.sys, "platform", "linux")
+    def test_linux_proc_unavailable_falls_back_to_os_kill(
+        self, mock_kill, mock_isdir
+    ):
+        """When /proc is not a directory, fall back to os.kill(pid, 0)."""
+        mock_isdir.return_value = False
+        mock_kill.side_effect = None
+        self.assertTrue(session_info._is_pid_alive(1234))
+        mock_kill.assert_called_once_with(1234, 0)
+
+    @patch("cli_topsailai.session_info.os.kill")
+    @patch.object(session_info.sys, "platform", "darwin")
+    def test_non_linux_uses_os_kill(self, mock_kill):
+        """Non-Linux platforms use os.kill directly."""
+        mock_kill.side_effect = None
+        self.assertTrue(session_info._is_pid_alive(1234))
+        mock_kill.assert_called_once_with(1234, 0)
+
+    @patch("cli_topsailai.session_info.os.kill")
+    @patch.object(session_info.sys, "platform", "darwin")
+    def test_os_kill_failure_means_dead(self, mock_kill):
+        """os.kill raising OSError means the process is not alive."""
+        mock_kill.side_effect = ProcessLookupError()
+        self.assertFalse(session_info._is_pid_alive(1234))
+
+    def test_none_pid_is_dead(self):
+        """None PID is treated as not alive."""
+        self.assertFalse(session_info._is_pid_alive(None))
+
+    def test_invalid_pid_is_dead(self):
+        """Non-integer or non-positive PID values are treated as not alive."""
+        self.assertFalse(session_info._is_pid_alive("abc"))
+        self.assertFalse(session_info._is_pid_alive(-1))
+        self.assertFalse(session_info._is_pid_alive(0))
+
+
+class TestHasRealSessionId(unittest.TestCase):
+    """Tests for _has_real_session_id."""
+
+    def test_real_session_id(self):
+        self.assertTrue(session_info._has_real_session_id({"session_id": "s1"}))
+
+    def test_temp_session_id(self):
+        self.assertFalse(
+            session_info._has_real_session_id({"session_id": "(temp)"})
+        )
+
+    def test_empty_session_id(self):
+        self.assertFalse(session_info._has_real_session_id({"session_id": ""}))
+        self.assertFalse(
+            session_info._has_real_session_id({"session_id": "   "})
+        )
+
+    def test_missing_session_id(self):
+        self.assertFalse(session_info._has_real_session_id({}))
+        self.assertFalse(
+            session_info._has_real_session_id({"session_id": None})
+        )
+
+
+class TestIsUnnamedRunningSession(unittest.TestCase):
+    """Tests for _is_unnamed_running_session."""
+
+    @patch("cli_topsailai.session_info._is_pid_alive")
+    def test_running_unnamed_session_matches(self, mock_alive):
+        mock_alive.return_value = True
+        self.assertTrue(
+            session_info._is_unnamed_running_session(
+                {"session_id": "s1", "session_name": None, "pid": 1234}
+            )
+        )
+
+    @patch("cli_topsailai.session_info._is_pid_alive")
+    def test_named_session_is_excluded(self, mock_alive):
+        mock_alive.return_value = True
+        self.assertFalse(
+            session_info._is_unnamed_running_session(
+                {"session_id": "s1", "session_name": "Named", "pid": 1234}
+            )
+        )
+
+    @patch("cli_topsailai.session_info._is_pid_alive")
+    def test_dead_session_is_excluded(self, mock_alive):
+        mock_alive.return_value = False
+        self.assertFalse(
+            session_info._is_unnamed_running_session(
+                {"session_id": "s1", "session_name": None, "pid": 1234}
+            )
+        )
+
+    def test_temp_session_is_excluded(self):
+        self.assertFalse(
+            session_info._is_unnamed_running_session(
+                {"session_id": "(temp)", "session_name": None, "pid": 1234}
+            )
+        )
+
+
+class TestEnrichRunningUnnamedSessions(unittest.TestCase):
+    """Tests for enrich_running_unnamed_sessions."""
+
+    def tearDown(self):
+        """Clear module-level cache after each test."""
+        session_info._SESSION_INFO_CACHE._data.clear()
+
+    @patch("cli_topsailai.session_info._is_pid_alive")
+    @patch("cli_topsailai.session_info.subprocess.run")
+    def test_backfills_running_unnamed_session(self, mock_run, mock_alive):
+        """A running unnamed session gets its name from session info."""
+        mock_alive.return_value = True
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"session_name": "Fresh Name", "project_workspace": "/work/a"}',
+            stderr="",
+        )
+        files = [
+            {"session_id": "s1", "session_name": None, "pid": 1234},
+        ]
+        session_info.enrich_running_unnamed_sessions(files)
+        self.assertEqual(files[0]["session_name"], "Fresh Name")
+
+    @patch("cli_topsailai.session_info._is_pid_alive")
+    @patch("cli_topsailai.session_info.subprocess.run")
+    def test_named_sessions_are_unchanged(self, mock_run, mock_alive):
+        """Sessions that already have a name are not queried."""
+        mock_alive.return_value = True
+        files = [
+            {"session_id": "s1", "session_name": "Existing", "pid": 1234},
+        ]
+        session_info.enrich_running_unnamed_sessions(files)
+        self.assertEqual(files[0]["session_name"], "Existing")
+        mock_run.assert_not_called()
+
+    @patch("cli_topsailai.session_info._is_pid_alive")
+    @patch("cli_topsailai.session_info.subprocess.run")
+    def test_dead_sessions_are_unchanged(self, mock_run, mock_alive):
+        """Dead sessions are not queried even if unnamed."""
+        mock_alive.return_value = False
+        files = [
+            {"session_id": "s1", "session_name": None, "pid": 1234},
+        ]
+        session_info.enrich_running_unnamed_sessions(files)
+        self.assertIsNone(files[0]["session_name"])
+        mock_run.assert_not_called()
+
+    @patch("cli_topsailai.session_info._is_pid_alive")
+    @patch("cli_topsailai.session_info.subprocess.run")
+    def test_failure_is_silent(self, mock_run, mock_alive):
+        """A failed lookup leaves the file unchanged."""
+        mock_alive.return_value = True
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="error",
+        )
+        files = [
+            {"session_id": "s1", "session_name": None, "pid": 1234},
+        ]
+        session_info.enrich_running_unnamed_sessions(files)
+        self.assertIsNone(files[0]["session_name"])
+
+    @patch("cli_topsailai.session_info._is_pid_alive")
+    @patch("cli_topsailai.session_info.subprocess.run")
+    def test_deduplicates_session_ids(self, mock_run, mock_alive):
+        """The same session ID is queried only once."""
+        mock_alive.return_value = True
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"session_name": "Shared Name"}',
+            stderr="",
+        )
+        files = [
+            {"session_id": "s1", "session_name": None, "pid": 1234},
+            {"session_id": "s1", "session_name": None, "pid": 1234},
+        ]
+        session_info.enrich_running_unnamed_sessions(files)
+        self.assertEqual(mock_run.call_count, 1)
+        self.assertEqual(files[0]["session_name"], "Shared Name")
+        self.assertEqual(files[1]["session_name"], "Shared Name")
+
+    @patch("cli_topsailai.session_info._is_pid_alive")
+    @patch("cli_topsailai.session_info.subprocess.run")
+    def test_empty_name_result_is_ignored(self, mock_run, mock_alive):
+        """An empty name from session info does not overwrite the field."""
+        mock_alive.return_value = True
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"session_name": ""}',
+            stderr="",
+        )
+        files = [
+            {"session_id": "s1", "session_name": None, "pid": 1234},
+        ]
+        session_info.enrich_running_unnamed_sessions(files)
+        self.assertIsNone(files[0]["session_name"])
 if __name__ == "__main__":
     unittest.main()

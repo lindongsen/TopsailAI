@@ -967,7 +967,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         resume_session,
     )
     from cli_topsailai.retrieve import retrieve_session
-    from cli_topsailai.session_info import enrich_files_with_session_names
+    from cli_topsailai.session_info import (
+        enrich_files_with_session_names,
+        enrich_running_unnamed_sessions,
+    )
     from cli_topsailai.streaming import handle_send_command, stream_file
     from cli_topsailai.yaml_commands import load_yaml_commands
 
@@ -1016,6 +1019,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         sys.stdout.flush()
         log_files = discover_log_files(task_dir, on_item=_print_refresh_item)
         enrich_files_with_session_names(log_files)
+        enrich_running_unnamed_sessions(log_files)
         print_table(log_files)
 
     def _refresh_managed_projects() -> None:

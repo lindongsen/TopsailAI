@@ -1,13 +1,14 @@
 """Helpers for resolving session metadata from external commands."""
 
 import json
+import os
 import subprocess
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Tuple
 
 from cli_topsailai.project_scope import load_project_workspace_lookup
-
 
 # Timeout for each external session-info lookup, in seconds.
 _SESSION_INFO_TIMEOUT = 5
@@ -190,3 +191,127 @@ def enrich_files_with_session_names(files: List[dict]) -> None:
             file_info["project_workspace"] = project_workspace
         else:
             file_info["project_workspace"] = workspace_lookup.get(session_id)
+
+
+def _is_pid_alive(pid: Optional[int]) -> bool:
+    """Return True if *pid* refers to a currently running process.
+
+    On Linux, the existence of ``/proc/{pid}`` is checked first because it
+    is the authoritative, signal-free way to determine whether a process is
+    alive.  ``os.kill(pid, 0)`` is used only as a fallback when ``/proc`` is
+    unavailable or is not a directory.  On non-Linux platforms ``os.kill`` is
+    used directly.
+    """
+    if pid is None:
+        return False
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+
+    if sys.platform.startswith("linux"):
+        if os.path.isdir("/proc"):
+            return os.path.isdir(f"/proc/{pid}")
+        # /proc is unavailable; fall back to os.kill.
+
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
+def _has_real_session_id(file_info: dict) -> bool:
+    """Return True when *file_info* has a real (non-temp) session ID."""
+    session_id = file_info.get("session_id")
+    if session_id is None:
+        return False
+    if not isinstance(session_id, str):
+        return False
+    if session_id == "(temp)" or session_id.strip() == "":
+        return False
+    return True
+
+
+def _is_unnamed_running_session(file_info: dict) -> bool:
+    """Return True when *file_info* is a running session with no name.
+
+    A file matches when all of the following hold:
+      1. It has a real session ID (not empty, not ``(temp)``, not None).
+      2. Its PID is alive.
+      3. Its ``session_name`` is missing or empty.
+    """
+    if not _has_real_session_id(file_info):
+        return False
+    session_name = file_info.get("session_name")
+    if isinstance(session_name, str) and session_name.strip():
+        return False
+    return _is_pid_alive(file_info.get("pid"))
+
+
+def _fetch_session_names(session_ids: List[str]) -> dict[str, str]:
+    """Fetch non-empty session names concurrently.
+
+    Returns a mapping from session ID to session name.  Lookups that fail or
+    return an empty/whitespace-only name are omitted.  Failures are silent so
+    the caller can continue refreshing the list without blocking.
+    """
+    if not session_ids:
+        return {}
+
+    results: dict[str, str] = {}
+    max_workers = min(_MAX_SESSION_INFO_WORKERS, len(session_ids))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_id = {
+            executor.submit(_get_session_info, sid): sid for sid in session_ids
+        }
+        for future in as_completed(future_to_id):
+            session_id = future_to_id[future]
+            try:
+                lookup = future.result()
+            except Exception:
+                continue
+            if lookup.success and lookup.name:
+                results[session_id] = lookup.name
+    return results
+
+
+def enrich_running_unnamed_sessions(files: List[dict]) -> None:
+    """Backfill session names for running sessions that currently have none.
+
+    When the workspace task list is refreshed, running sessions may already
+    have received a display name from the agent.  This function queries
+    ``topsailai_session_info`` for sessions that meet all of the following
+    criteria:
+
+      1. A real session ID exists (not empty, not ``(temp)``, not None).
+      2. The embedded PID is alive.
+      3. The ``session_name`` field is missing or empty.
+
+    Lookups are deduplicated and run concurrently.  Failures are silent and
+    do not block the refresh.  Only the ``session_name`` field is updated;
+    ``project_workspace`` is left untouched because it is already resolved by
+    :func:`enrich_files_with_session_names`.
+    """
+    if not files:
+        return
+
+    targets = [f for f in files if _is_unnamed_running_session(f)]
+    if not targets:
+        return
+
+    distinct_ids: list[str] = []
+    seen: set[str] = set()
+    for file_info in targets:
+        session_id = file_info["session_id"]
+        if session_id not in seen:
+            seen.add(session_id)
+            distinct_ids.append(session_id)
+
+    names = _fetch_session_names(distinct_ids)
+    for file_info in targets:
+        session_id = file_info["session_id"]
+        if session_id in names:
+            file_info["session_name"] = names[session_id]
