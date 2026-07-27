@@ -37,6 +37,7 @@ from topsailai.workspace import lock_tool
 
 DEFAULT_CALL_SKILL_TIMEOUT = 600
 
+
 def get_call_skill_timeout(skill_folder:str) -> int:
     """ get timeout from environ """
 
@@ -59,6 +60,7 @@ def get_call_skill_timeout(skill_folder:str) -> int:
         default_timeout = int(skill_timeout_map["default"])
 
     return default_timeout
+
 
 def call_skill(
         skill_folder:str,
@@ -95,15 +97,17 @@ def call_skill(
         tuple: (return_code, stdout, stderr) where stdout and stderr are strings.
                If no_need_stderr is True, stderr will be empty string.
     """
-
     # environ
     environ_d = environ
     if isinstance(environ, str):
         environ_d = json_tool.safe_json_load(environ)
     if not isinstance(environ_d, dict):
         environ_d = None
-    if environ and not environ_d:
-        raise Exception("error parameter 'environ': it should be JSON and MAP format")
+    if environ is not None and environ_d is None:
+        raise ValueError(
+            "A skill accepts environment variables only as a JSON object. "
+            f"The provided environ {environ!r} is not a valid object."
+        )
 
     # check parameter: output_file
     if output_file:
@@ -112,8 +116,31 @@ def call_skill(
         if not file_tool.is_tmp_dir(output_file):
             assert not os.path.exists(output_file), "The output_file already exists and cannot be overwritten"
 
+    # validate script_path before get_script_path normalizes it
+    if script_path.startswith(("/", "~", "\\")):
+        raise ValueError(
+            "A skill can only run scripts that exist inside its own folder. "
+            f"The provided path {script_path!r} is absolute; use a path relative to the skill folder."
+        )
+
     # format script_path
     script_path = get_script_path(skill_folder, script_path)
+
+    # resolved path must stay inside skill_folder
+    real_skill_folder = os.path.realpath(skill_folder)
+    real_script = os.path.realpath(os.path.join(skill_folder, script_path))
+    if not real_script.startswith(real_skill_folder + os.sep):
+        raise ValueError(
+            "A skill can only run scripts that exist inside its own folder. "
+            f"The resolved path {real_script!r} is outside the skill folder."
+        )
+
+    # target must exist and be a regular file
+    if not os.path.isfile(real_script):
+        raise ValueError(
+            "A skill can only run scripts that exist inside its own folder. "
+            f"The requested script {script_path!r} was not found."
+        )
 
     # cmd
     if isinstance(script_parameters, list):
@@ -125,23 +152,21 @@ def call_skill(
 
     # check parameter: cmd
     raw_cmd = cmd
-    if isinstance(cmd, str):
+    if isinstance(cmd, list):
+        cmd_exe_file = cmd[0]
+    elif isinstance(cmd, str):
         if cmd[0] == "[":
             # json str
             cmd = json_tool.safe_json_load(cmd)
-    if not cmd:
-        raise Exception("illegal cmd: [%s]" % raw_cmd)
-
-    cmd_exe_file = cmd
-    if isinstance(cmd, list):
-        cmd_exe_file = cmd[0]
+            cmd_exe_file = cmd[0] if isinstance(cmd, list) and cmd else ""
+        else:
+            # For string commands, extract just the executable path (first word)
+            cmd_exe_file = cmd.split()[0] if cmd else cmd
     else:
-        # For string commands, extract just the executable path (first word)
-        cmd_exe_file = cmd.split()[0] if cmd else cmd
+        cmd_exe_file = ""
 
     if not cmd_exe_file:
         raise Exception("illegal cmd: [%s]" % raw_cmd)
-
     if not cmd_exe_file.startswith(skill_folder):
         # case: /xxx or .xxx
         for _ in range(2):
