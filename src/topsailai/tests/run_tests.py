@@ -135,7 +135,18 @@ def parse_args(argv=None):
         action="store_true",
         help="Run tests one by one sequentially instead of concurrently.",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--sequential-yes-do-it",
+        action="store_true",
+        help="Acknowledge that running all tests sequentially without specifying files takes a very long time.",
+    )
+    args = parser.parse_args(argv)
+    if args.sequential and not args.files and not args.sequential_yes_do_it:
+        parser.error(
+            "Running all tests sequentially without specifying files takes an excessively long time. "
+            "Pass --sequential-yes-do-it if you really want to do this."
+        )
+    return args
 
 
 def _print_result(index, total, test_file, status, elapsed, threshold, print_lock):
