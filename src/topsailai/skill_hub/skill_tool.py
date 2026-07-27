@@ -18,7 +18,6 @@ name: aaa        -> yaml format
 description: bbb
 ---
 '''
-
 import hashlib
 import logging
 import os
@@ -35,6 +34,12 @@ from topsailai.utils import (
 )
 from topsailai.prompt_hub import prompt_tool
 from topsailai.workspace.folder_constants import FOLDER_SKILL
+
+
+class SkillHubToolError(ValueError):
+    """Raised when a skill-hub operation fails due to invalid input or environment."""
+    pass
+
 
 logger = logging.getLogger(__name__)
 g_skills = {}  # key is folder, value is SkillInfo
@@ -298,8 +303,16 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
 
     return skill_info
 
-def get_skill_markdown_with_subfolders(parent_folder:str, recursion_depth=0) -> str:
-    assert parent_folder
+def get_skill_markdown_with_subfolders(parent_folder: str, recursion_depth=0) -> str:
+    if not parent_folder:
+        raise SkillHubToolError(
+            "parent_folder cannot be empty when scanning subfolders for skills."
+        )
+    if not os.path.isdir(parent_folder):
+        raise SkillHubToolError(
+            f"Skill search folder does not exist or is not a directory: {parent_folder!r}. "
+            "Check TOPSAILAI_PLUGIN_SKILLS and ensure the folder path is correct."
+        )
     result = ""
     for item in os.listdir(parent_folder):
         subfolder = os.path.join(parent_folder, item)
@@ -464,24 +477,47 @@ def _expand_preload_doc_entry(skill_folder: str, doc_entry: str) -> list[tuple[s
     return [(relative_entry, abs_path)]
 
 
-def overview_skill_native(folder_path:str) -> str:
+def overview_skill_native(folder_path: str) -> str:
     """ Every time you want to use a skill you MUST call `overview_skill` for entire details.
     Args:
         folder_path (str): required, skill folder.
     """
+    if not folder_path:
+        raise SkillHubToolError(
+            "skill folder cannot be empty. Provide a valid skill folder path."
+        )
+    if not os.path.isdir(folder_path):
+        raise SkillHubToolError(
+            f"Skill folder does not exist or is not a directory: {folder_path!r}. "
+            "Check the folder path and ensure the skill is loaded."
+        )
+
     file_skill_md = ""
     for skill_md in ["SKILL.md", "skill.md"]:
-        file_skill_md = os.path.join(folder_path, skill_md)
-        if os.path.exists(file_skill_md):
+        candidate = os.path.join(folder_path, skill_md)
+        if os.path.exists(candidate):
+            file_skill_md = candidate
             break
 
-        file_skill_md = ""
+    if not file_skill_md:
+        raise SkillHubToolError(
+            f"No SKILL.md found in skill folder {folder_path!r}. "
+            "Ensure the folder contains a SKILL.md file and the skill is not disabled."
+        )
 
-    assert file_skill_md, f"no found skill.md in this folder: {folder_path}"
-
-    content_skill_md = ""
-    with open(file_skill_md, encoding="utf-8") as fd:
-        content_skill_md = fd.read()
+    try:
+        with open(file_skill_md, encoding="utf-8") as fd:
+            content_skill_md = fd.read()
+    except PermissionError as exc:
+        raise SkillHubToolError(
+            f"Permission denied reading {file_skill_md!r}: {exc}. "
+            "Check file permissions and ownership."
+        )
+    except UnicodeDecodeError as exc:
+        raise SkillHubToolError(
+            f"{file_skill_md!r} is not valid UTF-8 text: {exc}. "
+            "SKILL.md must be a UTF-8 encoded text file."
+        )
 
     folder_list = file_tool.list_files(
         folder_path,
@@ -532,8 +568,11 @@ def overview_skill_native(folder_path:str) -> str:
 
     return f"\n>>> [SKILL_OVERVIEW_START:{folder_path}]\n" + result + f"\n<<< [SKILL_OVERVIEW_END:{folder_path}]\n"
 
-def get_skill_file(folder_path:str, file_name:str) -> str:
-    """ Return a skill file """
+def get_skill_file(folder_path: str, file_name: str) -> str:
+    """Return a skill file path if it exists inside the skill folder."""
+    if not file_name:
+        return ""
+
     # format file_name
     for _ in range(2):
         if file_name[0] in "./":
@@ -577,15 +616,30 @@ def get_skill_file_content(folder_path:str, file_name:str) -> str:
 
     Returns:
         str: file content
+
+    Raises:
+        SkillHubToolError: If the file cannot be found or read.
     """
     file_path = get_skill_file(folder_path, file_name)
-    assert file_path, f"no found this skill file: {file_name}"
+    if not file_path:
+        raise SkillHubToolError(
+            f"File {file_name!r} not found in skill folder {folder_path!r}. "
+            "Use a relative path such as 'scripts/run.sh' or 'README.md'."
+        )
 
-    file_content = ""
-    with open(file_path, encoding='utf-8') as fp:
-        file_content = fp.read()
-
-    return file_content
+    try:
+        with open(file_path, encoding='utf-8') as fp:
+            return fp.read()
+    except PermissionError as exc:
+        raise SkillHubToolError(
+            f"Permission denied reading {file_path!r}: {exc}. "
+            "Check file permissions and ownership."
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise SkillHubToolError(
+            f"File {file_path!r} is not valid UTF-8 text: {exc}. "
+            "Use a tool designed for binary files if needed."
+        ) from exc
 
 def get_script_path(skill_folder:str, script_path:str) -> str:
     """ return absolute path """

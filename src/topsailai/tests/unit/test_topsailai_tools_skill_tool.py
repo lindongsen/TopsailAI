@@ -48,6 +48,31 @@ class TestGetCallSkillTimeout(unittest.TestCase):
                     result = get_call_skill_timeout('/some/python/skill')
                     self.assertEqual(result, 500)
 
+    def test_invalid_timeout_value_raises_skill_tool_error(self):
+        """Test non-integer timeout value raises SkillToolError with guidance."""
+        from topsailai.tools.skill_tool import get_call_skill_timeout
+
+        with patch('topsailai.tools.skill_tool.env_tool.EnvReaderInstance.get', return_value='{"python": "not_a_number", "default": "300"}'):
+            with patch('topsailai.tools.skill_tool.format_tool.parse_str_to_dict', return_value={'python': 'not_a_number', 'default': '300'}):
+                with patch('topsailai.tools.skill_tool.is_matched_skill', return_value=True):
+                    with self.assertRaises(SkillToolError) as context:
+                        get_call_skill_timeout('/some/python/skill')
+
+                    self.assertIn('python', str(context.exception))
+                    self.assertIn('not_a_number', str(context.exception))
+
+    def test_non_positive_timeout_value_raises_skill_tool_error(self):
+        """Test zero or negative timeout value raises SkillToolError."""
+        from topsailai.tools.skill_tool import get_call_skill_timeout
+
+        with patch('topsailai.tools.skill_tool.env_tool.EnvReaderInstance.get', return_value='{"python": "-10", "default": "300"}'):
+            with patch('topsailai.tools.skill_tool.format_tool.parse_str_to_dict', return_value={'python': '-10', 'default': '300'}):
+                with patch('topsailai.tools.skill_tool.is_matched_skill', return_value=True):
+                    with self.assertRaises(SkillToolError) as context:
+                        get_call_skill_timeout('/some/python/skill')
+
+                    self.assertIn('positive', str(context.exception))
+
 
 class TestCallSkill(unittest.TestCase):
     """Test call_skill function"""
@@ -379,11 +404,13 @@ class TestCallSkill(unittest.TestCase):
 
 
 class TestOverviewSkill(unittest.TestCase):
+    @patch('topsailai.tools.skill_tool.os.path.isdir')
     @patch('topsailai.tools.skill_tool.overview_skill_native')
-    def test_overview_skill_returns_native_result(self, mock_native):
+    def test_overview_skill_returns_native_result(self, mock_native, mock_isdir):
         """Test that overview_skill delegates to native function"""
         from topsailai.tools.skill_tool import overview_skill
 
+        mock_isdir.return_value = True
         expected_result = {'name': 'test_skill', 'description': 'A test skill'}
         mock_native.return_value = expected_result
 
@@ -392,49 +419,59 @@ class TestOverviewSkill(unittest.TestCase):
         self.assertEqual(result, expected_result)
         mock_native.assert_called_once_with('/test/skill/folder')
 
+    def test_overview_skill_missing_folder_raises_skill_tool_error(self):
+        """Test overview_skill raises SkillToolError when folder does not exist."""
+        from topsailai.tools.skill_tool import overview_skill
+
+        with self.assertRaises(SkillToolError) as context:
+            overview_skill('/nonexistent/skill/folder')
+
+        self.assertIn('does not exist', str(context.exception))
+
 
 class TestReadSkillFile(unittest.TestCase):
     """Test read_skill_file function"""
 
-    def test_read_skill_file_success(self):
+    @patch('topsailai.tools.skill_tool.os.path.isdir')
+    def test_read_skill_file_success(self, mock_isdir):
         """Test successful file reading"""
         from topsailai.tools.skill_tool import read_skill_file
         
+        mock_isdir.return_value = True
         test_content = 'Test file content'
-        test_file = '/tmp/test_skill_file.txt'
+        test_file = '/test/folder/test_file.txt'
         
-        with open(test_file, 'w', encoding='utf-8') as f:
-            f.write(test_content)
-        
-        try:
-            with patch('topsailai.tools.skill_tool.exists_skill', return_value=True):
-                with patch('topsailai.tools.skill_tool.get_skill_file', return_value=test_file):
+        with patch('topsailai.tools.skill_tool.exists_skill', return_value=True):
+            with patch('topsailai.tools.skill_tool.get_skill_file', return_value=test_file):
+                with patch('topsailai.tools.skill_tool.open', unittest.mock.mock_open(read_data=test_content)) as mock_file:
                     result = read_skill_file('/test/folder', 'test_file.txt')
                     self.assertEqual(result, test_content)
-        finally:
-            if os.path.exists(test_file):
-                os.remove(test_file)
+                    mock_file.assert_called_once_with(test_file, encoding='utf-8')
 
-    def test_read_skill_file_skill_not_exists(self):
-        """Test error when skill folder doesn't exist"""
+    @patch('topsailai.tools.skill_tool.os.path.isdir')
+    def test_read_skill_file_skill_not_exists(self, mock_isdir):
+        """Test error when skill is not loaded"""
         from topsailai.tools.skill_tool import read_skill_file
         
+        mock_isdir.return_value = True
         with patch('topsailai.tools.skill_tool.exists_skill', return_value=False):
-            with self.assertRaises(AssertionError) as context:
+            with self.assertRaises(SkillToolError) as context:
                 read_skill_file('/nonexistent/folder', 'test_file.txt')
             
-            self.assertIn('no found this skill folder', str(context.exception))
+            self.assertIn('not loaded', str(context.exception))
 
-    def test_read_skill_file_file_not_exists(self):
+    @patch('topsailai.tools.skill_tool.os.path.isdir')
+    def test_read_skill_file_file_not_exists(self, mock_isdir):
         """Test error when file doesn't exist"""
         from topsailai.tools.skill_tool import read_skill_file
         
+        mock_isdir.return_value = True
         with patch('topsailai.tools.skill_tool.exists_skill', return_value=True):
             with patch('topsailai.tools.skill_tool.get_skill_file', return_value=None):
-                with self.assertRaises(AssertionError) as context:
+                with self.assertRaises(SkillToolError) as context:
                     read_skill_file('/test/folder', 'nonexistent.txt')
                 
-                self.assertIn('no found this skill file', str(context.exception))
+                self.assertIn('not found', str(context.exception))
 
 class TestLoadSkill(unittest.TestCase):
     """Test load_skill function"""

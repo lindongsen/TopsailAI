@@ -45,6 +45,38 @@ class SkillToolError(ValueError):
 DEFAULT_CALL_SKILL_TIMEOUT = 600
 
 
+def _parse_timeout_value(raw_value, key_name: str) -> int:
+    """Parse a timeout value from the timeout map and validate it.
+
+    Args:
+        raw_value: The raw timeout value from the map.
+        key_name: The skill key (or 'default') being parsed, used in error messages.
+
+    Returns:
+        int: A positive timeout in seconds.
+
+    Raises:
+        SkillToolError: If the value is not a positive integer.
+    """
+    try:
+        timeout_value = int(raw_value)
+    except (ValueError, TypeError) as exc:
+        raise SkillToolError(
+            f"Invalid timeout value for '{key_name}' in TOPSAILAI_CALL_SKILL_TIMEOUT_MAP: "
+            f"{raw_value!r} is not an integer. "
+            "Use a positive integer in seconds, e.g. 'ai-community=86400'."
+        ) from exc
+
+    if timeout_value <= 0:
+        raise SkillToolError(
+            f"Invalid timeout value for '{key_name}' in TOPSAILAI_CALL_SKILL_TIMEOUT_MAP: "
+            f"{timeout_value} is not positive. "
+            "Use a positive integer in seconds, e.g. 'ai-community=86400'."
+        )
+
+    return timeout_value
+
+
 def get_call_skill_timeout(skill_folder:str) -> int:
     """ get timeout from environ """
 
@@ -59,12 +91,12 @@ def get_call_skill_timeout(skill_folder:str) -> int:
     # matched?
     for key, timeout in skill_timeout_map.items():
         if is_matched_skill(skill_folder, [key]):
-            return int(timeout)
+            return _parse_timeout_value(timeout, key)
 
     # default
     default_timeout = DEFAULT_CALL_SKILL_TIMEOUT
     if skill_timeout_map.get("default"):
-        default_timeout = int(skill_timeout_map["default"])
+        default_timeout = _parse_timeout_value(skill_timeout_map["default"], "default")
 
     return default_timeout
 
@@ -314,7 +346,35 @@ def overview_skill(skill_folder:str):
     Args:
         skill_folder (str): required, skill folder.
     """
+    if not skill_folder or not os.path.isdir(skill_folder):
+        raise SkillToolError(
+            f"Skill folder does not exist or is not a directory: {skill_folder!r}. "
+            "Provide a valid skill folder path."
+        )
     return overview_skill_native(skill_folder)
+
+
+def _validate_skill_file_name(file_name: str) -> None:
+    """Validate that a skill file name is safe to resolve.
+
+    Args:
+        file_name: The requested file name relative to the skill folder.
+
+    Raises:
+        SkillToolError: If the file name is empty or uses an absolute/tilde/backslash prefix.
+    """
+    if not file_name:
+        raise SkillToolError(
+            "file_name cannot be empty. "
+            "Provide a relative path inside the skill folder, e.g. 'scripts/run.sh'."
+        )
+
+    if file_name.startswith(("/", "~", "\\")):
+        raise SkillToolError(
+            f"file_name must be a relative path inside the skill folder, got {file_name!r}. "
+            "Use a path such as 'scripts/run.sh' or 'README.md'."
+        )
+
 
 def read_skill_file(
         skill_folder:str,
@@ -327,16 +387,48 @@ def read_skill_file(
         skill_folder (str): a skill folder
         file_name (str): a file with relative path
     """
-    assert exists_skill(skill_folder), f"no found this skill folder: {skill_folder}"
+    if not skill_folder or not os.path.isdir(skill_folder):
+        raise SkillToolError(
+            f"Skill folder does not exist or is not a directory: {skill_folder!r}. "
+            "Provide a valid skill folder path."
+        )
+
+    if not exists_skill(skill_folder):
+        raise SkillToolError(
+            f"Skill is not loaded: {skill_folder!r}. "
+            "Call load_skill() or ensure the skill is listed in TOPSAILAI_PLUGIN_SKILLS."
+        )
+
+    _validate_skill_file_name(file_name)
 
     file_path = get_skill_file(skill_folder, file_name)
-    assert file_path, f"no found this skill file: {file_name}"
+    if not file_path:
+        raise SkillToolError(
+            f"File {file_name!r} not found in skill folder {skill_folder!r}. "
+            "Use a relative path such as 'scripts/run.sh' or 'README.md'."
+        )
 
-    file_content = ""
-    with open(file_path, encoding='utf-8') as fp:
-        file_content = fp.read()
+    real_folder = os.path.realpath(skill_folder)
+    real_file = os.path.realpath(file_path)
+    if not real_file.startswith(real_folder + os.sep):
+        raise SkillToolError(
+            f"Resolved file {real_file!r} is outside the skill folder {real_folder!r}. "
+            "Use a relative path that stays inside the skill folder."
+        )
 
-    return file_content
+    try:
+        with open(file_path, encoding='utf-8') as fp:
+            return fp.read()
+    except PermissionError as exc:
+        raise SkillToolError(
+            f"Permission denied reading {file_path!r}. "
+            "Check file permissions and ownership."
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise SkillToolError(
+            f"File {file_path!r} is not valid UTF-8 text: {exc}. "
+            "Use a tool designed for binary files if needed."
+        ) from exc
 
 def load_skill(skill_folder:str):
     """Load a new SKILL
