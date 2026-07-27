@@ -974,5 +974,105 @@ class TestErrorHandlingImprovements(unittest.TestCase):
         self.assertIn('stdin_text', str(context.exception))
         self.assertIn('string', str(context.exception))
 
+class TestSymlinkPathHandling(unittest.TestCase):
+    """Test symlink-aware path validation in skill_tool."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.skill_folder = os.path.join(self.tmpdir, 'skill')
+        self.real_scripts = os.path.join(self.tmpdir, 'real_scripts')
+        os.makedirs(self.skill_folder)
+        os.makedirs(self.real_scripts)
+
+        real_script = os.path.join(self.real_scripts, 'hello.sh')
+        with open(real_script, 'w', encoding='utf-8') as f:
+            f.write('#!/bin/sh\necho hello')
+        os.chmod(real_script, 0o755)
+
+        # Symlink the scripts directory into the skill folder
+        os.symlink(self.real_scripts, os.path.join(self.skill_folder, 'scripts'))
+
+        # Also create a direct script inside the skill folder
+        direct_script = os.path.join(self.skill_folder, 'direct.sh')
+        with open(direct_script, 'w', encoding='utf-8') as f:
+            f.write('#!/bin/sh\necho direct')
+        os.chmod(direct_script, 0o755)
+
+        # Create a SKILL.md so load_skill/cache checks pass
+        with open(os.path.join(self.skill_folder, 'SKILL.md'), 'w', encoding='utf-8') as f:
+            f.write('---\nname: SymlinkSkill\ndescription: test\n---\n')
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    @patch('topsailai.tools.skill_tool.exec_cmd')
+    @patch('topsailai.tools.skill_tool.skill_hook.SkillHookHandler')
+    @patch('topsailai.tools.skill_tool.lock_tool.ctxm_void')
+    @patch('topsailai.tools.skill_tool.get_skills_from_cache')
+    @patch('topsailai.tools.skill_tool.get_call_skill_timeout')
+    @patch('topsailai.tools.skill_tool.format_tool.parse_str_to_dict')
+    @patch('topsailai.tools.skill_tool.env_tool.EnvReaderInstance.get')
+    def test_call_skill_accepts_script_inside_symlinked_subdir(
+        self, mock_env_get, mock_parse_dict, mock_timeout,
+        mock_get_skills, mock_ctxm, mock_hook, mock_exec_cmd
+    ):
+        """A script reached through a symlink inside the skill folder is accepted."""
+        from topsailai.tools.skill_tool import call_skill
+
+        mock_env_get.return_value = None
+        mock_parse_dict.return_value = {}
+        mock_timeout.return_value = 120
+        mock_get_skills.return_value = [SimpleNamespace(folder=self.skill_folder)]
+        mock_ctxm.return_value.__enter__ = MagicMock(return_value={})
+        mock_ctxm.return_value.__exit__ = MagicMock(return_value=False)
+        mock_hook_instance = MagicMock()
+        mock_hook_instance.need_lock_session = False
+        mock_hook_instance.need_refresh_session = False
+        mock_hook.return_value = mock_hook_instance
+        mock_exec_cmd.return_value = (0, 'hello', '')
+
+        result = call_skill(self.skill_folder, 'scripts/hello.sh', '')
+        self.assertEqual(result[0], 0)
+        mock_exec_cmd.assert_called_once()
+
+    def test_call_skill_rejects_traversal_through_symlink(self):
+        """A relative path that escapes the skill folder is still rejected."""
+        from topsailai.tools.skill_tool import call_skill, SkillToolError
+
+        with self.assertRaises((SkillToolError, ValueError)) as context:
+            call_skill(self.skill_folder, 'scripts/../../escape.sh', '')
+
+        self.assertIn('outside the skill folder', str(context.exception))
+
+    def test_read_skill_file_accepts_file_inside_symlinked_subdir(self):
+        """read_skill_file accepts files reached through an in-skill symlink."""
+        from topsailai.tools.skill_tool import read_skill_file
+        from topsailai.skill_hub.skill_tool import g_skills
+
+        real_file = os.path.join(self.real_scripts, 'note.txt')
+        with open(real_file, 'w', encoding='utf-8') as f:
+            f.write('symlinked note')
+
+        g_skills[self.skill_folder] = SimpleNamespace(folder=self.skill_folder)
+        try:
+            result = read_skill_file(self.skill_folder, 'scripts/note.txt')
+            self.assertEqual(result, 'symlinked note')
+        finally:
+            g_skills.pop(self.skill_folder, None)
+
+    def test_read_skill_file_rejects_traversal_through_symlink(self):
+        """read_skill_file still rejects paths that escape the skill folder."""
+        from topsailai.tools.skill_tool import read_skill_file, SkillToolError
+        from topsailai.skill_hub.skill_tool import g_skills
+
+        g_skills[self.skill_folder] = SimpleNamespace(folder=self.skill_folder)
+        try:
+            with self.assertRaises(SkillToolError) as context:
+                read_skill_file(self.skill_folder, 'scripts/../../escape.txt')
+
+            self.assertIn('not found in skill folder', str(context.exception))
+        finally:
+            g_skills.pop(self.skill_folder, None)
 if __name__ == '__main__':
     unittest.main()

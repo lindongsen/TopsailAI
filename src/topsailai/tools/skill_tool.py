@@ -181,26 +181,28 @@ def call_skill(
     # format script_path
     script_path = get_script_path(skill_folder, script_path)
 
-    # resolved path must stay inside skill_folder
-    real_skill_folder = os.path.realpath(skill_folder)
-    real_script = os.path.realpath(os.path.join(skill_folder, script_path))
-    if not real_script.startswith(real_skill_folder + os.sep):
+    # normalized path must stay inside skill_folder (symlinks inside the
+    # skill folder are intentionally preserved so scripts/files exposed via
+    # symlinks are accepted, while ".." traversal is still rejected).
+    norm_skill_folder = os.path.normpath(os.path.abspath(skill_folder))
+    norm_script = os.path.normpath(os.path.abspath(os.path.join(skill_folder, script_path)))
+    if not _is_normalized_path_inside_skill_folder(norm_skill_folder, norm_script):
         raise SkillToolError(
             "A skill can only run scripts that exist inside its own folder. "
-            f"The resolved path {real_script!r} is outside the skill folder {real_skill_folder!r}."
+            f"The path {norm_script!r} is outside the skill folder {norm_skill_folder!r}."
         )
 
     # target must exist and be a regular file
-    if not os.path.isfile(real_script):
+    if not os.path.isfile(norm_script):
         raise SkillToolError(
             "A skill can only run scripts that exist inside its own folder. "
             f"The requested script {script_path!r} was not found inside {skill_folder!r}."
         )
 
     # target must be executable
-    if not os.access(real_script, os.X_OK):
+    if not os.access(norm_script, os.X_OK):
         raise SkillToolError(
-            f"Script {real_script!r} exists but is not executable. "
+            f"Script {norm_script!r} exists but is not executable. "
             f"Run 'chmod +x {script_path}' or invoke it with an interpreter "
             f"such as 'python {script_path}'."
         )
@@ -234,14 +236,13 @@ def call_skill(
             "Provide a valid script path and parameters."
         )
 
-    # resolved executable must stay inside skill_folder
-    real_cmd_exe = os.path.realpath(cmd_exe_file)
-    if not real_cmd_exe.startswith(real_skill_folder + os.sep):
+    # normalized executable must stay inside skill_folder
+    norm_cmd_exe = os.path.normpath(os.path.abspath(os.path.join(skill_folder, cmd_exe_file)))
+    if not _is_normalized_path_inside_skill_folder(norm_skill_folder, norm_cmd_exe):
         raise SkillToolError(
-            f"The executable {cmd_exe_file!r} resolves outside the skill folder "
-            f"{real_skill_folder!r}. Use a script path relative to the skill folder."
+            f"The executable {cmd_exe_file!r} is outside the skill folder "
+            f"{norm_skill_folder!r}. Use a script path relative to the skill folder."
         )
-
     # enhance security
     if isinstance(cmd, str):
         cmd = shlex.split(cmd)
@@ -376,6 +377,32 @@ def _validate_skill_file_name(file_name: str) -> None:
         )
 
 
+def _is_normalized_path_inside_skill_folder(
+    skill_folder: str,
+    candidate_path: str,
+) -> bool:
+    """Check that a candidate path stays inside the skill folder.
+
+    Paths are normalized (``.`` and ``..`` collapsed) but symlinks are
+    intentionally preserved. This lets a skill expose scripts or files
+    through symlinks inside its folder while still rejecting directory
+    traversal attempts.
+
+    Args:
+        skill_folder: The skill folder boundary (absolute or relative).
+        candidate_path: The path to validate (absolute or relative).
+
+    Returns:
+        True if ``candidate_path`` is inside ``skill_folder`` after
+        normalization, False otherwise.
+    """
+    norm_skill_folder = os.path.normpath(os.path.abspath(skill_folder))
+    norm_candidate = os.path.normpath(os.path.abspath(candidate_path))
+    if norm_candidate == norm_skill_folder:
+        return True
+    prefix = norm_skill_folder + os.sep
+    return norm_candidate.startswith(prefix)
+
 def read_skill_file(
         skill_folder:str,
         file_name:str,
@@ -400,7 +427,6 @@ def read_skill_file(
         )
 
     _validate_skill_file_name(file_name)
-
     file_path = get_skill_file(skill_folder, file_name)
     if not file_path:
         raise SkillToolError(
@@ -408,11 +434,11 @@ def read_skill_file(
             "Use a relative path such as 'scripts/run.sh' or 'README.md'."
         )
 
-    real_folder = os.path.realpath(skill_folder)
-    real_file = os.path.realpath(file_path)
-    if not real_file.startswith(real_folder + os.sep):
+    norm_folder = os.path.normpath(os.path.abspath(skill_folder))
+    norm_file = os.path.normpath(os.path.abspath(file_path))
+    if not _is_normalized_path_inside_skill_folder(norm_folder, norm_file):
         raise SkillToolError(
-            f"Resolved file {real_file!r} is outside the skill folder {real_folder!r}. "
+            f"File {norm_file!r} is outside the skill folder {norm_folder!r}. "
             "Use a relative path that stays inside the skill folder."
         )
 
