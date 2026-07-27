@@ -89,7 +89,7 @@ class TestScanWorkspaceFiles(unittest.TestCase):
             self.assertIn("nested.txt", tree)
             self.assertIn("> " + tmpdir, tree)
 
-    def test_project_folder_outside_workspace_falls_back(self):
+    def test_project_folder_outside_workspace_scans_both(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = os.path.join(tmpdir, "workspace")
             outside = os.path.join(tmpdir, "outside")
@@ -102,8 +102,9 @@ class TestScanWorkspaceFiles(unittest.TestCase):
 
             tree = launcher._scan_workspace_files(workspace, outside)
             self.assertIn("inside.txt", tree)
-            self.assertNotIn("outside.txt", tree)
+            self.assertIn("outside.txt", tree)
             self.assertIn("> " + workspace, tree)
+            self.assertIn("> " + outside, tree)
 
     def test_project_folder_none_scans_workspace(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -115,7 +116,6 @@ class TestScanWorkspaceFiles(unittest.TestCase):
             tree = launcher._scan_workspace_files(tmpdir, None)
             self.assertIn("sub", tree)
             self.assertIn("nested.txt", tree)
-
 
     def test_hidden_files_and_directories_are_excluded(self):
         with tempfile.TemporaryDirectory() as tmpdir:

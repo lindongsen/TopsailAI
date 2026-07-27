@@ -25,7 +25,7 @@ This variable is read from the merged environment with the following priority:
 2. The base `_` environment section in `.topsailai/settings.yaml`.
 3. The OS environment (`os.environ`).
 
-If `TOPSAILAI_PROJECT_FOLDER` points to a directory inside the workspace, only that directory is scanned. If it points outside the workspace, the launcher falls back to scanning the whole workspace.
+If `TOPSAILAI_PROJECT_FOLDER` points to a directory inside the workspace, only that directory is scanned. If it points outside the workspace, both the workspace and the external project folder are scanned so the agent sees the full workspace context alongside the external project.
 
 Example configuration:
 

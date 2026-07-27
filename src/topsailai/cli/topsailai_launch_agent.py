@@ -1040,60 +1040,68 @@ def _scan_workspace_files(workspace, project_folder=None):
     equals it), only that folder is scanned. This lets the agent focus on the
     active project when ``TOPSAILAI_PROJECT_FOLDER`` is set.
 
+    If ``project_folder`` is provided but lies outside ``workspace``, both
+    ``workspace`` and ``project_folder`` are scanned so the agent still sees
+    the full workspace context alongside the external project folder.
+
     Symbolic links are not followed: symlinked files are listed as leaf
     entries and symlinked directories are not recursed into.
     """
+
+    def _build_tree(scan_root):
+        """Build a tree string for a single root directory."""
+        scan_root = os.path.abspath(scan_root)
+        patterns = _load_gitignore_patterns(scan_root)
+
+        entries = []
+
+        def walk(current_dir, prefix=""):
+            try:
+                items = sorted(os.listdir(current_dir))
+            except (PermissionError, OSError):
+                return
+
+            visible_items = []
+            for name in items:
+                # Skip hidden files and directories by default (names starting
+                # with a dot). This keeps the generated context tree focused on
+                # project-visible content.
+                if name.startswith("."):
+                    continue
+                full_path = os.path.join(current_dir, name)
+                rel_path = os.path.relpath(full_path, scan_root).replace("\\", "/")
+                is_symlink = os.path.islink(full_path)
+                is_dir = os.path.isdir(full_path) and not is_symlink
+                if _is_ignored(rel_path, name, is_dir, patterns):
+                    continue
+                visible_items.append((name, full_path, is_dir))
+
+            count = len(visible_items)
+            for idx, (name, full_path, is_dir) in enumerate(visible_items):
+                is_last = idx == count - 1
+                connector = "└── " if is_last else "├── "
+                entries.append(f"{prefix}{connector}{name}")
+                if is_dir:
+                    extension = "    " if is_last else "│   "
+                    walk(full_path, prefix + extension)
+
+        entries.append(".")
+        walk(scan_root)
+        return "> " + scan_root + "\n" + "\n".join(entries)
+
     workspace = os.path.abspath(workspace)
-    if project_folder:
-        project_folder = os.path.abspath(project_folder)
-        # Only accept the project folder if it is the workspace itself or a
-        # descendant of the workspace.
-        if project_folder == workspace or project_folder.startswith(
-            workspace + os.sep
-        ):
-            scan_root = project_folder
-        else:
-            scan_root = workspace
-    else:
-        scan_root = workspace
+    if not project_folder:
+        return _build_tree(workspace)
 
-    patterns = _load_gitignore_patterns(scan_root)
+    project_folder = os.path.abspath(project_folder)
+    if project_folder == workspace or project_folder.startswith(workspace + os.sep):
+        return _build_tree(project_folder)
 
-    entries = []
-
-    def walk(current_dir, prefix=""):
-        try:
-            items = sorted(os.listdir(current_dir))
-        except (PermissionError, OSError):
-            return
-
-        visible_items = []
-        for name in items:
-            # Skip hidden files and directories by default (names starting
-            # with a dot). This keeps the generated context tree focused on
-            # project-visible content.
-            if name.startswith("."):
-                continue
-            full_path = os.path.join(current_dir, name)
-            rel_path = os.path.relpath(full_path, scan_root).replace("\\", "/")
-            is_symlink = os.path.islink(full_path)
-            is_dir = os.path.isdir(full_path) and not is_symlink
-            if _is_ignored(rel_path, name, is_dir, patterns):
-                continue
-            visible_items.append((name, full_path, is_dir))
-
-        count = len(visible_items)
-        for idx, (name, full_path, is_dir) in enumerate(visible_items):
-            is_last = idx == count - 1
-            connector = "└── " if is_last else "├── "
-            entries.append(f"{prefix}{connector}{name}")
-            if is_dir:
-                extension = "    " if is_last else "│   "
-                walk(full_path, prefix + extension)
-
-    entries.append(".")
-    walk(scan_root)
-    return "> " + scan_root + "\n" + "\n".join(entries)
+    # Project folder is outside the workspace: include both trees.
+    parts = [_build_tree(workspace)]
+    if os.path.isdir(project_folder):
+        parts.append(_build_tree(project_folder))
+    return "\n\n".join(parts)
 
 
 def main():
