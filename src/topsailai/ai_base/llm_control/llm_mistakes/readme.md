@@ -111,6 +111,54 @@ MISTAKES = dict(
 After adding the fixer, verify it through `format_response()` end-to-end, not only by calling the fixer directly. Unit tests should cover both the fixer in isolation and the full `format_response()` path for the affected response format.
 
 
+
+## Methodology: Removing Consecutive Duplicate Action Steps
+
+When the LLM emits the same `action` step multiple times in a row, the agent may execute the same tool call repeatedly within a single turn. The fixer `duplicate_consecutive_steps.py` detects and removes consecutive duplicate `action` steps from an already-parsed `list[dict]` response.
+
+### Scope and Matching Rules
+
+- Only items with `step_name == "action"` are considered.
+- Duplicates are determined by comparing a normalized signature of `tool_call` and `tool_args`:
+  - `tool_call` must be a non-empty string.
+  - `tool_args` is JSON-normalized with sorted keys and no insignificant whitespace.
+  - This makes the comparison robust against formatting differences in raw LLM output.
+- A single left-to-right pass removes the earlier item of any matching consecutive pair.
+
+Example:
+
+```python
+[
+    {"step_name": "thought", "raw_text": "Let me read the file."},
+    {"step_name": "action", "tool_call": "file_tool-read_file", "tool_args": {"files": ["/tmp/1.txt"]}},
+    {"step_name": "action", "tool_call": "file_tool-read_file", "tool_args": {"files": ["/tmp/1.txt"]}},
+]
+```
+
+becomes:
+
+```python
+[
+    {"step_name": "thought", "raw_text": "Let me read the file."},
+    {"step_name": "action", "tool_call": "file_tool-read_file", "tool_args": {"files": ["/tmp/1.txt"]}},
+]
+```
+
+### Failure Safety
+
+The fixer is wrapped so that any unexpected exception is caught and logged. If the deduplication logic fails, the original response is returned unchanged and `format_response()` continues normally. This prevents a bug in the fixer from breaking the upstream parsing flow.
+
+### Input-Format Limitation
+
+The `topsailai.` text format is parsed into an `OrderedDict` keyed by `step_name` in `format_tool.parse_topsailai_format()`, so duplicate `action` keys are already collapsed by the parser. The deduplication fixer therefore applies primarily to:
+
+- JSON string responses that parse to a `list[dict]`.
+- Direct `list[dict]` inputs passed to `format_response()`.
+
+### Registration
+
+Like other fixers, `duplicate_consecutive_steps.py` exposes its handler in a module-level `MISTAKES` dictionary and is auto-discovered by `llm_mistakes/base/init.py`. It runs during `format_response_finally()` so that earlier fixers (e.g., `missing_tool_args.py`, `action_with_final_answer.py`) have already normalized action content before duplication detection runs.
+
 ## Diagnosing `parsing response` Failures from `topsailai.log.ec`
 
 Search `topsailai.log.ec` for `parsing response` and ignore entries whose tail contains `(unit-test:)`. Inspect the raw LLM response enclosed between `>>>` and `<<<`.

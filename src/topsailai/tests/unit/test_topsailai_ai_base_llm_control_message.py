@@ -498,3 +498,64 @@ class TestFormatResponseActionWithFinalAnswer:
         assert result[1]["step_name"] == "action"
         assert '"tool_call": "file_tool-read_file"' in result[1]["raw_text"]
         assert '"tool_args": {"files": [\"/tmp/1.txt\"]}' in result[1]["raw_text"]
+
+
+class TestFormatResponseDuplicateConsecutiveSteps:
+    """Test suite for duplicate_consecutive_steps fixer in format_response."""
+
+    def test_format_response_topsailai_duplicate_actions_collapsed_by_parser(self):
+        """Verify topsailai format parser collapses duplicate action keys.
+
+        The ``topsailai.`` format is parsed into an ``OrderedDict`` keyed by
+        ``step_name``, so duplicate ``action`` steps are already collapsed
+        before any fixer runs. The deduplication fixer therefore cannot (and
+        does not need to) handle this format.
+        """
+        from topsailai.ai_base.llm_control.message import format_response
+
+        text = (
+            "topsailai.thought\n"
+            "Let me read the file.\n"
+            "topsailai.action\n"
+            '{"tool_call": "file_tool-read_file", "tool_args": {"files": ["/tmp/1.txt"]}}\n'
+            "topsailai.action\n"
+            '{"tool_call": "file_tool-read_file", "tool_args": {"files": ["/tmp/2.txt"]}}'
+        )
+        result = format_response(text)
+        assert len(result) == 2
+        assert result[0]["step_name"] == "thought"
+        assert result[1]["step_name"] == "action"
+        assert '"files": ["/tmp/2.txt"]' in result[1]["raw_text"]
+
+    def test_format_response_duplicate_actions_in_list_input(self):
+        """Verify duplicate action steps are deduplicated for list input."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        response = [
+            {"step_name": "thought", "raw_text": "Let me read the file."},
+            {"step_name": "action", "tool_call": "file_tool-read_file", "tool_args": {"files": ["/tmp/1.txt"]}},
+            {"step_name": "action", "tool_call": "file_tool-read_file", "tool_args": {"files": ["/tmp/1.txt"]}},
+        ]
+        result = format_response(response)
+        assert len(result) == 2
+        assert result[0]["step_name"] == "thought"
+        assert result[1]["step_name"] == "action"
+        assert result[1]["tool_args"]["files"] == ["/tmp/1.txt"]
+
+    def test_format_response_duplicate_action_fixer_failure_is_safe(self):
+        """Verify an exception in the duplicate fixer does not break format_response."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        response = [
+            {"step_name": "action", "tool_call": "file_tool-read_file", "tool_args": {"files": ["/tmp/1.txt"]}},
+            {"step_name": "action", "tool_call": "file_tool-read_file", "tool_args": {"files": ["/tmp/1.txt"]}},
+        ]
+        with patch(
+            "topsailai.ai_base.llm_control.llm_mistakes.duplicate_consecutive_steps._remove_consecutive_duplicate_actions",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = format_response(response)
+
+        assert len(result) == 2
+        assert result[0]["step_name"] == "action"
+        assert result[1]["step_name"] == "action"
