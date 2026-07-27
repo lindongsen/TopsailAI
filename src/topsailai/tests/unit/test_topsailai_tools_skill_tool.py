@@ -495,16 +495,16 @@ class TestLoadSkill(unittest.TestCase):
             self.assertIn("LoadedSkill", result)
             self.assertIn(tmpdir, result)
 
-    def test_load_skill_missing_name_raises_runtime_error(self):
-        """Test load_skill raises RuntimeError when SKILL.md has no name."""
-        from topsailai.tools.skill_tool import load_skill
+    def test_load_skill_missing_name_raises_skill_tool_error(self):
+        """Test load_skill raises SkillToolError when SKILL.md has no name."""
+        from topsailai.tools.skill_tool import load_skill, SkillToolError
 
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_file = os.path.join(tmpdir, "SKILL.md")
             with open(skill_file, "w", encoding="utf-8") as f:
                 f.write("---\ndescription: no name\n---\n")
 
-            with self.assertRaises(RuntimeError) as context:
+            with self.assertRaises(SkillToolError) as context:
                 load_skill(tmpdir)
 
             self.assertIn("load skill failed", str(context.exception))
@@ -533,9 +533,9 @@ class TestLoadSkill(unittest.TestCase):
             result2 = load_skill(folder2)
             self.assertIn("DupSkill", result2)
 
-    def test_load_skill_duplicate_basename_different_content_raises_runtime_error(self):
+    def test_load_skill_duplicate_basename_different_content_raises_skill_tool_error(self):
         """Test load_skill fails when a conflicting duplicate basename is already loaded."""
-        from topsailai.tools.skill_tool import load_skill
+        from topsailai.tools.skill_tool import load_skill, SkillToolError
         from topsailai.skill_hub.skill_tool import g_skills
 
         with tempfile.TemporaryDirectory() as parent:
@@ -552,9 +552,8 @@ class TestLoadSkill(unittest.TestCase):
             load_skill(folder1)
             self.assertIn(folder1, g_skills)
 
-            with self.assertRaises(RuntimeError) as context:
+            with self.assertRaises(SkillToolError) as context:
                 load_skill(folder2)
-
             self.assertIn("load skill failed", str(context.exception))
 
 class TestModuleConstants(unittest.TestCase):

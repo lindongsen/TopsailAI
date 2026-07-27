@@ -437,13 +437,19 @@ def load_skill(skill_folder:str):
         skill_folder (str):
 
     Raises:
-        RuntimeError: when the skill folder is invalid, disabled, or a
+        SkillToolError: when the skill folder is invalid, disabled, or a
             duplicate basename has already been loaded and no valid name
             could be resolved.
     """
-    s = parse_skill_folder(skill_folder)
+    try:
+        s = parse_skill_folder(skill_folder)
+    except Exception as exc:
+        raise SkillToolError(
+            f"load skill failed for folder {skill_folder!r}: {exc}"
+        ) from exc
+
     if not s.name:
-        raise RuntimeError(
+        raise SkillToolError(
             f"load skill failed: {skill_folder} "
             "(no valid SKILL.md, skill disabled, or duplicate basename already loaded)"
         )
