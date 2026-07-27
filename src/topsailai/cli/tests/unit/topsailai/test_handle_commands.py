@@ -368,7 +368,7 @@ class TestRuntimeModeArguments(unittest.TestCase):
 
         _, kwargs = mock_stream.call_args
         self.assertTrue(kwargs["runtime_raw"])
-        self.assertEqual(kwargs["tail_lines"], 100)
+        self.assertEqual(kwargs["tail_lines"], 300)
 
     @patch("cli_topsailai.streaming.stream_file")
     @patch("cli_topsailai.core.prompt_selection")
@@ -445,7 +445,7 @@ class TestRuntimeModeArguments(unittest.TestCase):
 
         _, kwargs = mock_stream.call_args
         self.assertFalse(kwargs["runtime_raw"])
-        self.assertEqual(kwargs["tail_lines"], 100)
+        self.assertEqual(kwargs["tail_lines"], 300)
 
 
 class TestProjectScopeCommands(unittest.TestCase):

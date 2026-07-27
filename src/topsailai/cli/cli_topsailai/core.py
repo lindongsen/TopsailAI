@@ -683,10 +683,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         interactive_group.add_argument(
             "--tail-lines",
             type=int,
-            default=100,
+            default=300,
             dest="tail_lines",
             metavar="N",
-            help="number of recent log lines to echo on startup in runtime mode (default: 100)",
+            help="number of recent log lines to echo on startup in runtime mode (default: 300)",
         )
         interactive_group.add_argument(
             "--agent-mode",
@@ -787,10 +787,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     interactive_group.add_argument(
         "--tail-lines",
         type=int,
-        default=100,
+        default=300,
         dest="tail_lines",
         metavar="N",
-        help="number of recent log lines to echo on startup in runtime mode (default: 100)",
+        help="number of recent log lines to echo on startup in runtime mode (default: 300)",
     )
     interactive_group.add_argument(
         "--agent-mode",

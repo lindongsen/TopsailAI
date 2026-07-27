@@ -246,7 +246,7 @@ def stream_file(
     default_stdout_path: Optional[str] = None,
     default_pid: Optional[int] = None,
     runtime_raw: bool = False,
-    tail_lines: int = 100,
+    tail_lines: int = 300,
 ) -> None:
     """
     Stream a log file in real-time, similar to ``tail -f``.
@@ -1122,7 +1122,7 @@ def _stream_file_raw(
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
     default_pid: Optional[int] = None,
-    tail_lines: int = 100,
+    tail_lines: int = 300,
 ) -> None:
     """Raw curses-free stream implementation used when ``--runtime-raw`` is set."""
     filename = os.path.basename(filepath)
