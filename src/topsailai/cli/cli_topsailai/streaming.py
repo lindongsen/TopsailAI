@@ -652,6 +652,31 @@ def _read_input_line_tty(
         return sum(_char_display_width(c) for c in chars)
 
     last_total_rows = 1
+    pending_redraw = False
+
+    def input_available() -> bool:
+        """Return True if stdin has bytes waiting without blocking."""
+        try:
+            ready, _, _ = select.select([fd], [], [], 0)
+            return fd in ready
+        except (OSError, ValueError):
+            return False
+
+    def request_redraw() -> None:
+        nonlocal pending_redraw
+        pending_redraw = True
+
+    def maybe_redraw() -> None:
+        """Redraw only when no more input is waiting.
+
+        This batches screen updates during a paste so the whole pasted chunk
+        is processed before repainting once, instead of redrawing after every
+        single byte.
+        """
+        nonlocal pending_redraw
+        if pending_redraw and not input_available():
+            redraw()
+            pending_redraw = False
 
     def redraw() -> None:
         # Repaint the prompt and input buffer, wrapping long input across
@@ -936,7 +961,8 @@ def _read_input_line_tty(
             cursor += 1
             history_index = -1
             _debug_input(f"Inserted char={char!r} cursor={cursor} buffer={''.join(buffer)!r}")
-            redraw()
+            request_redraw()
+            maybe_redraw()
     finally:
         _debug_input("_read_input_line_tty finally")
         if old_settings is not None:

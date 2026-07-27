@@ -163,7 +163,8 @@ class CursesStreamUI:
             if had_log or had_input or self._needs_redraw:
                 self._draw()
                 self._needs_redraw = False
-            curses.napms(50)
+            if not had_input:
+                curses.napms(50)
 
     def _setup_colors(self) -> None:
         """Initialize curses color pairs."""
@@ -245,92 +246,109 @@ class CursesStreamUI:
         return changed
 
     def _poll_input(self) -> bool:
-        """Read a single keystroke and update the input state.
+        """Read available keystrokes and update the input state.
 
         Returns True if the input state changed and the screen should be redrawn.
+        Printable characters are batched so that a paste is processed in one
+        update instead of one character per main-loop iteration.
         """
         import curses
 
-        try:
-            ch = self.stdscr.get_wch()
-        except curses.error:
-            return False
+        changed = False
+        max_batch = 128
 
-        if ch == -1:
-            return False
+        for _ in range(max_batch):
+            try:
+                ch = self.stdscr.get_wch()
+            except curses.error:
+                break
 
-        if ch == curses.KEY_RESIZE:
-            self._handle_resize()
-            return True
+            if ch == -1:
+                break
 
-        if self._multi_line_mode:
-            return self._handle_multi_line_input(ch)
+            if ch == curses.KEY_RESIZE:
+                self._handle_resize()
+                changed = True
+                break
 
-        if ch in (curses.KEY_ENTER, "\n", "\r"):
-            self._execute_input()
-            return True
-        if ch in (curses.KEY_BACKSPACE, 127, 8):
-            if self._cursor_pos > 0:
-                self._input_buffer = (
-                    self._input_buffer[: self._cursor_pos - 1]
-                    + self._input_buffer[self._cursor_pos :]
-                )
-                self._cursor_pos -= 1
-                self._history_index = -1
-                return True
-            return False
-        if ch in (curses.KEY_DC, 330):
-            if self._cursor_pos < len(self._input_buffer):
+            if self._multi_line_mode:
+                changed = self._handle_multi_line_input(ch) or changed
+                break
+
+            if ch in (curses.KEY_ENTER, "\n", "\r"):
+                self._execute_input()
+                changed = True
+                break
+            if ch in (curses.KEY_BACKSPACE, 127, 8):
+                if self._cursor_pos > 0:
+                    self._input_buffer = (
+                        self._input_buffer[: self._cursor_pos - 1]
+                        + self._input_buffer[self._cursor_pos :]
+                    )
+                    self._cursor_pos -= 1
+                    self._history_index = -1
+                    changed = True
+                break
+            if ch in (curses.KEY_DC, 330):
+                if self._cursor_pos < len(self._input_buffer):
+                    self._input_buffer = (
+                        self._input_buffer[: self._cursor_pos]
+                        + self._input_buffer[self._cursor_pos + 1 :]
+                    )
+                    self._history_index = -1
+                    changed = True
+                break
+            if ch == curses.KEY_LEFT or ch == 260:
+                if self._cursor_pos > 0:
+                    self._cursor_pos -= 1
+                    changed = True
+                break
+            if ch == curses.KEY_RIGHT or ch == 261:
+                if self._cursor_pos < len(self._input_buffer):
+                    self._cursor_pos += 1
+                    changed = True
+                break
+            if ch == curses.KEY_HOME or ch == 262:
+                if self._cursor_pos != 0:
+                    self._cursor_pos = 0
+                    changed = True
+                break
+            if ch == curses.KEY_END or ch == 360:
+                if self._cursor_pos != len(self._input_buffer):
+                    self._cursor_pos = len(self._input_buffer)
+                    changed = True
+                break
+            if ch == curses.KEY_UP or ch == 259:
+                changed = self._recall_history(1) or changed
+                break
+            if ch == curses.KEY_DOWN or ch == 258:
+                changed = self._recall_history(-1) or changed
+                break
+            if ch == curses.KEY_PPAGE or ch == curses.KEY_NPAGE:
+                if ch == curses.KEY_PPAGE:
+                    self._scroll_up(self._page_scroll_lines)
+                else:
+                    self._scroll_down(self._page_scroll_lines)
+                changed = True
+                break
+            if ch == 27:
+                self._running = False
+                changed = True
+                break
+            if isinstance(ch, str):
                 self._input_buffer = (
                     self._input_buffer[: self._cursor_pos]
-                    + self._input_buffer[self._cursor_pos + 1 :]
+                    + ch
+                    + self._input_buffer[self._cursor_pos :]
                 )
-                self._history_index = -1
-                return True
-            return False
-        if ch == curses.KEY_LEFT or ch == 260:
-            if self._cursor_pos > 0:
-                self._cursor_pos -= 1
-                return True
-            return False
-        if ch == curses.KEY_RIGHT or ch == 261:
-            if self._cursor_pos < len(self._input_buffer):
                 self._cursor_pos += 1
-                return True
-            return False
-        if ch == curses.KEY_HOME or ch == 262:
-            if self._cursor_pos != 0:
-                self._cursor_pos = 0
-                return True
-            return False
-        if ch == curses.KEY_END or ch == 360:
-            if self._cursor_pos != len(self._input_buffer):
-                self._cursor_pos = len(self._input_buffer)
-                return True
-            return False
-        if ch == curses.KEY_UP or ch == 259:
-            return self._recall_history(1)
-        if ch == curses.KEY_DOWN or ch == 258:
-            return self._recall_history(-1)
-        if ch == curses.KEY_PPAGE or ch == curses.KEY_NPAGE:
-            if ch == curses.KEY_PPAGE:
-                self._scroll_up(self._page_scroll_lines)
-            else:
-                self._scroll_down(self._page_scroll_lines)
-            return True
-        if ch == 27:
-            self._running = False
-            return True
-        if isinstance(ch, str):
-            self._input_buffer = (
-                self._input_buffer[: self._cursor_pos]
-                + ch
-                + self._input_buffer[self._cursor_pos :]
-            )
-            self._cursor_pos += 1
-            self._history_index = -1
-            return True
-        return False
+                self._history_index = -1
+                changed = True
+                continue
+            # Unknown key: ignore and stop batching.
+            break
+
+        return changed
 
     def _recall_history(self, direction: int) -> bool:
         """Recall a previous or next command into the input buffer.
@@ -542,7 +560,8 @@ class CursesStreamUI:
                 if had_log or had_input or self._needs_redraw:
                     self._draw_multi_line()
                     self._needs_redraw = False
-                curses.napms(50)
+                if not had_input:
+                    curses.napms(50)
         finally:
             self._multi_line_mode = False
             self._multi_line_prompt = ""

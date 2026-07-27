@@ -164,8 +164,23 @@ class TestCursesStreamUI(unittest.TestCase):
             command_handler=command_handler or (lambda _: True),
         )
     def _poll_input_with_key(self, ui, key):
-        """Simulate a single key press by wiring get_wch and invoking _poll_input."""
-        ui.stdscr.get_wch.return_value = key
+        """Simulate a single key press by wiring get_wch and invoking _poll_input.
+
+        IMPORTANT: _poll_input() batches characters from stdscr.get_wch() in a
+        loop. The loop only terminates when get_wch() returns -1 (no more input
+        waiting) or a special/control key is encountered. Therefore tests must
+        use side_effect=[key, -1], not return_value=key:
+
+        - The first get_wch() call returns the desired *key*.
+        - The second get_wch() call returns -1 to break the batch loop.
+
+        Using return_value=key would make every get_wch() call return the same
+        key forever, causing infinite loops or incorrect batch consumption.
+        Using side_effect without the trailing -1 means the mock raises
+        StopIteration after the key, which is silently caught and skips the
+        intended key handling.
+        """
+        ui.stdscr.get_wch.side_effect = [key, -1]
         ui._poll_input()
 
     @patch.dict("sys.modules", {"curses": FakeCurses()})
@@ -197,9 +212,6 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
-        stdscr.get_wch.side_effect = ["h", "i", "\n"]
-
-        stdscr.get_wch.return_value = 27
 
         ui = self._make_ui(fake_curses)
         ui.stdscr = stdscr
@@ -216,10 +228,10 @@ class TestCursesStreamUI(unittest.TestCase):
 
         ui.command_handler = handler
 
-        ui._poll_input()
-        ui._poll_input()
+        self._poll_input_with_key(ui, "h")
+        self._poll_input_with_key(ui, "i")
         self.assertEqual(ui._input_buffer, "hi")
-        ui._poll_input()
+        self._poll_input_with_key(ui, "\n")
         self.assertEqual(ui._input_buffer, "")
         self.assertEqual(calls, ["hi"])
 
@@ -228,7 +240,9 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
-        # get_wch() returns Enter as a newline string.
+        # _poll_input() batches printable characters until it sees a special
+        # key or -1. Here Enter ("\n") acts as the terminator, so the whole
+        # "hi" string is submitted in one _poll_input() call.
         stdscr.get_wch.side_effect = ["h", "i", "\n"]
         stdscr.get_wch.return_value = 27
 
@@ -253,6 +267,9 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
+        # _poll_input() batches printable characters until it sees a special
+        # key or -1. Here "\r" acts as the terminator, so the whole "hi"
+        # string is submitted in one _poll_input() call.
         stdscr.get_wch.side_effect = ["h", "i", "\r"]
         stdscr.get_wch.return_value = 27
 
@@ -277,6 +294,9 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
+        # _poll_input() batches printable characters until it sees a special
+        # key or -1. Here DEL (127) acts as the terminator, so "ab" is
+        # inserted and then backspaced in one _poll_input() call.
         stdscr.get_wch.side_effect = ["a", "b", 127]
 
         stdscr.get_wch.return_value = 27
@@ -294,8 +314,10 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
+        # _poll_input() batches printable characters until it sees a special
+        # key or -1. Here Enter ("\n") terminates the batch and submits the
+        # whole "quit" string in one _poll_input() call.
         stdscr.get_wch.side_effect = ["q", "u", "i", "t", "\n"]
-
         stdscr.get_wch.return_value = 27
 
         ui = self._make_ui(fake_curses, command_handler=lambda _: False)
@@ -311,18 +333,17 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
-        # Chinese characters are returned as strings by get_wch().
-        stdscr.get_wch.side_effect = ["中", "文", "\n"]
 
-        stdscr.get_wch.return_value = 27
-
+        # Each _poll_input_with_key() call simulates a single keystroke by
+        # setting get_wch.side_effect = [key, -1]. The -1 terminates the
+        # _poll_input() batch loop after the desired key is processed.
         ui = self._make_ui(fake_curses)
         ui.stdscr = stdscr
 
-        ui._poll_input()
-        ui._poll_input()
+        self._poll_input_with_key(ui, "中")
+        self._poll_input_with_key(ui, "文")
         self.assertEqual(ui._input_buffer, "中文")
-        ui._poll_input()
+        self._poll_input_with_key(ui, "\n")
         self.assertEqual(ui._input_buffer, "")
 
     @patch.dict("sys.modules", {"curses": FakeCurses()})
@@ -341,8 +362,9 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (40, 120)
+        # KEY_RESIZE is a special key, so _poll_input() stops batching
+        # immediately and does not need a trailing -1 terminator.
         stdscr.get_wch.side_effect = [fake_curses.KEY_RESIZE]
-
         stdscr.get_wch.return_value = 27
 
         ui = self._make_ui(fake_curses)
@@ -496,7 +518,8 @@ class TestCursesStreamUI(unittest.TestCase):
         fake_curses = sys.modules["curses"]
         stdscr = MagicMock()
         stdscr.getmaxyx.return_value = (24, 80)
-        # First iteration reads 'q' + Enter, then loop exits.
+        # First iteration reads 'q' then Enter. Enter terminates the
+        # _poll_input() batch loop and submits "q", causing the UI to exit.
         stdscr.get_wch.side_effect = ["q", "\n"]
 
         stdscr.get_wch.return_value = 27
@@ -1388,8 +1411,7 @@ class TestCursesStreamUI(unittest.TestCase):
         self._poll_input_with_key(ui, fake_curses.KEY_UP)
         self.assertEqual(ui._history_index, 0)
 
-        ui.stdscr.get_wch.return_value = 127
-        ui._poll_input()
+        self._poll_input_with_key(ui, 127)
         self.assertEqual(ui._history_index, -1)
 
     @patch.dict("sys.modules", {"curses": FakeCurses()})
@@ -1407,8 +1429,7 @@ class TestCursesStreamUI(unittest.TestCase):
 
         # Position cursor at the start so delete actually removes a character.
         ui._cursor_pos = 0
-        ui.stdscr.get_wch.return_value = fake_curses.KEY_DC
-        ui._poll_input()
+        self._poll_input_with_key(ui, fake_curses.KEY_DC)
         self.assertEqual(ui._history_index, -1)
 
     @patch.dict("sys.modules", {"curses": FakeCurses()})
