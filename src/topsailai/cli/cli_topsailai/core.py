@@ -13,6 +13,7 @@ import re
 import signal
 import sys
 import shutil
+import socket
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -597,6 +598,8 @@ def _print_workspace_table() -> None:
     task_dir = os.path.join(topsailai_home, "workspace", "task")
 
     print_header("TopsailAI Task Watcher")
+    print(f"{Colors.DIM}HOST: {socket.gethostname()}{Colors.RESET}")
+    print(f"{Colors.DIM}PWD:  {os.getcwd()}{Colors.RESET}")
     print(f"{Colors.DIM}HOME: {topsailai_home}{Colors.RESET}")
     print(f"{Colors.DIM}DIR:  {task_dir}{Colors.RESET}")
 
@@ -992,6 +995,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     setup_tab_completion()
 
     print_header("TopsailAI Task Watcher")
+    print(f"{Colors.DIM}HOST: {socket.gethostname()}{Colors.RESET}")
+    print(f"{Colors.DIM}PWD:  {os.getcwd()}{Colors.RESET}")
     print(f"{Colors.DIM}HOME: {topsailai_home}{Colors.RESET}")
     print(f"{Colors.DIM}DIR:  {task_dir}{Colors.RESET}")
 
