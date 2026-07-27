@@ -4,8 +4,10 @@
   Created: 2026-03-19
   Purpose:
 '''
+import subprocess
 
 import os
+from topsailai.logger import logger
 import shlex
 
 from topsailai.skill_hub import skill_hook
@@ -33,6 +35,11 @@ from topsailai.ai_base.agent_types.exception import (
     AgentNeedRefreshSession,
 )
 from topsailai.workspace import lock_tool
+
+
+class SkillToolError(ValueError):
+    """Raised when a skill call fails due to invalid input or environment."""
+    pass
 
 
 DEFAULT_CALL_SKILL_TIMEOUT = 600
@@ -97,6 +104,14 @@ def call_skill(
         tuple: (return_code, stdout, stderr) where stdout and stderr are strings.
                If no_need_stderr is True, stderr will be empty string.
     """
+    # validate skill_folder first
+    if not skill_folder or not os.path.isdir(skill_folder):
+        raise SkillToolError(
+            "Skill folder does not exist or is not a directory. "
+            f"Provided: {skill_folder!r}. "
+            "Check the folder path and ensure the skill is loaded."
+        )
+
     # environ
     environ_d = environ
     if isinstance(environ, str):
@@ -104,21 +119,29 @@ def call_skill(
     if not isinstance(environ_d, dict):
         environ_d = None
     if environ is not None and environ_d is None:
-        raise ValueError(
+        raise SkillToolError(
             "A skill accepts environment variables only as a JSON object. "
-            f"The provided environ {environ!r} is not a valid object."
+            f"The provided environ {environ!r} is not a valid object. "
+            "Pass a dict or a JSON object string such as '{\"KEY\": \"value\"}'."
         )
 
     # check parameter: output_file
     if output_file:
-        assert output_file[0] == '/', "The output_file MUST be a absolute path"
+        if output_file[0] != '/':
+            raise SkillToolError(
+                f"output_file must be an absolute path, got {output_file!r}. "
+                "Provide a full path such as '/tmp/output.txt'."
+            )
 
-        if not file_tool.is_tmp_dir(output_file):
-            assert not os.path.exists(output_file), "The output_file already exists and cannot be overwritten"
+        if not file_tool.is_tmp_dir(output_file) and os.path.exists(output_file):
+            raise SkillToolError(
+                f"output_file already exists and cannot be overwritten: {output_file!r}. "
+                "Choose a different path or delete the existing file first."
+            )
 
     # validate script_path before get_script_path normalizes it
     if script_path.startswith(("/", "~", "\\")):
-        raise ValueError(
+        raise SkillToolError(
             "A skill can only run scripts that exist inside its own folder. "
             f"The provided path {script_path!r} is absolute; use a path relative to the skill folder."
         )
@@ -130,16 +153,24 @@ def call_skill(
     real_skill_folder = os.path.realpath(skill_folder)
     real_script = os.path.realpath(os.path.join(skill_folder, script_path))
     if not real_script.startswith(real_skill_folder + os.sep):
-        raise ValueError(
+        raise SkillToolError(
             "A skill can only run scripts that exist inside its own folder. "
-            f"The resolved path {real_script!r} is outside the skill folder."
+            f"The resolved path {real_script!r} is outside the skill folder {real_skill_folder!r}."
         )
 
     # target must exist and be a regular file
     if not os.path.isfile(real_script):
-        raise ValueError(
+        raise SkillToolError(
             "A skill can only run scripts that exist inside its own folder. "
-            f"The requested script {script_path!r} was not found."
+            f"The requested script {script_path!r} was not found inside {skill_folder!r}."
+        )
+
+    # target must be executable
+    if not os.access(real_script, os.X_OK):
+        raise SkillToolError(
+            f"Script {real_script!r} exists but is not executable. "
+            f"Run 'chmod +x {script_path}' or invoke it with an interpreter "
+            f"such as 'python {script_path}'."
         )
 
     # cmd
@@ -166,31 +197,18 @@ def call_skill(
         cmd_exe_file = ""
 
     if not cmd_exe_file:
-        raise Exception("illegal cmd: [%s]" % raw_cmd)
-    if not cmd_exe_file.startswith(skill_folder):
-        # case: /xxx or .xxx
-        for _ in range(2):
-            if cmd_exe_file[0] in ['/', '.']:
-                cmd_exe_file = cmd_exe_file[1:]
-            else:
-                break
+        raise SkillToolError(
+            f"Could not determine the executable from script_parameters: {raw_cmd!r}. "
+            "Provide a valid script path and parameters."
+        )
 
-        cmd_exe_file = os.path.join(skill_folder, cmd_exe_file)
-        if isinstance(cmd, list):
-            cmd[0] = cmd_exe_file
-        else:
-            for _ in range(2):
-                if cmd[0] in '/.':
-                    cmd = cmd[1:]
-            cmd = skill_folder + "/" + cmd
-
-    flag_cmd_matched = False
-    for skill in get_skills_from_cache():
-        if cmd_exe_file.startswith(skill.folder):
-            flag_cmd_matched = True
-            break
-    assert flag_cmd_matched, \
-        "Illegal cmd, The executable file must be an absolute path from skill folder OR no found this skill: error_exe_file=[%s]" % cmd_exe_file
+    # resolved executable must stay inside skill_folder
+    real_cmd_exe = os.path.realpath(cmd_exe_file)
+    if not real_cmd_exe.startswith(real_skill_folder + os.sep):
+        raise SkillToolError(
+            f"The executable {cmd_exe_file!r} resolves outside the skill folder "
+            f"{real_skill_folder!r}. Use a script path relative to the skill folder."
+        )
 
     # enhance security
     if isinstance(cmd, str):
@@ -218,22 +236,57 @@ def call_skill(
     result = None
     exec_kwargs = {}
     if stdin_text is not None:
+        if not isinstance(stdin_text, str):
+            raise SkillToolError(
+                f"stdin_text must be a string, got {type(stdin_text).__name__}. "
+                "Pass a UTF-8 text string or omit the argument."
+            )
         exec_kwargs["input"] = stdin_text.encode("utf-8")
 
     with ctxm_tool() as data:
         if isinstance(data, lock_tool.YieldData):
             if hook_handler.need_lock_session and data.get("session_id"):
                 if not data.get("fp"):
-                    return f"call_skill failed: {data.get("msg")}"
+                    msg = data.get("msg") or "unknown lock error"
+                    return (
+                        1,
+                        "",
+                        f"call_skill failed: {msg}. "
+                        "Wait for the other process to release the session lock, "
+                        "or remove this skill from TOPSAILAI_SESSION_LOCK_ON_SKILLS."
+                    )
 
-        result = exec_cmd(
-            cmd,
-            no_need_stderr=True if int(no_need_stderr) else False,
-            timeout=int(timeout),
-            cwd=skill_folder,
-            env_info=environ_d,
-            **exec_kwargs,
-        )
+        try:
+            result = exec_cmd(
+                cmd,
+                no_need_stderr=True if int(no_need_stderr) else False,
+                timeout=int(timeout),
+                cwd=skill_folder,
+                env_info=environ_d,
+                **exec_kwargs,
+            )
+        except subprocess.TimeoutExpired:
+            logger.exception(
+                "Skill script timed out: skill=%s script=%s timeout=%s",
+                skill_folder, script_path, timeout,
+            )
+            return (
+                1,
+                "",
+                f"Skill script timed out after {timeout}s. "
+                "Increase the timeout argument or optimize the script."
+            )
+        except PermissionError as exc:
+            logger.exception(
+                "Permission denied executing skill script: %s", exc,
+            )
+            return (
+                1,
+                "",
+                f"Permission denied executing {script_path!r}. "
+                "Check file permissions and ownership."
+            )
+
         hook_handler.data_agent_refresh_session.tool_result = result
 
         # hook after
@@ -242,6 +295,9 @@ def call_skill(
         if result:
             # save stdout to the output_file
             if output_file and result[1]:
+                output_dir = os.path.dirname(output_file)
+                if output_dir and not os.path.exists(output_dir):
+                    os.makedirs(output_dir, exist_ok=True)
                 with open(output_file, mode='w', encoding='utf-8') as fp:
                     fp.write(result[1])
 

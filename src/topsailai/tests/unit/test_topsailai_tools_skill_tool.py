@@ -7,6 +7,7 @@ from types import SimpleNamespace
 # Add project root to path
 sys.path.insert(0, '/root/ai/TopsailAI/src')
 
+from topsailai.tools.skill_tool import SkillToolError
 
 class TestGetCallSkillTimeout(unittest.TestCase):
     """Test get_call_skill_timeout function"""
@@ -56,6 +57,12 @@ class TestCallSkill(unittest.TestCase):
         self.test_folder = '/test/skill/folder'
         self.test_script = 'test_script.py'
 
+        self._isdir_patcher = patch('topsailai.tools.skill_tool.os.path.isdir', return_value=True)
+        self._isdir_patcher.start()
+
+    def tearDown(self):
+        self._isdir_patcher.stop()
+
     def _patch_call_skill(self, mock_env_get, mock_parse_dict, mock_timeout,
                           mock_get_skills, mock_ctxm, mock_hook, mock_exec_cmd,
                           folder=None, script=None):
@@ -71,14 +78,23 @@ class TestCallSkill(unittest.TestCase):
         mock_hook_instance.need_refresh_session = False
         mock_hook.return_value = mock_hook_instance
         mock_exec_cmd.return_value = (0, 'output', '')
+        # Default os.access to True so executable check passes
+        import topsailai.tools.skill_tool as st
+        st.os.access = MagicMock(return_value=True)
 
-    def _mock_realpath_for_test_folder(self, mock_realpath, mock_isfile):
+    def _mock_realpath_for_test_folder(self, mock_realpath, mock_isfile, folder=None, script=None):
         """Make realpath and isfile behave as if test_script exists under test_folder."""
+        target_folder = folder if folder is not None else self.test_folder
+        target_script = script if script is not None else self.test_script
         def fake_realpath(path):
             if isinstance(path, str):
-                if path.startswith(self.test_folder):
+                if path == target_folder:
+                    return target_folder
+                if path.startswith(target_folder):
                     return path
-                return os.path.join(self.test_folder, os.path.basename(path))
+                if path == target_script or path.endswith('/' + target_script):
+                    return os.path.join(target_folder, target_script)
+                return os.path.join(target_folder, os.path.basename(path))
             return path
         mock_realpath.side_effect = fake_realpath
         mock_isfile.return_value = True
@@ -221,7 +237,7 @@ class TestCallSkill(unittest.TestCase):
         mock_get_skills.return_value = [SimpleNamespace(folder=self.test_folder)]
         self._mock_realpath_for_test_folder(mock_realpath, mock_isfile)
 
-        with self.assertRaises(AssertionError) as context:
+        with self.assertRaises((SkillToolError, ValueError)) as context:
             call_skill(self.test_folder, self.test_script, '', output_file='relative/path.txt')
 
         self.assertIn('absolute path', str(context.exception))
@@ -584,13 +600,24 @@ class TestEdgeCases(unittest.TestCase):
         self.test_folder = '/test/skill/folder'
         self.test_script = 'test_script.py'
 
-    def _mock_realpath_for_test_folder(self, mock_realpath, mock_isfile, folder=None):
+        self._isdir_patcher = patch('topsailai.tools.skill_tool.os.path.isdir', return_value=True)
+        self._isdir_patcher.start()
+
+    def tearDown(self):
+        self._isdir_patcher.stop()
+
+    def _mock_realpath_for_test_folder(self, mock_realpath, mock_isfile, folder=None, script=None):
         """Make realpath and isfile behave as if test_script exists under test_folder."""
         target_folder = folder if folder is not None else self.test_folder
+        target_script = script if script is not None else self.test_script
         def fake_realpath(path):
             if isinstance(path, str):
+                if path == target_folder:
+                    return target_folder
                 if path.startswith(target_folder):
                     return path
+                if path == target_script or path.endswith('/' + target_script):
+                    return os.path.join(target_folder, target_script)
                 return os.path.join(target_folder, os.path.basename(path))
             return path
         mock_realpath.side_effect = fake_realpath
@@ -699,6 +726,217 @@ class TestEdgeCases(unittest.TestCase):
         self.assertIsNotNone(result)
         mock_exec_cmd.assert_called_once()
 
+
+class TestErrorHandlingImprovements(unittest.TestCase):
+    """Test improved error handling and actionable guidance in call_skill."""
+
+    def setUp(self):
+        self.test_folder = '/tmp/test_skill'
+        self.test_script = 'scripts/test.sh'
+
+        self._isdir_patcher = patch('topsailai.tools.skill_tool.os.path.isdir', return_value=True)
+        self._isdir_patcher.start()
+
+    def tearDown(self):
+        self._isdir_patcher.stop()
+
+    def _mock_realpath_for_test_folder(self, mock_realpath, mock_isfile, folder=None, script=None):
+        """Make realpath and isfile behave as if script exists under folder."""
+        target_folder = folder if folder is not None else self.test_folder
+        target_script = script if script is not None else self.test_script
+        def fake_realpath(path):
+            if isinstance(path, str):
+                if path == target_folder:
+                    return target_folder
+                if path.startswith(target_folder):
+                    return path
+                if path == target_script or path.endswith('/' + target_script):
+                    return os.path.join(target_folder, target_script)
+                return os.path.join(target_folder, os.path.basename(path))
+            return path
+        mock_realpath.side_effect = fake_realpath
+        mock_isfile.return_value = True
+
+    @patch('topsailai.tools.skill_tool.os.path.isfile')
+    @patch('topsailai.tools.skill_tool.os.path.realpath')
+    @patch('topsailai.tools.skill_tool.get_skills_from_cache')
+    def test_call_skill_missing_skill_folder(self, mock_get_skills, mock_realpath, mock_isfile):
+        """Missing skill folder should raise SkillToolError with guidance."""
+        from topsailai.tools.skill_tool import call_skill
+
+        self._isdir_patcher.stop()
+        mock_get_skills.return_value = []
+        mock_realpath.return_value = '/nonexistent/skill'
+        mock_isfile.return_value = True
+
+        with patch('topsailai.tools.skill_tool.os.path.isdir', return_value=False):
+            with self.assertRaises(SkillToolError) as context:
+                call_skill('/nonexistent/skill', self.test_script, '')
+
+        self.assertIn('does not exist', str(context.exception))
+
+    @patch('topsailai.tools.skill_tool.os.access')
+    @patch('topsailai.tools.skill_tool.os.path.isfile')
+    @patch('topsailai.tools.skill_tool.os.path.realpath')
+    @patch('topsailai.tools.skill_tool.get_skills_from_cache')
+    def test_call_skill_non_executable_script(self, mock_get_skills, mock_realpath, mock_isfile, mock_access):
+        """Non-executable script should raise SkillToolError with chmod guidance."""
+        from topsailai.tools.skill_tool import call_skill
+
+        mock_get_skills.return_value = [SimpleNamespace(folder=self.test_folder)]
+        mock_access.return_value = False
+        self._mock_realpath_for_test_folder(mock_realpath, mock_isfile)
+
+        with self.assertRaises(SkillToolError) as context:
+            call_skill(self.test_folder, self.test_script, '')
+
+        self.assertIn('not executable', str(context.exception))
+        self.assertIn('chmod +x', str(context.exception))
+
+    @patch('topsailai.tools.skill_tool.exec_cmd')
+    @patch('topsailai.tools.skill_tool.lock_tool.ctxm_try_session_lock')
+    @patch('topsailai.tools.skill_tool.skill_hook.SkillHookHandler')
+    @patch('topsailai.tools.skill_tool.os.path.isfile')
+    @patch('topsailai.tools.skill_tool.os.path.realpath')
+    @patch('topsailai.tools.skill_tool.get_skills_from_cache')
+    def test_call_skill_session_lock_failure_returns_tuple(
+        self, mock_get_skills, mock_realpath, mock_isfile,
+        mock_hook, mock_ctxm, mock_exec_cmd
+    ):
+        """Session lock failure should return a tuple, not a string."""
+        from topsailai.tools.skill_tool import call_skill
+        from topsailai.workspace import lock_tool
+
+        mock_get_skills.return_value = [SimpleNamespace(folder=self.test_folder)]
+        self._mock_realpath_for_test_folder(mock_realpath, mock_isfile)
+        mock_ctxm.return_value.__enter__ = MagicMock(return_value=lock_tool.YieldData(
+            session_id='s1',
+            fp=None,
+            msg='another process holds the lock'
+        ))
+        mock_ctxm.return_value.__exit__ = MagicMock(return_value=False)
+        mock_hook_instance = MagicMock()
+        mock_hook_instance.need_lock_session = True
+        mock_hook_instance.need_refresh_session = False
+        mock_hook.return_value = mock_hook_instance
+        mock_exec_cmd.return_value = (0, 'output', '')
+
+        result = call_skill(self.test_folder, self.test_script, '')
+
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(result[0], 1)
+        self.assertIn('call_skill failed', result[2])
+        self.assertIn('another process holds the lock', result[2])
+    @patch('topsailai.tools.skill_tool.get_call_skill_timeout')
+    @patch('topsailai.tools.skill_tool.exec_cmd')
+    @patch('topsailai.tools.skill_tool.skill_hook.SkillHookHandler')
+    @patch('topsailai.tools.skill_tool.os.access')
+    @patch('topsailai.tools.skill_tool.os.path.isfile')
+    @patch('topsailai.tools.skill_tool.os.path.realpath')
+    @patch('topsailai.tools.skill_tool.get_skills_from_cache')
+    def test_call_skill_timeout_returns_guidance(
+        self, mock_get_skills, mock_realpath, mock_isfile,
+        mock_access, mock_hook, mock_exec_cmd, mock_get_timeout
+    ):
+        """Timeout should return a tuple with actionable guidance."""
+        import subprocess
+        from topsailai.tools.skill_tool import call_skill
+
+        mock_get_skills.return_value = [SimpleNamespace(folder=self.test_folder)]
+        mock_access.return_value = True
+        self._mock_realpath_for_test_folder(mock_realpath, mock_isfile)
+        mock_hook_instance = MagicMock()
+        mock_hook_instance.need_lock_session = False
+        mock_hook_instance.need_refresh_session = False
+        mock_hook.return_value = mock_hook_instance
+        mock_get_timeout.return_value = 10
+        mock_exec_cmd.side_effect = subprocess.TimeoutExpired(cmd='test', timeout=10)
+
+        result = call_skill(self.test_folder, self.test_script, '', timeout=10)
+
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(result[0], 1)
+        self.assertIn('timed out', result[2])
+        self.assertIn('10', result[2])
+
+    @patch('topsailai.tools.skill_tool.exec_cmd')
+    @patch('topsailai.tools.skill_tool.skill_hook.SkillHookHandler')
+    @patch('topsailai.tools.skill_tool.os.access')
+    @patch('topsailai.tools.skill_tool.os.path.isfile')
+    @patch('topsailai.tools.skill_tool.os.path.realpath')
+    @patch('topsailai.tools.skill_tool.get_skills_from_cache')
+    def test_call_skill_permission_error_returns_guidance(
+        self, mock_get_skills, mock_realpath, mock_isfile,
+        mock_access, mock_hook, mock_exec_cmd
+    ):
+        """PermissionError should return a tuple with actionable guidance."""
+        from topsailai.tools.skill_tool import call_skill
+
+        mock_get_skills.return_value = [SimpleNamespace(folder=self.test_folder)]
+        mock_access.return_value = True
+        self._mock_realpath_for_test_folder(mock_realpath, mock_isfile)
+        mock_hook_instance = MagicMock()
+        mock_hook_instance.need_lock_session = False
+        mock_hook_instance.need_refresh_session = False
+        mock_hook.return_value = mock_hook_instance
+        mock_exec_cmd.side_effect = PermissionError(13, 'Permission denied')
+
+        result = call_skill(self.test_folder, self.test_script, '')
+
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(result[0], 1)
+        self.assertIn('Permission denied', result[2])
+
+    @patch('topsailai.tools.skill_tool.exec_cmd')
+    @patch('topsailai.tools.skill_tool.skill_hook.SkillHookHandler')
+    @patch('topsailai.tools.skill_tool.os.access')
+    @patch('topsailai.tools.skill_tool.os.path.isfile')
+    @patch('topsailai.tools.skill_tool.os.path.realpath')
+    @patch('topsailai.tools.skill_tool.get_skills_from_cache')
+    def test_call_skill_output_file_parent_dir_created(
+        self, mock_get_skills, mock_realpath, mock_isfile,
+        mock_access, mock_hook, mock_exec_cmd
+    ):
+        """output_file parent directory should be auto-created."""
+        from topsailai.tools.skill_tool import call_skill
+
+        mock_get_skills.return_value = [SimpleNamespace(folder=self.test_folder)]
+        mock_access.return_value = True
+        self._mock_realpath_for_test_folder(mock_realpath, mock_isfile)
+        mock_hook_instance = MagicMock()
+        mock_hook_instance.need_lock_session = False
+        mock_hook_instance.need_refresh_session = False
+        mock_hook.return_value = mock_hook_instance
+        mock_exec_cmd.return_value = (0, 'output', '')
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = os.path.join(tmpdir, 'nested', 'dir', 'out.txt')
+            self.assertFalse(os.path.exists(os.path.dirname(output_file)))
+
+            result = call_skill(self.test_folder, self.test_script, '', output_file=output_file)
+
+            self.assertEqual(result[0], 0)
+            self.assertTrue(os.path.exists(output_file))
+            with open(output_file, 'r') as f:
+                self.assertEqual(f.read(), 'output')
+
+    @patch('topsailai.tools.skill_tool.os.access')
+    @patch('topsailai.tools.skill_tool.os.path.isfile')
+    @patch('topsailai.tools.skill_tool.os.path.realpath')
+    @patch('topsailai.tools.skill_tool.get_skills_from_cache')
+    def test_call_skill_stdin_text_not_string(self, mock_get_skills, mock_realpath, mock_isfile, mock_access):
+        """stdin_text must be a string."""
+        from topsailai.tools.skill_tool import call_skill
+
+        mock_get_skills.return_value = [SimpleNamespace(folder=self.test_folder)]
+        mock_access.return_value = True
+        self._mock_realpath_for_test_folder(mock_realpath, mock_isfile)
+
+        with self.assertRaises(SkillToolError) as context:
+            call_skill(self.test_folder, self.test_script, '', stdin_text=12345)
+
+        self.assertIn('stdin_text', str(context.exception))
+        self.assertIn('string', str(context.exception))
 
 if __name__ == '__main__':
     unittest.main()
