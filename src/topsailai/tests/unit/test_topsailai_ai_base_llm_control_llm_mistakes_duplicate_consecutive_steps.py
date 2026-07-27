@@ -186,6 +186,65 @@ class TestRemoveConsecutiveDuplicateActions:
         assert result == [
             {"step_name": "action", "tool_call": "x", "tool_args": {}, "extra": 2},
         ]
+    def test_tool_args_as_list(self):
+        """Verify list tool_args are normalized and compared correctly."""
+        response = [
+            {"step_name": "action", "tool_call": "x", "tool_args": []},
+            {"step_name": "action", "tool_call": "x", "tool_args": []},
+            {"step_name": "action", "tool_call": "x", "tool_args": [1]},
+        ]
+        result = _remove_consecutive_duplicate_actions(response)
+        assert result == [
+            {"step_name": "action", "tool_call": "x", "tool_args": []},
+            {"step_name": "action", "tool_call": "x", "tool_args": [1]},
+        ]
+
+    def test_empty_tool_call_not_duplicate(self):
+        """Verify empty-string tool_call is treated as a valid call name."""
+        response = [
+            {"step_name": "action", "tool_call": "", "tool_args": {}},
+            {"step_name": "action", "tool_call": "", "tool_args": {}},
+        ]
+        result = _remove_consecutive_duplicate_actions(response)
+        assert result == [
+            {"step_name": "action", "tool_call": "", "tool_args": {}},
+        ]
+
+    def test_none_tool_call_ignored(self):
+        """Verify action items with None tool_call are ignored by dedup."""
+        response = [
+            {"step_name": "action", "tool_call": None, "tool_args": {}},
+            {"step_name": "action", "tool_call": None, "tool_args": {}},
+            {"step_name": "action", "tool_call": "x", "tool_args": {}},
+        ]
+        # None tool_call actions are not valid action signatures, so no
+        # consecutive duplicates are detected and the function returns None.
+        assert _remove_consecutive_duplicate_actions(response) is None
+
+    def test_mixed_step_types_partial_match(self):
+        """Verify only consecutive action pairs are deduplicated in mixed lists."""
+        response = [
+            {"step_name": "thought", "raw_text": "same"},
+            {"step_name": "thought", "raw_text": "same"},
+            {"step_name": "action", "tool_call": "x", "tool_args": {"a": 1}},
+            {"step_name": "action", "tool_call": "x", "tool_args": {"a": 1}},
+            {"step_name": "action", "tool_call": "y", "tool_args": {"b": 2}},
+            {"step_name": "inquiry", "raw_text": "ask"},
+            {"step_name": "inquiry", "raw_text": "ask"},
+            {"step_name": "action", "tool_call": "y", "tool_args": {"b": 2}},
+            {"step_name": "action", "tool_call": "y", "tool_args": {"b": 2}},
+        ]
+        result = _remove_consecutive_duplicate_actions(response)
+        assert result == [
+            {"step_name": "thought", "raw_text": "same"},
+            {"step_name": "thought", "raw_text": "same"},
+            {"step_name": "action", "tool_call": "x", "tool_args": {"a": 1}},
+            {"step_name": "action", "tool_call": "y", "tool_args": {"b": 2}},
+            {"step_name": "inquiry", "raw_text": "ask"},
+            {"step_name": "inquiry", "raw_text": "ask"},
+            {"step_name": "action", "tool_call": "y", "tool_args": {"b": 2}},
+        ]
+
 
 
 class TestFixDuplicateConsecutiveSteps:

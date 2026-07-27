@@ -29,12 +29,14 @@ def _normalize_action_item(item):
         return None
     if item.get("step_name") != "action":
         return None
-
     tool_call = item.get("tool_call")
     if not isinstance(tool_call, str):
         return None
 
     tool_args = item.get("tool_args")
+    # Missing tool_args is intentionally treated as an empty dict so that
+    # two consecutive actions with the same tool_call and no arguments are
+    # still considered duplicates.
     if tool_args is None:
         tool_args = {}
     if not isinstance(tool_args, (dict, list)):
