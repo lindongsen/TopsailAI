@@ -11,13 +11,16 @@ from topsailai.ai_base.llm_control.llm_mistakes.kimi import (
     _insert_newline_before_think_tag,
     _is_kimi_model,
     _strip_trailing_garbage,
+    _truncate_at_thinking_close,
     fix_kimi_action_newline_before_think_tag,
+    fix_kimi_action_raw_text_after_thinking,
     fix_kimi_trailing_garbage,
     MISTAKES,
     THINK_TAG,
+    THINKING_CLOSE,
 )
 
-
+# Kimi-specific trailing garbage marker matched by _strip_trailing_garbage.
 GARBAGE = "<|tool_call_end|><|tool_calls_section_end|>"
 
 
@@ -287,6 +290,110 @@ class TestFixKimiActionNewlineBeforeThinkTag:
         assert result[1]["raw_text"] == 'action1\n' + THINK_TAG
         assert result[2]["raw_text"] == 'action2'
 
+class TestFixKimiActionRawTextAfterThinking:
+    """Tests for fix_kimi_action_raw_text_after_thinking function."""
+
+    def test_non_kimi_model(self, monkeypatch):
+        """Non-Kimi model returns None."""
+        monkeypatch.setenv("OPENAI_MODEL", "gpt-4")
+        message = [{"step_name": "action", "raw_text": f'some text {THINKING_CLOSE} trailing garbage'}]
+        result = fix_kimi_action_raw_text_after_thinking(message)
+        assert result is None
+
+    def test_kimi_model_truncates_after_thinking(self, monkeypatch):
+        """Kimi model truncates raw_text at THINKING_CLOSE."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [{"step_name": "action", "tool_call": "some_tool", "raw_text": f'some text {THINKING_CLOSE} trailing garbage'}]
+        result = fix_kimi_action_raw_text_after_thinking(message)
+        assert result is not None
+        assert result[0]["raw_text"] == f'some text {THINKING_CLOSE}'
+
+    def test_no_thinking_tag(self, monkeypatch):
+        """No THINKING_CLOSE tag returns None."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [{"step_name": "action", "raw_text": 'some text without thinking tag'}]
+        result = fix_kimi_action_raw_text_after_thinking(message)
+        assert result is None
+
+    def test_non_action_item(self, monkeypatch):
+        """Non-action items are skipped."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [{"step_name": "thought", "raw_text": f'some text {THINKING_CLOSE} trailing garbage'}]
+        result = fix_kimi_action_raw_text_after_thinking(message)
+        assert result is None
+
+    def test_non_string_raw_text(self, monkeypatch):
+        """Non-string raw_text is skipped."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [{"step_name": "action", "raw_text": {"key": "value"}}]
+        result = fix_kimi_action_raw_text_after_thinking(message)
+        assert result is None
+
+    def test_non_list_message(self, monkeypatch):
+        """Non-list message returns None."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        result = fix_kimi_action_raw_text_after_thinking("hello")
+        assert result is None
+
+    def test_thinking_at_end_of_raw_text(self, monkeypatch):
+        """THINKING_CLOSE at end of raw_text returns None (no change)."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [{"step_name": "action", "tool_call": "some_tool", "raw_text": f'some text {THINKING_CLOSE}'}]
+        result = fix_kimi_action_raw_text_after_thinking(message)
+        assert result is None
+
+    def test_action_without_tool_call_is_skipped(self, monkeypatch):
+        """Action items without a tool_call key are skipped."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [{"step_name": "action", "raw_text": f'some text {THINKING_CLOSE} trailing garbage'}]
+        result = fix_kimi_action_raw_text_after_thinking(message)
+        assert result is None
+    def test_multiple_items_some_truncated(self, monkeypatch):
+        """Multiple items, only action items with trailing content after THINKING_CLOSE are truncated."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [
+            {"step_name": "thought", "raw_text": f'thought {THINKING_CLOSE} trailing'},
+            {"step_name": "action", "tool_call": "some_tool", "raw_text": f'action1 {THINKING_CLOSE} trailing garbage'},
+            {"step_name": "action", "raw_text": f'action2 {THINKING_CLOSE}'},
+            {"step_name": "action", "raw_text": 'action3 no thinking tag'},
+        ]
+        result = fix_kimi_action_raw_text_after_thinking(message)
+        assert result is not None
+        # thought item unchanged
+        assert result[0]["raw_text"] == f'thought {THINKING_CLOSE} trailing'
+        # action item with trailing garbage truncated
+        assert result[1]["raw_text"] == f'action1 {THINKING_CLOSE}'
+        # action item with THINKING_CLOSE at end unchanged
+        assert result[2]["raw_text"] == f'action2 {THINKING_CLOSE}'
+        # action item without THINKING_CLOSE unchanged
+        assert result[3]["raw_text"] == 'action3 no thinking tag'
+
+    def test_idempotent(self, monkeypatch):
+        """Running twice yields same result."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [{"step_name": "action", "tool_call": "some_tool", "raw_text": f'some text {THINKING_CLOSE} trailing garbage'}]
+        result1 = fix_kimi_action_raw_text_after_thinking(message)
+        assert result1 is not None
+        assert result1[0]["raw_text"] == f'some text {THINKING_CLOSE}'
+        result2 = fix_kimi_action_raw_text_after_thinking(result1)
+        assert result2 is None
+        assert result1[0]["raw_text"] == f'some text {THINKING_CLOSE}'
+
+    def test_multiple_thinking_tags(self, monkeypatch):
+        """Multiple THINKING_CLOSE tags, truncates at first occurrence."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [{"step_name": "action", "tool_call": "some_tool", "raw_text": f'first {THINKING_CLOSE} second {THINKING_CLOSE} third'}]
+        result = fix_kimi_action_raw_text_after_thinking(message)
+        assert result is not None
+        assert result[0]["raw_text"] == f'first {THINKING_CLOSE}'
+
+    def test_thinking_at_start(self, monkeypatch):
+        """THINKING_CLOSE at start of raw_text, truncates to just THINKING_CLOSE."""
+        monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
+        message = [{"step_name": "action", "tool_call": "some_tool", "raw_text": f'{THINKING_CLOSE} trailing garbage'}]
+        result = fix_kimi_action_raw_text_after_thinking(message)
+        assert result is not None
+        assert result[0]["raw_text"] == THINKING_CLOSE
 
 class TestMistakesDict:
     """Tests for MISTAKES dictionary."""
@@ -302,9 +409,15 @@ class TestMistakesDict:
             == fix_kimi_action_newline_before_think_tag
         )
 
-    def test_mistakes_length(self):
-        assert len(MISTAKES) == 2
+    def test_contains_fix_kimi_action_raw_text_after_thinking(self):
+        assert "fix_kimi_action_raw_text_after_thinking" in MISTAKES
+        assert (
+            MISTAKES["fix_kimi_action_raw_text_after_thinking"]
+            == fix_kimi_action_raw_text_after_thinking
+        )
 
+    def test_mistakes_length(self):
+        assert len(MISTAKES) == 3
 
 class TestGetCurrentModelNameThreadLocal:
     """Additional coverage for _get_current_model_name thread-local agent resolution."""

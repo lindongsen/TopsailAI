@@ -120,6 +120,7 @@ def fix_kimi_trailing_garbage(message, rsp_obj=None, **_):
 
 
 THINK_TAG = "<|tool_calls_section_begin|>"
+THINKING_CLOSE = "</think>"
 
 
 def _insert_newline_before_think_tag(text):
@@ -165,11 +166,9 @@ def fix_kimi_action_newline_before_think_tag(message, rsp_obj=None, **_):
             continue
         if item.get("step_name") != "action":
             continue
-
         raw_text = item.get("raw_text")
         if not isinstance(raw_text, str):
             continue
-
         fixed = _insert_newline_before_think_tag(raw_text)
         if fixed != raw_text:
             item["raw_text"] = fixed
@@ -177,8 +176,69 @@ def fix_kimi_action_newline_before_think_tag(message, rsp_obj=None, **_):
 
     return message if changed else None
 
+def _truncate_at_thinking_close(raw_text, thinking_close):
+    """Truncate *raw_text* to keep only content up to and including *thinking_close*.
+
+    Args:
+        raw_text (str): The text to truncate.
+        thinking_close (str): The closing marker (e.g. ``</thinking>``).
+
+    Returns:
+        str: The truncated text if *thinking_close* is found and there is
+        trailing content after it, otherwise *raw_text* unchanged.
+    """
+    pos = raw_text.find(thinking_close)
+    if pos == -1:
+        return raw_text
+    # pos is the start of thinking_close, so truncate to include it
+    truncated = raw_text[:pos + len(thinking_close)]
+    return truncated
+
+
+def fix_kimi_action_raw_text_after_thinking(message, rsp_obj=None, **_):
+    """Truncate action raw_text to keep only content up to and including </thinking>.
+
+    Kimi sometimes outputs action steps where the raw_text contains trailing
+    content after the closing </thinking> tag. This handler truncates the
+    raw_text to keep only the content up to and including the first occurrence
+    of </thinking> for items with step_name == 'action'.
+
+    Args:
+        message (str | list | dict): The LLM response to fix.
+        rsp_obj (any, optional): Raw response object, used as a secondary
+            model-name signal.
+
+    Returns:
+        list | None: The modified message if any change was made, otherwise
+        ``None``.
+    """
+    model_name = _get_current_model_name(rsp_obj=rsp_obj)
+    if not _is_kimi_model(model_name):
+        return None
+
+    if not isinstance(message, list):
+        return None
+
+    changed = False
+    for item in message:
+        if not isinstance(item, dict):
+            continue
+        if item.get("step_name") != "action":
+            continue
+        if "tool_call" not in item:
+            continue
+        raw_text = item.get("raw_text")
+        if not isinstance(raw_text, str):
+            continue
+        truncated = _truncate_at_thinking_close(raw_text, THINKING_CLOSE)
+        if truncated != raw_text:
+            item["raw_text"] = truncated
+            changed = True
+
+    return message if changed else None
 
 MISTAKES = dict(
-    fix_kimi_trailing_garbage=fix_kimi_trailing_garbage,
     fix_kimi_action_newline_before_think_tag=fix_kimi_action_newline_before_think_tag,
+    fix_kimi_action_raw_text_after_thinking=fix_kimi_action_raw_text_after_thinking,
+    fix_kimi_trailing_garbage=fix_kimi_trailing_garbage,
 )

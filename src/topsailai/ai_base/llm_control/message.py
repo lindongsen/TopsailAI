@@ -452,6 +452,7 @@ def format_response(response, rsp_obj=None, messages=None):
                 logger.debug(e)
         finally:
             new_response = format_response_finally(response, rsp_obj, messages)
+            new_response = fix_llm_mistakes(new_response, rsp_obj)
             if new_response is not response:
                 if isinstance(new_response, list) and len(new_response) == 1 and isinstance(new_response[0], dict):
                     if isinstance(response, list) and len(response) == 1 and isinstance(response[0], dict):
