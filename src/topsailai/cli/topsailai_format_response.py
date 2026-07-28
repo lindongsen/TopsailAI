@@ -149,6 +149,7 @@ def main(argv=None) -> int:
 
     exit_code = 0
     for path in args.files:
+        print(f"\n>>> {path}")
         if path == "-":
             text = sys.stdin.read()
             try:
