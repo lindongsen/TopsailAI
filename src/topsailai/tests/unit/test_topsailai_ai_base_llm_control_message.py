@@ -192,6 +192,64 @@ class TestGetCountOfAction:
         result = get_count_of_action(messages)
         assert result == 1
 
+    def test_get_count_of_action_uses_tool_stat_when_available(self):
+        """Verify returns tool_stat total_calls when it has recorded calls."""
+        from topsailai.ai_base.llm_control.message import get_count_of_action
+        from topsailai.context.tool_stat import ToolStat
+
+        stat = ToolStat()
+        stat.record("file_tool-read_file", {"files": ["/tmp/1.txt"]})
+        stat.record("cmd_tool-exec_cmd", {"cmd": "echo hello"})
+
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": '"step_name": "action"'},
+        ]
+
+        result = get_count_of_action(messages, tool_stat=stat)
+        assert result == 2
+
+    def test_get_count_of_action_falls_back_when_tool_stat_is_empty(self):
+        """Verify scans messages when tool_stat has no recorded calls."""
+        from topsailai.ai_base.llm_control.message import get_count_of_action
+        from topsailai.context.tool_stat import ToolStat
+
+        stat = ToolStat()
+
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": '"step_name": "action"'},
+            {"role": "assistant", "content": '"step_name": "action"'},
+        ]
+
+        result = get_count_of_action(messages, tool_stat=stat)
+        assert result == 2
+
+    def test_get_count_of_action_resolves_tool_stat_from_thread_local(self):
+        """Verify resolves agent-bound tool_stat when no explicit instance is passed."""
+        from topsailai.ai_base.llm_control.message import get_count_of_action
+        from topsailai.context.tool_stat import ToolStat
+        from topsailai.utils.thread_local_tool import ctxm_set_agent
+
+        stat = ToolStat()
+        stat.record("file_tool-read_file", {"files": ["/tmp/1.txt"]})
+
+        mock_agent = MagicMock()
+        mock_agent.llm_model.tool_stat = stat
+
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+        ]
+
+        with ctxm_set_agent(mock_agent):
+            result = get_count_of_action(messages)
+
+        assert result == 1
+
+
 
 class TestUpdateResponseItem:
     """Test suite for update_response_item function."""

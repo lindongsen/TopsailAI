@@ -22,6 +22,7 @@ from topsailai.utils import (
     env_tool,
 )
 from topsailai.ai_base.llm_hooks.executor import hook_execute
+from topsailai.context.tool_stat import get_agent_tool_stat
 
 from .exception import (
     JsonError,
@@ -223,7 +224,33 @@ def assert_model_service_error(response):
 
     return
 
-def get_count_of_action(messages:list) -> int:
+def get_count_of_action(messages:list, tool_stat=None) -> int:
+    """
+    Count the number of action/tool-call steps that have occurred.
+
+    Prioritizes the authoritative count from ``tool_stat`` when available and
+    non-empty. This avoids re-scanning message content for the ``action`` step
+    marker and is consistent with how the rest of the system tracks executed
+    tool calls.
+
+    Args:
+        messages: List of messages to scan as a fallback.
+        tool_stat: Optional ``ToolStat`` instance. When omitted, the agent-bound
+            ToolStat is resolved from thread-local storage.
+
+    Returns:
+        int: Number of recorded actions. Falls back to scanning ``messages``
+        when ``tool_stat`` is unavailable or has no recorded calls.
+    """
+    if tool_stat is None:
+        try:
+            tool_stat = get_agent_tool_stat()
+        except Exception:
+            tool_stat = None
+
+    if tool_stat is not None and tool_stat.total_calls > 0:
+        return tool_stat.total_calls
+
     if not messages:
         return 0
     count = 0
