@@ -10,6 +10,7 @@ import sys
 import _import_topsailai
 
 from topsailai.ai_base.llm_control.message import format_response
+from topsailai.utils.format_tool import to_topsailai_format
 
 # change PWD after importing topsailai
 PWD = os.getenv("TOPSAILAI_PWD")
@@ -54,6 +55,13 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Paths to files containing responses to format. Use '-' to read from stdin.",
     )
     parser.add_argument(
+        "--format",
+        type=str,
+        default="json",
+        choices=("json", "topsailai"),
+        help="Output format (default: json).",
+    )
+    parser.add_argument(
         "--indent",
         type=int,
         default=2,
@@ -80,17 +88,19 @@ def read_input(path: str) -> str:
     return read_file(path)
 
 
-def format_output(data, indent: int, compact: bool) -> str:
-    """Serialize formatted response data to JSON."""
+def format_output(data, fmt: str, indent: int, compact: bool) -> str:
+    """Serialize formatted response data to the requested output format."""
+    if fmt == "topsailai":
+        return to_topsailai_format(data, key_name="step_name", value_name="raw_text", for_print=True)
     if compact:
         return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     return json.dumps(data, ensure_ascii=False, indent=indent)
 
 
-def format_response_text(text: str, indent: int = 2, compact: bool = False) -> str:
-    """Format a single response string and return JSON output."""
+def format_response_text(text: str, fmt: str = "json", indent: int = 2, compact: bool = False) -> str:
+    """Format a single response string and return output in the requested format."""
     data = format_response(text)
-    return format_output(data, indent, compact)
+    return format_output(data, fmt, indent, compact)
 
 
 def main(argv=None) -> int:
@@ -105,7 +115,7 @@ def main(argv=None) -> int:
             )
             return 2
         try:
-            print(format_response_text(args.text, args.indent, args.compact))
+            print(format_response_text(args.text, args.format, args.indent, args.compact))
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
@@ -124,7 +134,7 @@ def main(argv=None) -> int:
             return 1
         try:
             text = read_file(file_path)
-            print(format_response_text(text, args.indent, args.compact))
+            print(format_response_text(text, args.format, args.indent, args.compact))
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
@@ -142,7 +152,7 @@ def main(argv=None) -> int:
         if path == "-":
             text = sys.stdin.read()
             try:
-                print(format_response_text(text, args.indent, args.compact))
+                print(format_response_text(text, args.format, args.indent, args.compact))
             except Exception as e:
                 print(f"Error: {e}", file=sys.stderr)
                 exit_code = 1
@@ -154,7 +164,7 @@ def main(argv=None) -> int:
             continue
         try:
             text = read_file(resolved)
-            print(format_response_text(text, args.indent, args.compact))
+            print(format_response_text(text, args.format, args.indent, args.compact))
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)
             exit_code = 1

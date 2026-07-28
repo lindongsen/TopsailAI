@@ -66,3 +66,54 @@ class TestFormatResponseCli:
 
     def test_main_no_input(self):
         assert cli.main([]) != 0
+
+    def test_format_topsailai_text(self):
+        text = json.dumps({"step_name": "thought", "raw_text": "hello"})
+        result = cli.format_response_text(text, fmt="topsailai")
+        assert "topsailai.thought" in result
+        assert "hello" in result
+
+    def test_format_topsailai_text_with_action(self):
+        text = (
+            "topsailai.thought\n"
+            "hello\n\n"
+            "topsailai.action\n"
+            '{"tool_call": "tool", "tool_args": {}}\n'
+        )
+        result = cli.format_response_text(text, fmt="topsailai")
+        assert "topsailai.thought" in result
+        assert "hello" in result
+        assert "topsailai.action" in result
+
+    def test_main_text_topsailai_format(self, capsys):
+        cli.main([
+            "--text",
+            json.dumps({"step_name": "thought", "raw_text": "hi"}),
+            "--format",
+            "topsailai",
+        ])
+        captured = capsys.readouterr()
+        assert "topsailai.thought" in captured.out
+        assert "hi" in captured.out
+
+    def test_main_file_topsailai_format(self, tmp_path, capsys):
+        path = tmp_path / "response.txt"
+        path.write_text(json.dumps({"step_name": "thought", "raw_text": "file"}))
+        cli.main(["--file", str(path), "--format", "topsailai"])
+        captured = capsys.readouterr()
+        assert "topsailai.thought" in captured.out
+        assert "file" in captured.out
+
+    def test_main_stdin_topsailai_format(self, capsys):
+        with mock.patch(
+            "sys.stdin", io.StringIO('{"step_name":"thought","raw_text":"stdin"}')
+        ):
+            cli.main(["-", "--format", "topsailai"])
+        captured = capsys.readouterr()
+        assert "topsailai.thought" in captured.out
+        assert "stdin" in captured.out
+
+    def test_main_default_format_is_json(self, capsys):
+        cli.main(["--text", json.dumps({"step_name": "thought", "raw_text": "hi"})])
+        captured = capsys.readouterr()
+        assert '"raw_text": "hi"' in captured.out
