@@ -1,0 +1,23 @@
+<｜DSML｜tool_calls>
+<｜DSML｜invoke name="cmd_tool-exec_cmd">
+<｜DSML｜parameter name="cmd" string="true">export KUBECONFIG=/path/to/kubeconfig.yaml && kubectl logs -n qrew deployment/qrew-api --tail=500 2>/dev/null | grep -i -E "DawsonLin|session|auth|token|expire|personal|assistant|agent|connect|error"</｜DSML｜parameter>
+<｜DSML｜parameter name="timeout" string="false">30</｜DSML｜parameter>
+</｜DSML｜invoke>
+<｜DSML｜invoke name="cmd_tool-exec_cmd">
+<｜DSML｜parameter name="cmd" string="true">export KUBECONFIG=/path/to/kubeconfig.yaml && kubectl logs -n qrew deployment/qrew-api --tail=200 2>/dev/null</｜DSML｜parameter>
+<｜DSML｜parameter name="timeout" string="false">30</｜DSML｜parameter>
+</｜DSML｜invoke>
+<｜DSML｜invoke name="cmd_tool-exec_cmd">
+<｜DSML｜parameter name="cmd" string="true">export KUBECONFIG=/path/to/kubeconfig.yaml && kubectl logs -n qrew deployment/qrew-web --tail=200 2>/dev/null</｜DSML｜parameter>
+<｜DSML｜parameter name="timeout" string="false">30</｜DSML｜parameter>
+</｜DSML｜invoke>
+<｜DSML｜invoke name="cmd_tool-exec_cmd">
+<｜DSML｜parameter name="cmd" string="true">export KUBECONFIG=/path/to/kubeconfig.yaml && kubectl get pods -n qrew -l app.kubernetes.io/name=nats -o wide 2>/dev/null && echo "===NATS LOGS===" && kubectl logs -n qrew statefulset/nats --tail=100 2>/dev/null</｜DSML｜parameter>
+<｜DSML｜parameter name="timeout" string="false">30</｜DSML｜parameter>
+</｜DSML｜invoke>
+<｜DSML｜invoke name="cmd_tool-exec_cmd">
+<｜DSML｜parameter name="cmd" string="true">export KUBECONFIG=/path/to/kubeconfig.yaml && echo "=== qrew-pa ===" && kubectl get svc,endpoints -n qrew-pa 2>/dev/null && echo "=== qrew ===" && kubectl get svc,endpoints -n qrew 2>/dev/null</｜DSML｜parameter>
+<｜DSML｜parameter name="timeout" string="false">30</｜DSML｜parameter>
+</｜DSML｜invoke>
+</｜DSML｜tool_calls>
+

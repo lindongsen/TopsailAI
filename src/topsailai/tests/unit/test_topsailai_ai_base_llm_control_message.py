@@ -5,9 +5,10 @@ Author: AI
 Purpose: Unit tests for message handling functions
 """
 
+from pathlib import Path
+
 import pytest
 from unittest.mock import MagicMock, patch
-
 
 class TestToList:
     """Test suite for _to_list function."""
@@ -544,3 +545,155 @@ class TestFormatResponseDuplicateConsecutiveSteps:
         assert len(result) == 2
         assert result[0]["step_name"] == "action"
         assert result[1]["step_name"] == "action"
+
+class TestDeepseekDsmlToolCalls:
+    """Test suite for DeepSeek DSML tool-call parsing fixer."""
+
+    DSML_SAMPLE_PATH = (
+        Path(__file__).resolve().parent.parent / "mistakes" / "response" / "deepseek" / "dsml.txt"
+    )
+
+    def test_parse_dsml_single_invoke(self):
+        """Verify a single invoke block is parsed into one action step."""
+        from topsailai.ai_base.llm_control.llm_mistakes.deepseek import _parse_dsml_tool_calls
+
+        text = (
+            '<｜DSML｜tool_calls>\n'
+            '<｜DSML｜invoke name="file_tool-read_file">\n'
+            '<｜DSML｜parameter name="files" string="false">["/tmp/1.txt"]</｜DSML｜parameter>\n'
+            '</｜DSML｜invoke>\n'
+            '</｜DSML｜tool_calls>'
+        )
+        result = _parse_dsml_tool_calls(text)
+        assert result == [
+            {
+                "step_name": "action",
+                "tool_call": "file_tool-read_file",
+                "tool_args": {"files": ["/tmp/1.txt"]},
+            },
+        ]
+
+    def test_parse_dsml_multiple_invokes(self):
+        """Verify multiple invoke blocks produce multiple action steps."""
+        from topsailai.ai_base.llm_control.llm_mistakes.deepseek import _parse_dsml_tool_calls
+
+        text = (
+            '<｜DSML｜tool_calls>\n'
+            '<｜DSML｜invoke name="cmd_tool-exec_cmd">\n'
+            '<｜DSML｜parameter name="cmd" string="true">echo hello</｜DSML｜parameter>\n'
+            '</｜DSML｜invoke>\n'
+            '<｜DSML｜invoke name="file_tool-read_file">\n'
+            '<｜DSML｜parameter name="files" string="false">["/tmp/1.txt"]</｜DSML｜parameter>\n'
+            '</｜DSML｜invoke>\n'
+            '</｜DSML｜tool_calls>'
+        )
+        result = _parse_dsml_tool_calls(text)
+        assert len(result) == 2
+        assert result[0]["tool_call"] == "cmd_tool-exec_cmd"
+        assert result[0]["tool_args"]["cmd"] == "echo hello"
+        assert result[1]["tool_call"] == "file_tool-read_file"
+        assert result[1]["tool_args"]["files"] == ["/tmp/1.txt"]
+
+    def test_parse_dsml_leading_text_as_thought(self):
+        """Verify leading text before the DSML block is preserved as thought."""
+        from topsailai.ai_base.llm_control.llm_mistakes.deepseek import _parse_dsml_tool_calls
+
+        text = (
+            'Let me check the logs.\n'
+            '<｜DSML｜tool_calls>\n'
+            '<｜DSML｜invoke name="cmd_tool-exec_cmd">\n'
+            '<｜DSML｜parameter name="cmd" string="true">echo hello</｜DSML｜parameter>\n'
+            '</｜DSML｜invoke>\n'
+            '</｜DSML｜tool_calls>'
+        )
+        result = _parse_dsml_tool_calls(text)
+        assert len(result) == 2
+        assert result[0]["step_name"] == "thought"
+        assert result[0]["raw_text"] == "Let me check the logs."
+        assert result[1]["step_name"] == "action"
+
+    def test_parse_dsml_string_true_keeps_string(self):
+        """Verify string=\"true\" keeps the raw value as a string."""
+        from topsailai.ai_base.llm_control.llm_mistakes.deepseek import _parse_dsml_tool_calls
+
+        text = (
+            '<｜DSML｜tool_calls>\n'
+            '<｜DSML｜invoke name="cmd_tool-exec_cmd">\n'
+            '<｜DSML｜parameter name="cmd" string="true">export FOO=bar && echo $FOO</｜DSML｜parameter>\n'
+            '</｜DSML｜invoke>\n'
+            '</｜DSML｜tool_calls>'
+        )
+        result = _parse_dsml_tool_calls(text)
+        assert result[0]["tool_args"]["cmd"] == "export FOO=bar && echo $FOO"
+
+    def test_parse_dsml_string_false_parses_json(self):
+        """Verify string=\"false\" parses the value as JSON."""
+        from topsailai.ai_base.llm_control.llm_mistakes.deepseek import _parse_dsml_tool_calls
+
+        text = (
+            '<｜DSML｜tool_calls>\n'
+            '<｜DSML｜invoke name="cmd_tool-exec_cmd">\n'
+            '<｜DSML｜parameter name="cmd" string="true">echo hello</｜DSML｜parameter>\n'
+            '<｜DSML｜parameter name="timeout" string="false">30</｜DSML｜parameter>\n'
+            '</｜DSML｜invoke>\n'
+            '</｜DSML｜tool_calls>'
+        )
+        result = _parse_dsml_tool_calls(text)
+        assert result[0]["tool_args"]["timeout"] == 30
+        assert isinstance(result[0]["tool_args"]["timeout"], int)
+
+    def test_parse_dsml_no_block_returns_none(self):
+        """Verify None is returned when no DSML block exists."""
+        from topsailai.ai_base.llm_control.llm_mistakes.deepseek import _parse_dsml_tool_calls
+
+        assert _parse_dsml_tool_calls("just some text") is None
+        assert _parse_dsml_tool_calls('{"step_name": "action"}') is None
+
+    def test_parse_dsml_malformed_returns_none(self):
+        """Verify None is returned for malformed DSML blocks."""
+        from topsailai.ai_base.llm_control.llm_mistakes.deepseek import _parse_dsml_tool_calls
+
+        assert _parse_dsml_tool_calls('<｜DSML｜tool_calls>') is None
+        assert _parse_dsml_tool_calls(
+            '<｜DSML｜tool_calls>\n'
+            '<｜DSML｜invoke name="foo">\n'
+            '<｜DSML｜parameter name="bar">baz</｜DSML｜parameter>\n'
+        ) is None
+
+    def test_format_response_deepseek_dsml_sample(self, monkeypatch):
+        """Verify the real DeepSeek sample is parsed into action steps."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        monkeypatch.setenv("OPENAI_MODEL", "deepseek-chat")
+
+        text = self.DSML_SAMPLE_PATH.read_text(encoding="utf-8")
+        result = format_response(text)
+
+        assert isinstance(result, list)
+        assert len(result) == 5
+        for item in result:
+            assert item["step_name"] == "action"
+            assert item["tool_call"] == "cmd_tool-exec_cmd"
+            assert "cmd" in item["tool_args"]
+            assert isinstance(item["tool_args"]["cmd"], str)
+            assert item["tool_args"]["timeout"] == 30
+
+    def test_format_response_deepseek_requires_model(self, monkeypatch):
+        """Verify DSML is not parsed when the model is not DeepSeek."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        monkeypatch.setenv("OPENAI_MODEL", "kimi-k2.5")
+
+        text = (
+            '<｜DSML｜tool_calls>\n'
+            '<｜DSML｜invoke name="cmd_tool-exec_cmd">\n'
+            '<｜DSML｜parameter name="cmd" string="true">echo hello</｜DSML｜parameter>\n'
+            '</｜DSML｜invoke>\n'
+            '</｜DSML｜tool_calls>'
+        )
+        result = format_response(text)
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["step_name"] == "thought"
+        assert "DSML" in result[0]["raw_text"]
