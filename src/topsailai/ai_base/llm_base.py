@@ -6,11 +6,19 @@
 '''
 
 import os
+import random
 import time
 import threading
 import httpx
 import httpcore
 import openai
+
+# Fixed prime sleep durations (seconds) used when retrying after
+# LLMServiceSpecialResponseError (e.g. "服务器繁忙").
+_LLM_SERVICE_SPECIAL_RESPONSE_SLEEP_SECONDS = (
+    5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97
+)
+
 from openai.types.chat import (
     ChatCompletionMessage,
     ChatCompletionMessageToolCall,
@@ -844,7 +852,7 @@ class LLMModel(LLMModelBase):
 
                 # special responses (e.g. "服务器繁忙") should retry quickly
                 if isinstance(e, LLMServiceSpecialResponseError):
-                    sec = 3
+                    sec = random.choice(_LLM_SERVICE_SPECIAL_RESPONSE_SLEEP_SECONDS)
 
                 print_error(f"!!! [{i}] {LLM_KEYWORD_SERVICE}: {e}")
                 print_error(f"blocking chat {sec}s ...")
