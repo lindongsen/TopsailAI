@@ -1142,9 +1142,9 @@ def main():
     parser.add_argument(
         "--select-timeout",
         type=float,
-        default=10.0,
+        default=60.0,
         metavar="SECONDS",
-        help="Timeout in seconds for interactive context selection prompts (default: 10)",
+        help="Timeout in seconds for interactive context selection prompts (default: 60)",
     )
     parser.add_argument(
         "--scan",
