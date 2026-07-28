@@ -42,6 +42,7 @@ from topsailai.workspace.task import task_tool
 from topsailai.workspace.print_tool import (
     decorator_tee_output_by_session,
 )
+from topsailai.workspace import terminal_title
 
 
 def _get_session_token_totals(session_id: str, ai_agent) -> tuple[int, int]:
@@ -213,6 +214,14 @@ class AgentChat(AgentChatBase):
         if message:
             message = self.format_message(message)
 
+        # set terminal title once at session start
+        try:
+            terminal_title.refresh_terminal_title(
+                session_id=self.ctx_runtime_data.session_id,
+            )
+        except Exception as e:
+            logger.debug("Failed to refresh terminal title at session start: %s", e)
+
         # start
         while True:
             flag_abort = False
@@ -220,7 +229,6 @@ class AgentChat(AgentChatBase):
             answer = ""
 
             curr_count += 1
-
             # build message
             if message and func_build_message:
                 message = func_build_message(
@@ -360,6 +368,13 @@ class AgentChat(AgentChatBase):
                 logger.info("ToolStat of tool_calls:\n [%s]", __content)
 
             # next time
+            try:
+                terminal_title.refresh_terminal_title(
+                    session_id=self.ctx_runtime_data.session_id,
+                )
+            except Exception as e:
+                logger.debug("Failed to refresh terminal title: %s", e)
+
             func_print_pre_input_message()
             while True:
                 message = input_message(hook=self.hook_instruction)

@@ -36,6 +36,8 @@ These variables define the agent's working environment and project access scope.
 | `DEBUG` | `1` | Debug mode. `0` = production (disabled), `1` = debug (enabled, verbose logging). Also controls the default level of the automatically configured root logger: `1` sets `logging.DEBUG`, otherwise `logging.INFO`. |
 | `DEBUG_PRINT_TRUNCATE_LENGTH` | `3000` | Maximum length for debug print truncation. |
 | `TOPSAILAI_INTERACTIVE_MODE` | `1` | Interactive mode. `1` = enabled, `0` = disabled. |
+| `TOPSAILAI_TERMINAL_TITLE_ENABLED` | `1` | When `1`, the terminal window title is updated in interactive mode using `TOPSAILAI_TERMINAL_TITLE_FORMAT`. Set to `0` to disable. |
+| `TOPSAILAI_TERMINAL_TITLE_FORMAT` | `"{host_name}:{session_name}"` | Format string for the terminal window title. Supported placeholders: `{host_name}`, `{session_name}`, `{session_id}`. `session_name` falls back to `session_id` when empty. |
 | `TOPSAILAI_PRINT_TOOL_PROMPT` | `0` | Whether to print tool prompt content. `1` = enabled. |
 | `TOPSAILAI_CHAT_MULTI_LINE` | `0` | Multi-line input mode. `1` = enabled. |
 | `TOPSAILAI_INPUT_PIPE_ENABLED` | `"0"` | Enable pipe-based input. When `1`, interactive `input()` calls read from a session-scoped named pipe (`FOLDER_WORKSPACE_TASK/{session_id}.{pid}.session.pipe`) instead of stdin. The CLI `topsailai.py` provides a `/send` command to write messages to this pipe for running sessions. |

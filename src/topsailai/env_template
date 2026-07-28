@@ -185,6 +185,17 @@ DEBUG_PRINT_TRUNCATE_LENGTH=3000
 # Interactive Mode, 1 for enabled, 0 for disabled
 TOPSAILAI_INTERACTIVE_MODE=1
 
+# Terminal window title in interactive mode.
+# When 1 (default), the terminal title is set to the configured format while
+# running in interactive mode. When 0, the title is never changed.
+TOPSAILAI_TERMINAL_TITLE_ENABLED=1
+
+# Format string for the terminal window title. Supported placeholders:
+#   {host_name}   - short hostname
+#   {session_name} - display name of the session (falls back to session_id)
+#   {session_id}   - session identifier
+TOPSAILAI_TERMINAL_TITLE_FORMAT="{host_name}:{session_name}"
+
 # Maximum size in bytes of the JSONL input history file before rotation.
 # Default is 1048576 (1 MiB). Values below 0 disable rotation.
 TOPSAILAI_INPUT_HISTORY_MAX_SIZE=1048576
