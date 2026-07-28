@@ -129,7 +129,7 @@ def compare_files_strived(file1_path, file2_path, context_lines=3) -> str:
     except Exception:
         pass
 
-    return ""
+    return "---\nNothing Changed"
 
 
 # Usage example
