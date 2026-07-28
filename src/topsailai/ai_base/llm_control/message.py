@@ -241,6 +241,8 @@ def update_response_item(item:dict) -> dict:
     """ for item in response(list) """
     if item.get("step_name") == "action" and item.get("raw_text"):
         item_extra = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", item["raw_text"])
+        if not item_extra or isinstance(item_extra, str):
+            item_extra = fix_llm_mistakes(item_extra or item["raw_text"])
         if item_extra and isinstance(item_extra, list):
             # get tool_call item
             item_tool_call = None
