@@ -1,0 +1,12 @@
+Hello
+</think>
+{
+  "tool_args": {
+    "cmd": [
+      "ls",
+      "-la",
+      "/tmp"
+    ]
+  },
+  "tool_call": "cmd_tool-exec_cmd"
+}
