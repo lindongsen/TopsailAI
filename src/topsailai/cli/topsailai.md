@@ -18,6 +18,7 @@ references:
 ## Scope: project
 
 - project workspace
+- shows today's records, default limit 30, use `r [limit]` to adjust
 
 ## Scope: session
 

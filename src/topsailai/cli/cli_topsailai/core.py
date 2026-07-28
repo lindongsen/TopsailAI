@@ -14,6 +14,7 @@ import signal
 import sys
 import shutil
 import socket
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -90,6 +91,12 @@ def _read_input_with_prompt(prompt: str) -> str:
     sys.stdout.flush()
     return input("").strip()
 
+
+def _set_project_scope_today_range() -> None:
+    """Set state.project_scope_since/until to today's local date range."""
+    now = datetime.now()
+    state.project_scope_since = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    state.project_scope_until = now
 
 
 def _try_handle_project_subcommand(
@@ -350,7 +357,30 @@ def prompt_selection(
 
             # Project scope: r/recent shows recent session/project history.
             # This must be checked before the global r/refresh binding.
-            if state.current_scope == "project" and lower_input in ("r", "recent"):
+            if state.current_scope == "project" and (
+                lower_input in ("r", "recent")
+                or lower_input.startswith("r ")
+                or lower_input.startswith("recent ")
+            ):
+                parts = user_input.split(None, 1)
+                if len(parts) > 1:
+                    arg = parts[1].strip()
+                    if arg.isdigit():
+                        limit = int(arg)
+                        if limit > 0:
+                            state.project_scope_limit = limit
+                        else:
+                            print(
+                                f"{Colors.RED}[ERROR] Limit must be a positive integer. "
+                                f"Usage: r [limit] or recent [limit]{Colors.RESET}"
+                            )
+                            continue
+                    else:
+                        print(
+                            f"{Colors.RED}[ERROR] Invalid limit: {arg!r}. "
+                            f"Usage: r [limit] or recent [limit]{Colors.RESET}"
+                        )
+                        continue
                 return ("show_recent_projects", None)
 
             if lower_input in ("r", "refresh", "/refresh"):
@@ -449,8 +479,6 @@ def prompt_selection(
             if state.current_scope == "project":
                 if lower_input in ("p", "projects"):
                     return ("show_managed_projects", None)
-                if lower_input in ("r", "recent"):
-                    return ("show_recent_projects", None)
                 if lower_input.startswith("p ") or lower_input.startswith("/p "):
                     parts = user_input.split(None, 2)
                     subcmd = parts[1].lower() if len(parts) > 1 else ""
@@ -563,11 +591,18 @@ def prompt_selection(
                     f"Please enter 1-{len(files)}.{Colors.RESET}"
                 )
             except ValueError:
-                print(
-                    f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
-                    f"Please enter a number, /refresh, /session {{number}}, "
-                    f"/agent {{number|folder}}, /resume {{number}}, /clean, /send, /help, or 'q'.{Colors.RESET}"
-                )
+                if state.current_scope == "project":
+                    print(
+                        f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
+                        f"Please enter a number, r [limit], recent [limit], /refresh, /session {{number}}, "
+                        f"/agent {{number|folder}}, /resume {{number}}, /clean, /send, /help, or 'q'.{Colors.RESET}"
+                    )
+                else:
+                    print(
+                        f"{Colors.RED}[ERROR] Unknown command: '{user_input}'. "
+                        f"Please enter a number, /refresh, /session {{number}}, "
+                        f"/agent {{number|folder}}, /resume {{number}}, /clean, /send, /help, or 'q'.{Colors.RESET}"
+                    )
                 _consecutive_unrecognized += 1
                 if _consecutive_unrecognized >= _MAX_CONSECUTIVE_UNRECOGNIZED:
                     print(
@@ -1035,7 +1070,15 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     def _refresh_project() -> None:
         nonlocal project_entries
-        project_entries = build_project_list(limit=10)
+        project_entries = build_project_list(
+            since=state.project_scope_since.isoformat()
+            if state.project_scope_since is not None
+            else None,
+            until=state.project_scope_until.isoformat()
+            if state.project_scope_until is not None
+            else None,
+            limit=state.project_scope_limit,
+        )
         if project_entries:
             print_project_table(project_entries)
         else:
@@ -1101,6 +1144,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     if state.current_scope == "project":
         _project_scope_mode = "sessions"
+        _set_project_scope_today_range()
         _refresh_project()
     elif state.current_scope == "doc":
         _refresh_doc()
@@ -1129,6 +1173,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                 if state.current_scope != previous_scope:
                     if state.current_scope == "project":
                         _project_scope_mode = "sessions"
+                        _set_project_scope_today_range()
                         _refresh_project()
                     elif state.current_scope == "doc":
                         _refresh_doc()

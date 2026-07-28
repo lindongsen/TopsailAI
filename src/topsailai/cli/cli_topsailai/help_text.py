@@ -215,9 +215,9 @@ def print_help(
             "scopes": ["project"],
         },
         {
-            "cmd": "r  or  recent",
-            "desc": "Switch back to the recent session/project list in project scope. This is the default view when entering project scope.",
-            "example": "Example: r",
+            "cmd": "r [limit]  or  recent [limit]",
+            "desc": "Refresh today's project session list. If `[limit]` is provided, update the maximum number of records shown (default 30).",
+            "example": "Example: r  or  r 30",
             "scopes": ["project"],
         },
         {
@@ -287,7 +287,7 @@ def print_help(
         },
         {
             "cmd": "cd project",
-            "desc": "Enter project scope to list the 10 most recent sessions that have a project workspace.",
+            "desc": "Enter project scope to show today's records (default limit 30).",
             "example": "",
             "scopes": ["workspace"],
         },

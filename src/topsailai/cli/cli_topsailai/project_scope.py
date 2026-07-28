@@ -158,15 +158,18 @@ def load_project_workspace_lookup() -> Dict[str, str]:
 
 
 def build_project_list(
-    limit: Optional[int] = 10, session_id: Optional[str] = None
+    limit: Optional[int] = 10,
+    session_id: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Build the list of recent sessions with a project workspace.
 
     Runs ``ai_list_sessions.py --json --has-project --sort desc`` with an
-    optional session ID and limit, then parses the JSON output.  The database
-    returns entries newest-first, so the list is reversed before rendering so
-    the oldest entry appears at the top of the project scope table and the
-    newest entry appears at the bottom.
+    optional session ID, limit, and time range, then parses the JSON output.
+    The database returns entries newest-first, so the list is reversed before
+    rendering so the oldest entry appears at the top of the project scope
+    table and the newest entry appears at the bottom.
 
     Each entry is enriched with a ``status`` field (``Running`` or ``Idle``)
     by scanning ``{TOPSAILAI_HOME}/workspace/task/`` for the most recent
@@ -176,6 +179,8 @@ def build_project_list(
     Args:
         limit: Maximum number of sessions to return, or ``None`` for no limit.
         session_id: Optional exact session ID to retrieve.
+        since: Optional ISO datetime string for the earliest create_time.
+        until: Optional ISO datetime string for the latest create_time.
 
     Returns:
         List of session dictionaries with keys ``no``, ``session_id``,
@@ -195,6 +200,10 @@ def build_project_list(
         cmd.append(session_id)
     if limit is not None:
         cmd.extend(["--limit", str(limit)])
+    if since:
+        cmd.extend(["--since", since])
+    if until:
+        cmd.extend(["--until", until])
 
     try:
         result = subprocess.run(
@@ -350,18 +359,22 @@ def print_managed_project_table(entries: List[Dict[str, Any]]) -> None:
 
 
 def refresh_project_list(
-    entries: List[Dict[str, Any]], limit: int = 10
+    entries: List[Dict[str, Any]],
+    limit: int = 10,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Reload the project session list.
 
     Args:
         entries: Previous list (unused, kept for API symmetry).
         limit: Maximum number of sessions to return.
-
+        since: Optional ISO datetime string for the earliest create_time.
+        until: Optional ISO datetime string for the latest create_time.
     Returns:
         Fresh list from :func:`build_project_list`.
     """
-    return build_project_list(limit=limit)
+    return build_project_list(limit=limit, since=since, until=until)
 
 
 def resolve_agent_folder(arg: str, entries: List[Dict[str, Any]]) -> Optional[str]:

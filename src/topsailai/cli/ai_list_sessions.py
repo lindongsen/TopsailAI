@@ -22,6 +22,7 @@ Examples:
     ai_list_sessions.py --db-conn sqlite:///custom.db
     ai_list_sessions.py s1 s2 s3 --json
     ai_list_sessions.py --limit 10 --sort desc
+    ai_list_sessions.py --since 2026-07-28T00:00:00 --until 2026-07-28T23:59:59
     ai_list_sessions.py --db-conn sqlite:///custom.db s1 s2 --json
 
 Author: DawsonLin
@@ -41,6 +42,7 @@ import _import_topsailai
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
 
 from topsailai.context.ctx_manager import get_session_manager
+
 
 def _supports_color():
     """Return True if the output stream supports ANSI color codes."""
@@ -253,6 +255,40 @@ def _filter_sessions(sessions, has_project):
     return [session for session in sessions if session.project_workspace]
 
 
+def _filter_sessions_by_time(sessions, since=None, until=None):
+    """Filter sessions by create_time range.
+
+    Args:
+        sessions (list): List of session objects with a create_time attribute.
+        since (datetime, optional): Include sessions with create_time >= since.
+        until (datetime, optional): Include sessions with create_time <= until.
+
+    Returns:
+        list: Sessions whose create_time falls within the requested range.
+    """
+    if since is None and until is None:
+        return sessions
+
+    result = []
+    for session in sessions:
+        create_time = getattr(session, "create_time", None)
+        if create_time is None:
+            continue
+        if since is not None and create_time < since:
+            continue
+        if until is not None and create_time > until:
+            continue
+        result.append(session)
+    return result
+
+
+def _parse_datetime(value):
+    """Parse an ISO datetime string into a datetime object."""
+    if value is None:
+        return None
+    return datetime.fromisoformat(value)
+
+
 def _parse_sessions(positional_sessions):
     """Parse positional session IDs into a list of strings."""
     if not positional_sessions:
@@ -332,6 +368,18 @@ def main():
         default=None,
         help="Sort by field name; prefix with '-' for descending (e.g., '-create_time')",
     )
+    parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="Include sessions created at or after this ISO datetime (e.g., 2026-07-28T00:00:00)",
+    )
+    parser.add_argument(
+        "--until",
+        type=str,
+        default=None,
+        help="Include sessions created at or before this ISO datetime (e.g., 2026-07-28T23:59:59)",
+    )
     args = parser.parse_args()
 
     if args.no_color:
@@ -351,6 +399,11 @@ def main():
             limit=args.limit,
         )
         sessions = _filter_sessions(sessions, args.has_project)
+        sessions = _filter_sessions_by_time(
+            sessions,
+            since=_parse_datetime(args.since),
+            until=_parse_datetime(args.until),
+        )
 
         if args.json:
             print(format_sessions_json(sessions))

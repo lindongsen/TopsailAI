@@ -437,6 +437,41 @@ class TestJsonAndFilterFlags(unittest.TestCase):
         self.assertEqual(len(data), 2)
         self.assertEqual({session["session_id"] for session in data}, {"pos-s1", "pos-s3"})
 
+    @mock.patch.object(sys.stdout, "isatty", return_value=False)
+    def test_main_filters_by_since_until(self, _mock_tty):
+        """--since and --until filter sessions by create_time."""
+        manager = get_session_manager(self.db_conn)
+        manager.create_session(
+            SessionData(session_id="early", task="early task")
+        )
+        import time
+        time.sleep(0.2)
+        cutoff = datetime.now()
+        time.sleep(0.2)
+        manager.create_session(
+            SessionData(session_id="late", task="late task")
+        )
+        since = cutoff.strftime("%Y-%m-%dT%H:%M:%S.%f")
+        until = (cutoff + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S.%f")
+        with mock.patch(
+            "sys.argv",
+            [
+                "ai_list_sessions.py",
+                "--db-conn", self.db_conn,
+                "--json",
+                "--since", since,
+                "--until", until,
+                "--no-color",
+            ],
+        ):
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                ai_list_sessions.main()
+                output = mock_stdout.getvalue()
+        data = json.loads(output)
+        ids = {s["session_id"] for s in data}
+        self.assertNotIn("early", ids)
+        self.assertIn("late", ids)
+
 
 if __name__ == "__main__":
     unittest.main()

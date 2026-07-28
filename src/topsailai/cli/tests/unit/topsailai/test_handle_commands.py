@@ -456,12 +456,18 @@ class TestProjectScopeCommands(unittest.TestCase):
         cli_state.current_session_id = None
         cli_state.yaml_commands = []
         cli_state.history_manager = None
+        cli_state.project_scope_limit = 30
+        cli_state.project_scope_since = None
+        cli_state.project_scope_until = None
 
     def tearDown(self):
         cli_state.current_scope = "workspace"
         cli_state.current_session_id = None
         cli_state.yaml_commands = []
         cli_state.history_manager = None
+        cli_state.project_scope_limit = 30
+        cli_state.project_scope_since = None
+        cli_state.project_scope_until = None
         cli_state._child_processes.clear()
 
     @patch("cli_topsailai.core.input")
@@ -565,6 +571,39 @@ class TestProjectScopeCommands(unittest.TestCase):
         action, value = prompt_selection([], "/task")
         self.assertEqual(action, "yaml_handled")
 
+
+    @patch("cli_topsailai.core.input")
+    def test_prompt_selection_r_with_limit(self, mock_input):
+        """'r 30' in project scope updates the limit and triggers refresh."""
+        cli_state.current_scope = "project"
+        mock_input.return_value = "r 30"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "show_recent_projects")
+        self.assertEqual(cli_state.project_scope_limit, 30)
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_prompt_selection_r_invalid_limit(self, mock_input, mock_print):
+        """'r abc' prints an error and does not refresh."""
+        cli_state.current_scope = "project"
+        mock_input.side_effect = ["r abc", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("Invalid limit" in str(call) for call in mock_print.call_args_list)
+        )
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_prompt_selection_r_zero_limit(self, mock_input, mock_print):
+        """'r 0' prints an error and does not refresh."""
+        cli_state.current_scope = "project"
+        mock_input.side_effect = ["r 0", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("positive integer" in str(call) for call in mock_print.call_args_list)
+        )
 
 class TestWorkspaceAgentCommand(unittest.TestCase):
     """Tests for /agent command support in workspace scope."""
