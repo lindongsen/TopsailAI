@@ -20,7 +20,6 @@ from topsailai.utils import (
 
 from topsailai.ai_base.agent2llm_message_source import (
     apply_agent2llm_message_source,
-    unset_agent2llm_message_source,
 )
 from topsailai.ai_base.constants import (
     STEP_NAME_TASK,
@@ -121,7 +120,6 @@ class AgentBase(AgentTool):
             finally:
                 if self.flag_dump_messages:
                     self.dump_messages()
-                unset_agent2llm_message_source()
 
     def _run(self, step_call:StepCallBase, user_input:str):
         """
