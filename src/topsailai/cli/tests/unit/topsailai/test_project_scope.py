@@ -67,7 +67,8 @@ class TestBuildProjectList(unittest.TestCase):
         self.assertEqual(entries[0]["no"], 1)
         self.assertEqual(entries[0]["session_id"], "s1")
         self.assertEqual(entries[0]["project_workspace"], "/work/project-a")
-        self.assertEqual(entries[0]["create_time"], "07-06 10:00")
+        self.assertEqual(entries[0]["modified_time"], "07-06 10:00")
+        self.assertEqual(entries[0]["modified_time_raw"], "2026-07-06T10:00:00")
         self.assertEqual(entries[0]["task"], "task one")
         self.assertEqual(entries[1]["session_id"], "s2")
 
@@ -80,9 +81,10 @@ class TestBuildProjectList(unittest.TestCase):
         self.assertIn("--limit", call_args)
         self.assertIn("10", call_args)
 
+    @patch("cli_topsailai.project_scope._resolve_session_mtime")
     @patch("cli_topsailai.project_scope.subprocess.run")
-    def test_build_project_list_keeps_oldest_first_order(self, mock_run):
-        """Database returns newest-first; after reversal oldest is row 1."""
+    def test_build_project_list_keeps_oldest_first_order(self, mock_run, mock_mtime):
+        """Sessions are sorted by stdout mtime ascending (oldest on top)."""
         sessions = [
             {
                 "session_id": "newest",
@@ -103,6 +105,11 @@ class TestBuildProjectList(unittest.TestCase):
                 "topsailai_home": "/home/user/.topsailai",
             },
         ]
+        # Even though create_time says otherwise, stdout mtime decides order.
+        mock_mtime.side_effect = lambda _task_dir, session_id: {
+            "newest": 1751454000.0,  # 2026-07-06 11:00:00
+            "oldest": 1751446800.0,  # 2026-07-06 09:00:00
+        }.get(session_id)
         mock_run.return_value = MockCompletedProcess(stdout=json.dumps(sessions))
         entries = project_scope.build_project_list(limit=10)
 
@@ -323,8 +330,8 @@ class TestPrintProjectTable(unittest.TestCase):
                 "session_id": "s1",
                 "session_name": "session one",
                 "project_workspace": "/work/project-a",
-                "create_time": "07-06 10:00",
-                "create_time_raw": "2026-07-06T10:00:00",
+                "modified_time": "07-06 10:00",
+                "modified_time_raw": "2026-07-06T10:00:00",
                 "task": "task one",
                 "status": "Running",
             }
@@ -334,6 +341,7 @@ class TestPrintProjectTable(unittest.TestCase):
         self.assertNotIn("Status", output)
         self.assertIn("Session ID", output)
         self.assertIn("Project Workspace", output)
+        self.assertIn("Modified", output)
         self.assertIn("s1", output)
         self.assertIn("/work/project-a", output)
         self.assertIn("07-06 10:00", output)
@@ -353,8 +361,8 @@ class TestPrintProjectTable(unittest.TestCase):
                 "session_id": "s" * 50,
                 "session_name": "n" * 50,
                 "project_workspace": "/work/" + "p" * 50,
-                "create_time": "07-06 10:00",
-                "create_time_raw": "2026-07-06T10:00:00",
+                "modified_time": "07-06 10:00",
+                "modified_time_raw": "2026-07-06T10:00:00",
                 "task": "task",
                 "status": "Idle",
             }
@@ -371,8 +379,8 @@ class TestPrintProjectTable(unittest.TestCase):
                 "session_id": "s-running",
                 "session_name": "running session",
                 "project_workspace": "/work/running",
-                "create_time": "07-06 10:00",
-                "create_time_raw": "2026-07-06T10:00:00",
+                "modified_time": "07-06 10:00",
+                "modified_time_raw": "2026-07-06T10:00:00",
                 "task": "task",
                 "status": "Running",
             }
@@ -390,8 +398,8 @@ class TestPrintProjectTable(unittest.TestCase):
                 "session_id": "s-idle",
                 "session_name": "idle session",
                 "project_workspace": "/work/idle",
-                "create_time": "07-06 10:00",
-                "create_time_raw": "2026-07-06T10:00:00",
+                "modified_time": "07-06 10:00",
+                "modified_time_raw": "2026-07-06T10:00:00",
                 "task": "task",
                 "status": "Idle",
             }
@@ -1065,8 +1073,8 @@ class TestResumeSession(unittest.TestCase):
             "session_id": session_id,
             "session_name": f"name-{session_id}",
             "project_workspace": workspace,
-            "create_time": "07-06 10:00",
-            "create_time_raw": "2026-07-06T10:00:00",
+            "modified_time": "07-06 10:00",
+            "modified_time_raw": "2026-07-06T10:00:00",
             "task": "task",
             "status": status,
         }

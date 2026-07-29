@@ -75,6 +75,23 @@ def _check_session_running(home: str, session_id: str) -> bool:
     return _is_pid_alive(pid)
 
 
+def _resolve_session_mtime(task_dir: str, session_id: str) -> Optional[float]:
+    """Return the modification time of the most recent session stdout file.
+
+    Uses :func:`cli_topsailai.log_files._find_session_stdout_file` to locate
+    the newest ``*.session.stdout`` file for *session_id* and returns its
+    ``st_mtime``.  If no stdout file exists, returns ``None`` so callers can
+    fall back to another timestamp (e.g. ``create_time``).
+    """
+    stdout_path = _find_session_stdout_file(task_dir, session_id)
+    if not stdout_path:
+        return None
+    try:
+        return os.path.getmtime(stdout_path)
+    except OSError:
+        return None
+
+
 def _enrich_running_status(entries: List[Dict[str, Any]]) -> None:
     """Add a ``status`` field to each entry by scanning stdout files.
 
@@ -101,15 +118,15 @@ def _enrich_running_status(entries: List[Dict[str, Any]]) -> None:
             entry["status"] = "Running" if is_running else "Idle"
 
 
-def _format_create_time(create_time: str) -> str:
-    """Format an ISO create_time string for the project table."""
-    if not create_time:
+def _format_time(time_value: str) -> str:
+    """Format an ISO timestamp string for the project table."""
+    if not time_value:
         return "-"
     try:
-        dt = datetime.fromisoformat(create_time)
+        dt = datetime.fromisoformat(time_value)
         return dt.strftime("%m-%d %H:%M")
     except ValueError:
-        return create_time
+        return time_value
 
 
 def _read_project_history_lines(home: str) -> list[str]:
@@ -164,10 +181,10 @@ def build_project_list(
     """Build the list of recent sessions with a project workspace.
 
     Runs ``ai_list_sessions.py --json --has-project --sort desc`` with an
-    optional session ID and limit, then parses the JSON output. The database
-    returns entries newest-first, so the list is reversed before rendering so
-    the oldest entry appears at the top of the project scope table and the
-    newest entry appears at the bottom.
+    optional session ID and limit, then parses the JSON output. Sessions are
+    then re-sorted by the modification time of their most recent
+    ``*.session.stdout`` file (oldest first, newest last). When a session has
+    no stdout file, its ``create_time`` is used as a fallback.
 
     Each entry is enriched with a ``status`` field (``Running`` or ``Idle``)
     by scanning ``{TOPSAILAI_HOME}/workspace/task/`` for the most recent
@@ -180,8 +197,8 @@ def build_project_list(
 
     Returns:
         List of session dictionaries with keys ``no``, ``session_id``,
-        ``session_name``, ``project_workspace``, ``create_time``,
-        ``create_time_raw``, ``task``, and ``status``.
+        ``session_name``, ``project_workspace``, ``modified_time``,
+        ``modified_time_raw``, ``task``, and ``status``.
     """
     script = _script_path()
     cmd = [
@@ -235,22 +252,47 @@ def build_project_list(
         )
         return []
 
-    sessions.reverse()
+    home = get_topsailai_home()
+    task_dir = os.path.join(home, "workspace", "task")
 
     entries = []
-    for idx, session in enumerate(sessions, start=1):
+    for session in sessions:
+        session_id_value = session.get("session_id") or ""
         create_time_raw = session.get("create_time") or ""
+        mtime = _resolve_session_mtime(task_dir, session_id_value)
+        if mtime is not None:
+            modified_time_raw = datetime.fromtimestamp(mtime).isoformat()
+        else:
+            modified_time_raw = create_time_raw
         entries.append(
             {
-                "no": idx,
-                "session_id": session.get("session_id") or "",
+                "session_id": session_id_value,
                 "session_name": session.get("session_name") or "",
                 "project_workspace": session.get("project_workspace") or "",
-                "create_time": _format_create_time(create_time_raw),
+                "modified_time_raw": modified_time_raw,
                 "create_time_raw": create_time_raw,
                 "task": session.get("task") or "",
+                "_mtime": mtime if mtime is not None else 0.0,
+                "_fallback_time": create_time_raw,
             }
         )
+
+    # Sort oldest-first by stdout mtime. Entries without a stdout file fall
+    # back to their create_time for stable ordering.
+    entries.sort(
+        key=lambda e: (
+            e["_mtime"] if e["_mtime"] else datetime.fromisoformat(
+                e["_fallback_time"]
+            ).timestamp() if e["_fallback_time"] else 0.0
+        )
+    )
+
+    # Assign visible row numbers after sorting and drop internal sort keys.
+    for idx, entry in enumerate(entries, start=1):
+        entry["no"] = idx
+        entry["modified_time"] = _format_time(entry["modified_time_raw"])
+        entry.pop("_mtime", None)
+        entry.pop("_fallback_time", None)
 
     _enrich_running_status(entries)
     return entries
@@ -267,7 +309,7 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
     w_no = 4
     w_session = 20
     w_project = 30
-    w_created = 14
+    w_modified = 14
     w_name = 16
 
     header = (
@@ -275,7 +317,7 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
         f" {'No':^{w_no}} |"
         f" {'Session ID':^{w_session}} |"
         f" {'Project Workspace':^{w_project}} |"
-        f" {'Created':^{w_created}} |"
+        f" {'Modified':^{w_modified}} |"
         f" {'Session Name':^{w_name}} "
         f"{Colors.RESET}"
     )
@@ -284,7 +326,7 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
         f"{'-' * (w_no + 1)}+"
         f"{'-' * (w_session + 2)}+"
         f"{'-' * (w_project + 2)}+"
-        f"{'-' * (w_created + 2)}+"
+        f"{'-' * (w_modified + 2)}+"
         f"{'-' * (w_name + 1)}"
         f"{Colors.RESET}"
     )
@@ -301,7 +343,7 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
         if len(project) > w_project:
             project = project[: w_project - 3] + "..."
 
-        created = entry.get("create_time") or "-"
+        modified = entry.get("modified_time") or "-"
         session_name = entry.get("session_name") or "-"
         if len(session_name) > w_name:
             session_name = session_name[: w_name - 3] + "..."
@@ -314,7 +356,7 @@ def print_project_table(entries: List[Dict[str, Any]]) -> None:
             f" {entry['no']:^{w_no}} |"
             f" {session_id:<{w_session}} |"
             f" {project:<{w_project}} |"
-            f" {created:^{w_created}} |"
+            f" {modified:^{w_modified}} |"
             f" {session_name:<{w_name}} "
             f"{Colors.RESET}"
         )
