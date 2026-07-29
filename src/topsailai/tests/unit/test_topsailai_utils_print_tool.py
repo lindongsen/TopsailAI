@@ -60,13 +60,14 @@ class TestPrintTool(unittest.TestCase):
         result = print_tool.truncate_msg(msg)
 
         # Should be truncated and contain the truncation marker
-        self.assertIn('(truncated)', result)
-        self.assertIn('total_len=500', result)
+        self.assertIn('[Truncated:', result)
+        self.assertIn('500 chars total', result)
         # Should be valid JSON
         import json
         parsed = json.loads(result)
         self.assertEqual(parsed['step_name'], 'test')
-        self.assertIn('aaaaaaaaaa (truncated)', parsed['raw_text'])
+        self.assertIn('aaaaaaaaaa', parsed['raw_text'])
+        self.assertIn('[Truncated:', parsed['raw_text'])
 
     def test_truncate_msg_with_dict(self):
         """Test truncate_msg with a dictionary that will be truncated."""
@@ -80,13 +81,14 @@ class TestPrintTool(unittest.TestCase):
         result = print_tool.truncate_msg(msg)
 
         # Should be truncated and contain the truncation marker
-        self.assertIn('(truncated)', result)
-        self.assertIn('total_len=500', result)
+        self.assertIn('[Truncated:', result)
+        self.assertIn('500 chars total', result)
         # Should be valid JSON
         import json
         parsed = json.loads(result)
         self.assertEqual(parsed['step_name'], 'test')
-        self.assertIn('bbbbbbbbbb (truncated)', parsed['raw_text'])
+        self.assertIn('bbbbbbbbbb', parsed['raw_text'])
+        self.assertIn('[Truncated:', parsed['raw_text'])
 
     def test_truncate_msg_plain_string_short(self):
         """Test truncate_msg with a short plain string (no truncation)."""
@@ -122,9 +124,9 @@ class TestPrintTool(unittest.TestCase):
         result = print_tool.truncate_msg(msg)
 
         # Should be truncated and contain the truncation markers
-        self.assertIn('(truncated)', result)
-        self.assertIn('total_len=300', result)
-        self.assertIn('total_len=400', result)
+        self.assertIn('[Truncated:', result)
+        self.assertIn('300 chars total', result)
+        self.assertIn('400 chars total', result)
         # Should be valid JSON list
         import json
         parsed = json.loads(result)

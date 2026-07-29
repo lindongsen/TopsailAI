@@ -8,6 +8,7 @@ from topsailai.utils import thread_local_tool
 from topsailai.utils import env_tool
 
 g_flag_print_step = None
+TAIL_PREVIEW_LENGTH = 300
 
 def get_truncation_len() -> int|None:
     """Get the truncation length for debug printing from environment.
@@ -30,7 +31,7 @@ def _format_truncated_msg(msg, truncation_len:int|None=None) -> str:
     raw_msg = msg
     msg = str(msg)
     if msg and len(msg) > truncation_len:
-        return msg[:truncation_len] + f" (PRINT:truncated)\n\n---\n\n> (PRINT:truncated) ...\n> total_len={len(msg)}\n> tail_content\n>>>\n{msg[-300:]}\n<<<"
+        return msg[:truncation_len] + f"\n\n[Truncated: {len(msg)} chars total; showing last {TAIL_PREVIEW_LENGTH} below]\n\n{msg[-TAIL_PREVIEW_LENGTH:]}"
     return raw_msg
 
 def truncate_msg(msg:str|list|dict, key_name="step_name", value_name="raw_text") -> str:
