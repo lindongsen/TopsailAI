@@ -218,12 +218,12 @@ class ContentProgress(ContentSender):
       - "dots":  legacy dot-per-chunk behavior for backward compatibility
       - "stats": single-line status with chars/tokens/speed (default)
       - "bar":   compact progress bar with chars/tokens/speed
+      - "stats_7s": like stats, but refreshes the line only once every 7 seconds
 
     The display is refreshed in place with \\r to avoid flooding stdout.
     A final newline is emitted when the stream ends so later logs are not
     overwritten.
     """
-
     # Default refresh interval in seconds.
     DEFAULT_REFRESH_INTERVAL = 0.1
     # Approximate characters per token for token estimation.
@@ -232,36 +232,41 @@ class ContentProgress(ContentSender):
     BAR_WIDTH = 20
     # Idle gap after which the speed window is reset (seconds).
     SPEED_IDLE_RESET_SECONDS = 7.0
+    # Throttled stats mode refresh interval (seconds).
+    STATS_7S_REFRESH_INTERVAL = 7.0
 
     def __init__(self, mode=None, refresh_interval=None, refresh_interval_ms=None):
         """
         Initialize the progress sender.
 
         Args:
-            mode: Display mode ("dots", "stats", or "bar"). When None, the
-                value is read from the TOPSAILAI_STREAM_PROGRESS environment
-                variable and defaults to "stats".
+            mode: Display mode ("dots", "stats", "bar", or "stats_7s"). When
+                None, the value is read from the TOPSAILAI_STREAM_PROGRESS
+                environment variable and defaults to "stats".
             refresh_interval: Minimum time in seconds between screen refreshes.
-                Defaults to DEFAULT_REFRESH_INTERVAL.
+                Defaults to DEFAULT_REFRESH_INTERVAL. Ignored for stats_7s,
+                which always uses STATS_7S_REFRESH_INTERVAL.
             refresh_interval_ms: Minimum time in milliseconds between screen
                 refreshes. Takes precedence over refresh_interval when given.
         """
         if mode is None:
             mode = os.environ.get("TOPSAILAI_STREAM_PROGRESS", "stats").strip().lower()
-        if mode not in ("dots", "stats", "bar", ""):
+        if mode not in ("dots", "stats", "bar", "stats_7s", ""):
             mode = "stats"
         if mode == "":
             mode = "stats"
         self.mode = mode
 
-        if refresh_interval_ms is not None:
+        if self.mode == "stats_7s":
+            refresh_interval = self.STATS_7S_REFRESH_INTERVAL
+        elif refresh_interval_ms is not None:
             refresh_interval = refresh_interval_ms / 1000.0
         self.refresh_interval = refresh_interval or self.DEFAULT_REFRESH_INTERVAL
 
         self._start_time = None
         self._speed_start_time = None
         self._last_chunk_time = None
-        self._last_refresh_time = 0.0
+        self._last_refresh_time = None
         self._char_count = 0
         self._speed_char_count = 0
         self._token_count = 0
@@ -292,6 +297,8 @@ class ContentProgress(ContentSender):
     def _should_refresh(self):
         """Return True if enough time has passed since the last refresh."""
         now = time.monotonic()
+        if self._last_refresh_time is None:
+            return True
         return now - self._last_refresh_time >= self.refresh_interval
 
     def _render_dots(self):
@@ -353,14 +360,14 @@ class ContentProgress(ContentSender):
         now = time.monotonic()
         if self._start_time is None:
             self._start_time = now
+        if self._speed_start_time is None:
+            self._speed_start_time = now
 
         # Reset the speed calculation window after an idle gap.
         if self._last_chunk_time is not None and now - self._last_chunk_time > self.SPEED_IDLE_RESET_SECONDS:
             self._speed_start_time = now
             self._speed_char_count = 0
         self._last_chunk_time = now
-        if self._speed_start_time is None:
-            self._speed_start_time = now
 
         self._char_count += len(text)
         self._speed_char_count += len(text)

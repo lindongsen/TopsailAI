@@ -360,7 +360,62 @@ class TestContentProgress(unittest.TestCase):
             progress = ContentProgress()
             self.assertEqual(progress.mode, "bar")
 
+    def test_content_progress_stats_7s_mode_defaults_to_7s_interval(self):
+        """Test stats_7s mode forces a 7-second refresh interval."""
+        progress = ContentProgress(mode="stats_7s")
+        self.assertEqual(progress.mode, "stats_7s")
+        self.assertEqual(progress.refresh_interval, 7.0)
 
+    @patch("topsailai.workspace.print_tool.time.monotonic")
+    def test_content_progress_stats_7s_throttles_output(self, mock_monotonic):
+        """Test stats_7s renders only once per 7-second window."""
+        timestamps = [
+            0.0,   # first chunk -> render
+            0.1,   # suppressed
+            1.0,   # suppressed
+            6.9,   # suppressed
+            7.0,   # render
+            8.0,   # suppressed
+            14.0,  # render
+            20.9,  # suppressed
+            21.0,  # render
+        ]
+        # _should_refresh calls time.monotonic() once per send, but _render_stats
+        # also calls it for elapsed/speed timing. Provide extra values.
+        base = list(timestamps)
+        extra = [t + 0.001 for t in timestamps]
+        mock_monotonic.side_effect = [val for pair in zip(base, extra) for val in pair]
+
+        progress = ContentProgress(mode="stats_7s")
+        for _ in timestamps:
+            progress.send("x")
+
+        output = self.captured_output.getvalue()
+        self.assertEqual(output.count("Generating"), 4)
+
+    @patch("topsailai.workspace.print_tool.time.monotonic")
+    def test_content_progress_stats_7s_counts_between_refreshes(self, mock_monotonic):
+        """Test stats_7s accumulates chunks between refreshes."""
+        timestamps = [0.0, 0.5, 1.0, 7.0]
+        base = list(timestamps)
+        extra = [t + 0.001 for t in timestamps]
+        mock_monotonic.side_effect = [val for pair in zip(base, extra) for val in pair]
+
+        progress = ContentProgress(mode="stats_7s")
+        progress.send("a")
+        progress.send("b")
+        progress.send("c")
+        progress.send("d")
+
+        output = self.captured_output.getvalue()
+        # First render at t=0 shows 1 char; second at t=7 shows 4 chars.
+        self.assertEqual(output.count("Generating"), 2)
+        lines = [line for line in output.split("\r") if "Generating" in line]
+        self.assertIn("1 chars", lines[0])
+        self.assertIn("4 chars", lines[1])
+
+        progress.finish()
+        self.assertIn("\n", self.captured_output.getvalue())
 class TestCountWords(unittest.TestCase):
     """Test cases for _count_words helper."""
 

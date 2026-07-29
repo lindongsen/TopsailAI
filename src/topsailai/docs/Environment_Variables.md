@@ -95,6 +95,7 @@ Controls how LLM streaming output progress is displayed when `LLM_RESPONSE_STREA
 | `dots` | Prints one dot (`.`) for each received chunk. This is the legacy behavior and provides minimal visual feedback. |
 | `stats` | **Default.** Overwrites a single line (`\r`) with live statistics: generated characters, estimated tokens, speed (chars/s), and elapsed time. |
 | `bar` | Renders a simple ASCII progress bar alongside generation statistics. |
+| `stats_7s` | Like `stats`, but refreshes the line only once every 7 seconds. Chunks are still received and counted between updates. |
 
 If the variable is unset or empty, `stats` mode is used.
 
@@ -103,6 +104,12 @@ Example:
 ```bash
 export TOPSAILAI_STREAM_PROGRESS=stats
 python -m topsailai workspace agent-shell --prompt "hello"
+```
+
+To use the 7-second throttled stats mode:
+
+```bash
+export TOPSAILAI_STREAM_PROGRESS=stats_7s
 ```
 
 To restore the original dot-based output:

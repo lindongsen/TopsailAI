@@ -305,6 +305,7 @@ LLM_RESPONSE_STREAM=1
 #   dots - print one dot per chunk (legacy behavior)
 #   stats - single-line live stats: chars, estimated tokens, speed, elapsed time (default)
 #   bar - ASCII progress bar with stats
+#   stats_7s - like stats, but refreshes the line only once every 7 seconds
 # Leave empty or unset to use the default "stats".
 TOPSAILAI_STREAM_PROGRESS=stats
 
