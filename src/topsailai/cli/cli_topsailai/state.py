@@ -7,7 +7,6 @@ place to make dependencies and lifecycle obvious.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 if TYPE_CHECKING:
@@ -45,7 +44,3 @@ current_doc_filename: Optional[str] = None
 # Project scope state.
 # Default limit for the recent project session list.
 project_scope_limit: Optional[int] = 30
-# Optional start of the date range used to filter recent project sessions.
-project_scope_since: Optional[datetime] = None
-# Optional end of the date range used to filter recent project sessions.
-project_scope_until: Optional[datetime] = None

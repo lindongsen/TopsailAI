@@ -467,7 +467,7 @@ When the CLI is showing the project scope (`[project]>`), the following commands
 | `/refresh` | Reload the project session list. |
 | `/agent <number|folder>` | Launch an agent in the selected project workspace. |
 | `/resume <number>` | Resume the selected running session. |
-| `r [limit]` or `recent [limit]` | Refresh today's project session list. If `[limit]` is provided, update the maximum number of records shown (default 30). |
+| `r [limit]` or `recent [limit]` | Refresh the recent project session list. If `[limit]` is provided, update the maximum number of records shown (default 30). |
 | `p` or `projects` | Switch to the managed project list. |
 | `p add [path] [name]` | Add a project to the managed project list. |
 | `p del <number>` | Delete the managed project at the displayed row number. |

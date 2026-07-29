@@ -216,7 +216,7 @@ def print_help(
         },
         {
             "cmd": "r [limit]  or  recent [limit]",
-            "desc": "Refresh today's project session list. If `[limit]` is provided, update the maximum number of records shown (default 30).",
+            "desc": "Refresh the recent project session list. If `[limit]` is provided, update the maximum number of records shown (default 30).",
             "example": "Example: r  or  r 30",
             "scopes": ["project"],
         },
@@ -287,12 +287,11 @@ def print_help(
         },
         {
             "cmd": "cd project",
-            "desc": "Enter project scope to show today's records (default limit 30).",
+            "desc": "Enter project scope to show recent records (default limit 30).",
             "example": "",
             "scopes": ["workspace"],
         },
         {
-            "cmd": "cd doc  or  cd docs  or  cd <folder>",
             "desc": "Enter doc scope to list documentation files under docs/ (grouped by single-level subfolders such as usage/ and memo/). The folder name can also be used as a shortcut (e.g., cd usage or cd memo).",
             "example": "",
             "scopes": ["workspace"],

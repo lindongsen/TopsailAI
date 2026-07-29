@@ -14,7 +14,6 @@ import signal
 import sys
 import shutil
 import socket
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -90,13 +89,6 @@ def _read_input_with_prompt(prompt: str) -> str:
     sys.stdout.write(prompt)
     sys.stdout.flush()
     return input("").strip()
-
-
-def _set_project_scope_today_range() -> None:
-    """Set state.project_scope_since/until to today's local date range."""
-    now = datetime.now()
-    state.project_scope_since = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    state.project_scope_until = now
 
 
 def _try_handle_project_subcommand(
@@ -1071,12 +1063,6 @@ def main(argv: Optional[List[str]] = None) -> None:
     def _refresh_project() -> None:
         nonlocal project_entries
         project_entries = build_project_list(
-            since=state.project_scope_since.isoformat()
-            if state.project_scope_since is not None
-            else None,
-            until=state.project_scope_until.isoformat()
-            if state.project_scope_until is not None
-            else None,
             limit=state.project_scope_limit,
         )
         if project_entries:
@@ -1144,7 +1130,6 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     if state.current_scope == "project":
         _project_scope_mode = "sessions"
-        _set_project_scope_today_range()
         _refresh_project()
     elif state.current_scope == "doc":
         _refresh_doc()
@@ -1173,7 +1158,6 @@ def main(argv: Optional[List[str]] = None) -> None:
                 if state.current_scope != previous_scope:
                     if state.current_scope == "project":
                         _project_scope_mode = "sessions"
-                        _set_project_scope_today_range()
                         _refresh_project()
                     elif state.current_scope == "doc":
                         _refresh_doc()

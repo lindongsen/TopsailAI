@@ -133,21 +133,6 @@ class TestBuildProjectList(unittest.TestCase):
         self.assertNotIn("--limit", call_args)
 
     @patch("cli_topsailai.project_scope.subprocess.run")
-    def test_build_project_list_passes_since_until(self, mock_run):
-        """build_project_list forwards --since and --until to ai_list_sessions.py."""
-        mock_run.return_value = MockCompletedProcess(stdout="[]")
-        project_scope.build_project_list(
-            limit=10,
-            since="2026-07-28T00:00:00",
-            until="2026-07-28T23:59:59",
-        )
-        call_args = mock_run.call_args[0][0]
-        self.assertIn("--since", call_args)
-        self.assertIn("2026-07-28T00:00:00", call_args)
-        self.assertIn("--until", call_args)
-        self.assertIn("2026-07-28T23:59:59", call_args)
-
-    @patch("cli_topsailai.project_scope.subprocess.run")
     def test_build_project_list_empty_output(self, mock_run):
         mock_run.return_value = MockCompletedProcess(stdout="")
         entries = project_scope.build_project_list(limit=10)

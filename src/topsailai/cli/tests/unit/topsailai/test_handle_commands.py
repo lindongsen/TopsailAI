@@ -457,8 +457,6 @@ class TestProjectScopeCommands(unittest.TestCase):
         cli_state.yaml_commands = []
         cli_state.history_manager = None
         cli_state.project_scope_limit = 30
-        cli_state.project_scope_since = None
-        cli_state.project_scope_until = None
 
     def tearDown(self):
         cli_state.current_scope = "workspace"
@@ -466,8 +464,6 @@ class TestProjectScopeCommands(unittest.TestCase):
         cli_state.yaml_commands = []
         cli_state.history_manager = None
         cli_state.project_scope_limit = 30
-        cli_state.project_scope_since = None
-        cli_state.project_scope_until = None
         cli_state._child_processes.clear()
 
     @patch("cli_topsailai.core.input")
