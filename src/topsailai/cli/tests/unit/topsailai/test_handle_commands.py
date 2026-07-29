@@ -647,6 +647,26 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         self.assertEqual(value, "/path/to/project")
 
     @patch("cli_topsailai.core.input")
+    def test_resume_command_in_workspace(self, mock_input):
+        """/resume argument is parsed in workspace scope."""
+        mock_input.return_value = "/resume 1"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "resume")
+        self.assertEqual(value, "1")
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_resume_missing_arg_in_workspace(self, mock_input, mock_print):
+        """/resume with no argument prints usage and loops back."""
+        cli_state.current_scope = "workspace"
+        mock_input.side_effect = ["/resume", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("Usage: /resume" in str(call) for call in mock_print.call_args_list)
+        )
+
+    @patch("cli_topsailai.core.input")
     def test_agent_with_args_in_workspace_uses_explicit_branch_with_real_yaml(self, mock_input):
         """'agent <folder>' with real YAML loaded must use explicit branch, not YAML."""
         from cli_topsailai.yaml_commands import load_yaml_commands
@@ -810,7 +830,7 @@ class TestResumeCommand(unittest.TestCase):
     """Tests for resume command forwarding agent_mode."""
 
     def setUp(self):
-        cli_state.current_scope = "project"
+        cli_state.current_scope = "workspace"
         cli_state.current_session_id = None
         cli_state.yaml_commands = []
         cli_state.history_manager = None
@@ -822,6 +842,236 @@ class TestResumeCommand(unittest.TestCase):
         cli_state.history_manager = None
         cli_state._child_processes.clear()
 
+    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
+    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    def test_resume_forwards_agent_mode_in_workspace(
+        self,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        mock_resume: MagicMock,
+        mock_lookup: MagicMock,
+    ) -> None:
+        from cli_topsailai.core import main
+
+        log_file = {
+            "filename": "s1.1234.session.stdout",
+            "path": "/task/s1.1234.session.stdout",
+            "session_id": "s1",
+            "project_workspace": "/work/a",
+            "status": "Idle",
+            "ctime": 1710000000,
+            "mtime": 1710000000,
+        }
+        mock_discover.return_value = [log_file]
+        mock_lookup.return_value = {}
+        mock_prompt.side_effect = [("resume", "1"), ("quit", None)]
+
+        main(["--agent-mode", "tmux"])
+
+        mock_resume.assert_called_once()
+        positional, kwargs = mock_resume.call_args
+        self.assertEqual(kwargs.get("agent_mode"), "tmux")
+        self.assertEqual(positional[0], "1")
+        synthetic_entries = positional[1]
+        self.assertEqual(len(synthetic_entries), 1)
+        self.assertEqual(synthetic_entries[0]["session_id"], "s1")
+        self.assertEqual(synthetic_entries[0]["project_workspace"], "/work/a")
+        self.assertEqual(synthetic_entries[0]["status"], "Idle")
+
+    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
+    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    def test_resume_invalid_number_in_workspace(
+        self,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        mock_resume: MagicMock,
+        mock_lookup: MagicMock,
+    ) -> None:
+        """/resume with an out-of-range number in workspace prints an error."""
+        from cli_topsailai.core import main
+
+        log_file = {
+            "filename": "s1.1234.session.stdout",
+            "path": "/task/s1.1234.session.stdout",
+            "session_id": "s1",
+            "project_workspace": "/work/a",
+            "status": "Idle",
+            "ctime": 1710000000,
+            "mtime": 1710000000,
+        }
+        mock_discover.return_value = [log_file]
+        mock_prompt.side_effect = [("resume", "5"), ("quit", None)]
+
+        main([])
+
+        mock_resume.assert_not_called()
+        mock_lookup.assert_not_called()
+
+    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
+    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    def test_resume_temp_session_in_workspace_rejected(
+        self,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        mock_resume: MagicMock,
+        mock_lookup: MagicMock,
+    ) -> None:
+        """/resume for a temporary session in workspace is rejected."""
+        from cli_topsailai.core import main
+
+        log_file = {
+            "filename": "topsailai.1234.session.stdout",
+            "path": "/task/topsailai.1234.session.stdout",
+            "session_id": "(temp)",
+            "project_workspace": "/work/a",
+            "status": "Idle",
+            "ctime": 1710000000,
+            "mtime": 1710000000,
+        }
+        mock_discover.return_value = [log_file]
+        mock_prompt.side_effect = [("resume", "1"), ("quit", None)]
+
+        main([])
+
+        mock_resume.assert_not_called()
+        mock_lookup.assert_not_called()
+
+    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
+    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    def test_resume_missing_workspace_uses_history_lookup(
+        self,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        mock_resume: MagicMock,
+        mock_lookup: MagicMock,
+    ) -> None:
+        """/resume falls back to project history when the log entry lacks project_workspace."""
+        from cli_topsailai.core import main
+
+        log_file = {
+            "filename": "s1.1234.session.stdout",
+            "path": "/task/s1.1234.session.stdout",
+            "session_id": "s1",
+            "status": "Idle",
+            "ctime": 1710000000,
+            "mtime": 1710000000,
+        }
+        mock_discover.return_value = [log_file]
+        mock_lookup.return_value = {"s1": "/work/from-history"}
+        mock_prompt.side_effect = [("resume", "1"), ("quit", None)]
+
+        main([])
+
+        mock_lookup.assert_called_once()
+        mock_resume.assert_called_once()
+        positional, _kwargs = mock_resume.call_args
+        synthetic_entries = positional[1]
+        self.assertEqual(synthetic_entries[0]["project_workspace"], "/work/from-history")
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
+    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    def test_resume_missing_workspace_no_history_prints_error(
+        self,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        mock_resume: MagicMock,
+        mock_lookup: MagicMock,
+        mock_print: MagicMock,
+    ) -> None:
+        """/resume prints an error when no project workspace can be resolved."""
+        from cli_topsailai.core import main
+
+        log_file = {
+            "filename": "s1.1234.session.stdout",
+            "path": "/task/s1.1234.session.stdout",
+            "session_id": "s1",
+            "status": "Idle",
+            "ctime": 1710000000,
+            "mtime": 1710000000,
+        }
+        mock_discover.return_value = [log_file]
+        mock_lookup.return_value = {}
+        mock_prompt.side_effect = [("resume", "1"), ("quit", None)]
+
+        main([])
+
+        mock_lookup.assert_called_once()
+        mock_resume.assert_not_called()
+        self.assertTrue(
+            any("Selected session has no project workspace" in str(call) for call in mock_print.call_args_list)
+        )
+
     @patch("cli_topsailai.project_scope.build_project_list")
     @patch("cli_topsailai.project_scope.resume_session")
     @patch("cli_topsailai.core.prompt_selection")
@@ -832,7 +1082,7 @@ class TestResumeCommand(unittest.TestCase):
     @patch("cli_topsailai.history.HistoryManager")
     @patch("cli_topsailai.history.load_readline_history")
     @patch("cli_topsailai.completer.setup_tab_completion")
-    def test_resume_forwards_agent_mode(
+    def test_resume_forwards_agent_mode_in_project(
         self,
         _mock_setup_tab: MagicMock,
         _mock_load_history: MagicMock,
@@ -846,6 +1096,7 @@ class TestResumeCommand(unittest.TestCase):
         mock_build_project_list: MagicMock,
     ) -> None:
         from cli_topsailai.core import main
+        cli_state.current_scope = "project"
 
         log_file = {
             "filename": "s1.1234.session.stdout",
@@ -870,6 +1121,8 @@ class TestResumeCommand(unittest.TestCase):
         mock_resume.assert_called_once()
         _, kwargs = mock_resume.call_args
         self.assertEqual(kwargs.get("agent_mode"), "tmux")
+
+
 class TestWorkspaceFlag(unittest.TestCase):
     """Tests for -w / --workspace early-exit flag."""
 

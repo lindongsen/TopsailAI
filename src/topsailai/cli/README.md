@@ -379,6 +379,7 @@ When the CLI is showing the workspace task list (`[workspace]>`), the following 
 | `/refresh` | Reload the workspace task list. |
 | `/clean` | Remove expired files from the task directory. |
 | `/send <number> [message]` | Send a message to the running session associated with the selected entry. |
+| `/resume <number>` | Resume an idle session in its project workspace. |
 | `cd doc` | Enter doc scope and list usage documentation files under `docs/usage/`. |
 | `scopes` | Display detailed introductions and available actions for workspace, runtime, project, session, and doc scopes. |
 | `/help` | Show available commands. |

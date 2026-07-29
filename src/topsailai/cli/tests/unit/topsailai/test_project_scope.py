@@ -16,10 +16,9 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import cli_topsailai.state as cli_state
-from cli_topsailai import project_scope
+from cli_topsailai import core, project_scope
 from cli_topsailai.colors import Colors
 from cli_topsailai.core import prompt_selection
-
 
 class MockCompletedProcess:
     """Minimal mock for subprocess.CompletedProcess."""
@@ -1162,6 +1161,73 @@ class TestResumeSession(unittest.TestCase):
 
 
 
+
+
+class TestWorkspaceResumeDelegation(unittest.TestCase):
+    """Tests for workspace-scope /resume delegating to resume_session."""
+
+    @patch("cli_topsailai.project_scope.resume_session")
+    def test_resume_from_log_entry_with_workspace(self, mock_resume):
+        log_files = [
+            {
+                "no": 1,
+                "session_id": "s-idle",
+                "status": "Idle",
+                "project_workspace": "/work/project-a",
+            }
+        ]
+        core._resume_from_workspace_log("1", log_files, agent_mode="dtach")
+        mock_resume.assert_called_once()
+        args = mock_resume.call_args
+        self.assertEqual(args[0][0], "1")
+        entry = args[0][1][0]
+        self.assertEqual(entry["session_id"], "s-idle")
+        self.assertEqual(entry["project_workspace"], "/work/project-a")
+        self.assertEqual(entry["status"], "Idle")
+        self.assertEqual(args[1]["agent_mode"], "dtach")
+
+    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
+    @patch("cli_topsailai.project_scope.resume_session")
+    def test_resume_from_log_entry_uses_history_lookup(
+        self, mock_resume, mock_lookup
+    ):
+        mock_lookup.return_value = {"s-idle": "/work/from-history"}
+        log_files = [
+            {
+                "no": 1,
+                "session_id": "s-idle",
+                "status": "Idle",
+                "project_workspace": "",
+            }
+        ]
+        core._resume_from_workspace_log("1", log_files, agent_mode="tmux")
+        mock_lookup.assert_called_once()
+        mock_resume.assert_called_once()
+        entry = mock_resume.call_args[0][1][0]
+        self.assertEqual(entry["project_workspace"], "/work/from-history")
+
+    @patch("cli_topsailai.project_scope.load_project_workspace_lookup")
+    @patch("cli_topsailai.project_scope.resume_session")
+    @patch("builtins.print")
+    def test_resume_from_log_entry_missing_workspace_prints_error(
+        self, mock_print, mock_resume, mock_lookup
+    ):
+        mock_lookup.return_value = {}
+        log_files = [
+            {
+                "no": 1,
+                "session_id": "s-idle",
+                "status": "Idle",
+                "project_workspace": "",
+            }
+        ]
+        result = core._resume_from_workspace_log("1", log_files, agent_mode="raw")
+        self.assertFalse(result)
+        mock_lookup.assert_called_once()
+        mock_resume.assert_not_called()
+        self.assertTrue(
+            any("Selected session has no project workspace" in str(call) for call in mock_print.call_args_list)
+        )
 class TestManagedProjectWrappers(unittest.TestCase):
     """Tests for managed-project helpers in project_scope."""
 

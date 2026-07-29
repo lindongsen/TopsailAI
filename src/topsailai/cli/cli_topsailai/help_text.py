@@ -185,6 +185,12 @@ def print_help(
             "scopes": ["session", "runtime"],
         },
         {
+            "cmd": "/resume <number>",
+            "desc": "Resume an idle session in its project workspace. In workspace scope the number refers to the task list; in project scope it refers to the project session list. The selected session must not be running. You will be prompted to choose an agent driver (default: topsailai_agent_plan_tasks). Use `--agent-mode raw|dtach|tmux` to control how the resumed agent process is launched (default: dtach).",
+            "example": "Example: /resume 3  or  topsailai --agent-mode tmux",
+            "scopes": ["workspace", "project"],
+        },
+        {
             "cmd": "/git <subcommand> [args...]",
             "desc": "Run an arbitrary git command in the project workspace of the current session.",
             "example": "Example: /git status  or  /git diff --cached  or  /git log --oneline -10",
@@ -201,12 +207,6 @@ def print_help(
             "desc": "Launch an agent. In workspace scope, `agent` or `/agent` (no arguments) runs the YAML-configured agent command. `agent <number|folder>` or `/agent <number|folder>` changes to the selected project workspace folder and launches topsailai_launch_agent; the number refers to the log file list in workspace scope, the project session list in project scope, or the managed project list when it is active. An absolute/relative folder path can also be used. Use `--agent-mode raw|dtach|tmux` to control how the agent process is launched (default: dtach).",
             "example": "Example: agent  or  /agent  or  /agent 3  or  /agent /path/to/project  or  topsailai --agent-mode tmux",
             "scopes": ["workspace", "project"],
-        },
-        {
-            "cmd": "/resume <number>",
-            "desc": "Resume an idle session in its project workspace. The selected session must not be running. You will be prompted to choose an agent driver (default: topsailai_agent_plan_tasks). Use `--agent-mode raw|dtach|tmux` to control how the resumed agent process is launched (default: dtach).",
-            "example": "Example: /resume 3  or  topsailai --agent-mode tmux",
-            "scopes": ["project"],
         },
         {
             "cmd": "p  or  projects",

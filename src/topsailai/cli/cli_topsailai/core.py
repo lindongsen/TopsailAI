@@ -66,6 +66,51 @@ def _make_readline_safe_prompt(prompt: str) -> str:
     )
 
 
+
+def _resume_from_workspace_log(value, log_files, agent_mode):
+    """Resume an idle session selected from the workspace task list.
+
+    Validates the 1-based row number, resolves the session ID and project
+    workspace, and delegates to ``resume_session`` with a synthetic entry.
+    Returns True if resume was attempted, False otherwise.
+    """
+    from cli_topsailai.project_scope import (
+        load_project_workspace_lookup,
+        resume_session,
+    )
+
+    if not value.isdigit():
+        print(f"\n{Colors.RED}[ERROR] Usage: /resume <number>{Colors.RESET}")
+        return False
+    idx = int(value) - 1
+    if not (0 <= idx < len(log_files)):
+        print(
+            f"\n{Colors.RED}[ERROR] Invalid number. Please enter 1-{len(log_files)}.{Colors.RESET}"
+        )
+        return False
+    selected_file = log_files[idx]
+    session_id = selected_file.get("session_id", "")
+    if not session_id or session_id == "(temp)":
+        print(
+            f"\n{Colors.RED}[ERROR] Selected entry has no resumable session ID.{Colors.RESET}"
+        )
+        return False
+    project_workspace = selected_file.get("project_workspace", "")
+    if not project_workspace:
+        project_workspace = load_project_workspace_lookup().get(session_id, "")
+    if not project_workspace:
+        print(
+            f"\n{Colors.RED}[ERROR] Selected session has no project workspace.{Colors.RESET}"
+        )
+        return False
+    synthetic_entry = {
+        "session_id": session_id,
+        "status": selected_file.get("status", "Idle"),
+        "project_workspace": project_workspace,
+    }
+    resume_session("1", [synthetic_entry], agent_mode=agent_mode)
+    return True
+
 def _read_input_with_prompt(prompt: str) -> str:
     """Read a line, using readline when possible so the prompt is protected.
 
@@ -991,6 +1036,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         build_managed_project_list,
         build_project_list,
         launch_agent_in_folder,
+        load_project_workspace_lookup,
         print_managed_project_table,
         print_project_table,
         resolve_agent_folder,
@@ -1239,12 +1285,14 @@ def main(argv: Optional[List[str]] = None) -> None:
                 continue
 
             if action == "resume":
-                if state.current_scope != "project":
+                if state.current_scope == "project":
+                    resume_session(value, project_entries, agent_mode=args.agent_mode)
+                elif state.current_scope == "workspace":
+                    _resume_from_workspace_log(value, log_files, agent_mode=args.agent_mode)
+                else:
                     print(
-                        f"\n{Colors.RED}[ERROR] /resume is only available in project scope.{Colors.RESET}"
+                        f"\n{Colors.RED}[ERROR] /resume is only available in workspace or project scope.{Colors.RESET}"
                     )
-                    continue
-                resume_session(value, project_entries, agent_mode=args.agent_mode)
                 continue
 
             if action == "session":
