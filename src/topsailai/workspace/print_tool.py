@@ -230,6 +230,8 @@ class ContentProgress(ContentSender):
     CHARS_PER_TOKEN = 4.0
     # Progress bar width in characters.
     BAR_WIDTH = 20
+    # Idle gap after which the speed window is reset (seconds).
+    SPEED_IDLE_RESET_SECONDS = 7.0
 
     def __init__(self, mode=None, refresh_interval=None, refresh_interval_ms=None):
         """
@@ -257,8 +259,11 @@ class ContentProgress(ContentSender):
         self.refresh_interval = refresh_interval or self.DEFAULT_REFRESH_INTERVAL
 
         self._start_time = None
+        self._speed_start_time = None
+        self._last_chunk_time = None
         self._last_refresh_time = 0.0
         self._char_count = 0
+        self._speed_char_count = 0
         self._token_count = 0
         self._finished = False
 
@@ -294,9 +299,9 @@ class ContentProgress(ContentSender):
         sys.stdout.write(".")
         sys.stdout.flush()
 
-    def _render_stats(self, elapsed):
+    def _render_stats(self, elapsed, speed_elapsed):
         """Render the stats mode status line."""
-        speed = self._char_count / elapsed if elapsed > 0 else 0.0
+        speed = self._speed_char_count / speed_elapsed if speed_elapsed > 0 else 0.0
         line = (
             f"\rGenerating... "
             f"{self._format_number(self._char_count)} chars, "
@@ -308,9 +313,9 @@ class ContentProgress(ContentSender):
         sys.stdout.write(line.ljust(80)[:80])
         sys.stdout.flush()
 
-    def _render_bar(self, elapsed):
+    def _render_bar(self, elapsed, speed_elapsed):
         """Render the bar mode status line."""
-        speed = self._char_count / elapsed if elapsed > 0 else 0.0
+        speed = self._speed_char_count / speed_elapsed if speed_elapsed > 0 else 0.0
         # Use a rolling pseudo-progress based on chars generated so far.
         # The bar fills up to a soft target and then wraps visually.
         target = max(1000, self._token_count * self.CHARS_PER_TOKEN)
@@ -349,16 +354,26 @@ class ContentProgress(ContentSender):
         if self._start_time is None:
             self._start_time = now
 
+        # Reset the speed calculation window after an idle gap.
+        if self._last_chunk_time is not None and now - self._last_chunk_time > self.SPEED_IDLE_RESET_SECONDS:
+            self._speed_start_time = now
+            self._speed_char_count = 0
+        self._last_chunk_time = now
+        if self._speed_start_time is None:
+            self._speed_start_time = now
+
         self._char_count += len(text)
+        self._speed_char_count += len(text)
         self._token_count += self._estimate_tokens(text)
 
         if self._should_refresh():
             self._last_refresh_time = now
             elapsed = now - self._start_time
+            speed_elapsed = now - self._speed_start_time
             if self.mode == "bar":
-                self._render_bar(elapsed)
+                self._render_bar(elapsed, speed_elapsed)
             else:
-                self._render_stats(elapsed)
+                self._render_stats(elapsed, speed_elapsed)
 
         return True
 
@@ -375,6 +390,7 @@ class ContentProgress(ContentSender):
         sys.stdout.write("\n")
         sys.stdout.flush()
         return True
+
 
 def _count_words(content):
     """
