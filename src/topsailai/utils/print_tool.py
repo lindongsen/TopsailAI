@@ -30,7 +30,7 @@ def _format_truncated_msg(msg, truncation_len:int|None=None) -> str:
     raw_msg = msg
     msg = str(msg)
     if msg and len(msg) > truncation_len:
-        return msg[:truncation_len] + f" (PRINT:truncated)\n\n---\n\n> (PRINT:truncated) ... total_len={len(msg)} tail_content=[{msg[-30:]}]"
+        return msg[:truncation_len] + f" (PRINT:truncated)\n\n---\n\n> (PRINT:truncated) ...\n> total_len={len(msg)}\n> tail_content\n>>>\n{msg[-300:]}\n<<<"
     return raw_msg
 
 def truncate_msg(msg:str|list|dict, key_name="step_name", value_name="raw_text") -> str:
