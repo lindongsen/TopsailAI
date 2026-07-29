@@ -137,6 +137,7 @@ def get_agent2llm_message_source():
 
 def unset_agent2llm_message_source():
     """Remove the runtime message source from thread-local storage."""
+    logger.info("unset Agent2LLM message source: %s", thread_local_tool.KEY_AGENT2LLM_MESSAGE_SOURCE)
     thread_local_tool.unset_thread_var(
         thread_local_tool.KEY_AGENT2LLM_MESSAGE_SOURCE
     )
