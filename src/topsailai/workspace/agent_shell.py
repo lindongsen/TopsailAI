@@ -17,6 +17,10 @@ from topsailai.ai_base.agent_types.init import (
 )
 from topsailai.ai_base.agent_base import AgentRun
 from topsailai.workspace.project_history import record_project_history
+from topsailai.workspace.session_meta import (
+    create_session_meta,
+    cleanup_session_meta_files,
+)
 from topsailai.context import ctx_manager
 from topsailai.workspace.input_tool import (
     get_message,
@@ -216,6 +220,9 @@ def _get_agent_chat_impl(
     ##########################################################################################
     # record project workspace used for this startup
     record_project_history(session_id)
+    # Session metadata (best-effort, failures are logged inside the helpers)
+    create_session_meta(session_id=session_id, ai_agent=ai_agent)
+    cleanup_session_meta_files()
     # Hook Instruction
     ##########################################################################################
     hook_instruction.load_instructions(ctx_rt_instruction.instructions)

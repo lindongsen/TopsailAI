@@ -389,6 +389,13 @@ These variables are for runtime use only and should not be set manually.
 | `TOPSAILAI_LLM_RESPONSE_EVENTS_INCLUDE_RAW` | `1` | Include the raw provider response object (`response.to_dict()`) in the event payload. `1` = include, `0` = omit. The raw response is never leaked when serialization fails. |
 | `TOPSAILAI_LLM_RESPONSE_EVENTS_STREAM_CHUNK_SAMPLE` | `0` | Number of stream chunks to sample into the event payload. `0` disables chunk sampling. Positive values keep the first N and last N chunks. Sampling only occurs when response event recording is enabled. |
 
+## Session Metadata
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_SESSION_META_RETENTION_DAYS` | `7` | Number of days to retain session metadata files (`.meta`) in the task directory. Files older than this are removed during cleanup. Set to `0` to disable age-based cleanup. |
+| `TOPSAILAI_SESSION_META_MAX_COUNT` | `0` | Maximum number of session metadata files to keep in the task directory. When the limit is exceeded, oldest files are deleted first. `0` disables count-based cleanup. |
+
 ## Event Module Configuration
 
 These variables control the independent event recording subsystem.
@@ -420,3 +427,4 @@ The project history file (`.project_history.jsonl`) records each agent/LLM start
 | `pid` | integer | Process ID of the agent/LLM process that wrote the record. |
 
 Older records that were written before the `pid` field was introduced may omit it; loaders should treat the field as optional.
+

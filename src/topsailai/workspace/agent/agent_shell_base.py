@@ -26,6 +26,7 @@ from topsailai.ai_base.constants import (
 from topsailai.ai_base.agent_types.init import (
     get_agent_step_call,
 )
+from topsailai.workspace.session_meta import update_session_meta_status
 from topsailai.ai_base.agent_types import (
     exception as agent_exception,
 )
@@ -99,7 +100,6 @@ LAZY_EXECUTION_WARNING = (
 )
 
 class AgentChat(AgentChatBase):
-
     @decorator_tee_output_by_session(need_delete_log_files=True)
     def run(self, *args, **kwargs):
         """Run the agent chat session.
@@ -122,7 +122,23 @@ class AgentChat(AgentChatBase):
         Returns:
             str: The final answer from the AI agent.
         """
-        return self._run(*args, **kwargs)
+        completed = False
+        try:
+            result = self._run(*args, **kwargs)
+            completed = True
+            return result
+        except Exception:
+            update_session_meta_status(
+                "error",
+                getattr(self.ctx_runtime_data, "session_id", None),
+            )
+            raise
+        finally:
+            if completed:
+                update_session_meta_status(
+                    "completed",
+                    getattr(self.ctx_runtime_data, "session_id", None),
+                )
 
     def _run(
             self,

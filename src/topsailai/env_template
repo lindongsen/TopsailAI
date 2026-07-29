@@ -789,3 +789,18 @@ TOPSAILAI_EVENTS_FILE_DELETE_ON_EXIT=0
 # durability. Set to 0 to reduce I/O overhead at the cost of potential data
 # loss on crash.
 TOPSAILAI_EVENTS_FILE_FSYNC=1
+
+
+# =============================================================================
+# Session Metadata
+# =============================================================================
+
+# Number of days to retain session metadata files (.meta) in the task directory.
+# Files older than this are removed during cleanup. Set to 0 to disable
+# age-based cleanup.
+TOPSAILAI_SESSION_META_RETENTION_DAYS=7
+
+# Maximum number of session metadata files to keep in the task directory. When
+# the limit is exceeded, oldest files are deleted first. Set to 0 to disable
+# count-based cleanup.
+TOPSAILAI_SESSION_META_MAX_COUNT=0
