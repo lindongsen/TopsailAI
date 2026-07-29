@@ -58,6 +58,23 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         messages: List of message dictionaries with 'role' and 'content' keys
     """
 
+    @property
+    def session_data(self):
+        """
+        Get the session record for the current session_id.
+
+        Returns:
+            SessionData | None: The session data object returned by the session
+            manager, or None if no session_id is set or the session is not found.
+        """
+        if not self.session_id:
+            return None
+        try:
+            return ctx_manager.get_session_manager().get_session(self.session_id)
+        except Exception as e:
+            logger.debug(f"session_data: failed to read session data: {e}")
+            return None
+
     ###############################################################
     # User chats to Agent
     ###############################################################

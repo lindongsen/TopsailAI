@@ -350,10 +350,18 @@ class AgentChat(AgentChatBase):
                     cache_hit_rate = f"{total_cached_tokens / total_tokens * 100:.3f}%"
                 else:
                     cache_hit_rate = "N/A"
+
+                session_id = self.ctx_runtime_data.session_id or ""
+                session_name = ""
+                session_data = self.ctx_runtime_data.session_data
+                if session_data is not None:
+                    session_name = session_data.session_name or ""
+
                 print()
                 print(SPLIT_LINE)
                 print(f"[{self.agent_name}] have scheduled tasks [{curr_count}] times")
-                print(f"session             : {self.ctx_runtime_data.session_id}")
+                print(f"session_id          : {session_id}")
+                print(f"session_name        : {session_name}")
                 print(f"start_time          : {time_tool.parse_time_seconds(start_time)}")
                 print(f"end_time(now)       : {time_tool.parse_time_seconds(end_time)}")
                 print(f"elapsed_time        : {end_time-start_time}")
