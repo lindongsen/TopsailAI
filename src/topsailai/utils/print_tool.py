@@ -31,7 +31,7 @@ def _format_truncated_msg(msg, truncation_len:int|None=None) -> str:
     raw_msg = msg
     msg = str(msg)
     if msg and len(msg) > truncation_len:
-        return msg[:truncation_len] + f"\n\n[Truncated: {len(msg)} chars total; showing last {TAIL_PREVIEW_LENGTH} below]\n\n{msg[-TAIL_PREVIEW_LENGTH:]}"
+        return msg[:truncation_len] + f"\n\n[Display truncated: {len(msg)} chars total; showing last {TAIL_PREVIEW_LENGTH} below]\n\n{msg[-TAIL_PREVIEW_LENGTH:]}"
     return raw_msg
 
 def truncate_msg(msg:str|list|dict, key_name="step_name", value_name="raw_text") -> str:
