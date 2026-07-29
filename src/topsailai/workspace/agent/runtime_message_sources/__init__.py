@@ -6,10 +6,14 @@ sources can be added here and registered in ``REGISTRY`` without modifying the
 ``ai_base`` injection logic.
 """
 
+import logging
+
 from topsailai.ai_base.agent2llm_message_source import Agent2LLMMessageSource
 from topsailai.workspace.agent.runtime_message_sources.file import (
     FileAgent2LLMMessageSource,
 )
+
+logger = logging.getLogger(__name__)
 
 REGISTRY = {
     "file": FileAgent2LLMMessageSource,
@@ -29,4 +33,5 @@ def create_source(source_type: str, config: dict) -> Agent2LLMMessageSource | No
     cls = REGISTRY.get(source_type)
     if cls is None:
         return None
+    logger.info("create Agent2LLM message source [%s] with config: %s", source_type, config)
     return cls(**config)

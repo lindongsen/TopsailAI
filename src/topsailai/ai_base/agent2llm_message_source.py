@@ -122,6 +122,7 @@ def set_agent2llm_message_source(source):
     Args:
         source: An ``Agent2LLMMessageSource`` instance, or ``None`` to clear.
     """
+    logger.info("set Agent2LLM message source: %s", source)
     thread_local_tool.set_thread_var(
         thread_local_tool.KEY_AGENT2LLM_MESSAGE_SOURCE, source
     )

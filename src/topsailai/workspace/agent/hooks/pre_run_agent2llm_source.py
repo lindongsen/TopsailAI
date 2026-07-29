@@ -44,6 +44,7 @@ def pre_run_set_agent2llm_message_source(self):
     if not file_path:
         file_path = get_default_inject_message_file_path()
 
+    logger.info("Agent2LLM inject message file_path: %s", file_path)
     source = create_source(source_type, {"file_path": file_path})
     if source is None:
         logger.warning("unknown Agent2LLM inject message source type [%s]", source_type)
