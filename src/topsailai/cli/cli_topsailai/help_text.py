@@ -292,6 +292,7 @@ def print_help(
             "scopes": ["workspace"],
         },
         {
+            "cmd": "cd doc  or  cd docs  or  cd <folder>",
             "desc": "Enter doc scope to list documentation files under docs/ (grouped by single-level subfolders such as usage/ and memo/). The folder name can also be used as a shortcut (e.g., cd usage or cd memo).",
             "example": "",
             "scopes": ["workspace"],
