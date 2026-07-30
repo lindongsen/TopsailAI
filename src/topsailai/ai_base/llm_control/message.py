@@ -442,6 +442,7 @@ def format_response(response, rsp_obj=None, messages=None):
             raise JsonError("null of response")
 
     max_count = 3
+    topsailai_count = 0
     for count in range(max_count):
         try:
             if response.startswith(format_tool.TOPSAILAI_FORMAT_PREFIX) \
@@ -449,9 +450,10 @@ def format_response(response, rsp_obj=None, messages=None):
                 or f"{format_tool.TOPSAILAI_STEP_ACTION}\n" in response \
                 or f"{format_tool.TOPSAILAI_STEP_THINK}\n" in response \
                 :
-                    if count:
+                    if topsailai_count:
                         # no need retry
                         break
+                    topsailai_count += 1
                     response = format_tool.format_dict_to_list(
                         format_tool.parse_topsailai_format(response),
                         key_name="step_name",
