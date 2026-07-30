@@ -50,4 +50,5 @@ environment:
 
   llm_mistake:
     TOPSAILAI_USE_TOOL_CALLS: "1"
+    TOPSAILAI_AGENT_DRIVER: "topsailai_agent_plan_tasks"
 
