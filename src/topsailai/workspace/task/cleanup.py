@@ -34,6 +34,7 @@ import threading
 
 from topsailai.utils.file_tool import delete_file
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
+from topsailai.workspace.session_meta import get_session_meta_path
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,9 @@ _CLEANUP_LOCK = threading.Lock()
 _ORIGINAL_SIGNAL_HANDLERS: dict[int, object] = {}
 _SIGNALS_INSTALLED = False
 _INSTALL_LOCK = threading.Lock()
+
+_SESSION_META_PRINTED = False
+_SESSION_META_PRINT_LOCK = threading.Lock()
 
 
 def register_cleanup_file(file_path: str) -> None:
@@ -99,6 +103,8 @@ def cleanup_task_folder() -> None:
     This function is safe to call multiple times: the registry is cleared
     on the first call, making subsequent calls no-ops for registered files.
     """
+    print_session_meta_files_on_exit()
+
     with _CLEANUP_LOCK:
         files = sorted(_CLEANUP_FILES)
         _CLEANUP_FILES.clear()
@@ -107,6 +113,34 @@ def cleanup_task_folder() -> None:
         delete_file(file_path)
 
     _cleanup_pid_scoped_pipes()
+
+
+def print_session_meta_files_on_exit() -> None:
+    """Print the current process's session ``.meta`` file before cleanup.
+
+    The output is written directly to ``stdout`` so it is visible even when
+    the process is exiting abnormally.  If the current process has no meta
+    file, this function produces no output.  The operation is idempotent
+    and thread-safe.
+    """
+    global _SESSION_META_PRINTED
+    with _SESSION_META_PRINT_LOCK:
+        if _SESSION_META_PRINTED:
+            return
+        _SESSION_META_PRINTED = True
+
+    meta_path = get_session_meta_path()
+    if not os.path.isfile(meta_path):
+        return
+
+    print(f"\n--- Session meta file: {meta_path} ---")
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            for line in f:
+                print(line, end="")
+    except OSError as exc:
+        print(f"[Error reading {meta_path}: {exc}]")
+    print("\n--- End of session meta file ---")
 
 
 def _raise_signal(signum: int) -> None:
