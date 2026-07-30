@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import unittest
+import shutil
 from unittest.mock import patch, MagicMock
 from types import SimpleNamespace
 # Add project root to path
@@ -252,6 +253,7 @@ class TestCallSkill(unittest.TestCase):
         call_kwargs = mock_exec_cmd.call_args[1]
         self.assertIn('input', call_kwargs)
         self.assertEqual(call_kwargs['input'], b'hello from stdin')
+
     @patch('topsailai.tools.skill_tool.os.path.isfile')
     @patch('topsailai.tools.skill_tool.os.path.realpath')
     @patch('topsailai.tools.skill_tool.get_skills_from_cache')
@@ -341,12 +343,56 @@ class TestCallSkill(unittest.TestCase):
         self.assertIn("'missing_script.py'", msg)
         self.assertIn('requested script', msg)
         self.assertIn('was not found', msg)
+
+    @patch('topsailai.tools.skill_tool.exec_cmd')
+    @patch('topsailai.tools.skill_tool.skill_hook.SkillHookHandler')
+    @patch('topsailai.tools.skill_tool.lock_tool.ctxm_void')
+    @patch('topsailai.tools.skill_tool.get_skills_from_cache')
+    @patch('topsailai.tools.skill_tool.get_call_skill_timeout')
+    @patch('topsailai.tools.skill_tool.format_tool.parse_str_to_dict')
+    @patch('topsailai.tools.skill_tool.env_tool.EnvReaderInstance.get')
+    def test_call_skill_accepts_absolute_path_inside_skill_folder(
+        self, mock_env_get, mock_parse_dict, mock_timeout,
+        mock_get_skills, mock_ctxm, mock_hook, mock_exec_cmd
+    ):
+        """An absolute script path inside the skill folder is accepted."""
+        from topsailai.tools.skill_tool import call_skill
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            scripts_dir = os.path.join(skill_dir, "scripts")
+            os.makedirs(scripts_dir)
+            script_file = os.path.join(scripts_dir, "run.sh")
+            with open(script_file, "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh\necho ok")
+            os.chmod(script_file, 0o755)
+
+            mock_env_get.return_value = None
+            mock_parse_dict.return_value = {}
+            mock_timeout.return_value = 120
+            mock_get_skills.return_value = [SimpleNamespace(folder=skill_dir)]
+            mock_ctxm.return_value.__enter__ = MagicMock(return_value={})
+            mock_ctxm.return_value.__exit__ = MagicMock(return_value=False)
+            mock_hook_instance = MagicMock()
+            mock_hook_instance.need_lock_session = False
+            mock_hook_instance.need_refresh_session = False
+            mock_hook.return_value = mock_hook_instance
+            mock_exec_cmd.return_value = (0, 'ok', '')
+
+            result = call_skill(skill_dir, script_file, '')
+
+            self.assertEqual(result[0], 0)
+            mock_exec_cmd.assert_called_once()
+            called_cmd = mock_exec_cmd.call_args[0][0]
+            self.assertEqual(called_cmd[0], script_file)
+
     @patch('topsailai.tools.skill_tool.get_skills_from_cache')
     def test_call_skill_rejects_invalid_environ_string(self, mock_get_skills):
         """Test that non-JSON environ string is rejected"""
         from topsailai.tools.skill_tool import call_skill
 
         mock_get_skills.return_value = [SimpleNamespace(folder=self.test_folder)]
+
 
         with self.assertRaises(ValueError) as context:
             call_skill(self.test_folder, self.test_script, '', environ='not-json')
@@ -471,6 +517,73 @@ class TestReadSkillFile(unittest.TestCase):
                     read_skill_file('/test/folder', 'nonexistent.txt')
                 
                 self.assertIn('not found', str(context.exception))
+
+
+class TestReadSkillFilePathSecurity(unittest.TestCase):
+    """Real-filesystem tests for read_skill_file path containment."""
+
+    def setUp(self):
+        from topsailai.skill_hub.skill_tool import g_skills
+        self.tmpdir = tempfile.mkdtemp()
+        self.skill_folder = os.path.join(self.tmpdir, 'skill')
+        os.makedirs(self.skill_folder)
+        with open(os.path.join(self.skill_folder, 'SKILL.md'), 'w', encoding='utf-8') as f:
+            f.write('---\nname: PathSecSkill\ndescription: test\n---\n')
+        g_skills[self.skill_folder] = SimpleNamespace(folder=self.skill_folder)
+
+    def tearDown(self):
+        from topsailai.skill_hub.skill_tool import g_skills
+        g_skills.pop(self.skill_folder, None)
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_read_skill_file_accepts_absolute_path_inside_skill_folder(self):
+        """An absolute file path inside the skill folder is accepted."""
+        from topsailai.tools.skill_tool import read_skill_file
+
+        target = os.path.join(self.skill_folder, 'note.txt')
+        with open(target, 'w', encoding='utf-8') as f:
+            f.write('inside')
+
+        result = read_skill_file(self.skill_folder, target)
+        self.assertEqual(result, 'inside')
+
+    def test_read_skill_file_rejects_absolute_path_outside_skill_folder(self):
+        """An absolute file path outside the skill folder is rejected."""
+        from topsailai.tools.skill_tool import read_skill_file, SkillToolError
+
+        outside = os.path.join(self.tmpdir, 'outside.txt')
+        with open(outside, 'w', encoding='utf-8') as f:
+            f.write('outside')
+
+        with self.assertRaises(SkillToolError) as context:
+            read_skill_file(self.skill_folder, outside)
+
+        self.assertIn('inside the skill folder', str(context.exception))
+
+    def test_read_skill_file_rejects_relative_path_traversal(self):
+        """A relative path that escapes the skill folder is rejected."""
+        from topsailai.tools.skill_tool import read_skill_file, SkillToolError
+
+        outside = os.path.join(self.tmpdir, 'outside.txt')
+        with open(outside, 'w', encoding='utf-8') as f:
+            f.write('outside')
+
+        with self.assertRaises(SkillToolError) as context:
+            read_skill_file(self.skill_folder, '../outside.txt')
+
+        self.assertIn('inside the skill folder', str(context.exception))
+
+    def test_read_skill_file_relative_path_inside_skill_folder_still_works(self):
+        """A normal relative path inside the skill folder still works."""
+        from topsailai.tools.skill_tool import read_skill_file
+
+        target = os.path.join(self.skill_folder, 'subdir', 'note.txt')
+        os.makedirs(os.path.dirname(target))
+        with open(target, 'w', encoding='utf-8') as f:
+            f.write('relative inside')
+
+        result = read_skill_file(self.skill_folder, 'subdir/note.txt')
+        self.assertEqual(result, 'relative inside')
 
 class TestLoadSkill(unittest.TestCase):
     """Test load_skill function"""
@@ -657,6 +770,7 @@ class TestEdgeCases(unittest.TestCase):
             return path
         mock_realpath.side_effect = fake_realpath
         mock_isfile.return_value = True
+
     @patch('topsailai.tools.skill_tool.os.path.isfile')
     @patch('topsailai.tools.skill_tool.os.path.realpath')
     @patch('topsailai.tools.skill_tool.exec_cmd')
@@ -862,6 +976,7 @@ class TestErrorHandlingImprovements(unittest.TestCase):
         self.assertEqual(result[0], 1)
         self.assertIn('call_skill failed', result[2])
         self.assertIn('another process holds the lock', result[2])
+
     @patch('topsailai.tools.skill_tool.get_call_skill_timeout')
     @patch('topsailai.tools.skill_tool.exec_cmd')
     @patch('topsailai.tools.skill_tool.skill_hook.SkillHookHandler')
@@ -1070,7 +1185,7 @@ class TestSymlinkPathHandling(unittest.TestCase):
             with self.assertRaises(SkillToolError) as context:
                 read_skill_file(self.skill_folder, 'scripts/../../escape.txt')
 
-            self.assertIn('not found in skill folder', str(context.exception))
+            self.assertIn('inside the skill folder', str(context.exception))
         finally:
             g_skills.pop(self.skill_folder, None)
 if __name__ == '__main__':

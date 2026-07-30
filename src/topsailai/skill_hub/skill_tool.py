@@ -568,51 +568,62 @@ def overview_skill_native(folder_path: str) -> str:
 
     return f"\n>>> [SKILL_OVERVIEW_START:{folder_path}]\n" + result + f"\n<<< [SKILL_OVERVIEW_END:{folder_path}]\n"
 
+def _is_path_inside_skill_folder(skill_folder: str, target_path: str) -> bool:
+    """Return True if ``target_path`` resolves to a path inside ``skill_folder``.
+
+    Symlinks inside the skill folder are intentionally preserved so a skill
+    can expose files through symlinks. Only ``.`` and ``..`` components are
+    normalized.
+    """
+    try:
+        real_skill = os.path.normpath(os.path.abspath(skill_folder))
+        real_target = os.path.normpath(os.path.abspath(target_path))
+        if real_target == real_skill:
+            return True
+        common = os.path.commonpath([real_skill, real_target])
+        return common == real_skill
+    except (ValueError, OSError):
+        return False
+
 def get_skill_file(folder_path: str, file_name: str) -> str:
-    """Return a skill file path if it exists inside the skill folder.
+    """Return a skill file path if it resolves inside the skill folder.
 
     ``file_name`` may be a relative path inside ``folder_path`` or an
-    absolute path to an existing file. When an absolute path is provided
-    and the file exists, it is returned directly. Relative paths are
-    resolved under ``folder_path`` as before.
+    absolute path that resolves to a file inside ``folder_path``.
+    Relative path traversal outside the skill folder is rejected.
+    Symlinks inside the skill folder are preserved.
     """
     if not file_name:
         return ""
 
-    # If an absolute path is provided and exists, use it directly.
-    if os.path.isabs(file_name) and os.path.exists(file_name):
-        return file_name
-
-    # format file_name
-    for _ in range(2):
-        if file_name[0] in "./":
-            file_name = file_name[1:]
-        else:
-            break
-
-    # check file path
-    fpath = os.path.join(folder_path, file_name)
-    if os.path.exists(fpath):
-        return fpath
-
-    # real file_name
-    for _ in range(2):
-        if file_name[-1] == '/':
-            file_name = file_name[:-1]
-        else:
-            break
-    file_name = file_name.rsplit('/', 1)[-1]
-    if not file_name:
+    if os.path.isabs(file_name):
+        candidate = os.path.normpath(os.path.abspath(file_name))
+        if _is_path_inside_skill_folder(folder_path, candidate) and os.path.isfile(candidate):
+            return candidate
         return ""
 
-    # list folder
+    normalized = os.path.normpath(file_name)
+    if normalized.startswith(".."):
+        return ""
+
+    candidate = os.path.normpath(os.path.abspath(os.path.join(folder_path, normalized)))
+    if _is_path_inside_skill_folder(folder_path, candidate) and os.path.isfile(candidate):
+        return candidate
+
+    # Fallback: search by basename, keeping results inside the skill folder.
+    base_name = os.path.basename(normalized)
+    if not base_name:
+        return ""
+
     file_list = file_tool.list_files(
         folder_path,
         to_exclude_dot_start=True,
-        included_filename_keywords=[file_name],
+        included_filename_keywords=[base_name],
     )
-    if file_list and len(file_list) == 1:
-        return file_list[0]
+    for found_path in file_list or []:
+        real_found = os.path.normpath(os.path.abspath(found_path))
+        if _is_path_inside_skill_folder(folder_path, real_found) and os.path.isfile(real_found):
+            return real_found
 
     return ""
 
@@ -630,6 +641,18 @@ def get_skill_file_content(folder_path:str, file_name:str) -> str:
     Raises:
         SkillHubToolError: If the file cannot be found or read.
     """
+    # Reject traversal and outside absolute paths before attempting resolution.
+    if file_name:
+        if os.path.isabs(file_name):
+            candidate = os.path.normpath(os.path.abspath(file_name))
+        else:
+            candidate = os.path.normpath(os.path.abspath(os.path.join(folder_path, file_name)))
+        if not _is_path_inside_skill_folder(folder_path, candidate):
+            raise SkillHubToolError(
+                f"File {file_name!r} is outside the skill folder {folder_path!r}. "
+                "Use a relative path that stays inside the skill folder."
+            )
+
     file_path = get_skill_file(folder_path, file_name)
     if not file_path:
         raise SkillHubToolError(
@@ -655,43 +678,43 @@ def get_script_path(skill_folder:str, script_path:str) -> str:
     """Return absolute path to a skill script.
 
     ``script_path`` may be a relative path inside ``skill_folder`` or an
-    absolute path to an existing script. When an absolute path is provided
-    and the script exists, it is returned directly. Relative paths are
-    resolved under ``skill_folder`` as before, including common script
-    subdirectories.
+    absolute path that resolves to a script inside ``skill_folder``.
+    Relative path traversal outside the skill folder is rejected.
+    Symlinks inside the skill folder are preserved.
     """
     if not script_path:
         return script_path
 
-    # If an absolute path is provided and exists, use it directly.
-    if os.path.isabs(script_path) and os.path.exists(script_path):
-        return script_path
+    normalized = os.path.normpath(script_path)
 
-    if not script_path.startswith(skill_folder):
-        # case: /xxx or .xxx
-        for _ in range(2):
-            if script_path[0] in ['/', '.']:
-                script_path = script_path[1:]
-            else:
-                break
+    # Reject traversal before checking existence.
+    if normalized.startswith(".."):
+        return ""
 
-        if not os.path.exists(f"{skill_folder}/{script_path}"):
-            for _script_dirname in COMMON_SCRIPT_FOLDER_NAME_LIST:
-                _real_script_path = f"{skill_folder}/{_script_dirname}/{script_path}"
-                if os.path.exists(_real_script_path):
-                    script_path = _real_script_path
-                    return script_path
+    # Absolute paths are accepted only when contained in the skill folder.
+    if os.path.isabs(normalized):
+        candidate = os.path.normpath(os.path.abspath(normalized))
+        if _is_path_inside_skill_folder(skill_folder, candidate) and os.path.isfile(candidate):
+            return candidate
+        return ""
 
-    script_base_name = os.path.basename(script_path)
-    if not os.path.exists(script_path):
-        for _script_dirname in COMMON_SCRIPT_FOLDER_NAME_LIST:
-            _real_script_path = f"{skill_folder}/{_script_dirname}/{script_base_name}"
-            if os.path.exists(_real_script_path):
-                script_path = _real_script_path
-                return script_path
+    candidate = os.path.normpath(os.path.abspath(os.path.join(skill_folder, normalized)))
+    if _is_path_inside_skill_folder(skill_folder, candidate) and os.path.isfile(candidate):
+        return candidate
+
+    for _script_dirname in COMMON_SCRIPT_FOLDER_NAME_LIST:
+        candidate = os.path.normpath(os.path.abspath(os.path.join(skill_folder, _script_dirname, normalized)))
+        if _is_path_inside_skill_folder(skill_folder, candidate) and os.path.isfile(candidate):
+            return candidate
+
+    script_base_name = os.path.basename(normalized)
+    for _script_dirname in COMMON_SCRIPT_FOLDER_NAME_LIST:
+        candidate = os.path.normpath(os.path.abspath(os.path.join(skill_folder, _script_dirname, script_base_name)))
+        if _is_path_inside_skill_folder(skill_folder, candidate) and os.path.isfile(candidate):
+            return candidate
 
     _real_script_path = get_skill_file(skill_folder, script_base_name)
     if _real_script_path:
         return _real_script_path
 
-    return script_path
+    return ""

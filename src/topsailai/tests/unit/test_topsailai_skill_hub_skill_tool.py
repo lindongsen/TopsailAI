@@ -820,34 +820,46 @@ class TestDuplicateSkillFolderBlocking(unittest.TestCase):
 
 
 
-class TestGetSkillFileAbsolutePath(unittest.TestCase):
-    """Test cases for get_skill_file accepting absolute paths."""
+class TestGetSkillFilePathSecurity(unittest.TestCase):
+    """Security tests for get_skill_file path resolution."""
 
-    def test_absolute_existing_file_returns_path(self):
-        """An absolute path to an existing file is returned directly."""
+    def test_absolute_path_inside_skill_folder_returns_path(self):
+        """An absolute path inside the skill folder resolves correctly."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "skill")
             os.makedirs(skill_dir)
-            abs_file = os.path.join(tmpdir, "external.md")
+            abs_file = os.path.join(skill_dir, "doc.md")
             with open(abs_file, "w", encoding="utf-8") as f:
-                f.write("external content")
+                f.write("content")
 
             result = get_skill_file(skill_dir, abs_file)
             self.assertEqual(result, abs_file)
 
-    def test_absolute_nonexistent_file_falls_back_to_relative_lookup(self):
-        """An absolute path that does not exist falls back to relative lookup."""
+    def test_absolute_path_outside_skill_folder_is_rejected(self):
+        """An absolute path outside the skill folder is rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "skill")
             os.makedirs(skill_dir)
-            rel_file = os.path.join(skill_dir, "README.md")
-            with open(rel_file, "w", encoding="utf-8") as f:
-                f.write("readme content")
+            outside_file = os.path.join(tmpdir, "outside.md")
+            with open(outside_file, "w", encoding="utf-8") as f:
+                f.write("content")
 
-            result = get_skill_file(skill_dir, "/nonexistent/README.md")
-            self.assertEqual(result, rel_file)
+            result = get_skill_file(skill_dir, outside_file)
+            self.assertEqual(result, "")
 
-    def test_relative_path_still_works(self):
+    def test_relative_traversal_is_rejected(self):
+        """A relative path escaping the skill folder is rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            os.makedirs(skill_dir)
+            outside_file = os.path.join(tmpdir, "secret.md")
+            with open(outside_file, "w", encoding="utf-8") as f:
+                f.write("content")
+
+            result = get_skill_file(skill_dir, "../secret.md")
+            self.assertEqual(result, "")
+
+    def test_relative_path_inside_skill_folder_still_works(self):
         """Relative paths continue to resolve inside the skill folder."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "skill")
@@ -861,22 +873,36 @@ class TestGetSkillFileAbsolutePath(unittest.TestCase):
             self.assertEqual(result, rel_file)
 
 
-class TestGetSkillFileContentAbsolutePath(unittest.TestCase):
-    """Test cases for get_skill_file_content accepting absolute paths."""
+class TestGetSkillFileContentPathSecurity(unittest.TestCase):
+    """Security tests for get_skill_file_content path resolution."""
 
-    def test_absolute_path_reads_content(self):
-        """An absolute path to an existing file returns its content."""
+    def test_absolute_path_inside_skill_folder_reads_content(self):
+        """An absolute path inside the skill folder returns its content."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "skill")
             os.makedirs(skill_dir)
-            abs_file = os.path.join(tmpdir, "external.md")
+            abs_file = os.path.join(skill_dir, "doc.md")
             with open(abs_file, "w", encoding="utf-8") as f:
-                f.write("external content")
+                f.write("inside content")
 
             result = get_skill_file_content(skill_dir, abs_file)
-            self.assertEqual(result, "external content")
+            self.assertEqual(result, "inside content")
 
-    def test_relative_path_still_reads_content(self):
+    def test_absolute_path_outside_skill_folder_is_rejected(self):
+        """An absolute path outside the skill folder is rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            os.makedirs(skill_dir)
+            outside_file = os.path.join(tmpdir, "outside.md")
+            with open(outside_file, "w", encoding="utf-8") as f:
+                f.write("outside content")
+            from topsailai.skill_hub.skill_tool import SkillHubToolError
+            with self.assertRaises(SkillHubToolError) as context:
+                get_skill_file_content(skill_dir, outside_file)
+
+            self.assertIn('inside the skill folder', str(context.exception))
+
+    def test_relative_path_inside_skill_folder_still_reads_content(self):
         """Relative paths continue to return content from the skill folder."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "skill")
@@ -889,22 +915,46 @@ class TestGetSkillFileContentAbsolutePath(unittest.TestCase):
             self.assertEqual(result, "readme content")
 
 
-class TestGetScriptPathAbsolutePath(unittest.TestCase):
-    """Test cases for get_script_path accepting absolute paths."""
+class TestGetScriptPathSecurity(unittest.TestCase):
+    """Security tests for get_script_path path resolution."""
 
-    def test_absolute_existing_script_returns_path(self):
-        """An absolute path to an existing script is returned directly."""
+    def test_absolute_path_inside_skill_folder_returns_path(self):
+        """An absolute script path inside the skill folder is accepted."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "skill")
             os.makedirs(skill_dir)
-            abs_script = os.path.join(tmpdir, "external.sh")
+            abs_script = os.path.join(skill_dir, "script.sh")
             with open(abs_script, "w", encoding="utf-8") as f:
                 f.write("#!/bin/sh")
 
             result = get_script_path(skill_dir, abs_script)
             self.assertEqual(result, abs_script)
 
-    def test_relative_script_still_resolves(self):
+    def test_absolute_path_outside_skill_folder_is_rejected(self):
+        """An absolute script path outside the skill folder is rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            os.makedirs(skill_dir)
+            outside_script = os.path.join(tmpdir, "outside.sh")
+            with open(outside_script, "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh")
+
+            result = get_script_path(skill_dir, outside_script)
+            self.assertEqual(result, "")
+
+    def test_relative_traversal_is_rejected(self):
+        """A relative script path escaping the skill folder is rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            os.makedirs(skill_dir)
+            outside_script = os.path.join(tmpdir, "outside.sh")
+            with open(outside_script, "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh")
+
+            result = get_script_path(skill_dir, "../outside.sh")
+            self.assertEqual(result, "")
+
+    def test_relative_script_inside_skill_folder_still_resolves(self):
         """Relative script paths continue to resolve inside the skill folder."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "skill")

@@ -182,7 +182,16 @@ def call_skill(
         )
 
     # format script_path
+    original_script_path = script_path
     script_path = get_script_path(skill_folder, script_path)
+
+    # Reject paths that could not be resolved inside the skill folder.
+    if not script_path:
+        raise SkillToolError(
+            "A skill can only run scripts that exist inside its own folder. "
+            f"The requested script {original_script_path!r} was not found inside {skill_folder!r} "
+            "or is outside the skill folder."
+        )
 
     # normalized path must stay inside skill_folder (symlinks inside the
     # skill folder are intentionally preserved so scripts/files exposed via
@@ -368,7 +377,7 @@ def _validate_skill_file_name(skill_folder: str, file_name: str) -> None:
 
     Raises:
         SkillToolError: If the file name is empty, uses a tilde/backslash prefix,
-            or is an absolute path outside the skill folder.
+            or resolves outside the skill folder (including ".." traversal).
     """
     if not file_name:
         raise SkillToolError(
@@ -382,14 +391,16 @@ def _validate_skill_file_name(skill_folder: str, file_name: str) -> None:
             "Use a path such as 'scripts/run.sh' or 'README.md'."
         )
 
+    norm_folder = os.path.normpath(os.path.abspath(skill_folder))
     if os.path.isabs(file_name):
-        norm_folder = os.path.normpath(os.path.abspath(skill_folder))
         norm_file = os.path.normpath(os.path.abspath(file_name))
-        if not _is_normalized_path_inside_skill_folder(norm_folder, norm_file):
-            raise SkillToolError(
-                f"file_name must be inside the skill folder, got {file_name!r}. "
-                "Use a relative path such as 'scripts/run.sh' or 'README.md'."
-            )
+    else:
+        norm_file = os.path.normpath(os.path.abspath(os.path.join(skill_folder, file_name)))
+    if not _is_normalized_path_inside_skill_folder(norm_folder, norm_file):
+        raise SkillToolError(
+            f"file_name must be inside the skill folder, got {file_name!r}. "
+            "Use a relative path such as 'scripts/run.sh' or 'README.md'."
+        )
 
 
 def _is_normalized_path_inside_skill_folder(
@@ -411,12 +422,15 @@ def _is_normalized_path_inside_skill_folder(
         True if ``candidate_path`` is inside ``skill_folder`` after
         normalization, False otherwise.
     """
-    norm_skill_folder = os.path.normpath(os.path.abspath(skill_folder))
-    norm_candidate = os.path.normpath(os.path.abspath(candidate_path))
-    if norm_candidate == norm_skill_folder:
-        return True
-    prefix = norm_skill_folder + os.sep
-    return norm_candidate.startswith(prefix)
+    try:
+        norm_skill_folder = os.path.normpath(os.path.abspath(skill_folder))
+        norm_candidate = os.path.normpath(os.path.abspath(candidate_path))
+        if norm_candidate == norm_skill_folder:
+            return True
+        common = os.path.commonpath([norm_skill_folder, norm_candidate])
+        return common == norm_skill_folder
+    except (ValueError, OSError):
+        return False
 
 def read_skill_file(
         skill_folder:str,
