@@ -22,3 +22,7 @@ Mandatory Action:
 1. Ignore Prior Context: Do not rely on, summarize, or reference previous conclusions.
 2. Full Reprocessing: You must re-evaluate the entire problem space from the beginning.
 3. Comprehensive Output: Ensure the new analysis is thorough, detailed, and fully implemented as if it were the first time.
+
+## Verbatim File Content Returns
+
+Members should not be asked to return file content verbatim. The manager verifies state via its own tools (`git diff`, file read, test runner) when necessary; the member reports outcomes with concise evidence (what changed, why, and test/diff evidence). Verbatim file returns are the exception, not the default.
