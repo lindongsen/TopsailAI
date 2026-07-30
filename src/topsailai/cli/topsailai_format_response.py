@@ -99,7 +99,9 @@ def format_output(data, fmt: str, indent: int, compact: bool) -> str:
 
 def format_response_text(text: str, fmt: str = "json", indent: int = 2, compact: bool = False) -> str:
     """Format a single response string and return output in the requested format."""
+    print("\n--- calling format_response ---")
     data = format_response(text)
+    print("\n--- outputing ---")
     return format_output(data, fmt, indent, compact)
 
 
