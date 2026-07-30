@@ -115,12 +115,10 @@ class TestAgentChatBaseInit(unittest.TestCase):
     def test_init_initializes_hooks(
         self, mock_env_tool, mock_set_ai_agent, mock_get_hooks
     ):
-        """Test that pre_run and final_answer hooks are initialized."""
-        from topsailai.workspace.agent.agent_chat_base import AgentChatBase
-
         mock_pre_run_hooks = [MagicMock(), MagicMock()]
         mock_post_hooks = [MagicMock()]
-        mock_get_hooks.side_effect = [mock_pre_run_hooks, mock_post_hooks]
+        mock_get_hooks.side_effect = [mock_pre_run_hooks, mock_post_hooks, [], []]
+        from topsailai.workspace.agent.agent_chat_base import AgentChatBase
         mock_env_tool.EnvReaderInstance.get.return_value = None
 
         agent_chat = AgentChatBase(
@@ -321,7 +319,7 @@ class TestAgentChatBaseCallHookForFinalAnswer(unittest.TestCase):
 
         mock_hook1 = MagicMock()
         mock_hook2 = MagicMock()
-        mock_get_hooks.side_effect = [[], [mock_hook1, mock_hook2]]
+        mock_get_hooks.side_effect = [[], [mock_hook1, mock_hook2], [], []]
         mock_env_tool.EnvReaderInstance.get.return_value = None
 
         agent_chat = AgentChatBase(
@@ -347,7 +345,7 @@ class TestAgentChatBaseCallHookForFinalAnswer(unittest.TestCase):
 
         mock_hook1 = MagicMock(side_effect=Exception("Hook error"))
         mock_hook2 = MagicMock()
-        mock_get_hooks.side_effect = [[], [mock_hook1, mock_hook2]]
+        mock_get_hooks.side_effect = [[], [mock_hook1, mock_hook2], [], []]
         mock_env_tool.EnvReaderInstance.get.return_value = None
 
         agent_chat = AgentChatBase(

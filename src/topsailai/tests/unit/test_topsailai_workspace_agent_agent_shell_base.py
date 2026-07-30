@@ -533,7 +533,7 @@ class TestAgentChatRun(unittest.TestCase):
         from topsailai.workspace.agent.agent_shell_base import AgentChat
 
         mock_pre_run_hook = MagicMock()
-        mock_get_hooks.side_effect = [[mock_pre_run_hook], []]
+        mock_get_hooks.side_effect = [[mock_pre_run_hook], [], [], []]
         mock_env_tool.EnvReaderInstance.get.return_value = None
         mock_env_tool.EnvReaderInstance.check_bool.side_effect = lambda key, default: {
             "TOPSAILAI_INTERACTIVE_MODE": False,

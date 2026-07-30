@@ -216,8 +216,13 @@ class TestAgentBaseRun(unittest.TestCase):
 
         agent.dump_messages.assert_called_once()
 
-    def test_run_unsets_agent2llm_message_source_in_finally(self):
-        """Test run unsets the thread-local source even when _run raises."""
+    def test_run_does_not_unset_agent2llm_message_source(self):
+        """Test run does not unset the thread-local source when _run raises.
+
+        The message source is owned by the User2Agent conversation layer and
+        must survive across per-turn AgentBase.run calls. Cleanup belongs to
+        the conversation loop, not the per-turn run.
+        """
         from topsailai.ai_base.agent_base import AgentBase
         from topsailai.ai_base.agent2llm_message_source import (
             set_agent2llm_message_source,
@@ -245,8 +250,7 @@ class TestAgentBaseRun(unittest.TestCase):
         with self.assertRaises(Exception):
             agent.run(self.step_call_mock, "test input")
 
-        self.assertIsNone(get_agent2llm_message_source())
-
+        self.assertIsNotNone(get_agent2llm_message_source())
 
 class TestAgentRunRunEdgeCases(unittest.TestCase):
     """Test AgentRun._run edge cases with proper setup."""
