@@ -268,8 +268,8 @@ class TestCallSkill(unittest.TestCase):
         self.assertIn('absolute path', str(context.exception))
 
     @patch('topsailai.tools.skill_tool.get_skills_from_cache')
-    def test_call_skill_rejects_absolute_path(self, mock_get_skills):
-        """Test that absolute script_path is rejected with skill-centric message"""
+    def test_call_skill_rejects_absolute_path_outside_skill_folder(self, mock_get_skills):
+        """Test that absolute script_path outside the skill folder is rejected."""
         from topsailai.tools.skill_tool import call_skill
 
         mock_get_skills.return_value = [SimpleNamespace(folder=self.test_folder)]
@@ -280,7 +280,7 @@ class TestCallSkill(unittest.TestCase):
         msg = str(context.exception)
         self.assertIn('A skill can only run scripts that exist inside its own folder', msg)
         self.assertIn("'/bin/sh'", msg)
-        self.assertIn('absolute', msg)
+        self.assertIn('outside', msg)
 
     @patch('topsailai.tools.skill_tool.get_skills_from_cache')
     def test_call_skill_rejects_tilde_path(self, mock_get_skills):
@@ -295,7 +295,6 @@ class TestCallSkill(unittest.TestCase):
         msg = str(context.exception)
         self.assertIn('A skill can only run scripts that exist inside its own folder', msg)
         self.assertIn("'~/.bashrc'", msg)
-        self.assertIn('absolute', msg)
 
     @patch('topsailai.tools.skill_tool.get_skills_from_cache')
     def test_call_skill_rejects_backslash_path(self, mock_get_skills):
@@ -309,7 +308,7 @@ class TestCallSkill(unittest.TestCase):
 
         msg = str(context.exception)
         self.assertIn('A skill can only run scripts that exist inside its own folder', msg)
-        self.assertIn('absolute', msg)
+        self.assertIn(r"'\\\\windows\\script.bat'", msg)
 
     @patch('topsailai.tools.skill_tool.os.path.realpath')
     @patch('topsailai.tools.skill_tool.get_skills_from_cache')

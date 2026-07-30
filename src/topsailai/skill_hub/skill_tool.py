@@ -569,9 +569,19 @@ def overview_skill_native(folder_path: str) -> str:
     return f"\n>>> [SKILL_OVERVIEW_START:{folder_path}]\n" + result + f"\n<<< [SKILL_OVERVIEW_END:{folder_path}]\n"
 
 def get_skill_file(folder_path: str, file_name: str) -> str:
-    """Return a skill file path if it exists inside the skill folder."""
+    """Return a skill file path if it exists inside the skill folder.
+
+    ``file_name`` may be a relative path inside ``folder_path`` or an
+    absolute path to an existing file. When an absolute path is provided
+    and the file exists, it is returned directly. Relative paths are
+    resolved under ``folder_path`` as before.
+    """
     if not file_name:
         return ""
+
+    # If an absolute path is provided and exists, use it directly.
+    if os.path.isabs(file_name) and os.path.exists(file_name):
+        return file_name
 
     # format file_name
     for _ in range(2):
@@ -612,7 +622,7 @@ def get_skill_file_content(folder_path:str, file_name:str) -> str:
 
     Args:
         folder_path (str): skill folder
-        file_name (str): relative file name
+        file_name (str): relative file name or absolute file path
 
     Returns:
         str: file content
@@ -642,7 +652,21 @@ def get_skill_file_content(folder_path:str, file_name:str) -> str:
         ) from exc
 
 def get_script_path(skill_folder:str, script_path:str) -> str:
-    """ return absolute path """
+    """Return absolute path to a skill script.
+
+    ``script_path`` may be a relative path inside ``skill_folder`` or an
+    absolute path to an existing script. When an absolute path is provided
+    and the script exists, it is returned directly. Relative paths are
+    resolved under ``skill_folder`` as before, including common script
+    subdirectories.
+    """
+    if not script_path:
+        return script_path
+
+    # If an absolute path is provided and exists, use it directly.
+    if os.path.isabs(script_path) and os.path.exists(script_path):
+        return script_path
+
     if not script_path.startswith(skill_folder):
         # case: /xxx or .xxx
         for _ in range(2):

@@ -30,10 +30,10 @@ from topsailai.skill_hub.skill_tool import (
     overview_skill_native,
     get_skill_file,
     get_skill_file_content,
+    get_script_path,
     _expand_preload_doc_entry,
     g_skills,
 )
-
 
 class TestIsMatchedSkill(unittest.TestCase):
     def test_with_none_keys(self):
@@ -128,9 +128,9 @@ class TestIsNeedLoadOverview(unittest.TestCase):
 
     @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
     def test_no_match(self, mock_env):
-        """Test when folder doesn't match any configured skill."""
+        """Test when folder does not match any configured skill."""
         mock_env.get_list_str.return_value = ["/skills/other"]
-        
+
         result = is_need_load_overview("/skills/different")
         self.assertFalse(result)
 
@@ -435,7 +435,7 @@ class TestSkillCache(unittest.TestCase):
         self.assertEqual(result.name, "TestSkill")
 
     def test_get_skill_info_from_cache_not_found(self):
-        """Test getting skill info that doesn't exist."""
+        """Test getting skill info that does not exist."""
         result = get_skill_info_from_cache("/nonexistent")
         self.assertIsNone(result)
 
@@ -817,6 +817,111 @@ class TestDuplicateSkillFolderBlocking(unittest.TestCase):
             self.assertEqual(first_info.name, "HelloSkill")
             self.assertEqual(second_info.name, "HelloSkill")
             self.assertEqual(len(g_skills), 1)
+
+
+
+class TestGetSkillFileAbsolutePath(unittest.TestCase):
+    """Test cases for get_skill_file accepting absolute paths."""
+
+    def test_absolute_existing_file_returns_path(self):
+        """An absolute path to an existing file is returned directly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            os.makedirs(skill_dir)
+            abs_file = os.path.join(tmpdir, "external.md")
+            with open(abs_file, "w", encoding="utf-8") as f:
+                f.write("external content")
+
+            result = get_skill_file(skill_dir, abs_file)
+            self.assertEqual(result, abs_file)
+
+    def test_absolute_nonexistent_file_falls_back_to_relative_lookup(self):
+        """An absolute path that does not exist falls back to relative lookup."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            os.makedirs(skill_dir)
+            rel_file = os.path.join(skill_dir, "README.md")
+            with open(rel_file, "w", encoding="utf-8") as f:
+                f.write("readme content")
+
+            result = get_skill_file(skill_dir, "/nonexistent/README.md")
+            self.assertEqual(result, rel_file)
+
+    def test_relative_path_still_works(self):
+        """Relative paths continue to resolve inside the skill folder."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            os.makedirs(skill_dir)
+            rel_file = os.path.join(skill_dir, "scripts", "run.sh")
+            os.makedirs(os.path.dirname(rel_file))
+            with open(rel_file, "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh")
+
+            result = get_skill_file(skill_dir, "scripts/run.sh")
+            self.assertEqual(result, rel_file)
+
+
+class TestGetSkillFileContentAbsolutePath(unittest.TestCase):
+    """Test cases for get_skill_file_content accepting absolute paths."""
+
+    def test_absolute_path_reads_content(self):
+        """An absolute path to an existing file returns its content."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            os.makedirs(skill_dir)
+            abs_file = os.path.join(tmpdir, "external.md")
+            with open(abs_file, "w", encoding="utf-8") as f:
+                f.write("external content")
+
+            result = get_skill_file_content(skill_dir, abs_file)
+            self.assertEqual(result, "external content")
+
+    def test_relative_path_still_reads_content(self):
+        """Relative paths continue to return content from the skill folder."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            os.makedirs(skill_dir)
+            rel_file = os.path.join(skill_dir, "README.md")
+            with open(rel_file, "w", encoding="utf-8") as f:
+                f.write("readme content")
+
+            result = get_skill_file_content(skill_dir, "README.md")
+            self.assertEqual(result, "readme content")
+
+
+class TestGetScriptPathAbsolutePath(unittest.TestCase):
+    """Test cases for get_script_path accepting absolute paths."""
+
+    def test_absolute_existing_script_returns_path(self):
+        """An absolute path to an existing script is returned directly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            os.makedirs(skill_dir)
+            abs_script = os.path.join(tmpdir, "external.sh")
+            with open(abs_script, "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh")
+
+            result = get_script_path(skill_dir, abs_script)
+            self.assertEqual(result, abs_script)
+
+    def test_relative_script_still_resolves(self):
+        """Relative script paths continue to resolve inside the skill folder."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            scripts_dir = os.path.join(skill_dir, "scripts")
+            os.makedirs(scripts_dir)
+            script_file = os.path.join(scripts_dir, "run.sh")
+            with open(script_file, "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh")
+
+            result = get_script_path(skill_dir, "run.sh")
+            self.assertEqual(result, script_file)
+
+    def test_empty_script_path_returns_empty(self):
+        """An empty script path is returned unchanged."""
+        result = get_script_path("/some/skill", "")
+        self.assertEqual(result, "")
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -171,11 +171,14 @@ def call_skill(
                 "Choose a different path or delete the existing file first."
             )
 
-    # validate script_path before get_script_path normalizes it
-    if script_path.startswith(("/", "~", "\\")):
+    # validate script_path before get_script_path normalizes it.
+    # Absolute paths are allowed as long as they resolve inside the skill folder;
+    # tilde and backslash prefixes are still rejected.
+    if script_path.startswith(("~", "\\")):
         raise SkillToolError(
             "A skill can only run scripts that exist inside its own folder. "
-            f"The provided path {script_path!r} is absolute; use a path relative to the skill folder."
+            f"The provided path {script_path!r} is not a valid relative path; "
+            "use a path relative to the skill folder."
         )
 
     # format script_path
@@ -355,14 +358,17 @@ def overview_skill(skill_folder:str):
     return overview_skill_native(skill_folder)
 
 
-def _validate_skill_file_name(file_name: str) -> None:
+def _validate_skill_file_name(skill_folder: str, file_name: str) -> None:
     """Validate that a skill file name is safe to resolve.
 
     Args:
-        file_name: The requested file name relative to the skill folder.
+        skill_folder: The validated skill folder path.
+        file_name: The requested file name, either relative to the skill folder
+            or an absolute path that resolves inside the skill folder.
 
     Raises:
-        SkillToolError: If the file name is empty or uses an absolute/tilde/backslash prefix.
+        SkillToolError: If the file name is empty, uses a tilde/backslash prefix,
+            or is an absolute path outside the skill folder.
     """
     if not file_name:
         raise SkillToolError(
@@ -370,11 +376,20 @@ def _validate_skill_file_name(file_name: str) -> None:
             "Provide a relative path inside the skill folder, e.g. 'scripts/run.sh'."
         )
 
-    if file_name.startswith(("/", "~", "\\")):
+    if file_name.startswith(("~", "\\")):
         raise SkillToolError(
             f"file_name must be a relative path inside the skill folder, got {file_name!r}. "
             "Use a path such as 'scripts/run.sh' or 'README.md'."
         )
+
+    if os.path.isabs(file_name):
+        norm_folder = os.path.normpath(os.path.abspath(skill_folder))
+        norm_file = os.path.normpath(os.path.abspath(file_name))
+        if not _is_normalized_path_inside_skill_folder(norm_folder, norm_file):
+            raise SkillToolError(
+                f"file_name must be inside the skill folder, got {file_name!r}. "
+                "Use a relative path such as 'scripts/run.sh' or 'README.md'."
+            )
 
 
 def _is_normalized_path_inside_skill_folder(
@@ -426,7 +441,7 @@ def read_skill_file(
             "Call load_skill() or ensure the skill is listed in TOPSAILAI_PLUGIN_SKILLS."
         )
 
-    _validate_skill_file_name(file_name)
+    _validate_skill_file_name(skill_folder, file_name)
     file_path = get_skill_file(skill_folder, file_name)
     if not file_path:
         raise SkillToolError(
