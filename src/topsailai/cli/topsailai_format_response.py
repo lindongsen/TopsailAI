@@ -17,6 +17,7 @@ PWD = os.getenv("TOPSAILAI_PWD")
 if PWD:
     os.chdir(PWD)
 
+print(f"OPENAI_MODEL: {os.getenv("OPENAI_MODEL")}")
 
 def resolve_path(path: str) -> str:
     """Resolve a relative path against the original TOPSAILAI_PWD.
