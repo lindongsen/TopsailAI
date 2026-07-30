@@ -75,6 +75,7 @@ def with_tool_approval(exec_tool_func: Callable) -> Callable:
         # decision.action == ApprovalDecision.ASK
         register_pending_approval(instance)
         rule_name = decision.rule.name if decision.rule and decision.rule.name else "<unnamed>"
+        instance.rule_name = rule_name
         logger.info(
             "Tool approval matched rule: [%s] for tool [%s] instance=%s timeout=%s policy=%s",
             rule_name,

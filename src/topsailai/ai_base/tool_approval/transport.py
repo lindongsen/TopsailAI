@@ -122,8 +122,10 @@ class LocalApprovalTransport(ApprovalTransport):
         from topsailai.utils.input_tool import input_with_timeout
         from topsailai.utils.thread_local_tool import get_agent_runtime_input_with_timeout
 
+        rule_name = getattr(instance, "rule_name", None) or "<unnamed>"
         prompt = (
             f"\n[APPROVAL REQUEST] {instance.id}\n"
+            f"  Rule: {rule_name}\n"
             f"  Tool: {instance.tool_name}\n"
             f"  Args: {instance.tool_args}\n"
             f"  Timeout: {instance.timeout}s\n"
