@@ -480,31 +480,68 @@ def _generate_agent_session_name() -> str:
     return f"topsailai-{timestamp}"
 
 
-def _wrap_command_for_agent_mode(command: str, mode: str) -> str:
-    """Wrap *command* according to the requested agent launch mode.
+def _apply_selected_model_environment(
+    project_workspace: str,
+) -> Optional[tuple[Dict[str, Optional[str]], set[str]]]:
+    """Apply the selected model and return restore values and forwarded keys."""
+    from cli_topsailai.models import (
+        ModelConfigurationError,
+        build_model_environment,
+        load_models,
+        resolve_effective_model,
+    )
 
-    Supported modes:
+    registry = load_models()
+    try:
+        effective = resolve_effective_model(
+            registry.models,
+            project_workspace=project_workspace,
+        )
+        if effective.model is None:
+            return {}, set()
+        model = effective.model
+        child_environment = build_model_environment(model, os.environ)
+    except ModelConfigurationError as error:
+        print(f"{Colors.RED}[ERROR] Cannot apply selected model: {error}{Colors.RESET}")
+        return None
 
-    - ``raw``: return *command* unchanged.
-    - ``dtach``: wrap with ``dtach -A {socket} {command}`` when ``dtach`` is
-      available in ``PATH``; otherwise fall back to *command* unchanged.
-    - ``tmux``: wrap with ``tmux new-session -e KEY=VALUE ... -s {name}
-      {command}``.  Requires ``tmux`` to be available in ``PATH``; raises
-      ``RuntimeError`` if it is not.  Environment variables set by the
-      caller (``TOPSAILAI_SESSION_ID``, ``TOPSAILAI_PWD`` and ``PWD``) are
-      forwarded explicitly so the tmux session sees the same environment as
-      raw and dtach modes.
+    forwarded_keys = set(model.environment)
+    forwarded_keys.add("OPENAI_MODEL")
+    if model.base_url:
+        forwarded_keys.update(("OPENAI_BASE_URL", "OPENAI_API_BASE"))
+    source_targets = (
+        (model.api_key_env, "OPENAI_API_KEY"),
+        (model.organization_env, "OPENAI_ORG_ID"),
+        (model.project_env, "OPENAI_PROJECT_ID"),
+    )
+    forwarded_keys.update(target for source, target in source_targets if source)
+    changed_values = {
+        key: child_environment[key]
+        for key in forwarded_keys
+        if os.environ.get(key) != child_environment[key]
+    }
+    original_values = {key: os.environ.get(key) for key in changed_values}
+    os.environ.update(changed_values)
+    return original_values, forwarded_keys
 
-    Args:
-        command: The command to wrap.
-        mode: Launch mode, one of ``"raw"``, ``"dtach"`` or ``"tmux"``.
 
-    Returns:
-        The wrapped command string.
+def _restore_environment(original_values: Dict[str, Optional[str]]) -> None:
+    """Restore environment values changed for one child launch."""
+    for key, original_value in original_values.items():
+        if original_value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = original_value
 
-    Raises:
-        RuntimeError: If *mode* is ``"tmux"`` and ``tmux`` is not installed.
-        ValueError: If *mode* is not one of the supported values.
+def _wrap_command_for_agent_mode(
+    command: str,
+    mode: str,
+    forwarded_environment: Optional[set[str]] = None,
+) -> str:
+    """Wrap a command for raw, dtach, or tmux agent launch mode.
+
+    Tmux receives the requested model environment explicitly because an
+    existing tmux server may otherwise retain stale environment values.
     """
     if mode == "raw":
         return command
@@ -522,14 +559,11 @@ def _wrap_command_for_agent_mode(command: str, mode: str) -> str:
                 "Install tmux to use --agent-mode tmux, or choose raw/dtach."
             )
         session_name = _generate_agent_session_name()
-
-        # tmux starts a fresh session environment; explicitly forward all
-        # TopsailAI-related variables and essential shell variables so the
-        # agent sees the same environment as raw/dtach modes.
-        forwarded_keys = set(
-            key for key in os.environ.keys() if key.startswith("TOPSAILAI_")
-        )
+        forwarded_keys = {
+            key for key in os.environ if key.startswith("TOPSAILAI_")
+        }
         forwarded_keys.update(("PATH", "HOME", "SHELL", "USER", "PWD"))
+        forwarded_keys.update(forwarded_environment or set())
         env_vars = {
             key: os.environ[key]
             for key in forwarded_keys
@@ -548,49 +582,47 @@ def _wrap_command_for_agent_mode(command: str, mode: str) -> str:
 
 
 def launch_agent_in_folder(folder: str, agent_mode: str = "dtach") -> None:
-    """Change to *folder* and launch ``topsailai_launch_agent`` via os.system.
+    """Launch ``topsailai_launch_agent`` with the selected model environment.
 
-    The launch mode is controlled by *agent_mode*:
-
-    - ``raw``: invoke ``topsailai_launch_agent`` directly.
-    - ``dtach`` (default): wrap with ``dtach -A {socket}`` when ``dtach`` is
-      available; fall back to raw otherwise.
-    - ``tmux``: wrap with ``tmux new-session -s {name}``; requires ``tmux``.
-
-    The launcher reads ``TOPSAILAI_PWD`` at import time and uses it to decide
-    its working directory, so both the process working directory and the
-    ``TOPSAILAI_PWD``/``PWD`` environment variables are set to the target
-    folder before invoking the launcher.  The original working directory and
-    environment values are restored after the launcher returns.
-
-    Args:
-        folder: Target project workspace folder.
-        agent_mode: How to launch the agent: ``"raw"``, ``"dtach"`` or
-            ``"tmux"``.  Defaults to ``"dtach"``.
+    The target workspace and model environment are applied only for the child
+    launch and restored immediately afterward. Raw, dtach, and tmux modes use
+    the same effective project/workspace model selection.
     """
     original_cwd = os.getcwd()
     target_folder = os.path.abspath(folder)
-
     env_keys = ("TOPSAILAI_PWD", "PWD")
     original_env: Dict[str, Optional[str]] = {
         key: os.environ.get(key) for key in env_keys
     }
+    model_original_env: Optional[Dict[str, Optional[str]]] = {}
+    model_forwarded_keys: set[str] = set()
 
     try:
         os.chdir(target_folder)
         for key in env_keys:
             os.environ[key] = target_folder
+        model_environment = _apply_selected_model_environment(target_folder)
+        if model_environment is None:
+            model_original_env = None
+            return
+        model_original_env, model_forwarded_keys = model_environment
         print(
             f"{Colors.GREEN}[INFO] Launching agent in {target_folder} "
             f"(mode: {agent_mode}) ...{Colors.RESET}"
         )
-        command = _wrap_command_for_agent_mode("topsailai_launch_agent", agent_mode)
+        command = _wrap_command_for_agent_mode(
+            "topsailai_launch_agent",
+            agent_mode,
+            model_forwarded_keys,
+        )
         os.system(command)
     except OSError as exc:
         print(
             f"{Colors.RED}[ERROR] Failed to change to folder '{target_folder}': {exc}{Colors.RESET}"
         )
     finally:
+        if model_original_env is not None:
+            _restore_environment(model_original_env)
         for key in env_keys:
             original_value = original_env[key]
             if original_value is None:
@@ -607,55 +639,47 @@ def launch_agent_in_folder(folder: str, agent_mode: str = "dtach") -> None:
 def launch_agent_driver(
     folder: str, driver: str, session_id: str, agent_mode: str = "dtach"
 ) -> None:
-    """Change to *folder* and launch *driver* directly with *session_id* set.
+    """Launch a resume driver with the selected model environment.
 
-    The launch mode is controlled by *agent_mode*:
-
-    - ``raw``: invoke *driver* directly.
-    - ``dtach`` (default): wrap with ``dtach -A {socket}`` when ``dtach`` is
-      available; fall back to raw otherwise.
-    - ``tmux``: wrap with ``tmux new-session -s {name}``; requires ``tmux``.
-
-    The process working directory and the ``TOPSAILAI_PWD``/``PWD``
-    environment variables are set to the target folder so the driver reads
-    ``.topsailai/settings.yaml`` from the correct project workspace.
-    ``TOPSAILAI_SESSION_ID`` is set to *session_id* so the resumed agent
-    continues the existing session instead of generating a new one.
-
-    The original working directory and environment values are restored
-    after the driver returns.
-
-    Args:
-        folder: Target project workspace folder.
-        driver: Agent driver command to execute.
-        session_id: Session ID to resume.
-        agent_mode: How to launch the driver: ``"raw"``, ``"dtach"`` or
-            ``"tmux"``.  Defaults to ``"dtach"``.
+    The target workspace, session ID, and effective model configuration are
+    applied only for the child launch and restored immediately afterward.
     """
     original_cwd = os.getcwd()
     target_folder = os.path.abspath(folder)
-
     env_keys = ("TOPSAILAI_PWD", "PWD", "TOPSAILAI_SESSION_ID")
     original_env: Dict[str, Optional[str]] = {
         key: os.environ.get(key) for key in env_keys
     }
+    model_original_env: Optional[Dict[str, Optional[str]]] = {}
+    model_forwarded_keys: set[str] = set()
 
     try:
         os.chdir(target_folder)
         os.environ["TOPSAILAI_PWD"] = target_folder
         os.environ["PWD"] = target_folder
         os.environ["TOPSAILAI_SESSION_ID"] = session_id
+        model_environment = _apply_selected_model_environment(target_folder)
+        if model_environment is None:
+            model_original_env = None
+            return
+        model_original_env, model_forwarded_keys = model_environment
         print(
             f"{Colors.GREEN}[INFO] Launching driver '{driver}' in {target_folder} "
             f"for session '{session_id}' (mode: {agent_mode}) ...{Colors.RESET}"
         )
-        command = _wrap_command_for_agent_mode(driver, agent_mode)
+        command = _wrap_command_for_agent_mode(
+            driver,
+            agent_mode,
+            model_forwarded_keys,
+        )
         os.system(command)
     except OSError as exc:
         print(
             f"{Colors.RED}[ERROR] Failed to change to folder '{target_folder}': {exc}{Colors.RESET}"
         )
     finally:
+        if model_original_env is not None:
+            _restore_environment(model_original_env)
         for key in env_keys:
             original_value = original_env[key]
             if original_value is None:

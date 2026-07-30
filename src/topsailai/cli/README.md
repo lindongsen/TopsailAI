@@ -127,6 +127,8 @@ The CLI and agent processes share a single workspace root referred to as `TOPSAI
 ├── .input_history.jsonl   # Agent process input history
 ├── .input_completions.json # TAB completion definitions for interactive input
 ├── .project_history.jsonl # Project/workspace navigation history
+├── .models.jsonl          # User-maintained model configuration registry
+├── .model_selection.json  # Workspace and project model selections
 ├── memory.db              # SQLite memory database
 ├── topsailai_agent_daemon.db # Agent daemon SQLite database
 └── tool_approval.json     # Tool approval rules
@@ -140,9 +142,19 @@ The CLI and agent processes share a single workspace root referred to as `TOPSAI
 | `.input_history.jsonl` | Agent input history in JSONL format (`{"ts", "session_id", "text"}`) | Agent processes (e.g., `topsailai_agent_chats`, `topsailai_llm_chats`) |
 | `.input_completions.json` | TAB completion items for interactive input | Agent processes |
 | `.project_history.jsonl` | Project/workspace navigation history (`{"ts", "session_id", "project_workspace", "pwd"}`) | Agent processes |
+| `.models.jsonl` | Model registry with one non-secret configuration object per line | User |
+| `.model_selection.json` | Persistent workspace default and project-specific model selections | `cli/topsailai.py` |
 | `memory.db` | SQLite memory database | Agent processes |
 | `topsailai_agent_daemon.db` | Agent daemon SQLite database | Agent daemon |
 | `tool_approval.json` | Tool approval rule set | User / external configuration |
+
+### Model Selection
+
+Create `{TOPSAILAI_HOME}/.models.jsonl` with one model configuration object per line. Use `/models` in workspace scope to set the default model or in project scope to set an override for the active project. `/models current` shows the effective model and `/models clear` removes the selection for the current scope.
+
+Selections are stored in `.model_selection.json` with project overrides taking precedence over the workspace default. The selected OpenAI-compatible configuration is applied only to subsequently launched or resumed agent processes; it does not modify the parent shell environment.
+
+Registry entries must reference credentials by environment-variable name through `api_key_env`, `organization_env`, or `project_env`. Do not store credentials directly in `.models.jsonl`.
 
 ### History Rotation
 

@@ -308,6 +308,140 @@ def _handle_project_subcommand(args: argparse.Namespace) -> int:
     return 0 if code is None else code
 
 
+def _prompt_project_workspace(entries: List[dict]) -> Optional[str]:
+    """Prompt for a project row and return its normalized workspace path."""
+    from cli_topsailai.models import (
+        ModelConfigurationError,
+        normalize_project_workspace,
+    )
+
+    if not entries:
+        print(f"{Colors.RED}[ERROR] No project entries are available.{Colors.RESET}")
+        return None
+    try:
+        answer = _read_input_with_prompt("Project number (q to cancel): ")
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if answer.lower() in ("q", "quit"):
+        return None
+    if not answer.isdigit() or not 1 <= int(answer) <= len(entries):
+        print(
+            f"{Colors.RED}[ERROR] Invalid project number. "
+            f"Please enter 1-{len(entries)}.{Colors.RESET}"
+        )
+        return None
+    entry = entries[int(answer) - 1]
+    workspace = entry.get("project_workspace") or entry.get("path")
+    if not workspace:
+        print(
+            f"{Colors.RED}[ERROR] Selected entry has no project workspace."
+            f"{Colors.RESET}"
+        )
+        return None
+    try:
+        return normalize_project_workspace(workspace)
+    except ModelConfigurationError as error:
+        print(f"{Colors.RED}[ERROR] {error}{Colors.RESET}")
+        return None
+
+
+def _handle_models_action(
+    command: str,
+    project_workspace: Optional[str] = None,
+) -> None:
+    """List, inspect, select, or clear model configuration for one scope."""
+    from cli_topsailai.models import (
+        ModelConfigurationError,
+        clear_selected_model,
+        format_model_summary,
+        load_models,
+        resolve_effective_model,
+        set_selected_model,
+    )
+
+    registry = load_models()
+    for error in registry.errors:
+        print(f"{Colors.YELLOW}[WARN] {error}{Colors.RESET}")
+
+    if command == "clear":
+        changed = clear_selected_model(project_workspace)
+        scope_name = "project" if project_workspace else "workspace"
+        if changed:
+            print(
+                f"{Colors.GREEN}[INFO] Cleared {scope_name} model selection."
+                f"{Colors.RESET}"
+            )
+        else:
+            print(
+                f"{Colors.YELLOW}[INFO] No {scope_name} model selection was set."
+                f"{Colors.RESET}"
+            )
+        return
+
+    if command == "current":
+        try:
+            effective = resolve_effective_model(
+                registry.models,
+                project_workspace=project_workspace,
+            )
+        except ModelConfigurationError as error:
+            print(f"{Colors.RED}[ERROR] {error}{Colors.RESET}")
+            return
+        if effective.model is None:
+            print(
+                f"{Colors.YELLOW}[INFO] No persisted model selection; "
+                f"agent launches inherit the current environment.{Colors.RESET}"
+            )
+            return
+        print(
+            f"{Colors.GREEN}[INFO] Effective model ({effective.source}): "
+            f"{format_model_summary(effective.model)}{Colors.RESET}"
+        )
+        return
+
+    if not registry.models:
+        print(f"{Colors.RED}[ERROR] No model configurations are available.{Colors.RESET}")
+        return
+
+    print("\nAvailable model configurations:")
+    for index, model in enumerate(registry.models, start=1):
+        selectable = model.enabled and model.protocol == "openai-compatible"
+        marker = "" if selectable else " (not selectable)"
+        print(f"  {index}. {format_model_summary(model)}{marker}")
+    try:
+        answer = _read_input_with_prompt("Select model (q to cancel): ")
+    except (EOFError, KeyboardInterrupt):
+        return
+    if answer.lower() in ("q", "quit"):
+        return
+    if not answer.isdigit() or not 1 <= int(answer) <= len(registry.models):
+        print(
+            f"{Colors.RED}[ERROR] Invalid model number. "
+            f"Please enter 1-{len(registry.models)}.{Colors.RESET}"
+        )
+        return
+    model = registry.models[int(answer) - 1]
+    if not model.enabled:
+        print(f"{Colors.RED}[ERROR] Model {model.id!r} is disabled.{Colors.RESET}")
+        return
+    if model.protocol != "openai-compatible":
+        print(
+            f"{Colors.RED}[ERROR] Model protocol {model.protocol!r} is not supported."
+            f"{Colors.RESET}"
+        )
+        return
+    try:
+        set_selected_model(model.id, project_workspace=project_workspace)
+    except (OSError, ModelConfigurationError) as error:
+        print(f"{Colors.RED}[ERROR] Cannot save model selection: {error}{Colors.RESET}")
+        return
+    scope_name = "project" if project_workspace else "workspace"
+    print(
+        f"{Colors.GREEN}[INFO] Selected {scope_name} model: "
+        f"{format_model_summary(model)}{Colors.RESET}"
+    )
+
+
 def setup_signal_handlers() -> None:
     """Register SIGINT/SIGTERM handlers for graceful shutdown."""
     from cli_topsailai.process import signal_handler
@@ -535,6 +669,29 @@ def prompt_selection(
                     )
                     continue
 
+
+            if lower_input == "/models":
+                if state.current_scope in ("workspace", "project"):
+                    return ("models", "select")
+                print(
+                    f"{Colors.RED}[ERROR] /models is only available in workspace "
+                    f"or project scope.{Colors.RESET}"
+                )
+                continue
+            if lower_input in ("/models current", "/models clear"):
+                if state.current_scope in ("workspace", "project"):
+                    return ("models", lower_input.split()[1])
+                print(
+                    f"{Colors.RED}[ERROR] /models is only available in workspace "
+                    f"or project scope.{Colors.RESET}"
+                )
+                continue
+            if lower_input.startswith("/models "):
+                print(
+                    f"{Colors.RED}[ERROR] Usage: /models, /models current, "
+                    f"or /models clear{Colors.RESET}"
+                )
+                continue
             # Try YAML command matching first
             yaml_match = match_yaml_command(user_input, task_dir)
             if yaml_match:
@@ -1233,6 +1390,15 @@ def main(argv: Optional[List[str]] = None) -> None:
 
             if action == "help_cmd":
                 print_instruction_help(value)
+                continue
+
+            if action == "models":
+                project_workspace = None
+                if state.current_scope == "project":
+                    project_workspace = _prompt_project_workspace(active_items)
+                    if project_workspace is None:
+                        continue
+                _handle_models_action(value, project_workspace=project_workspace)
                 continue
 
             if action == "clean":

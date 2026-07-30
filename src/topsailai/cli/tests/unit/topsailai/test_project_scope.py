@@ -712,6 +712,28 @@ class TestWrapCommandForAgentMode(unittest.TestCase):
         )
         self.assertIn(" topsailai_launch_agent", result)
 
+    @patch.dict(
+        os.environ,
+        {"OPENAI_MODEL": "gpt-selected"},
+        clear=True,
+    )
+    @patch("cli_topsailai.project_scope._generate_agent_session_name")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    def test_tmux_forwards_selected_model_when_value_is_unchanged(
+        self, mock_which, mock_generate_name
+    ):
+        """Selected model keys are explicit even when their values did not change."""
+        mock_which.return_value = "/usr/bin/tmux"
+        mock_generate_name.return_value = "topsailai-model-test"
+
+        result = project_scope._wrap_command_for_agent_mode(
+            "topsailai_launch_agent",
+            "tmux",
+            {"OPENAI_MODEL"},
+        )
+
+        self.assertIn("-e OPENAI_MODEL=gpt-selected", result)
+
     @patch("cli_topsailai.project_scope.shutil.which")
     def test_tmux_mode_without_tmux_raises_runtime_error(self, mock_which):
         mock_which.return_value = None

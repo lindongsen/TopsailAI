@@ -62,14 +62,27 @@ The CLI has five scopes, derived from the original design notes in `../../topsai
 | `<number>` | Watch the selected log file (workspace) or enter the selected session (project). |
 | `/refresh` | Re-scan the task directory and refresh the list. |
 | `/session <number\|session_id>` | Retrieve full context messages for a session. |
-| `/agent [<number\|folder>]` | Launch an agent. With no argument, run the YAML-configured agent command. With an argument, change to the selected folder and run `topsailai_launch_agent`. |
-| `/resume <number>` | Resume the selected running session. |
+| `/agent [<number\|folder>]` | Launch an agent. With no argument, run the YAML-configured agent command. With an argument, change to the selected folder and run `topsailai_launch_agent`. The effective model selection is applied to the child process. |
+| `/resume <number>` | Resume the selected running session with the effective model selection. |
+| `/models` | List registry entries and select the workspace default or active-project override. |
+| `/models current` | Show the effective model and whether it comes from project or workspace selection. |
+| `/models clear` | Clear the model selection for the current workspace or project scope. |
 | `/send <number> [message]` | Send a message to the running session associated with the selected entry. |
 | `/clean` | Remove expired files from the task directory. |
 | `cd doc` | Enter doc scope and list usage documentation files under `docs/usage/`. |
 | `scopes` | Display detailed introductions and available actions for each scope. |
 | `/help` | Show available commands. |
 | `q` | Quit the CLI. |
+
+## Model Registry and Selection
+
+Model definitions are read from `{TOPSAILAI_HOME}/.models.jsonl`, with one JSON object per line. Each entry requires `id`, `name`, `provider`, `protocol`, and `model`; the initial implementation supports `openai-compatible`. Optional connection fields include `base_url`, `api_key_env`, `organization_env`, and `project_env`.
+
+Credential fields name existing source environment variables. The registry must not contain raw API keys, tokens, passwords, or secrets. Additional non-secret variables may be supplied through `environment`, while protected TopsailAI runtime variables cannot be overridden.
+
+Selections persist in `{TOPSAILAI_HOME}/.model_selection.json`. A project override takes precedence over the workspace default, which takes precedence over the inherited process environment. Invalid, missing, disabled, or unsupported selected entries stop the launch with an error instead of silently falling back.
+
+The selected configuration is resolved immediately before `/agent` or `/resume`. It sets `OPENAI_MODEL`; when configured, it also sets identical `OPENAI_BASE_URL` and `OPENAI_API_BASE` values and maps referenced credentials to `OPENAI_API_KEY`, `OPENAI_ORG_ID`, and `OPENAI_PROJECT_ID`. These values apply only to the launched child process and do not alter the parent shell.
 
 ## Runtime Commands
 

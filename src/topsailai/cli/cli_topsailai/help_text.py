@@ -209,6 +209,12 @@ def print_help(
             "scopes": ["workspace", "project"],
         },
         {
+            "cmd": "/models [current|clear]",
+            "desc": "List and select model configurations, show the effective selection, or clear the selection for the current workspace or project scope. Project selections override the workspace default for subsequent agent launches and resumes.",
+            "example": "Example: /models  or  /models current  or  /models clear",
+            "scopes": ["workspace", "project"],
+        },
+        {
             "cmd": "p  or  projects",
             "desc": "Switch to the managed project list in project scope. The list is stored in .projects.jsonl under TOPSAILAI_HOME and is sorted oldest-first.",
             "example": "Example: p",

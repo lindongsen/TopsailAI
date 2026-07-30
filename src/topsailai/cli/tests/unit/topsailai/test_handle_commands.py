@@ -306,6 +306,35 @@ class TestPerCommandHelp(unittest.TestCase):
         self.assertEqual(action, "help_cmd")
         self.assertEqual(value.get("cmd"), "/ctx.btw")
 
+    @patch("cli_topsailai.core.input", return_value="/models")
+    def test_models_select_available_in_workspace(self, _mock_input):
+        """Workspace scope accepts interactive model selection."""
+        cli_state.current_scope = "workspace"
+        self.assertEqual(prompt_selection([], "/task"), ("models", "select"))
+
+    @patch("cli_topsailai.core.input", return_value="/models current")
+    def test_models_current_available_in_project(self, _mock_input):
+        """Project scope accepts effective model inspection."""
+        cli_state.current_scope = "project"
+        self.assertEqual(prompt_selection([], "/task"), ("models", "current"))
+
+    @patch("cli_topsailai.core.input", return_value="/models clear")
+    def test_models_clear_available_in_workspace(self, _mock_input):
+        """Workspace scope accepts model selection clearing."""
+        cli_state.current_scope = "workspace"
+        self.assertEqual(prompt_selection([], "/task"), ("models", "clear"))
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input", side_effect=["/models", "q"])
+    def test_models_rejected_in_session_scope(self, _mock_input, mock_print):
+        """Session scope rejects model management without changing scope."""
+        cli_state.current_scope = "session"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual((action, value), ("quit", None))
+        self.assertTrue(
+            any("only available" in str(call) for call in mock_print.call_args_list)
+        )
+
     @patch("cli_topsailai.process.run_external_command")
     @patch("cli_topsailai.core.input")
     def test_help_flag_passthrough_for_args_command(
