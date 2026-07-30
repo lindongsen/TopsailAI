@@ -35,3 +35,32 @@ Lessons:
 1. A "small display change" must not silently restructure control flow or remove state mutations.
 2. Before committing any change that affects when/how output is produced or mutates object state, obtain the user's explicit approval.
 3. When the user says a change is too large, stop and revert to the minimal version rather than iterating on top of the rejected approach.
+
+## Each layer's lifecycle must be self-contained: setup and teardown belong to the same layer
+
+Commit `8a853e43b02b930d82746a06062d74d9033f5314` fixed a regression where the Agent2LLM message source was unset after the first turn and never re-established, causing subsequent turns to ignore injected messages. The deeper issue was a lifecycle boundary violation: User2Agent set up a per-conversation resource, but Agent2LLM's per-turn execution tore it down.
+
+Background:
+- `AgentChat._run()` in `workspace/agent/agent_shell_base.py` starts the User2Agent conversation loop and calls `self.call_hooks_pre_run()` **once** before the loop.
+- That pre-run hook (`workspace/agent/hooks/pre_run_agent2llm_source.py`) registers the Agent2LLM message source via `set_agent2llm_message_source(source)`.
+- Each User2Agent turn then calls `ai_agent.run()`, which executes `AgentBase.run()` in `ai_base/agent_base.py`.
+- Inside `AgentBase.run()`, `_inject_runtime_messages()` calls `apply_agent2llm_message_source(self)`, which returns early if `get_agent2llm_message_source()` is `None`.
+
+The bug:
+- The old `AgentBase.run()` had `unset_agent2llm_message_source()` in its `finally` block.
+- `AgentBase.run()` is a **per-turn** function; the message source was set up **once per conversation** by User2Agent.
+- After the first turn completed, the per-turn `finally` cleared the per-conversation source.
+- Because `call_hooks_pre_run()` is not invoked again for later turns, the source stayed `None`.
+- From the second turn onward, any messages written to the Agent2LLM inject file were silently ignored.
+
+The fix:
+- Remove the premature `unset_agent2llm_message_source()` from `AgentBase.run()`.
+- The source now survives for the entire User2Agent conversation.
+- The file source itself clears consumed messages in `consume_messages()`, so there is no duplication or leak.
+- The teardown, if needed, belongs in the User2Agent conversation loop's exit path — not inside a per-turn `finally` in Agent2LLM.
+
+Lessons:
+1. **A layer's lifecycle must be self-contained: setup and teardown must be paired in the same layer and at the same granularity.** User2Agent created the Agent2LLM message source once per conversation in its pre-run hook, so only User2Agent should destroy it, and only when the conversation ends.
+2. **A per-turn function must not teardown a per-conversation resource.** `AgentBase.run()` runs once per User2Agent turn; its `finally` block is the wrong place to clean up state that outlives a single turn.
+3. **If teardown is missing in the owning layer, add it there instead of borrowing another layer's cleanup.** The correct place to unset the message source is the User2Agent conversation loop's exit path, not `AgentBase.run()`.
+4. **Always verify multi-turn behavior for features that inject or mutate Agent2LLM context,** because single-turn tests will not catch lifecycle mismatches.
