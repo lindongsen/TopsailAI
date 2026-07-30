@@ -1279,8 +1279,13 @@ def main():
     project_folder = merged_env.get("TOPSAILAI_PROJECT_FOLDER") or os.environ.get(
         "TOPSAILAI_PROJECT_FOLDER"
     )
+    if project_folder and project_folder[0] != "/":
+        project_folder = os.path.join(os.getcwd(), project_folder)
+        project_folder = os.path.abspath(project_folder)
+    if project_folder:
+        merged_env["TOPSAILAI_PROJECT_FOLDER"] = project_folder
+        os.environ["TOPSAILAI_PROJECT_FOLDER"] = project_folder
     folder_structure = _scan_workspace_files(workspace, project_folder)
-
     message_parts = []
     if context_content:
         message_parts.append(context_content)

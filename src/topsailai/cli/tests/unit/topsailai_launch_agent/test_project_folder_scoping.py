@@ -22,12 +22,17 @@ class TestProjectFolderScoping(unittest.TestCase):
     def setUp(self):
         self._original_dir = os.getcwd()
         self._original_argv = sys.argv
+        self._original_project_folder = os.environ.get("TOPSAILAI_PROJECT_FOLDER")
         self._stdout = StringIO()
         self._stderr = StringIO()
 
     def tearDown(self):
         os.chdir(self._original_dir)
         sys.argv = self._original_argv
+        if self._original_project_folder is None:
+            os.environ.pop("TOPSAILAI_PROJECT_FOLDER", None)
+        else:
+            os.environ["TOPSAILAI_PROJECT_FOLDER"] = self._original_project_folder
 
     def _write_settings(self, workspace, environment=None):
         settings_dir = os.path.join(workspace, ".topsailai")
@@ -76,10 +81,31 @@ class TestProjectFolderScoping(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(captured["project_folder"], project_dir)
 
-    def test_project_folder_from_os_environment_fallback(self):
+    def test_relative_project_folder_is_resolved_to_absolute(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             os.chdir(tmpdir)
-            project_dir = os.path.join(tmpdir, "os-project")
+            project_dir = os.path.join(tmpdir, "rel-project")
+            os.makedirs(project_dir, exist_ok=True)
+            self._write_settings(tmpdir, {"TOPSAILAI_PROJECT_FOLDER": "rel-project"})
+
+            captured = {}
+
+            def fake_scan(workspace, project_folder=None):
+                captured["workspace"] = workspace
+                captured["project_folder"] = project_folder
+                return "fake-tree"
+
+            with mock.patch.object(launcher, "_scan_workspace_files", fake_scan):
+                exit_code = self._run_main(["topsailai_launch_agent.py", "--dry-run"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(captured["project_folder"], project_dir)
+            self.assertEqual(os.environ.get("TOPSAILAI_PROJECT_FOLDER"), project_dir)
+
+    def test_relative_project_folder_from_os_environment_is_resolved(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            project_dir = os.path.join(tmpdir, "os-rel-project")
             os.makedirs(project_dir, exist_ok=True)
             self._write_settings(tmpdir)
 
@@ -90,10 +116,11 @@ class TestProjectFolderScoping(unittest.TestCase):
                 captured["project_folder"] = project_folder
                 return "fake-tree"
 
-            env = {"TOPSAILAI_PROJECT_FOLDER": project_dir}
+            env = {"TOPSAILAI_PROJECT_FOLDER": "os-rel-project"}
             with mock.patch.object(launcher, "_scan_workspace_files", fake_scan):
                 with mock.patch.dict(os.environ, env, clear=False):
                     exit_code = self._run_main(["topsailai_launch_agent.py", "--dry-run"])
+                    self.assertEqual(os.environ.get("TOPSAILAI_PROJECT_FOLDER"), project_dir)
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(captured["project_folder"], project_dir)
