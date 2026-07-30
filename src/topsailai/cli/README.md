@@ -38,6 +38,7 @@ Unit tests for each CLI tool are organized under `tests/unit/{cli-name}/`.
 For example:
 
 - `topsailai.py` → `tests/unit/topsailai/`
+- `topsailai_models.py` → `tests/unit/topsailai_models/`
 
 When adding a new CLI tool, create a matching folder under `tests/unit/` and place its tests there.
 
@@ -52,6 +53,7 @@ For example:
 - `topsailai.py`
 - `topsailai_launch_agent.py`
 - `topsailai_session_status.py`
+- `topsailai_models.py`
 
 When adding a new CLI tool, prefix its entry-point script with `topsailai` (e.g., `topsailai_<feature>.py`).
 
@@ -66,6 +68,7 @@ Add a Python entry point named `topsailai_<feature>.py` in this directory (`./`)
 
 ```bash
 topsailai_session_info.py
+topsailai_models.py
 ```
 
 ### Step 2: Create a matching symlink in `bin/`
@@ -151,6 +154,8 @@ The CLI and agent processes share a single workspace root referred to as `TOPSAI
 ### Model Selection
 
 Create `{TOPSAILAI_HOME}/.models.jsonl` with one model configuration object per line. Use `/models` in workspace scope to set the default model or in project scope to set an override for the active project. `/models current` shows the effective model and `/models clear` removes the selection for the current scope.
+
+You can also manage the registry from the shell with the `topsailai models` subcommand (see below).
 
 Selections are stored in `.model_selection.json` with project overrides taking precedence over the workspace default. The selected OpenAI-compatible configuration is applied only to subsequently launched or resumed agent processes; it does not modify the parent shell environment.
 
@@ -534,6 +539,43 @@ topsailai project launch /work/my-project
 # Resume an idle session
 topsailai project resume my-session
 ```
+
+### Non-interactive model registry management
+
+The `topsailai models` subcommand manages `{TOPSAILAI_HOME}/.models.jsonl` without entering the interactive CLI.
+
+| Command | Description |
+|---|---|
+| `topsailai models list` | Display all model registry entries with row numbers. |
+| `topsailai models add <name> --config KEY=VALUE ...` | Add a new model entry. Duplicate names are rejected. |
+| `topsailai models get <name>` | Print the full JSON for the named model. |
+| `topsailai models update <name> --config KEY=VALUE ...` | Merge key/value pairs into an existing entry. |
+| `topsailai models delete <name>` | Remove the named entry. Prompts for confirmation unless `--yes` is passed. |
+
+Examples:
+
+```bash
+# Add a model with credential reference
+topsailai models add "GPT-4o" \
+  --config provider=openai \
+  --config protocol=openai-compatible \
+  --config model=gpt-4o \
+  --config api_key_env=OPENAI_API_KEY
+
+# List models
+topsailai models list
+
+# Update a model
+topsailai models update "GPT-4o" --config base_url=https://api.example.test/v1
+
+# Show a model
+topsailai models get "GPT-4o"
+
+# Delete a model without confirmation
+topsailai models delete "GPT-4o" --yes
+```
+
+Registry entries must reference credentials by environment-variable name through `api_key_env`, `organization_env`, or `project_env`. Literal secret fields such as `api_key` are rejected.
 
 ## Modification Rule
 

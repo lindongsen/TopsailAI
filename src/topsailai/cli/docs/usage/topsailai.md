@@ -103,6 +103,14 @@ The selected configuration is resolved immediately before `/agent` or `/resume`.
 | `project add <path> [name]` | Add a project to the managed project list. |
 | `project del <path>` | Remove a project from the managed project list. |
 | `project list` | Display all managed projects. |
+| `models list` | Display all model registry entries. |
+| `models add <json-or-key=value...>` | Add a model entry to `.models.jsonl`. |
+| `models update <number-or-name> <json-or-key=value...>` | Update an existing model entry. |
+| `models delete <number-or-name>` | Delete a model entry. Use `--yes` to skip confirmation. |
+| `models get <number-or-name>` | Print one model entry as formatted JSON. |
+| `models current` | Show the workspace model selection. |
+| `models select <number-or-name>` | Set the workspace default model selection. |
+| `models clear` | Clear the workspace model selection. |
 
 ## Examples
 
@@ -124,6 +132,27 @@ The selected configuration is resolved immediately before `/agent` or `/resume`.
 
 # List managed projects
 ./topsailai.py project list
+
+# List model registry entries
+./topsailai.py models list
+
+# Add a model with key=value pairs
+./topsailai.py models add name="My Model" provider=openai protocol=openai-compatible model=gpt-4o api_key_env=OPENAI_API_KEY
+
+# Add a model with a JSON object
+./topsailai.py models add '{"id":"my-model","name":"My Model","provider":"openai","protocol":"openai-compatible","model":"gpt-4o","api_key_env":"OPENAI_API_KEY"}'
+
+# Update the first model's base URL
+./topsailai.py models update 1 base_url=https://api.example.com/v1
+
+# Select the first model as the workspace default
+./topsailai.py models select 1
+
+# Show the current workspace selection
+./topsailai.py models current
+
+# Clear the workspace selection
+./topsailai.py models clear
 ```
 
 ## Historical Reference

@@ -3,6 +3,7 @@ references:
   - topsailai.py
   - cli_topsailai/
   - topsailai.yaml
+  - topsailai_models.py
 ---
 
 # CLI: topsailai
@@ -28,6 +29,11 @@ references:
 
 - usage documentation list
 - read usage documentation
+
+## Non-interactive subcommands
+
+- `project add|del|list|launch|resume`
+- `models list|add|get|update|delete`
 
 ## Command Design Convention
 

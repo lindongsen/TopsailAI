@@ -27,6 +27,9 @@ from cli_topsailai.doc_scope import (
     print_doc_table,
     resolve_doc,
 )
+from cli_topsailai.models_cli import (
+    _register_models_subcommands,
+)
 from cli_topsailai.projects import (
     add_project,
     build_managed_project_list,
@@ -41,6 +44,10 @@ __version__ = "0.1.0"
 # Tracks whether the project scope is showing session-based projects
 # ("sessions") or the managed project list ("managed").
 _project_scope_mode: str = "sessions"
+
+# Holds the top-level ``models`` argparse subparser so bare ``topsailai models``
+# can print help without relying on namespace attributes.
+_MODELS_PARSER: Optional[argparse.ArgumentParser] = None
 
 # Match ANSI escape sequences (e.g. "\033[32m") so they can be marked as
 # non-printing when a prompt is passed to readline-based input().
@@ -290,6 +297,19 @@ def _handle_docs_read_subcommand(args: argparse.Namespace) -> int:
         return 1
     print(result["content"])
     return 0
+
+
+def _handle_models_subcommand(args: argparse.Namespace) -> int:
+    """Delegate ``models`` subcommands to the models CLI module."""
+    if getattr(args, "models_command", None) is None:
+        if _MODELS_PARSER is not None:
+            _MODELS_PARSER.print_help()
+        return 1
+    if getattr(args, "func", None) is None:
+        if _MODELS_PARSER is not None:
+            _MODELS_PARSER.print_help()
+        return 1
+    return args.func(args)
 
 
 def _handle_project_subcommand(args: argparse.Namespace) -> int:
@@ -847,7 +867,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     if argv is None:
         argv = []
 
-    _TOP_LEVEL_COMMANDS = {"workspace", "docs", "project"}
+    _TOP_LEVEL_COMMANDS = {"workspace", "docs", "project", "models"}
     _TOP_LEVEL_OPTIONS = {
         "-h", "--help", "--version", "-w", "--workspace",
         "--list-docs", "--read-doc", "--tui", "--runtime-tui",
@@ -979,6 +999,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         project_subparsers.add_parser(
             "resume",
             help="resume an idle project session",
+            add_help=False,
+        )
+        subparsers.add_parser(
+            "models",
+            help="manage the model registry",
             add_help=False,
         )
         help_parser.print_help()
@@ -1121,6 +1146,15 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     project_resume_parser.add_argument("session_id", help="session ID")
     project_resume_parser.set_defaults(func=_handle_project_subcommand)
+    models_parser = subparsers.add_parser(
+        "models",
+        help="manage the model registry",
+    )
+    models_subparsers = models_parser.add_subparsers(dest="models_command")
+    _register_models_subcommands(models_subparsers, models_parser)
+    global _MODELS_PARSER
+    _MODELS_PARSER = models_parser
+    models_parser.set_defaults(func=_handle_models_subcommand)
 
     # Be tolerant of unknown arguments so tests that invoke main() with
     # arbitrary fake argv do not crash. Only help/version trigger an exit.
