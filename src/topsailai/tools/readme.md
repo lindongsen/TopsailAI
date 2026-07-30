@@ -2,6 +2,14 @@
 
 These tools will be called by the AI agent.
 
+## Available Tools
+
+| Module | Tool Name | Purpose |
+|--------|-----------|---------|
+| `cmd_tool.py` | `exec_cmd` | Execute arbitrary shell commands |
+| `file_tool.py` | `read_file`, `write_file`, `append_file`, `check_files_existing`, `mkdirs`, `overwrite_lines_in_file`, `insert_content_to_file`, `list_dirs`, `read_files` | File and directory operations |
+| `git_tool.py` | `exec_readonly` | Execute read-only git commands safely (disabled by default) |
+
 ## Variables & Functions
 
 - TOOLS: required, dict, func_name=func_call
