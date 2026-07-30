@@ -5,10 +5,9 @@ Created: 2026-07-22
 Purpose: Fix common trailing garbage produced by Kimi models.
 '''
 
-import os
 import re
 
-from topsailai.utils.thread_local_tool import get_agent_object
+from topsailai.ai_base.helper.model_name import get_current_model_name
 
 
 # Kimi sometimes appends trailing garbage such as `` ` <|tool_call_end|><|tool_calls_section_end|> `` to tool-call
@@ -16,37 +15,6 @@ from topsailai.utils.thread_local_tool import get_agent_object
 # the literal garbage characters, and any trailing whitespace at the end of a
 # string.
 TRAILING_GARBAGE_PATTERN = re.compile(r'[`\s]*<\|tool_call_end\|><\|tool_calls_section_end\|>\s*$')
-
-
-def _get_current_model_name(rsp_obj=None):
-    """Resolve the current LLM model name from agent context or environment.
-
-    The primary source is the agent object stored in thread-local storage,
-    which is set by ``AgentBase.run`` during agent execution. If no agent is
-    running (for example when ``llm_shell`` is used directly), fall back to
-    the ``OPENAI_MODEL`` environment variable. An optional ``rsp_obj`` can
-    provide a secondary signal via its ``model`` attribute.
-
-    Args:
-        rsp_obj (any, optional): Raw response object from the SDK.
-
-    Returns:
-        str: The resolved model name, or an empty string if unknown.
-    """
-    agent = get_agent_object()
-    if agent is not None:
-        llm_model = getattr(agent, "llm_model", None)
-        if llm_model is not None:
-            model_name = getattr(llm_model, "model_name", None)
-            if model_name:
-                return str(model_name)
-
-    if rsp_obj is not None:
-        model_name = getattr(rsp_obj, "model", None)
-        if model_name:
-            return str(model_name)
-
-    return os.getenv("OPENAI_MODEL", "")
 
 
 def _is_kimi_model(model_name):
@@ -94,7 +62,7 @@ def fix_kimi_trailing_garbage(message, rsp_obj=None, **_):
         list | None: The modified message if any change was made, otherwise
         ``None``.
     """
-    model_name = _get_current_model_name(rsp_obj=rsp_obj)
+    model_name = get_current_model_name(rsp_obj=rsp_obj)
     if not _is_kimi_model(model_name):
         return None
 
@@ -153,7 +121,7 @@ def fix_kimi_action_newline_before_think_tag(message, rsp_obj=None, **_):
         list | None: The modified message if any change was made, otherwise
         ``None``.
     """
-    model_name = _get_current_model_name(rsp_obj=rsp_obj)
+    model_name = get_current_model_name(rsp_obj=rsp_obj)
     if not _is_kimi_model(model_name):
         return None
 
@@ -212,7 +180,7 @@ def fix_kimi_action_raw_text_after_thinking(message, rsp_obj=None, **_):
         list | None: The modified message if any change was made, otherwise
         ``None``.
     """
-    model_name = _get_current_model_name(rsp_obj=rsp_obj)
+    model_name = get_current_model_name(rsp_obj=rsp_obj)
     if not _is_kimi_model(model_name):
         return None
 

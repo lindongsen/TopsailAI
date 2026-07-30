@@ -5,11 +5,9 @@ Created: 2026-07-28
 Purpose: Fix DeepSeek-specific DSML tool-call output format.
 '''
 
-import os
-
 import simplejson
 
-from topsailai.utils.thread_local_tool import get_agent_object
+from topsailai.ai_base.helper.model_name import get_current_model_name
 
 
 DSML_TOOL_CALLS_OPEN = "<｜DSML｜tool_calls>"
@@ -20,44 +18,11 @@ DSML_PARAMETER_OPEN = "<｜DSML｜parameter"
 DSML_PARAMETER_CLOSE = "</｜DSML｜parameter>"
 
 
-def _get_current_model_name(rsp_obj=None):
-    """Resolve the current LLM model name from agent context or environment.
-
-    The primary source is the agent object stored in thread-local storage,
-    which is set by ``AgentBase.run`` during agent execution. If no agent is
-    running (for example when ``llm_shell`` is used directly), fall back to
-    the ``OPENAI_MODEL`` environment variable. An optional ``rsp_obj`` can
-    provide a secondary signal via its ``model`` attribute.
-
-    Args:
-        rsp_obj (any, optional): Raw response object from the SDK.
-
-    Returns:
-        str: The resolved model name, or an empty string if unknown.
-    """
-    agent = get_agent_object()
-    if agent is not None:
-        llm_model = getattr(agent, "llm_model", None)
-        if llm_model is not None:
-            model_name = getattr(llm_model, "model_name", None)
-            if model_name:
-                return str(model_name)
-
-    if rsp_obj is not None:
-        model_name = getattr(rsp_obj, "model", None)
-        if model_name:
-            return str(model_name)
-
-    return os.getenv("OPENAI_MODEL", "")
-
-
 def _is_deepseek_model(model_name):
     """Return True when *model_name* identifies a DeepSeek model."""
     if not model_name:
         return False
     return str(model_name).lower().startswith("deepseek")
-
-
 def _parse_attribute(text, name):
     """Extract a double-quoted attribute value from an XML-like opening tag.
 
@@ -224,7 +189,7 @@ def fix_deepseek_dsml_tool_calls(message, rsp_obj=None, **_):
         list | None: The parsed action steps if the input is a DeepSeek DSML
         string, otherwise ``None``.
     """
-    model_name = _get_current_model_name(rsp_obj=rsp_obj)
+    model_name = get_current_model_name(rsp_obj=rsp_obj)
     if not _is_deepseek_model(model_name):
         return None
 

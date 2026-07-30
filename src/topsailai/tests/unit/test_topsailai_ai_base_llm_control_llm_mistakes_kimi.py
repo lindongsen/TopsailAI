@@ -6,8 +6,8 @@ import os
 import pytest
 from unittest.mock import MagicMock, patch
 
+from topsailai.ai_base.helper.model_name import get_current_model_name
 from topsailai.ai_base.llm_control.llm_mistakes.kimi import (
-    _get_current_model_name,
     _insert_newline_before_think_tag,
     _is_kimi_model,
     _strip_trailing_garbage,
@@ -93,25 +93,25 @@ class TestStripTrailingGarbage:
 
 
 class TestGetCurrentModelName:
-    """Tests for _get_current_model_name function."""
+    """Tests for get_current_model_name function."""
 
     def test_fallback_to_env_var(self, monkeypatch):
         """Fallback to OPENAI_MODEL when no agent context."""
         monkeypatch.setenv("OPENAI_MODEL", "Kimi-K2.5")
-        result = _get_current_model_name()
+        result = get_current_model_name()
         assert result == "Kimi-K2.5"
 
     def test_env_var_empty(self, monkeypatch):
         """Returns empty string when no agent and no env var."""
         monkeypatch.delenv("OPENAI_MODEL", raising=False)
-        result = _get_current_model_name()
+        result = get_current_model_name()
         assert result == ""
 
     def test_rsp_obj_model(self):
         """Use rsp_obj.model as secondary signal."""
         class FakeRsp:
             model = "Kimi-K2.5"
-        result = _get_current_model_name(rsp_obj=FakeRsp())
+        result = get_current_model_name(rsp_obj=FakeRsp())
         assert result == "Kimi-K2.5"
 
 
@@ -420,31 +420,33 @@ class TestMistakesDict:
         assert len(MISTAKES) == 3
 
 class TestGetCurrentModelNameThreadLocal:
-    """Additional coverage for _get_current_model_name thread-local agent resolution."""
+    """Additional coverage for get_current_model_name thread-local agent resolution."""
 
     def test_thread_local_agent_llm_model(self):
         """Model name is resolved from thread-local agent's llm_model."""
-        from topsailai.ai_base.llm_control.llm_mistakes import kimi
-
         fake_llm_model = MagicMock()
         fake_llm_model.model_name = "Kimi-Custom"
         fake_agent = MagicMock()
         fake_agent.llm_model = fake_llm_model
 
-        with patch.object(kimi, "get_agent_object", return_value=fake_agent):
-            result = kimi._get_current_model_name()
+        with patch(
+            "topsailai.ai_base.helper.model_name.get_agent_object",
+            return_value=fake_agent,
+        ):
+            result = get_current_model_name()
             assert result == "Kimi-Custom"
 
     def test_thread_local_agent_without_llm_model_falls_back_to_env(self, monkeypatch):
         """When agent lacks llm_model, fall back to OPENAI_MODEL env var."""
-        from topsailai.ai_base.llm_control.llm_mistakes import kimi
-
         fake_agent = MagicMock()
         fake_agent.llm_model = None
         monkeypatch.setenv("OPENAI_MODEL", "Kimi-Fallback")
 
-        with patch.object(kimi, "get_agent_object", return_value=fake_agent):
-            result = kimi._get_current_model_name()
+        with patch(
+            "topsailai.ai_base.helper.model_name.get_agent_object",
+            return_value=fake_agent,
+        ):
+            result = get_current_model_name()
             assert result == "Kimi-Fallback"
 
 
