@@ -132,6 +132,8 @@ class AgentChatBase(object):
         # hook(self)
         self.hooks_pre_run = get_hooks("pre_run")
         self.hooks_for_final_answer = get_hooks("post_final_answer")
+        self.hooks_post_succ_run = get_hooks("post_succ_run")
+        self.hooks_post_fail_run = get_hooks("post_fail_run")
 
         if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION", False):
             def hook_final_summarize_into_session(_) -> None:
@@ -295,6 +297,40 @@ class AgentChatBase(object):
                 hook(self)
             except Exception as e:
                 logger.exception("call hook_for_final_answer failed [%s]: %s", hook, e)
+                # continue
+        return
+
+    def call_hooks_post_succ_run(self):
+        """Execute all post-success-run hooks registered in the hooks_post_succ_run list.
+
+        Iterates through each registered hook function and executes it with
+        the current AgentChat instance as the argument. Any exceptions raised
+        by hooks are logged but do not stop execution of remaining hooks.
+        """
+        for hook in self.hooks_post_succ_run:
+            try:
+                hook(self)
+            except Exception as e:
+                logger.exception("call hook_post_succ_run failed [%s]: %s", hook, e)
+                # continue
+        return
+
+    def call_hooks_post_fail_run(self, exception: Exception):
+        """Execute all post-failure-run hooks registered in the hooks_post_fail_run list.
+
+        Iterates through each registered hook function and executes it with
+        the current AgentChat instance and the exception as arguments. Any
+        exceptions raised by hooks are logged but do not stop execution of
+        remaining hooks.
+
+        Args:
+            exception: The exception that caused the run to fail.
+        """
+        for hook in self.hooks_post_fail_run:
+            try:
+                hook(self, exception)
+            except Exception as e:
+                logger.exception("call hook_post_fail_run failed [%s]: %s", hook, e)
                 # continue
         return
 

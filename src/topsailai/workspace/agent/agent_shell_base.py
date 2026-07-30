@@ -301,15 +301,18 @@ class AgentChat(AgentChatBase):
 
             except agent_exception.AgentEndProcess:
                 self.last_message = self.messages[-1]
+                self.call_hooks_post_fail_run(agent_exception.AgentEndProcess())
             except HeavyTaskError as e:
                 logger.warning("HeavyTaskError caught in agent chat loop: %s", e)
                 answer = f"Task terminated: {e}"
                 self.last_message = answer
+                self.call_hooks_post_fail_run(e)
                 break
             except (KeyboardInterrupt, EOFError):
                 flag_abort = True
                 answer = "failed due to abort by Human"
                 if need_confirm_abort and not input_yes("Agent Session Continue [yes/no] "):
+                    self.call_hooks_post_fail_run(KeyboardInterrupt())
                     break
 
             if answer:
@@ -340,6 +343,7 @@ class AgentChat(AgentChatBase):
                 self.last_message = answer
 
             self.call_hook_for_final_answer()
+            self.call_hooks_post_succ_run()
 
             # it is not interactive mode
             if not env_tool.is_debug_mode() or not env_tool.is_interactive_mode():
