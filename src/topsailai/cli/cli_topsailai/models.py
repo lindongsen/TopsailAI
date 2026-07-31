@@ -422,7 +422,14 @@ def build_model_environment(
     model: ModelConfig,
     inherited_environment: Mapping[str, str],
 ) -> dict[str, str]:
-    """Build an OpenAI-compatible child environment without mutating input."""
+    """Build an OpenAI-compatible child environment without mutating input.
+
+    Source environment variables referenced by ``api_key_env``,
+    ``organization_env``, and ``project_env`` are optional.  If a referenced
+    variable is unset, the corresponding OpenAI target variable is left
+    unchanged in the inherited environment and a warning is returned so the
+    caller can surface it without aborting the launch.
+    """
     if not model.enabled:
         raise ModelConfigurationError(f"Model {model.id!r} is disabled")
     if model.protocol not in _SUPPORTED_PROTOCOLS:
@@ -437,6 +444,7 @@ def build_model_environment(
         environment["OPENAI_BASE_URL"] = model.base_url
         environment["OPENAI_API_BASE"] = model.base_url
 
+    warnings: list[str] = []
     source_mappings = (
         (model.api_key_env, "OPENAI_API_KEY"),
         (model.organization_env, "OPENAI_ORG_ID"),
@@ -447,8 +455,10 @@ def build_model_environment(
             continue
         source_value = inherited_environment.get(source_name)
         if source_value is None:
-            raise ModelConfigurationError(
-                f"Required source environment variable {source_name!r} is not set"
+            warnings.append(
+                f"Source environment variable {source_name!r} is not set; "
+                f"leaving {target_name} unchanged"
             )
+            continue
         environment[target_name] = source_value
-    return environment
+    return environment, warnings

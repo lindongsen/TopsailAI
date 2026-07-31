@@ -196,7 +196,7 @@ class TestModelEnvironment(unittest.TestCase):
             "UNCHANGED": "yes",
         }
 
-        child = build_model_environment(model, inherited)
+        child, warnings = build_model_environment(model, inherited)
 
         self.assertEqual(child["OPENAI_MODEL"], "company-chat")
         self.assertEqual(child["OPENAI_BASE_URL"], "https://llm.example.test/v1")
@@ -206,8 +206,9 @@ class TestModelEnvironment(unittest.TestCase):
         self.assertEqual(child["OPENAI_TIMEOUT"], "60")
         self.assertEqual(child["UNCHANGED"], "yes")
         self.assertNotIn("OPENAI_MODEL", inherited)
+        self.assertEqual(warnings, [])
 
-    def test_missing_secret_source_fails_without_exposing_values(self):
+    def test_missing_secret_source_warns_without_exposing_values(self):
         model = validate_model_record(
             {
                 "id": "missing-key",
@@ -218,8 +219,32 @@ class TestModelEnvironment(unittest.TestCase):
                 "api_key_env": "MISSING_API_KEY",
             }
         )
-        with self.assertRaisesRegex(ModelConfigurationError, "MISSING_API_KEY"):
-            build_model_environment(model, {})
+        child, warnings = build_model_environment(model, {})
+        self.assertNotIn("OPENAI_API_KEY", child)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("MISSING_API_KEY", warnings[0])
+        self.assertIn("OPENAI_API_KEY", warnings[0])
+
+    def test_missing_source_env_vars_leave_targets_unchanged(self):
+        model = validate_model_record(
+            {
+                "id": "partial-key",
+                "name": "Partial Key",
+                "provider": "openai",
+                "protocol": "openai-compatible",
+                "model": "gpt",
+                "api_key_env": "SET_API_KEY",
+                "organization_env": "MISSING_ORG",
+                "project_env": "MISSING_PROJECT",
+            }
+        )
+        inherited = {"SET_API_KEY": "secret", "OPENAI_ORG_ID": "existing-org"}
+        child, warnings = build_model_environment(model, inherited)
+        self.assertEqual(child["OPENAI_API_KEY"], "secret")
+        self.assertEqual(child["OPENAI_ORG_ID"], "existing-org")
+        self.assertNotIn("OPENAI_PROJECT_ID", child)
+        self.assertEqual(len(warnings), 2)
+        self.assertTrue(all("is not set" in warning for warning in warnings))
 
 
 if __name__ == "__main__":

@@ -500,10 +500,13 @@ def _apply_selected_model_environment(
         if effective.model is None:
             return {}, set()
         model = effective.model
-        child_environment = build_model_environment(model, os.environ)
+        child_environment, warnings = build_model_environment(model, os.environ)
     except ModelConfigurationError as error:
         print(f"{Colors.RED}[ERROR] Cannot apply selected model: {error}{Colors.RESET}")
         return None
+
+    for warning in warnings:
+        print(f"{Colors.YELLOW}[WARN] {warning}{Colors.RESET}")
 
     forwarded_keys = set(model.environment)
     forwarded_keys.add("OPENAI_MODEL")
@@ -518,7 +521,7 @@ def _apply_selected_model_environment(
     changed_values = {
         key: child_environment[key]
         for key in forwarded_keys
-        if os.environ.get(key) != child_environment[key]
+        if key in child_environment and os.environ.get(key) != child_environment[key]
     }
     original_values = {key: os.environ.get(key) for key in changed_values}
     os.environ.update(changed_values)

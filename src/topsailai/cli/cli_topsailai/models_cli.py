@@ -284,7 +284,6 @@ def handle_models_add(args: Any) -> int:
     models, errors = _load_registry()
     for error in errors:
         _print_warn(error)
-
     try:
         raw_record = _build_add_record(args.name, args.config or [])
     except ModelConfigurationError as error:
