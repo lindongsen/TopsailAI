@@ -117,7 +117,7 @@ def _require_non_empty_string(record: Mapping[str, Any], field_name: str) -> str
     value = record.get(field_name)
     if not isinstance(value, str) or not value.strip():
         raise ModelConfigurationError(
-            f"field {field_name!r} must be a non-empty string"
+            f"field {field_name!r} is required and must be a non-empty string"
         )
     return value.strip()
 
@@ -194,12 +194,20 @@ def validate_model_record(record: Any) -> ModelConfig:
     secret_fields = _SECRET_FIELD_NAMES.intersection(record)
     if secret_fields:
         names = ", ".join(sorted(secret_fields))
-        raise ModelConfigurationError(f"raw secret fields are prohibited: {names}")
+        raise ModelConfigurationError(
+            f"raw secret fields are prohibited: {names}. "
+            "Use the corresponding *_env fields instead "
+            "(e.g. api_key_env=OPENAI_API_KEY, organization_env=OPENAI_ORG_ID, "
+            "project_env=OPENAI_PROJECT_ID)."
+        )
 
     unknown_fields = set(record).difference(_ALLOWED_FIELDS)
     if unknown_fields:
         names = ", ".join(sorted(str(name) for name in unknown_fields))
-        raise ModelConfigurationError(f"unknown fields: {names}")
+        allowed = ", ".join(sorted(_ALLOWED_FIELDS))
+        raise ModelConfigurationError(
+            f"unknown fields: {names}. Allowed fields: {allowed}"
+        )
 
     model_id = _require_non_empty_string(record, "id")
     if not _MODEL_ID_PATTERN.fullmatch(model_id):
@@ -307,14 +315,15 @@ def load_selection(path: Optional[str] = None) -> dict[str, Any]:
     if not isinstance(workspace, str) or not workspace:
         workspace = None
     raw_projects = raw_state.get("projects", {})
-    projects = {
-        key: value
-        for key, value in raw_projects.items()
-        if isinstance(key, str)
-        and key
-        and isinstance(value, str)
-        and value
-    } if isinstance(raw_projects, dict) else {}
+    projects = (
+        {
+            key: value
+            for key, value in raw_projects.items()
+            if isinstance(key, str) and key and isinstance(value, str) and value
+        }
+        if isinstance(raw_projects, dict)
+        else {}
+    )
     return {"workspace": workspace, "projects": projects}
 
 

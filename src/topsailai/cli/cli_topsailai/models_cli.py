@@ -28,6 +28,47 @@ from cli_topsailai.models import (
 )
 
 
+_CONFIG_HELP = """Set a model configuration key/value pair (repeatable).
+
+Common keys:
+  name                  Unique display name for the model (required for add).
+  model                 Actual model ID sent to the API (required).
+  provider              Provider name, e.g. openai, azure, local (required).
+  protocol              Must be "openai-compatible" (required).
+  base_url              OpenAI-compatible endpoint URL.
+  api_key_env           Name of the environment variable that holds the API key.
+  organization_env      Name of the environment variable for the organization ID.
+  project_env           Name of the environment variable for the project ID.
+  description           Short human-readable description.
+  tags                  List of tags, e.g. ["prod","vision"].
+  enabled               true or false.
+  metadata              Arbitrary JSON object for extra settings.
+
+Security note:
+  Never pass api_key, organization, or project directly. Always use the
+  *_env variants so secrets are read from environment variables.
+
+Values are parsed as JSON when possible, so numbers, booleans, arrays, and
+objects work without extra shell quoting. Plain strings are kept as strings.
+"""
+
+_ADD_EPILOG = """Example:
+  topsailai models add GPT-4o \\
+    --config provider=openai \\
+    --config protocol=openai-compatible \\
+    --config model=gpt-4o \\
+    --config base_url=https://api.openai.com/v1 \\
+    --config api_key_env=OPENAI_API_KEY \\
+    --config description="OpenAI GPT-4o"
+"""
+
+_UPDATE_EPILOG = """Example:
+  topsailai models update GPT-4o \\
+    --config base_url=https://api.example.test/v1 \\
+    --config enabled=true
+"""
+
+
 def _slugify_id(name: str) -> str:
     """Derive a stable model id from a display name.
 
@@ -424,6 +465,9 @@ def _register_models_subcommands(
     models_add_parser = subparsers.add_parser(
         "add",
         help="add a model to the registry",
+        description="Add a new model configuration to the registry.",
+        epilog=_ADD_EPILOG,
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     models_add_parser.add_argument(
         "name",
@@ -434,7 +478,7 @@ def _register_models_subcommands(
         action="append",
         dest="config",
         metavar="KEY=VALUE",
-        help="model configuration key/value pair (repeatable)",
+        help=_CONFIG_HELP,
     )
     _add_json_flag(models_add_parser)
     models_add_parser.set_defaults(func=handle_models_add, **common_defaults)
@@ -442,6 +486,9 @@ def _register_models_subcommands(
     models_update_parser = subparsers.add_parser(
         "update",
         help="update an existing model entry",
+        description="Update an existing model configuration by merging key/value pairs.",
+        epilog=_UPDATE_EPILOG,
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     models_update_parser.add_argument(
         "name",
@@ -452,7 +499,7 @@ def _register_models_subcommands(
         action="append",
         dest="config",
         metavar="KEY=VALUE",
-        help="model configuration key/value pair to merge (repeatable)",
+        help=_CONFIG_HELP,
     )
     _add_json_flag(models_update_parser)
     models_update_parser.set_defaults(func=handle_models_update, **common_defaults)
