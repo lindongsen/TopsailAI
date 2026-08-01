@@ -590,10 +590,13 @@ def launch_agent_in_folder(folder: str, agent_mode: str = "dtach") -> None:
     The target workspace and model environment are applied only for the child
     launch and restored immediately afterward. Raw, dtach, and tmux modes use
     the same effective project/workspace model selection.
+
+    A stale ``TOPSAILAI_SESSION_ID`` is cleared before launch so the agent
+    driver starts a fresh session instead of resuming the parent's session.
     """
     original_cwd = os.getcwd()
     target_folder = os.path.abspath(folder)
-    env_keys = ("TOPSAILAI_PWD", "PWD")
+    env_keys = ("TOPSAILAI_PWD", "PWD", "TOPSAILAI_SESSION_ID")
     original_env: Dict[str, Optional[str]] = {
         key: os.environ.get(key) for key in env_keys
     }
@@ -603,7 +606,10 @@ def launch_agent_in_folder(folder: str, agent_mode: str = "dtach") -> None:
     try:
         os.chdir(target_folder)
         for key in env_keys:
-            os.environ[key] = target_folder
+            if key == "TOPSAILAI_SESSION_ID":
+                os.environ[key] = ""
+            else:
+                os.environ[key] = target_folder
         model_environment = _apply_selected_model_environment(target_folder)
         if model_environment is None:
             model_original_env = None

@@ -531,6 +531,11 @@ class TestLaunchAgentInFolder(unittest.TestCase):
                 expected_folder,
                 "PWD must point to the target folder during launch",
             )
+            self.assertEqual(
+                os.environ.get("TOPSAILAI_SESSION_ID"),
+                "",
+                "TOPSAILAI_SESSION_ID must be cleared during launch",
+            )
         return _side_effect
 
     @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
@@ -584,9 +589,33 @@ class TestLaunchAgentInFolder(unittest.TestCase):
         mock_getcwd.return_value = "/TopsailAI/cli"
         original_pwd = os.environ.get("PWD")
         original_topsailai_pwd = os.environ.get("TOPSAILAI_PWD")
+        original_session_id = os.environ.get("TOPSAILAI_SESSION_ID")
         project_scope.launch_agent_in_folder("/work/project-a")
         self.assertEqual(os.environ.get("PWD"), original_pwd)
         self.assertEqual(os.environ.get("TOPSAILAI_PWD"), original_topsailai_pwd)
+        self.assertEqual(os.environ.get("TOPSAILAI_SESSION_ID"), original_session_id)
+
+    @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_clears_stale_session_id_during_launch(
+        self, mock_getcwd, mock_chdir, mock_system, mock_which
+    ):
+        """A historical session ID must not be inherited by a new agent launch."""
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        os.environ["TOPSAILAI_SESSION_ID"] = "stale-session-id"
+        captured = {}
+
+        def _capture_and_assert(_cmd):
+            captured["session_id_during"] = os.environ.get("TOPSAILAI_SESSION_ID")
+
+        mock_system.side_effect = _capture_and_assert
+        try:
+            project_scope.launch_agent_in_folder("/work/project-a")
+        finally:
+            os.environ.pop("TOPSAILAI_SESSION_ID", None)
+        self.assertEqual(captured["session_id_during"], "")
 
     @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
     @patch("cli_topsailai.project_scope.os.system")
@@ -808,8 +837,37 @@ class TestLaunchAgentInFolderWithMode(unittest.TestCase):
         self.assertTrue(called_command.startswith("tmux new-session"))
         self.assertIn("-e TOPSAILAI_PWD=/work/project-a", called_command)
         self.assertIn("-e PWD=/work/project-a", called_command)
-        self.assertNotIn("TOPSAILAI_SESSION_ID", called_command)
+        self.assertIn("-e TOPSAILAI_SESSION_ID=", called_command)
         self.assertIn("topsailai_launch_agent", called_command)
+
+    @patch.dict(
+        os.environ,
+        {
+            "TOPSAILAI_PWD": "/work/project-a",
+            "PWD": "/work/project-a",
+            "TOPSAILAI_SESSION_ID": "stale-session-id",
+        },
+        clear=False,
+    )
+    @patch("cli_topsailai.project_scope._generate_agent_session_name")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    @patch("cli_topsailai.project_scope.os.system")
+    @patch("cli_topsailai.project_scope.os.chdir")
+    @patch("cli_topsailai.project_scope.os.getcwd")
+    def test_tmux_mode_clears_stale_session_id(
+        self, mock_getcwd, mock_chdir, mock_system, mock_which, mock_generate_name
+    ):
+        mock_getcwd.return_value = "/TopsailAI/cli"
+        mock_which.return_value = "/usr/bin/tmux"
+        mock_generate_name.return_value = "topsailai-20260707T221748.169974"
+        project_scope.launch_agent_in_folder("/work/project-a", agent_mode="tmux")
+        mock_system.assert_called_once()
+        called_command = mock_system.call_args[0][0]
+        self.assertIn("-e TOPSAILAI_SESSION_ID=", called_command)
+        self.assertNotIn("-e TOPSAILAI_SESSION_ID=stale-session-id", called_command)
+        self.assertIn("topsailai_launch_agent", called_command)
+        # Original value is restored after launch.
+        self.assertEqual(os.environ.get("TOPSAILAI_SESSION_ID"), "stale-session-id")
 
     @patch("cli_topsailai.project_scope.shutil.which", return_value=None)
     @patch("cli_topsailai.project_scope.os.system")
