@@ -666,8 +666,8 @@ def prompt_selection(
                     # Non-numeric argument is treated as a literal session ID.
                     return ("enter_session", arg)
 
-            # Managed project list commands (project scope only).
-            if state.current_scope == "project":
+            # Managed project list commands (available in workspace and project scopes).
+            if state.current_scope in ("workspace", "project"):
                 if lower_input in ("p", "projects"):
                     return ("show_managed_projects", None)
                 if lower_input.startswith("p ") or lower_input.startswith("/p "):
@@ -688,7 +688,6 @@ def prompt_selection(
                         f"'{subcmd}'. Use p add or p del.{Colors.RESET}"
                     )
                     continue
-
 
             if lower_input == "/models":
                 if state.current_scope in ("workspace", "project"):
@@ -781,6 +780,15 @@ def prompt_selection(
                 return ("resume", parts[1].strip())
             try:
                 selected = int(user_input)
+                if (
+                    state.current_scope == "workspace"
+                    and state.workspace_showing_managed_projects
+                ):
+                    print(
+                        f"\n{Colors.YELLOW}[INFO] In projects list; press 'r' "
+                        f"to return to the workspace task list.{Colors.RESET}"
+                    )
+                    continue
                 if state.current_scope == "doc":
                     if 1 <= selected <= len(files):
                         return ("read_doc", selected - 1)
@@ -804,6 +812,7 @@ def prompt_selection(
                     f"{Colors.RED}[ERROR] Invalid number. "
                     f"Please enter 1-{len(files)}.{Colors.RESET}"
                 )
+                continue
             except ValueError:
                 if state.current_scope == "project":
                     print(
@@ -1285,6 +1294,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     def _refresh_workspace() -> None:
         nonlocal log_files
+        state.workspace_showing_managed_projects = False
         print(f"{Colors.DIM}Refreshing list...{Colors.RESET}")
         sys.stdout.flush()
         log_files = discover_log_files(task_dir, on_item=_print_refresh_item)
@@ -1572,6 +1582,12 @@ def main(argv: Optional[List[str]] = None) -> None:
                 continue
 
             if action == "watch":
+                if state.current_scope == "workspace" and state.workspace_showing_managed_projects:
+                    print(
+                        f"\n{Colors.YELLOW}[INFO] In projects list; press 'r' "
+                        f"to return to the workspace task list.{Colors.RESET}"
+                    )
+                    continue
                 if state.current_scope == "project" and _project_scope_mode == "managed":
                     print(
                         f"\n{Colors.YELLOW}[INFO] Watching a log file is not available for managed projects. "

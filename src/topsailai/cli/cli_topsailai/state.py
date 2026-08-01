@@ -44,3 +44,9 @@ current_doc_filename: Optional[str] = None
 # Project scope state.
 # Default limit for the recent project session list.
 project_scope_limit: Optional[int] = 30
+
+# Workspace scope sub-view state.
+# True when workspace scope is displaying the managed project list via the
+# "p" / "projects" command. In this sub-view bare numeric input is blocked
+# and "r" returns to the normal workspace task list.
+workspace_showing_managed_projects: bool = False

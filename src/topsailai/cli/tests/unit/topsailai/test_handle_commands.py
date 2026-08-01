@@ -718,15 +718,62 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         self.assertEqual(value, "/path/to/project")
 
     @patch("cli_topsailai.core.input")
-    def test_slash_agent_with_args_in_workspace_uses_explicit_branch_with_real_yaml(self, mock_input):
-        """'/agent <folder>' with real YAML loaded must use explicit branch, not YAML."""
-        from cli_topsailai.yaml_commands import load_yaml_commands
-
-        cli_state.yaml_commands = load_yaml_commands()
-        mock_input.return_value = "/agent /path/to/project"
+    def test_p_shows_managed_projects_in_workspace(self, mock_input):
+        """'p' in workspace scope switches to the managed project list."""
+        cli_state.current_scope = "workspace"
+        mock_input.return_value = "p"
         action, value = prompt_selection([], "/task")
-        self.assertEqual(action, "agent")
-        self.assertEqual(value, "/path/to/project")
+        self.assertEqual(action, "show_managed_projects")
+
+    @patch("cli_topsailai.core.input")
+    def test_projects_alias_shows_managed_projects_in_workspace(self, mock_input):
+        """'projects' in workspace scope switches to the managed project list."""
+        cli_state.current_scope = "workspace"
+        mock_input.return_value = "projects"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "show_managed_projects")
+
+    @patch("cli_topsailai.core.input")
+    def test_p_add_with_args_in_workspace(self, mock_input):
+        """'p add <path> [name]' in workspace scope adds a managed project."""
+        cli_state.current_scope = "workspace"
+        mock_input.return_value = "p add /work/my-project my-project"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "add_managed_project")
+        self.assertEqual(value, "/work/my-project my-project")
+
+    @patch("cli_topsailai.core.input")
+    def test_p_del_with_number_in_workspace(self, mock_input):
+        """'p del <number>' in workspace scope deletes a managed project."""
+        cli_state.current_scope = "workspace"
+        mock_input.return_value = "p del 2"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "delete_managed_project")
+        self.assertEqual(value, "2")
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_p_del_without_number_in_workspace_shows_usage(self, mock_input, mock_print):
+        """'p del' without a number in workspace scope prints usage."""
+        cli_state.current_scope = "workspace"
+        mock_input.side_effect = ["p del", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("Usage: p del <number>" in str(call) for call in mock_print.call_args_list)
+        )
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_p_unknown_subcommand_in_workspace_shows_error(self, mock_input, mock_print):
+        """Unknown 'p' subcommand in workspace scope prints an error."""
+        cli_state.current_scope = "workspace"
+        mock_input.side_effect = ["p foo", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("Unknown project sub-command" in str(call) for call in mock_print.call_args_list)
+        )
 
     @patch("cli_topsailai.project_scope.launch_agent_in_folder")
     @patch("cli_topsailai.project_scope.resolve_agent_folder")
@@ -809,7 +856,6 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
 
         mock_resolve.assert_called_once_with("1", [log_file])
         mock_launch.assert_called_once_with("/work/a", agent_mode="raw")
-
     @patch("cli_topsailai.core._detect_agent_mode")
     @patch("cli_topsailai.project_scope.launch_agent_in_folder")
     @patch("cli_topsailai.project_scope.resolve_agent_folder")

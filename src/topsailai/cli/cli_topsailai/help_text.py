@@ -216,9 +216,9 @@ def print_help(
         },
         {
             "cmd": "p  or  projects",
-            "desc": "Switch to the managed project list in project scope. The list is stored in .projects.jsonl under TOPSAILAI_HOME and is sorted oldest-first.",
+            "desc": "Switch to the managed project list. The list is stored in .projects.jsonl under TOPSAILAI_HOME and is sorted oldest-first.",
             "example": "Example: p",
-            "scopes": ["project"],
+            "scopes": ["workspace", "project"],
         },
         {
             "cmd": "r [limit]  or  recent [limit]",
@@ -230,13 +230,13 @@ def print_help(
             "cmd": "p add [path] [name]",
             "desc": "Add a project to the managed project list. The path must exist and be a directory. If path or name is omitted, you will be prompted interactively.",
             "example": "Example: p add /work/my-project my-project",
-            "scopes": ["project"],
+            "scopes": ["workspace", "project"],
         },
         {
             "cmd": "p del <number>",
             "desc": "Delete the managed project at the displayed row number. You will be asked for y/N confirmation. Only the registry entry is removed; the project folder on disk is not deleted.",
             "example": "Example: p del 2",
-            "scopes": ["project"],
+            "scopes": ["workspace", "project"],
         },
         {
             "cmd": "project add <path> [name]",
