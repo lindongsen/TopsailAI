@@ -43,6 +43,7 @@ func setupManager(t *testing.T) (*manager.Manager, string, context.Context) {
 	})
 	return mgr, tmp, ctx
 }
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout
@@ -80,6 +81,21 @@ func buildTarArchive(t *testing.T, files map[string][]byte) []byte {
 	return buf.Bytes()
 }
 
+// createTestObject creates an object with mandatory markdown content and
+// description for use in CLI tests.
+func createTestObject(t *testing.T, ctx context.Context, mgr *manager.Manager, name string, tags ...string) *models.Object {
+	t.Helper()
+	obj, err := mgr.CreateObject(ctx, name, manager.CreateObjectOptions{
+		Data:        bytes.NewReader(buildTarArchive(t, map[string][]byte{name + ".md": []byte("# " + name + "\n")})),
+		Description: "test object " + name,
+		Tags:        tags,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject %s failed: %v", name, err)
+	}
+	return obj
+}
+
 func TestNoArgsPrintsUsage(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
@@ -98,9 +114,15 @@ func TestNoArgsPrintsUsage(t *testing.T) {
 }
 
 func TestCreateAndShow(t *testing.T) {
-	mgr, _, ctx := setupManager(t)
+	mgr, tmp, ctx := setupManager(t)
 
-	if err := Run(ctx, mgr, []string{"create", "hello", "--classify", "demo", "--tag", "a,b", "--description", "Hello description"}); err != nil {
+	content := []byte("# Hello\n\nBody content.\n")
+	src := filepath.Join(tmp, "hello.md")
+	if err := os.WriteFile(src, content, 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	if err := Run(ctx, mgr, []string{"create", "hello", "--classify", "demo", "--tag", "a,b", "--description", "Hello description", "--from", src}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
@@ -139,12 +161,7 @@ func TestCreateAndShow(t *testing.T) {
 func TestWriteAndReadActualFile(t *testing.T) {
 	mgr, tmp, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "doc", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "doc")
 
 	content := []byte("hello actual data")
 	src := filepath.Join(tmp, "input.txt")
@@ -156,6 +173,7 @@ func TestWriteAndReadActualFile(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 
+	var err error
 	var buf bytes.Buffer
 	old := os.Stdout
 	r, w, _ := os.Pipe()
@@ -175,18 +193,13 @@ func TestWriteAndReadActualFile(t *testing.T) {
 func TestTagAddAndSearch(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "tagged", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-		Tags:     []string{"alpha"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "tagged", "alpha")
 
 	if err := Run(ctx, mgr, []string{"tag", "add", string(obj.ID), "beta"}); err != nil {
 		t.Fatalf("tag add: %v", err)
 	}
 
+	var err error
 	var buf bytes.Buffer
 	old := os.Stdout
 	r, w, _ := os.Pipe()
@@ -207,12 +220,7 @@ func TestTagAddAndSearch(t *testing.T) {
 func TestDeleteAndFinalize(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "removeme", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "removeme")
 
 	if err := Run(ctx, mgr, []string{"delete", string(obj.ID)}); err != nil {
 		t.Fatalf("delete: %v", err)
@@ -242,12 +250,7 @@ func TestDeleteAndFinalize(t *testing.T) {
 func TestMoveObject(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "movable", manager.CreateObjectOptions{
-		Classify: []string{"old"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "movable")
 
 	if err := Run(ctx, mgr, []string{"move", string(obj.ID), "new", "nested"}); err != nil {
 		t.Fatalf("move: %v", err)
@@ -266,12 +269,7 @@ func TestMoveObject(t *testing.T) {
 func TestMoveObjectSlashPath(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "movable", manager.CreateObjectOptions{
-		Classify: []string{"old"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "movable")
 
 	if err := Run(ctx, mgr, []string{"move", string(obj.ID), "new/nested"}); err != nil {
 		t.Fatalf("move: %v", err)
@@ -296,7 +294,7 @@ func TestCreateFromPlainFile(t *testing.T) {
 		t.Fatalf("write input: %v", err)
 	}
 
-	if err := Run(ctx, mgr, []string{"create", "plaindoc", "--from", src}); err != nil {
+	if err := Run(ctx, mgr, []string{"create", "plaindoc", "--from", src, "--description", "plain file description"}); err != nil {
 		t.Fatalf("create from file: %v", err)
 	}
 
@@ -328,12 +326,7 @@ func TestCreateFromPlainFile(t *testing.T) {
 func TestRecoverRestoresDeletedObject(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "recoverable", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "recoverable")
 
 	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
 		t.Fatalf("delete: %v", err)
@@ -362,20 +355,14 @@ func TestRecoverRejectsNonDeleted(t *testing.T) {
 		{
 			name: "active",
 			setup: func() (models.ObjectID, error) {
-				obj, err := mgr.CreateObject(ctx, "active-obj", manager.CreateObjectOptions{})
-				if err != nil {
-					return "", err
-				}
+				obj := createTestObject(t, ctx, mgr, "active-obj")
 				return obj.ID, nil
 			},
 		},
 		{
 			name: "creating",
 			setup: func() (models.ObjectID, error) {
-				obj, err := mgr.CreateObject(ctx, "creating-obj", manager.CreateObjectOptions{})
-				if err != nil {
-					return "", err
-				}
+				obj := createTestObject(t, ctx, mgr, "creating-obj")
 				metaPath := filepath.Join(mgr.Root(), obj.Path, "metadata.json")
 				metaBytes, err := os.ReadFile(metaPath)
 				if err != nil {
@@ -391,10 +378,7 @@ func TestRecoverRejectsNonDeleted(t *testing.T) {
 		{
 			name: "ceased",
 			setup: func() (models.ObjectID, error) {
-				obj, err := mgr.CreateObject(ctx, "ceased-obj", manager.CreateObjectOptions{})
-				if err != nil {
-					return "", err
-				}
+				obj := createTestObject(t, ctx, mgr, "ceased-obj")
 				if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
 					return "", err
 				}
@@ -422,12 +406,7 @@ func TestRecoverRejectsNonDeleted(t *testing.T) {
 func TestRecoverRestoresDeletedWithFrom(t *testing.T) {
 	mgr, tmp, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "restore-from", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "restore-from")
 
 	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
 		t.Fatalf("delete: %v", err)
@@ -457,9 +436,7 @@ func TestRecoverRestoresDeletedWithFrom(t *testing.T) {
 func TestRecoverRejectsActiveObject(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	if err := Run(ctx, mgr, []string{"create", "activeobj"}); err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	_ = createTestObject(t, ctx, mgr, "activeobj")
 
 	err := Run(ctx, mgr, []string{"recover", "activeobj"})
 	if err == nil {
@@ -473,9 +450,7 @@ func TestRecoverRejectsActiveObject(t *testing.T) {
 func TestRecoverRejectsCeasedObject(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	if err := Run(ctx, mgr, []string{"create", "ceasedobj"}); err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	_ = createTestObject(t, ctx, mgr, "ceasedobj")
 	if err := Run(ctx, mgr, []string{"delete", "ceasedobj"}); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -495,9 +470,7 @@ func TestRecoverRejectsCeasedObject(t *testing.T) {
 func TestRecoverRestoresDeletedWithFromArchive(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	if err := Run(ctx, mgr, []string{"create", "restorearchive"}); err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	_ = createTestObject(t, ctx, mgr, "restorearchive")
 	if err := Run(ctx, mgr, []string{"delete", "restorearchive"}); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -550,10 +523,7 @@ func TestGCStatusDeletedFinalizesObjects(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
 	// Create and delete an object; first delete transitions to deleted.
-	obj, err := mgr.CreateObject(ctx, "stale", manager.CreateObjectOptions{Classify: []string{"demo"}})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "stale")
 	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -570,13 +540,11 @@ func TestGCStatusDeletedFinalizesObjects(t *testing.T) {
 		t.Fatalf("expected status ceased, got %s", got.Status)
 	}
 }
+
 func TestGCStatusCeasedDeletesImmediately(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "fresh-ceased", manager.CreateObjectOptions{Classify: []string{"demo"}})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "fresh-ceased")
 	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -615,7 +583,7 @@ func TestCreateFromStdin(t *testing.T) {
 		_ = w.Close()
 	}()
 
-	err := Run(ctx, mgr, []string{"create", "stdinobj"})
+	err := Run(ctx, mgr, []string{"create", "stdinobj", "--description", "stdin description"})
 	<-done
 	os.Stdin = oldStdin
 	if err != nil {
@@ -628,6 +596,9 @@ func TestCreateFromStdin(t *testing.T) {
 	}
 	if obj.Status != models.ObjectStatusActive {
 		t.Fatalf("expected status active, got %s", obj.Status)
+	}
+	if obj.Description != "stdin description" {
+		t.Fatalf("expected description from flag, got %q", obj.Description)
 	}
 
 	rc, err := mgr.ReadActualFile(ctx, "stdinobj", "stdinobj.md")
@@ -654,29 +625,11 @@ func TestCreateFromStdinEmpty(t *testing.T) {
 
 	err := Run(ctx, mgr, []string{"create", "emptyobj"})
 	os.Stdin = oldStdin
-	if err != nil {
-		t.Fatalf("create from empty stdin: %v", err)
+	if err == nil {
+		t.Fatalf("expected error for empty stdin")
 	}
-
-	obj, err := mgr.GetObject(ctx, "emptyobj", false)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if obj.Status != models.ObjectStatusActive {
-		t.Fatalf("expected status active, got %s", obj.Status)
-	}
-
-	rc, err := mgr.ReadActualFile(ctx, "emptyobj", "emptyobj.md")
-	if err != nil {
-		t.Fatalf("read actual file: %v", err)
-	}
-	defer rc.Close()
-	got, err := io.ReadAll(rc)
-	if err != nil {
-		t.Fatalf("read content: %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("expected empty object.md, got %q", got)
+	if !errors.Is(err, apperrors.ErrMissingMarkdown) {
+		t.Fatalf("expected ErrMissingMarkdown, got %v", err)
 	}
 }
 
@@ -685,7 +638,7 @@ func TestCreateFromStdinTarArchive(t *testing.T) {
 
 	var tarBuf bytes.Buffer
 	tw := tar.NewWriter(&tarBuf)
-	markerContent := []byte("archive marker content")
+	markerContent := []byte("---\ndescription: stdin tar desc\n---\n\narchive marker content")
 	hdr := &tar.Header{
 		Name: "stdinarchive.md",
 		Mode: 0o644,
@@ -730,6 +683,14 @@ func TestCreateFromStdinTarArchive(t *testing.T) {
 		t.Fatalf("create from stdin tar: %v", err)
 	}
 
+	obj, err := mgr.GetObject(ctx, "stdinarchive", false)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if obj.Description != "stdin tar desc" {
+		t.Fatalf("expected frontmatter description, got %q", obj.Description)
+	}
+
 	rc, err := mgr.ReadActualFile(ctx, "stdinarchive", "stdinarchive.md")
 	if err != nil {
 		t.Fatalf("read marker: %v", err)
@@ -756,12 +717,14 @@ func TestCreateFromStdinTarArchive(t *testing.T) {
 		t.Fatalf("expected extra %q, got %q", extraContent, got2)
 	}
 }
+
 func TestListOutputFormatAndPagination(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
 	for i := 1; i <= 5; i++ {
 		name := fmt.Sprintf("obj%d", i)
 		if _, err := mgr.CreateObject(ctx, name, manager.CreateObjectOptions{
+			Data:        tarBytes(name+".md", []byte("# "+name+"\n")),
 			Description: fmt.Sprintf("description%d", i),
 			Classify:    []string{"demo"},
 			Tags:        []string{fmt.Sprintf("tag%d", i)},
@@ -806,6 +769,7 @@ func TestListFormatJSON(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
 	if _, err := mgr.CreateObject(ctx, "jsonobj", manager.CreateObjectOptions{
+		Data:        tarBytes("jsonobj.md", []byte("# jsonobj\n")),
 		Description: "JSON description",
 		Classify:    []string{"demo"},
 		Tags:        []string{"alpha", "beta"},
@@ -874,13 +838,7 @@ func TestShowReadsMarkdownAndTree(t *testing.T) {
 	mgr, root, ctx := setupManager(t)
 
 	content := []byte("# Hello\n\nThis is the object content.\n")
-	obj, err := mgr.CreateObject(ctx, "hello", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-		Tags:     []string{"greeting"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "hello")
 
 	if err := mgr.WriteActualFile(ctx, obj.ID, "hello.md", bytes.NewReader(content)); err != nil {
 		t.Fatalf("put hello.md: %v", err)
@@ -899,6 +857,7 @@ func TestShowReadsMarkdownAndTree(t *testing.T) {
 		t.Fatalf("write note.txt: %v", err)
 	}
 
+	var err error
 	var buf bytes.Buffer
 	old := os.Stdout
 	r, w, _ := os.Pipe()
@@ -927,16 +886,12 @@ func TestShowNoExtraFiles(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
 	content := []byte("# Minimal\n")
-	obj, err := mgr.CreateObject(ctx, "minimal", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "minimal")
 	if err := mgr.WriteActualFile(ctx, obj.ID, "minimal.md", bytes.NewReader(content)); err != nil {
 		t.Fatalf("put minimal.md: %v", err)
 	}
 
+	var err error
 	var buf bytes.Buffer
 	old := os.Stdout
 	r, w, _ := os.Pipe()
@@ -961,13 +916,7 @@ func TestShowNoExtraFiles(t *testing.T) {
 func TestShowCeasedObject(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "ceasedobj", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-		Tags:     []string{"demo-tag"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "ceasedobj", "demo-tag")
 
 	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
 		t.Fatalf("delete: %v", err)
@@ -977,6 +926,7 @@ func TestShowCeasedObject(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
+	var err error
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
@@ -1009,18 +959,13 @@ func TestShowCeasedObject(t *testing.T) {
 func TestShowDeletedObject(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "deletedobj", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-		Tags:     []string{"demo-tag"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "deletedobj", "demo-tag")
 
 	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 
+	var err error
 	var buf bytes.Buffer
 	old := os.Stdout
 	r, w, _ := os.Pipe()
@@ -1054,29 +999,9 @@ func TestShowDeletedObject(t *testing.T) {
 func TestSearchORLogic(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	alpha, err := mgr.CreateObject(ctx, "alpha", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-		Tags:     []string{"first"},
-	})
-	if err != nil {
-		t.Fatalf("create alpha: %v", err)
-	}
-
-	beta, err := mgr.CreateObject(ctx, "beta", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-		Tags:     []string{"second"},
-	})
-	if err != nil {
-		t.Fatalf("create beta: %v", err)
-	}
-
-	gamma, err := mgr.CreateObject(ctx, "gamma", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-		Tags:     []string{"third"},
-	})
-	if err != nil {
-		t.Fatalf("create gamma: %v", err)
-	}
+	alpha := createTestObject(t, ctx, mgr, "alpha", "first")
+	beta := createTestObject(t, ctx, mgr, "beta", "second")
+	gamma := createTestObject(t, ctx, mgr, "gamma", "third")
 
 	out := captureStdout(t, func() {
 		if err := Run(ctx, mgr, []string{"search", "alpha|gamma"}); err != nil {
@@ -1098,13 +1023,7 @@ func TestSearchORLogic(t *testing.T) {
 func TestSearchByTagOR(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "tagged", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-		Tags:     []string{"alpha", "beta"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "tagged", "alpha", "beta")
 
 	out := captureStdout(t, func() {
 		if err := Run(ctx, mgr, []string{"search", "alpha|gamma"}); err != nil {
@@ -1148,8 +1067,9 @@ func TestGetArchiveSuccess(t *testing.T) {
 
 	content := []byte("archive marker")
 	obj, err := mgr.CreateObject(ctx, "archobj", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-		Data:     tarBytes("archobj.md", content),
+		Classify:    []string{"demo"},
+		Data:        tarBytes("archobj.md", content),
+		Description: "archive object",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -1206,12 +1126,7 @@ func TestGetArchiveMissingObject(t *testing.T) {
 func TestPutArchiveSuccess(t *testing.T) {
 	mgr, tmp, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "putarch", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "putarch")
 
 	var tarBuf bytes.Buffer
 	tw := tar.NewWriter(&tarBuf)
@@ -1308,13 +1223,7 @@ func TestPutArchiveMissingObject(t *testing.T) {
 func TestTagRemoveSuccess(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "tagged", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-		Tags:     []string{"alpha", "beta"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "tagged", "alpha", "beta")
 
 	if err := Run(ctx, mgr, []string{"tag", "remove", string(obj.ID), "alpha"}); err != nil {
 		t.Fatalf("tag remove: %v", err)
@@ -1332,17 +1241,20 @@ func TestTagRemoveSuccess(t *testing.T) {
 func TestTagRemoveInheritedTagBlocked(t *testing.T) {
 	mgr, root, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "inhtest", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
+	// Create the object under a classify directory so that a classify tag file
+	// with the matching directory name applies recursively.
+	obj := createTestObject(t, ctx, mgr, "inhtest")
+	if err := Run(ctx, mgr, []string{"move", string(obj.ID), "demo"}); err != nil {
+		t.Fatalf("move object under demo: %v", err)
 	}
 
-	// Create a classify tag file that applies to all objects under the demo/
-	// classify directory on the object's actual path.
-	classifyDir := filepath.Join(root, obj.Path, "..")
-	classifyDir = filepath.Clean(classifyDir)
+	// Derive the classify directory from the object's current path so the test
+	// does not depend on the current date/time.
+	obj, err := mgr.GetObject(ctx, obj.ID, false)
+	if err != nil {
+		t.Fatalf("get moved object: %v", err)
+	}
+	classifyDir := filepath.Join(root, filepath.Dir(obj.Path))
 	if err := os.WriteFile(filepath.Join(classifyDir, "demo.tags"), []byte("inherited\n"), 0644); err != nil {
 		t.Fatalf("write classify tags: %v", err)
 	}
@@ -1364,14 +1276,9 @@ func TestTagRemoveInheritedTagBlocked(t *testing.T) {
 func TestTagRemoveMissingTag(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	obj, err := mgr.CreateObject(ctx, "notag", manager.CreateObjectOptions{
-		Classify: []string{"demo"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	obj := createTestObject(t, ctx, mgr, "notag")
 
-	err = Run(ctx, mgr, []string{"tag", "remove", string(obj.ID), "missing"})
+	err := Run(ctx, mgr, []string{"tag", "remove", string(obj.ID), "missing"})
 	if err == nil {
 		t.Fatalf("expected error removing non-existent tag")
 	}
@@ -1550,15 +1457,40 @@ func TestCreateInvalidName(t *testing.T) {
 	}
 }
 
+func TestCreateRequiresMarkdown(t *testing.T) {
+	mgr, _, ctx := setupManager(t)
+
+	err := Run(ctx, mgr, []string{"create", "nodata", "--description", "missing markdown"})
+	if err == nil {
+		t.Fatalf("expected error for missing markdown")
+	}
+	if !errors.Is(err, apperrors.ErrMissingMarkdown) {
+		t.Fatalf("expected ErrMissingMarkdown, got %v", err)
+	}
+}
+
+func TestCreateRequiresDescription(t *testing.T) {
+	mgr, tmp, ctx := setupManager(t)
+
+	src := filepath.Join(tmp, "no-desc.md")
+	if err := os.WriteFile(src, []byte("# no description\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	err := Run(ctx, mgr, []string{"create", "nodesc", "--from", src})
+	if err == nil {
+		t.Fatalf("expected error for missing description")
+	}
+	if !errors.Is(err, apperrors.ErrMissingDescription) {
+		t.Fatalf("expected ErrMissingDescription, got %v", err)
+	}
+}
+
 func TestListTagFlagFilters(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	if err := Run(ctx, mgr, []string{"create", "alpha-obj", "--tag", "alpha"}); err != nil {
-		t.Fatalf("create alpha-obj: %v", err)
-	}
-	if err := Run(ctx, mgr, []string{"create", "beta-obj", "--tag", "beta"}); err != nil {
-		t.Fatalf("create beta-obj: %v", err)
-	}
+	_ = createTestObject(t, ctx, mgr, "alpha-obj", "alpha")
+	_ = createTestObject(t, ctx, mgr, "beta-obj", "beta")
 
 	var buf bytes.Buffer
 	orig := os.Stdout
@@ -1596,10 +1528,7 @@ func TestListTagFlagFilters(t *testing.T) {
 func TestUpdateDescriptionActiveObject(t *testing.T) {
 	mgr, _, ctx := setupManager(t)
 
-	if err := Run(ctx, mgr, []string{"create", "updatable"}); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
+	_ = createTestObject(t, ctx, mgr, "updatable")
 	if err := Run(ctx, mgr, []string{"update", "updatable", "--description", "new description"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -1663,15 +1592,12 @@ func TestUpdateDescriptionRejectsNonActive(t *testing.T) {
 			mgr, _, ctx := setupManager(t)
 			id := tc.name + "-cli-update-obj"
 
-			if err := Run(ctx, mgr, []string{"create", id}); err != nil {
-				t.Fatalf("create: %v", err)
-			}
+			_ = createTestObject(t, ctx, mgr, id)
 			for i := 0; i < tc.deleteRuns; i++ {
 				if err := Run(ctx, mgr, []string{"delete", id}); err != nil {
 					t.Fatalf("delete run %d: %v", i+1, err)
 				}
 			}
-
 			err := Run(ctx, mgr, []string{"update", id, "--description", "should fail"})
 			if !errors.Is(err, apperrors.ErrObjectNotActive) {
 				t.Fatalf("expected ErrObjectNotActive, got %v", err)
@@ -1689,7 +1615,7 @@ func TestCreateFromObjectMDFile(t *testing.T) {
 		t.Fatalf("write source: %v", err)
 	}
 
-	if err := Run(ctx, mgr, []string{"create", "hello", "--from", src}); err != nil {
+	if err := Run(ctx, mgr, []string{"create", "hello", "--from", src, "--description", "hello object"}); err != nil {
 		t.Fatalf("create from object.md: %v", err)
 	}
 
@@ -1699,6 +1625,9 @@ func TestCreateFromObjectMDFile(t *testing.T) {
 	}
 	if obj.Status != models.ObjectStatusActive {
 		t.Fatalf("expected status active, got %s", obj.Status)
+	}
+	if obj.Description != "hello object" {
+		t.Fatalf("expected description from flag, got %q", obj.Description)
 	}
 
 	rc, err := mgr.ReadActualFile(ctx, "hello", "hello.md")
@@ -1750,17 +1679,48 @@ func TestCreateFromObjectMDFileWithFrontmatter(t *testing.T) {
 	}
 }
 
+func TestCreateDescriptionFlagTakesPrecedenceOverFrontmatter(t *testing.T) {
+	mgr, tmp, ctx := setupManager(t)
+
+	content := []byte("---\ndescription: from frontmatter\n---\n\nbody\n")
+	src := filepath.Join(tmp, "front.md")
+	if err := os.WriteFile(src, content, 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	if err := Run(ctx, mgr, []string{"create", "front", "--from", src, "--description", "from flag"}); err != nil {
+		t.Fatalf("create from object.md with frontmatter and flag: %v", err)
+	}
+
+	obj, err := mgr.GetObject(ctx, "front", false)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if obj.Description != "from flag" {
+		t.Fatalf("expected --description to take precedence, got %q", obj.Description)
+	}
+
+	rc, err := mgr.ReadActualFile(ctx, "front", "front.md")
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read marker content: %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("expected marker %q, got %q", content, got)
+	}
+}
+
 func TestPutObjectMDFile(t *testing.T) {
 	mgr, tmp, ctx := setupManager(t)
 
-	if err := Run(ctx, mgr, []string{"create", "note"}); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
+	_ = createTestObject(t, ctx, mgr, "note")
 	content := []byte("# Updated marker\n")
 	src := filepath.Join(tmp, "note.md")
 	if err := os.WriteFile(src, content, 0o644); err != nil {
-		t.Fatalf("write source: %v", err)
 	}
 
 	if err := Run(ctx, mgr, []string{"put", "note", "note.md", "--from", src}); err != nil {

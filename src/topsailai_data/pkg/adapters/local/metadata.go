@@ -151,7 +151,7 @@ func (a *MetadataAdapter) findObject(id models.ObjectID) (*models.Object, string
 
 // Update replaces the metadata file with the provided object.
 func (a *MetadataAdapter) Update(ctx context.Context, obj *models.Object) error {
-	_, objectDir, err := a.findObject(obj.ID)
+	objectDir, err := a.findObjectDir(obj.ID, obj.Path)
 	if err != nil {
 		return err
 	}
@@ -165,6 +165,69 @@ func (a *MetadataAdapter) Update(ctx context.Context, obj *models.Object) error 
 		return fmt.Errorf("write metadata: %w", err)
 	}
 	return nil
+}
+
+// findObjectDir locates the directory for the given object ID. If pathHint is
+// non-empty and a directory with that relative path exists under the root and
+// contains a matching metadata file, it is preferred. Otherwise the first
+// directory named after the ID with a matching metadata file is returned.
+func (a *MetadataAdapter) findObjectDir(id models.ObjectID, pathHint string) (string, error) {
+	var first *models.Object
+	var firstDir string
+	var preferred *models.Object
+	var preferredDir string
+
+	err := filepath.WalkDir(a.root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+
+		name := filepath.Base(path)
+		if name != string(id) {
+			return nil
+		}
+
+		metaPath := a.metadataFile(path)
+		data, err := os.ReadFile(metaPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+
+		var o models.Object
+		if err := json.Unmarshal(data, &o); err != nil {
+			return fmt.Errorf("%w: %q: %v", errors.ErrCorruptedMetadata, metaPath, err)
+		}
+		if o.ID != id {
+			return nil
+		}
+
+		if first == nil {
+			first = &o
+			firstDir = path
+		}
+		if pathHint != "" && filepath.ToSlash(path) == filepath.ToSlash(filepath.Join(a.root, pathHint)) {
+			preferred = &o
+			preferredDir = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if preferred != nil {
+		return preferredDir, nil
+	}
+	if first != nil {
+		return firstDir, nil
+	}
+	return "", fmt.Errorf("%w: %s", errors.ErrObjectNotFound, id)
 }
 
 // Delete marks an active object as deleted.

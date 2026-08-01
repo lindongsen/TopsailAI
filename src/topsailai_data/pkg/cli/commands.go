@@ -28,7 +28,7 @@ func runCreate(ctx context.Context, mgr *manager.Manager, args []string) error {
 	classify := fs.String("classify", "", "comma-separated classify directories after the time prefix")
 	tags := fs.String("tag", "", "comma-separated tags for the object")
 	description := fs.String("description", "", "object description")
-	from := fs.String("from", "", "local file or tar archive to use as initial actual data (use - for stdin); default is stdin when stdin is redirected")
+	from := fs.String("from", "", "local file or tar archive to use as initial actual data (use - for stdin); markdown content is required")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -56,20 +56,21 @@ func runCreate(ctx context.Context, mgr *manager.Manager, args []string) error {
 	} else if !term.IsTerminal(int(os.Stdin.Fd())) {
 		// No --from and stdin is redirected: read object.md content from stdin.
 		r = io.NopCloser(os.Stdin)
+	} else {
+		return fmt.Errorf("create: %w: provide --from or redirect stdin with markdown content", apperrors.ErrMissingMarkdown)
 	}
 
-	if r != nil {
-		buf, err := io.ReadAll(r)
-		if err != nil {
-			return fmt.Errorf("create: read input: %w", err)
-		}
-		if len(buf) > 0 {
-			if isTarBytes(buf) {
-				opts.Data = bytes.NewReader(buf)
-			} else {
-				opts.Data = tarBytes(name+".md", buf)
-			}
-		}
+	buf, err := io.ReadAll(r)
+	if err != nil {
+		return fmt.Errorf("create: read input: %w", err)
+	}
+	if len(buf) == 0 {
+		return fmt.Errorf("create: %w", apperrors.ErrMissingMarkdown)
+	}
+	if isTarBytes(buf) {
+		opts.Data = bytes.NewReader(buf)
+	} else {
+		opts.Data = tarBytes(name+".md", buf)
 	}
 
 	obj, err := mgr.CreateObject(ctx, name, opts)

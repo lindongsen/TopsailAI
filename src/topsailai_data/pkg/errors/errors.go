@@ -52,6 +52,12 @@ var (
 
 	// ErrInvalidSearchQuery is returned when a search query contains unsupported characters.
 	ErrInvalidSearchQuery = errors.New("invalid search query")
+
+	// ErrMissingMarkdown is returned when creating an object without markdown content.
+	ErrMissingMarkdown = errors.New("markdown content is required")
+
+	// ErrMissingDescription is returned when creating an object without a description.
+	ErrMissingDescription = errors.New("description is required")
 )
 
 // Adapter errors.

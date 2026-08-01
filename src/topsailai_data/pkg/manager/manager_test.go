@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -37,6 +38,40 @@ func newTestManager(t *testing.T) *Manager {
 	}
 	t.Cleanup(func() { _ = mgr.Close() })
 	return mgr
+}
+
+// newMarkdownData returns an io.Reader containing a tar archive with a single
+// file named {name}.md and optional YAML frontmatter description.
+func newMarkdownData(t *testing.T, name, description string) io.Reader {
+	t.Helper()
+	content := "---\n"
+	if description != "" {
+		content += fmt.Sprintf("description: %s\n", description)
+	}
+	content += "---\n\n# " + name + "\n"
+	return tarBytes(name+".md", []byte(content))
+}
+
+func tarBytes(filename string, content []byte) io.Reader {
+	buf := &bytes.Buffer{}
+	tw := tar.NewWriter(buf)
+	_ = tw.WriteHeader(&tar.Header{Name: filename, Mode: 0o644, Size: int64(len(content))})
+	_, _ = tw.Write(content)
+	_ = tw.Close()
+	return bytes.NewReader(buf.Bytes())
+}
+
+func createTestObject(t *testing.T, mgr *Manager, name string, tags ...string) *models.Object {
+	t.Helper()
+	ctx := context.Background()
+	obj, err := mgr.CreateObject(ctx, name, CreateObjectOptions{
+		Data: newMarkdownData(t, name, "test object "+name),
+		Tags: tags,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject %s failed: %v", name, err)
+	}
+	return obj
 }
 
 func TestNew(t *testing.T) {
@@ -91,7 +126,10 @@ func TestCreateObject(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	obj, err := mgr.CreateObject(ctx, "hello", CreateObjectOptions{Tags: []string{"demo"}})
+	obj, err := mgr.CreateObject(ctx, "hello", CreateObjectOptions{
+		Data: newMarkdownData(t, "hello", "hello object"),
+		Tags: []string{"demo"},
+	})
 	if err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
@@ -106,7 +144,9 @@ func TestCreateObject(t *testing.T) {
 	}
 
 	// Duplicate creation should fail.
-	_, err = mgr.CreateObject(ctx, "hello", CreateObjectOptions{})
+	_, err = mgr.CreateObject(ctx, "hello", CreateObjectOptions{
+		Data: newMarkdownData(t, "hello", "hello object"),
+	})
 	if !errors.Is(err, apperrors.ErrObjectExists) {
 		t.Fatalf("expected ErrObjectExists, got %v", err)
 	}
@@ -116,7 +156,9 @@ func TestCreateObjectInvalidName(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	_, err := mgr.CreateObject(ctx, "", CreateObjectOptions{})
+	_, err := mgr.CreateObject(ctx, "", CreateObjectOptions{
+		Data: newMarkdownData(t, "", "empty name object"),
+	})
 	if err == nil {
 		t.Fatal("expected error for empty name")
 	}
@@ -126,7 +168,7 @@ func TestCreateObjectOverCeased(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "reuse", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "reuse", CreateObjectOptions{Data: newMarkdownData(t, "reuse", "test object reuse")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 	if err := mgr.DeleteObject(ctx, "reuse"); err != nil {
@@ -139,7 +181,7 @@ func TestCreateObjectOverCeased(t *testing.T) {
 	}
 
 	// Creating over a ceased object should purge it and succeed.
-	obj, err := mgr.CreateObject(ctx, "reuse", CreateObjectOptions{Tags: []string{"new"}})
+	obj, err := mgr.CreateObject(ctx, "reuse", CreateObjectOptions{Data: newMarkdownData(t, "reuse", "test object reuse"), Tags: []string{"new"}})
 	if err != nil {
 		t.Fatalf("CreateObject over ceased failed: %v", err)
 	}
@@ -152,7 +194,7 @@ func TestGetObject(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "hello", CreateObjectOptions{Tags: []string{"demo"}}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "hello", CreateObjectOptions{Data: newMarkdownData(t, "hello", "test object hello"), Tags: []string{"demo"}}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 
@@ -188,7 +230,7 @@ func TestGetObjectWithReadLock(t *testing.T) {
 	t.Cleanup(func() { _ = createMgr.Close() })
 
 	ctx := context.Background()
-	if _, err := createMgr.CreateObject(ctx, "locked", CreateObjectOptions{}); err != nil {
+	if _, err := createMgr.CreateObject(ctx, "locked", CreateObjectOptions{Data: newMarkdownData(t, "locked", "test object locked")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 	if err := createMgr.Close(); err != nil {
@@ -224,7 +266,7 @@ func TestListObjects(t *testing.T) {
 	ctx := context.Background()
 
 	for _, name := range []string{"alpha", "beta", "gamma"} {
-		if _, err := mgr.CreateObject(ctx, name, CreateObjectOptions{Tags: []string{"shared", name}}); err != nil {
+		if _, err := mgr.CreateObject(ctx, name, CreateObjectOptions{Data: newMarkdownData(t, name, "test object "+name), Tags: []string{"shared", name}}); err != nil {
 			t.Fatalf("CreateObject %s failed: %v", name, err)
 		}
 	}
@@ -257,9 +299,8 @@ func TestListObjects(t *testing.T) {
 func TestSearchObjects(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
-
 	for _, name := range []string{"hello-world", "goodbye", "archive"} {
-		if _, err := mgr.CreateObject(ctx, name, CreateObjectOptions{Tags: []string{"demo"}}); err != nil {
+		if _, err := mgr.CreateObject(ctx, name, CreateObjectOptions{Data: newMarkdownData(t, name, "test object "+name), Tags: []string{"demo"}}); err != nil {
 			t.Fatalf("CreateObject %s failed: %v", name, err)
 		}
 	}
@@ -285,7 +326,7 @@ func TestUpdateActualData(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 
@@ -316,7 +357,7 @@ func TestWriteAndReadActualFile(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 
@@ -357,7 +398,7 @@ func TestReadActualFileWithReadLock(t *testing.T) {
 	t.Cleanup(func() { _ = createMgr.Close() })
 
 	ctx := context.Background()
-	if _, err := createMgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := createMgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 	if err := createMgr.WriteActualFile(ctx, "obj", "note.txt", strings.NewReader("hello")); err != nil {
@@ -402,7 +443,7 @@ func TestReadActualArchive(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 	if err := mgr.WriteActualFile(ctx, "obj", "note.txt", strings.NewReader("hello")); err != nil {
@@ -452,7 +493,7 @@ func TestReadActualArchiveWithReadLock(t *testing.T) {
 	t.Cleanup(func() { _ = createMgr.Close() })
 
 	ctx := context.Background()
-	if _, err := createMgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := createMgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 	if err := createMgr.WriteActualFile(ctx, "obj", "note.txt", strings.NewReader("hello")); err != nil {
@@ -507,7 +548,7 @@ func TestDeleteObject(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 
@@ -533,7 +574,7 @@ func TestDeleteObjectFinalize(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 	if err := mgr.DeleteObject(ctx, "obj"); err != nil {
@@ -556,7 +597,7 @@ func TestDeleteObjectRetry(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 	if err := mgr.DeleteObject(ctx, "obj"); err != nil {
@@ -612,7 +653,7 @@ func TestMoveObject(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 
@@ -636,7 +677,7 @@ func TestMoveObjectDepthExceeded(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 
@@ -655,7 +696,7 @@ func TestMoveObjectSamePath(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 
@@ -681,14 +722,13 @@ func TestAddAndRemoveTag(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Classify: []string{"classify"}}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj"), Classify: []string{"classify"}}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 
 	if err := mgr.AddTag(ctx, "obj", "new-tag"); err != nil {
 		t.Fatalf("AddTag failed: %v", err)
 	}
-
 	obj, err := mgr.GetObject(ctx, "obj", false)
 	if err != nil {
 		t.Fatalf("GetObject failed: %v", err)
@@ -714,7 +754,7 @@ func TestAddTagInvalid(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 
@@ -731,7 +771,7 @@ func TestRemoveTagInvalid(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 
@@ -748,9 +788,18 @@ func TestRemoveInheritedTagFails(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	// Create classify tag at the time prefix that will be used by the object.
-	now := time.Now()
-	classifyTagPath := filepath.Join(mgr.Root(), local.TimePath(now))
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
+		t.Fatalf("CreateObject failed: %v", err)
+	}
+
+	obj, err := mgr.GetObject(ctx, "obj", false)
+	if err != nil {
+		t.Fatalf("GetObject failed: %v", err)
+	}
+
+	// Derive the time-prefix classify directory from the object's path instead
+	// of hard-coding a time value. The object path is {year}/{monthday}/{hourminute}/{name}.
+	classifyTagPath := filepath.Join(mgr.Root(), filepath.Dir(obj.Path))
 	if err := os.MkdirAll(classifyTagPath, 0o755); err != nil {
 		t.Fatalf("mkdir classify path: %v", err)
 	}
@@ -758,13 +807,9 @@ func TestRemoveInheritedTagFails(t *testing.T) {
 		t.Fatalf("write classify tags: %v", err)
 	}
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
-		t.Fatalf("CreateObject failed: %v", err)
-	}
-
-	obj, err := mgr.GetObject(ctx, "obj", false)
+	obj, err = mgr.GetObject(ctx, "obj", false)
 	if err != nil {
-		t.Fatalf("GetObject failed: %v", err)
+		t.Fatalf("GetObject after classify tag failed: %v", err)
 	}
 	if !hasTag(obj.Tags, "inherited") {
 		t.Fatalf("expected inherited tag, got %v", obj.Tags)
@@ -782,7 +827,7 @@ func TestRestoreObject(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	obj, err := mgr.CreateObject(ctx, "restore-me", CreateObjectOptions{})
+	obj, err := mgr.CreateObject(ctx, "restore-me", CreateObjectOptions{Data: newMarkdownData(t, "restore-me", "test object restore-me")})
 	if err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
@@ -811,7 +856,10 @@ func TestUpdateObject(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	obj, err := mgr.CreateObject(ctx, "update-desc", CreateObjectOptions{Description: "initial"})
+	obj, err := mgr.CreateObject(ctx, "update-desc", CreateObjectOptions{
+		Data:        newMarkdownData(t, "update-desc", ""),
+		Description: "initial",
+	})
 	if err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
@@ -842,6 +890,7 @@ func TestUpdateObjectClearsDescription(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := mgr.CreateObject(ctx, "yaml-clear", CreateObjectOptions{
+		Data:        newMarkdownData(t, "yaml-clear", ""),
 		Description: "initial",
 	}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
@@ -885,7 +934,7 @@ func TestUpdateObjectRejectsNonActive(t *testing.T) {
 			ctx := context.Background()
 			id := models.ObjectID(tc.name + "-update-obj")
 
-			if _, err := mgr.CreateObject(ctx, string(id), CreateObjectOptions{}); err != nil {
+			if _, err := mgr.CreateObject(ctx, string(id), CreateObjectOptions{Data: newMarkdownData(t, string(id), "test object")}); err != nil {
 				t.Fatalf("CreateObject failed: %v", err)
 			}
 			for i := 0; i < tc.deleteRuns; i++ {
@@ -1005,7 +1054,7 @@ func TestRestoreObjectRejectsNonDeleted(t *testing.T) {
 		{
 			name: "active",
 			setup: func() error {
-				_, err := mgr.CreateObject(ctx, "active-obj", CreateObjectOptions{})
+				_, err := mgr.CreateObject(ctx, "active-obj", CreateObjectOptions{Data: newMarkdownData(t, "active-obj", "test object active-obj")})
 				return err
 			},
 			id: "active-obj",
@@ -1013,7 +1062,7 @@ func TestRestoreObjectRejectsNonDeleted(t *testing.T) {
 		{
 			name: "ceased",
 			setup: func() error {
-				_, err := mgr.CreateObject(ctx, "ceased-obj", CreateObjectOptions{})
+				_, err := mgr.CreateObject(ctx, "ceased-obj", CreateObjectOptions{Data: newMarkdownData(t, "ceased-obj", "test object ceased-obj")})
 				if err != nil {
 					return err
 				}
@@ -1043,7 +1092,7 @@ func TestRestoreObjectMissingData(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	_, err := mgr.CreateObject(ctx, "no-data", CreateObjectOptions{})
+	_, err := mgr.CreateObject(ctx, "no-data", CreateObjectOptions{Data: newMarkdownData(t, "no-data", "test object no-data")})
 	if err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
@@ -1077,7 +1126,7 @@ func TestGCZeroRetention(t *testing.T) {
 	t.Cleanup(func() { _ = mgr.Close() })
 
 	ctx := context.Background()
-	_, err = mgr.CreateObject(ctx, "old", CreateObjectOptions{})
+	_, err = mgr.CreateObject(ctx, "old", CreateObjectOptions{Data: newMarkdownData(t, "old", "test object old")})
 	if err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
@@ -1103,7 +1152,7 @@ func TestGCForceRemovesCeasedImmediately(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	_, err := mgr.CreateObject(ctx, "fresh-ceased", CreateObjectOptions{})
+	_, err := mgr.CreateObject(ctx, "fresh-ceased", CreateObjectOptions{Data: newMarkdownData(t, "fresh-ceased", "test object fresh-ceased")})
 	if err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
@@ -1170,7 +1219,7 @@ func TestListDeletedObjects(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 	if err := mgr.DeleteObject(ctx, "obj"); err != nil {
@@ -1225,7 +1274,7 @@ func TestObjectDir(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 
@@ -1247,7 +1296,7 @@ func TestRequireActive(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{}); err != nil {
+	if _, err := mgr.CreateObject(ctx, "obj", CreateObjectOptions{Data: newMarkdownData(t, "obj", "test object obj")}); err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
 	if err := mgr.DeleteObject(ctx, "obj"); err != nil {
@@ -1387,7 +1436,10 @@ func TestMoveObjectRemovesOldPathAndEmptyParents(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	obj, err := mgr.CreateObject(ctx, "moveme", CreateObjectOptions{Classify: []string{"old", "nested"}})
+	obj, err := mgr.CreateObject(ctx, "moveme", CreateObjectOptions{
+		Data:     newMarkdownData(t, "moveme", "test object moveme"),
+		Classify: []string{"old", "nested"},
+	})
 	if err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
@@ -1423,7 +1475,10 @@ func TestGCRemovesEmptyParents(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	obj, err := mgr.CreateObject(ctx, "gcme", CreateObjectOptions{Classify: []string{"demo"}})
+	obj, err := mgr.CreateObject(ctx, "gcme", CreateObjectOptions{
+		Data:     newMarkdownData(t, "gcme", "test object gcme"),
+		Classify: []string{"demo"},
+	})
 	if err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
@@ -1509,7 +1564,10 @@ func TestDeleteObjectRetainsMetadataAndParents(t *testing.T) {
 	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	obj, err := mgr.CreateObject(ctx, "keepme", CreateObjectOptions{Classify: []string{"demo"}})
+	obj, err := mgr.CreateObject(ctx, "keepme", CreateObjectOptions{
+		Data:     newMarkdownData(t, "keepme", "test object keepme"),
+		Classify: []string{"demo"},
+	})
 	if err != nil {
 		t.Fatalf("CreateObject failed: %v", err)
 	}
@@ -1578,5 +1636,24 @@ func TestCreateObjectWithMarkerTar(t *testing.T) {
 	}
 	if string(got2) != "extra data" {
 		t.Fatalf("expected extra data, got %q", got2)
+	}
+}
+
+func TestCreateObjectTarMissingMarkdown(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	archive := buildTarArchive(t, map[string][]byte{
+		"other.txt": []byte("no marker file"),
+	})
+
+	_, err := mgr.CreateObject(ctx, "nomarker", CreateObjectOptions{
+		Data: bytes.NewReader(archive),
+	})
+	if err == nil {
+		t.Fatal("expected error creating object from tar without {name}.md")
+	}
+	if !errors.Is(err, apperrors.ErrMissingMarkdown) {
+		t.Fatalf("expected ErrMissingMarkdown, got %v", err)
 	}
 }

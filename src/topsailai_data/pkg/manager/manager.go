@@ -3,6 +3,8 @@
 package manager
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	stderrors "errors"
 	"fmt"
@@ -121,14 +123,42 @@ type CreateObjectOptions struct {
 	Data        io.Reader
 }
 
-// CreateObject creates a new object, writes optional initial actual data, and
+// CreateObject creates a new object, writes initial actual data, and
 // transitions the object from creating to active.
 //
-// If Data is nil, the object is created with an empty actual-data folder.
-// If Data is non-nil it is interpreted as a tar archive stream.
+// Data must be non-nil and must contain a file named {name}.md. A description
+// must be provided either in opts.Description or in the YAML frontmatter of
+// {name}.md; otherwise the object is not created.
 func (m *Manager) CreateObject(ctx context.Context, name string, opts CreateObjectOptions) (*models.Object, error) {
 	if err := local.ValidateObjectName(name); err != nil {
 		return nil, fmt.Errorf("%w: %v", errors.ErrInvalidName, err)
+	}
+	if opts.Data == nil {
+		return nil, errors.ErrMissingMarkdown
+	}
+
+	// Read the actual-data stream into memory so we can validate its contents
+	// and reuse it for writing.
+	dataBytes, err := io.ReadAll(opts.Data)
+	if err != nil {
+		return nil, fmt.Errorf("read actual data: %w", err)
+	}
+	if len(dataBytes) == 0 {
+		return nil, errors.ErrMissingMarkdown
+	}
+
+	markerName := name + ".md"
+	extractedDescription, err := extractDescriptionFromArchive(dataBytes, markerName)
+	if err != nil {
+		return nil, err
+	}
+
+	description := opts.Description
+	if description == "" {
+		description = extractedDescription
+	}
+	if description == "" {
+		return nil, errors.ErrMissingDescription
 	}
 
 	id := models.ObjectID(name)
@@ -164,7 +194,7 @@ func (m *Manager) CreateObject(ctx context.Context, name string, opts CreateObje
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		DataRef:       objectDir,
-		Description:   opts.Description,
+		Description:   description,
 	}
 
 	// Step 1: create metadata in creating state.
@@ -174,6 +204,7 @@ func (m *Manager) CreateObject(ctx context.Context, name string, opts CreateObje
 	lock, err := local.AcquireWriteLock(objectDir)
 	if err != nil {
 		_ = os.RemoveAll(objectDir)
+		_ = m.meta.Delete(ctx, id)
 		return nil, fmt.Errorf("acquire object lock: %w", err)
 	}
 
@@ -181,17 +212,12 @@ func (m *Manager) CreateObject(ctx context.Context, name string, opts CreateObje
 	defer func() {
 		if !success {
 			_ = os.RemoveAll(objectDir)
+			_ = m.meta.Delete(ctx, id)
 		}
 		lock.Release()
 	}()
 
-	// Step 3: write the required {name}.md marker file.
-	markerPath := filepath.Join(objectDir, name+".md")
-	if err := os.WriteFile(markerPath, []byte{}, 0o644); err != nil {
-		return nil, fmt.Errorf("create object marker file: %w", err)
-	}
-
-	// Step 4: write initial tags.
+	// Step 2: write initial tags.
 	if len(opts.Tags) > 0 {
 		tagsFile := filepath.Join(objectDir, name+".tags")
 		if err := local.WriteTagsFile(tagsFile, opts.Tags); err != nil {
@@ -199,24 +225,14 @@ func (m *Manager) CreateObject(ctx context.Context, name string, opts CreateObje
 		}
 	}
 
-	// Step 5: write actual data if provided.
-	if opts.Data != nil {
-		if _, err := m.actual.WriteArchive(ctx, obj.DataRef, opts.Data); err != nil {
-			return nil, fmt.Errorf("write actual data: %w", err)
-		}
+	// Step 3: write actual data.
+	if _, err := m.actual.WriteArchive(ctx, obj.DataRef, bytes.NewReader(dataBytes)); err != nil {
+		return nil, fmt.Errorf("write actual data: %w", err)
 	}
 
-	// Step 6: promote to active.
+	// Step 4: promote to active.
 	obj.Status = models.ObjectStatusActive
 	obj.UpdatedAt = time.Now()
-
-	// If description is empty, try to extract it from the marker file's YAML
-	// frontmatter. This is best-effort; failures are ignored.
-	if obj.Description == "" {
-		if extracted := extractDescriptionFromMarkdown(markerPath); extracted != "" {
-			obj.Description = extracted
-		}
-	}
 
 	if err := m.meta.Update(ctx, obj); err != nil {
 		return nil, fmt.Errorf("activate object: %w", err)
@@ -797,12 +813,50 @@ func extractDescriptionFromMarkdown(path string) string {
 	if err != nil && err != io.EOF {
 		return ""
 	}
-	content := strings.ReplaceAll(string(buf[:n]), "\r\n", "\n")
+	return parseDescriptionFromFrontmatter(buf[:n])
+}
 
-	if !strings.HasPrefix(content, "---\n") {
+// extractDescriptionFromArchive inspects a tar archive represented by data and
+// returns the value of the "description" key from the YAML frontmatter of the
+// file named markerName. It also validates that the archive contains the
+// required marker file. Any error parsing the archive or missing marker file
+// results in an error.
+func extractDescriptionFromArchive(data []byte, markerName string) (string, error) {
+	tr := tar.NewReader(bytes.NewReader(data))
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("parse archive: %w", err)
+		}
+		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+			continue
+		}
+		cleanName := filepath.Clean(hdr.Name)
+		if cleanName == filepath.Clean(markerName) {
+			const maxFrontmatterSize = 8 * 1024
+			buf := make([]byte, maxFrontmatterSize)
+			n, err := tr.Read(buf)
+			if err != nil && err != io.EOF {
+				return "", fmt.Errorf("read %s from archive: %w", markerName, err)
+			}
+			return parseDescriptionFromFrontmatter(buf[:n]), nil
+		}
+	}
+	return "", fmt.Errorf("%w: archive must contain %s", errors.ErrMissingMarkdown, markerName)
+}
+
+// parseDescriptionFromFrontmatter attempts to read a YAML frontmatter block
+// from the beginning of content and return the value of the "description" key.
+// Any error results in an empty string.
+func parseDescriptionFromFrontmatter(content []byte) string {
+	text := strings.ReplaceAll(string(content), "\r\n", "\n")
+	if !strings.HasPrefix(text, "---\n") {
 		return ""
 	}
-	frontmatterContent := content[4:]
+	frontmatterContent := text[4:]
 	end := strings.Index(frontmatterContent, "\n---\n")
 	if end < 0 && strings.HasSuffix(frontmatterContent, "\n---") {
 		end = len(frontmatterContent) - len("\n---")

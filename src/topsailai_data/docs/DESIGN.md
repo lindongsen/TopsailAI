@@ -119,7 +119,7 @@ type Object struct {
 - `ID`: stable, opaque identifier. In the local adapter it equals the object name; in database adapters it is typically the same value stored as the primary key.
 - `Name`: the object name, equal to the object folder name.
 - `Path`: the full relative path of the object folder, e.g. `2026/0714/2323/xyz` or `2026/0714/2323/projects/demo/xyz`.
-- `Description`: a short human-readable summary of the object. It may be supplied explicitly or extracted automatically from YAML frontmatter in `{name}.md`.
+- `Description`: a short human-readable summary of the object. A description is required when an object is created; it may be supplied explicitly via `--description` or extracted automatically from the YAML frontmatter in `{name}.md`.
 - `Tags`: merged set of inherited tags and object-specific tags.
 - `Status`: lifecycle state. New objects start as `creating`, transition to `active` once actual data is written, and are removed through `deleted` to `ceased`.
 - `SchemaVersion`: persistent storage format version of this object record. Starts at `1` and is updated on migration.
@@ -129,11 +129,13 @@ type Object struct {
 
 #### Description and YAML frontmatter fallback
 
-When an object is created without an explicit description, or when an object with an empty existing description is updated without an explicit description, the manager attempts to populate `Description` from the YAML frontmatter at the beginning of `{name}.md`. The extraction is best-effort:
+When an object is created, a description is required. The manager first uses an explicit `--description` value if provided. If no explicit description is provided, the manager attempts to populate `Description` from the YAML frontmatter at the beginning of `{name}.md`. The extraction is best-effort:
 
 - Only a leading `--- ... ---` block is considered.
 - A bounded prefix of the file (first 8 KiB) is read for efficiency.
-- If the frontmatter is missing, malformed, lacks a `description` key, or the value is not a string, the field is left empty and the operation continues normally.
+- If the frontmatter is missing, malformed, lacks a `description` key, or the value is not a string, the manager returns an error and the object is not created.
+
+When an object with an empty existing description is updated without an explicit description, the manager attempts the same frontmatter extraction. If the frontmatter does not provide a description, the existing description remains empty and the update continues normally.
 
 ### 5.2 ObjectID
 
@@ -397,7 +399,7 @@ The CLI is named `topsaildata`. Commands include:
 
 | Command | Purpose |
 |---------|---------|
-| `create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--description <text>] [--from <path|->]` | Create a new object. Optional classify directories may follow the time prefix. If no description is given, the manager tries to read it from YAML frontmatter in `{object}.md`. |
+| `create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--description <text>] [--from <path|->]` | Create a new object. Markdown content is required and must include the mandatory `{object}.md` file; it can be supplied via `--from` or stdin. A description is required and may be provided with `--description` or extracted from the `description` field in the YAML frontmatter of `{object}.md`. If neither source provides a description, creation fails. Optional classify directories may follow the time prefix. |
 | `show <id>` | Display metadata of an object. For `active` objects also display the markdown content and folder structure; for `deleted` or `ceased` objects only metadata is shown. |
 | `update <id> [--description <text>]` | Update an object's metadata. Currently supports updating the description; `--description ""` clears it. |
 | `move <id> <new-classify...>` | Move an object to a different classify path. The ID and name do not change. |
@@ -553,6 +555,8 @@ The `Manager` is responsible for orchestrating metadata and actual data adapters
    - Return the metadata error wrapped with a cleanup note.
 7. Release the object lock.
 
+The manager reads the entire tar archive into memory before writing it through the actual-data adapter. This allows it to inspect the archive for the mandatory `{name}.md` marker and to extract the description from YAML frontmatter before the archive is persisted. For large archives, this means memory usage is proportional to the archive size.
+
 Objects in `creating` status are excluded from normal `List`, `Get`, and search results. Run `gc` to remove incomplete metadata and any partial actual data. Re-running `create` with the same name while a `creating` object exists returns `ErrObjectExists` unless `--force` is used.
 
 ### 12.2 Update Actual Data
@@ -707,4 +711,4 @@ Integration tests verify CLI commands against a temporary root directory configu
 
 ## 18. Summary
 
-`topsailai_data` separates metadata from actual data through adapter interfaces, enabling flexible backend combinations. The local adapter uses a time-based directory layout, mandatory `object.md` files as actual-data carriers, optional tag files, and recursive classify tag inheritance. Object boundaries are detected by the presence of a same-named `.md` file, and scanning stops at those boundaries. The metadata model includes `ID`, `Name`, `Path`, `Description`, `CreatedAt`, `UpdatedAt`, `Status`, `SchemaVersion`, and `Tags`, with `ObjectID` stable across moves. A database metadata adapter can implement the same interface using an `objects` table, an `object_tags` table, and a `classify_tag` relationship table. The design prioritizes extensibility, clear conventions, and testability.
+`topsailai_data` separates metadata from actual data through adapter interfaces, enabling flexible backend combinations. The local adapter uses a time-based directory layout, mandatory `object.md` files as actual-data carriers, optional tag files, and recursive classify tag inheritance. Object creation requires non-empty markdown content and a description, which may be supplied explicitly or extracted from YAML frontmatter. Object boundaries are detected by the presence of a same-named `.md` file, and scanning stops at those boundaries. The metadata model includes `ID`, `Name`, `Path`, `Description`, `CreatedAt`, `UpdatedAt`, `Status`, `SchemaVersion`, and `Tags`, with `ObjectID` stable across moves. A database metadata adapter can implement the same interface using an `objects` table, an `object_tags` table, and a `classify_tag` relationship table. The design prioritizes extensibility, clear conventions, and testability.

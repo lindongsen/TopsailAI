@@ -116,12 +116,13 @@ project--qrew--skill-hub/
     └── 2026-07-23.md
 ```
 
-Create one object for each project:
+Create one object for each project. Each project object needs markdown
+content and a description:
 
 ```
-bin/topsailai_data create project--qrew--data-hub --classify projects
-bin/topsailai_data create project--qrew--qguard --classify projects
-bin/topsailai_data create project--qrew--skill-hub --classify projects
+bin/topsailai_data create project--qrew--data-hub --classify projects --description "Data hub project notes" --from ./projects/qrew/data-hub/project.md
+bin/topsailai_data create project--qrew--qguard --classify projects --description "QGuard project notes" --from ./projects/qrew/qguard/project.md
+bin/topsailai_data create project--qrew--skill-hub --classify projects --description "Skill hub project notes" --from ./projects/qrew/skill-hub/project.md
 ```
 
 Add or replace an individual project note with `put`. When the source already
@@ -164,7 +165,12 @@ itself, use the appropriate development tools instead of this skill.
 ## Object Markdown frontmatter
 
 Every `{name}.md` document inside an object SHOULD include a YAML frontmatter
-block with at least two fields:
+block. For the mandatory `<object>.md` file, the frontmatter SHOULD include a
+`description` field because a description is required when creating an object.
+The description may also be supplied with `--description`, but providing it in
+frontmatter makes the object self-describing.
+
+The frontmatter block SHOULD contain at least these two fields:
 
 - `name`: the document name, usually matching the file name without the `.md`
   extension. This is the canonical identifier of the document within the object.
@@ -237,7 +243,7 @@ This rule applies to commands that accept `--from`, such as `create` and `put`.
 Correct:
 
 ```
-bin/topsailai_data create note --from /path/to/note.md
+bin/topsailai_data create note --description "Note description" --from /path/to/note.md
 bin/topsailai_data put note attachment.txt --from /path/to/attachment.txt
 ```
 
@@ -259,7 +265,11 @@ Only use `stdin` when the data is generated in memory and has no corresponding f
 > Correct (all parameters are present):
 >
 > ```
-> echo "inline content" | bin/topsailai_data create note --tag quickstart
+> echo "---
+> description: Inline note
+> ---
+>
+> inline content" | bin/topsailai_data create note --tag quickstart
 > echo "attachment data" | bin/topsailai_data put note attachment.txt --from -
 > tar -cf - ./files | bin/topsailai_data put-archive note -
 > ```
@@ -287,7 +297,7 @@ The `bin/` directory holds the executable. Helper shell scripts are intentionall
 ```
 export TOPSAILAI_DATA_ROOT=./data
 make build
-bin/topsailai_data create hello --description "A hello object" --tag quickstart
+echo "# Hello" | bin/topsailai_data create hello --description "A hello object" --tag quickstart
 bin/topsailai_data list
 bin/topsailai_data show hello
 ```
@@ -296,7 +306,7 @@ bin/topsailai_data show hello
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `create` | `create <object> [--classify dir1/dir2/...] [--description <text>] [--tag t1,t2] [--from <file\|archive\|->]` | Create a new object. Writes a mandatory `<object>.md` marker and optional tags. `--description` sets the object description; if omitted, the CLI attempts to read it from YAML frontmatter in the `<object>.md` content. `--from` accepts a plain file, a tar archive, or `-` for stdin; when omitted, content is read from stdin. If an object with the same name already exists in `ceased` status, the ceased object is purged and the new object is created; `active`, `creating`, and `deleted` objects cause `ErrObjectExists`. |
+| `create` | `create <object> [--classify dir1/dir2/...] [--description <text>] [--tag t1,t2] [--from <file\|archive\|->]` | Create a new object. **Markdown content is required** and must contain the mandatory `<object>.md` file; it can be supplied via `--from` or stdin. **A description is required** and may be provided with `--description` or extracted from the `description` field in the YAML frontmatter of `<object>.md`. If neither source provides a description, the command fails. `--from` accepts a plain file, a tar archive, or `-` for stdin; when omitted, content is read from stdin. If an object with the same name already exists in `ceased` status, the ceased object is purged and the new object is created; `active`, `creating`, and `deleted` objects cause `ErrObjectExists`. |
 | `show` | `show <id>` | Display metadata, the `<object>.md` content, and the folder structure of an object. |
 | `update` | `update <id> [--description <text>]` | Update an active object's metadata. Currently supports updating the description. Pass an empty value (`--description ""`) to clear the description. |
 | `list` | `list [--include-deleted] [--offset n] [--limit n] [--format yaml\|json] [--sort time:desc\|time:asc]` | List active objects, optionally paginated and sorted by the time prefix of the object path. Default format is YAML; use `json` for machine-readable output. Default sort is `time:desc` (newest first). |
@@ -316,10 +326,20 @@ bin/topsailai_data show hello
 Create:
 
 ```
-bin/topsailai_data create note --classify work/2026 --description "Work notes for 2026" --tag work,important
+bin/topsailai_data create note --classify work/2026 --description "Work notes for 2026" --tag work,important <<'EOF'
+---
+description: Work notes for 2026
+---
+
+# Work Notes
+EOF
 bin/topsailai_data create report --description "Monthly report" --from report.md
-bin/topsailai_data create bundle --from bundle.tar
-echo "inline content" | bin/topsailai_data create inline-note
+bin/topsailai_data create bundle --description "Bundle archive" --from bundle.tar
+echo "---
+description: Inline note
+---
+
+inline content" | bin/topsailai_data create inline-note
 ```
 
 Update metadata:
