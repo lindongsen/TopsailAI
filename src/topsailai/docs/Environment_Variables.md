@@ -261,15 +261,15 @@ These variables configure the optional tool-call approval gate. When enabled, ea
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOPSAILAI_TOOL_APPROVAL_ENABLED` | `0` | Master switch. `1` enables the approval mechanism, `0` disables it. |
-| `TOPSAILAI_TOOL_APPROVAL_RULES` | `${TOPSAILAI_WORK_FOLDER}/tool_approval.json` | JSON approval rules. Either a JSON array literal or a path to a file containing a JSON array. |
+| `TOPSAILAI_TOOL_APPROVAL_RULES` | `${TOPSAILAI_WORK_FOLDER}/tool_approval.json` | JSON approval rules. Either a JSON array literal or one or more paths to files containing a JSON array, separated by `;`. Rules from all files are aggregated in order. |
 | `TOPSAILAI_TOOL_APPROVAL_DEFAULT_TIMEOUT` | `60` | Default timeout in seconds when a rule does not specify one. |
 | `TOPSAILAI_TOOL_APPROVAL_DEFAULT_POLICY` | `deny` | Default timeout policy when a rule does not specify one. Must be one of `deny`, `allow`, `ask_again`. |
 
 ### Details
 
-- `TOPSAILAI_TOOL_APPROVAL_RULES` is read at call time so rules can be updated without restarting the agent. If the value is a path to an existing file, the file content is read and parsed as JSON; otherwise the value is parsed directly as JSON.
+- `TOPSAILAI_TOOL_APPROVAL_RULES` is read at call time so rules can be updated without restarting the agent. The value may be a JSON array literal, a single path to a file containing a JSON array, or multiple file paths separated by `;`. When multiple files are provided, each file is read and parsed as JSON, and the resulting rule arrays are concatenated in the order given.
 - If `TOPSAILAI_TOOL_APPROVAL_RULES` is empty/unset, the default path `${TOPSAILAI_WORK_FOLDER}/tool_approval.json` is used. If that file does not exist, approval is effectively disabled and all tool calls execute normally.
-- On JSON parsing failure or unreadable file path, approval is disabled for the current process and tool calls execute normally (fail-open behavior).
+- On JSON parsing failure or unreadable file path, a critical log is emitted, the offending file is skipped, and the remaining files are still evaluated (fail-open behavior). If all configured files fail, approval is disabled for the current process and tool calls execute normally.
 - Rule `mode` values: `require` (approval needed), `bypass` (skip approval), `skip` (alias for `bypass`). Unknown modes are treated as `require`.
 - Rule `policy` values: `deny` (reject on timeout), `allow` (auto-approve on timeout), `ask_again` (reset and wait one extra cycle, then deny). Unknown policies are treated as `deny`.
 

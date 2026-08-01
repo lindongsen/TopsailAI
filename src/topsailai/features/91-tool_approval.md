@@ -36,13 +36,13 @@ Configuration is read at call time so rules can be updated without restarting th
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOPSAILAI_TOOL_APPROVAL_ENABLED` | `0` | Master switch. `1` enables the approval mechanism, `0` disables it. |
-| `TOPSAILAI_TOOL_APPROVAL_RULES` | `${TOPSAILAI_WORK_FOLDER}/tool_approval.json` | JSON approval rules. Either a JSON array literal or a path to a file containing a JSON array. |
+| `TOPSAILAI_TOOL_APPROVAL_RULES` | `${TOPSAILAI_WORK_FOLDER}/tool_approval.json` | JSON approval rules. Either a JSON array literal or one or more paths to files containing a JSON array, separated by `;`. Rules from all files are aggregated in order. |
 | `TOPSAILAI_TOOL_APPROVAL_DEFAULT_TIMEOUT` | `60` | Default timeout in seconds when a rule does not specify one. |
 | `TOPSAILAI_TOOL_APPROVAL_DEFAULT_POLICY` | `deny` | Default timeout policy when a rule does not specify one. Must be one of `deny`, `allow`, `ask_again`. |
 
 ### JSON Rule Format
 
-`TOPSAILAI_TOOL_APPROVAL_RULES` must be valid JSON. The top-level value is an array of rule objects. Rules are sorted by `priority` ascending (smaller values first) before evaluation; the first matching rule wins. If no rule matches, the call is allowed without approval.
+`TOPSAILAI_TOOL_APPROVAL_RULES` must be valid JSON. The top-level value is an array of rule objects. When multiple files are provided, each file must contain a top-level array and the arrays are concatenated in the order given. Rules are sorted by `priority` ascending (smaller values first) before evaluation; the first matching rule wins. If no rule matches, the call is allowed without approval.
 
 #### Rule Object Schema
 
@@ -121,7 +121,7 @@ For example, a `bypass` rule with `match: "cmd_*"` and `priority: 10` will be ov
 
 ### File Path Support
 
-If the value of `TOPSAILAI_TOOL_APPROVAL_RULES` is a path to an existing file, the file content is read and parsed as JSON. Otherwise the value is parsed directly as JSON. This allows large rule sets to be maintained in separate files.
+If the value of `TOPSAILAI_TOOL_APPROVAL_RULES` is a path to an existing file, the file content is read and parsed as JSON. Multiple file paths may be provided separated by `;`; each file is read and parsed independently, and the resulting rule arrays are concatenated in the order given. Otherwise the value is parsed directly as JSON. This allows large rule sets to be maintained in separate files and composed from multiple sources.
 
 ### Configuration Error Handling
 
@@ -130,9 +130,9 @@ The approval mechanism must fail safely. The recommended default behavior is:
 | Error Condition | Behavior |
 |-----------------|----------|
 | `TOPSAILAI_TOOL_APPROVAL_ENABLED=0` | Approval is disabled; all tool calls execute normally. |
-| `TOPSAILAI_TOOL_APPROVAL_RULES` points to a non-existent file or is empty/unset | Approval is effectively disabled; all tool calls execute normally. |
-| JSON parsing fails | Log an error, disable approval for the current process, and allow tool calls to execute normally. |
-| File path does not exist or is unreadable | Log an error, disable approval for the current process, and allow tool calls to execute normally. |
+| `TOPSAILAI_TOOL_APPROVAL_RULES` is empty/unset or all configured files are missing/unreadable | Approval is effectively disabled; all tool calls execute normally. |
+| JSON parsing fails for one file | Log a critical error, skip that file, and continue evaluating rules from any remaining files. |
+| File path does not exist or is unreadable | Log a critical error, skip that file, and continue evaluating rules from any remaining files. |
 | Rule schema is invalid | Log a warning, skip the invalid rule, and continue evaluating remaining rules. |
 | Unknown `mode` value | Treat as `require` (safe default) and log a warning. |
 | Unknown `policy` value | Treat as `deny` (safe default) and log a warning. |

@@ -243,10 +243,10 @@ def _parse_rule(item: Any) -> ApprovalRule | None:
     )
 
 
-def _parse_rules(data: Any) -> list[ApprovalRule]:
+def _parse_rules(data: Any, source: str = "<inline>") -> list[ApprovalRule]:
     """Parse a JSON-decoded value into a list of ApprovalRule objects."""
     if not isinstance(data, list):
-        logger.warning("TOPSAILAI_TOOL_APPROVAL_RULES must be a JSON array")
+        logger.critical("Approval rules from %s must be a JSON array", source)
         _disable_approval_due_to_config_error()
         return []
 
@@ -256,10 +256,9 @@ def _parse_rules(data: Any) -> list[ApprovalRule]:
         if rule is not None:
             rules.append(rule)
         else:
-            logger.warning("Skipping invalid approval rule: %s", item)
-
-    # Smaller priority values are evaluated first.
-    return sorted(rules, key=lambda r: r.priority)
+            logger.warning("Skipping invalid approval rule from %s: %s", source, item)
+    # Keep original order here; final sorting happens in load_approval_rules().
+    return rules
 
 
 def _disable_approval_due_to_config_error() -> None:
@@ -277,6 +276,64 @@ def _get_default_rules_path() -> str:
     return os.path.join(work_folder, "tool_approval.json")
 
 
+def _looks_like_file_path(value: str) -> bool:
+    """Return True if the value looks like a file path rather than inline JSON."""
+    if os.path.isfile(value):
+        return True
+    # Treat strings containing path separators or ending with .json as paths.
+    if "/" in value or "\\" in value or value.lower().endswith(".json"):
+        return True
+    return False
+
+
+def _load_file_rules(path: str) -> list[ApprovalRule]:
+    """Load rules from a JSON file path."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            content = fh.read()
+    except OSError as exc:
+        logger.critical("Cannot read approval rules file %s: %s", path, exc)
+        _disable_approval_due_to_config_error()
+        return []
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError as exc:
+        logger.critical("Invalid JSON in approval rules file %s: %s", path, exc)
+        _disable_approval_due_to_config_error()
+        return []
+    return _parse_rules(data, source=path)
+
+
+def _load_inline_rules(raw: str) -> list[ApprovalRule]:
+    """Load rules from an inline JSON string."""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.critical("Invalid TOPSAILAI_TOOL_APPROVAL_RULES JSON: %s", exc)
+        _disable_approval_due_to_config_error()
+        return []
+    return _parse_rules(data, source="<inline>")
+
+
+def _load_raw_rules_value(raw: str) -> list[ApprovalRule]:
+    """
+    Load rules from a single value.
+
+    The value may be either a path to an existing JSON file or a raw JSON
+    array literal. Returns a list of parsed rules, or an empty list if the
+    value cannot be loaded. Configuration errors are logged at critical level
+    and disable approval for the current process.
+    """
+    if _looks_like_file_path(raw):
+        if not os.path.isfile(raw):
+            logger.critical("Cannot read approval rules file %s", raw)
+            _disable_approval_due_to_config_error()
+            return []
+        return _load_file_rules(raw)
+
+    return _load_inline_rules(raw)
+
+
 def load_approval_rules() -> list[ApprovalRule]:
     """Load and cache approval rules from the environment."""
     global _RULES_CACHE
@@ -290,29 +347,33 @@ def load_approval_rules() -> list[ApprovalRule]:
         if not os.path.isfile(raw):
             _RULES_CACHE = []
             return _RULES_CACHE
-
-    # If the value points to an existing file, read the file content.
-    if os.path.isfile(raw):
-        try:
-            with open(raw, "r", encoding="utf-8") as fh:
-                raw = fh.read()
-        except OSError as exc:
-            logger.error("Cannot read approval rules file %s: %s", raw, exc)
-            _disable_approval_due_to_config_error()
-            _RULES_CACHE = []
-            return _RULES_CACHE
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        logger.error("Invalid TOPSAILAI_TOOL_APPROVAL_RULES JSON: %s", exc)
-        _disable_approval_due_to_config_error()
-        _RULES_CACHE = []
+        rules = _load_raw_rules_value(raw)
+        _RULES_CACHE = rules
         return _RULES_CACHE
 
-    rules = _parse_rules(data)
-    _RULES_CACHE = rules
-    return rules
+    stripped = raw.strip()
+    # Backward compatibility: if the whole value is valid JSON, treat it as an
+    # inline rule array and do NOT split by ';'. This preserves the previous
+    # behavior for JSON literals that may contain semicolons inside strings.
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
+        data = None
+
+    if data is not None:
+        _RULES_CACHE = sorted(_parse_rules(data, source="<inline>"), key=lambda r: r.priority)
+        return _RULES_CACHE
+
+    # Multiple rule sources separated by ';'. Each part may be a file
+    # path or an inline JSON array literal. Rules from all sources are
+    # aggregated and then sorted by priority so the smallest priority wins.
+    parts = [part.strip() for part in stripped.split(";") if part.strip()]
+    rules: list[ApprovalRule] = []
+    for part in parts:
+        rules.extend(_load_raw_rules_value(part))
+
+    _RULES_CACHE = sorted(rules, key=lambda r: r.priority)
+    return _RULES_CACHE
 
 
 def clear_approval_rules_cache() -> None:

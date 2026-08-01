@@ -521,3 +521,161 @@ class TestEvaluateConditionEdgeCases:
 
     def test_not_in_with_unsupported_expected_type_returns_false(self):
         assert _evaluate_condition("x", "not_in", {"x": 1}) is False
+
+
+class TestLoadMultipleApprovalRuleFiles:
+    """Tests for loading rules from multiple JSON files separated by ';'."""
+
+    def test_multiple_files_aggregated_in_order(self, tmp_path):
+        file_a = tmp_path / "rules_a.json"
+        file_b = tmp_path / "rules_b.json"
+        file_a.write_text(json.dumps([{"match": "cmd_*", "mode": "require", "priority": 1}]), encoding="utf-8")
+        file_b.write_text(json.dumps([{"match": "file_*", "mode": "bypass", "priority": 2}]), encoding="utf-8")
+
+        with patch.dict(
+            os.environ,
+            {"TOPSAILAI_TOOL_APPROVAL_RULES": f"{file_a};{file_b}"},
+            clear=True,
+        ):
+            clear_approval_rules_cache()
+            rules = load_approval_rules()
+
+        assert len(rules) == 2
+        assert rules[0].match == "cmd_*"
+        assert rules[0].mode == "require"
+        assert rules[1].match == "file_*"
+        assert rules[1].mode == "bypass"
+
+    def test_multiple_files_priority_sorting(self, tmp_path):
+        file_a = tmp_path / "rules_a.json"
+        file_b = tmp_path / "rules_b.json"
+        file_a.write_text(json.dumps([{"match": "cmd_*", "mode": "require", "priority": 10}]), encoding="utf-8")
+        file_b.write_text(json.dumps([{"match": "cmd_*", "mode": "bypass", "priority": 1}]), encoding="utf-8")
+
+        with patch.dict(
+            os.environ,
+            {"TOPSAILAI_TOOL_APPROVAL_RULES": f"{file_a};{file_b}"},
+            clear=True,
+        ):
+            clear_approval_rules_cache()
+            rules = load_approval_rules()
+
+        assert len(rules) == 2
+        assert rules[0].priority == 1
+        assert rules[1].priority == 10
+
+    def test_multiple_files_with_inline_json(self, tmp_path):
+        file_a = tmp_path / "rules_a.json"
+        file_a.write_text(json.dumps([{"match": "cmd_*", "mode": "require"}]), encoding="utf-8")
+        inline = json.dumps([{"match": "file_*", "mode": "bypass"}])
+
+        with patch.dict(
+            os.environ,
+            {"TOPSAILAI_TOOL_APPROVAL_RULES": f"{file_a};{inline}"},
+            clear=True,
+        ):
+            clear_approval_rules_cache()
+            rules = load_approval_rules()
+
+        assert len(rules) == 2
+
+    def test_multiple_files_missing_file_skipped(self, tmp_path, caplog):
+        file_a = tmp_path / "rules_a.json"
+        file_a.write_text(json.dumps([{"match": "cmd_*", "mode": "require"}]), encoding="utf-8")
+        missing = tmp_path / "missing.json"
+
+        with patch.dict(
+            os.environ,
+            {"TOPSAILAI_TOOL_APPROVAL_RULES": f"{file_a};{missing}"},
+            clear=True,
+        ):
+            clear_approval_rules_cache()
+            with caplog.at_level("CRITICAL", logger="topsailai.ai_base.tool_approval.matcher"):
+                rules = load_approval_rules()
+
+        assert len(rules) == 1
+        assert rules[0].match == "cmd_*"
+        assert "Cannot read approval rules file" in caplog.text
+        assert str(missing) in caplog.text
+
+    def test_inline_json_with_semicolon_parsed_as_single_source(self):
+        inline = json.dumps([{"match": "cmd_*", "mode": "require", "params": [{"param": "cmd", "op": "contains", "value": "a;b"}]}])
+        with patch.dict(os.environ, {"TOPSAILAI_TOOL_APPROVAL_RULES": inline}, clear=True):
+            clear_approval_rules_cache()
+            rules = load_approval_rules()
+        assert len(rules) == 1
+        assert rules[0].params[0]["value"] == "a;b"
+
+    def test_single_file_path_backward_compatible(self, tmp_path):
+        rule_file = tmp_path / "rules.json"
+        rule_file.write_text(json.dumps([{"match": "cmd_*", "mode": "require"}]), encoding="utf-8")
+        with patch.dict(os.environ, {"TOPSAILAI_TOOL_APPROVAL_RULES": str(rule_file)}, clear=True):
+            clear_approval_rules_cache()
+            rules = load_approval_rules()
+        assert len(rules) == 1
+        assert rules[0].match == "cmd_*"
+
+    def test_inline_json_backward_compatible(self):
+        inline = json.dumps([{"match": "*", "mode": "require"}])
+        with patch.dict(os.environ, {"TOPSAILAI_TOOL_APPROVAL_RULES": inline}, clear=True):
+            clear_approval_rules_cache()
+            rules = load_approval_rules()
+        assert len(rules) == 1
+        assert rules[0].match == "*"
+
+    def test_multiple_files_invalid_json_in_one_file(self, tmp_path, caplog):
+        file_a = tmp_path / "rules_a.json"
+        file_b = tmp_path / "rules_b.json"
+        file_a.write_text(json.dumps([{"match": "cmd_*", "mode": "require"}]), encoding="utf-8")
+        file_b.write_text("not valid json", encoding="utf-8")
+
+        with patch.dict(
+            os.environ,
+            {"TOPSAILAI_TOOL_APPROVAL_RULES": f"{file_a};{file_b}"},
+            clear=True,
+        ):
+            clear_approval_rules_cache()
+            with caplog.at_level("CRITICAL", logger="topsailai.ai_base.tool_approval.matcher"):
+                rules = load_approval_rules()
+
+        assert len(rules) == 1
+        assert rules[0].match == "cmd_*"
+        assert "Invalid JSON" in caplog.text
+
+    def test_multiple_files_non_array_in_one_file(self, tmp_path, caplog):
+        file_a = tmp_path / "rules_a.json"
+        file_b = tmp_path / "rules_b.json"
+        file_a.write_text(json.dumps([{"match": "cmd_*", "mode": "require"}]), encoding="utf-8")
+        file_b.write_text('{"key": "value"}', encoding="utf-8")
+
+        with patch.dict(
+            os.environ,
+            {"TOPSAILAI_TOOL_APPROVAL_RULES": f"{file_a};{file_b}"},
+            clear=True,
+        ):
+            clear_approval_rules_cache()
+            with caplog.at_level("CRITICAL", logger="topsailai.ai_base.tool_approval.matcher"):
+                rules = load_approval_rules()
+
+        assert len(rules) == 1
+        assert rules[0].match == "cmd_*"
+        assert "must be a JSON array" in caplog.text
+
+    def test_multiple_files_all_invalid_disables_approval(self, tmp_path, caplog):
+        file_a = tmp_path / "rules_a.json"
+        file_b = tmp_path / "rules_b.json"
+        file_a.write_text("not valid", encoding="utf-8")
+        file_b.write_text('{"key": "value"}', encoding="utf-8")
+
+        with patch.dict(
+            os.environ,
+            {"TOPSAILAI_TOOL_APPROVAL_RULES": f"{file_a};{file_b}"},
+            clear=True,
+        ):
+            clear_approval_rules_cache()
+            with caplog.at_level("CRITICAL", logger="topsailai.ai_base.tool_approval.matcher"):
+                rules = load_approval_rules()
+
+        assert rules == []
+        assert "Invalid JSON" in caplog.text
+        assert "must be a JSON array" in caplog.text

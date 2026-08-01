@@ -8,7 +8,7 @@ the default regression cases can be extended without touching the evaluation
 logic, and arbitrary tool calls can be supplied on the command line.
 
 Usage:
-    # Run the built-in regression suite.
+    # Run the built-in regression suite using TOPSAILAI_TOOL_APPROVAL_RULES.
     python topsailai_test_tool_approval_rules.py
 
     # Evaluate a single command using the default tool (cmd_tool-exec_cmd).
@@ -17,6 +17,10 @@ Usage:
     # Evaluate calls for a specific tool.
     python topsailai_test_tool_approval_rules.py "cmd_tool-exec_cmd:rm -f /tmp/.tmp/x.file"
     python topsailai_test_tool_approval_rules.py --tool file_tool-write_file "/etc/passwd" "/etc/hosts"
+
+    # Use a specific rule file or multiple files separated by ';'.
+    python topsailai_test_tool_approval_rules.py --rules /path/to/tool_approval.json
+    python topsailai_test_tool_approval_rules.py --rules "/path/to/a.json;/path/to/b.json"
 
     # Machine-readable JSON output.
     python topsailai_test_tool_approval_rules.py --json "rm -rf /" "echo hello"
@@ -34,35 +38,11 @@ from typing import Any
 import _import_topsailai  # noqa: F401
 
 from topsailai.ai_base.tool_approval import instance as approval_instance
-from topsailai.ai_base.tool_approval import matcher as approval_matcher
+from topsailai.ai_base.tool_approval.matcher import (
+    clear_approval_rules_cache,
+    load_approval_rules,
+)
 
-
-def _resolve_default_rules_path() -> str:
-    """Resolve the default approval rules file path.
-
-    Resolution order (earlier wins):
-      1. TOPSAILAI_TOOL_APPROVAL_RULES environment variable if set and non-empty.
-      2. ${TOPSAILAI_HOME}/tool_approval.json if TOPSAILAI_HOME is set and non-empty.
-      3. ${TOPSAILAI_WORK_FOLDER}/tool_approval.json if TOPSAILAI_WORK_FOLDER is set and non-empty.
-      4. ~/.topsailai/tool_approval.json as the final fallback.
-
-    The returned path is resolved at import time so that --rules can still
-    override it explicitly on the command line.
-    """
-    env_rules = os.environ.get("TOPSAILAI_TOOL_APPROVAL_RULES")
-    if env_rules:
-        return env_rules
-
-    topsailai_home = os.environ.get("TOPSAILAI_HOME")
-    if topsailai_home:
-        return os.path.join(topsailai_home, "tool_approval.json")
-
-    work_folder = os.environ.get("TOPSAILAI_WORK_FOLDER")
-    if work_folder:
-        return os.path.join(work_folder, "tool_approval.json")
-
-    return os.path.expanduser("~/.topsailai/tool_approval.json")
-DEFAULT_RULES_PATH = _resolve_default_rules_path()
 
 # Tool name used for positional arguments that do not specify one explicitly.
 DEFAULT_TOOL_NAME = "cmd_tool-exec_cmd"
@@ -136,16 +116,11 @@ DEFAULT_TEST_CASES: list[TestCase] = [
 ]
 
 
-def _configure_environment(rules_path: str) -> None:
-    """Enable approval and point the matcher at the requested rule file."""
+def _configure_environment(rules_value: str | None) -> None:
+    """Enable approval and point the matcher at the requested rule source."""
     os.environ["TOPSAILAI_TOOL_APPROVAL_ENABLED"] = "1"
-    os.environ["TOPSAILAI_TOOL_APPROVAL_RULES"] = rules_path
-
-
-def _load_rules(rules_path: str) -> list[dict[str, Any]]:
-    """Load and return the raw rule list from a JSON file."""
-    with open(rules_path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
+    if rules_value:
+        os.environ["TOPSAILAI_TOOL_APPROVAL_RULES"] = rules_value
 
 
 def _build_tool_args(tool_name: str, raw_value: str, extra_args: dict[str, Any] | None) -> dict[str, Any]:
@@ -253,8 +228,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--rules",
-        default=DEFAULT_RULES_PATH,
-        help=f"Path to the approval rules JSON file (default: {DEFAULT_RULES_PATH}).",
+        default=None,
+        help=(
+            "Path to the approval rules JSON file, multiple paths separated by ';', "
+            "or an inline JSON array. If omitted, reads from "
+            "TOPSAILAI_TOOL_APPROVAL_RULES."
+        ),
     )
     parser.add_argument(
         "--tool",
@@ -268,12 +247,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # Make sure the matcher reads from the requested file on this run.
+    # Make sure the matcher reads from the requested source on this run.
     _configure_environment(args.rules)
-    approval_matcher._rules_cache = None  # type: ignore[attr-defined]
+    clear_approval_rules_cache()
 
-    # Load rules early so JSON syntax errors surface before evaluation.
-    _load_rules(args.rules)
+    # Load rules through the shared loader so single file, multiple files,
+    # inline JSON, and default-path fallback all work consistently.
+    rules = load_approval_rules()
+
+    source = args.rules or os.environ.get("TOPSAILAI_TOOL_APPROVAL_RULES") or "<default>"
+    if args.json:
+        # Keep stdout clean for machine-readable JSON; emit summary to stderr.
+        print(f"Loaded {len(rules)} approval rule(s) from {source}", file=sys.stderr)
+    else:
+        print(f"Loaded {len(rules)} approval rule(s) from {source}")
+        for rule in rules:
+            print(f"  - {rule.name or rule.match}: mode={rule.mode}, priority={rule.priority}")
 
     results: list[dict[str, Any]] = []
     for tool_name, raw_value, extra_args, description in _collect_cases(args):
