@@ -775,6 +775,29 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
             any("Unknown project sub-command" in str(call) for call in mock_print.call_args_list)
         )
 
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_numeric_input_in_workspace_projects_list_is_blocked(self, mock_input, mock_print):
+        """Numeric input in workspace projects list is blocked with a prompt."""
+        cli_state.current_scope = "workspace"
+        cli_state.workspace_showing_managed_projects = True
+        mock_input.side_effect = ["1", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("In projects list" in str(call) for call in mock_print.call_args_list)
+        )
+
+    @patch("cli_topsailai.core.input")
+    def test_r_in_workspace_projects_list_returns_refresh(self, mock_input):
+        """'r' in workspace projects list returns refresh to restore task list."""
+        cli_state.current_scope = "workspace"
+        cli_state.workspace_showing_managed_projects = True
+        mock_input.return_value = "r"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "refresh")
+        self.assertIsNone(value)
+
     @patch("cli_topsailai.project_scope.launch_agent_in_folder")
     @patch("cli_topsailai.project_scope.resolve_agent_folder")
     @patch("cli_topsailai.core.prompt_selection")

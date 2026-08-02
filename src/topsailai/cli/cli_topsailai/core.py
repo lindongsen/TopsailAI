@@ -1623,6 +1623,8 @@ def main(argv: Optional[List[str]] = None) -> None:
 
             if action == "show_managed_projects":
                 _project_scope_mode = "managed"
+                if state.current_scope == "workspace":
+                    state.workspace_showing_managed_projects = True
                 _refresh_managed_projects()
                 continue
 
