@@ -638,14 +638,15 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         cli_state.current_session_id = None
         cli_state.yaml_commands = []
         cli_state.history_manager = None
+        cli_state.workspace_showing_managed_projects = False
 
     def tearDown(self):
         cli_state.current_scope = "workspace"
         cli_state.current_session_id = None
         cli_state.yaml_commands = []
         cli_state.history_manager = None
+        cli_state.workspace_showing_managed_projects = False
         cli_state._child_processes.clear()
-
     @patch("cli_topsailai.core.input")
     def test_prompt_selection_agent_in_workspace(self, mock_input):
         """/agent argument is parsed in workspace scope."""
@@ -785,7 +786,7 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         action, value = prompt_selection([], "/task")
         self.assertEqual(action, "quit")
         self.assertTrue(
-            any("In projects list" in str(call) for call in mock_print.call_args_list)
+            any("In projects list; supported commands: r, p, q, p agent <number>" in str(call) for call in mock_print.call_args_list)
         )
 
     @patch("cli_topsailai.core.input")
@@ -797,6 +798,63 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
         action, value = prompt_selection([], "/task")
         self.assertEqual(action, "refresh")
         self.assertIsNone(value)
+
+    @patch("cli_topsailai.core.input")
+    def test_p_in_workspace_projects_list_returns_show_managed_projects(self, mock_input):
+        """'p' in workspace projects list returns show_managed_projects."""
+        cli_state.current_scope = "workspace"
+        cli_state.workspace_showing_managed_projects = True
+        mock_input.return_value = "p"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "show_managed_projects")
+        self.assertIsNone(value)
+
+    @patch("cli_topsailai.core.input")
+    def test_q_in_workspace_projects_list_returns_quit(self, mock_input):
+        """'q' in workspace projects list returns quit."""
+        cli_state.current_scope = "workspace"
+        cli_state.workspace_showing_managed_projects = True
+        mock_input.return_value = "q"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertIsNone(value)
+
+    @patch("cli_topsailai.core.input")
+    def test_cd_in_workspace_projects_list_returns_refresh(self, mock_input):
+        """'cd' in workspace projects list returns refresh to restore task list."""
+        cli_state.current_scope = "workspace"
+        cli_state.workspace_showing_managed_projects = True
+        mock_input.return_value = "cd"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "refresh")
+        self.assertIsNone(value)
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_unsupported_commands_in_workspace_projects_list_are_blocked(self, mock_input, mock_print):
+        """Unsupported commands in workspace projects list are blocked."""
+        cli_state.current_scope = "workspace"
+        cli_state.workspace_showing_managed_projects = True
+        unsupported_commands = [
+            "/send 1 hello",
+            "/session 1",
+            "/refresh",
+            "/clean",
+            "cd doc",
+            "scopes",
+            "/help",
+            "agent 1",
+            "1",
+        ]
+        mock_input.side_effect = unsupported_commands + ["q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        printed = "\n".join(str(call) for call in mock_print.call_args_list)
+        self.assertIn("In projects list; supported commands: r, p, q, p agent <number>", printed)
+        self.assertEqual(
+            printed.count("In projects list; supported commands: r, p, q, p agent <number>"),
+            len(unsupported_commands),
+        )
 
     @patch("cli_topsailai.project_scope.launch_agent_in_folder")
     @patch("cli_topsailai.project_scope.resolve_agent_folder")
@@ -922,6 +980,197 @@ class TestWorkspaceAgentCommand(unittest.TestCase):
 
         mock_detect.assert_called_once_with()
         mock_launch.assert_called_once_with("/work/a", agent_mode="dtach")
+
+    @patch("cli_topsailai.core.input")
+    def test_p_agent_number_in_managed_project_list(self, mock_input):
+        """'p agent <number>' in managed-project list returns the dedicated action."""
+        cli_state.current_scope = "workspace"
+        cli_state.workspace_showing_managed_projects = True
+        mock_input.return_value = "p agent 2"
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "agent_managed_project")
+        self.assertEqual(value, "2")
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_p_agent_number_in_workspace_task_list_is_rejected(self, mock_input, mock_print):
+        """'p agent <number>' is rejected in ordinary workspace task list."""
+        cli_state.current_scope = "workspace"
+        cli_state.workspace_showing_managed_projects = False
+        mock_input.side_effect = ["p agent 2", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any(
+                "Unknown project sub-command" in str(call)
+                for call in mock_print.call_args_list
+            )
+        )
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_p_agent_without_number_in_managed_project_list_shows_usage(self, mock_input, mock_print):
+        """'p agent' without a number in managed-project list prints usage."""
+        cli_state.current_scope = "workspace"
+        cli_state.workspace_showing_managed_projects = True
+        mock_input.side_effect = ["p agent", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("Usage: p agent <number>" in str(call) for call in mock_print.call_args_list)
+        )
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_p_agent_non_numeric_in_managed_project_list_shows_usage(self, mock_input, mock_print):
+        """'p agent <non-numeric>' in managed-project list prints usage."""
+        cli_state.current_scope = "workspace"
+        cli_state.workspace_showing_managed_projects = True
+        mock_input.side_effect = ["p agent abc", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("Usage: p agent <number>" in str(call) for call in mock_print.call_args_list)
+        )
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_p_agent_zero_in_managed_project_list_shows_usage(self, mock_input, mock_print):
+        """'p agent 0' in managed-project list prints usage."""
+        cli_state.current_scope = "workspace"
+        cli_state.workspace_showing_managed_projects = True
+        mock_input.side_effect = ["p agent 0", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("Usage: p agent <number>" in str(call) for call in mock_print.call_args_list)
+        )
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_p_agent_negative_in_managed_project_list_shows_usage(self, mock_input, mock_print):
+        """'p agent -1' in managed-project list prints usage."""
+        cli_state.current_scope = "workspace"
+        cli_state.workspace_showing_managed_projects = True
+        mock_input.side_effect = ["p agent -1", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("Usage: p agent <number>" in str(call) for call in mock_print.call_args_list)
+        )
+
+    @patch("builtins.print")
+    @patch("cli_topsailai.core.input")
+    def test_p_agent_in_project_scope_is_unknown(self, mock_input, mock_print):
+        """'p agent' in project scope is treated as an unknown subcommand."""
+        cli_state.current_scope = "project"
+        cli_state.workspace_showing_managed_projects = False
+        mock_input.side_effect = ["p agent 1", "q"]
+        action, value = prompt_selection([], "/task")
+        self.assertEqual(action, "quit")
+        self.assertTrue(
+            any("Unknown project sub-command" in str(call) for call in mock_print.call_args_list)
+        )
+
+    @patch("cli_topsailai.project_scope.build_managed_project_list")
+    @patch("cli_topsailai.project_scope.launch_agent_in_folder")
+    @patch("cli_topsailai.project_scope.resolve_agent_folder")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    def test_p_agent_number_in_workspace_launches_managed_project(
+        self,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        mock_resolve: MagicMock,
+        mock_launch: MagicMock,
+        mock_build_managed: MagicMock,
+    ) -> None:
+        """'p agent <number>' in workspace managed-project list uses managed entries."""
+        from cli_topsailai.core import main
+
+        log_file = {
+            "filename": "s1.1234.session.stdout",
+            "path": "/task/s1.1234.session.stdout",
+            "session_id": "s1",
+            "project_workspace": "/work/a",
+        }
+        managed_entry = {
+            "no": 1,
+            "name": "project-a",
+            "path": "/work/managed-a",
+        }
+        mock_discover.return_value = [log_file]
+        mock_build_managed.return_value = [managed_entry]
+        mock_prompt.side_effect = [
+            ("show_managed_projects", None),
+            ("agent_managed_project", "1"),
+            ("quit", None),
+        ]
+        mock_resolve.return_value = "/work/managed-a"
+
+        main(["--agent-mode", "raw"])
+
+        mock_resolve.assert_called_once_with("1", [managed_entry])
+        mock_launch.assert_called_once_with("/work/managed-a", agent_mode="raw")
+
+    @patch("cli_topsailai.project_scope.build_managed_project_list")
+    @patch("cli_topsailai.project_scope.launch_agent_in_folder")
+    @patch("cli_topsailai.core.prompt_selection")
+    @patch("cli_topsailai.log_files.discover_log_files")
+    @patch("cli_topsailai.session_info.enrich_files_with_session_names")
+    @patch("cli_topsailai.formatting.print_table")
+    @patch("cli_topsailai.formatting.print_header")
+    @patch("cli_topsailai.history.HistoryManager")
+    @patch("cli_topsailai.history.load_readline_history")
+    @patch("cli_topsailai.completer.setup_tab_completion")
+    def test_p_agent_out_of_range_in_workspace_does_not_launch(
+        self,
+        _mock_setup_tab: MagicMock,
+        _mock_load_history: MagicMock,
+        _mock_history: MagicMock,
+        _mock_header: MagicMock,
+        _mock_table: MagicMock,
+        _mock_enrich: MagicMock,
+        mock_discover: MagicMock,
+        mock_prompt: MagicMock,
+        mock_launch: MagicMock,
+        mock_build_managed: MagicMock,
+    ) -> None:
+        """'p agent <out-of-range>' does not launch an agent."""
+        from cli_topsailai.core import main
+
+        log_file = {
+            "filename": "s1.1234.session.stdout",
+            "path": "/task/s1.1234.session.stdout",
+            "session_id": "s1",
+            "project_workspace": "/work/a",
+        }
+        managed_entry = {
+            "no": 1,
+            "name": "project-a",
+            "path": "/work/managed-a",
+        }
+        mock_discover.return_value = [log_file]
+        mock_build_managed.return_value = [managed_entry]
+        mock_prompt.side_effect = [
+            ("show_managed_projects", None),
+            ("agent_managed_project", "2"),
+            ("quit", None),
+        ]
+
+        main(["--agent-mode", "raw"])
+
+        mock_launch.assert_not_called()
 
 
 class TestResumeCommand(unittest.TestCase):

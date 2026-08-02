@@ -204,7 +204,7 @@ def print_help(
         },
         {
             "cmd": "/agent <number|folder>",
-            "desc": "Launch an agent. In workspace scope, `agent` or `/agent` (no arguments) runs the YAML-configured agent command. `agent <number|folder>` or `/agent <number|folder>` changes to the selected project workspace folder and launches topsailai_launch_agent; the number refers to the log file list in workspace scope, the project session list in project scope, or the managed project list when it is active. An absolute/relative folder path can also be used. Use `--agent-mode raw|dtach|tmux` to control how the agent process is launched (default: dtach).",
+            "desc": "Launch an agent. In workspace scope, `agent` or `/agent` (no arguments) runs the YAML-configured agent command. `agent <number|folder>` or `/agent <number|folder>` changes to the selected project workspace folder and launches topsailai_launch_agent; the number refers to the log file list in workspace scope or the project session list in project scope. An absolute/relative folder path can also be used. Use `--agent-mode raw|dtach|tmux` to control how the agent process is launched (default: dtach).",
             "example": "Example: agent  or  /agent  or  /agent 3  or  /agent /path/to/project  or  topsailai --agent-mode tmux",
             "scopes": ["workspace", "project"],
         },
@@ -216,7 +216,7 @@ def print_help(
         },
         {
             "cmd": "p  or  projects",
-            "desc": "Switch to the managed project list. The list is stored in .projects.jsonl under TOPSAILAI_HOME and is sorted oldest-first.",
+            "desc": "Switch to the managed project list. The list is stored in .projects.jsonl under TOPSAILAI_HOME and is sorted oldest-first. In workspace scope this view only accepts r (return to task list), p (refresh list), q (quit), cd (return to task list), and p agent <number>.",
             "example": "Example: p",
             "scopes": ["workspace", "project"],
         },
@@ -237,6 +237,12 @@ def print_help(
             "desc": "Delete the managed project at the displayed row number. You will be asked for y/N confirmation. Only the registry entry is removed; the project folder on disk is not deleted.",
             "example": "Example: p del 2",
             "scopes": ["workspace", "project"],
+        },
+        {
+            "cmd": "p agent <number>",
+            "desc": "Launch an agent in the managed project at the displayed row number. This command is only available when the workspace is showing the managed project list (after typing `p` or `projects`). The number is the 1-based row number shown in the managed project table. Use `--agent-mode raw|dtach|tmux` to control how the agent process is launched (default: dtach).",
+            "example": "Example: p agent 2  or  topsailai --agent-mode tmux",
+            "scopes": ["workspace"],
         },
         {
             "cmd": "project add <path> [name]",

@@ -546,6 +546,41 @@ def prompt_selection(
                     return ("leave_scope", None)
                 return ("quit", None)
 
+            # Restricted command set when workspace is showing the managed
+            # project list. Only r/recent, p/projects, q/quit/cd, and
+            # p agent <number> are accepted; everything else is rejected.
+            if (
+                state.current_scope == "workspace"
+                and state.workspace_showing_managed_projects
+            ):
+                if lower_input in ("r", "recent"):
+                    return ("refresh", None)
+                if lower_input in ("p", "projects"):
+                    return ("show_managed_projects", None)
+                if lower_input in ("cd", "/cd"):
+                    return ("refresh", None)
+                if lower_input.startswith("p ") or lower_input.startswith("/p "):
+                    parts = user_input.split(None, 2)
+                    subcmd = parts[1].lower() if len(parts) > 1 else ""
+                    if subcmd == "agent":
+                        if len(parts) < 3:
+                            print(
+                                f"{Colors.RED}[ERROR] Usage: p agent <number>{Colors.RESET}"
+                            )
+                            continue
+                        arg = parts[2].strip()
+                        if not arg.isdigit() or int(arg) <= 0:
+                            print(
+                                f"{Colors.RED}[ERROR] Usage: p agent <number>{Colors.RESET}"
+                            )
+                            continue
+                        return ("agent_managed_project", arg)
+                print(
+                    f"{Colors.RED}[ERROR] In projects list; supported commands: "
+                    f"r, p, q, p agent <number>{Colors.RESET}"
+                )
+                continue
+
             # Project scope: r/recent shows recent session/project history.
             # This must be checked before the global r/refresh binding.
             if state.current_scope == "project" and (
@@ -688,10 +723,17 @@ def prompt_selection(
                         f"'{subcmd}'. Use p add or p del.{Colors.RESET}"
                     )
                     continue
-
             if lower_input == "/models":
                 if state.current_scope in ("workspace", "project"):
                     return ("models", "select")
+                print(
+                    f"{Colors.RED}[ERROR] /models is only available in workspace "
+                    f"or project scope.{Colors.RESET}"
+                )
+                continue
+            if lower_input in ("/models current", "/models clear"):
+                if state.current_scope in ("workspace", "project"):
+                    return ("models", lower_input.split()[1])
                 print(
                     f"{Colors.RED}[ERROR] /models is only available in workspace "
                     f"or project scope.{Colors.RESET}"
@@ -1489,6 +1531,17 @@ def main(argv: Optional[List[str]] = None) -> None:
                     print(
                         f"\n{Colors.RED}[ERROR] Invalid number or folder: '{value}'. "
                         f"Use /agent {{number}} or /agent {{folder}}.{Colors.RESET}"
+                    )
+                    continue
+                launch_agent_in_folder(folder, agent_mode=args.agent_mode)
+                continue
+
+            if action == "agent_managed_project":
+                folder = resolve_agent_folder(value, managed_project_entries)
+                if folder is None:
+                    print(
+                        f"\n{Colors.RED}[ERROR] Invalid number: '{value}'. "
+                        f"Use p agent <number> with a row from the managed project list.{Colors.RESET}"
                     )
                     continue
                 launch_agent_in_folder(folder, agent_mode=args.agent_mode)
