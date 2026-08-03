@@ -104,11 +104,11 @@ class TaskData(object):
         Returns:
             str: YAML string containing task_id, status, tool_call_count and now
         """
+        tool_call_line = f"tool_call_count: {self.tool_call_count}\n" if self.status != self.TASK_STATUS_INITING else ""
         return f"""---
 task_id: {self.task_id}
 status: {self.status}
-tool_call_count: {self.tool_call_count}
-now: {time_tool.get_current_date(with_t=True)}
+{tool_call_line}now: {time_tool.get_current_date(with_t=True)}
 ---
 """
 
