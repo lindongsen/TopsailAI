@@ -23,13 +23,13 @@ import copy
 import json
 import dataclasses
 import os
+import select
 import shlex
 import signal
 import subprocess
 import sys
 import threading
 import time
-
 # DONOT REMOVE THIS
 import readline
 
@@ -486,18 +486,51 @@ def _timed_input(prompt, default="", timeout=10.0):
     """Read a line from stdin with a timeout.
 
     If no input is received within ``timeout`` seconds, ``default`` is
-    returned. This works in both TTY and non-TTY environments, but it
-    always returns ``default`` immediately when stdin is not a TTY so
-    non-interactive callers do not block.
+    returned. When stdin is not a TTY, the function returns ``default``
+    immediately so non-interactive callers do not block.
+
+    On POSIX systems the prompt is written to stdout and ``select.select``
+    is used to wait for input without spawning a background thread. This
+    keeps the timeout path clean and avoids leaving a blocked thread behind.
+    On platforms without a selectable stdin, a daemon thread fallback is
+    used; the thread may remain blocked until the process exits.
     """
     if not sys.stdin.isatty():
         return default
 
+    # Write the prompt to stdout explicitly. Wrappers such as uv run may
+    # strip ANSI escape sequences from the prompt argument of input().
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+
+    # POSIX path: use select for a thread-free timeout.
+    if hasattr(select, "select"):
+        try:
+            ready, _, _ = select.select([sys.stdin], [], [], timeout)
+            if ready:
+                try:
+                    line = sys.stdin.readline()
+                except EOFError:
+                    line = ""
+                if not line:
+                    return default
+                return line.rstrip("\n").rstrip("\r")
+            print(
+                f"\nTimeout after {timeout}s, using default: {default!r}",
+                file=sys.stderr,
+            )
+            return default
+        except (OSError, ValueError):
+            # Fall back to the threaded implementation if select is not usable
+            # for this stdin (e.g. certain emulators or restricted environments).
+            pass
+
+    # Fallback for Windows and other platforms without selectable stdin.
     result = [default]
 
     def _reader():
         try:
-            result[0] = input(prompt)
+            result[0] = input("")
         except EOFError:
             pass
 
@@ -505,7 +538,10 @@ def _timed_input(prompt, default="", timeout=10.0):
     thread.start()
     thread.join(timeout)
     if thread.is_alive():
-        print(f"\nTimeout after {timeout}s, using default: {default!r}", file=sys.stderr)
+        print(
+            f"\nTimeout after {timeout}s, using default: {default!r}",
+            file=sys.stderr,
+        )
     return result[0]
 
 
@@ -836,7 +872,8 @@ def _select_context_item(context_map, env_map, timeout=10.0):
         else f"Select context item (1-{len(items)})"
     )
 
-    while True:
+    max_attempts = 100
+    for _ in range(max_attempts):
         answer = _timed_prompt(
             prompt_text, default=default_item or "", timeout=timeout
         )
@@ -852,6 +889,12 @@ def _select_context_item(context_map, env_map, timeout=10.0):
             f"Invalid selection. Please enter a number 1-{len(items)} or an item name.",
             file=sys.stderr,
         )
+
+    print(
+        "Too many invalid selections. Please use --item to select a context item.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 def _run_context_setup(settings_path, settings):
     """Guide the user through configuring context when it is empty."""

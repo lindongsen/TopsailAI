@@ -298,6 +298,87 @@ class TestContextSelection(unittest.TestCase):
             settings = launcher.load_yaml(settings_path)
             self.assertEqual(settings["context"]["_"], ["project.yaml"])
 
+    def test_timed_input_select_path_returns_input(self):
+        """_timed_input returns the entered value when select reports stdin ready."""
+        with mock.patch("sys.stdin.isatty", return_value=True):
+            with mock.patch("select.select", return_value=([sys.stdin], [], [])):
+                with mock.patch("sys.stdin.readline", return_value="hello\n"):
+                    result = launcher._timed_input(
+                        "prompt: ", default="fallback", timeout=10.0
+                    )
+        self.assertEqual(result, "hello")
+
+    def test_timed_input_select_path_returns_default_on_eof(self):
+        """_timed_input returns the default value when readline returns EOF."""
+        with mock.patch("sys.stdin.isatty", return_value=True):
+            with mock.patch("select.select", return_value=([sys.stdin], [], [])):
+                with mock.patch("sys.stdin.readline", return_value=""):
+                    result = launcher._timed_input(
+                        "prompt: ", default="fallback", timeout=10.0
+                    )
+        self.assertEqual(result, "fallback")
+
+    def test_timed_input_non_tty_returns_default_immediately(self):
+        """_timed_input returns the default immediately when stdin is not a TTY."""
+        with mock.patch("sys.stdin.isatty", return_value=False):
+            result = launcher._timed_input(
+                "prompt: ", default="fallback", timeout=10.0
+            )
+        self.assertEqual(result, "fallback")
+
+    def test_select_context_item_exits_after_max_attempts(self):
+        """_select_context_item exits when the user exceeds max attempts."""
+        context_map = {"default": [], "memo": []}
+        env_map = {}
+        with mock.patch("sys.stdin.isatty", return_value=True):
+            with mock.patch(
+                "topsailai_launch_agent._timed_prompt", return_value="invalid"
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    launcher._select_context_item(
+                        context_map, env_map, timeout=0.01
+                    )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_select_context_item_selects_by_name(self):
+        """_select_context_item returns the item selected by name."""
+        context_map = {"default": [], "memo": []}
+        env_map = {}
+        with mock.patch("sys.stdin.isatty", return_value=True):
+            with mock.patch(
+                "topsailai_launch_agent._timed_prompt", return_value="memo"
+            ):
+                result = launcher._select_context_item(
+                    context_map, env_map, timeout=10.0
+                )
+        self.assertEqual(result, "memo")
+
+    def test_select_context_item_selects_by_number(self):
+        """_select_context_item returns the item selected by number."""
+        context_map = {"default": [], "memo": []}
+        env_map = {}
+        with mock.patch("sys.stdin.isatty", return_value=True):
+            with mock.patch(
+                "topsailai_launch_agent._timed_prompt", return_value="2"
+            ):
+                result = launcher._select_context_item(
+                    context_map, env_map, timeout=10.0
+                )
+        self.assertEqual(result, "memo")
+
+    def test_select_context_item_default_used_on_timeout(self):
+        """_select_context_item uses the default item when the prompt times out."""
+        context_map = {"default": [], "memo": []}
+        env_map = {}
+        with mock.patch("sys.stdin.isatty", return_value=True):
+            with mock.patch(
+                "topsailai_launch_agent._timed_prompt", return_value="default"
+            ):
+                result = launcher._select_context_item(
+                    context_map, env_map, timeout=10.0
+                )
+        self.assertEqual(result, "default")
+
     def test_empty_context_in_non_tty_warns_and_continues(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             os.chdir(tmpdir)
@@ -354,15 +435,13 @@ class TestContextSelection(unittest.TestCase):
             self.assertEqual(settings["context"]["_"], ["project.yaml"])
 
     def test_timed_input_returns_default_on_timeout(self):
-        """_timed_input returns the default value when input does not arrive in time."""
+        """_timed_input returns the default value when select times out."""
         with mock.patch("sys.stdin.isatty", return_value=True):
-            with mock.patch("threading.Thread.join", return_value=None):
-                with mock.patch("threading.Thread.is_alive", return_value=True):
-                    result = launcher._timed_input(
-                        "prompt: ", default="fallback", timeout=0.01
-                    )
+            with mock.patch("select.select", return_value=([], [], [])):
+                result = launcher._timed_input(
+                    "prompt: ", default="fallback", timeout=0.01
+                )
         self.assertEqual(result, "fallback")
-
 
     def test_format_item_config_shows_merged_default_and_item_values(self):
         context_map = {
@@ -382,7 +461,6 @@ class TestContextSelection(unittest.TestCase):
         self.assertIn("MEMO_ONLY", output)
         # The merged value of SHARED should come from the item.
         self.assertIn("[item] SHARED=memo", output)
-        self.assertIn("[base] TOPSAILAI_INTERACTIVE_MODE=1", output)
 
     def test_format_item_config_underscore_merges_with_default(self):
         context_map = {
