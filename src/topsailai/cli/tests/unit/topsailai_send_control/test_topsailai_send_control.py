@@ -291,6 +291,15 @@ class TestFormatHumanResponse:
 
 
 class TestGetParams:
+    def test_control_actions_are_discovered_from_runtime_handlers(self):
+        assert cli_module.get_control_actions() == [
+            "clear_interrupt",
+            "get_runtime_messages",
+            "get_session_messages",
+            "hard_interrupt",
+            "soft_interrupt",
+        ]
+
     def test_invalid_json_args_exits(self, capsys):
         with patch.object(sys, "argv", ["script", "-c", "hard_interrupt", "-a", "not-json"]):
             with pytest.raises(SystemExit) as exc_info:

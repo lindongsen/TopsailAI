@@ -26,6 +26,8 @@ from typing import Any, List, Optional, Tuple
 import _import_topsailai  # noqa: F401
 
 from cli_topsailai.log_files import parse_stdout_filename
+from topsailai.workspace.control_channel.handler import ControlHandlerRegistry
+from topsailai.workspace.control_handlers import register_control_handlers
 from topsailai.workspace.folder_constants import (
     FOLDER_WORKSPACE_TASK,
 )
@@ -34,14 +36,14 @@ from topsailai.workspace.folder_utils import (
 )
 
 
-# Known control actions exposed by the agent runtime. Used for CLI help and
-# validation; the server remains the authoritative validator.
-CONTROL_ACTIONS = [
-    "hard_interrupt",
-    "soft_interrupt",
-    "clear_interrupt",
-    "get_runtime_messages",
-]
+def get_control_actions() -> List[str]:
+    """Return actions registered by the runtime control handlers."""
+    registry = ControlHandlerRegistry()
+    register_control_handlers(registry)
+    return registry.list_actions()
+
+
+CONTROL_ACTIONS = get_control_actions()
 
 
 def build_socket_path(task_folder: str, session_id: str, pid: str) -> str:
@@ -202,7 +204,7 @@ def get_params() -> dict:
         type=str,
         required=True,
         choices=CONTROL_ACTIONS,
-        help="Control action name to send. Supported actions: hard_interrupt, soft_interrupt, clear_interrupt, get_runtime_messages.",
+        help=f"Control action name to send. Supported actions: {', '.join(CONTROL_ACTIONS)}.",
     )
     parser.add_argument(
         "-a",
