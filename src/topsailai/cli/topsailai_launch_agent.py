@@ -47,6 +47,9 @@ def _reset_tmp_dir(workspace):
     """Remove and recreate the workspace .tmp/ directory if it exists."""
     tmp_dir = os.path.join(workspace, ".tmp")
     if os.path.isdir(tmp_dir):
+        print(
+            f"[TopsailAI-Launcher] Clearing temporary directory: {tmp_dir}"
+        )
         for root, dirs, files in os.walk(tmp_dir, topdown=False):
             for name in files:
                 file_path = os.path.join(root, name)
