@@ -342,6 +342,12 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
             logger.exception(e)
 
     if skill_info.name:
+        preload = bool(skill_info.all.get("preload_docs"))
+        load_overview = is_need_load_overview(folder_path)
+        print_tool.print_info(
+            f"Skill loaded: folder={folder_path}, name={skill_info.name}, "
+            f"preload={preload}, load_overview={load_overview}"
+        )
         g_skills[skill_info.folder] = skill_info
 
     return skill_info

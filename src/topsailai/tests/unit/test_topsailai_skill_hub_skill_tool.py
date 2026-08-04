@@ -352,6 +352,58 @@ description: A cached skill
             self.assertIn(tmpdir, g_skills)
             self.assertEqual(g_skills[tmpdir].name, "CachedSkill")
 
+    @patch('topsailai.skill_hub.skill_tool.print_tool')
+    @patch('topsailai.skill_hub.skill_tool.is_need_load_overview')
+    def test_logs_preload_and_load_overview_true(self, mock_is_need, mock_print_tool):
+        """Test that parse_skill_folder logs preload=True and load_overview=True."""
+        mock_is_need.return_value = True
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "SKILL.md")
+            yaml_content = """---
+name: PreloadSkill
+description: A skill with preload docs
+preload_docs:
+  - "references/doc1.md"
+---
+"""
+            with open(skill_file, "w", encoding="utf-8") as f:
+                f.write(yaml_content)
+
+            result = parse_skill_folder(tmpdir)
+
+            self.assertEqual(result.name, "PreloadSkill")
+            self.assertIn(tmpdir, g_skills)
+            mock_print_tool.print_info.assert_called_once()
+            logged_message = mock_print_tool.print_info.call_args[0][0]
+            self.assertIn("Skill loaded:", logged_message)
+            self.assertIn("preload=True", logged_message)
+            self.assertIn("load_overview=True", logged_message)
+
+    @patch('topsailai.skill_hub.skill_tool.print_tool')
+    @patch('topsailai.skill_hub.skill_tool.is_need_load_overview')
+    def test_logs_preload_and_load_overview_false(self, mock_is_need, mock_print_tool):
+        """Test that parse_skill_folder logs preload=False and load_overview=False."""
+        mock_is_need.return_value = False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_file = os.path.join(tmpdir, "SKILL.md")
+            yaml_content = """---
+name: NoPreloadSkill
+description: A skill without preload docs
+---
+"""
+            with open(skill_file, "w", encoding="utf-8") as f:
+                f.write(yaml_content)
+
+            result = parse_skill_folder(tmpdir)
+
+            self.assertEqual(result.name, "NoPreloadSkill")
+            self.assertIn(tmpdir, g_skills)
+            mock_print_tool.print_info.assert_called_once()
+            logged_message = mock_print_tool.print_info.call_args[0][0]
+            self.assertIn("Skill loaded:", logged_message)
+            self.assertIn("preload=False", logged_message)
+            self.assertIn("load_overview=False", logged_message)
+
 class TestDuplicateSkillFolderBlocking(unittest.TestCase):
     """Test duplicate skill folder basename handling with SKILL.md comparison."""
 

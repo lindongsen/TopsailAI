@@ -18,6 +18,11 @@ class TestShowToolCallStat(unittest.TestCase):
             "api_call": {"count": 10, "success": 8, "failed": 2},
             "file_read": {"count": 5, "success": 5, "failed": 0}
         }
+        # Suppress skill-loading logs triggered by the import chain of stat.py,
+        # so assertions on builtins.print only observe show_tool_call_stat output.
+        self._print_info_patcher = patch("topsailai.utils.print_tool.print_info")
+        self._print_info_patcher.start()
+        self.addCleanup(self._print_info_patcher.stop)
 
     @patch("topsailai.workspace.plugin_instruction.stat.get_ai_agent")
     @patch("topsailai.workspace.plugin_instruction.stat.tool_stat")
