@@ -423,11 +423,21 @@ def _handle_models_action(
         print(f"{Colors.RED}[ERROR] No model configurations are available.{Colors.RESET}")
         return
 
+    selected_model_id = None
+    try:
+        selected_model_id = resolve_effective_model(
+            registry.models,
+            project_workspace=project_workspace,
+        ).model_id
+    except ModelConfigurationError as error:
+        print(f"{Colors.YELLOW}[WARN] {error}{Colors.RESET}")
+
     print("\nAvailable model configurations:")
     for index, model in enumerate(registry.models, start=1):
-        selectable = model.enabled and model.protocol == "openai-compatible"
-        marker = "" if selectable else " (not selectable)"
-        print(f"  {index}. {format_model_summary(model)}{marker}")
+        name = model.name
+        if model.id == selected_model_id:
+            name = f"{Colors.GREEN}{name}{Colors.RESET}"
+        print(f"  {index}. {name}")
     try:
         answer = _read_input_with_prompt("Select model (q to cancel): ")
     except (EOFError, KeyboardInterrupt):

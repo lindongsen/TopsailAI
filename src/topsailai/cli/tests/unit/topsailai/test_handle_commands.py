@@ -20,7 +20,12 @@ sys.path.insert(
 import cli_topsailai.projects as projects
 import cli_topsailai.state as cli_state
 from cli_topsailai.colors import Colors
-from cli_topsailai.core import _try_handle_project_subcommand, prompt_selection
+from cli_topsailai.core import (
+    _handle_models_action,
+    _try_handle_project_subcommand,
+    prompt_selection,
+)
+from cli_topsailai.models import EffectiveModel, ModelConfig, ModelRegistry
 
 
 class TestHandleCommands(unittest.TestCase):
@@ -225,6 +230,53 @@ class TestHandleCommands(unittest.TestCase):
             any("Maximum prompt iterations" in str(call) for call in mock_print.call_args_list)
         )
 
+
+
+class TestInteractiveModelDisplay(unittest.TestCase):
+    """Tests for the interactive model selection list."""
+
+    @patch("cli_topsailai.core._read_input_with_prompt", return_value="q")
+    @patch("cli_topsailai.models.resolve_effective_model")
+    @patch("cli_topsailai.models.load_models")
+    @patch("builtins.print")
+    def test_list_shows_names_and_highlights_effective_model(
+        self,
+        mock_print: MagicMock,
+        mock_load_models: MagicMock,
+        mock_resolve_effective_model: MagicMock,
+        _mock_read_input: MagicMock,
+    ) -> None:
+        """The active model is green and the list excludes internal IDs."""
+        active_model = ModelConfig(
+            id="active-id",
+            name="Active Model",
+            provider="openai",
+            protocol="openai-compatible",
+            model="gpt-active",
+        )
+        other_model = ModelConfig(
+            id="other-id",
+            name="Other Model",
+            provider="openai",
+            protocol="openai-compatible",
+            model="gpt-other",
+        )
+        mock_load_models.return_value = ModelRegistry((active_model, other_model))
+        mock_resolve_effective_model.return_value = EffectiveModel(
+            active_model,
+            "workspace",
+            active_model.id,
+        )
+
+        _handle_models_action("select")
+
+        output = "\n".join(str(call.args[0]) for call in mock_print.call_args_list)
+        self.assertIn(f"{Colors.GREEN}Active Model{Colors.RESET}", output)
+        self.assertIn("Other Model", output)
+        self.assertNotIn("active-id", output)
+        self.assertNotIn("other-id", output)
+        self.assertNotIn("gpt-active", output)
+        self.assertNotIn("gpt-other", output)
 class TestPerCommandHelp(unittest.TestCase):
     """Tests for -h/--help suffix on YAML commands."""
 
