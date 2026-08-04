@@ -19,6 +19,7 @@ from topsailai.utils import (
 )
 from topsailai.utils.print_tool import (
     print_info,
+    print_warning,
 )
 from topsailai.context import tool_stat
 from topsailai.ai_base.constants import (
@@ -392,7 +393,7 @@ class AgentChat(AgentChatBase):
             except HardInterruptError as e:
                 self.interrupted = True
                 answer = ""
-                logger.warning("Hard interrupt caught in agent chat loop: %s", e)
+                print_warning(f"Hard interrupt requested: {e}")
                 continue
             except agent_exception.AgentEndProcess:
                 self.last_message = self.messages[-1]

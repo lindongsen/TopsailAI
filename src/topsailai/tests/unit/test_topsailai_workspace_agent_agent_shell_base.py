@@ -483,6 +483,53 @@ class TestAgentChatRun(unittest.TestCase):
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
     @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
     @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.print_warning")
+    @patch("topsailai.workspace.agent.agent_shell_base.input_message", return_value="resume")
+    @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
+    def test_run_hard_interrupt_prints_warning(
+        self, mock_get_agent_step_call, mock_task_tool, mock_lock_tool,
+        mock_input_message, mock_print_warning, mock_env_tool,
+        mock_set_ai_agent, mock_get_hooks,
+    ):
+        """Hard interrupts emit a warning from the AgentChat execution thread."""
+        from topsailai.ai_base.exception import HardInterruptError
+        from topsailai.workspace.agent.agent_shell_base import AgentChat
+
+        mock_get_hooks.return_value = []
+        mock_env_tool.EnvReaderInstance.get.return_value = None
+        mock_env_tool.EnvReaderInstance.check_bool.side_effect = lambda key, default: {
+            "TOPSAILAI_INTERACTIVE_MODE": False,
+            "TOPSAILAI_NEED_SYMBOL_FOR_ANSWER": False,
+            "TOPSAILAI_ENABLE_SESSION_LOCK": False,
+        }.get(key, default)
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_env_tool.is_debug_mode.return_value = False
+        mock_lock_tool.ctxm_void.return_value.__enter__ = MagicMock(return_value={})
+        mock_lock_tool.ctxm_void.return_value.__exit__ = MagicMock(return_value=False)
+        self.mock_ai_agent.run.side_effect = [
+            HardInterruptError("Hard interrupt requested via control channel"),
+            "resumed response",
+        ]
+
+        agent_chat = AgentChat(
+            hook_instruction=self.hook_instruction,
+            ctx_rt_aiagent=self.ctx_rt_aiagent,
+            ctx_rt_instruction=self.ctx_rt_instruction,
+        )
+
+        result = agent_chat.run(message="Hello", times=2)
+
+        self.assertEqual(result, "resumed response")
+        mock_input_message.assert_called_once()
+        mock_print_warning.assert_called_once_with(
+            "Hard interrupt requested: Hard interrupt requested via control channel"
+        )
+
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
     @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
