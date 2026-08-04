@@ -32,7 +32,7 @@ When `--socket-path` is provided, discovery is skipped and only that socket is t
 | `-a ARGS`, `--args ARGS` | JSON object with action-specific arguments. Defaults to `{}`. |
 | `--socket-path SOCKET_PATH` | Send the request directly to this socket path. |
 | `--timeout TIMEOUT` | Set the socket connection timeout in seconds. Defaults to `5.0`. |
-| `--json` | Print raw server responses as JSON. |
+| `--json` | Retained for backward compatibility; server responses are always printed as JSON with two-space indentation. |
 
 ## Exit Status
 

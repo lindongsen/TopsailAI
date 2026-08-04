@@ -375,7 +375,7 @@ class TestMain:
         captured = capsys.readouterr()
         assert "No matching" in captured.err
 
-    def test_successful_send_human_readable(self, tmp_path, capsys):
+    def test_successful_send_json_by_default(self, tmp_path, capsys):
         (tmp_path / "abc.123.session.stdout").write_text("")
         (tmp_path / "abc.123.session.sock").write_text("")
 
@@ -394,8 +394,10 @@ class TestMain:
 
         assert code == 0
         captured = capsys.readouterr()
-        assert "[ok]" in captured.out
-        assert "handled" in captured.out
+        output = captured.out
+        assert json.loads(output) == mock_response
+        assert '  "status": "ok"' in output
+        assert '    "handled": true' in output
 
     def test_successful_send_json_output(self, tmp_path, capsys):
         (tmp_path / "abc.123.session.stdout").write_text("")

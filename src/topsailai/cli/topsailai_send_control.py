@@ -306,10 +306,7 @@ def main() -> int:
             params["timeout"],
         )
 
-        if params["json_output"]:
-            print(json.dumps(response, ensure_ascii=False))
-        else:
-            print(format_human_response(response))
+        print(json.dumps(response, ensure_ascii=False, indent=2))
 
         if success and response.get("status") == "ok":
             success_count += 1
