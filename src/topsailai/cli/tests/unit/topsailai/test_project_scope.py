@@ -720,9 +720,13 @@ class TestWrapCommandForAgentMode(unittest.TestCase):
         clear=True,
     )
     @patch("cli_topsailai.project_scope._generate_agent_session_name")
+    @patch("cli_topsailai.project_scope._tmux_supports_environment_option")
     @patch("cli_topsailai.project_scope.shutil.which")
-    def test_tmux_mode_wraps_with_tmux(self, mock_which, mock_generate_name):
+    def test_tmux_mode_wraps_with_tmux(
+        self, mock_which, mock_supports_environment_option, mock_generate_name
+    ):
         mock_which.return_value = "/usr/bin/tmux"
+        mock_supports_environment_option.return_value = True
         mock_generate_name.return_value = "topsailai-20260707T221748.169974"
         result = project_scope._wrap_command_for_agent_mode(
             "topsailai_launch_agent", "tmux"
@@ -747,12 +751,14 @@ class TestWrapCommandForAgentMode(unittest.TestCase):
         clear=True,
     )
     @patch("cli_topsailai.project_scope._generate_agent_session_name")
+    @patch("cli_topsailai.project_scope._tmux_supports_environment_option")
     @patch("cli_topsailai.project_scope.shutil.which")
     def test_tmux_forwards_selected_model_when_value_is_unchanged(
-        self, mock_which, mock_generate_name
+        self, mock_which, mock_supports_environment_option, mock_generate_name
     ):
         """Selected model keys are explicit even when their values did not change."""
         mock_which.return_value = "/usr/bin/tmux"
+        mock_supports_environment_option.return_value = True
         mock_generate_name.return_value = "topsailai-model-test"
 
         result = project_scope._wrap_command_for_agent_mode(
@@ -771,6 +777,88 @@ class TestWrapCommandForAgentMode(unittest.TestCase):
                 "topsailai_launch_agent", "tmux"
             )
         self.assertIn("tmux is not installed", str(ctx.exception))
+
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    def test_tmux_environment_option_supports_version_3_2(self, mock_run):
+        mock_run.return_value = MockCompletedProcess(stdout="tmux 3.2")
+
+        supported = project_scope._tmux_supports_environment_option("/usr/bin/tmux")
+
+        self.assertTrue(supported)
+        mock_run.assert_called_once_with(
+            ["/usr/bin/tmux", "-V"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    def test_tmux_environment_option_rejects_legacy_version(self, mock_run):
+        mock_run.return_value = MockCompletedProcess(stdout="tmux 3.0a")
+
+        supported = project_scope._tmux_supports_environment_option("/usr/bin/tmux")
+
+        self.assertFalse(supported)
+
+    @patch("cli_topsailai.project_scope.subprocess.run")
+    def test_tmux_environment_option_rejects_unusable_versions(self, mock_run):
+        unusable_results = (
+            MockCompletedProcess(stdout="tmux 3.1-rc2"),
+            MockCompletedProcess(stdout="tmux 3.2", returncode=1),
+            MockCompletedProcess(stdout="tmux version unknown"),
+        )
+
+        for result in unusable_results:
+            with self.subTest(stdout=result.stdout, returncode=result.returncode):
+                mock_run.return_value = result
+                self.assertFalse(
+                    project_scope._tmux_supports_environment_option("/usr/bin/tmux")
+                )
+
+    @patch("cli_topsailai.project_scope.subprocess.run", side_effect=OSError)
+    def test_tmux_environment_option_rejects_execution_error(self, mock_run):
+        supported = project_scope._tmux_supports_environment_option("/usr/bin/tmux")
+
+        self.assertFalse(supported)
+        mock_run.assert_called_once_with(
+            ["/usr/bin/tmux", "-V"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    @patch("cli_topsailai.project_scope._build_dtach_socket_path")
+    @patch("cli_topsailai.project_scope._tmux_supports_environment_option")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    def test_unsupported_tmux_falls_back_to_dtach(
+        self, mock_which, mock_supports_environment_option, mock_build_socket
+    ):
+        mock_which.side_effect = ["/usr/bin/tmux", "/usr/bin/dtach"]
+        mock_supports_environment_option.return_value = False
+        mock_build_socket.return_value = "/tmp/agent.dtach"
+
+        result = project_scope._wrap_command_for_agent_mode(
+            "topsailai_launch_agent", "tmux"
+        )
+
+        self.assertEqual(result, "dtach -A /tmp/agent.dtach topsailai_launch_agent")
+        mock_supports_environment_option.assert_called_once_with("/usr/bin/tmux")
+        self.assertEqual(mock_which.call_args_list[0].args, ("tmux",))
+        self.assertEqual(mock_which.call_args_list[1].args, ("dtach",))
+
+    @patch("cli_topsailai.project_scope._tmux_supports_environment_option")
+    @patch("cli_topsailai.project_scope.shutil.which")
+    def test_unsupported_tmux_falls_back_to_raw_without_dtach(
+        self, mock_which, mock_supports_environment_option
+    ):
+        mock_which.side_effect = ["/usr/bin/tmux", None]
+        mock_supports_environment_option.return_value = False
+
+        result = project_scope._wrap_command_for_agent_mode(
+            "topsailai_launch_agent", "tmux"
+        )
+
+        self.assertEqual(result, "topsailai_launch_agent")
 
     def test_unsupported_mode_raises_value_error(self):
         with self.assertRaises(ValueError) as ctx:
@@ -820,15 +908,18 @@ class TestLaunchAgentInFolderWithMode(unittest.TestCase):
         clear=False,
     )
     @patch("cli_topsailai.project_scope._generate_agent_session_name")
+    @patch("cli_topsailai.project_scope._tmux_supports_environment_option")
     @patch("cli_topsailai.project_scope.shutil.which")
     @patch("cli_topsailai.project_scope.os.system")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
     def test_tmux_mode_wraps_with_tmux(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which, mock_generate_name
+        self, mock_getcwd, mock_chdir, mock_system, mock_which,
+        mock_supports_environment_option, mock_generate_name
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
         mock_which.return_value = "/usr/bin/tmux"
+        mock_supports_environment_option.return_value = True
         mock_generate_name.return_value = "topsailai-20260707T221748.169974"
         os.environ.pop("TOPSAILAI_SESSION_ID", None)
         project_scope.launch_agent_in_folder("/work/project-a", agent_mode="tmux")
@@ -850,15 +941,18 @@ class TestLaunchAgentInFolderWithMode(unittest.TestCase):
         clear=False,
     )
     @patch("cli_topsailai.project_scope._generate_agent_session_name")
+    @patch("cli_topsailai.project_scope._tmux_supports_environment_option")
     @patch("cli_topsailai.project_scope.shutil.which")
     @patch("cli_topsailai.project_scope.os.system")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
     def test_tmux_mode_clears_stale_session_id(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which, mock_generate_name
+        self, mock_getcwd, mock_chdir, mock_system, mock_which,
+        mock_supports_environment_option, mock_generate_name
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
         mock_which.return_value = "/usr/bin/tmux"
+        mock_supports_environment_option.return_value = True
         mock_generate_name.return_value = "topsailai-20260707T221748.169974"
         project_scope.launch_agent_in_folder("/work/project-a", agent_mode="tmux")
         mock_system.assert_called_once()
@@ -1092,15 +1186,18 @@ class TestLaunchAgentDriver(unittest.TestCase):
         clear=False,
     )
     @patch("cli_topsailai.project_scope._generate_agent_session_name")
+    @patch("cli_topsailai.project_scope._tmux_supports_environment_option")
     @patch("cli_topsailai.project_scope.shutil.which")
     @patch("cli_topsailai.project_scope.os.system")
     @patch("cli_topsailai.project_scope.os.chdir")
     @patch("cli_topsailai.project_scope.os.getcwd")
     def test_tmux_mode_wraps_driver_with_tmux(
-        self, mock_getcwd, mock_chdir, mock_system, mock_which, mock_generate_name
+        self, mock_getcwd, mock_chdir, mock_system, mock_which,
+        mock_supports_environment_option, mock_generate_name
     ):
         mock_getcwd.return_value = "/TopsailAI/cli"
         mock_which.return_value = "/usr/bin/tmux"
+        mock_supports_environment_option.return_value = True
         mock_generate_name.return_value = "topsailai-20260707T221748.169974"
         project_scope.launch_agent_driver(
             "/work/project-a", "topsailai_agent_plan_tasks", "s-123", agent_mode="tmux"

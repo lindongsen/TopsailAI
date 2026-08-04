@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -536,6 +537,31 @@ def _restore_environment(original_values: Dict[str, Optional[str]]) -> None:
         else:
             os.environ[key] = original_value
 
+def _tmux_supports_environment_option(tmux_path: str) -> bool:
+    """Return whether *tmux_path* supports ``new-session -e``."""
+    try:
+        result = subprocess.run(
+            [tmux_path, "-V"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+
+    if result.returncode != 0:
+        return False
+    version_text = result.stdout.strip()
+    if not version_text.startswith("tmux "):
+        return False
+    version = version_text[len("tmux "):].split()[0]
+    version_match = re.fullmatch(r"(\d+)\.(\d+)", version)
+    if version_match is None:
+        return False
+    major, minor = (int(part) for part in version_match.groups())
+    return (major, minor) >= (3, 2)
+
+
 def _wrap_command_for_agent_mode(
     command: str,
     mode: str,
@@ -556,10 +582,21 @@ def _wrap_command_for_agent_mode(
         return f"dtach -A {shlex.quote(socket_path)} {command}"
 
     if mode == "tmux":
-        if shutil.which("tmux") is None:
+        tmux_path = shutil.which("tmux")
+        if tmux_path is None:
             raise RuntimeError(
                 "tmux is not installed or not found in PATH. "
                 "Install tmux to use --agent-mode tmux, or choose raw/dtach."
+            )
+        if not _tmux_supports_environment_option(tmux_path):
+            print(
+                f"{Colors.YELLOW}[WARN] tmux does not support new-session -e; "
+                f"falling back to dtach/raw mode.{Colors.RESET}"
+            )
+            return _wrap_command_for_agent_mode(
+                command,
+                "dtach",
+                forwarded_environment,
             )
         session_name = _generate_agent_session_name()
         forwarded_keys = {
@@ -582,7 +619,6 @@ def _wrap_command_for_agent_mode(
         )
 
     raise ValueError(f"Unsupported agent launch mode: {mode!r}")
-
 
 def launch_agent_in_folder(folder: str, agent_mode: str = "dtach") -> None:
     """Launch ``topsailai_launch_agent`` with the selected model environment.
