@@ -498,3 +498,111 @@ class TestMain:
         mock_send.assert_called_once()
         call_args = mock_send.call_args[0]
         assert call_args[0] == override_path
+
+
+class TestEnsureSessionIdInPayload:
+    def test_injects_session_id_for_get_session_messages(self):
+        params = {
+            "command": "get_session_messages",
+            "session_id": "20260804T191116",
+            "payload": {},
+        }
+        result = cli_module._ensure_session_id_in_payload(params)
+        assert result["payload"]["session_id"] == "20260804T191116"
+
+    def test_preserves_explicit_payload_session_id(self):
+        params = {
+            "command": "get_session_messages",
+            "session_id": "from-cli",
+            "payload": {"session_id": "explicit-id"},
+        }
+        result = cli_module._ensure_session_id_in_payload(params)
+        assert result["payload"]["session_id"] == "explicit-id"
+
+    def test_no_injection_without_session_id(self):
+        params = {
+            "command": "get_session_messages",
+            "session_id": None,
+            "payload": {},
+        }
+        result = cli_module._ensure_session_id_in_payload(params)
+        assert result["payload"] == {}
+
+    def test_no_injection_for_other_commands(self):
+        params = {
+            "command": "hard_interrupt",
+            "session_id": "20260804T191116",
+            "payload": {},
+        }
+        result = cli_module._ensure_session_id_in_payload(params)
+        assert result["payload"] == {}
+
+
+class TestMainGetSessionMessages:
+    def _run_main(self, argv, tmp_path, mock_send=None):
+        patches = [
+            patch.object(cli_module, "FOLDER_WORKSPACE_TASK", str(tmp_path)),
+            patch.object(sys, "argv", argv),
+        ]
+        if mock_send is not None:
+            patches.append(patch.object(cli_module, "send_control_request", mock_send))
+
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            return cli_module.main()
+
+    def test_main_injects_session_id_for_get_session_messages(self, tmp_path, capsys):
+        (tmp_path / "20260804T191116.439605.session.stdout").write_text("")
+        (tmp_path / "20260804T191116.439605.session.sock").write_text("")
+
+        mock_send = MagicMock(return_value=(True, {
+            "status": "ok",
+            "request_id": "server-id",
+            "result": {"count": 0, "messages": []},
+        }))
+
+        code = self._run_main(
+            [
+                "script",
+                "-s", "20260804T191116",
+                "-p", "439605",
+                "-c", "get_session_messages",
+            ],
+            tmp_path,
+            mock_send=mock_send,
+        )
+
+        assert code == 0
+        mock_send.assert_called_once()
+        _, action, payload, _ = mock_send.call_args[0]
+        assert action == "get_session_messages"
+        assert payload["session_id"] == "20260804T191116"
+
+    def test_main_preserves_explicit_session_id(self, tmp_path, capsys):
+        (tmp_path / "20260804T191116.439605.session.stdout").write_text("")
+        (tmp_path / "20260804T191116.439605.session.sock").write_text("")
+
+        mock_send = MagicMock(return_value=(True, {
+            "status": "ok",
+            "request_id": "server-id",
+            "result": {"count": 0, "messages": []},
+        }))
+
+        code = self._run_main(
+            [
+                "script",
+                "-s", "20260804T191116",
+                "-p", "439605",
+                "-c", "get_session_messages",
+                "-a", '{"session_id":"explicit-id"}',
+            ],
+            tmp_path,
+            mock_send=mock_send,
+        )
+
+        assert code == 0
+        mock_send.assert_called_once()
+        _, action, payload, _ = mock_send.call_args[0]
+        assert action == "get_session_messages"
+        assert payload["session_id"] == "explicit-id"

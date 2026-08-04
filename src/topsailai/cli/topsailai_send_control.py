@@ -262,8 +262,22 @@ def get_params() -> dict:
     }
 
 
+def _ensure_session_id_in_payload(params: dict) -> dict:
+    """Copy CLI session_id into payload for get_session_messages if absent."""
+    if params["command"] != "get_session_messages":
+        return params
+    session_id = params.get("session_id")
+    if session_id is None:
+        return params
+    payload = params["payload"]
+    if payload.get("session_id"):
+        return params
+    params["payload"] = {**payload, "session_id": session_id}
+    return params
+
+
 def main() -> int:
-    params = get_params()
+    params = _ensure_session_id_in_payload(get_params())
 
     socket_path_override = params["socket_path"]
     if socket_path_override:
