@@ -42,6 +42,7 @@ from topsailai.utils.state_visualizer import (
     VisualizationState,
 )
 from topsailai.utils.thread_local_tool import (
+    get_agent_object,
     get_agent_runtime_input,
 )
 
@@ -49,6 +50,9 @@ from .constants import (
     ROLE_ASSISTANT,
     LLM_KEYWORD_SERVICE,
     DEFAULT_LLM_SLOW_CHAT_THRESHOLD,
+)
+from .exception import (
+    HardInterruptError,
 )
 from .llm_control.exception import (
     JsonError,
@@ -602,6 +606,20 @@ class LLMModel(LLMModelBase):
             # first useful response byte.
             if first_byte_ms is None:
                 first_byte_ms = (time.monotonic() - stream_start_time) * 1000
+
+            # Cooperative hard-interrupt check during streaming. The check is
+            # throttled so it does not add I/O overhead on every chunk.
+            try:
+                agent = get_agent_object()
+                if agent is not None and hasattr(agent, "_check_hard_interrupt"):
+                    agent._check_hard_interrupt(throttle_stream=True)
+            except HardInterruptError:
+                # Re-raise immediately so the ReAct loop can stop cleanly.
+                raise
+            except Exception:
+                # Any other problem with the interrupt check must not break
+                # the streaming response.
+                pass
 
             # content
             delta_content = delta_obj.content

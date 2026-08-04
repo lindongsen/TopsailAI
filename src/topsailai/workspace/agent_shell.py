@@ -5,6 +5,7 @@
   Purpose:
 '''
 
+import logging
 import os
 
 from topsailai.utils import (
@@ -43,6 +44,32 @@ from topsailai.workspace.lock_tool import ctxm_project_workspace_lock, ctxm_void
 from topsailai.workspace.agent.agent_shell_base import (
     AgentChat,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _cleanup_stale_interrupt_flag(session_id: str | None, pid: int | None) -> None:
+    """Remove a stale hard-interrupt flag file for the current session/pid.
+
+    The flag file is session-scoped and process-scoped. If the agent process
+    restarts while a flag was left behind, the new process must not start in
+    an interrupted state.
+    """
+    if not session_id or pid is None:
+        return
+
+    from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
+
+    flag_path = os.path.join(
+        FOLDER_WORKSPACE_TASK,
+        f"{session_id}.{pid}.session.agent2llm_interrupt.flag",
+    )
+    if os.path.exists(flag_path):
+        try:
+            os.remove(flag_path)
+            logger.warning("Cleaned stale hard interrupt flag on startup: %s", flag_path)
+        except OSError as e:
+            logger.warning("Failed to clean stale hard interrupt flag %s: %s", flag_path, e)
 
 
 def get_ai_agent(
@@ -241,6 +268,11 @@ def _get_agent_chat_impl(
     )
 
     agent_chat.first_message = message
+
+    # Clean any stale hard-interrupt flag for this session/pid before the
+    # conversation loop starts. This prevents a previous crash or abrupt exit
+    # from leaving the session in an interrupted state.
+    _cleanup_stale_interrupt_flag(session_id, os.getpid())
 
     return agent_chat
 

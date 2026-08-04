@@ -39,6 +39,9 @@ context:
   events:
     - events/README.md
 
+  handlers:
+    - workspace/control_channel/NOTE.md
+
 # Environment variable configuration: each item can define its own environment variables
 # _default is the base environment variables shared by all items
 environment:

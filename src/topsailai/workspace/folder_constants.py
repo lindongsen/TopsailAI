@@ -70,6 +70,16 @@ FOLDER_MEMORY_STORY = FOLDER_MEMORY + "/story"
 
 # Task files
 FOLDER_WORKSPACE_TASK = FOLDER_WORKSPACE + "/task"
+
+
+def get_interrupt_flag_path(task_folder: str, session_id: str, pid: int) -> str:
+    """Return the absolute hard-interrupt flag path for a session process."""
+    return os.path.abspath(
+        os.path.join(
+            task_folder,
+            f"{session_id}.{pid}.session.agent2llm_interrupt.flag",
+        )
+    )
 # Input history files - Stores readline history for interactive input
 FILE_INPUT_HISTORY = FOLDER_ROOT + "/.input_history"
 

@@ -8,6 +8,7 @@
     2. ctx_runtime_data.messages: Save the processed Q&A messages
 '''
 
+import os
 import sys
 import time
 
@@ -31,6 +32,7 @@ from topsailai.ai_base.agent_types import (
     exception as agent_exception,
 )
 from topsailai.ai_base.exception import HeavyTaskError
+from topsailai.ai_base.exception import HardInterruptError
 from topsailai.workspace.input_tool import (
     get_message,
     input_message,
@@ -140,6 +142,32 @@ class AgentChat(AgentChatBase):
                     getattr(self.ctx_runtime_data, "session_id", None),
                 )
 
+
+    def _clear_interrupt_state(self):
+        """Clear the interrupted state and any current-process flag file."""
+        self.interrupted = False
+        session_id = self.ctx_runtime_data.session_id or env_tool.get_session_id()
+        if not session_id:
+            return
+
+        from topsailai.workspace.folder_constants import (
+            FOLDER_WORKSPACE_TASK,
+            get_interrupt_flag_path,
+        )
+
+        flag_path = get_interrupt_flag_path(
+            FOLDER_WORKSPACE_TASK,
+            session_id,
+            os.getpid(),
+        )
+        try:
+            os.remove(flag_path)
+            logger.info("Cleared hard interrupt flag after receiving new input: %s", flag_path)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            logger.warning("Failed to clear hard interrupt flag %s: %s", flag_path, e)
+
     def _run(
             self,
             message:str=None,
@@ -227,6 +255,7 @@ class AgentChat(AgentChatBase):
         answer = ""
         curr_count = 0
 
+
         if message:
             message = self.format_message(message)
 
@@ -240,6 +269,15 @@ class AgentChat(AgentChatBase):
 
         # start
         while True:
+            if self.interrupted:
+                func_print_pre_input_message()
+                while True:
+                    message = input_message(hook=self.hook_instruction).strip()
+                    if message:
+                        message = self.format_message(message)
+                        self._clear_interrupt_state()
+                        break
+                continue
             flag_abort = False
             # reset answer to null string
             answer = ""
@@ -299,6 +337,11 @@ class AgentChat(AgentChatBase):
                             logger.debug("Failed to read task tool call count: %s", e)
                             task.tool_call_count = 0
 
+            except HardInterruptError as e:
+                self.interrupted = True
+                answer = ""
+                logger.warning("Hard interrupt caught in agent chat loop: %s", e)
+                continue
             except agent_exception.AgentEndProcess:
                 self.last_message = self.messages[-1]
                 self.call_hooks_post_fail_run(agent_exception.AgentEndProcess())

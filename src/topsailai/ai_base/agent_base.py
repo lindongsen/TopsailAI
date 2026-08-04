@@ -5,6 +5,8 @@
   Purpose:
 '''
 
+import os
+
 from topsailai.logger.log_chat import logger
 from topsailai.utils.print_tool import (
     print_critical,
@@ -30,7 +32,10 @@ from topsailai.ai_base.agent_types.exception import (
     AgentNeedRefreshSession,
     DataAgentRefreshSession,
 )
-from topsailai.ai_base.exception import HeavyTaskError
+from topsailai.ai_base.exception import (
+    HardInterruptError,
+    HeavyTaskError,
+)
 from topsailai.tools.base.common import (
     get_tools_for_chat,
 )
@@ -141,6 +146,63 @@ class AgentRun(AgentBase):
     This class provides a standard implementation for agent execution
     with step-by-step processing.
     """
+
+    # Throttle interrupt checks during streaming to avoid excessive I/O.
+    # A value of N means we check the flag at most once every N chunks.
+    STREAM_INTERRUPT_CHECK_INTERVAL = 50
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._stream_chunk_counter = 0
+
+    def _get_interrupt_flag_path(self) -> str:
+        """Return the hard-interrupt flag path for the current process/session.
+
+        The path follows the same convention used by the Agent2LLM runtime
+        message source and the CLI injection helper:
+        ``{FOLDER_WORKSPACE_TASK}/{session_id}.{pid}.session.agent2llm_interrupt.flag``.
+        """
+        from topsailai.workspace.folder_constants import (
+            FOLDER_WORKSPACE_TASK,
+            get_interrupt_flag_path,
+        )
+        session_id = env_tool.get_session_id() or "topsailai"
+        pid = os.getpid()
+        return get_interrupt_flag_path(FOLDER_WORKSPACE_TASK, session_id, pid)
+
+    def _check_hard_interrupt(self, *, throttle_stream: bool = False):
+        """Check for a hard-interrupt request and raise if present.
+
+        This method is intentionally lightweight when the flag file does not
+        exist. When the file exists, it is removed and ``HardInterruptError``
+        is raised so the ReAct loop can terminate at a safe point.
+
+        Args:
+            throttle_stream: When True, only perform the check every
+                ``STREAM_INTERRUPT_CHECK_INTERVAL`` chunks to avoid I/O
+                overhead during streaming.
+
+        Raises:
+            HardInterruptError: If the interrupt flag file exists.
+        """
+        if throttle_stream:
+            self._stream_chunk_counter += 1
+            if self._stream_chunk_counter % self.STREAM_INTERRUPT_CHECK_INTERVAL != 0:
+                return
+
+        flag_path = self._get_interrupt_flag_path()
+        if not os.path.exists(flag_path):
+            return
+
+        try:
+            os.remove(flag_path)
+            logger.warning("Hard interrupt flag detected and removed: %s", flag_path)
+        except OSError as e:
+            logger.warning("Failed to remove hard interrupt flag %s: %s", flag_path, e)
+            # Even if cleanup fails, the flag exists; raise anyway so the
+            # loop terminates rather than continuing under an interrupt.
+        raise HardInterruptError("Hard interrupt requested via control channel")
+
     def _run(self, step_call:StepCallBase, user_input:str):
         """
         Execute the agent run process with step-by-step processing.
@@ -172,8 +234,14 @@ class AgentRun(AgentBase):
         self.new_session(user_message)
 
         while True:
+            # Check for hard interrupt at the start of each iteration.
+            self._check_hard_interrupt()
+
             # Inject runtime messages before each LLM call
             self._inject_runtime_messages()
+
+            # Check again right before the LLM call.
+            self._check_hard_interrupt()
 
             rsp_obj, response = self.llm_model.chat(
                 self.messages, for_response=True,
@@ -242,6 +310,9 @@ class AgentRun(AgentBase):
                     break
 
             # end for step in response
+
+            # Check for hard interrupt after tool calls have returned.
+            self._check_hard_interrupt()
 
             if len(self.messages) == ctx_count and last_message == self.messages[-1]:
                 print_critical("No progress made in this iteration, exiting.")

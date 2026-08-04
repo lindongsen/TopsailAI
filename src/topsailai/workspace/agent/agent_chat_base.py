@@ -135,6 +135,11 @@ class AgentChatBase(object):
         self.hooks_post_succ_run = get_hooks("post_succ_run")
         self.hooks_post_fail_run = get_hooks("post_fail_run")
 
+        # Control channel interrupt state. When True, the session has been
+        # hard-interrupted and will not run the agent again until the user
+        # provides a new message.
+        self.interrupted = False
+
         if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION", False):
             def hook_final_summarize_into_session(_) -> None:
                 """ summarize messages of agent2llm, save summary content to session of user2agent """
