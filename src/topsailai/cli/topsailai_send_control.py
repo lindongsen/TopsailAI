@@ -25,21 +25,28 @@ from typing import Any, List, Optional, Tuple
 
 import _import_topsailai  # noqa: F401
 
+from cli_topsailai.log_files import parse_stdout_filename
 from topsailai.workspace.folder_constants import (
     FOLDER_WORKSPACE_TASK,
 )
 from topsailai.workspace.folder_utils import (
     get_control_socket_path,
 )
-from topsailai_session_add_agent2llm_message import parse_stdout_filename
 
 
-def build_socket_path(session_id: str, pid: str) -> str:
+# Known control actions exposed by the agent runtime. Used for CLI help and
+# validation; the server remains the authoritative validator.
+CONTROL_ACTIONS = [
+    "hard_interrupt",
+    "soft_interrupt",
+    "clear_interrupt",
+    "get_runtime_messages",
+]
+
+
+def build_socket_path(task_folder: str, session_id: str, pid: str) -> str:
     """Return the default UDS socket path for a session process."""
-    return get_control_socket_path(FOLDER_WORKSPACE_TASK, session_id, pid)
-
-
-SOCKET_SUFFIX = ".session.sock"
+    return get_control_socket_path(task_folder, session_id, pid)
 
 def discover_socket_paths(
     task_folder: str,
@@ -56,7 +63,8 @@ def discover_socket_paths(
     Returns:
         Sorted list of socket paths for each matching stdout file. The list is
         sorted by stdout file mtime descending so the most recently active
-        session/task comes first.
+        session/task comes first. Only sockets that actually exist on disk are
+        returned, avoiding wasted connection attempts.
     """
     targets = []
     if not os.path.isdir(task_folder):
@@ -77,7 +85,9 @@ def discover_socket_paths(
         if pid is not None and spid != pid:
             continue
 
-        socket_path = build_socket_path(sid, spid)
+        socket_path = build_socket_path(task_folder, sid, spid)
+        if not os.path.exists(socket_path):
+            continue
 
         try:
             mtime = os.path.getmtime(stdout_path)
@@ -121,9 +131,15 @@ def send_control_request(
             sock.connect(socket_path)
             sock.sendall(request_bytes)
 
-            file_obj = sock.makefile("r")
+            file_obj = sock.makefile("r", encoding="utf-8")
             try:
-                line = file_obj.readline()
+                # The protocol is JSONL; skip any empty lines caused by
+                # buffering and read the first non-empty line.
+                line = ""
+                while line.strip() == "":
+                    line = file_obj.readline()
+                    if not line:
+                        break
             finally:
                 file_obj.close()
 
@@ -185,7 +201,8 @@ def get_params() -> dict:
         dest="command",
         type=str,
         required=True,
-        help="Control action name to send (e.g. hard_interrupt, soft_interrupt, clear_interrupt, get_runtime_messages).",
+        choices=CONTROL_ACTIONS,
+        help="Control action name to send. Supported actions: hard_interrupt, soft_interrupt, clear_interrupt, get_runtime_messages.",
     )
     parser.add_argument(
         "-a",
@@ -219,14 +236,17 @@ def get_params() -> dict:
 
     args = parser.parse_args()
 
+    args_value = args.args.strip()
+    if not args_value:
+        args_value = "{}"
     try:
-        payload = json.loads(args.args)
+        payload = json.loads(args_value)
     except json.JSONDecodeError as e:
-        print(f"[ERROR] Invalid --args JSON: {e}", file=sys.stderr)
+        print(f"[ERROR] Invalid --args JSON {args_value!r}: {e}", file=sys.stderr)
         sys.exit(1)
 
     if not isinstance(payload, dict):
-        print("[ERROR] --args must be a JSON object.", file=sys.stderr)
+        print(f"[ERROR] --args must be a JSON object, got {args_value!r}.", file=sys.stderr)
         sys.exit(1)
 
     return {
@@ -261,7 +281,7 @@ def main() -> int:
         return 1
 
     success_count = 0
-    last_error = ""
+    errors: List[Tuple[str, str]] = []
     for socket_path in targets:
         success, response = send_control_request(
             socket_path,
@@ -278,11 +298,16 @@ def main() -> int:
         if success and response.get("status") == "ok":
             success_count += 1
         else:
-            last_error = response.get("error", "request failed")
+            errors.append((socket_path, response.get("error", "request failed")))
 
     if success_count == 0:
         if len(targets) > 1:
-            print(f"[ERROR] All {len(targets)} targets failed. Last error: {last_error}", file=sys.stderr)
+            print(
+                f"[ERROR] All {len(targets)} targets failed:",
+                file=sys.stderr,
+            )
+            for socket_path, error in errors:
+                print(f"  - {socket_path}: {error}", file=sys.stderr)
         return 1
 
     if len(targets) > 1:

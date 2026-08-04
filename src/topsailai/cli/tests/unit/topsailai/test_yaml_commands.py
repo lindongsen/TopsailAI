@@ -120,6 +120,53 @@ class TestMatchYamlCommand(unittest.TestCase):
         self.assertEqual(result[1].get("message"), "hello world")
 
 
+class TestControlCommand(unittest.TestCase):
+    """Tests for runtime control-command matching and dispatch."""
+
+    def tearDown(self):
+        cli_state.yaml_commands = []
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+
+    def _control_instruction(self):
+        return {
+            "cmd": "/control {command} {args}",
+            "scopes": ["session", "runtime"],
+            "shell": "topsailai_send_control -s '{session_id}' -c '{command}' -a '{args}'",
+        }
+
+    def test_control_matches_without_optional_args(self):
+        """The control payload may be omitted and defaults to an empty string."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [self._control_instruction()]
+
+        result = match_yaml_command("/control hard_interrupt", "/task")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result[1].get("command"), "hard_interrupt")
+        self.assertEqual(result[1].get("args"), "")
+
+    @patch("cli_topsailai.process.run_external_command")
+    def test_control_preserves_json_args_as_one_argument(self, mock_run):
+        """JSON payload syntax must survive command-list construction unchanged."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        instruction = self._control_instruction()
+        variables = {
+            "session_id": "s1",
+            "task_dir": "/task",
+            "command": "hard_interrupt",
+            "args": '{"reason":"timeout"}',
+        }
+
+        result = handle_yaml_command(instruction, variables)
+
+        self.assertEqual(result, "yaml_handled")
+        command = mock_run.call_args[0][0]
+        self.assertEqual(command[-2:], ["-a", '{"reason":"timeout"}'])
+
+
 class TestGitStatusCommand(unittest.TestCase):
     """Tests for the /git.status session-scope and runtime-scope command."""
 

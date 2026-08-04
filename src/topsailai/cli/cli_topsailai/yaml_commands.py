@@ -251,7 +251,7 @@ def match_yaml_command(
         for var_name in var_names:
             if var_name == "args":
                 pattern = pattern.replace(
-                    f"\\{{{var_name}\\}}", f"(?P<{var_name}>.*)"
+                    f"\\ \\{{{var_name}\\}}", f"(?:\\s+(?P<{var_name}>.*))?"
                 )
             else:
                 pattern = pattern.replace(
@@ -274,7 +274,10 @@ def match_yaml_command(
         flags = re.DOTALL if cmd_template.startswith(("/ctx.add_msg", "/ctx.btw", "/agent2llm.add_msg")) else 0
         match = re.match(pattern, user_input, flags)
         if match:
-            variables = match.groupdict()
+            variables = {
+                key: value if value is not None else ""
+                for key, value in match.groupdict().items()
+            }
             variables.setdefault("session_id", state.current_session_id or "")
             variables["task_dir"] = task_dir
             if cmd_template.startswith(("/ctx.add_msg", "/ctx.btw", "/agent2llm.add_msg")):
@@ -538,15 +541,19 @@ def handle_yaml_command(
     try:
         shell_cmd = shell
         for var_name, var_value in variables.items():
-            if var_name == "args":
+            if var_name == "args" and cmd != "/control {command} {args}":
                 shell_cmd = shell_cmd.replace(f"'{{{var_name}}}'", var_value)
                 shell_cmd = shell_cmd.replace(f"{{{var_name}}}", var_value)
             else:
                 quoted_placeholder = f"'{{{var_name}}}'"
                 if quoted_placeholder in shell_cmd:
-                    shell_cmd = shell_cmd.replace(quoted_placeholder, shlex.quote(var_value))
+                    shell_cmd = shell_cmd.replace(
+                        quoted_placeholder, shlex.quote(var_value or "")
+                    )
                 else:
-                    shell_cmd = shell_cmd.replace(f"{{{var_name}}}", shlex.quote(var_value))
+                    shell_cmd = shell_cmd.replace(
+                        f"{{{var_name}}}", shlex.quote(var_value or "")
+                    )
 
         cmd_list = shlex.split(shell_cmd)
         cmd_env = build_command_env(instruction, variables)

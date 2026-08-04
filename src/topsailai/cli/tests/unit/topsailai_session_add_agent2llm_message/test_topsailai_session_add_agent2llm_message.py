@@ -14,11 +14,11 @@ CLI_DIR = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(CLI_DIR))
 
 import topsailai_session_add_agent2llm_message as cli_module
+from cli_topsailai.log_files import parse_stdout_filename
 from topsailai_session_add_agent2llm_message import (
     JSONL_SUFFIX,
     build_inject_path,
     discover_jsonl_files,
-    parse_stdout_filename,
 )
 from topsailai.workspace.agent.runtime_message_sources.file import write_message
 

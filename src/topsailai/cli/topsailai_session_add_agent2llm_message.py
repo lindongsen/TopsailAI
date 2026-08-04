@@ -16,10 +16,11 @@ source path(s) from each match.
 import argparse
 import os
 import sys
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import _import_topsailai  # noqa: F401
 
+from cli_topsailai.log_files import parse_stdout_filename
 from topsailai.utils import env_tool
 from topsailai.workspace.agent.runtime_message_sources.file import (
     get_default_inject_message_file_path,
@@ -29,52 +30,6 @@ from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
 
 
 JSONL_SUFFIX = ".session.agent2llm_inject_messages.jsonl"
-
-
-def parse_stdout_filename(filename: str) -> Tuple[Optional[str], Optional[str]]:
-    """Parse session/task stdout filenames into (session_id, pid).
-
-    Supported conventions:
-      - Session stdout: ``{session_id}.{pid}.session.stdout``
-      - Task stdout: ``{session_id}.{pid}[.{other}].task.stdout``
-      - Temporary session: ``topsailai.{pid}.session.stdout`` or
-        ``topsailai.{pid}[.{other}].task.stdout``
-
-    For task stdout files the PID is the second dot-separated component,
-    because additional optional identifiers may follow it.
-
-    Returns:
-        Tuple of (session_id, pid) strings. Either value may be ``None`` if
-        the filename does not match the expected format.
-    """
-    if filename.endswith(".task.stdout"):
-        suffix = ".task.stdout"
-        base = filename[: -len(suffix)]
-        if not base:
-            return None, None
-        parts = base.split(".")
-        if len(parts) < 2:
-            return None, None
-        pid = parts[1]
-        if not pid.isdigit():
-            return None, None
-        session_id = parts[0]
-        return session_id, pid
-
-    suffix = ".session.stdout"
-    if not filename.endswith(suffix):
-        return None, None
-    base = filename[: -len(suffix)]
-    if not base:
-        return None, None
-
-    parts = base.split(".")
-    pid = parts[-1]
-    if not pid.isdigit():
-        return None, None
-
-    session_id = ".".join(parts[:-1]) if len(parts) > 1 else "topsailai"
-    return session_id, pid
 
 
 def build_inject_path(session_id: str, pid: str) -> str:

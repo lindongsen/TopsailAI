@@ -132,6 +132,14 @@ instructions:
     example: ""
     shell: "topsailai_session_add_agent2llm_message -s '{session_id}' -m '{message}'"
 
+  - cmd: "/control {command} {args}"
+    scopes:
+      - session
+      - runtime
+    desc: "Send a control request to the current session through its UDS control socket"
+    example: "/control hard_interrupt  or  /control soft_interrupt {\"reason\":\"timeout\"}"
+    shell: "topsailai_send_control -s '{session_id}' -c '{command}' -a '{args}'"
+
   - cmd: "/ctx.add_msg" # Note: Special handling, supports line breaks
     scopes:
       - session
@@ -156,6 +164,7 @@ instructions:
     desc: "Set environment variable"
     example: "/env.set OPENAI_MODEL DeepSeek-V4-Pro"
     shell: ""
+
 
   - cmd: "/log.check"
     scopes:

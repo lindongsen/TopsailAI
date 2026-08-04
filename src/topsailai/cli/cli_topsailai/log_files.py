@@ -166,6 +166,25 @@ def _parse_stdout_filename(filename: str) -> Tuple[Optional[str], Optional[int]]
     return None, None
 
 
+def parse_stdout_filename(filename: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Parse a session/task stdout filename into string identifiers.
+
+    This is a thin wrapper around :func:`_parse_stdout_filename` that returns
+    ``session_id`` and ``pid`` as strings. Temporary sessions (filenames
+    starting with ``topsailai.``) are represented by the literal string
+    ``"topsailai"`` so callers can build paths without special-casing ``None``.
+
+    Returns:
+        Tuple of (session_id, pid). Either value may be ``None`` when the
+        filename does not match a known stdout convention.
+    """
+    session_id, pid = _parse_stdout_filename(filename)
+    if session_id is None and pid is not None and filename.startswith("topsailai."):
+        session_id = "topsailai"
+    return session_id, str(pid) if pid is not None else None
+
+
 def _get_pid_from_stdout_path(stdout_path: str) -> Optional[int]:
     """
     Extract the session process PID from a stdout file path.

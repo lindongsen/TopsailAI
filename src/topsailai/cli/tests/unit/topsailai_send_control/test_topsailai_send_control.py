@@ -16,7 +16,6 @@ sys.path.insert(0, str(CLI_DIR))
 
 import topsailai_send_control as cli_module
 from topsailai_send_control import (
-    SOCKET_SUFFIX,
     build_socket_path,
     discover_socket_paths,
     format_human_response,
@@ -26,19 +25,31 @@ from topsailai_send_control import (
 
 class TestBuildSocketPath:
     def test_build(self, tmp_path):
-        with patch.object(cli_module, "FOLDER_WORKSPACE_TASK", str(tmp_path)):
-            path = build_socket_path("abc", "123")
-        assert path.endswith(f"abc.123{SOCKET_SUFFIX}")
+        path = build_socket_path(str(tmp_path), "abc", "123")
+        assert ".session.sock" in path
+        assert path.endswith("abc.123.session.sock")
         assert os.path.isabs(path)
 
     def test_session_id_with_dots(self, tmp_path):
-        with patch.object(cli_module, "FOLDER_WORKSPACE_TASK", str(tmp_path)):
-            path = build_socket_path("my.session", "456")
-        assert path.endswith(f"my.session.456{SOCKET_SUFFIX}")
-
+        path = build_socket_path(str(tmp_path), "my.session", "456")
+        assert path.endswith("my.session.456.session.sock")
 
 class TestDiscoverSocketPaths:
     def test_specific_session_and_pid(self, tmp_path):
+        stdout = tmp_path / "abc.123.session.stdout"
+        stdout.write_text("")
+        sock = tmp_path / "abc.123.session.sock"
+        sock.write_text("")
+
+        result = discover_socket_paths(
+            str(tmp_path),
+            session_id="abc",
+            pid="123",
+        )
+        assert len(result) == 1
+        assert result[0].endswith("abc.123.session.sock")
+
+    def test_skips_missing_sockets(self, tmp_path):
         stdout = tmp_path / "abc.123.session.stdout"
         stdout.write_text("")
 
@@ -47,14 +58,15 @@ class TestDiscoverSocketPaths:
             session_id="abc",
             pid="123",
         )
-        assert len(result) == 1
-        assert result[0].endswith(f"abc.123{SOCKET_SUFFIX}")
+        assert result == []
 
     def test_all_sessions_sorted_by_mtime(self, tmp_path):
         older = tmp_path / "abc.123.session.stdout"
         older.write_text("")
+        (tmp_path / "abc.123.session.sock").write_text("")
         newer = tmp_path / "def.456.session.stdout"
         newer.write_text("")
+        (tmp_path / "def.456.session.sock").write_text("")
 
         import time
         time.sleep(0.01)
@@ -66,12 +78,14 @@ class TestDiscoverSocketPaths:
             pid=None,
         )
         assert len(result) == 2
-        assert result[0].endswith(f"def.456{SOCKET_SUFFIX}")
-        assert result[1].endswith(f"abc.123{SOCKET_SUFFIX}")
+        assert result[0].endswith("def.456.session.sock")
+        assert result[1].endswith("abc.123.session.sock")
 
     def test_task_stdout(self, tmp_path):
         stdout = tmp_path / "abc.123.step-1.task.stdout"
         stdout.write_text("")
+        sock = tmp_path / "abc.123.session.sock"
+        sock.write_text("")
 
         result = discover_socket_paths(
             str(tmp_path),
@@ -79,11 +93,13 @@ class TestDiscoverSocketPaths:
             pid="123",
         )
         assert len(result) == 1
-        assert result[0].endswith(f"abc.123{SOCKET_SUFFIX}")
+        assert result[0].endswith("abc.123.session.sock")
 
     def test_filter_by_session(self, tmp_path):
         (tmp_path / "abc.123.session.stdout").write_text("")
+        (tmp_path / "abc.123.session.sock").write_text("")
         (tmp_path / "def.456.session.stdout").write_text("")
+        (tmp_path / "def.456.session.sock").write_text("")
 
         result = discover_socket_paths(
             str(tmp_path),
@@ -91,11 +107,13 @@ class TestDiscoverSocketPaths:
             pid=None,
         )
         assert len(result) == 1
-        assert result[0].endswith(f"abc.123{SOCKET_SUFFIX}")
+        assert result[0].endswith("abc.123.session.sock")
 
     def test_filter_by_pid(self, tmp_path):
         (tmp_path / "abc.123.step-1.task.stdout").write_text("")
+        (tmp_path / "abc.123.session.sock").write_text("")
         (tmp_path / "abc.456.step-2.task.stdout").write_text("")
+        (tmp_path / "abc.456.session.sock").write_text("")
 
         result = discover_socket_paths(
             str(tmp_path),
@@ -103,7 +121,7 @@ class TestDiscoverSocketPaths:
             pid="123",
         )
         assert len(result) == 1
-        assert result[0].endswith(f"abc.123{SOCKET_SUFFIX}")
+        assert result[0].endswith("abc.123.session.sock")
 
     def test_no_task_folder(self, tmp_path):
         nonexistent = tmp_path / "does_not_exist"
@@ -148,6 +166,28 @@ class TestSendControlRequest:
         assert request["payload"] == {"reason": "test"}
         assert "request_id" in request
         assert len(request["request_id"]) > 0
+
+    def test_skips_empty_lines(self):
+        mock_sock = MagicMock()
+        mock_file = MagicMock()
+        mock_file.readline.side_effect = ["\n", "\n", json.dumps({
+            "request_id": "server-id",
+            "status": "ok",
+        }) + "\n"]
+        mock_sock.makefile.return_value = mock_file
+
+        with patch("socket.socket") as mock_socket_class:
+            mock_socket_class.return_value.__enter__ = MagicMock(return_value=mock_sock)
+            mock_socket_class.return_value.__exit__ = MagicMock(return_value=False)
+            success, response = send_control_request(
+                "/tmp/test.sock",
+                "hard_interrupt",
+                {},
+                5.0,
+            )
+
+        assert success is True
+        assert response["status"] == "ok"
 
     def test_connection_timeout(self):
         with patch("socket.socket") as mock_socket_class:
@@ -251,17 +291,21 @@ class TestFormatHumanResponse:
 
 
 class TestGetParams:
-    def test_invalid_json_args_exits(self):
+    def test_invalid_json_args_exits(self, capsys):
         with patch.object(sys, "argv", ["script", "-c", "hard_interrupt", "-a", "not-json"]):
             with pytest.raises(SystemExit) as exc_info:
                 cli_module.get_params()
             assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "not-json" in captured.err
 
-    def test_non_object_args_exits(self):
+    def test_non_object_args_exits(self, capsys):
         with patch.object(sys, "argv", ["script", "-c", "hard_interrupt", "-a", "[1, 2]"]):
             with pytest.raises(SystemExit) as exc_info:
                 cli_module.get_params()
             assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "[1, 2]" in captured.err
 
     def test_valid_args(self):
         with patch.object(sys, "argv", [
@@ -281,6 +325,21 @@ class TestGetParams:
         assert params["payload"] == {"reason": "test"}
         assert params["timeout"] == 10.0
         assert params["json_output"] is True
+
+    def test_empty_args_default_to_empty_object(self):
+        with patch.object(
+            sys,
+            "argv",
+            ["script", "-c", "hard_interrupt", "-a", ""],
+        ):
+            params = cli_module.get_params()
+
+        assert params["payload"] == {}
+
+    def test_unknown_command_rejected(self):
+        with patch.object(sys, "argv", ["script", "-c", "unknown_action"]):
+            with pytest.raises(SystemExit):
+                cli_module.get_params()
 
 
 class TestMain:
@@ -309,6 +368,7 @@ class TestMain:
 
     def test_successful_send_human_readable(self, tmp_path, capsys):
         (tmp_path / "abc.123.session.stdout").write_text("")
+        (tmp_path / "abc.123.session.sock").write_text("")
 
         mock_response = {
             "request_id": "server-id",
@@ -330,6 +390,7 @@ class TestMain:
 
     def test_successful_send_json_output(self, tmp_path, capsys):
         (tmp_path / "abc.123.session.stdout").write_text("")
+        (tmp_path / "abc.123.session.sock").write_text("")
 
         mock_response = {
             "request_id": "server-id",
@@ -351,6 +412,7 @@ class TestMain:
 
     def test_server_error_exits_nonzero(self, tmp_path, capsys):
         (tmp_path / "abc.123.session.stdout").write_text("")
+        (tmp_path / "abc.123.session.sock").write_text("")
 
         mock_response = {
             "request_id": "server-id",
@@ -360,7 +422,7 @@ class TestMain:
         mock_send = MagicMock(return_value=(True, mock_response))
 
         code = self._run_main(
-            ["script", "-s", "abc", "-p", "123", "-c", "bad_action"],
+            ["script", "-s", "abc", "-p", "123", "-c", "hard_interrupt"],
             tmp_path,
             mock_send=mock_send,
         )
@@ -371,7 +433,9 @@ class TestMain:
 
     def test_connection_failure_continues_to_next(self, tmp_path, capsys):
         (tmp_path / "abc.123.session.stdout").write_text("")
+        (tmp_path / "abc.123.session.sock").write_text("")
         (tmp_path / "def.456.session.stdout").write_text("")
+        (tmp_path / "def.456.session.sock").write_text("")
 
         def side_effect(socket_path, action, payload, timeout):
             if "abc" in socket_path:
@@ -393,7 +457,9 @@ class TestMain:
 
     def test_all_targets_fail(self, tmp_path, capsys):
         (tmp_path / "abc.123.session.stdout").write_text("")
+        (tmp_path / "abc.123.session.sock").write_text("")
         (tmp_path / "def.456.session.stdout").write_text("")
+        (tmp_path / "def.456.session.sock").write_text("")
 
         mock_send = MagicMock(return_value=(False, {"error": "down"}))
 
@@ -406,6 +472,8 @@ class TestMain:
         assert code != 0
         captured = capsys.readouterr()
         assert "All 2 targets failed" in captured.err
+        assert "abc" in captured.err
+        assert "def" in captured.err
 
     def test_socket_path_override(self, tmp_path, capsys):
         override_path = str(tmp_path / "custom.sock")

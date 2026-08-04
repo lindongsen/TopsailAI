@@ -2,6 +2,8 @@
 
 This directory contains the command-line interface (CLI) tools for the project.
 
+> CLI NO NEED issues
+
 ## Workspace Scope
 
 This directory (`./`, example: `/TopsailAI/src/topsailai/cli/`) is the current workspace. All development, fixes, and documentation updates must stay within this workspace.
