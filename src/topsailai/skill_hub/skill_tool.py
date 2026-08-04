@@ -75,6 +75,7 @@ COMMON_SCRIPT_FOLDER_NAME_LIST = [
     "tools",
 ]
 
+
 def is_matched_skill(skill_folder:str, keys:list[str]) -> bool:
     """ return True for matched """
     keys = to_list(keys)
@@ -94,6 +95,58 @@ def is_matched_skill(skill_folder:str, keys:list[str]) -> bool:
 
     return False
 
+
+def _normalize_overview_entry(entry: str) -> str:
+    """Normalize a TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS entry.
+
+    Strips whitespace, removes leading ``./`` or ``.\\`` components, and
+    removes trailing path separators so matching is consistent regardless
+    of how the value was written.
+    """
+    entry = entry.strip()
+    for _ in range(2):
+        if entry.startswith("./") or entry.startswith(".\\"):
+            entry = entry[2:]
+        else:
+            break
+    return entry.rstrip("/\\")
+
+
+def _match_overview_entry(folder_path: str, entry: str) -> bool:
+    """Return True when ``folder_path`` matches a single overview entry.
+
+    Matching rules (in order):
+
+    1. ``*`` matches every folder.
+    2. Exact full-path match after normalization.
+    3. ``folder_path`` starts with the normalized entry (full-path prefix).
+    4. The last path segment of ``folder_path`` equals the entry (skill-name
+       match). This avoids unsafe substring matches such as ``team`` matching
+       ``my_team`` or ``team_x``.
+    """
+    if entry == "*":
+        return True
+
+    normalized_folder = folder_path.rstrip("/\\")
+    normalized_entry = _normalize_overview_entry(entry)
+    if not normalized_entry:
+        return False
+
+    if normalized_folder == normalized_entry:
+        return True
+    if normalized_folder.startswith(normalized_entry + os.sep):
+        return True
+    if normalized_folder.startswith(normalized_entry + "/"):
+        return True
+
+    folder_basename = os.path.basename(normalized_folder)
+    entry_basename = os.path.basename(normalized_entry)
+    if folder_basename and entry_basename and folder_basename == entry_basename:
+        return True
+
+    return False
+
+
 def is_need_load_overview(folder_path:str) -> bool:
     """
     Check if need load overview content into prompt
@@ -108,18 +161,8 @@ def is_need_load_overview(folder_path:str) -> bool:
     if not skill_list:
         return False
 
-    for _ in range(2):
-        if folder_path[-1] == '/':
-            folder_path = folder_path[:-1]
-        else:
-            break
-
     for skill_folder in skill_list:
-        if folder_path.startswith(skill_folder):
-            return True
-        if folder_path.endswith(
-            ('' if skill_folder[0] in "./" else '/')+skill_folder
-        ):
+        if _match_overview_entry(folder_path, skill_folder):
             return True
     return False
 

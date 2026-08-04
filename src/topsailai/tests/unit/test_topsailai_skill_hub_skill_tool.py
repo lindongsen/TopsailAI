@@ -90,40 +90,73 @@ class TestIsNeedLoadOverview(unittest.TestCase):
     def test_no_skills_configured(self, mock_env):
         """Test when no skills are configured."""
         mock_env.get_list_str.return_value = None
-        
+
         result = is_need_load_overview("/some/folder")
         self.assertFalse(result)
 
     @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_wildcard_matches_all(self, mock_env):
+        """Asterisk wildcard matches every skill folder."""
+        mock_env.get_list_str.return_value = ["*"]
+
+        self.assertTrue(is_need_load_overview("/skills/my_skill"))
+        self.assertTrue(is_need_load_overview("/any/other/folder"))
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
     def test_folder_matches_configured_skill(self, mock_env):
-        """Test when folder matches a configured skill."""
+        """Test exact full-path match."""
         mock_env.get_list_str.return_value = ["/skills/my_skill"]
-        
+
         result = is_need_load_overview("/skills/my_skill")
         self.assertTrue(result)
 
     @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
     def test_folder_starts_with_skill(self, mock_env):
-        """Test when folder path starts with configured skill."""
+        """Test full-path prefix match."""
         mock_env.get_list_str.return_value = ["/skills/base"]
-        
+
         result = is_need_load_overview("/skills/base/subfolder")
         self.assertTrue(result)
 
     @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
-    def test_folder_ends_with_skill(self, mock_env):
-        """Test when folder path ends with configured skill."""
+    def test_skill_name_matches_basename(self, mock_env):
+        """Skill name matches the basename of the folder path."""
         mock_env.get_list_str.return_value = ["my_skill"]
-        
+
         result = is_need_load_overview("/path/to/my_skill")
         self.assertTrue(result)
 
     @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_skill_name_does_not_match_substring(self, mock_env):
+        """Skill name must match the full basename, not a substring."""
+        mock_env.get_list_str.return_value = ["team"]
+
+        self.assertFalse(is_need_load_overview("/path/to/my_team"))
+        self.assertFalse(is_need_load_overview("/path/to/team_x"))
+        self.assertFalse(is_need_load_overview("/path/to/xteamy"))
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
     def test_folder_with_trailing_slash(self, mock_env):
-        """Test folder path with trailing slash handling."""
+        """Trailing slash on folder path is normalized."""
         mock_env.get_list_str.return_value = ["/skills/test"]
-        
+
         result = is_need_load_overview("/skills/test/")
+        self.assertTrue(result)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_entry_with_trailing_slash(self, mock_env):
+        """Trailing slash on configured entry is normalized."""
+        mock_env.get_list_str.return_value = ["/skills/test/"]
+
+        result = is_need_load_overview("/skills/test")
+        self.assertTrue(result)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_entry_with_leading_dot_slash(self, mock_env):
+        """Leading ./ on configured entry is normalized."""
+        mock_env.get_list_str.return_value = ["./my_skill"]
+
+        result = is_need_load_overview("/path/to/my_skill")
         self.assertTrue(result)
 
     @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
@@ -133,7 +166,6 @@ class TestIsNeedLoadOverview(unittest.TestCase):
 
         result = is_need_load_overview("/skills/different")
         self.assertFalse(result)
-
 
 class TestSkillInfo(unittest.TestCase):
     """Test cases for SkillInfo class."""
