@@ -751,5 +751,49 @@ class TestCacheHitRate(unittest.TestCase):
         printed = "\n".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
         self.assertIn("cache_hit_rate      : N/A", printed)
 
+class TestAgentChatControlServer(unittest.TestCase):
+    """Test control channel server startup from AgentChat."""
+
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks", return_value=[])
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    def test_start_control_server_creates_session_socket(
+        self, _mock_set_ai_agent, _mock_get_hooks
+    ):
+        """Starting the agent control server creates its resolved session socket."""
+        import tempfile
+
+        from topsailai.workspace.agent.agent_shell_base import AgentChat
+
+        ctx_rt_aiagent = MagicMock()
+        ctx_rt_aiagent.ai_agent = MagicMock()
+        ctx_rt_aiagent.ctx_runtime_data = MagicMock()
+        ctx_rt_aiagent.ctx_runtime_data.session_id = "control-session"
+        agent_chat = AgentChat(
+            hook_instruction=MagicMock(),
+            ctx_rt_aiagent=ctx_rt_aiagent,
+            ctx_rt_instruction=MagicMock(),
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            socket_path = os.path.join(
+                temporary_directory,
+                "control-session.123.session.sock",
+            )
+            with patch(
+                "topsailai.workspace.control_channel.server.resolve_socket_path",
+                return_value=socket_path,
+            ):
+                agent_chat._start_control_server()
+
+            try:
+                self.assertIsNotNone(agent_chat.control_server)
+                self.assertEqual(agent_chat.control_server.socket_path, socket_path)
+                self.assertTrue(os.path.exists(socket_path))
+            finally:
+                agent_chat._stop_control_server()
+
+            self.assertFalse(os.path.exists(socket_path))
+
+
 if __name__ == "__main__":
     unittest.main()

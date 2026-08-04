@@ -191,7 +191,11 @@ class AgentChat(AgentChatBase):
                 agent_chat=self,
             )
 
+            from topsailai.workspace.control_channel.server import resolve_socket_path
+            socket_path = resolve_socket_path(session_id)
+
             server = ControlServer(
+                socket_path=socket_path,
                 registry=registry,
                 context=context,
             )
