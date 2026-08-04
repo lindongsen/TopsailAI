@@ -112,7 +112,7 @@ class TestDiscoverSocketPaths:
 
     def test_ignores_non_stdout_files(self, tmp_path):
         (tmp_path / "abc.123.session.stderr").write_text("")
-        (tmp_path / "abc.123.session.control.sock").write_text("")
+        (tmp_path / "abc.123.session.sock").write_text("")
         result = discover_socket_paths(str(tmp_path))
         assert result == []
 

@@ -241,6 +241,8 @@ class PromptBase(object):
         assert system_prompt, "missing system_prompt"
 
         self.system_prompt = system_prompt
+        if system_prompt and system_prompt[-1] != '\n':
+            system_prompt += "\n"
         prompt_from_script = get_prompt_by_script("TOPSAILAI_OBTAIN_SYSTEM_PROMPT_SCRIPT")
         if prompt_from_script:
             self.system_prompt += "\n---\n" + prompt_from_script

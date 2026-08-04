@@ -23,6 +23,8 @@ from topsailai.workspace.control_channel.protocol import (
 )
 from topsailai.workspace.folder_constants import (
     FOLDER_WORKSPACE_TASK,
+)
+from topsailai.workspace.folder_utils import (
     get_interrupt_flag_path,
 )
 

@@ -31,8 +31,14 @@ from topsailai.workspace.session_meta import update_session_meta_status
 from topsailai.ai_base.agent_types import (
     exception as agent_exception,
 )
-from topsailai.ai_base.exception import HeavyTaskError
-from topsailai.ai_base.exception import HardInterruptError
+from topsailai.ai_base.exception import (
+    HardInterruptError,
+    HeavyTaskError,
+)
+from topsailai.workspace.control_channel import ControlServer
+from topsailai.workspace.control_channel.handler import ControlHandlerRegistry
+from topsailai.workspace.control_channel.protocol import ControlContext
+from topsailai.workspace.control_handlers import register_control_handlers
 from topsailai.workspace.input_tool import (
     get_message,
     input_message,
@@ -141,7 +147,7 @@ class AgentChat(AgentChatBase):
                     "completed",
                     getattr(self.ctx_runtime_data, "session_id", None),
                 )
-
+            self._stop_control_server()
 
     def _clear_interrupt_state(self):
         """Clear the interrupted state and any current-process flag file."""
@@ -152,6 +158,8 @@ class AgentChat(AgentChatBase):
 
         from topsailai.workspace.folder_constants import (
             FOLDER_WORKSPACE_TASK,
+        )
+        from topsailai.workspace.folder_utils import (
             get_interrupt_flag_path,
         )
 
@@ -167,6 +175,45 @@ class AgentChat(AgentChatBase):
             pass
         except OSError as e:
             logger.warning("Failed to clear hard interrupt flag %s: %s", flag_path, e)
+    def _start_control_server(self):
+        """Start the per-process control channel server if not already running."""
+        if self.control_server is not None:
+            return
+
+        try:
+            registry = ControlHandlerRegistry()
+            register_control_handlers(registry)
+
+            session_id = self.ctx_runtime_data.session_id or env_tool.get_session_id() or "topsailai"
+            context = ControlContext(
+                session_id=session_id,
+                pid=os.getpid(),
+                agent_chat=self,
+            )
+
+            server = ControlServer(
+                registry=registry,
+                context=context,
+            )
+            server.start()
+            self.control_server = server
+            logger.info("Started control channel server at %s", server.socket_path)
+        except Exception as e:
+            logger.warning("Failed to start control channel server: %s", e)
+            self.control_server = None
+
+    def _stop_control_server(self):
+        """Stop the per-process control channel server if running."""
+        if self.control_server is None:
+            return
+
+        try:
+            self.control_server.stop()
+            logger.info("Stopped control channel server")
+        except Exception as e:
+            logger.warning("Failed to stop control channel server: %s", e)
+        finally:
+            self.control_server = None
 
     def _run(
             self,
@@ -205,6 +252,7 @@ class AgentChat(AgentChatBase):
             str: The final answer from the AI agent.
         """
         self.call_hooks_pre_run()
+        self._start_control_server()
 
         if not func_print_pre_input_message or not env_tool.is_interactive_mode():
             # noop

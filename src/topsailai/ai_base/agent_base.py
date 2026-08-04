@@ -164,6 +164,8 @@ class AgentRun(AgentBase):
         """
         from topsailai.workspace.folder_constants import (
             FOLDER_WORKSPACE_TASK,
+        )
+        from topsailai.workspace.folder_utils import (
             get_interrupt_flag_path,
         )
         session_id = env_tool.get_session_id() or "topsailai"

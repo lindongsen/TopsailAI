@@ -25,23 +25,21 @@ from typing import Any, List, Optional, Tuple
 
 import _import_topsailai  # noqa: F401
 
-from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
-from topsailai_session_add_agent2llm_message import (
-    parse_stdout_filename,
+from topsailai.workspace.folder_constants import (
+    FOLDER_WORKSPACE_TASK,
 )
-
-SOCKET_SUFFIX = ".session.control.sock"
+from topsailai.workspace.folder_utils import (
+    get_control_socket_path,
+)
+from topsailai_session_add_agent2llm_message import parse_stdout_filename
 
 
 def build_socket_path(session_id: str, pid: str) -> str:
     """Return the default UDS socket path for a session process."""
-    return os.path.abspath(
-        os.path.join(
-            FOLDER_WORKSPACE_TASK,
-            f"{session_id}.{pid}{SOCKET_SUFFIX}",
-        )
-    )
+    return get_control_socket_path(FOLDER_WORKSPACE_TASK, session_id, pid)
 
+
+SOCKET_SUFFIX = ".session.sock"
 
 def discover_socket_paths(
     task_folder: str,

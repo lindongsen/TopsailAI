@@ -140,6 +140,10 @@ class AgentChatBase(object):
         # provides a new message.
         self.interrupted = False
 
+        # Per-process control channel server. Started lazily on first run and
+        # stopped when the agent chat session ends.
+        self.control_server = None
+
         if env_tool.EnvReaderInstance.check_bool("TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION", False):
             def hook_final_summarize_into_session(_) -> None:
                 """ summarize messages of agent2llm, save summary content to session of user2agent """

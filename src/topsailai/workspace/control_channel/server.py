@@ -1,9 +1,9 @@
 """
 Server for the control channel module.
 
-The ControlServer listens on a Unix Domain Socket, accepts concurrent client
-connections, dispatches requests through the handler registry, and sends back
-responses.
+Provides a Unix-domain-socket (UDS) server that accepts JSONL control
+requests from external processes (e.g. `topsailai_send_control`) and
+routes them to registered handlers.
 
 Author: DawsonLin
 Email: lin_dongsen@126.com
@@ -35,6 +35,7 @@ from topsailai.workspace.control_channel.transport import (
     send_bytes,
 )
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
+from topsailai.workspace.folder_utils import get_control_socket_path
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ def resolve_socket_path(session_id: Optional[str] = None) -> str:
     """Resolve the default control channel socket path.
 
     The path follows the session-scoped convention used by other runtime files:
-    ``{FOLDER_WORKSPACE_TASK}/{session_id}.{pid}.control.sock``.
+    ``{FOLDER_WORKSPACE_TASK}/{session_id}.{pid}.session.sock``.
 
     Args:
         session_id: Optional session ID. Falls back to env_tool.get_session_id().
@@ -57,15 +58,7 @@ def resolve_socket_path(session_id: Optional[str] = None) -> str:
     """
     if not session_id:
         session_id = env_tool.get_session_id() or "topsailai"
-    return os.path.join(
-        FOLDER_WORKSPACE_TASK,
-        f"{session_id}.{os.getpid()}.control.sock",
-    )
-
-
-def is_control_channel_enabled() -> bool:
-    """Return whether the control channel is enabled via environment variable."""
-    return env_tool.EnvReaderInstance.check_bool("TOPSAILAI_CONTROL_CHANNEL_ENABLED", False)
+    return get_control_socket_path(FOLDER_WORKSPACE_TASK, session_id, os.getpid())
 
 
 def get_backlog() -> int:
