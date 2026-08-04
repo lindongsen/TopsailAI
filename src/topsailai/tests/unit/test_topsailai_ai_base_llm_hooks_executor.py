@@ -83,14 +83,21 @@ class TestGetHooksRuntime(unittest.TestCase):
         self.assertEqual(result, [])
 
     @patch.dict(os.environ, {"AI_MODEL": "gpt-4"}, clear=True)
+    def test_before_llm_chat_returns_merge_hook_for_all_models(self):
+        """Test that TOPSAILAI_HOOK_BEFORE_LLM_CHAT returns the merge hook for all models by default"""
+        rid_all_thread_vars()
+
+        result = get_hooks_runtime("TOPSAILAI_HOOK_BEFORE_LLM_CHAT", "minimax")
+        self.assertEqual(result, ["topsailai.ai_base.llm_hooks.hook_before_chat.only_one_system_message"])
+
+    @patch.dict(os.environ, {"AI_MODEL": "gpt-4"}, clear=True)
     def test_content_check_only_for_after_llm_chat(self):
         """Test that content-based check only works for TOPSAILAI_HOOK_AFTER_LLM_CHAT"""
         rid_all_thread_vars()
 
-        # Content has 'minimax' but key is BEFORE_LLM_CHAT, so content check should not trigger
-        result = get_hooks_runtime("TOPSAILAI_HOOK_BEFORE_LLM_CHAT", "minimax")
-        self.assertEqual(result, [])
-
+        # Content has 'minimax' but key is AFTER_LLM_CHAT, so content check should trigger
+        result = get_hooks_runtime("TOPSAILAI_HOOK_AFTER_LLM_CHAT", "minimax")
+        self.assertEqual(result, ["topsailai.ai_base.llm_hooks.hook_after_chat.minimax"])
 
 class TestHookExecute(unittest.TestCase):
     """Test cases for hook_execute function."""
