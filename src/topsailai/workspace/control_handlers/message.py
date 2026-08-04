@@ -18,35 +18,33 @@ from topsailai.workspace.control_channel.handler import ControlHandler
 from topsailai.workspace.control_channel.protocol import ControlContext, ControlRequest, ControlResponse
 
 def serialize_message(message: Any) -> Any:
-    """
-    Serialize a single message object into a JSON-compatible dict.
+    """Serialize a message value into JSON-compatible primitives."""
+    if message is None or isinstance(message, (bool, int, float, str)):
+        return message
 
-    Tries, in order:
-      1. ``message.to_dict()`` if available.
-      2. ``dataclasses.asdict(message)`` for dataclass instances.
-      3. ``dict(message)`` for dict-like objects.
-      4. ``message.__dict__`` for plain objects.
-      5. ``str(message)`` as a last resort.
+    if isinstance(message, dict):
+        return {str(key): serialize_message(value) for key, value in message.items()}
 
-    ``None`` is returned as-is so callers can filter it out.
-    """
-    if message is None:
-        return None
+    if isinstance(message, (list, tuple)):
+        return [serialize_message(value) for value in message]
+
+    if hasattr(message, "model_dump") and callable(message.model_dump):
+        return serialize_message(message.model_dump(mode="json"))
 
     if hasattr(message, "to_dict") and callable(message.to_dict):
-        return message.to_dict()
+        return serialize_message(message.to_dict())
 
     if dataclasses.is_dataclass(message) and not isinstance(message, type):
-        return dataclasses.asdict(message)
+        return serialize_message(dataclasses.asdict(message))
 
     try:
-        return dict(message)
+        return serialize_message(dict(message))
     except (TypeError, ValueError):
         pass
 
     obj_dict = getattr(message, "__dict__", None)
     if obj_dict:
-        return dict(obj_dict)
+        return serialize_message(obj_dict)
 
     return str(message)
 

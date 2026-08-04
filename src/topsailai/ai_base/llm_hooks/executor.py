@@ -36,11 +36,11 @@ def get_hooks_runtime(key:str, content) -> list[str]:
             return [
                 "topsailai.ai_base.llm_hooks.hook_after_chat.minimax"
             ]
-        if key == "TOPSAILAI_HOOK_BEFORE_LLM_CHAT":
-            if model_name == "MiniMax-M2.5":
-                return [
-                    "topsailai.ai_base.llm_hooks.hook_before_chat.only_one_system_message",
-                ]
+
+    if key == "TOPSAILAI_HOOK_BEFORE_LLM_CHAT":
+        return [
+            "topsailai.ai_base.llm_hooks.hook_before_chat.only_one_system_message",
+        ]
 
     if isinstance(content, str):
         if key == "TOPSAILAI_HOOK_AFTER_LLM_CHAT":

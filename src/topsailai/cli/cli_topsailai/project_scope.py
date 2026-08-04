@@ -555,7 +555,9 @@ def _tmux_supports_environment_option(tmux_path: str) -> bool:
     if not version_text.startswith("tmux "):
         return False
     version = version_text[len("tmux "):].split()[0]
-    version_match = re.fullmatch(r"(\d+)\.(\d+)", version)
+    # Tmux version strings may include suffixes such as "3.5a", "3.1-rc2",
+    # or "next-3.4".  Extract the first MAJOR.MINOR pair and ignore the rest.
+    version_match = re.search(r"(\d+)\.(\d+)", version)
     if version_match is None:
         return False
     major, minor = (int(part) for part in version_match.groups())
