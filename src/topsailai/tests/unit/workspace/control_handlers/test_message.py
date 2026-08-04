@@ -97,6 +97,26 @@ class TestGetRuntimeMessagesHandler:
         assert response.result["messages"] == FakeAgent.messages
         assert response.error is None
 
+    def test_handle_uses_agent_chat_context_when_thread_local_is_unavailable(
+        self, handler, monkeypatch
+    ):
+        class FakeAgent:
+            messages = [{"role": "user", "content": "from context"}]
+
+        class FakeAgentChat:
+            ai_agent = FakeAgent()
+
+        monkeypatch.setattr(
+            "topsailai.workspace.control_handlers.message.get_agent_object",
+            lambda: None,
+        )
+
+        request = ControlRequest(request_id="r-context", action="get_runtime_messages", payload={})
+        response = handler.handle(request, ControlContext(agent_chat=FakeAgentChat()))
+
+        assert response.status == "ok"
+        assert response.result["messages"] == FakeAgent.messages
+
     def test_handle_no_agent(self, handler, monkeypatch):
         monkeypatch.setattr(
             "topsailai.workspace.control_handlers.message.get_agent_object",

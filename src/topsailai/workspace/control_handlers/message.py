@@ -50,20 +50,27 @@ def serialize_message(message: Any) -> Any:
 
     return str(message)
 
+def _get_context_agent(context: ControlContext) -> Any:
+    """Return Agent2LLM through the User2Agent reference in the context."""
+    agent_chat = getattr(context, "agent_chat", None)
+    if agent_chat is not None:
+        return getattr(agent_chat, "ai_agent", None)
+    return getattr(context, "ai_agent", None)
+
 class GetRuntimeMessagesHandler(ControlHandler):
-    """Return the current Agent2LLM runtime messages from the thread-local agent."""
+    """Return current Agent2LLM messages using the server context when available."""
 
     @property
     def action(self) -> str:
         return "get_runtime_messages"
 
     def handle(self, request: ControlRequest, context: ControlContext) -> ControlResponse:
-        agent = get_agent_object()
+        agent = _get_context_agent(context) or get_agent_object()
         if agent is None:
             return ControlResponse(
                 request_id=request.request_id,
                 status="error",
-                error="no active agent in current thread",
+                error="no active agent in control context or current thread",
             )
 
         if not hasattr(agent, "messages"):
