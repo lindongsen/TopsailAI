@@ -104,6 +104,23 @@ class TestControlServer:
         assert not server.is_running()
         assert not os.path.exists(socket_path)
 
+    def test_stop_wakes_idle_accept_loop(self, socket_path, registry):
+        """Stopping an idle server must not wait for its accept timeout."""
+        server = ControlServer(
+            socket_path=socket_path,
+            registry=registry,
+            context=ControlContext(),
+            timeout=30,
+        )
+        server.start()
+        time.sleep(0.1)
+
+        start = time.perf_counter()
+        server.stop()
+
+        assert time.perf_counter() - start < 1
+        assert not server.is_running()
+
     def test_echo_request(self, server, socket_path):
         server.start()
         time.sleep(0.1)

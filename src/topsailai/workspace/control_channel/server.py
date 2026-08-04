@@ -133,6 +133,11 @@ class ControlServer:
         self._sock = None
         if sock is not None:
             try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as wake_socket:
+                    wake_socket.connect(self.socket_path)
+            except OSError:
+                pass
+            try:
                 sock.close()
             except Exception:
                 pass
