@@ -43,6 +43,45 @@ _CONTEXT_MESSAGE_FILE = None
 BASE_ITEM_NAMES = ("_", "_default")
 
 
+def _reset_tmp_dir(workspace):
+    """Remove and recreate the workspace .tmp/ directory if it exists."""
+    tmp_dir = os.path.join(workspace, ".tmp")
+    if os.path.isdir(tmp_dir):
+        for root, dirs, files in os.walk(tmp_dir, topdown=False):
+            for name in files:
+                file_path = os.path.join(root, name)
+                try:
+                    os.remove(file_path)
+                except OSError as exc:
+                    print(
+                        f"[TopsailAI-Launcher] Warning: Failed to remove temporary file '{file_path}': {exc}",
+                        file=sys.stderr,
+                    )
+            for name in dirs:
+                dir_path = os.path.join(root, name)
+                try:
+                    os.rmdir(dir_path)
+                except OSError as exc:
+                    print(
+                        f"[TopsailAI-Launcher] Warning: Failed to remove temporary directory '{dir_path}': {exc}",
+                        file=sys.stderr,
+                    )
+        try:
+            os.rmdir(tmp_dir)
+        except OSError as exc:
+            print(
+                f"[TopsailAI-Launcher] Warning: Failed to remove temporary directory '{tmp_dir}': {exc}",
+                file=sys.stderr,
+            )
+    try:
+        os.makedirs(tmp_dir, exist_ok=True)
+    except OSError as exc:
+        print(
+            f"[TopsailAI-Launcher] Warning: Failed to create temporary directory '{tmp_dir}': {exc}",
+            file=sys.stderr,
+        )
+
+
 def _is_base_item(name):
     """Return True if the item name is a base/shared configuration key."""
     return name in BASE_ITEM_NAMES
@@ -1345,13 +1384,14 @@ def main():
             context_message = original_user_message
     else:
         context_message = "\n\n---\n\n".join(message_parts)
+    # Reset the workspace temporary directory so each launch starts with a clean .tmp/ folder.
+    _reset_tmp_dir(workspace)
 
     # Write large context message to a file to avoid exceeding environment variable size limits.
     global _CONTEXT_MESSAGE_FILE
     _CONTEXT_MESSAGE_FILE = None
     if context_message:
         tmp_dir = os.path.join(workspace, ".tmp")
-        os.makedirs(tmp_dir, exist_ok=True)
         timestamp = time.strftime("%Y%m%d%H%M%S", time.localtime())
         _CONTEXT_MESSAGE_FILE = os.path.join(
             tmp_dir, f"TOPSAILAI_CONTEXT_USER_MESSAGE.{timestamp}.data"
