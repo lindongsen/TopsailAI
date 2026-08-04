@@ -801,6 +801,14 @@ class TestWrapCommandForAgentMode(unittest.TestCase):
         self.assertFalse(supported)
 
     @patch("cli_topsailai.project_scope.subprocess.run")
+    def test_tmux_environment_option_supports_suffixed_version(self, mock_run):
+        mock_run.return_value = MockCompletedProcess(stdout="tmux 3.5a")
+
+        supported = project_scope._tmux_supports_environment_option("/usr/bin/tmux")
+
+        self.assertTrue(supported)
+
+    @patch("cli_topsailai.project_scope.subprocess.run")
     def test_tmux_environment_option_rejects_unusable_versions(self, mock_run):
         unusable_results = (
             MockCompletedProcess(stdout="tmux 3.1-rc2"),
