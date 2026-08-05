@@ -194,6 +194,7 @@ def set_llm(*args) -> str:
     result = _apply_model_config(agent, config)
     return result
 
+
 def get_llm() -> str:
     """
     Print LLM name
@@ -224,13 +225,19 @@ def select_model(*args) -> str:
     registry = _load_models_registry()
 
     if not args:
+        current_model = agent.llm_model.model_name
         if not registry:
-            return f"No models found in {FILE_MODELS_REGISTRY}"
-        lines = ["Available models:"]
+            return f"Current model: {current_model}\nNo models found in {FILE_MODELS_REGISTRY}"
+
+        lines = []
+        if current_model not in registry:
+            lines.append(f"Current model: {current_model} (not in registry)")
+        lines.append("Available models:")
         for idx, name in enumerate(sorted(registry.keys()), start=1):
             config = registry[name]
             api_base = config.get("api_base") or config.get("base_url", "")
-            lines.append(f"  {idx}. {name} ({api_base})")
+            marker = "* " if name == current_model else "  "
+            lines.append(f"  {idx}.{marker}{name} ({api_base})")
         return "\n".join(lines)
 
     model_name = str(args[0]).strip()
@@ -241,10 +248,9 @@ def select_model(*args) -> str:
     result = _apply_model_config(agent, config)
     return result
 
-
 INSTRUCTIONS = dict(
     system_prompt=get_system_prompt,
-    env_prompt = get_env_prompt,
+    env_prompt=get_env_prompt,
     tool_prompt=get_tool_prompt,
     tools=get_tools,
     set_llm=set_llm,

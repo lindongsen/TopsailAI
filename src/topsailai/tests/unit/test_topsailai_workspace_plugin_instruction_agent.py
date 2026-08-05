@@ -355,8 +355,9 @@ class TestSelectModel(unittest.TestCase):
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
     def test_list_models(self, mock_load_registry, mock_get_agent):
-        """Test /models lists available models"""
+        """Test /models lists available models and marks current model"""
         mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "ModelA"
         mock_get_agent.return_value = mock_agent
         mock_load_registry.return_value = {
             "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
@@ -366,6 +367,28 @@ class TestSelectModel(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.agent import select_model
         result = select_model()
 
+        self.assertIn("Available models:", result)
+        self.assertIn("ModelA", result)
+        self.assertIn("ModelB", result)
+        self.assertIn("* ModelA", result)
+        self.assertNotIn("not in registry", result)
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_list_models_current_not_in_registry(self, mock_load_registry, mock_get_agent):
+        """Test /models prints current model when it is not in the registry"""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "CustomModel"
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
+            "ModelB": {"name": "ModelB", "api_base": "https://b.example.com"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model()
+
+        self.assertIn("Current model: CustomModel (not in registry)", result)
         self.assertIn("Available models:", result)
         self.assertIn("ModelA", result)
         self.assertIn("ModelB", result)
@@ -417,6 +440,21 @@ class TestSelectModel(unittest.TestCase):
         result = select_model()
 
         self.assertEqual(result, "No active agent")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_list_models_empty_registry(self, mock_load_registry, mock_get_agent):
+        """Test /models with empty registry shows current model"""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "CurrentModel"
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {}
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model()
+
+        self.assertIn("Current model: CurrentModel", result)
+        self.assertIn("No models found in", result)
 
 
 class TestLoadModelsRegistry(unittest.TestCase):
