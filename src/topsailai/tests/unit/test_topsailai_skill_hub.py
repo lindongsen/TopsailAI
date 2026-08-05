@@ -422,13 +422,13 @@ class TestGetSkillFile(unittest.TestCase):
         self.assertEqual(result, test_file)
 
     def test_relative_path_with_leading_slash(self):
-        """Test path with leading slash is handled."""
+        """Test leading slash path outside skill folder is rejected."""
         test_file = os.path.join(self.temp_dir, "test.txt")
         with open(test_file, "w") as f:
             f.write("content")
 
         result = skill_tool.get_skill_file(self.temp_dir, "/test.txt")
-        self.assertEqual(result, test_file)
+        self.assertEqual(result, "")
 
     def test_relative_path_with_leading_dot(self):
         """Test path with leading dot is handled."""
@@ -455,19 +455,13 @@ class TestGetSkillFile(unittest.TestCase):
         self.assertEqual(result, "")
 
     def test_path_traversal_parent_with_existing_basename_rejected(self):
-        """Test parent directory traversal still returns empty when basename exists inside folder.
-
-        The current implementation strips leading parent-directory components and falls
-        back to a basename search, which can resolve a traversal-looking input to a file
-        inside the skill folder. This test documents that behavior so future changes are
-        deliberate.
-        """
+        """Test parent directory traversal is rejected even when basename exists inside folder."""
         test_file = os.path.join(self.temp_dir, "test.txt")
         with open(test_file, "w") as f:
             f.write("content")
 
         result = skill_tool.get_skill_file(self.temp_dir, "../test.txt")
-        self.assertEqual(result, test_file)
+        self.assertEqual(result, "")
 
     def test_path_traversal_nested_parent_rejected(self):
         """Test nested parent directory traversal is rejected."""
