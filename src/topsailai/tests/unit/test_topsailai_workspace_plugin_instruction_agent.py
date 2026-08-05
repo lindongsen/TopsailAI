@@ -355,7 +355,7 @@ class TestSelectModel(unittest.TestCase):
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
     def test_list_models(self, mock_load_registry, mock_get_agent):
-        """Test /models lists available models and marks current model"""
+        """Test /models lists available models with indices and marks current model"""
         mock_agent = MagicMock()
         mock_agent.llm_model.model_name = "ModelA"
         mock_get_agent.return_value = mock_agent
@@ -368,10 +368,68 @@ class TestSelectModel(unittest.TestCase):
         result = select_model()
 
         self.assertIn("Available models:", result)
-        self.assertIn("ModelA", result)
-        self.assertIn("ModelB", result)
-        self.assertIn("* ModelA", result)
+        self.assertIn("1. * ModelA (https://a.example.com)", result)
+        self.assertIn("2. ModelB (https://b.example.com)", result)
         self.assertNotIn("not in registry", result)
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_select_model_by_index(self, mock_load_registry, mock_get_agent):
+        """Test /models <number> selects model by 1-based index"""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "OldModel"
+        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.llm_model.get_llm_model.return_value = "new_client"
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com", "api_key": "key_a"},
+            "ModelB": {"name": "ModelB", "api_base": "https://b.example.com", "api_key": "key_b"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model("2")
+
+        self.assertEqual(mock_agent.llm_model.model_name, "ModelB")
+        mock_agent.llm_model.get_llm_model.assert_called_once_with(
+            api_key="key_b",
+            api_base="https://b.example.com",
+        )
+        self.assertEqual(mock_agent.llm_model.model, "new_client")
+        self.assertEqual(mock_agent.llm_model.models, [])
+        self.assertIn("ModelB", result)
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_select_model_by_invalid_index(self, mock_load_registry, mock_get_agent):
+        """Test /models with out-of-range numeric index returns error"""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "OldModel"
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model("5")
+
+        self.assertEqual(result, "Invalid model index: 5. Valid range: 1-1")
+        mock_agent.llm_model.get_llm_model.assert_not_called()
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_select_model_by_zero_index(self, mock_load_registry, mock_get_agent):
+        """Test /models with 0 index returns error"""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "OldModel"
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model("0")
+
+        self.assertEqual(result, "Invalid model index: 0. Valid range: 1-1")
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
@@ -390,12 +448,12 @@ class TestSelectModel(unittest.TestCase):
 
         self.assertIn("Current model: CustomModel (not in registry)", result)
         self.assertIn("Available models:", result)
-        self.assertIn("ModelA", result)
-        self.assertIn("ModelB", result)
+        self.assertIn("1. ModelA (https://a.example.com)", result)
+        self.assertIn("2. ModelB (https://b.example.com)", result)
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
-    def test_select_model(self, mock_load_registry, mock_get_agent):
+    def test_select_model_by_name(self, mock_load_registry, mock_get_agent):
         """Test /models <model_name> applies the selected model"""
         mock_agent = MagicMock()
         mock_agent.llm_model.model_name = "OldModel"

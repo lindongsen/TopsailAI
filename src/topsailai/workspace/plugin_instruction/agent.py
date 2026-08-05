@@ -214,6 +214,7 @@ def select_model(*args) -> str:
     Supported forms:
       /models              # list available models
       /models <model_name> # select and apply the named model
+      /models <number>     # select and apply the model by 1-based index
 
     Args:
         *args: Positional arguments from the instruction parser.
@@ -223,9 +224,10 @@ def select_model(*args) -> str:
         return "No active agent"
 
     registry = _load_models_registry()
+    current_model = agent.llm_model.model_name
+    model_names = sorted(registry.keys())
 
     if not args:
-        current_model = agent.llm_model.model_name
         if not registry:
             return f"Current model: {current_model}\nNo models found in {FILE_MODELS_REGISTRY}"
 
@@ -233,20 +235,30 @@ def select_model(*args) -> str:
         if current_model not in registry:
             lines.append(f"Current model: {current_model} (not in registry)")
         lines.append("Available models:")
-        for idx, name in enumerate(sorted(registry.keys()), start=1):
+        for idx, name in enumerate(model_names, start=1):
             config = registry[name]
             api_base = config.get("api_base") or config.get("base_url", "")
-            marker = "* " if name == current_model else "  "
-            lines.append(f"  {idx}.{marker}{name} ({api_base})")
+            marker = "* " if name == current_model else ""
+            lines.append(f"  {idx}. {marker}{name} ({api_base})")
         return "\n".join(lines)
 
-    model_name = str(args[0]).strip()
+    arg = str(args[0]).strip()
+    # Numeric 1-based index selection.
+    if arg.isdigit():
+        index = int(arg)
+        if index < 1 or index > len(model_names):
+            return f"Invalid model index: {index}. Valid range: 1-{len(model_names)}"
+        model_name = model_names[index - 1]
+    else:
+        model_name = arg
+
     config = registry.get(model_name)
     if not config:
         return f"Model not found: {model_name}"
 
     result = _apply_model_config(agent, config)
     return result
+
 
 INSTRUCTIONS = dict(
     system_prompt=get_system_prompt,
