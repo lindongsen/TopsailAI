@@ -202,3 +202,236 @@ class TestControlServer:
         assert len(results) == 10
         request_ids = {r["request_id"] for r in results}
         assert request_ids == {f"c{i}" for i in range(10)}
+
+
+from topsailai.workspace.control_channel.server import (
+    ControlServer,
+    get_or_start_control_server,
+    release_control_server,
+)
+from topsailai.workspace.control_channel.transport import (
+    create_unix_socket,
+    is_socket_live,
+)
+
+
+class TestSocketLiveProbe:
+    """Tests for socket liveness probing used by the singleton registry."""
+
+    @pytest.fixture
+    def socket_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield os.path.join(tmpdir, "probe.sock")
+
+    def test_missing_socket_is_not_live(self, socket_path):
+        assert is_socket_live(socket_path) is False
+
+    def test_listening_socket_is_live(self, socket_path):
+        sock = create_unix_socket(socket_path)
+        try:
+            assert is_socket_live(socket_path) is True
+        finally:
+            sock.close()
+            if os.path.exists(socket_path):
+                os.remove(socket_path)
+
+    def test_stale_socket_file_is_not_live(self, socket_path):
+        # Create a socket file without a listening server.
+        with open(socket_path, "w") as f:
+            f.write("")
+        assert os.path.exists(socket_path)
+        assert is_socket_live(socket_path) is False
+
+    def test_create_unix_socket_removes_stale_file(self, socket_path):
+        with open(socket_path, "w") as f:
+            f.write("stale")
+        sock = create_unix_socket(socket_path)
+        try:
+            assert is_socket_live(socket_path) is True
+        finally:
+            sock.close()
+            if os.path.exists(socket_path):
+                os.remove(socket_path)
+
+    def test_create_unix_socket_refuses_live_socket(self, socket_path):
+        sock = create_unix_socket(socket_path)
+        try:
+            with pytest.raises(OSError):
+                create_unix_socket(socket_path)
+        finally:
+            sock.close()
+            if os.path.exists(socket_path):
+                os.remove(socket_path)
+
+
+class TestSharedControlServer:
+    """Tests for the per-(session_id, pid) singleton ControlServer registry."""
+
+    @pytest.fixture
+    def socket_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield os.path.join(tmpdir, "shared.sock")
+
+    @pytest.fixture
+    def registry(self):
+        reg = ControlHandlerRegistry()
+        reg.register(EchoHandler())
+        return reg
+
+    @pytest.fixture
+    def context(self):
+        return ControlContext(session_id="shared-session", pid=os.getpid())
+
+    def test_get_or_start_creates_server(self, socket_path, registry, context):
+        server = get_or_start_control_server(
+            session_id="s1",
+            pid=os.getpid(),
+            registry=registry,
+            context=context,
+            socket_path=socket_path,
+        )
+        try:
+            assert isinstance(server, ControlServer)
+            assert server.is_running()
+            assert is_socket_live(socket_path)
+        finally:
+            release_control_server("s1", os.getpid(), server)
+
+    def test_get_or_start_reuses_existing_server(self, socket_path, registry, context):
+        server1 = get_or_start_control_server(
+            session_id="s2",
+            pid=os.getpid(),
+            registry=registry,
+            context=context,
+            socket_path=socket_path,
+        )
+        server2 = get_or_start_control_server(
+            session_id="s2",
+            pid=os.getpid(),
+            registry=registry,
+            context=context,
+            socket_path=socket_path,
+        )
+        try:
+            assert server1 is server2
+            assert is_socket_live(socket_path)
+        finally:
+            release_control_server("s2", os.getpid(), server1)
+            release_control_server("s2", os.getpid(), server2)
+
+    def test_reference_counting_keeps_server_alive(self, socket_path, registry, context):
+        server1 = get_or_start_control_server(
+            session_id="s3",
+            pid=os.getpid(),
+            registry=registry,
+            context=context,
+            socket_path=socket_path,
+        )
+        server2 = get_or_start_control_server(
+            session_id="s3",
+            pid=os.getpid(),
+            registry=registry,
+            context=context,
+            socket_path=socket_path,
+        )
+        try:
+            release_control_server("s3", os.getpid(), server1)
+            assert server1.is_running()
+            assert is_socket_live(socket_path)
+        finally:
+            release_control_server("s3", os.getpid(), server2)
+
+    def test_last_release_stops_server(self, socket_path, registry, context):
+        server = get_or_start_control_server(
+            session_id="s4",
+            pid=os.getpid(),
+            registry=registry,
+            context=context,
+            socket_path=socket_path,
+        )
+        release_control_server("s4", os.getpid(), server)
+        time.sleep(0.1)
+        assert not server.is_running()
+        assert not os.path.exists(socket_path)
+
+    def test_different_sessions_are_isolated(self, socket_path, registry, context):
+        base_dir = os.path.dirname(socket_path)
+        path_a = os.path.join(base_dir, "session_a.sock")
+        path_b = os.path.join(base_dir, "session_b.sock")
+
+        server_a = get_or_start_control_server(
+            session_id="session-a",
+            pid=os.getpid(),
+            registry=registry,
+            context=context,
+            socket_path=path_a,
+        )
+        server_b = get_or_start_control_server(
+            session_id="session-b",
+            pid=os.getpid(),
+            registry=registry,
+            context=context,
+            socket_path=path_b,
+        )
+        try:
+            assert server_a is not server_b
+            assert is_socket_live(path_a)
+            assert is_socket_live(path_b)
+        finally:
+            release_control_server("session-a", os.getpid(), server_a)
+            release_control_server("session-b", os.getpid(), server_b)
+
+    def test_concurrent_get_or_start_returns_single_server(self, socket_path, registry, context):
+        servers = []
+        errors = []
+
+        def worker():
+            try:
+                srv = get_or_start_control_server(
+                    session_id="s5",
+                    pid=os.getpid(),
+                    registry=registry,
+                    context=context,
+                    socket_path=socket_path,
+                )
+                servers.append(srv)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        try:
+            assert not errors
+            assert len({id(s) for s in servers}) == 1
+            assert servers[0].is_running()
+        finally:
+            for _ in range(len(servers)):
+                release_control_server("s5", os.getpid(), servers[0])
+
+    def test_reuse_after_server_stopped(self, socket_path, registry, context):
+        server1 = get_or_start_control_server(
+            session_id="s6",
+            pid=os.getpid(),
+            registry=registry,
+            context=context,
+            socket_path=socket_path,
+        )
+        release_control_server("s6", os.getpid(), server1)
+        time.sleep(0.1)
+
+        server2 = get_or_start_control_server(
+            session_id="s6",
+            pid=os.getpid(),
+            registry=registry,
+            context=context,
+            socket_path=socket_path,
+        )
+        try:
+            assert server1 is not server2
+            assert server2.is_running()
+        finally:
+            release_control_server("s6", os.getpid(), server2)

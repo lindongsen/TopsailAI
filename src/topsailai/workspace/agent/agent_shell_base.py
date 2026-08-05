@@ -177,7 +177,12 @@ class AgentChat(AgentChatBase):
         except OSError as e:
             logger.warning("Failed to clear hard interrupt flag %s: %s", flag_path, e)
     def _start_control_server(self):
-        """Start the per-process control channel server if not already running."""
+        """Acquire the shared per-process control channel server if available.
+
+        Only one control server is started per (session_id, pid) combination
+        inside a single process. Subsequent AgentChat instances (e.g. subagents)
+        reuse the existing server instead of creating a new one.
+        """
         if self.control_server is not None:
             return
 
@@ -186,40 +191,55 @@ class AgentChat(AgentChatBase):
             register_control_handlers(registry)
 
             session_id = self.ctx_runtime_data.session_id or env_tool.get_session_id() or "topsailai"
+            pid = os.getpid()
             context = ControlContext(
                 session_id=session_id,
-                pid=os.getpid(),
+                pid=pid,
                 agent_chat=self,
             )
 
-            from topsailai.workspace.control_channel.server import resolve_socket_path
-            socket_path = resolve_socket_path(session_id)
+            from topsailai.workspace.control_channel.server import (
+                get_or_start_control_server,
+            )
 
-            server = ControlServer(
-                socket_path=socket_path,
+            server = get_or_start_control_server(
+                session_id=session_id,
+                pid=pid,
                 registry=registry,
                 context=context,
             )
-            server.start()
             self.control_server = server
-            logger.info("Started control channel server at %s", server.socket_path)
+            logger.info("Acquired control channel server at %s", server.socket_path)
         except Exception as e:
-            logger.warning("Failed to start control channel server: %s", e)
+            logger.warning("Failed to acquire control channel server: %s", e)
             self.control_server = None
 
     def _stop_control_server(self):
-        """Stop the per-process control channel server if running."""
+        """Release the shared per-process control channel server reference.
+
+        The underlying server is only stopped when the last AgentChat that
+        acquired it releases its reference.
+        """
         if self.control_server is None:
             return
 
         try:
-            self.control_server.stop()
-            logger.info("Stopped control channel server")
+            session_id = self.ctx_runtime_data.session_id or env_tool.get_session_id() or "topsailai"
+            pid = os.getpid()
+            from topsailai.workspace.control_channel.server import (
+                release_control_server,
+            )
+
+            release_control_server(
+                session_id=session_id,
+                pid=pid,
+                server=self.control_server,
+            )
+            logger.info("Released control channel server reference")
         except Exception as e:
-            logger.warning("Failed to stop control channel server: %s", e)
+            logger.warning("Failed to release control channel server: %s", e)
         finally:
             self.control_server = None
-
     def _run(
             self,
             message:str=None,

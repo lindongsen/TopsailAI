@@ -83,3 +83,16 @@ Key logic:
 - `workspace/context/ctx_runtime.py` and `workspace/context/agent2llm.py` use `_message_in_list()` for tail-offset and last-user-message deduplication, preventing duplicate content from appearing in summarized context.
 
 System impact: Summarized context is now free of duplicate messages caused by object reconstruction or JSON-string content, while preserving the original ordering and head/tail offsets. Unit tests cover string, non-string, list, dict, nested JSON-string, and task-message scenarios.
+
+## Control Channel Server Singleton per Session+PID
+
+Ensured that only one control channel server is started per `(session_id, pid)` combination inside a single process, even when multiple `AgentChat` instances (such as subagents) are created for the same session.
+
+Key logic:
+- `workspace/control_channel/server.py` now maintains a process-level registry `_control_servers` mapping `(session_id, pid)` to a shared `ControlServer` entry with reference counting.
+- `get_or_start_control_server()` returns an existing live server when one is already registered, and creates a new one otherwise. A `threading.Lock` protects the registry so concurrent callers cannot create duplicate servers.
+- `release_control_server()` decrements the reference count and only stops the server when the last holder releases it, preventing the first exiting `AgentChat` from tearing down a server still used by others.
+- `workspace/control_channel/transport.py` gained `is_socket_live()` to probe whether a UDS file has an active listener. `create_unix_socket()` now refuses to remove a live socket and only removes stale files, avoiding the race where a second `AgentChat` deletes the first agent's listening socket.
+- `workspace/agent/agent_shell_base.py` updated `AgentChat._start_control_server()` to acquire the shared server and `_stop_control_server()` to release its reference.
+
+System impact: Subagent scenarios that create multiple `AgentChat` instances in the same process and session no longer collide on the control socket or start redundant servers. The control channel continues to serve the first registered `AgentChat` for the session; it does not add per-agent routing.

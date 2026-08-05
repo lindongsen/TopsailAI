@@ -16,6 +16,7 @@ import logging
 import os
 import socket
 import threading
+from dataclasses import dataclass
 from typing import Optional
 
 from topsailai.utils import env_tool
@@ -201,3 +202,135 @@ class ControlServer:
                 error=e.message,
             )
         return self.registry.handle(request, self.context)
+
+
+@dataclass
+class _ServerEntry:
+    """Internal record for a shared ControlServer instance."""
+
+    server: ControlServer
+    ref_count: int = 1
+
+
+# Process-level registry mapping (session_id, pid) to a shared ControlServer.
+# This guarantees that only one control server is started per session+pid
+# combination inside a single process, even when multiple AgentChat instances
+# (e.g. subagents) are created for the same session.
+_control_servers: dict[tuple[str, int], _ServerEntry] = {}
+_servers_lock = threading.Lock()
+
+
+def get_or_start_control_server(
+    session_id: str,
+    pid: int,
+    registry: ControlHandlerRegistry,
+    context: ControlContext,
+    socket_path: Optional[str] = None,
+    backlog: Optional[int] = None,
+    timeout: Optional[float] = None,
+) -> ControlServer:
+    """Return an existing ControlServer for (session_id, pid) or create one.
+
+    The server is shared across all callers in the same process that target
+    the same session and pid. Reference counting keeps the server alive until
+    the last caller releases it.
+
+    Args:
+        session_id: Session identifier.
+        pid: Process identifier.
+        registry: Handler registry for dispatching requests.
+        context: Runtime context passed to handlers. The context of the first
+            caller is used for the lifetime of the shared server.
+        socket_path: Optional explicit socket path. Defaults to the standard
+            session-scoped path.
+        backlog: Optional listen backlog.
+        timeout: Optional accept timeout.
+
+    Returns:
+        The shared ControlServer instance.
+    """
+    key = (session_id, pid)
+    with _servers_lock:
+        entry = _control_servers.get(key)
+        if entry is not None and entry.server.is_running():
+            entry.ref_count += 1
+            logger.debug(
+                "reusing control server for session=%s pid=%s (ref_count=%s)",
+                session_id,
+                pid,
+                entry.ref_count,
+            )
+            return entry.server
+
+        if socket_path is None:
+            socket_path = resolve_socket_path(session_id)
+
+        server = ControlServer(
+            socket_path=socket_path,
+            registry=registry,
+            context=context,
+            backlog=backlog,
+            timeout=timeout,
+        )
+        server.start()
+        _control_servers[key] = _ServerEntry(server=server, ref_count=1)
+        logger.info(
+            "started shared control channel server at %s for session=%s pid=%s",
+            socket_path,
+            session_id,
+            pid,
+        )
+        return server
+
+
+def release_control_server(
+    session_id: str,
+    pid: int,
+    server: Optional[ControlServer] = None,
+) -> None:
+    """Release one reference to the shared ControlServer for (session_id, pid).
+
+    When the reference count reaches zero, the server is stopped and the
+    socket file is removed.
+
+    Args:
+        session_id: Session identifier.
+        pid: Process identifier.
+        server: Optional server instance to validate against the registry.
+    """
+    key = (session_id, pid)
+    with _servers_lock:
+        entry = _control_servers.get(key)
+        if entry is None:
+            logger.debug(
+                "no shared control server to release for session=%s pid=%s",
+                session_id,
+                pid,
+            )
+            return
+        if server is not None and entry.server is not server:
+            logger.warning(
+                "release_control_server called with mismatched server for session=%s pid=%s",
+                session_id,
+                pid,
+            )
+            return
+
+        entry.ref_count -= 1
+        logger.debug(
+            "released control server for session=%s pid=%s (ref_count=%s)",
+            session_id,
+            pid,
+            entry.ref_count,
+        )
+        if entry.ref_count <= 0:
+            try:
+                entry.server.stop()
+            except Exception as e:
+                logger.warning("failed to stop shared control server: %s", e)
+            _control_servers.pop(key, None)
+            logger.info(
+                "stopped shared control channel server for session=%s pid=%s",
+                session_id,
+                pid,
+            )

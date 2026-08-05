@@ -17,22 +17,64 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
-def create_unix_socket(socket_path: str, backlog: int = 128) -> socket.socket:
+def is_socket_live(socket_path: str, timeout: float = 0.5) -> bool:
+    """Probe whether a Unix Domain Socket has a live server accepting connections.
+
+    A socket file may exist even when no server is listening (e.g. after a
+    crash). This function attempts a non-blocking connect to distinguish a
+    live endpoint from a stale file.
+
+    Args:
+        socket_path: Filesystem path for the UDS endpoint.
+        timeout: Maximum seconds to wait for the connect to succeed.
+
+    Returns:
+        True if a server is listening on the socket path, False otherwise.
+    """
+    if not socket_path or not os.path.exists(socket_path):
+        return False
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+            probe.settimeout(timeout)
+            probe.connect(socket_path)
+            return True
+    except (OSError, socket.timeout):
+        return False
+
+
+def create_unix_socket(
+    socket_path: str,
+    backlog: int = 128,
+    *,
+    remove_existing: bool = True,
+) -> socket.socket:
     """Create and bind a Unix Domain Socket.
 
-    Any existing socket file at the path is removed before binding.
+    By default any existing socket file at the path is removed before binding.
+    When ``remove_existing`` is False, a stale file is still removed, but a
+    live socket (one with a listening server) is left in place and the bind
+    will raise ``OSError`` instead of destroying it.
 
     Args:
         socket_path: Filesystem path for the UDS endpoint.
         backlog: Listen backlog size.
+        remove_existing: When False, refuse to remove a live socket file.
 
     Returns:
         A bound and listening socket.socket instance.
 
     Raises:
-        OSError: If the socket cannot be created or bound.
+        OSError: If the socket cannot be created or bound, or if a live socket
+            already exists and ``remove_existing`` is False.
     """
-    remove_socket_file(socket_path)
+    if os.path.exists(socket_path):
+        if is_socket_live(socket_path):
+            raise OSError(f"control socket is already live: {socket_path}")
+        if remove_existing:
+            remove_socket_file(socket_path)
+        else:
+            raise OSError(f"control socket already exists: {socket_path}")
+
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         sock.bind(socket_path)
