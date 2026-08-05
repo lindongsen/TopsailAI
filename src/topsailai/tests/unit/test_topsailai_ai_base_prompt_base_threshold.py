@@ -212,8 +212,9 @@ class TestThresholdContextHistory(unittest.TestCase):
         self.assertFalse(result)
 
     @patch("topsailai.ai_base.prompt_base.count_tokens")
-    def test_is_exceeded_by_msg_len(self, mock_count_tokens):
-        """Test is_exceeded returns True when message length exceeds threshold."""
+    @patch("topsailai.ai_base.prompt_base.thread_local_tool")
+    def test_is_exceeded_by_msg_len(self, mock_thread_local_tool, mock_count_tokens):
+        """Test is_exceeded returns False when only message length exceeds threshold."""
         from topsailai.ai_base.prompt_base import ThresholdContextHistory
         instance = ThresholdContextHistory()
 
@@ -221,8 +222,14 @@ class TestThresholdContextHistory(unittest.TestCase):
         messages = [{"role": "user", "content": f"msg{i}"} for i in range(50)]
         mock_count_tokens.return_value = 100  # Low token count
 
+        # uncached_tokens below threshold should prevent link_message
+        mock_agent = MagicMock()
+        mock_agent.llm_model.tokenStat.current_tokens = 100
+        mock_agent.llm_model.tokenStat.uncached_tokens = 100
+        mock_thread_local_tool.get_agent_object.return_value = mock_agent
+
         result = instance.is_exceeded(messages)
-        self.assertTrue(result)
+        self.assertFalse(result)
 
     @patch("topsailai.ai_base.prompt_base.count_tokens")
     def test_is_exceeded_by_token_ratio(self, mock_count_tokens):

@@ -179,8 +179,6 @@ class ThresholdContextHistory(object):
         # such as "No tool call found for function call output with call_id".
         if is_use_tool_calls():
             return False
-        if self.exceed_msg_len(len(messages)):
-            return True
         # check cached_tokens first
         agent = thread_local_tool.get_agent_object()
 
