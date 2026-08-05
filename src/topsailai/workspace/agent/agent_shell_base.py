@@ -40,6 +40,7 @@ from topsailai.workspace.control_channel import ControlServer
 from topsailai.workspace.control_channel.handler import ControlHandlerRegistry
 from topsailai.workspace.control_channel.protocol import ControlContext
 from topsailai.workspace.control_handlers import register_control_handlers
+from topsailai.workspace.folder_utils import resolve_session_id_for_files
 from topsailai.workspace.input_tool import (
     get_message,
     input_message,
@@ -53,7 +54,6 @@ from topsailai.workspace.print_tool import (
     decorator_tee_output_by_session,
 )
 from topsailai.workspace import terminal_title
-
 
 def _get_session_token_totals(session_id: str, ai_agent) -> tuple[int, int]:
     """
@@ -153,9 +153,7 @@ class AgentChat(AgentChatBase):
     def _clear_interrupt_state(self):
         """Clear the interrupted state and any current-process flag file."""
         self.interrupted = False
-        session_id = self.ctx_runtime_data.session_id or env_tool.get_session_id()
-        if not session_id:
-            return
+        session_id = resolve_session_id_for_files(self.ctx_runtime_data)
 
         from topsailai.workspace.folder_constants import (
             FOLDER_WORKSPACE_TASK,
@@ -176,6 +174,7 @@ class AgentChat(AgentChatBase):
             pass
         except OSError as e:
             logger.warning("Failed to clear hard interrupt flag %s: %s", flag_path, e)
+
     def _start_control_server(self):
         """Acquire the shared per-process control channel server if available.
 
@@ -190,7 +189,7 @@ class AgentChat(AgentChatBase):
             registry = ControlHandlerRegistry()
             register_control_handlers(registry)
 
-            session_id = self.ctx_runtime_data.session_id or env_tool.get_session_id() or "topsailai"
+            session_id = resolve_session_id_for_files(self.ctx_runtime_data)
             pid = os.getpid()
             context = ControlContext(
                 session_id=session_id,
@@ -213,7 +212,6 @@ class AgentChat(AgentChatBase):
         except Exception as e:
             logger.warning("Failed to acquire control channel server: %s", e)
             self.control_server = None
-
     def _stop_control_server(self):
         """Release the shared per-process control channel server reference.
 
@@ -224,7 +222,7 @@ class AgentChat(AgentChatBase):
             return
 
         try:
-            session_id = self.ctx_runtime_data.session_id or env_tool.get_session_id() or "topsailai"
+            session_id = resolve_session_id_for_files(self.ctx_runtime_data)
             pid = os.getpid()
             from topsailai.workspace.control_channel.server import (
                 release_control_server,
@@ -240,6 +238,7 @@ class AgentChat(AgentChatBase):
             logger.warning("Failed to release control channel server: %s", e)
         finally:
             self.control_server = None
+
     def _run(
             self,
             message:str=None,

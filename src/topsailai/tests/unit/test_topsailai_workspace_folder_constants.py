@@ -1,9 +1,9 @@
 """
-Unit tests for topsailai.workspace.folder_constants module.
+Unit tests for topsailai.workspace.folder_constants and folder_utils modules.
 
 This module tests the folder constants configuration for the TopsailAI system.
 It verifies that all folder paths are correctly defined and follow the expected
-hierarchical structure.
+hierarchical structure, and that session id resolution helpers behave correctly.
 
 Author: AI
 Created: 2026-04-18
@@ -11,6 +11,8 @@ Created: 2026-04-18
 
 import os
 import unittest
+from unittest.mock import patch
+
 from topsailai.workspace.folder_constants import (
     FOLDER_ROOT,
     FOLDER_WORKSPACE,
@@ -22,7 +24,11 @@ from topsailai.workspace.folder_constants import (
     FOLDER_WORKSPACE_TASK,
     TOPSAILAI_HOME,
 )
-
+from topsailai.workspace.folder_utils import (
+    resolve_session_id_for_files,
+    get_interrupt_flag_path,
+    get_control_socket_path,
+)
 
 class TestFolderConstantsRoot(unittest.TestCase):
     """Test cases for root folder constants."""
@@ -209,6 +215,51 @@ class TestFolderHierarchy(unittest.TestCase):
                 folder.endswith("/"),
                 f"{folder} should not end with a trailing slash",
             )
+
+class TestResolveSessionIdForFiles(unittest.TestCase):
+    """Test cases for resolve_session_id_for_files fallback chain."""
+
+    def test_uses_ctx_runtime_data_session_id(self):
+        """When ctx_runtime_data has a session id, it is returned."""
+        ctx = type("Ctx", (), {"session_id": "session-from-ctx"})()
+        self.assertEqual(resolve_session_id_for_files(ctx), "session-from-ctx")
+
+    def test_skips_empty_ctx_session_id(self):
+        """Empty ctx session id falls back to environment/default."""
+        ctx = type("Ctx", (), {"session_id": ""})()
+        with patch("topsailai.workspace.folder_utils.env_tool.get_session_id", return_value="env-session"):
+            self.assertEqual(resolve_session_id_for_files(ctx), "env-session")
+
+    def test_falls_back_to_env_session_id(self):
+        """Without ctx, the environment session id is used."""
+        with patch("topsailai.workspace.folder_utils.env_tool.get_session_id", return_value="env-session"):
+            self.assertEqual(resolve_session_id_for_files(), "env-session")
+
+    def test_defaults_to_topsailai(self):
+        """When nothing else is available, default to 'topsailai'."""
+        with patch("topsailai.workspace.folder_utils.env_tool.get_session_id", return_value=None):
+            self.assertEqual(resolve_session_id_for_files(), "topsailai")
+
+    def test_none_ctx_uses_env(self):
+        """Passing None as ctx falls back to environment/default."""
+        with patch("topsailai.workspace.folder_utils.env_tool.get_session_id", return_value="env-for-none"):
+            self.assertEqual(resolve_session_id_for_files(None), "env-for-none")
+
+
+class TestFolderUtilsPaths(unittest.TestCase):
+    """Test cases for folder_utils path builders."""
+
+    def test_get_interrupt_flag_path(self):
+        """Interrupt flag path contains session id and pid."""
+        path = get_interrupt_flag_path("/tmp/task", "abc", 123)
+        self.assertTrue(path.endswith("/abc.123.session.agent2llm_interrupt.flag"))
+        self.assertTrue(os.path.isabs(path))
+
+    def test_get_control_socket_path(self):
+        """Control socket path contains session id and pid."""
+        path = get_control_socket_path("/tmp/task", "abc", 123)
+        self.assertTrue(path.endswith("/abc.123.session.sock"))
+        self.assertTrue(os.path.isabs(path))
 
 
 if __name__ == "__main__":

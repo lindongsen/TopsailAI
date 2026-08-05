@@ -36,8 +36,7 @@ from topsailai.workspace.control_channel.transport import (
     send_bytes,
 )
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
-from topsailai.workspace.folder_utils import get_control_socket_path
-
+from topsailai.workspace.folder_utils import get_control_socket_path, resolve_session_id_for_files
 logger = logging.getLogger(__name__)
 
 
@@ -52,15 +51,15 @@ def resolve_socket_path(session_id: Optional[str] = None) -> str:
     ``{FOLDER_WORKSPACE_TASK}/{session_id}.{pid}.session.sock``.
 
     Args:
-        session_id: Optional session ID. Falls back to env_tool.get_session_id().
+        session_id: Optional explicit session ID. When omitted or empty, the
+            session id is resolved via ``resolve_session_id_for_files``.
 
     Returns:
         Absolute path for the control socket.
     """
     if not session_id:
-        session_id = env_tool.get_session_id() or "topsailai"
+        session_id = resolve_session_id_for_files()
     return get_control_socket_path(FOLDER_WORKSPACE_TASK, session_id, os.getpid())
-
 
 def get_backlog() -> int:
     """Return the configured listen backlog."""

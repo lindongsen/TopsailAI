@@ -14,7 +14,6 @@ import os
 import tempfile
 
 from topsailai.ai_base.constants import ROLE_USER, STEP_NAME_OBSERVATION
-from topsailai.utils import env_tool
 from topsailai.workspace.control_channel.handler import ControlHandler
 from topsailai.workspace.control_channel.protocol import (
     ControlContext,
@@ -26,6 +25,7 @@ from topsailai.workspace.folder_constants import (
 )
 from topsailai.workspace.folder_utils import (
     get_interrupt_flag_path,
+    resolve_session_id_for_files,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,12 +37,18 @@ DEFAULT_SOFT_INTERRUPT_MESSAGE = (
 )
 
 
-def _resolve_session_id(context: ControlContext) -> str | None:
-    """Return session_id from context or environment."""
+def _resolve_session_id(context: ControlContext) -> str:
+    """Return session_id from context or resolve it for file naming.
+
+    The resolved value follows the same fallback convention used for all
+    session-scoped runtime files: explicit context value, then environment
+    session id, then the default ``"topsailai"`` placeholder.
+    """
     if context.session_id:
         return context.session_id
-    return env_tool.get_session_id()
-
+    if context.ctx_runtime_data is not None:
+        return resolve_session_id_for_files(context.ctx_runtime_data)
+    return resolve_session_id_for_files()
 
 def _resolve_pid(context: ControlContext) -> int | None:
     """Return pid from context or current process."""
@@ -97,7 +103,6 @@ def _validate_target(context: ControlContext) -> tuple[str, int, str] | ControlR
         )
 
     return session_id, pid, task_folder
-
 
 def _atomic_write_flag(flag_path: str) -> bool:
     """Atomically write a hard-interrupt flag file.

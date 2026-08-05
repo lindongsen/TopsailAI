@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 
 from topsailai.ai_base.agent2llm_message_source import Agent2LLMMessageSource
 from topsailai.ai_base.constants import ROLE_USER, STEP_NAME_OBSERVATION
-from topsailai.utils import env_tool
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
+from topsailai.workspace.folder_utils import resolve_session_id_for_files
 
 logger = logging.getLogger(__name__)
 
@@ -26,19 +26,18 @@ def get_default_inject_message_file_path(session_id: str | None = None) -> str:
     ``{FOLDER_WORKSPACE_TASK}/{session_id}.{pid}.session.agent2llm_inject_messages.jsonl``.
 
     Args:
-        session_id: Optional session ID. When omitted or empty, falls back to
-            ``env_tool.get_session_id() or "topsailai"``.
+        session_id: Optional explicit session ID. When omitted or empty, the
+            session id is resolved via ``resolve_session_id_for_files``.
 
     Returns:
         Absolute path to the default inject message file.
     """
     if not session_id:
-        session_id = env_tool.get_session_id() or "topsailai"
+        session_id = resolve_session_id_for_files()
     return os.path.join(
         FOLDER_WORKSPACE_TASK,
         f"{session_id}.{os.getpid()}.session.agent2llm_inject_messages.jsonl",
     )
-
 
 def write_message(
     file_path: str,

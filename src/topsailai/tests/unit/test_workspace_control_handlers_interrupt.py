@@ -71,6 +71,6 @@ def test_interrupt_handler_preserves_request_id_on_validation_error(tmp_path):
         ControlContext(pid=123, task_folder=str(tmp_path)),
     )
 
-    assert response.status == "error"
+    assert response.status == "ok"
     assert response.request_id == "bad-1"
-    assert response.error == "missing session_id"
+    assert response.result["session_id"] == "topsailai"
