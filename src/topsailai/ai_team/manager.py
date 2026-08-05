@@ -79,6 +79,9 @@ def get_team_list() -> list[dict]:
             if member[f"is_able_to_call_{ext}"]:
                 os.system(f"chmod +x {f_ext}")
 
+    team_list.sort(key=lambda m: m["member_id"])
+    g_members[:] = [m["member_id"] for m in team_list]
+
     return team_list
 
 
