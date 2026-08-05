@@ -105,7 +105,7 @@ def disable_flag_print_step():
     g_flag_print_step = False
 
 def print_with_time(msg, need_format=False):
-    """Print a message with a timestamp and optional agent name prefix.
+    """Print a message with a timestamp and optional agent/model name prefix.
 
     Args:
         msg: Message string to print
@@ -113,6 +113,7 @@ def print_with_time(msg, need_format=False):
     The output format includes:
     - Current timestamp in YYYY-MM-DD HH:MM:SS format
     - Optional agent name if set in thread-local storage
+    - Optional model name from the active agent's LLM model
     - The message content
     """
     from . import env_tool
@@ -136,8 +137,18 @@ def print_with_time(msg, need_format=False):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     content = (f"[{now}] {msg}")
     agent_name = thread_local_tool.get_thread_var(thread_local_tool.KEY_AGENT_NAME)
+    model_name = ""
+    agent_obj = thread_local_tool.get_thread_var(thread_local_tool.KEY_AGENT_OBJECT)
+    if agent_obj is not None and hasattr(agent_obj, "llm_model"):
+        model_name = getattr(agent_obj.llm_model, "model_name", "") or ""
+
+    prefix_parts = []
     if agent_name:
-        content = f"[{agent_name}] " + content
+        prefix_parts.append(f"[{agent_name}]")
+    if model_name:
+        prefix_parts.append(f"[{model_name}]")
+    if prefix_parts:
+        content = " ".join(prefix_parts) + " " + content
 
     print(content)
 

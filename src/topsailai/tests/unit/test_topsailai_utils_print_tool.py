@@ -311,5 +311,84 @@ class TestPrintTool(unittest.TestCase):
         self.assertEqual(result, expected)
 
 
+    @patch('topsailai.utils.print_tool.print')
+    @patch('topsailai.utils.print_tool.datetime')
+    @patch('topsailai.utils.print_tool.thread_local_tool.get_thread_var')
+    @patch('topsailai.utils.env_tool.is_interactive_mode')
+    def test_print_with_time_no_prefix(self, mock_is_interactive_mode, mock_get_thread_var, mock_datetime, mock_print):
+        """Test print_with_time with no agent or model name."""
+        mock_is_interactive_mode.return_value = True
+        mock_get_thread_var.return_value = None
+        mock_datetime.now.return_value.strftime.return_value = "2026-01-01 00:00:00"
+
+        print_tool.print_with_time('test message')
+
+        mock_print.assert_called_once_with('[2026-01-01 00:00:00] test message')
+
+    @patch('topsailai.utils.print_tool.print')
+    @patch('topsailai.utils.print_tool.datetime')
+    @patch('topsailai.utils.print_tool.thread_local_tool.get_thread_var')
+    @patch('topsailai.utils.env_tool.is_interactive_mode')
+    def test_print_with_time_agent_name_only(self, mock_is_interactive_mode, mock_get_thread_var, mock_datetime, mock_print):
+        """Test print_with_time with only agent name."""
+        mock_is_interactive_mode.return_value = True
+
+        def _get_thread_var(name, default=None):
+            if name == print_tool.thread_local_tool.KEY_AGENT_NAME:
+                return "TestAgent"
+            return None
+        mock_get_thread_var.side_effect = _get_thread_var
+        mock_datetime.now.return_value.strftime.return_value = "2026-01-01 00:00:00"
+
+        print_tool.print_with_time('test message')
+
+        mock_print.assert_called_once_with('[TestAgent] [2026-01-01 00:00:00] test message')
+
+    @patch('topsailai.utils.print_tool.print')
+    @patch('topsailai.utils.print_tool.datetime')
+    @patch('topsailai.utils.print_tool.thread_local_tool.get_thread_var')
+    @patch('topsailai.utils.env_tool.is_interactive_mode')
+    def test_print_with_time_model_name_only(self, mock_is_interactive_mode, mock_get_thread_var, mock_datetime, mock_print):
+        """Test print_with_time with only model name from agent object."""
+        mock_is_interactive_mode.return_value = True
+
+        agent_obj = MagicMock()
+        agent_obj.llm_model.model_name = "TestModel"
+
+        def _get_thread_var(name, default=None):
+            if name == print_tool.thread_local_tool.KEY_AGENT_OBJECT:
+                return agent_obj
+            return None
+        mock_get_thread_var.side_effect = _get_thread_var
+        mock_datetime.now.return_value.strftime.return_value = "2026-01-01 00:00:00"
+
+        print_tool.print_with_time('test message')
+
+        mock_print.assert_called_once_with('[TestModel] [2026-01-01 00:00:00] test message')
+
+    @patch('topsailai.utils.print_tool.print')
+    @patch('topsailai.utils.print_tool.datetime')
+    @patch('topsailai.utils.print_tool.thread_local_tool.get_thread_var')
+    @patch('topsailai.utils.env_tool.is_interactive_mode')
+    def test_print_with_time_agent_and_model_name(self, mock_is_interactive_mode, mock_get_thread_var, mock_datetime, mock_print):
+        """Test print_with_time with both agent name and model name."""
+        mock_is_interactive_mode.return_value = True
+
+        agent_obj = MagicMock()
+        agent_obj.llm_model.model_name = "TestModel"
+
+        def _get_thread_var(name, default=None):
+            if name == print_tool.thread_local_tool.KEY_AGENT_NAME:
+                return "TestAgent"
+            if name == print_tool.thread_local_tool.KEY_AGENT_OBJECT:
+                return agent_obj
+            return None
+        mock_get_thread_var.side_effect = _get_thread_var
+        mock_datetime.now.return_value.strftime.return_value = "2026-01-01 00:00:00"
+
+        print_tool.print_with_time('test message')
+
+        mock_print.assert_called_once_with('[TestAgent] [TestModel] [2026-01-01 00:00:00] test message')
+
 if __name__ == '__main__':
     unittest.main()
