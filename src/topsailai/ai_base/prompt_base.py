@@ -174,6 +174,14 @@ class ThresholdContextHistory(object):
         Returns:
             bool: True if either message length or token ratio is exceeded, False otherwise
         """
+        # Requirement: link_message must NOT be triggered by message count alone.
+        # The uncached_tokens threshold is the primary gate. When uncached_tokens
+        # has not exceeded its configured ratio, is_exceeded() returns False even
+        # if the message list length is above CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH.
+        # This avoids unnecessary archiving that can break tool call pairings.
+        #
+        # When agent/token stats are unavailable, fall back to estimating tokens
+        # from the full message list and checking the current_tokens ratio.
         # Native tool calls require an intact tool_calls/tool_call_id pairing.
         # Archiving (linking) breaks that pairing and causes provider errors
         # such as "No tool call found for function call output with call_id".
