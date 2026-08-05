@@ -5,6 +5,7 @@ Author: mm-m25
 Purpose: Test agent instruction handlers (system_prompt, env_prompt, tool_prompt, tools)
 """
 
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -249,6 +250,207 @@ class TestGetMessages(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestSetLlm(unittest.TestCase):
+    """Test set_llm() function"""
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_set_llm_by_positional_arg(self, mock_get_agent):
+        """Test /set_llm <model_name>"""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "OldModel"
+        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_get_agent.return_value = mock_agent
+
+        from topsailai.workspace.plugin_instruction.agent import set_llm
+        result = set_llm("NewModel")
+
+        self.assertEqual(mock_agent.llm_model.model_name, "NewModel")
+        self.assertIn("OldModel -> NewModel", result)
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_set_llm_by_key_value(self, mock_get_agent):
+        """Test /set_llm model=<model_name>"""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "OldModel"
+        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_get_agent.return_value = mock_agent
+
+        from topsailai.workspace.plugin_instruction.agent import set_llm
+        result = set_llm("model=NewModel")
+
+        self.assertEqual(mock_agent.llm_model.model_name, "NewModel")
+        self.assertIn("OldModel -> NewModel", result)
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_set_llm_with_endpoint(self, mock_get_agent):
+        """Test /set_llm model=<model_name> base_url=<api_base> api_key=<api_key>"""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "OldModel"
+        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.llm_model.get_llm_model.return_value = "new_client"
+        mock_get_agent.return_value = mock_agent
+
+        from topsailai.workspace.plugin_instruction.agent import set_llm
+        result = set_llm(
+            "model=NewModel",
+            "base_url=https://example.com/v1",
+            "api_key=secret",
+        )
+
+        self.assertEqual(mock_agent.llm_model.model_name, "NewModel")
+        mock_agent.llm_model.get_llm_model.assert_called_once_with(
+            api_key="secret",
+            api_base="https://example.com/v1",
+        )
+        self.assertEqual(mock_agent.llm_model.model, "new_client")
+        self.assertEqual(mock_agent.llm_model.models, [])
+        self.assertIn("NewModel", result)
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_set_llm_api_key_env(self, mock_get_agent):
+        """Test /set_llm model=<model_name> api_key_env=MY_API_KEY"""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "OldModel"
+        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.llm_model.get_llm_model.return_value = "new_client"
+        mock_get_agent.return_value = mock_agent
+
+        with patch.dict(os.environ, {"MY_API_KEY": "env_secret"}):
+            from topsailai.workspace.plugin_instruction.agent import set_llm
+            result = set_llm("model=NewModel", "api_key_env=MY_API_KEY")
+
+        self.assertEqual(mock_agent.llm_model.model_name, "NewModel")
+        mock_agent.llm_model.get_llm_model.assert_called_once_with(
+            api_key="env_secret",
+            api_base="",
+        )
+        self.assertEqual(mock_agent.llm_model.model, "new_client")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_set_llm_no_agent(self, mock_get_agent):
+        """Test set_llm when no agent is available"""
+        mock_get_agent.return_value = None
+
+        from topsailai.workspace.plugin_instruction.agent import set_llm
+        result = set_llm("NewModel")
+
+        self.assertEqual(result, "No active agent")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_set_llm_no_args(self, mock_get_agent):
+        """Test /set_llm with no arguments returns current model"""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "CurrentModel"
+        mock_get_agent.return_value = mock_agent
+
+        from topsailai.workspace.plugin_instruction.agent import set_llm
+        result = set_llm()
+
+        self.assertEqual(result, "Current model: CurrentModel")
+
+
+class TestSelectModel(unittest.TestCase):
+    """Test select_model() function"""
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_list_models(self, mock_load_registry, mock_get_agent):
+        """Test /models lists available models"""
+        mock_agent = MagicMock()
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com"},
+            "ModelB": {"name": "ModelB", "api_base": "https://b.example.com"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model()
+
+        self.assertIn("Available models:", result)
+        self.assertIn("ModelA", result)
+        self.assertIn("ModelB", result)
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_select_model(self, mock_load_registry, mock_get_agent):
+        """Test /models <model_name> applies the selected model"""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "OldModel"
+        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.llm_model.get_llm_model.return_value = "new_client"
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com", "api_key": "key_a"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model("ModelA")
+
+        self.assertEqual(mock_agent.llm_model.model_name, "ModelA")
+        mock_agent.llm_model.get_llm_model.assert_called_once_with(
+            api_key="key_a",
+            api_base="https://a.example.com",
+        )
+        self.assertEqual(mock_agent.llm_model.model, "new_client")
+        self.assertEqual(mock_agent.llm_model.models, [])
+        self.assertIn("ModelA", result)
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_select_model_not_found(self, mock_load_registry, mock_get_agent):
+        """Test /models with unknown model name"""
+        mock_agent = MagicMock()
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {}
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model("Unknown")
+
+        self.assertEqual(result, "Model not found: Unknown")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_select_model_no_agent(self, mock_get_agent):
+        """Test select_model when no agent is available"""
+        mock_get_agent.return_value = None
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model()
+
+        self.assertEqual(result, "No active agent")
+
+
+class TestLoadModelsRegistry(unittest.TestCase):
+    """Test _load_models_registry() function"""
+
+    @patch("topsailai.workspace.plugin_instruction.agent.os.path.exists")
+    @patch("builtins.open")
+    def test_load_registry(self, mock_open, mock_exists):
+        """Test loading a valid models registry"""
+        mock_exists.return_value = True
+        mock_file = MagicMock()
+        mock_file.__iter__.return_value = iter([
+            '{"name": "ModelA", "api_base": "https://a.example.com"}\n',
+            '{"name": "ModelB", "api_base": "https://b.example.com"}\n',
+        ])
+        mock_open.return_value.__enter__.return_value = mock_file
+
+        from topsailai.workspace.plugin_instruction.agent import _load_models_registry
+        registry = _load_models_registry()
+
+        self.assertEqual(len(registry), 2)
+        self.assertEqual(registry["ModelA"]["api_base"], "https://a.example.com")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.os.path.exists")
+    def test_missing_registry(self, mock_exists):
+        """Test missing registry file returns empty dict"""
+        mock_exists.return_value = False
+
+        from topsailai.workspace.plugin_instruction.agent import _load_models_registry
+        registry = _load_models_registry()
+
+        self.assertEqual(registry, {})
+
+
 class TestInstructions(unittest.TestCase):
     """Test INSTRUCTIONS dict"""
 
@@ -277,6 +479,11 @@ class TestInstructions(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
         self.assertIn("set_llm", INSTRUCTIONS)
 
+    def test_has_models_key(self):
+        """Test INSTRUCTIONS has 'models' key"""
+        from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
+        self.assertIn("models", INSTRUCTIONS)
+
     def test_has_llm_key(self):
         """Test INSTRUCTIONS has 'llm' key"""
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
@@ -290,7 +497,7 @@ class TestInstructions(unittest.TestCase):
     def test_correct_count(self):
         """Test INSTRUCTIONS has correct number of entries"""
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
-        self.assertEqual(len(INSTRUCTIONS), 7)
+        self.assertEqual(len(INSTRUCTIONS), 8)
 
     def test_values_are_callable(self):
         """Test all INSTRUCTIONS values are callable"""
