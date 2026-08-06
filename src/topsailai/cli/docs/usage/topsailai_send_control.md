@@ -28,7 +28,7 @@ When `--socket-path` is provided, discovery is skipped and only that socket is t
 | `-h`, `--help` | Show the help message and exit. |
 | `-s SESSION_ID`, `--session_id SESSION_ID` | Target only stdout files whose session ID matches this value. |
 | `-p PID`, `--pid PID` | Target only stdout files whose PID matches this value. |
-| `-c COMMAND`, `--command COMMAND` | Control action to send. Supported actions: `hard_interrupt`, `soft_interrupt`, `clear_interrupt`, `get_runtime_messages`. |
+| `-c COMMAND`, `--command COMMAND` | Control action to send. Supported actions: `call_instruction`, `hard_interrupt`, `soft_interrupt`, `clear_interrupt`, `get_runtime_messages`. |
 | `-a ARGS`, `--args ARGS` | JSON object with action-specific arguments. Defaults to `{}`. |
 | `--socket-path SOCKET_PATH` | Send the request directly to this socket path. |
 | `--timeout TIMEOUT` | Set the socket connection timeout in seconds. Defaults to `5.0`. |
@@ -59,6 +59,12 @@ Retrieve runtime messages from a specific process:
 
 ```bash
 topsailai_send_control --pid 12345 --command get_runtime_messages
+```
+
+Invoke a registered `/` instruction with arguments:
+
+```bash
+topsailai_send_control --session_id my-session --command call_instruction --args '{"instruction":"ctx.history","args":["arg1"],"kwargs":{"key":"value"}}'
 ```
 
 Send a supported command with extra arguments:

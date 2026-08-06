@@ -377,6 +377,82 @@ class TestHookInstructionBase(unittest.TestCase):
             hook_inst.call_hook('/test')
             mock_print.assert_called_with("result value")
 
+    def test_call_instruction_returns_result(self):
+        """Test call_instruction returns the instruction result."""
+        hook_inst = self._make_hook_instruction()
+        mock_func = _make_mock_callable()
+        mock_func.return_value = "instruction result"
+        hook_inst.add_hook('/test', mock_func)
+        result = hook_inst.call_instruction('/test')
+        self.assertEqual(result, "instruction result")
+
+    def test_call_instruction_normalizes_trigger_char(self):
+        """Test call_instruction adds trigger char when missing."""
+        hook_inst = self._make_hook_instruction()
+        mock_func = _make_mock_callable()
+        mock_func.return_value = "ok"
+        hook_inst.add_hook('/test', mock_func)
+        result = hook_inst.call_instruction('test')
+        self.assertEqual(result, "ok")
+
+    def test_call_instruction_passes_args_and_kwargs(self):
+        """Test call_instruction forwards args and kwargs."""
+        hook_inst = self._make_hook_instruction()
+        mock_func = _make_mock_callable()
+        hook_inst.add_hook('/test', mock_func)
+        hook_inst.call_instruction('/test', 'arg1', key='value')
+        mock_func.assert_called_once_with('arg1', key='value')
+
+    def test_call_instruction_nonexistent_returns_none(self):
+        """Test call_instruction returns None for unknown instruction."""
+        hook_inst = self._make_hook_instruction()
+        self.assertIsNone(hook_inst.call_instruction('/nonexistent'))
+
+    def test_call_instruction_propagates_exception(self):
+        """Test call_instruction propagates exceptions from the instruction."""
+        hook_inst = self._make_hook_instruction()
+        mock_func = _make_mock_callable()
+        mock_func.side_effect = RuntimeError("boom")
+        hook_inst.add_hook('/test', mock_func)
+        with self.assertRaises(RuntimeError):
+            hook_inst.call_instruction('/test')
+
+    def test_call_instruction_multiple_hooks_returns_last(self):
+        """Test call_instruction returns the last registered result."""
+        hook_inst = self._make_hook_instruction()
+        first = _make_mock_callable()
+        first.return_value = "first"
+        second = _make_mock_callable()
+        second.return_value = "second"
+        hook_inst.add_hook('/test', first)
+        hook_inst.add_hook('/test', second)
+        result = hook_inst.call_instruction('/test')
+        self.assertEqual(result, "second")
+
+    def test_call_instruction_empty_string_returns_none(self):
+        """Test call_instruction returns None for empty string."""
+        hook_inst = self._make_hook_instruction()
+        self.assertIsNone(hook_inst.call_instruction(''))
+
+    def test_call_instruction_whitespace_returns_none(self):
+        """Test call_instruction returns None for whitespace-only input."""
+        hook_inst = self._make_hook_instruction()
+        self.assertIsNone(hook_inst.call_instruction('   '))
+
+    def test_call_instruction_none_returns_none(self):
+        """Test call_instruction returns None for None input."""
+        hook_inst = self._make_hook_instruction()
+        self.assertIsNone(hook_inst.call_instruction(None))
+
+    def test_call_instruction_strips_whitespace_before_resolution(self):
+        """Test call_instruction strips whitespace before resolving the hook."""
+        hook_inst = self._make_hook_instruction()
+        mock_func = _make_mock_callable()
+        mock_func.return_value = "ok"
+        hook_inst.add_hook('/test', mock_func)
+        result = hook_inst.call_instruction('  test  ')
+        self.assertEqual(result, "ok")
+
     def test_load_existing_completions_file_exists(self):
         """Test _load_existing_completions loads valid file."""
         hook_inst = self._make_hook_instruction()
