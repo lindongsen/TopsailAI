@@ -216,6 +216,56 @@ class TestAgentBaseRun(unittest.TestCase):
 
         agent.dump_messages.assert_called_once()
 
+    def test_run_clears_pending_native_tool_calls_before_and_after_success(self):
+        """Test run clears pending native tool calls around successful work."""
+        from topsailai.ai_base.agent_base import AgentBase
+
+        agent = AgentBase(
+            system_prompt="You are a helpful assistant",
+            tools={"tool1": MagicMock()},
+            agent_name="TestAgent"
+        )
+        call_order = []
+        agent.llm_model.clear_pending_native_tool_call_responses.side_effect = (
+            lambda: call_order.append("clear")
+        )
+        agent._run = MagicMock(
+            side_effect=lambda *args: call_order.append("run") or "result"
+        )
+        agent.flag_dump_messages = False
+
+        result = agent.run(self.step_call_mock, "test input")
+
+        self.assertEqual(result, "result")
+        self.assertEqual(call_order, ["clear", "run", "clear"])
+
+    def test_run_clears_pending_native_tool_calls_after_exception(self):
+        """Test run clears pending native tool calls when work raises."""
+        from topsailai.ai_base.agent_base import AgentBase
+
+        agent = AgentBase(
+            system_prompt="You are a helpful assistant",
+            tools={"tool1": MagicMock()},
+            agent_name="TestAgent"
+        )
+        call_order = []
+        agent.llm_model.clear_pending_native_tool_call_responses.side_effect = (
+            lambda: call_order.append("clear")
+        )
+
+        def raise_error(*args):
+            """Record execution before raising the test error."""
+            call_order.append("run")
+            raise RuntimeError("Test error")
+
+        agent._run = MagicMock(side_effect=raise_error)
+        agent.flag_dump_messages = False
+
+        with self.assertRaises(RuntimeError):
+            agent.run(self.step_call_mock, "test input")
+
+        self.assertEqual(call_order, ["clear", "run", "clear"])
+
     def test_run_does_not_unset_agent2llm_message_source(self):
         """Test run does not unset the thread-local source when _run raises.
 

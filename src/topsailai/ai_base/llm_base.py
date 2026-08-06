@@ -9,6 +9,8 @@ import os
 import random
 import time
 import threading
+from collections import deque
+
 import httpx
 import httpcore
 import openai
@@ -74,6 +76,70 @@ _state_visualizer.start()
 
 class LLMModel(LLMModelBase):
     """ openai methods """
+
+    def _get_pending_native_tool_call_responses(self):
+        """Return the per-model FIFO for synthetic native tool-call responses."""
+        queue = getattr(self, "_pending_native_tool_call_responses", None)
+        if queue is None:
+            queue = deque()
+            self._pending_native_tool_call_responses = queue
+        return queue
+
+    def clear_pending_native_tool_call_responses(self):
+        """Discard synthetic native tool-call responses not yet consumed."""
+        queue = self._get_pending_native_tool_call_responses()
+        pending_count = len(queue)
+        queue.clear()
+        if pending_count:
+            logger.debug("cleared %s pending native tool-call responses", pending_count)
+
+    def _split_native_tool_call_response(self, rsp_obj, rsp_content):
+        """Split a native multi-tool-call response into ordered single-call units."""
+        rsp_msg = self.get_response_message(rsp_obj)
+        tool_calls = getattr(rsp_msg, "tool_calls", None) or []
+        if len(tool_calls) <= 1:
+            return rsp_obj, rsp_content
+
+        responses = []
+        for index, tool_call in enumerate(tool_calls):
+            synthetic_content = rsp_content if index == 0 else ""
+            synthetic_rsp_msg = ChatCompletionMessage(
+                role=ROLE_ASSISTANT,
+                content=synthetic_content,
+                tool_calls=[tool_call],
+            )
+            synthetic_content = self.fix_response_content(
+                rsp_obj=synthetic_rsp_msg,
+                rsp_content=synthetic_content,
+            )
+            responses.append((synthetic_rsp_msg, synthetic_content))
+
+        queue = self._get_pending_native_tool_call_responses()
+        queue.extend(responses[1:])
+        logger.debug(
+            "split %s native tool calls into sequential responses",
+            len(responses),
+        )
+        return responses[0]
+
+    def _return_chat_response(
+            self,
+            rsp_obj,
+            rsp_content,
+            messages,
+            for_raw=False,
+            for_response=False,
+        ):
+        """Format and return one real or synthetic chat response."""
+        if for_raw:
+            return rsp_content
+
+        result = format_response(rsp_content, rsp_obj, messages=messages)
+        if not result:
+            raise TypeError("null of response content: [%s]" % rsp_content)
+        if for_response:
+            return rsp_obj, result
+        return result
 
     def get_model_name(self, default="DeepSeek-V3.1-Terminus"):
         return os.getenv("OPENAI_MODEL", default)
@@ -729,6 +795,21 @@ class LLMModel(LLMModelBase):
             Implements exponential backoff and specific error handling for
             various OpenAI API errors including rate limiting, timeouts, etc.
         """
+        pending_responses = self._get_pending_native_tool_call_responses()
+        if pending_responses:
+            rsp_obj, rsp_content = pending_responses.popleft()
+            logger.debug(
+                "dequeued native tool-call response; %s pending",
+                len(pending_responses),
+            )
+            return self._return_chat_response(
+                rsp_obj,
+                rsp_content,
+                messages,
+                for_raw=for_raw,
+                for_response=for_response,
+            )
+
         retry_times = 10
         err_count_map = {}
 
@@ -775,12 +856,16 @@ class LLMModel(LLMModelBase):
                 if for_raw:
                     return rsp_content
 
-                result = format_response(rsp_content, rsp_obj, messages=messages)
-                if not result:
-                    raise TypeError("null of response content: [%s]" % rsp_content)
-                if for_response:
-                    return (rsp_obj, result)
-                return result
+                rsp_obj, rsp_content = self._split_native_tool_call_response(
+                    rsp_obj,
+                    rsp_content,
+                )
+                return self._return_chat_response(
+                    rsp_obj,
+                    rsp_content,
+                    messages,
+                    for_response=for_response,
+                )
             except KeyboardInterrupt:
                 # The LLM service has been stuck for a long time, we can proactively retry
                 input_func = get_agent_runtime_input()

@@ -115,6 +115,16 @@ class AgentBase(AgentTool):
         """
         return self.llm_model.max_tokens
 
+    def _clear_pending_native_tool_call_responses(self):
+        """Clear synthetic native tool-call responses when supported."""
+        clear_pending = getattr(
+            self.llm_model,
+            "clear_pending_native_tool_call_responses",
+            None,
+        )
+        if callable(clear_pending):
+            clear_pending()
+
     def run(self, step_call:StepCallBase, user_input:str):
         """
         Run the agent with the given step call and user input.
@@ -132,9 +142,11 @@ class AgentBase(AgentTool):
                 ctxm_give_agent_name(self.agent_name),
                 ctxm_set_agent(self),
             ):
+            self._clear_pending_native_tool_call_responses()
             try:
                 return self._run(step_call, user_input)
             finally:
+                self._clear_pending_native_tool_call_responses()
                 if self.flag_dump_messages:
                     self.dump_messages()
 

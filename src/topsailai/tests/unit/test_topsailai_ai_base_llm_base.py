@@ -893,6 +893,142 @@ class TestLLMModelChat(unittest.TestCase):
         
         self.assertEqual(result, ["success"])
 
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_splits_native_tool_calls_into_sequential_responses(
+            self,
+            mock_base_init,
+            mock_logger,
+            mock_format,
+        ):
+        """Test multiple native tool calls are returned one at a time in order."""
+        from openai.types.chat import (
+            ChatCompletionMessage,
+            ChatCompletionMessageToolCall,
+        )
+
+        tool_calls = [
+            ChatCompletionMessageToolCall(
+                id="call-1",
+                type="function",
+                function={"name": "tool_one", "arguments": "{}"},
+            ),
+            ChatCompletionMessageToolCall(
+                id="call-2",
+                type="function",
+                function={"name": "tool_two", "arguments": "{}"},
+            ),
+        ]
+        response = ChatCompletionMessage(
+            role="assistant",
+            content="provider thought",
+            tool_calls=tool_calls,
+        )
+        mock_format.return_value = [{"step_name": "action"}]
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(
+            return_value=(response, "provider thought")
+        )
+
+        first_rsp, first_result = model.chat(self.messages, for_response=True)
+        second_rsp, second_result = model.chat(self.messages, for_response=True)
+
+        self.assertEqual(first_result, [{"step_name": "action"}])
+        self.assertEqual(second_result, [{"step_name": "action"}])
+        self.assertEqual([call.id for call in first_rsp.tool_calls], ["call-1"])
+        self.assertEqual([call.id for call in second_rsp.tool_calls], ["call-2"])
+        self.assertEqual(first_rsp.content, "provider thought")
+        self.assertEqual(second_rsp.content, "")
+        model.call_llm_model.assert_called_once()
+        self.assertEqual(len(model._get_pending_native_tool_call_responses()), 0)
+
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_preserves_single_native_tool_call(
+            self,
+            mock_base_init,
+            mock_logger,
+            mock_format,
+        ):
+        """Test a single native tool call retains the original response object."""
+        from openai.types.chat import (
+            ChatCompletionMessage,
+            ChatCompletionMessageToolCall,
+        )
+
+        response = ChatCompletionMessage(
+            role="assistant",
+            content="single",
+            tool_calls=[ChatCompletionMessageToolCall(
+                id="call-1",
+                type="function",
+                function={"name": "tool_one", "arguments": "{}"},
+            )],
+        )
+        mock_format.return_value = [{"step_name": "action"}]
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(return_value=(response, "single"))
+
+        returned_rsp, result = model.chat(self.messages, for_response=True)
+
+        self.assertIs(returned_rsp, response)
+        self.assertEqual(result, [{"step_name": "action"}])
+        self.assertEqual(len(model._get_pending_native_tool_call_responses()), 0)
+
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_raw_multi_tool_response_does_not_create_pending_responses(
+            self,
+            mock_base_init,
+            mock_logger,
+        ):
+        """Test raw response mode does not retain executable synthetic calls."""
+        from openai.types.chat import (
+            ChatCompletionMessage,
+            ChatCompletionMessageToolCall,
+        )
+
+        response = ChatCompletionMessage(
+            role="assistant",
+            content="raw provider content",
+            tool_calls=[
+                ChatCompletionMessageToolCall(
+                    id=f"call-{index}",
+                    type="function",
+                    function={"name": f"tool_{index}", "arguments": "{}"},
+                )
+                for index in (1, 2)
+            ],
+        )
+        model = self._create_mock_model()
+        model.call_llm_model = MagicMock(
+            return_value=(response, "raw provider content")
+        )
+
+        result = model.chat(self.messages, for_raw=True)
+
+        self.assertEqual(result, "raw provider content")
+        self.assertEqual(len(model._get_pending_native_tool_call_responses()), 0)
+
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_clear_pending_native_tool_call_responses_is_idempotent(
+            self,
+            mock_base_init,
+            mock_logger,
+        ):
+        """Test pending response cleanup can run repeatedly."""
+        model = self._create_mock_model()
+        queue = model._get_pending_native_tool_call_responses()
+        queue.append((MagicMock(), "action"))
+
+        model.clear_pending_native_tool_call_responses()
+        model.clear_pending_native_tool_call_responses()
+
+        self.assertEqual(len(queue), 0)
+
 
 class TestLLMModelErrorHandling(unittest.TestCase):
     """Test cases for LLMModel error handling."""
