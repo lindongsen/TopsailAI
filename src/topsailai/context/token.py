@@ -310,11 +310,10 @@ class TokenStat(threading.Thread):
                 ),
             )
             if usage:
-                prompt_tokens_details = usage.prompt_tokens_details
-                self.current_cached_tokens = (
-                    prompt_tokens_details.cached_tokens
-                    if prompt_tokens_details else 0
-                )
+                if usage.prompt_tokens_details:
+                    self.current_cached_tokens = (
+                        usage.prompt_tokens_details.cached_tokens
+                    )
                 info.update(
                     dict(
                         cached_tokens=self.current_cached_tokens,
