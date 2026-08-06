@@ -826,6 +826,20 @@ class LLMModel(LLMModelBase):
         rsp_obj = None
 
         for i in range(100):
+            # Cooperative hard-interrupt check before each retry attempt so a
+            # pending interrupt can stop a long retry/sleep wait.
+            try:
+                agent = get_agent_object()
+                if agent is not None and hasattr(agent, "_check_hard_interrupt"):
+                    agent._check_hard_interrupt()
+            except HardInterruptError:
+                # Re-raise immediately so the ReAct loop can stop cleanly.
+                raise
+            except Exception:
+                # Any other problem with the interrupt check must not break
+                # the retry flow.
+                pass
+
             if i > retry_times:
                 break
 

@@ -1144,6 +1144,88 @@ class TestLLMModelErrorHandling(unittest.TestCase):
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_raises_hard_interrupt_during_retry(
+        self, mock_base_init, mock_logger, mock_format, mock_sleep
+    ):
+        """A pending hard interrupt during the retry loop stops the retry.
+
+        When an APIConnectionError triggers a retry, the hard-interrupt check
+        at the top of the retry loop must detect the pending interrupt and
+        raise HardInterruptError instead of continuing to retry.
+        """
+        import openai
+
+        from topsailai.ai_base.exception import HardInterruptError
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Should not be reached"
+
+        # First call raises APIConnectionError (triggers retry), then the
+        # hard-interrupt check fires before the next attempt.
+        mock_format.side_effect = [
+            openai.APIConnectionError(request=MagicMock()),
+        ]
+
+        agent = MagicMock()
+        agent._check_hard_interrupt.side_effect = HardInterruptError("interrupted")
+
+        model = self._create_mock_model()
+        model.model.create.return_value = mock_response
+
+        with patch(
+            "topsailai.ai_base.llm_base.get_agent_object",
+            return_value=agent,
+        ):
+            with self.assertRaises(HardInterruptError):
+                model.chat(self.messages)
+
+        # The interrupt check must have been invoked.
+        agent._check_hard_interrupt.assert_called()
+
+    @patch("topsailai.ai_base.llm_base.time.sleep")
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_ignores_non_interrupt_exception_in_check(
+        self, mock_base_init, mock_logger, mock_format, mock_sleep
+    ):
+        """A non-interrupt exception in the hard-interrupt check is swallowed.
+
+        Any unexpected problem with the interrupt check itself must not break
+        the retry flow; the chat call should still succeed after retrying.
+        """
+        import openai
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Success after retry"
+
+        # First call raises APIConnectionError (triggers retry), then succeeds.
+        mock_format.side_effect = [
+            openai.APIConnectionError(request=MagicMock()),
+            ["success"],
+        ]
+
+        agent = MagicMock()
+        agent._check_hard_interrupt.side_effect = RuntimeError("check failed")
+
+        model = self._create_mock_model()
+        model.model.create.return_value = mock_response
+
+        with patch(
+            "topsailai.ai_base.llm_base.get_agent_object",
+            return_value=agent,
+        ):
+            result = model.chat(self.messages)
+
+        self.assertEqual(result, ["success"])
+        agent._check_hard_interrupt.assert_called()
+
+    @patch("topsailai.ai_base.llm_base.time.sleep")
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_chat_raises_after_max_retries(self, mock_base_init, mock_logger, mock_format, mock_sleep):
         """Test chat raises Exception after max retries."""
         mock_format.side_effect = Exception("Persistent error")
