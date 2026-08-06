@@ -102,7 +102,7 @@ When `--item` is omitted:
 The settings file is `.topsailai/settings.yaml` in the current working directory. Example structure:
 
 ```yaml
-ai_agent_driver: "ai-team-flow-dev"
+ai_agent_driver: "topsailai_agent_plan_tasks"
 workspace: "."
 context:
   _: []
