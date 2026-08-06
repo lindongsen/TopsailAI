@@ -24,6 +24,7 @@ from topsailai.context.chat_history_manager.__base import (
     ChatHistoryMessageData,
 )
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
+from topsailai.workspace.task.cleanup import register_cleanup_func
 
 class TeeOutput:
     """ A class that outputs to both the screen and a file simultaneously.
@@ -64,6 +65,8 @@ class TeeOutput:
         self.log_file = open(filename, mode, encoding=encoding)
 
         self._need_delete_log_files = need_delete_log_files
+        if need_delete_log_files:
+            register_cleanup_func(self.delete_log_files)
 
 
     def logrotate_max_file_bytes(self):
@@ -108,8 +111,6 @@ class TeeOutput:
     def __exit__(self, exc_type, exc_val, exc_tb):
         sys.stdout = self.terminal
         self.close()
-        if self._need_delete_log_files:
-            self.delete_log_files()
         return False
 
     def __getattr__(self, name):

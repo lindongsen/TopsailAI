@@ -203,6 +203,66 @@ class TestTeeOutput(unittest.TestCase):
             content = f.read()
         self.assertIn("Inside context", content)
 
+    def test_tee_output_need_delete_registers_cleanup_not_eager(self):
+        """Test that need_delete_log_files registers a cleanup function for atexit
+        instead of eagerly deleting files in __exit__."""
+        from topsailai.workspace.task import cleanup as cleanup_module
+        from topsailai.workspace.task.cleanup import cleanup_task_folder
+
+        # Isolate the cleanup registry for this test.
+        with cleanup_module._CLEANUP_LOCK:
+            cleanup_module._CLEANUP_FILES.clear()
+            cleanup_module._CLEANUP_FUNCS.clear()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                log_file = os.path.join(tmpdir, "session.stdout")
+                with TeeOutput(log_file, mode="w", need_delete_log_files=True) as tee:
+                    print("Inside context")
+
+                # __exit__ must NOT eagerly delete the file.
+                self.assertTrue(os.path.exists(log_file))
+
+                # A cleanup function is registered (not the file paths directly).
+                with cleanup_module._CLEANUP_LOCK:
+                    registered_files = set(cleanup_module._CLEANUP_FILES)
+                    registered_funcs = list(cleanup_module._CLEANUP_FUNCS)
+                self.assertNotIn(os.path.abspath(log_file), registered_files)
+                self.assertNotIn(os.path.abspath(log_file + ".1"), registered_files)
+                self.assertEqual(len(registered_funcs), 1)
+                self.assertTrue(callable(registered_funcs[0]))
+
+                # cleanup_task_folder (invoked via atexit) invokes the function,
+                # which calls delete_log_files and removes the file.
+                cleanup_task_folder()
+                self.assertFalse(os.path.exists(log_file))
+        finally:
+            with cleanup_module._CLEANUP_LOCK:
+                cleanup_module._CLEANUP_FILES.clear()
+                cleanup_module._CLEANUP_FUNCS.clear()
+
+    def test_tee_output_default_no_cleanup_registration(self):
+        """Test that default need_delete_log_files=False does not register anything."""
+        from topsailai.workspace.task import cleanup as cleanup_module
+
+        with cleanup_module._CLEANUP_LOCK:
+            cleanup_module._CLEANUP_FILES.clear()
+            cleanup_module._CLEANUP_FUNCS.clear()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                log_file = os.path.join(tmpdir, "session.stdout")
+                with TeeOutput(log_file, mode="w") as tee:
+                    print("Inside context")
+
+                with cleanup_module._CLEANUP_LOCK:
+                    registered_files = set(cleanup_module._CLEANUP_FILES)
+                    registered_funcs = list(cleanup_module._CLEANUP_FUNCS)
+                self.assertNotIn(os.path.abspath(log_file), registered_files)
+                self.assertEqual(registered_funcs, [])
+                self.assertTrue(os.path.exists(log_file))
+        finally:
+            with cleanup_module._CLEANUP_LOCK:
+                cleanup_module._CLEANUP_FILES.clear()
+                cleanup_module._CLEANUP_FUNCS.clear()
 
 class TestContentDots(unittest.TestCase):
     """Test cases for ContentDots class (backward compatible dot sender)."""

@@ -39,6 +39,7 @@ from topsailai.workspace.session_meta import get_session_meta_path
 logger = logging.getLogger(__name__)
 
 _CLEANUP_FILES: set[str] = set()
+_CLEANUP_FUNCS: list[callable] = []
 _CLEANUP_LOCK = threading.Lock()
 
 _ORIGINAL_SIGNAL_HANDLERS: dict[int, object] = {}
@@ -47,7 +48,6 @@ _INSTALL_LOCK = threading.Lock()
 
 _SESSION_META_PRINTED = False
 _SESSION_META_PRINT_LOCK = threading.Lock()
-
 
 def register_cleanup_file(file_path: str) -> None:
     """Register *file_path* for removal when the process exits.
@@ -62,6 +62,22 @@ def register_cleanup_file(file_path: str) -> None:
         _CLEANUP_FILES.add(abs_path)
     _ensure_signal_handlers_installed()
     logger.debug("Registered task folder file for cleanup: %s", abs_path)
+
+
+def register_cleanup_func(func: callable) -> None:
+    """Register *func* to be invoked when the process exits.
+
+    The callable is stored as-is and invoked during :func:`cleanup_task_folder`
+    (which runs on process exit via :mod:`atexit` or the signal handler).
+    Registration is idempotent and thread-safe.
+    """
+    if not callable(func):
+        raise TypeError("func must be callable")
+    with _CLEANUP_LOCK:
+        if func not in _CLEANUP_FUNCS:
+            _CLEANUP_FUNCS.append(func)
+    _ensure_signal_handlers_installed()
+    logger.debug("Registered cleanup function: %s", func)
 
 
 def unregister_cleanup_file(file_path: str) -> None:
@@ -108,9 +124,17 @@ def cleanup_task_folder() -> None:
     with _CLEANUP_LOCK:
         files = sorted(_CLEANUP_FILES)
         _CLEANUP_FILES.clear()
+        funcs = list(_CLEANUP_FUNCS)
+        _CLEANUP_FUNCS.clear()
 
     for file_path in files:
         delete_file(file_path)
+
+    for func in funcs:
+        try:
+            func()
+        except Exception as exc:
+            logger.error("Error during cleanup function %s: %s", func, exc)
 
     _cleanup_pid_scoped_pipes()
 
