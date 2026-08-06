@@ -7,7 +7,7 @@ OpenAI-compatible LLM interaction capabilities.
 
 import json
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, call, patch, PropertyMock
 
 import openai
 
@@ -894,12 +894,14 @@ class TestLLMModelChat(unittest.TestCase):
         self.assertEqual(result, ["success"])
 
     @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.print_info")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_chat_splits_native_tool_calls_into_sequential_responses(
             self,
             mock_base_init,
             mock_logger,
+            mock_print_info,
             mock_format,
         ):
         """Test multiple native tool calls are returned one at a time in order."""
@@ -942,14 +944,24 @@ class TestLLMModelChat(unittest.TestCase):
         self.assertEqual(second_rsp.content, "")
         model.call_llm_model.assert_called_once()
         self.assertEqual(len(model._get_pending_native_tool_call_responses()), 0)
+        self.assertEqual(
+            mock_print_info.call_args_list,
+            [
+                call("Detected 2 native tool calls"),
+                call("Native tool call 1/2"),
+                call("Native tool call 2/2"),
+            ],
+        )
 
     @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.print_info")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_chat_preserves_single_native_tool_call(
             self,
             mock_base_init,
             mock_logger,
+            mock_print_info,
             mock_format,
         ):
         """Test a single native tool call retains the original response object."""
@@ -976,6 +988,7 @@ class TestLLMModelChat(unittest.TestCase):
         self.assertIs(returned_rsp, response)
         self.assertEqual(result, [{"step_name": "action"}])
         self.assertEqual(len(model._get_pending_native_tool_call_responses()), 0)
+        mock_print_info.assert_not_called()
 
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)

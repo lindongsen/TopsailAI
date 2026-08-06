@@ -30,6 +30,7 @@ from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 from topsailai.logger.log_chat import logger
 from topsailai.utils.print_tool import (
     print_error,
+    print_info,
     print_warning,
 )
 from topsailai.utils import (
@@ -98,8 +99,9 @@ class LLMModel(LLMModelBase):
         rsp_msg = self.get_response_message(rsp_obj)
         tool_calls = getattr(rsp_msg, "tool_calls", None) or []
         if len(tool_calls) <= 1:
-            return rsp_obj, rsp_content
+            return rsp_obj, rsp_content, 1, 1
 
+        total_tool_calls = len(tool_calls)
         responses = []
         for index, tool_call in enumerate(tool_calls):
             synthetic_content = rsp_content if index == 0 else ""
@@ -112,7 +114,12 @@ class LLMModel(LLMModelBase):
                 rsp_obj=synthetic_rsp_msg,
                 rsp_content=synthetic_content,
             )
-            responses.append((synthetic_rsp_msg, synthetic_content))
+            responses.append((
+                synthetic_rsp_msg,
+                synthetic_content,
+                index + 1,
+                total_tool_calls,
+            ))
 
         queue = self._get_pending_native_tool_call_responses()
         queue.extend(responses[1:])
@@ -120,6 +127,7 @@ class LLMModel(LLMModelBase):
             "split %s native tool calls into sequential responses",
             len(responses),
         )
+        print_info(f"Detected {total_tool_calls} native tool calls")
         return responses[0]
 
     def _return_chat_response(
@@ -797,11 +805,12 @@ class LLMModel(LLMModelBase):
         """
         pending_responses = self._get_pending_native_tool_call_responses()
         if pending_responses:
-            rsp_obj, rsp_content = pending_responses.popleft()
+            rsp_obj, rsp_content, sequence, total = pending_responses.popleft()
             logger.debug(
                 "dequeued native tool-call response; %s pending",
                 len(pending_responses),
             )
+            print_info(f"Native tool call {sequence}/{total}")
             return self._return_chat_response(
                 rsp_obj,
                 rsp_content,
@@ -856,10 +865,17 @@ class LLMModel(LLMModelBase):
                 if for_raw:
                     return rsp_content
 
-                rsp_obj, rsp_content = self._split_native_tool_call_response(
+                (
+                    rsp_obj,
+                    rsp_content,
+                    sequence,
+                    total,
+                ) = self._split_native_tool_call_response(
                     rsp_obj,
                     rsp_content,
                 )
+                if total > 1:
+                    print_info(f"Native tool call {sequence}/{total}")
                 return self._return_chat_response(
                     rsp_obj,
                     rsp_content,
