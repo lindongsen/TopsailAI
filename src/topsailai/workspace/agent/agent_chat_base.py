@@ -81,6 +81,23 @@ class AgentChatBase(object):
     handling message routing, context management, and session lifecycle.
     """
 
+    def __str__(self) -> str:
+        parts = {
+            # basic info
+            "session_id": self.ctx_runtime_data.session_id,
+
+            # advance options
+            "session_head_tail_offset": self.session_head_tail_offset,
+            "summary:head_offset_to_keep": self.ctx_runtime_data._get_head_offset_to_keep_in_summary(),
+            "summary:tail_offset_to_keep": self.ctx_runtime_data._get_tail_offset_to_keep_in_summary(),
+            "summary:quantity_threshold_agent2llm": os.getenv("TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD"),
+            "summary:quantity_threshold_user2agent": os.getenv("TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD"),
+        }
+        result = "\n"
+        for k, v in parts.items():
+            result += f"  {k}={v}\n"
+        return result
+
     def __init__(
             self,
             hook_instruction:HookInstruction,

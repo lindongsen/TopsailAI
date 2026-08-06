@@ -93,6 +93,18 @@ class AgentBase(AgentTool):
         self.llm_model = LLMModel()
         return
 
+    def __str__(self) -> str:
+        parts = {
+            "agent_name": self.agent_name,
+            "agent_type": self.agent_type,
+            "threshold_ctx_history": str(self.threshold_ctx_history),
+            "model_info": str(self.llm_model),
+        }
+        result = "\n"
+        for k, v in parts.items():
+            result += f"  {k}={v}\n"
+        return result
+
     @property
     def max_tokens(self) -> int:
         """

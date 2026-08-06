@@ -129,6 +129,26 @@ class LLMModelBase(object):
 
         self.content_senders = [] # instances of base class ContentSender
 
+    def __str__(self) -> str:
+        parts = {
+            # basic config
+            "model_name": self.model_name,
+            "api_base": self.model_config.get("api_base") or os.getenv("OPENAI_API_BASE"),
+            "api_key": (self.model_config.get("api_key") or os.getenv("OPENAI_API_KEY") or "")[:7] + "...",
+            "models_count": len(self.models),
+
+            # advance config
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "frequency_penalty": self.frequency_penalty,
+        }
+        result = "\n"
+        # agent indent is 2, llm indent is 4
+        for k, v in parts.items():
+            result += f"    {k}={v}\n"
+        return result
+
     #################################################################################
     # NotImplemented
     #################################################################################

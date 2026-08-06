@@ -12,6 +12,7 @@ from topsailai.utils import (
     env_tool,
     file_tool,
     thread_local_tool,
+    print_tool,
 )
 from topsailai.ai_base.agent_types.init import (
     get_agent_type,
@@ -123,6 +124,7 @@ def get_ai_agent(
     if to_dump_messages:
         agent.flag_dump_messages = True
 
+    print_tool.print_info(f"Got Agent2LLM: {agent}")
     return agent
 
 
@@ -274,6 +276,7 @@ def _get_agent_chat_impl(
     # from leaving the session in an interrupted state.
     _cleanup_stale_interrupt_flag(session_id, os.getpid())
 
+    print_tool.print_info(f"Got User2Agent: {agent_chat}")
     return agent_chat
 
 
