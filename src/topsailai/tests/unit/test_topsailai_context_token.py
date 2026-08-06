@@ -294,6 +294,20 @@ class TestTokenStat(unittest.TestCase):
         self.assertEqual(stat.total_cached_tokens, 0)
         stat.flag_running = False
 
+    def test_output_token_stat_handles_missing_prompt_tokens_details(self):
+        """Test output_token_stat handles usage without prompt token details."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        usage = MagicMock()
+        usage.prompt_tokens_details = None
+
+        with patch('topsailai.context.token.print_info'), \
+             patch('topsailai.context.token.logger'):
+            stat.output_token_stat(usage)
+
+        self.assertEqual(stat.current_cached_tokens, 0)
+        self.assertEqual(stat.total_cached_tokens, 0)
+        stat.flag_running = False
+
     def test_output_token_stat_includes_total_cached_tokens(self):
         """Test output_token_stat includes total_cached_tokens in logged info."""
         stat = TokenStat(self.llm_id, lifetime=0)

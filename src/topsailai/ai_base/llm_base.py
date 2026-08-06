@@ -656,7 +656,12 @@ class LLMModel(LLMModelBase):
             try:
                 delta_usage = self.get_response_usage(chunk)
                 if delta_usage:
-                    usage.prompt_tokens_details.cached_tokens += delta_usage.prompt_tokens_details.cached_tokens
+                    prompt_tokens_details = usage.prompt_tokens_details
+                    delta_prompt_tokens_details = delta_usage.prompt_tokens_details
+                    if prompt_tokens_details and delta_prompt_tokens_details:
+                        prompt_tokens_details.cached_tokens += (
+                            delta_prompt_tokens_details.cached_tokens
+                        )
             except Exception:
                 pass
             if delta_obj is None:
