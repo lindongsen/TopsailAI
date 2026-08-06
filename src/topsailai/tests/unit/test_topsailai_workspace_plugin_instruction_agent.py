@@ -476,6 +476,32 @@ class TestSelectModel(unittest.TestCase):
         self.assertEqual(mock_agent.llm_model.models, [])
         self.assertIn("ModelA", result)
 
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_select_model_uses_model_field_over_name(self, mock_load_registry, mock_get_agent):
+        """Test /models uses the model field (API ID) over the display name"""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "OldModel"
+        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.llm_model.get_llm_model.return_value = "new_client"
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {
+            "gpt56luna-tester": {"name": "gpt56luna-tester", "model": "gpt-5.6-luna", "api_base": "https://a.example.com", "api_key": "key_a"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model("gpt56luna-tester")
+
+        self.assertEqual(mock_agent.llm_model.model_name, "gpt-5.6-luna")
+        mock_agent.llm_model.get_llm_model.assert_called_once_with(
+            api_key="key_a",
+            api_base="https://a.example.com",
+        )
+        self.assertEqual(mock_agent.llm_model.model, "new_client")
+        self.assertEqual(mock_agent.llm_model.models, [])
+        self.assertIn("gpt-5.6-luna", result)
+
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
     def test_select_model_not_found(self, mock_load_registry, mock_get_agent):

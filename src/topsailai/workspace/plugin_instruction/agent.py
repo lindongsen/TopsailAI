@@ -70,7 +70,7 @@ def _apply_model_config(agent, config: dict) -> str:
     old_api_base = getattr(llm_model.model_config, "api_base", "") or llm_model.model_config.get("api_base", "")
     old_api_key = getattr(llm_model.model_config, "api_key", "") or llm_model.model_config.get("api_key", "")
 
-    new_model_name = config.get("model_name") or config.get("name") or old_model_name
+    new_model_name = config.get("model_name") or config.get("model") or config.get("name") or old_model_name
     new_api_base = config.get("api_base") or config.get("base_url") or old_api_base
     new_api_key = config.get("api_key") or old_api_key
 
