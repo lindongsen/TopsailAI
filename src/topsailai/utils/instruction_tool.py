@@ -480,6 +480,44 @@ class HookInstruction(HookBaseUtils):
                 print_tool.print_error(f"hook is failed [{hook_name}]: args={args} kwargs={kwargs} {e}", exception=True)
         return
 
+    def call_instruction(self, hook_name, *args, **kwargs):
+        """
+        Execute a registered instruction and return its result.
+
+        This is the programmatic counterpart to call_hook. It resolves the
+        instruction name, invokes the registered function(s), and returns
+        the result instead of printing it to stdout. Exceptions are
+        propagated to the caller so that control handlers can decide how
+        to respond.
+
+        Args:
+            hook_name (str): The instruction name, with or without the
+                leading trigger character (e.g. "/ctx.history" or
+                "ctx.history").
+            *args: Positional arguments passed to the instruction.
+            **kwargs: Keyword arguments passed to the instruction.
+
+        Returns:
+            The return value of the instruction, or None if the instruction
+            is not registered.
+        """
+        # Normalize the hook name: guard empty, strip whitespace, add trigger char if missing.
+        if not hook_name:
+            return None
+        hook_name = hook_name.strip()
+        if not hook_name:
+            return None
+        if hook_name[0] not in TRIGGER_CHARS:
+            hook_name = TRIGGER_CHARS[0] + hook_name
+
+        if hook_name not in self.hook_map:
+            return None
+
+        result = None
+        for hook_func in self.hook_map[hook_name]:
+            result = hook_func(*args, **kwargs)
+        return result
+
     def exist_hook(self, hook_name) -> bool:
         """
         Check if a hook name exists in the registry.

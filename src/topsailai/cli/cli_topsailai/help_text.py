@@ -276,8 +276,8 @@ def print_help(
         },
         {
             "cmd": "/control <command> [args_json]",
-            "desc": "Send a control request to the current session through its UDS control socket. Supported commands: hard_interrupt, soft_interrupt, clear_interrupt, get_runtime_messages. args_json is an optional JSON object; defaults to {}.",
-            "example": "Example: /control hard_interrupt  or  /control hard_interrupt {\"reason\":\"timeout\"}",
+            "desc": "Send a control request to the current session through its UDS control socket. Supported commands: call_instruction, hard_interrupt, soft_interrupt, clear_interrupt, get_runtime_messages. args_json is an optional JSON object; defaults to {}.",
+            "example": "Example: /control hard_interrupt  or  /control hard_interrupt {\"reason\":\"timeout\"}  or  /control call_instruction {\"instruction\":\"ctx.history\",\"args\":[\"arg1\"],\"kwargs\":{\"key\":\"value\"}}",
             "scopes": ["session", "runtime"],
         },
         {

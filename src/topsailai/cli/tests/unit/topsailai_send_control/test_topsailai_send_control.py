@@ -293,6 +293,7 @@ class TestFormatHumanResponse:
 class TestGetParams:
     def test_control_actions_are_discovered_from_runtime_handlers(self):
         assert cli_module.get_control_actions() == [
+            "call_instruction",
             "clear_interrupt",
             "get_runtime_messages",
             "get_session_messages",
