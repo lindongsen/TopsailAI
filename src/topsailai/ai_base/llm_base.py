@@ -824,7 +824,7 @@ class LLMModel(LLMModelBase):
                 for_response=for_response,
             )
 
-        retry_times = 10
+        retry_times = 17
         err_count_map = {}
 
         rsp_content = None
