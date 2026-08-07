@@ -12,6 +12,7 @@ import re
 import sys
 from typing import TYPE_CHECKING
 
+import cli_topsailai.completer as completer
 import cli_topsailai.state as state
 
 if TYPE_CHECKING:
@@ -102,6 +103,9 @@ class CursesStreamUI:
         # fresh line.
         self._history: List[str] = []
         self._history_index = -1
+        # Index of the currently selected TAB completion candidate, or -1
+        # when no completion is active.
+        self._completion_index = -1
 
         self.stdscr = None
         self.log_win = None
@@ -274,6 +278,9 @@ class CursesStreamUI:
             if self._multi_line_mode:
                 changed = self._handle_multi_line_input(ch) or changed
                 break
+            if ch in ("\t", 9, curses.KEY_BTAB):
+                changed = self._handle_tab_completion() or changed
+                break
 
             if ch in (curses.KEY_ENTER, "\n", "\r"):
                 self._execute_input()
@@ -287,6 +294,7 @@ class CursesStreamUI:
                     )
                     self._cursor_pos -= 1
                     self._history_index = -1
+                    self._completion_index = -1
                     changed = True
                 break
             if ch in (curses.KEY_DC, 330):
@@ -296,6 +304,7 @@ class CursesStreamUI:
                         + self._input_buffer[self._cursor_pos + 1 :]
                     )
                     self._history_index = -1
+                    self._completion_index = -1
                     changed = True
                 break
             if ch == curses.KEY_LEFT or ch == 260:
@@ -343,6 +352,7 @@ class CursesStreamUI:
                 )
                 self._cursor_pos += 1
                 self._history_index = -1
+                self._completion_index = -1
                 changed = True
                 continue
             # Unknown key: ignore and stop batching.
@@ -371,6 +381,31 @@ class CursesStreamUI:
         else:
             self._input_buffer = self._history[self._history_index]
         self._cursor_pos = len(self._input_buffer)
+        self._completion_index = -1
+        return True
+
+    def _handle_tab_completion(self) -> bool:
+        """Cycle through command completions for the current input prefix.
+
+        Pressing TAB repeatedly cycles through the matching candidates.  The
+        completion index is reset whenever the input buffer changes, so the
+        next TAB press starts a fresh cycle.
+
+        Returns True when the input buffer changed and the screen should be
+        redrawn.
+        """
+        prefix = self._input_buffer[: self._cursor_pos]
+        candidates = [
+            c for c in completer.get_available_completions() if c.startswith(prefix)
+        ]
+        if not candidates:
+            self._completion_index = -1
+            return False
+
+        self._completion_index = (self._completion_index + 1) % len(candidates)
+        completion = candidates[self._completion_index]
+        self._input_buffer = completion + self._input_buffer[self._cursor_pos :]
+        self._cursor_pos = len(completion)
         return True
 
     def _scroll_up(self, lines: int) -> None:

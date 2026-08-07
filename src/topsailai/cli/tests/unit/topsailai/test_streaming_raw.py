@@ -611,6 +611,62 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class TestReadInputLineTtyCompletion(unittest.TestCase):
+    """Tests for TAB completion in the raw TTY editor."""
+
+    def setUp(self):
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = []
+
+    def tearDown(self):
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+        cli_state.yaml_commands = []
+
+    def _run_tty_input(self, input_bytes, prompt=""):
+        stdout = io.StringIO()
+        stdin_buffer = io.BytesIO(input_bytes)
+        mock_stdin = MagicMock()
+        mock_stdin.isatty.return_value = True
+        mock_stdin.fileno.return_value = 0
+        mock_stdin.buffer = stdin_buffer
+
+        with patch("cli_topsailai.streaming.sys.stdin", mock_stdin), \
+             patch("cli_topsailai.streaming.sys.stdout", stdout), \
+             patch("cli_topsailai.streaming.termios") as mock_termios, \
+             patch("cli_topsailai.streaming.tty") as mock_tty:
+            mock_termios.tcgetattr.return_value = []
+            return _read_input_line_tty(
+                prompt, already_raw=True, session_id="s1"
+            )
+
+    def test_tab_completes_send_command(self):
+        # Type "/se" then TAB, then Enter.
+        result = self._run_tty_input(b"/se\t\r")
+        self.assertEqual(result, "/send")
+
+    def test_tab_cycles_through_candidates(self):
+        # Type "/s" then TAB twice, then Enter.
+        result = self._run_tty_input(b"/s\t\t\r")
+        self.assertIn(result, ["/send", "/session"])
+
+    def test_tab_with_no_match_keeps_buffer(self):
+        # Type "/zzz" then TAB, then Enter.
+        result = self._run_tty_input(b"/zzz\t\r")
+        self.assertEqual(result, "/zzz")
+
+    def test_tab_completes_quit(self):
+        # Type "q" then TAB twice (first TAB stays on "q", second goes to "quit"), then Enter.
+        result = self._run_tty_input(b"q\t\t\r")
+        self.assertEqual(result, "quit")
+
+    def test_typing_after_tab_resets_completion(self):
+        # Type "/se", TAB (completes to /send), then type "x", then Enter.
+        result = self._run_tty_input(b"/se\tx\r")
+        self.assertEqual(result, "/sendx")
+
+
 class TestHandleStreamCommandYamlDispatch(unittest.TestCase):
     """Tests that runtime-scope slash commands are delegated to the YAML engine."""
 

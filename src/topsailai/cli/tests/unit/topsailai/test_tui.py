@@ -28,6 +28,7 @@ class FakeCurses:
     KEY_DC = 330
     KEY_UP = 259
     KEY_DOWN = 258
+    KEY_BTAB = 353
     COLOR_GREEN = 1
     COLOR_YELLOW = 2
     COLOR_RED = 3

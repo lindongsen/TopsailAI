@@ -43,7 +43,7 @@ from cli_topsailai.process import register_process, unregister_process
 from cli_topsailai import yaml_commands
 import cli_topsailai.state as state
 from cli_topsailai import help_text
-
+from cli_topsailai import completer
 
 def _debug_input(msg: str) -> None:
     if _DEBUG_INPUT:
@@ -789,6 +789,29 @@ def _read_input_line_tty(
         cursor = len(buffer)
         redraw()
 
+    completion_index = -1
+
+    def complete() -> None:
+        """Cycle through command completions for the current input prefix.
+
+        Pressing TAB repeatedly cycles through the matching candidates.  The
+        completion index is reset whenever the input buffer changes, so the
+        next TAB press starts a fresh cycle.
+        """
+        nonlocal completion_index, buffer, cursor
+        prefix = "".join(buffer[:cursor])
+        candidates = [
+            c for c in completer.get_available_completions() if c.startswith(prefix)
+        ]
+        if not candidates:
+            completion_index = -1
+            return
+        completion_index = (completion_index + 1) % len(candidates)
+        completion = candidates[completion_index]
+        buffer = list(completion) + buffer[cursor:]
+        cursor = len(completion)
+        redraw()
+
     try:
         if not already_raw:
             tty.setraw(fd)
@@ -830,6 +853,7 @@ def _read_input_line_tty(
                     cursor -= 1
                     deleted = buffer[cursor]
                     del buffer[cursor]
+                    completion_index = -1
                     _debug_input(f"Backspace deleted={deleted!r} cursor={cursor} buffer={''.join(buffer)!r}")
                     redraw()
                 else:
@@ -850,6 +874,11 @@ def _read_input_line_tty(
                 redraw()
                 continue
 
+            # TAB completion
+            if byte == 0x09:
+                _debug_input("TAB pressed")
+                complete()
+                continue
             # Escape sequences
             if byte == 0x1B:
                 seq1 = read_byte()
@@ -960,6 +989,7 @@ def _read_input_line_tty(
             buffer.insert(cursor, char)
             cursor += 1
             history_index = -1
+            completion_index = -1
             _debug_input(f"Inserted char={char!r} cursor={cursor} buffer={''.join(buffer)!r}")
             request_redraw()
             maybe_redraw()
