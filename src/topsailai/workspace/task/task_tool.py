@@ -286,15 +286,11 @@ def ctxm_process_task(task:TaskUtil):
 
         stdout_file = task.task_file + ".stdout"
         register_cleanup_file(task.task_file)
-        register_cleanup_file(stdout_file)
-        try:
-            with TeeOutput(stdout_file):
-                yield fp
-        finally:
-            delete_file(stdout_file)
-            unregister_cleanup_file(stdout_file)
+        with TeeOutput(stdout_file, need_delete_log_files=True):
+            yield fp
+        delete_file(stdout_file)
+        unregister_cleanup_file(task.task_file)
 
         task.pre_unlock(fp)
     task.post_unlock()
-    unregister_cleanup_file(task.task_file)
     return

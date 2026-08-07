@@ -397,13 +397,23 @@ class AgentChatBase(object):
             answer: The answer string to process.
         """
         if not answer:
+            logger.warning("[hook_for_answer] empty answer, skip saving result file")
             return
 
         # save answer to file
         file_path_result = os.getenv("TOPSAILAI_SAVE_RESULT_TO_FILE")
         if file_path_result:
-            with open(file_path_result, encoding='utf-8', mode='w') as fd:
-                fd.write(answer)
+            logger.info("[hook_for_answer] saving answer to result file: %s (len=%d)", file_path_result, len(answer))
+            try:
+                with open(file_path_result, encoding='utf-8', mode='w') as fd:
+                    fd.write(answer)
+                logger.info("[hook_for_answer] result file written ok: %s", file_path_result)
+            except Exception as e:
+                # Log the failure, then re-raise to preserve the original behavior.
+                logger.error("[hook_for_answer] failed to write result file %s: %s", file_path_result, e)
+                raise
+        else:
+            logger.debug("[hook_for_answer] TOPSAILAI_SAVE_RESULT_TO_FILE not set, skip")
 
         return
 
