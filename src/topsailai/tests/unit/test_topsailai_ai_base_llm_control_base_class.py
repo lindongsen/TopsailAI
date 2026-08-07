@@ -211,6 +211,8 @@ class TestLLMModelBase:
     def request_model(self, monkeypatch):
         """Return a model for request-parameter tests."""
         monkeypatch.delenv("MAX_TOKENS", raising=False)
+        monkeypatch.delenv("TOPSAILAI_LLM_EXTRA_BODY", raising=False)
+        monkeypatch.delenv("TOPSAILAI_LLM_EXTRA_BODY_MAP", raising=False)
 
         class TestModel(LLMModelBase):
             def get_model_name(self, default=""):
@@ -227,11 +229,11 @@ class TestLLMModelBase:
     def test_extra_body_unset_or_empty_leaves_params_unchanged(
             self, monkeypatch, request_model):
         """Unset or empty extra-body configuration should not alter parameters."""
-        monkeypatch.delenv("TOPSAILAI_LLM_EXTRA_BODY", raising=False)
         messages = [{"role": "user", "content": "Hello"}]
         assert "extra_body" not in request_model.build_parameters_for_chat(messages)
 
         monkeypatch.setenv("TOPSAILAI_LLM_EXTRA_BODY", "")
+        monkeypatch.setenv("TOPSAILAI_LLM_EXTRA_BODY_MAP", "")
         assert "extra_body" not in request_model.build_parameters_for_chat(messages)
 
     def test_extra_body_injects_chat_template_kwargs(
@@ -278,6 +280,81 @@ class TestLLMModelBase:
             )
         assert "extra_body" not in params
         assert "TOPSAILAI_LLM_EXTRA_BODY" in caplog.text
+
+    def test_extra_body_map_exact_match_injects_model_configuration(
+            self, monkeypatch, request_model):
+        """An exact model-name match should inject its model-specific fields."""
+        monkeypatch.setenv(
+            "TOPSAILAI_LLM_EXTRA_BODY_MAP",
+            '{"test-model":{"chat_template_kwargs":{"thinking":false}},'
+            '"test":{"ignored":true}}',
+        )
+        params = request_model.build_parameters_for_chat(
+            [{"role": "user", "content": "Hello"}]
+        )
+        assert params["extra_body"] == {
+            "chat_template_kwargs": {"thinking": False}
+        }
+
+    def test_extra_body_map_miss_uses_only_global_configuration(
+            self, monkeypatch, request_model):
+        """A map miss should leave the global extra-body configuration in effect."""
+        monkeypatch.setenv("TOPSAILAI_LLM_EXTRA_BODY", '{"global":true}')
+        monkeypatch.setenv(
+            "TOPSAILAI_LLM_EXTRA_BODY_MAP", '{"other-model":{"model":true}}'
+        )
+        params = request_model.build_parameters_for_chat(
+            [{"role": "user", "content": "Hello"}]
+        )
+        assert params["extra_body"] == {"global": True}
+
+    def test_extra_body_map_recursively_overrides_global_and_caller(
+            self, monkeypatch, request_model):
+        """Model-specific fields should have the highest recursive merge priority."""
+        monkeypatch.setenv(
+            "TOPSAILAI_LLM_EXTRA_BODY",
+            '{"chat_template_kwargs":{"thinking":true,"global":"kept"}}',
+        )
+        monkeypatch.setenv(
+            "TOPSAILAI_LLM_EXTRA_BODY_MAP",
+            '{"test-model":{"chat_template_kwargs":{"thinking":false},'
+            '"model_option":1}}',
+        )
+        params = request_model.build_parameters_for_chat(
+            [{"role": "user", "content": "Hello"}],
+            extra_body={"chat_template_kwargs": {"caller": "kept"}},
+        )
+        assert params["extra_body"] == {
+            "chat_template_kwargs": {
+                "caller": "kept", "global": "kept", "thinking": False,
+            },
+            "model_option": 1,
+        }
+
+    @pytest.mark.parametrize("raw", ["not-json", "[]"])
+    def test_invalid_extra_body_map_is_ignored(
+            self, monkeypatch, request_model, caplog, raw):
+        """Invalid map configuration should warn and leave parameters unchanged."""
+        monkeypatch.setenv("TOPSAILAI_LLM_EXTRA_BODY_MAP", raw)
+        with caplog.at_level("WARNING"):
+            params = request_model.build_parameters_for_chat(
+                [{"role": "user", "content": "Hello"}]
+            )
+        assert "extra_body" not in params
+        assert "TOPSAILAI_LLM_EXTRA_BODY_MAP" in caplog.text
+
+    def test_non_object_matching_extra_body_map_value_is_ignored(
+            self, monkeypatch, request_model, caplog):
+        """A matching model value must itself be an extra-body JSON object."""
+        monkeypatch.setenv(
+            "TOPSAILAI_LLM_EXTRA_BODY_MAP", '{"test-model":false}'
+        )
+        with caplog.at_level("WARNING"):
+            params = request_model.build_parameters_for_chat(
+                [{"role": "user", "content": "Hello"}]
+            )
+        assert "extra_body" not in params
+        assert "value for model test-model must be a JSON object" in caplog.text
 
     def test_get_llm_models_empty_settings(self, monkeypatch):
         """Test get_llm_models with empty settings."""

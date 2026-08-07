@@ -130,6 +130,10 @@ TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY=["服务器繁忙，请稍后再试。
 # extra_body parameter. Example to disable server-side thinking:
 # TOPSAILAI_LLM_EXTRA_BODY='{"chat_template_kwargs":{"thinking":false}}'
 TOPSAILAI_LLM_EXTRA_BODY=""
+# JSON map of exact model names to provider-specific extra_body objects.
+# Model-specific fields recursively override TOPSAILAI_LLM_EXTRA_BODY. Example:
+# TOPSAILAI_LLM_EXTRA_BODY_MAP='{"Kimi-K2.5":{"chat_template_kwargs":{"thinking":false}}}'
+TOPSAILAI_LLM_EXTRA_BODY_MAP=""
 
 
 # =============================================================================

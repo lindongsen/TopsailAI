@@ -301,6 +301,11 @@ class LLMModelBase(object):
             params["extra_body"] = self._merge_dicts(
                 params.get("extra_body", {}), configured_extra_body
             )
+        model_extra_body = self._get_configured_model_extra_body(self.model_name)
+        if model_extra_body:
+            params["extra_body"] = self._merge_dicts(
+                params.get("extra_body", {}), model_extra_body
+            )
 
         return params
 
@@ -316,20 +321,42 @@ class LLMModelBase(object):
         return merged
 
     @staticmethod
-    def _get_configured_extra_body():
-        """Parse provider-specific request fields from TOPSAILAI_LLM_EXTRA_BODY."""
-        raw = EnvReaderInstance.get("TOPSAILAI_LLM_EXTRA_BODY", default="")
+    def _get_json_object_from_env(key):
+        """Parse an optional JSON object from an environment variable."""
+        raw = EnvReaderInstance.get(key, default="")
         if not raw or not raw.strip():
             return {}
         try:
             parsed = simplejson.loads(raw.strip())
         except Exception:
-            logger.warning("invalid JSON in TOPSAILAI_LLM_EXTRA_BODY: %s", raw)
+            logger.warning("invalid JSON in %s: %s", key, raw)
             return {}
         if not isinstance(parsed, dict):
-            logger.warning("TOPSAILAI_LLM_EXTRA_BODY must be a JSON object")
+            logger.warning("%s must be a JSON object", key)
             return {}
         return parsed
+
+    @staticmethod
+    def _get_configured_extra_body():
+        """Parse provider-specific fields from TOPSAILAI_LLM_EXTRA_BODY."""
+        return LLMModelBase._get_json_object_from_env("TOPSAILAI_LLM_EXTRA_BODY")
+
+    @staticmethod
+    def _get_configured_model_extra_body(model_name):
+        """Return provider-specific fields configured for an exact model name."""
+        configured_map = LLMModelBase._get_json_object_from_env(
+            "TOPSAILAI_LLM_EXTRA_BODY_MAP"
+        )
+        model_extra_body = configured_map.get(model_name)
+        if model_extra_body is None:
+            return {}
+        if not isinstance(model_extra_body, dict):
+            logger.warning(
+                "TOPSAILAI_LLM_EXTRA_BODY_MAP value for model %s must be a JSON object",
+                model_name,
+            )
+            return {}
+        return model_extra_body
 
     def debug_response(self, response, content):
         """

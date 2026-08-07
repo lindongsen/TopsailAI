@@ -86,6 +86,7 @@ These variables define the agent's working environment and project access scope.
 | `TOPSAILAI_STREAM_PROGRESS` | `stats` | Controls how LLM streaming output progress is displayed when `LLM_RESPONSE_STREAM` is enabled. See details below. |
 | `TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY` | `["服务器繁忙，请稍后再试。"]` | JSON list of exact LLM response strings that are treated as transient service errors and trigger a retry. |
 | `TOPSAILAI_LLM_EXTRA_BODY` | `""` | JSON object of provider-specific request fields passed through the OpenAI SDK `extra_body` parameter. Environment values recursively merge with and override matching caller-provided fields. For example, `{"chat_template_kwargs":{"thinking":false}}` requests a compatible backend to disable server-side thinking. Invalid JSON or non-object values are ignored with a warning. |
+| `TOPSAILAI_LLM_EXTRA_BODY_MAP` | `""` | JSON object mapping exact, case-sensitive model names to provider-specific `extra_body` objects, for example `{"Kimi-K2.5":{"chat_template_kwargs":{"thinking":false}}}`. A matching model configuration recursively merges after `TOPSAILAI_LLM_EXTRA_BODY` and overrides conflicts; a missing model key leaves only the global configuration. Invalid JSON, a non-object map, or a non-object matching value is ignored with a warning. |
 
 ### `TOPSAILAI_STREAM_PROGRESS`
 
