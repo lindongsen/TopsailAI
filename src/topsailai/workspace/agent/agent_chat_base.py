@@ -396,12 +396,14 @@ class AgentChatBase(object):
         Args:
             answer: The answer string to process.
         """
+        # NOTE: it may be temp file, not task file, file_name may be not task_id.
+        file_path_result = os.getenv("TOPSAILAI_SAVE_RESULT_TO_FILE")
+
         if not answer:
-            logger.warning("[hook_for_answer] empty answer, skip saving result file")
+            logger.warning("[hook_for_answer] empty answer, skip saving result file: [%s]", file_path_result)
             return
 
         # save answer to file
-        file_path_result = os.getenv("TOPSAILAI_SAVE_RESULT_TO_FILE")
         if file_path_result:
             logger.info("[hook_for_answer] saving answer to result file: %s (len=%d)", file_path_result, len(answer))
             try:
