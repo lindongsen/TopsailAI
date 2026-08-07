@@ -363,6 +363,58 @@ def build_command_env(
     return env
 
 
+def _prompt_call_instruction_wizard() -> Optional[str]:
+    """Interactively build a call_instruction JSON payload.
+
+    Prompts the user for the instruction name, positional args, and kwargs,
+    then returns a JSON string suitable for the ``-a`` payload. Returns None
+    if the user cancels (Ctrl+C) or provides no instruction.
+    """
+    try:
+        instruction_name = input("instruction (e.g. ctx.history): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print_warning("Cancelled.")
+        return None
+    if not instruction_name:
+        print_error("Instruction cannot be empty.")
+        return None
+
+    args_list: List[str] = []
+    print_info("Enter positional args (empty line to finish):")
+    while True:
+        try:
+            line = input("  arg: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print_warning("Cancelled.")
+            return None
+        if not line:
+            break
+        args_list.append(line)
+
+    kwargs_dict: Dict[str, str] = {}
+    print_info("Enter kwargs as key=value (empty line to finish):")
+    while True:
+        try:
+            line = input("  kwarg: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print_warning("Cancelled.")
+            return None
+        if not line:
+            break
+        if "=" in line:
+            key, _, value = line.partition("=")
+            kwargs_dict[key.strip()] = value.strip()
+        else:
+            print_warning(f"Ignored (expected key=value): {line}")
+
+    payload = {"instruction": instruction_name}
+    if args_list:
+        payload["args"] = args_list
+    if kwargs_dict:
+        payload["kwargs"] = kwargs_dict
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def handle_yaml_command(
     instruction: Dict[str, Any], variables: Dict[str, str]
 ) -> str:
@@ -504,9 +556,9 @@ def handle_yaml_command(
             else:
                 print_error("Usage: /env.set {key} {value}")
             return "yaml_handled"
-
         print_warning(f"Internal command not implemented: {cmd}")
         return "yaml_handled"
+
     # Validate that /git commands provide a subcommand.
     if cmd == "/git {args}":
         args = variables.get("args", "").strip()
@@ -538,13 +590,28 @@ def handle_yaml_command(
             print_error(f"Failed to resolve project workspace for session '{session_id}'.")
             return "yaml_handled"
 
+    # Interactive wizard for /control.call_instruction without a JSON payload.
+    if cmd == "/control.call_instruction {args}":
+        args_raw = variables.get("args", "").strip()
+        if not args_raw:
+            args_raw = _prompt_call_instruction_wizard()
+            if args_raw is None:
+                return "yaml_handled"
+            variables = dict(variables)
+            variables["args"] = args_raw
+
     try:
         shell_cmd = shell
         for var_name, var_value in variables.items():
-            if var_name == "args" and cmd != "/control {command} {args}":
-                shell_cmd = shell_cmd.replace(f"'{{{var_name}}}'", var_value)
-                shell_cmd = shell_cmd.replace(f"{{{var_name}}}", var_value)
-            else:
+            # Preserve raw JSON for control commands so the payload structure
+            # survives command-list construction unchanged.
+            if var_name == "args" and cmd in (
+                "/control {command} {args}",
+                "/control.call_instruction {args}",
+                "/control.soft_interrupt {args}",
+            ):
+                # Control commands carry a JSON payload; quote it so shlex
+                # preserves the JSON structure (double quotes intact).
                 quoted_placeholder = f"'{{{var_name}}}'"
                 if quoted_placeholder in shell_cmd:
                     shell_cmd = shell_cmd.replace(
@@ -554,6 +621,19 @@ def handle_yaml_command(
                     shell_cmd = shell_cmd.replace(
                         f"{{{var_name}}}", shlex.quote(var_value or "")
                     )
+            else:
+                # Non-control commands: {args} is inserted raw so shlex
+                # splits it into separate tokens; other variables keep
+                # their quoted placeholder so the value stays one token.
+                if var_name == "args":
+                    shell_cmd = shell_cmd.replace(f"'{{{var_name}}}'", var_value)
+                    shell_cmd = shell_cmd.replace(f"{{{var_name}}}", var_value)
+                else:
+                    shell_cmd = shell_cmd.replace(
+                        f"'{{{var_name}}}'", shlex.quote(var_value or "")
+                    )
+                    shell_cmd = shell_cmd.replace(f"{{{var_name}}}", var_value)
+                shell_cmd = shell_cmd.replace(f"{{{var_name}}}", var_value)
 
         cmd_list = shlex.split(shell_cmd)
         cmd_env = build_command_env(instruction, variables)

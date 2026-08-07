@@ -166,6 +166,152 @@ class TestControlCommand(unittest.TestCase):
         command = mock_run.call_args[0][0]
         self.assertEqual(command[-2:], ["-a", '{"reason":"timeout"}'])
 
+    def _subcommand_instruction(self, cmd):
+        return {
+            "cmd": cmd,
+            "scopes": ["session", "runtime"],
+            "shell": "topsailai_send_control -s '{session_id}' -c 'dummy' -a '{args}'",
+        }
+
+    def test_control_hard_interrupt_subcommand_matches(self):
+        """/control.hard_interrupt must match as a fixed subcommand."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [self._subcommand_instruction("/control.hard_interrupt")]
+        result = match_yaml_command("/control.hard_interrupt", "/task")
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0].get("cmd"), "/control.hard_interrupt")
+
+    def test_control_soft_interrupt_subcommand_matches(self):
+        """/control.soft_interrupt must match and extract optional args."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [self._subcommand_instruction("/control.soft_interrupt {args}")]
+        result = match_yaml_command("/control.soft_interrupt", "/task")
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0].get("cmd"), "/control.soft_interrupt {args}")
+        self.assertEqual(result[1].get("args"), "")
+
+        result = match_yaml_command("/control.soft_interrupt {\"reason\":\"timeout\"}", "/task")
+        self.assertIsNotNone(result)
+        self.assertEqual(result[1].get("args"), '{"reason":"timeout"}')
+
+    def test_control_clear_interrupt_subcommand_matches(self):
+        """/control.clear_interrupt must match as a fixed subcommand."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [self._subcommand_instruction("/control.clear_interrupt")]
+        result = match_yaml_command("/control.clear_interrupt", "/task")
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0].get("cmd"), "/control.clear_interrupt")
+
+    def test_control_get_runtime_messages_subcommand_matches(self):
+        """/control.get_runtime_messages must match as a fixed subcommand."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [self._subcommand_instruction("/control.get_runtime_messages")]
+        result = match_yaml_command("/control.get_runtime_messages", "/task")
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0].get("cmd"), "/control.get_runtime_messages")
+
+    def test_control_call_instruction_subcommand_matches(self):
+        """/control.call_instruction must match and extract JSON args."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [self._subcommand_instruction("/control.call_instruction {args}")]
+        result = match_yaml_command(
+            "/control.call_instruction {\"instruction\":\"ctx.history\"}", "/task"
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0].get("cmd"), "/control.call_instruction {args}")
+        self.assertEqual(result[1].get("args"), '{"instruction":"ctx.history"}')
+
+    @patch("cli_topsailai.process.run_external_command")
+    def test_control_subcommand_preserves_json_args(self, mock_run):
+        """Subcommand JSON payload must survive command-list construction unchanged."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        instruction = self._subcommand_instruction("/control.call_instruction {args}")
+        variables = {
+            "session_id": "s1",
+            "task_dir": "/task",
+            "args": '{"instruction":"ctx.history"}',
+        }
+        result = handle_yaml_command(instruction, variables)
+        self.assertEqual(result, "yaml_handled")
+        command = mock_run.call_args[0][0]
+        self.assertEqual(command[-2:], ["-a", '{"instruction":"ctx.history"}'])
+
+    @patch("cli_topsailai.process.run_external_command")
+    def test_control_generic_path_backward_compatible(self, mock_run):
+        """The generic /control {command} {args} path must remain usable."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        instruction = self._control_instruction()
+        variables = {
+            "session_id": "s1",
+            "task_dir": "/task",
+            "command": "call_instruction",
+            "args": '{"instruction":"ctx.history"}',
+        }
+        result = handle_yaml_command(instruction, variables)
+        self.assertEqual(result, "yaml_handled")
+        command = mock_run.call_args[0][0]
+        self.assertEqual(command[-4:], ["-c", "call_instruction", "-a", '{"instruction":"ctx.history"}'])
+
+
+class TestCallInstructionWizard(unittest.TestCase):
+    """Tests for the interactive call_instruction wizard."""
+
+    def tearDown(self):
+        cli_state.yaml_commands = []
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+
+    @patch("cli_topsailai.yaml_commands.input", side_effect=["ctx.history", "arg1", "", "key=value", ""])
+    def test_wizard_builds_payload(self, mock_input):
+        """Wizard assembles instruction + args + kwargs into a JSON payload."""
+        from cli_topsailai.yaml_commands import _prompt_call_instruction_wizard
+        result = _prompt_call_instruction_wizard()
+        self.assertEqual(
+            result,
+            '{"instruction": "ctx.history", "args": ["arg1"], "kwargs": {"key": "value"}}',
+        )
+
+    @patch("cli_topsailai.yaml_commands.input", side_effect=["ctx.history", "", ""])
+    def test_wizard_only_instruction(self, mock_input):
+        """Wizard with no args/kwargs returns instruction-only payload."""
+        from cli_topsailai.yaml_commands import _prompt_call_instruction_wizard
+        result = _prompt_call_instruction_wizard()
+        self.assertEqual(result, '{"instruction": "ctx.history"}')
+
+    @patch("cli_topsailai.yaml_commands.input", side_effect=[""])
+    @patch("cli_topsailai.yaml_commands.print_error")
+    def test_wizard_empty_instruction_returns_none(self, mock_print_error, mock_input):
+        """Empty instruction must return None and print an error."""
+        from cli_topsailai.yaml_commands import _prompt_call_instruction_wizard
+        result = _prompt_call_instruction_wizard()
+        self.assertIsNone(result)
+        mock_print_error.assert_called_once()
+
+    @patch("cli_topsailai.yaml_commands.input", side_effect=KeyboardInterrupt)
+    @patch("cli_topsailai.yaml_commands.print_warning")
+    def test_wizard_ctrl_c_cancels(self, mock_print_warning, mock_input):
+        """Ctrl+C during the first prompt must cancel and return None."""
+        from cli_topsailai.yaml_commands import _prompt_call_instruction_wizard
+        result = _prompt_call_instruction_wizard()
+        self.assertIsNone(result)
+        mock_print_warning.assert_called_once()
+
+    @patch("cli_topsailai.yaml_commands.input", side_effect=["ctx.history", "", "badline", ""])
+    @patch("cli_topsailai.yaml_commands.print_warning")
+    def test_wizard_ignores_invalid_kwarg(self, mock_print_warning, mock_input):
+        """A kwarg line without '=' must be ignored with a warning."""
+        from cli_topsailai.yaml_commands import _prompt_call_instruction_wizard
+        result = _prompt_call_instruction_wizard()
+        self.assertEqual(result, '{"instruction": "ctx.history"}')
+        mock_print_warning.assert_called_once()
+
 
 class TestGitStatusCommand(unittest.TestCase):
     """Tests for the /git.status session-scope and runtime-scope command."""

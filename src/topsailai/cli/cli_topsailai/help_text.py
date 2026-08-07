@@ -275,9 +275,9 @@ def print_help(
             "scopes": ["session", "runtime"],
         },
         {
-            "cmd": "/control <command> [args_json]",
-            "desc": "Send a control request to the current session through its UDS control socket. Supported commands: call_instruction, hard_interrupt, soft_interrupt, clear_interrupt, get_runtime_messages. args_json is an optional JSON object; defaults to {}.",
-            "example": "Example: /control hard_interrupt  or  /control hard_interrupt {\"reason\":\"timeout\"}  or  /control call_instruction {\"instruction\":\"ctx.history\",\"args\":[\"arg1\"],\"kwargs\":{\"key\":\"value\"}}",
+            "cmd": "/control <command> [args_json]  |  /control.<subcommand>",
+            "desc": "Send a control request to the current session through its UDS control socket. Supported commands: call_instruction, hard_interrupt, soft_interrupt, clear_interrupt, get_runtime_messages. args_json is an optional JSON object; defaults to {}. Fixed actions can be invoked without JSON via /control.hard_interrupt, /control.soft_interrupt [reason], /control.clear_interrupt, /control.get_runtime_messages. /control.call_instruction without a JSON payload starts an interactive wizard that prompts for instruction, args, and kwargs.",
+            "example": "Example: /control.hard_interrupt  or  /control.soft_interrupt timeout  or  /control.call_instruction  or  /control call_instruction {\"instruction\":\"ctx.history\",\"args\":[\"arg1\"],\"kwargs\":{\"key\":\"value\"}}",
             "scopes": ["session", "runtime"],
         },
         {

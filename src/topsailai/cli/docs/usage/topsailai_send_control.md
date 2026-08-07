@@ -87,6 +87,41 @@ To pass arguments, supply a JSON object as the second argument:
 [runtime:my-session]> /control soft_interrupt {"reason":"timeout"}
 ```
 
+### Subcommand shortcuts
+
+Fixed actions can be invoked without writing JSON using the `/control.<subcommand>` form:
+
+```text
+[runtime:my-session]> /control.hard_interrupt
+[runtime:my-session]> /control.soft_interrupt timeout
+[runtime:my-session]> /control.clear_interrupt
+[runtime:my-session]> /control.get_runtime_messages
+```
+
+`/control.soft_interrupt` accepts an optional free-text reason; the other three take no arguments.
+
+### Interactive wizard for `call_instruction`
+
+`/control.call_instruction` without a JSON payload starts an interactive wizard that prompts for the instruction name, positional arguments, and keyword arguments, then assembles the JSON payload automatically:
+
+```text
+[runtime:my-session]> /control.call_instruction
+Instruction name: ctx.history
+Positional arg (empty to finish): arg1
+Positional arg (empty to finish):
+Keyword arg (key=value, empty to finish): key=value
+Keyword arg (key=value, empty to finish):
+```
+
+The wizard sends `{"instruction":"ctx.history","args":["arg1"],"kwargs":{"key":"value"}}`.
+
+### TAB completion
+
+TAB completion is available for:
+
+- `/control.<action>` — completes the action name from the registered control actions.
+- `/control.call_instruction <name>` — completes the instruction name from the registered `/` instructions.
+
 ## See Also
 
 - `topsailai_session_add_agent2llm_message`

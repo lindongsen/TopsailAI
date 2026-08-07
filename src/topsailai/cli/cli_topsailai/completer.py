@@ -45,6 +45,27 @@ def get_all_command_names(yaml_commands: Optional[Any] = None) -> List[str]:
     return names
 
 
+def get_control_instruction_names() -> List[str]:
+    """Return known instruction names usable with /control.call_instruction.
+
+    These are the registered "/" instructions that can be invoked through the
+    control channel.  The list is derived from the YAML command definitions so
+    it stays in sync with the available instructions.
+    """
+    names: List[str] = []
+    for instruction in cli_state.yaml_commands:
+        cmd = instruction.get("cmd", "")
+        if not cmd or not cmd.startswith("/"):
+            continue
+        # Skip control commands themselves; only expose real instructions.
+        if cmd.startswith("/control"):
+            continue
+        base = cmd.split()[0].lstrip("/")
+        if base and base not in names:
+            names.append(base)
+    return sorted(names)
+
+
 def get_available_completions() -> List[str]:
     """Return all available command completions for the current scope."""
     completions: List[str] = []
@@ -119,6 +140,20 @@ def get_completions(text: str, state_index: int) -> Optional[str]:
         return None
 
 
+def _get_control_action_names() -> List[str]:
+    """Return the registered control action names.
+
+    Lazily imports the control actions so the completer stays lightweight
+    during normal TAB completion of unrelated commands.
+    """
+    try:
+        from topsailai_send_control import get_control_actions
+
+        return get_control_actions()
+    except Exception:
+        return []
+
+
 def tab_completer(text: str, state: int) -> Optional[str]:
     """readline tab completion callback."""
     try:
@@ -129,6 +164,25 @@ def tab_completer(text: str, state: int) -> Optional[str]:
             parts = line[: readline.get_begidx()].strip().split()
             if parts:
                 return None
+
+        # Complete instruction names after /control.call_instruction.
+        # This must be checked before the generic /control. branch so the
+        # more specific instruction-name completion is reachable.
+        if text.startswith("/control.call_instruction "):
+            names = get_control_instruction_names()
+            prefix = text[len("/control.call_instruction ") :]
+            matches = [n for n in names if n.startswith(prefix)]
+            if state < len(matches):
+                return matches[state]
+            return None
+
+        # Complete /control.<action> subcommands from the registered actions.
+        if text.startswith("/control."):
+            actions = _get_control_action_names()
+            matches = ["/control." + a for a in actions if a.startswith(text[len("/control.") :])]
+            if state < len(matches):
+                return matches[state]
+            return None
 
         candidates = get_available_completions()
         matches = []
