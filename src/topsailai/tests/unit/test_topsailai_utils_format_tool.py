@@ -125,6 +125,33 @@ class TestParseTopsailaiFormat:
         result = parse_topsailai_format("")
         assert result == OrderedDict()
 
+    def test_parse_topsailai_format_trailing_empty_duplicate_final(self):
+        """Test trailing duplicate final_answer marker with empty content preserves real content"""
+        text = "topsailai.final_answer\nReal content\ntopsailai.final_answer"
+        result = parse_topsailai_format(text)
+        expected = OrderedDict([("final_answer", "Real content")])
+        assert result == expected
+
+    def test_parse_topsailai_format_duplicate_final_first_empty_second_content(self):
+        """Test duplicate final_answer where first is empty and second has content"""
+        text = "topsailai.final_answer\n\ntopsailai.final_answer\nSecond content"
+        result = parse_topsailai_format(text)
+        expected = OrderedDict([("final_answer", "Second content")])
+        assert result == expected
+
+    def test_parse_topsailai_format_duplicate_thought_empty_does_not_overwrite(self):
+        """Test duplicate thought step with empty content does not overwrite existing"""
+        text = "topsailai.thought\nFirst thought\ntopsailai.thought"
+        result = parse_topsailai_format(text)
+        expected = OrderedDict([("thought", "First thought")])
+        assert result == expected
+
+    def test_parse_topsailai_format_duplicate_thought_non_empty_overwrites(self):
+        """Test duplicate thought step with non-empty content overwrites existing"""
+        text = "topsailai.thought\nFirst thought\ntopsailai.thought\nSecond thought"
+        result = parse_topsailai_format(text)
+        expected = OrderedDict([("thought", "Second thought")])
+        assert result == expected
 
 class TestFormatDictToList:
     """Test cases for format_dict_to_list function"""

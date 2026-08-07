@@ -191,7 +191,10 @@ def parse_topsailai_format(text: str) -> dict:
         if line.startswith(TOPSAILAI_FORMAT_PREFIX):
             # Save previous step if exists
             if current_step:
-                result[current_step] = '\n'.join(current_content).strip()
+                content = '\n'.join(current_content).strip()
+                # Preserve existing content when a duplicate step has empty content
+                if not (current_step in result and content == ""):
+                    result[current_step] = content
 
             # Start new step
             step_name = line[len(TOPSAILAI_FORMAT_PREFIX):].strip()
@@ -203,7 +206,10 @@ def parse_topsailai_format(text: str) -> dict:
 
     # Don't forget the last step
     if current_step:
-        result[current_step] = '\n'.join(current_content).strip()
+        content = '\n'.join(current_content).strip()
+        # Preserve existing content when a duplicate step has empty content
+        if not (current_step in result and content == ""):
+            result[current_step] = content
 
     return result
 
