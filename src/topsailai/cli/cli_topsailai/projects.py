@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
@@ -34,8 +34,8 @@ def _get_projects_path() -> str:
     return os.path.join(get_topsailai_home(), ".projects.jsonl")
 
 def _now_iso() -> str:
-    """Return the current UTC time as an ISO-8601 string."""
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    """Return the current local time as an ISO-8601 string."""
+    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def _resolve_project_path(raw_path: str) -> Optional[str]:

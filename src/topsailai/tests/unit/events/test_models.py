@@ -9,13 +9,19 @@ from topsailai.events.models import Event
 
 
 def test_event_defaults():
+    before = datetime.now().astimezone()
     event = Event(event_type="x", payload={"a": 1})
+    after = datetime.now().astimezone()
+
     assert event.event_type == "x"
     assert event.payload == {"a": 1}
     assert event.session_id is None
     assert event.trace_id is None
     assert event.source is None
     assert isinstance(event.timestamp, datetime)
+    assert event.timestamp.tzinfo is not None
+    assert event.timestamp.utcoffset() is not None
+    assert before <= event.timestamp <= after
 
 
 def test_event_to_dict():

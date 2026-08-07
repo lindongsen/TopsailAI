@@ -143,7 +143,7 @@ def _append_jsonl_message(file_path: str, content: str) -> bool:
     Reuses the same payload shape as the existing file-based Agent2LLM message
     source so the consumer can parse it without any special handling.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     parent_dir = os.path.dirname(file_path)
     if parent_dir and not os.path.exists(parent_dir):
@@ -159,7 +159,7 @@ def _append_jsonl_message(file_path: str, content: str) -> bool:
         "role": ROLE_USER,
         "content": content,
         "step_name": STEP_NAME_OBSERVATION,
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": datetime.now().astimezone().isoformat(),
     }
 
     try:

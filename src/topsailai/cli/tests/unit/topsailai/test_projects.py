@@ -9,12 +9,29 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from cli_topsailai import projects
+
+
+class TestNowIso(unittest.TestCase):
+    """Tests for _now_iso."""
+
+    def test_returns_local_timezone_aware_timestamp_at_seconds_precision(self):
+        before = datetime.now().astimezone()
+        timestamp = datetime.fromisoformat(projects._now_iso())
+        after = datetime.now().astimezone()
+
+        self.assertIsNotNone(timestamp.tzinfo)
+        self.assertIsNotNone(timestamp.utcoffset())
+        self.assertEqual(timestamp.utcoffset(), before.utcoffset())
+        self.assertEqual(timestamp.microsecond, 0)
+        self.assertLessEqual(before.replace(microsecond=0), timestamp)
+        self.assertLessEqual(timestamp, after)
 
 
 class TestLoadProjects(unittest.TestCase):

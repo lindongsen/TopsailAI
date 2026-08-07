@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Optional
 
 
@@ -35,7 +35,7 @@ class Event:
 
     Attributes:
         event_type: Dot-separated event type, e.g. "tool_call.start".
-        timestamp: UTC datetime when the event was created.
+        timestamp: Local timezone-aware datetime when the event was created.
         session_id: Optional session identifier.
         payload: Arbitrary event-specific data.
         trace_id: Optional correlation/trace identifier.
@@ -44,7 +44,7 @@ class Event:
     """
 
     event_type: str
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now().astimezone())
     session_id: Optional[str] = None
     payload: dict[str, Any] = field(default_factory=dict)
     trace_id: Optional[str] = None

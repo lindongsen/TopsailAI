@@ -8,6 +8,7 @@ Purpose: Verify hard, soft, and clear interrupt handlers
 """
 
 import json
+from datetime import datetime
 
 from topsailai.workspace.control_channel.protocol import ControlContext, ControlRequest
 from topsailai.workspace.control_handlers.interrupt import (
@@ -33,6 +34,7 @@ def test_hard_interrupt_writes_flag(tmp_path):
 def test_soft_interrupt_appends_jsonl_message(tmp_path):
     """Soft interrupt appends a consumable Agent2LLM message."""
     context = ControlContext(session_id="session", pid=123, task_folder=str(tmp_path))
+    before = datetime.now().astimezone()
     response = SoftInterruptHandler().handle(
         ControlRequest(
             request_id="soft-1",
@@ -41,11 +43,17 @@ def test_soft_interrupt_appends_jsonl_message(tmp_path):
         ),
         context,
     )
+    after = datetime.now().astimezone()
 
     assert response.status == "ok"
     records = (tmp_path / "session.123.session.agent2llm_inject_messages.jsonl").read_text().splitlines()
     assert len(records) == 1
-    assert json.loads(records[0])["content"] == "summarize now"
+    record = json.loads(records[0])
+    assert record["content"] == "summarize now"
+    timestamp = datetime.fromisoformat(record["ts"])
+    assert timestamp.tzinfo is not None
+    assert timestamp.utcoffset() is not None
+    assert before <= timestamp <= after
 
 
 def test_clear_interrupt_removes_flag(tmp_path):

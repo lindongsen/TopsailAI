@@ -131,7 +131,9 @@ class TestWriteMessage(unittest.TestCase):
             result = write_message(self.file_path, "hello")
         self.assertFalse(result)
 
-    def test_write_message_includes_ts_field(self):
+    def test_write_message_includes_timezone_aware_ts_field(self):
+        from datetime import datetime
+
         result = write_message(self.file_path, "hello")
         self.assertTrue(result)
 
@@ -140,21 +142,24 @@ class TestWriteMessage(unittest.TestCase):
 
         self.assertIn("ts", parsed)
         self.assertIsInstance(parsed["ts"], str)
-        self.assertTrue(parsed["ts"].endswith("+00:00"))
+        ts = datetime.fromisoformat(parsed["ts"])
+        self.assertIsNotNone(ts.tzinfo)
+        self.assertIsNotNone(ts.utcoffset())
 
-    def test_write_message_ts_is_iso_8601_utc(self):
-        from datetime import datetime, timezone
+    def test_write_message_ts_is_local_timezone_aware_iso_8601(self):
+        from datetime import datetime
 
-        before = datetime.now(timezone.utc)
+        before = datetime.now().astimezone()
         write_message(self.file_path, "hello")
-        after = datetime.now(timezone.utc)
+        after = datetime.now().astimezone()
 
         with open(self.file_path, "r", encoding="utf-8") as fd:
             parsed = json.loads(fd.readline())
 
         ts = datetime.fromisoformat(parsed["ts"])
         self.assertTrue(before <= ts <= after)
-        self.assertEqual(ts.tzinfo, timezone.utc)
+        self.assertIsNotNone(ts.tzinfo)
+        self.assertIsNotNone(ts.utcoffset())
 
 
 class TestFileAgent2LLMMessageSource(unittest.TestCase):

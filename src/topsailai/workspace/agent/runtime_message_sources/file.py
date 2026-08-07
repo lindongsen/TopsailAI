@@ -3,7 +3,7 @@ import hashlib
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 
 from topsailai.ai_base.agent2llm_message_source import Agent2LLMMessageSource
 from topsailai.ai_base.constants import ROLE_USER, STEP_NAME_OBSERVATION
@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 def _now_iso_ts() -> str:
-    """Return the current UTC time as an ISO 8601 timestamp string."""
-    return datetime.now(timezone.utc).isoformat()
+    """Return the current local time as an ISO 8601 timestamp string."""
+    return datetime.now().astimezone().isoformat()
 
 
 def get_default_inject_message_file_path(session_id: str | None = None) -> str:
@@ -54,7 +54,7 @@ def write_message(
     * If ``content`` is a dict, it is written as-is, allowing callers to
       inject pre-structured messages.
 
-    A top-level ``ts`` field containing an ISO 8601 UTC creation timestamp is
+    A top-level ``ts`` field containing an ISO 8601 local-time creation timestamp is
     added to every JSONL line. This field is for representation/logging only
     and is stripped by the consumer before the message is injected into the
     Agent2LLM context.

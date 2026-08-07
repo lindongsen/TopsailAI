@@ -326,7 +326,7 @@ These variables configure the optional runtime message source that injects messa
 - Messages are appended at the tail of `agent.messages` as `user` role messages with `step_name=observation`.
 - The source is consumed from thread-local storage, so it is scoped to the current agent execution thread.
 - The default filename follows the session-scoped convention used by the session stdout tee file and input pipe (`{session_id}.{pid}.session.*`) so concurrent processes do not collide.
-- Each JSONL line may include a `ts` field containing an ISO 8601 UTC creation timestamp. This field is for representation/logging only and is stripped before the message is injected into the Agent2LLM context.
+- Each JSONL line may include a `ts` field containing an ISO-8601 host-local, timezone-aware creation timestamp. This field is for representation/logging only and is stripped before the message is injected into the Agent2LLM context.
 ## Team Configuration
 
 | Variable | Default | Description |
