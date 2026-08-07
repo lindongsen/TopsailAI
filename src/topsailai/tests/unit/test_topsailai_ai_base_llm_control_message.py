@@ -736,6 +736,21 @@ class TestDeepseekDsmlToolCalls:
             assert isinstance(item["tool_args"]["cmd"], str)
             assert item["tool_args"]["timeout"] == 30
 
+
+    def test_format_response_deepseek_malformed_dsml_sample(self, monkeypatch):
+        """Verify malformed singular DSML wrapper is recovered into one action."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        monkeypatch.setenv("OPENAI_MODEL", "deepseek-chat")
+
+        text = self.DSML_SAMPLE_PATH.with_name("dsml-2.txt").read_text(encoding="utf-8")
+        result = format_response(text)
+
+        assert result == [{
+            "step_name": "action",
+            "tool_call": "file_tool-read_file",
+            "tool_args": {"file_path": "/tmp/test.txt"},
+        }]
     def test_format_response_deepseek_requires_model(self, monkeypatch):
         """Verify DSML is not parsed when the model is not DeepSeek."""
         from topsailai.ai_base.llm_control.message import format_response

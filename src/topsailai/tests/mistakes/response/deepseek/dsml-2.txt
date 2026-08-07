@@ -1,0 +1,3 @@
+<｜DSML｜tool_call>
+{"tool_args": {"file_path": "/tmp/test.txt"}, "tool_call": "file_tool-read_file"}
+</｜DSML｜tool_calls>
