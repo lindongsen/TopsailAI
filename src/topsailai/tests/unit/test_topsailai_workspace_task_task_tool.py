@@ -4,6 +4,9 @@ Unit tests for topsailai.workspace.task.task_tool module.
 
 import os
 import json
+from tempfile import TemporaryDirectory
+
+from topsailai.ai_base.exception import HardInterruptError
 from unittest import TestCase
 from unittest.mock import patch, MagicMock
 
@@ -460,3 +463,20 @@ class TestCtxmProcessTask(TestCase):
         # Full integration test would require actual file operations
         self.assertIsNotNone(task)
         self.assertEqual(task.result, "completed")
+
+    def test_ctxm_process_task_keeps_stdout_after_hard_interrupt(self):
+        """Verify task stdout persists when a hard interrupt unwinds processing."""
+        with TemporaryDirectory() as task_directory:
+            with patch(
+                'topsailai.workspace.task.task_tool.FOLDER_WORKSPACE_TASK',
+                task_directory,
+            ):
+                task = TaskUtil("hard_interrupt")
+                task.task_content = "test content"
+                stdout_file = task.task_file + ".stdout"
+
+                with self.assertRaises(HardInterruptError):
+                    with ctxm_process_task(task):
+                        raise HardInterruptError("interrupted")
+
+                self.assertTrue(os.path.exists(stdout_file))
