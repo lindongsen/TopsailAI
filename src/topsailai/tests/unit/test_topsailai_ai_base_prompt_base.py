@@ -1064,13 +1064,15 @@ class TestPromptBase(unittest.TestCase):
         with ctxm_set_env({"TOPSAILAI_USE_TOOL_CALLS": "1"}):
             self.assertFalse(threshold.is_exceeded(messages))
 
-    def test_threshold_context_history_is_exceeded_without_tool_calls(self):
+    @patch("topsailai.ai_base.prompt_base.count_tokens")
+    def test_threshold_context_history_is_exceeded_without_tool_calls(self, mock_count_tokens):
         """Test is_exceeded returns True when threshold exceeded and tool calls disabled."""
         from topsailai.ai_base.prompt_base import ThresholdContextHistory
         from topsailai.utils.env_tool import ctxm_set_env
 
         threshold = ThresholdContextHistory()
         messages = [{"role": "user", "content": f"message {i}"} for i in range(100)]
+        mock_count_tokens.return_value = 110000  # exceeds 0.8 * 128000
 
         with ctxm_set_env({"TOPSAILAI_USE_TOOL_CALLS": "0"}):
             self.assertTrue(threshold.is_exceeded(messages))
