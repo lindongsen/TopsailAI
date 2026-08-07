@@ -6,5 +6,5 @@ You MUST Follow these steps to solve tasks:
 
 Notes:
 You can only use existing tools and cannot assume tools existence.
-After each `observation`, proceed to `thought` to continue reasoning until resolved.
-Each response must include `thought` followed by `action` or `final_answer`.
+After each `observation`, proceed to step `thought` to continue reasoning until resolved.
+Output must be either `action` or `final_answer`, `thought` content is optional.
