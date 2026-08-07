@@ -146,11 +146,32 @@ class TestParseTopsailaiFormat:
         expected = OrderedDict([("thought", "First thought")])
         assert result == expected
 
-    def test_parse_topsailai_format_duplicate_thought_non_empty_overwrites(self):
-        """Test duplicate thought step with non-empty content overwrites existing"""
+    def test_parse_topsailai_format_duplicate_thought_non_empty_merges(self):
+        """Test duplicate thought step with non-empty content merges into one entry"""
         text = "topsailai.thought\nFirst thought\ntopsailai.thought\nSecond thought"
         result = parse_topsailai_format(text)
-        expected = OrderedDict([("thought", "Second thought")])
+        expected = OrderedDict([("thought", "First thought\n\nSecond thought")])
+        assert result == expected
+
+    def test_parse_topsailai_format_duplicate_final_non_empty_merges(self):
+        """Test duplicate final_answer step with non-empty content merges into one entry"""
+        text = "topsailai.final_answer\nFirst final\ntopsailai.final_answer\nSecond final"
+        result = parse_topsailai_format(text)
+        expected = OrderedDict([("final_answer", "First final\n\nSecond final")])
+        assert result == expected
+
+    def test_parse_topsailai_format_duplicate_final_dash_non_empty_merges(self):
+        """Test duplicate final-answer step with non-empty content merges into one entry"""
+        text = "topsailai.final-answer\nFirst final\ntopsailai.final-answer\nSecond final"
+        result = parse_topsailai_format(text)
+        expected = OrderedDict([("final-answer", "First final\n\nSecond final")])
+        assert result == expected
+
+    def test_parse_topsailai_format_duplicate_action_non_empty_overwrites(self):
+        """Test duplicate action step with non-empty content keeps overwrite behavior"""
+        text = "topsailai.action\nFirst action\ntopsailai.action\nSecond action"
+        result = parse_topsailai_format(text)
+        expected = OrderedDict([("action", "Second action")])
         assert result == expected
 
 class TestFormatDictToList:

@@ -167,6 +167,24 @@ def fix_llm_mistakes(text:str, step_keys=("thought", "action", "final_answer", "
 
     return text
 
+def _merge_step_content(result: OrderedDict, step_name: str, content: str) -> None:
+    """Merge or overwrite step content in the result dict.
+
+    For final/thought steps, duplicate non-empty content is concatenated.
+    Empty duplicate content is skipped (existing content preserved).
+    Other step types keep the original overwrite behavior.
+    """
+    if step_name not in result:
+        result[step_name] = content
+    elif content == "":
+        pass  # preserve existing content
+    elif result[step_name] == "":
+        result[step_name] = content
+    elif step_name.startswith("final") or step_name == "thought":
+        result[step_name] = result[step_name] + "\n\n" + content
+    else:
+        result[step_name] = content
+
 def parse_topsailai_format(text: str) -> dict:
     """
     Parse text in the topsailai format.
@@ -192,9 +210,7 @@ def parse_topsailai_format(text: str) -> dict:
             # Save previous step if exists
             if current_step:
                 content = '\n'.join(current_content).strip()
-                # Preserve existing content when a duplicate step has empty content
-                if not (current_step in result and content == ""):
-                    result[current_step] = content
+                _merge_step_content(result, current_step, content)
 
             # Start new step
             step_name = line[len(TOPSAILAI_FORMAT_PREFIX):].strip()
@@ -207,9 +223,7 @@ def parse_topsailai_format(text: str) -> dict:
     # Don't forget the last step
     if current_step:
         content = '\n'.join(current_content).strip()
-        # Preserve existing content when a duplicate step has empty content
-        if not (current_step in result and content == ""):
-            result[current_step] = content
+        _merge_step_content(result, current_step, content)
 
     return result
 
