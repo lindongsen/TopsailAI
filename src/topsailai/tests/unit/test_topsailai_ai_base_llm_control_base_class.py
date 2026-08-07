@@ -207,6 +207,78 @@ class TestLLMModelBase:
         assert params["top_p"] == 0.9
         assert params["frequency_penalty"] == 0.1
 
+    @pytest.fixture
+    def request_model(self, monkeypatch):
+        """Return a model for request-parameter tests."""
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
+
+        class TestModel(LLMModelBase):
+            def get_model_name(self, default=""):
+                return "test-model"
+            def get_llm_model(self, api_key=None, api_base=None):
+                return MagicMock()
+            def get_response_message(self, response):
+                return MagicMock()
+            def chat(self, *args, **kwargs):
+                pass
+
+        return TestModel()
+
+    def test_extra_body_unset_or_empty_leaves_params_unchanged(
+            self, monkeypatch, request_model):
+        """Unset or empty extra-body configuration should not alter parameters."""
+        monkeypatch.delenv("TOPSAILAI_LLM_EXTRA_BODY", raising=False)
+        messages = [{"role": "user", "content": "Hello"}]
+        assert "extra_body" not in request_model.build_parameters_for_chat(messages)
+
+        monkeypatch.setenv("TOPSAILAI_LLM_EXTRA_BODY", "")
+        assert "extra_body" not in request_model.build_parameters_for_chat(messages)
+
+    def test_extra_body_injects_chat_template_kwargs(
+            self, monkeypatch, request_model):
+        """Configured provider fields should be injected through extra_body."""
+        monkeypatch.setenv(
+            "TOPSAILAI_LLM_EXTRA_BODY",
+            '{"chat_template_kwargs":{"thinking":false}}',
+        )
+        params = request_model.build_parameters_for_chat(
+            [{"role": "user", "content": "Hello"}]
+        )
+        assert params["extra_body"] == {
+            "chat_template_kwargs": {"thinking": False}
+        }
+
+    def test_extra_body_recursively_merges_with_environment_precedence(
+            self, monkeypatch, request_model):
+        """Environment values should override matching keys without dropping peers."""
+        monkeypatch.setenv(
+            "TOPSAILAI_LLM_EXTRA_BODY",
+            '{"chat_template_kwargs":{"thinking":false}}',
+        )
+        params = request_model.build_parameters_for_chat(
+            [{"role": "user", "content": "Hello"}],
+            extra_body={
+                "chat_template_kwargs": {"thinking": True, "custom": "kept"},
+                "provider_option": 1,
+            },
+        )
+        assert params["extra_body"] == {
+            "chat_template_kwargs": {"thinking": False, "custom": "kept"},
+            "provider_option": 1,
+        }
+
+    @pytest.mark.parametrize("raw", ["not-json", "[]"])
+    def test_invalid_extra_body_is_ignored(
+            self, monkeypatch, request_model, caplog, raw):
+        """Invalid extra-body configuration should warn and leave parameters unchanged."""
+        monkeypatch.setenv("TOPSAILAI_LLM_EXTRA_BODY", raw)
+        with caplog.at_level("WARNING"):
+            params = request_model.build_parameters_for_chat(
+                [{"role": "user", "content": "Hello"}]
+            )
+        assert "extra_body" not in params
+        assert "TOPSAILAI_LLM_EXTRA_BODY" in caplog.text
+
     def test_get_llm_models_empty_settings(self, monkeypatch):
         """Test get_llm_models with empty settings."""
         monkeypatch.delenv("MAX_TOKENS", raising=False)

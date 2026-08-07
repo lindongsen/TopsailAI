@@ -293,7 +293,43 @@ class LLMModelBase(object):
         if "parallel_tool_calls" not in params and not EnvReaderInstance.is_not_config("TOPSAILAI_ENABLE_PARALLEL_TOOL_CALLS"):
             params["parallel_tool_calls"] = EnvReaderInstance.check_bool("TOPSAILAI_ENABLE_PARALLEL_TOOL_CALLS")
 
+        extra_body = options.get("extra_body")
+        if extra_body is not None:
+            params["extra_body"] = copy.deepcopy(extra_body)
+        configured_extra_body = self._get_configured_extra_body()
+        if configured_extra_body:
+            params["extra_body"] = self._merge_dicts(
+                params.get("extra_body", {}), configured_extra_body
+            )
+
         return params
+
+    @staticmethod
+    def _merge_dicts(base, override):
+        """Recursively merge dictionaries, giving override values precedence."""
+        merged = copy.deepcopy(base)
+        for key, value in override.items():
+            if isinstance(merged.get(key), dict) and isinstance(value, dict):
+                merged[key] = LLMModelBase._merge_dicts(merged[key], value)
+                continue
+            merged[key] = copy.deepcopy(value)
+        return merged
+
+    @staticmethod
+    def _get_configured_extra_body():
+        """Parse provider-specific request fields from TOPSAILAI_LLM_EXTRA_BODY."""
+        raw = EnvReaderInstance.get("TOPSAILAI_LLM_EXTRA_BODY", default="")
+        if not raw or not raw.strip():
+            return {}
+        try:
+            parsed = simplejson.loads(raw.strip())
+        except Exception:
+            logger.warning("invalid JSON in TOPSAILAI_LLM_EXTRA_BODY: %s", raw)
+            return {}
+        if not isinstance(parsed, dict):
+            logger.warning("TOPSAILAI_LLM_EXTRA_BODY must be a JSON object")
+            return {}
+        return parsed
 
     def debug_response(self, response, content):
         """

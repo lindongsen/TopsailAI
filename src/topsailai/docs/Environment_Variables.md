@@ -85,6 +85,7 @@ These variables define the agent's working environment and project access scope.
 | `TOPSAILAI_CHAT_INTERACTIVE_MODE` | `0` | Interactive mode for the Agent2LLM runtime (`StepCall`). When enabled (`1`), the agent pauses during `thought`/`inquiry` steps to prompt the user for input via the runtime input hook. When disabled (`0`), the step returns an automatic guidance message instead. |
 | `TOPSAILAI_STREAM_PROGRESS` | `stats` | Controls how LLM streaming output progress is displayed when `LLM_RESPONSE_STREAM` is enabled. See details below. |
 | `TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY` | `["服务器繁忙，请稍后再试。"]` | JSON list of exact LLM response strings that are treated as transient service errors and trigger a retry. |
+| `TOPSAILAI_LLM_EXTRA_BODY` | `""` | JSON object of provider-specific request fields passed through the OpenAI SDK `extra_body` parameter. Environment values recursively merge with and override matching caller-provided fields. For example, `{"chat_template_kwargs":{"thinking":false}}` requests a compatible backend to disable server-side thinking. Invalid JSON or non-object values are ignored with a warning. |
 
 ### `TOPSAILAI_STREAM_PROGRESS`
 

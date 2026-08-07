@@ -126,6 +126,11 @@ TOPSAILAI_LLM_RESPONSE_EVENTS_STREAM_CHUNK_SAMPLE=0
 # TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY='["服务器繁忙，请稍后再试。", "服务繁忙"]'
 TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY=["服务器繁忙，请稍后再试。"]
 
+# JSON object containing provider-specific fields passed through the OpenAI SDK
+# extra_body parameter. Example to disable server-side thinking:
+# TOPSAILAI_LLM_EXTRA_BODY='{"chat_template_kwargs":{"thinking":false}}'
+TOPSAILAI_LLM_EXTRA_BODY=""
+
 
 # =============================================================================
 # Multi-Model Configuration
