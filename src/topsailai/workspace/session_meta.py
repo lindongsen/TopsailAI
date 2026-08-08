@@ -172,10 +172,12 @@ def create_session_meta(session_id: str | None = None, ai_agent=None) -> str | N
 
     agent_name = ""
     agent_type = ""
+    agent_role = ""
     model_name = ""
     if ai_agent is not None:
         agent_name = getattr(ai_agent, "agent_name", "") or ""
         agent_type = getattr(ai_agent, "agent_type", "") or ""
+        agent_role = getattr(ai_agent, "agent_role", "") or ""
         llm_model = getattr(ai_agent, "llm_model", None)
         if llm_model is not None:
             model_name = getattr(llm_model, "model_name", "") or ""
@@ -191,6 +193,7 @@ def create_session_meta(session_id: str | None = None, ai_agent=None) -> str | N
         "pwd": pwd,
         "agent_name": agent_name,
         "agent_type": agent_type,
+        "agent_role": agent_role,
         "model_name": model_name,
         "task_id": task_id,
         "files": _get_related_files(meta_basename),

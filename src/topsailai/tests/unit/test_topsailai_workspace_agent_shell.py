@@ -26,6 +26,9 @@ class TestGetAIAgent(unittest.TestCase):
         self.mock_env_tool.is_debug_mode.return_value = False
         self.agent_type_patcher = patch('topsailai.workspace.agent_shell.get_agent_type')
         self.mock_get_agent_type = self.agent_type_patcher.start()
+        self.agent_role_patcher = patch('topsailai.workspace.agent_shell.get_agent_role')
+        self.mock_get_agent_role = self.agent_role_patcher.start()
+        self.mock_get_agent_role.return_value = "worker"
         
         # Mock AgentRun
         self.agent_run_patcher = patch('topsailai.workspace.agent_shell.AgentRun')
@@ -52,6 +55,7 @@ class TestGetAIAgent(unittest.TestCase):
         self.env_patcher.stop()
         self.env_tool_patcher.stop()
         self.agent_type_patcher.stop()
+        self.agent_role_patcher.stop()
         self.agent_run_patcher.stop()
         self.content_progress_patcher.stop()
 
@@ -73,6 +77,18 @@ class TestGetAIAgent(unittest.TestCase):
         
         # Verify agent_type attribute is set
         self.assertEqual(agent.agent_type, self.mock_agent_type.AGENT_NAME)
+        # Verify agent_role attribute is set
+        self.assertEqual(agent.agent_role, "worker")
+
+    def test_get_ai_agent_with_manager_role(self):
+        """Test get_ai_agent assigns manager role when provided."""
+        from topsailai.workspace.agent_shell import get_ai_agent
+
+        self.mock_get_agent_role.return_value = "manager"
+        agent = get_ai_agent(agent_role="manager")
+
+        self.mock_get_agent_role.assert_called_once_with("manager")
+        self.assertEqual(agent.agent_role, "manager")
 
     def test_get_ai_agent_with_system_prompt(self):
         """Test get_ai_agent with custom system prompt."""

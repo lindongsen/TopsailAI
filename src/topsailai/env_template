@@ -254,6 +254,9 @@ TOPSAILAI_INPUT_HISTORY_MAX_BACKUP=1
 # Agent Type, default is react
 TOPSAILAI_AGENT_TYPE=""
 
+# Agent Role, default is worker. Supported values: manager, worker
+TOPSAILAI_AGENT_ROLE=""
+
 # default agent name
 TOPSAILAI_AGENT_NAME="TopsailAI"
 

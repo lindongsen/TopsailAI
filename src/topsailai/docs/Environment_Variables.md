@@ -46,6 +46,7 @@ These variables define the agent's working environment and project access scope.
 | `TOPSAILAI_INPUT_HISTORY_MAX_BACKUP` | `1` | Maximum number of JSONL input history backup files to keep. Default is `1`. Values below `0` are treated as `0` (no backups kept). |
 | `TOPSAILAI_HISTORY_LOAD_MAX_ENTRIES` | `100` | Maximum number of recent records to load into memory from `.input_history.jsonl` and `.project_history.jsonl`. Older records remain on disk but are not loaded. Values that are unset, empty, zero, negative, or non-numeric fall back to `100`. |
 | `TOPSAILAI_AGENT_TYPE` | `""` | Agent type, default is `react`. |
+| `TOPSAILAI_AGENT_ROLE` | `""` | Agent role, default is `worker`. Supported values: `manager`, `worker`. |
 | `TOPSAILAI_AGENT_NAME` | `"TopsailAI"` | Default agent name. |
 | `TOPSAILAI_HUMAN_NAME` | `"Topsail"` | Human name used in interactions. |
 | `TOPSAILAI_ENABLE_SESSION_TEE_OUT` | `1` | Tee output to log file. `1` = enabled. |

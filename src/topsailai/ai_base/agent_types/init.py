@@ -11,6 +11,10 @@ from topsailai.utils import (
 from topsailai.ai_base.tool_call import (
     StepCallBase,
 )
+from topsailai.ai_base.constants import (
+    AGENT_ROLE_VALUES,
+    DEFAULT_AGENT_ROLE,
+)
 
 from . import (
     react,
@@ -54,6 +58,30 @@ def get_agent_type(agent_type=None) -> _template:
         return AGENT_TYPE_MAP[agent_type]
     agent_type = env_tool.EnvReaderInstance.get("TOPSAILAI_AGENT_TYPE") or "default"
     return AGENT_TYPE_MAP.get(agent_type) or AGENT_TYPE_MAP["default"]
+
+
+def get_agent_role(agent_role=None) -> str:
+    """
+    Resolve the agent role to use for the AI agent.
+
+    This function resolves the agent role from an explicit argument, falling back
+    to the environment variable 'TOPSAILAI_AGENT_ROLE', and finally to the default
+    role 'worker'. Invalid or unknown values fall back to the default role.
+
+    Args:
+        agent_role (str, optional): The agent role to use. Supported values:
+            - "manager": A manager agent that plans and delegates work.
+            - "worker": A worker agent that executes assigned tasks.
+
+    Returns:
+        str: The resolved agent role, one of AGENT_ROLE_VALUES.
+    """
+    if agent_role and agent_role in AGENT_ROLE_VALUES:
+        return agent_role
+    agent_role = env_tool.EnvReaderInstance.get("TOPSAILAI_AGENT_ROLE") or DEFAULT_AGENT_ROLE
+    if agent_role in AGENT_ROLE_VALUES:
+        return agent_role
+    return DEFAULT_AGENT_ROLE
 
 
 def get_agent_step_call(args:tuple=None, kwargs:dict=None, agent_type:str=None) -> StepCallBase:

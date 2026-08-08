@@ -50,5 +50,21 @@ class TestRoleConstants(unittest.TestCase):
         self.assertEqual(len(roles), len(set(roles)), "Role constants should be unique")
 
 
+    def test_agent_role_constants(self):
+        """Test agent_role constants and default value."""
+        from topsailai.ai_base.constants import (
+            AGENT_ROLE_MANAGER,
+            AGENT_ROLE_WORKER,
+            DEFAULT_AGENT_ROLE,
+            AGENT_ROLE_VALUES,
+        )
+
+        self.assertEqual(AGENT_ROLE_MANAGER, "manager")
+        self.assertEqual(AGENT_ROLE_WORKER, "worker")
+        self.assertEqual(DEFAULT_AGENT_ROLE, "worker")
+        self.assertEqual(set(AGENT_ROLE_VALUES), {"manager", "worker"})
+        self.assertIn(DEFAULT_AGENT_ROLE, AGENT_ROLE_VALUES)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -50,6 +50,7 @@ class TestAgentBaseInitialization(unittest.TestCase):
 
         self.assertEqual(agent.agent_name, "TestAgent")
         self.assertEqual(agent.agent_type, "")
+        self.assertEqual(agent.agent_role, "worker")
 
     def test_init_with_tool_prompt(self):
         """Test initialization with tool prompt."""

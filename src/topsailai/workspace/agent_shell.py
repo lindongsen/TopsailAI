@@ -16,6 +16,7 @@ from topsailai.utils import (
 )
 from topsailai.ai_base.agent_types.init import (
     get_agent_type,
+    get_agent_role,
 )
 from topsailai.ai_base.agent_base import AgentRun
 from topsailai.workspace.project_history import record_project_history
@@ -78,6 +79,7 @@ def get_ai_agent(
         to_dump_messages:bool=False,
         disabled_tools:list[str]=None,
         agent_type=None,
+        agent_role=None,
         enabled_tools:list[str]=None,
         tool_map:dict=None,
     ):
@@ -91,6 +93,7 @@ def get_ai_agent(
         to_dump_messages: Whether to enable message dumping for debugging.
         disabled_tools: List of tool names to exclude from the agent.
         agent_type: Type of agent to create. Defaults to configuration or ReAct.
+        agent_role: Role of the agent to create. Defaults to "worker".
         enabled_tools: List of tool names to include from the agent.
         tool_map: extra tool, key is tool_name, value is tool_func.
 
@@ -115,6 +118,7 @@ def get_ai_agent(
         excluded_tool_kits=env_disabled_tools if isinstance(env_disabled_tools, list) else disabled_tools,
     )
     agent.agent_type = agent_type_name or agent_type.AGENT_NAME
+    agent.agent_role = get_agent_role(agent_role)
 
     if env_tool.is_need_print():
         if env_tool.EnvReaderInstance.check_bool("LLM_RESPONSE_STREAM"):

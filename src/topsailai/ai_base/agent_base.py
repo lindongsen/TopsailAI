@@ -26,6 +26,7 @@ from topsailai.ai_base.agent2llm_message_source import (
 from topsailai.ai_base.constants import (
     STEP_NAME_TASK,
     STEP_NAME_OBSERVATION,
+    DEFAULT_AGENT_ROLE,
 )
 from topsailai.ai_base.agent_types.exception import (
     AgentNoCareResult,
@@ -84,6 +85,7 @@ class AgentBase(AgentTool):
         # Name of the agent
         self.agent_name = agent_name
         self.agent_type = ""
+        self.agent_role = DEFAULT_AGENT_ROLE
 
         # LLM
         # lazy import due to too long time to import

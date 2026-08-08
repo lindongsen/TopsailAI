@@ -144,5 +144,64 @@ class TestAgentTypeMap(unittest.TestCase):
         self.assertIs(AGENT_TYPE_MAP["default"], AGENT_TYPE_MAP["react"])
 
 
+class TestGetAgentRole(unittest.TestCase):
+    """Test cases for get_agent_role function."""
+
+    def test_returns_worker_for_default(self):
+        """Test get_agent_role defaults to worker when no role provided."""
+        from topsailai.ai_base.agent_types.init import get_agent_role
+        from topsailai.ai_base.constants import DEFAULT_AGENT_ROLE
+
+        with patch('topsailai.ai_base.agent_types.init.env_tool.EnvReaderInstance.get', return_value=None):
+            result = get_agent_role(None)
+            self.assertEqual(result, DEFAULT_AGENT_ROLE)
+            self.assertEqual(result, "worker")
+
+    def test_returns_manager_for_valid_role(self):
+        """Test get_agent_role returns manager for explicit manager."""
+        from topsailai.ai_base.agent_types.init import get_agent_role
+
+        result = get_agent_role("manager")
+        self.assertEqual(result, "manager")
+
+    def test_returns_worker_for_valid_role(self):
+        """Test get_agent_role returns worker for explicit worker."""
+        from topsailai.ai_base.agent_types.init import get_agent_role
+
+        result = get_agent_role("worker")
+        self.assertEqual(result, "worker")
+
+    def test_falls_back_to_worker_for_invalid_role(self):
+        """Test get_agent_role falls back to worker for invalid role."""
+        from topsailai.ai_base.agent_types.init import get_agent_role
+
+        result = get_agent_role("invalid_role")
+        self.assertEqual(result, "worker")
+
+    def test_uses_env_var_when_no_role_provided(self):
+        """Test get_agent_role uses environment variable when no role provided."""
+        from topsailai.ai_base.agent_types.init import get_agent_role
+
+        with patch('topsailai.ai_base.agent_types.init.env_tool.EnvReaderInstance.get', return_value="manager"):
+            result = get_agent_role(None)
+            self.assertEqual(result, "manager")
+
+    def test_explicit_role_overrides_env_var(self):
+        """Test explicit role parameter overrides environment variable."""
+        from topsailai.ai_base.agent_types.init import get_agent_role
+
+        with patch('topsailai.ai_base.agent_types.init.env_tool.EnvReaderInstance.get', return_value="manager"):
+            result = get_agent_role("worker")
+            self.assertEqual(result, "worker")
+
+    def test_env_var_invalid_falls_back_to_worker(self):
+        """Test invalid environment variable role falls back to worker."""
+        from topsailai.ai_base.agent_types.init import get_agent_role
+
+        with patch('topsailai.ai_base.agent_types.init.env_tool.EnvReaderInstance.get', return_value="supervisor"):
+            result = get_agent_role(None)
+            self.assertEqual(result, "worker")
+
+
 if __name__ == "__main__":
     unittest.main()

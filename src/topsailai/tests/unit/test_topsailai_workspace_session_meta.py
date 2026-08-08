@@ -47,6 +47,7 @@ def test_create_session_meta_writes_correct_json():
     class FakeAgent:
         agent_name = "FakeAgent"
         agent_type = "react"
+        agent_role = "worker"
         llm_model = FakeLLM()
 
     path = session_meta.create_session_meta("s-001", FakeAgent())
@@ -61,6 +62,7 @@ def test_create_session_meta_writes_correct_json():
     assert meta["end_ts"] is None
     assert meta["agent_name"] == "FakeAgent"
     assert meta["agent_type"] == "react"
+    assert meta["agent_role"] == "worker"
     assert meta["model_name"] == "fake-model"
     assert "files" in meta
     assert "events" in meta["files"]
