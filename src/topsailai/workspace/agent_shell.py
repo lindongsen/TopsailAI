@@ -139,6 +139,7 @@ def _get_agent_chat_impl(
         enabled_tools:list[str]=None,
         tool_map:dict=None,
         agent_type:str=None,
+        agent_role:str=None,
 
         agent_name:str=None,
         session_id:str=None,
@@ -237,6 +238,7 @@ def _get_agent_chat_impl(
         enabled_tools=enabled_tools,
         tool_map=tool_map,
         agent_type=agent_type,
+        agent_role=agent_role,
     )
 
     if agent_name:
@@ -291,6 +293,7 @@ def get_agent_chat(
         enabled_tools:list[str]=None,
         tool_map:dict=None,
         agent_type:str=None,
+        agent_role:str=None,
 
         agent_name:str=None,
         session_id:str=None,
@@ -314,6 +317,7 @@ def get_agent_chat(
         to_dump_messages: Whether to enable message dumping for debugging.
         disabled_tools: List of tool names to exclude from the agent.
         agent_type: Type of agent to create.
+        agent_role: Role of the agent (manager or worker).
         agent_name: Name to assign to the agent.
         session_id: Session identifier for context tracking.
         message: Initial message to process.
@@ -335,6 +339,7 @@ def get_agent_chat(
             enabled_tools=enabled_tools,
             tool_map=tool_map,
             agent_type=agent_type,
+            agent_role=agent_role,
             agent_name=agent_name,
             session_id=session_id,
             message=message,

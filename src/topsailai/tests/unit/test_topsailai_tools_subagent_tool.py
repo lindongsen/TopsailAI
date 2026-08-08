@@ -559,5 +559,39 @@ class TestEdgeCases:
         assert call_kwargs["agent_name"] == "Sub.Test_Agent-123"
         assert call_kwargs["need_project_workspace_lock"] is False
 
+class TestMainAgent:
+    """Verify MainAgent constructs the manager plan agent with agent_role=manager."""
+
+    @patch("topsailai.workspace.agent_shell.get_agent_chat")
+    def test_main_agent_plan_agent_role_is_manager(self, mock_get_agent_chat):
+        """MainAgent must pass agent_role=manager when building the plan agent."""
+        from topsailai.tools.subagent_tool import MainAgent
+
+        mock_agent = MagicMock()
+        mock_get_agent_chat.return_value = mock_agent
+
+        main_agent = MainAgent(agent_name="TestManager")
+
+        # The plan agent is the manager agent
+        assert main_agent.plan_agent is mock_agent
+        mock_get_agent_chat.assert_called_once()
+        call_kwargs = mock_get_agent_chat.call_args[1]
+        assert call_kwargs["agent_role"] == "manager"
+        assert call_kwargs["agent_type"] == "plan_and_execute"
+
+    @patch("topsailai.workspace.agent_shell.get_agent_chat")
+    def test_main_agent_plan_agent_kwargs_contains_manager_role(self, mock_get_agent_chat):
+        """plan_agent_kwargs must carry agent_role=manager for the manager agent."""
+        from topsailai.tools.subagent_tool import MainAgent
+
+        mock_agent = MagicMock()
+        mock_get_agent_chat.return_value = mock_agent
+
+        main_agent = MainAgent(agent_name="TestManager")
+
+        assert main_agent.plan_agent_kwargs["agent_role"] == "manager"
+        assert main_agent.plan_agent_kwargs["agent_type"] == "plan_and_execute"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

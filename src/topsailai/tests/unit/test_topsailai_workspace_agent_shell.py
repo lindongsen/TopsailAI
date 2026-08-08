@@ -497,6 +497,15 @@ class TestGetAgentChat(unittest.TestCase):
         call_kwargs = self.mock_agent_run.call_args[1]
         self.assertEqual(call_kwargs['tools'], tool_map)
 
+    def test_get_agent_chat_with_agent_role(self):
+        """Test get_agent_chat forwards agent_role to the agent instance."""
+        from topsailai.workspace.agent_shell import get_agent_chat
+
+        agent_chat = get_agent_chat(agent_role="manager", session_id="test-session")
+
+        # Verify agent_role was resolved and assigned to the agent instance
+        self.assertEqual(self.mock_agent_instance.agent_role, "manager")
+
     def test_get_agent_chat_with_to_dump_messages(self):
         """Test get_agent_chat enables message dumping."""
         from topsailai.workspace.agent_shell import get_agent_chat

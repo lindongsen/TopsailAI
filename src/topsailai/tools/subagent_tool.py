@@ -311,6 +311,7 @@ I am Main-Agent(Manager)
             disabled_tools=["agent_tool"],
             enabled_tools=["story_memory_tool", "subagent_tool"],
             agent_type="plan_and_execute",
+            agent_role="manager",
         )
         if self.use_tool_map:
             self.plan_agent_kwargs["tool_map"] = self.tool_map
