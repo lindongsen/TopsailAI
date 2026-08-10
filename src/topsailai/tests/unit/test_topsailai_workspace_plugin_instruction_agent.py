@@ -502,6 +502,54 @@ class TestSelectModel(unittest.TestCase):
         self.assertEqual(mock_agent.llm_model.models, [])
         self.assertIn("gpt-5.6-luna", result)
 
+    @patch("topsailai.workspace.plugin_instruction.agent.print_info")
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_select_model_applies_environment(self, mock_load_registry, mock_get_agent, mock_print_info):
+        """Test /models applies environment variables from the model config"""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "OldModel"
+        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.llm_model.get_llm_model.return_value = "new_client"
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {
+            "ModelA": {
+                "name": "ModelA",
+                "api_base": "https://a.example.com",
+                "api_key": "key_a",
+                "environment": {"MY_CUSTOM_VAR": "custom_value", "ANOTHER_VAR": "123"},
+            },
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model("ModelA")
+
+        self.assertEqual(os.environ.get("MY_CUSTOM_VAR"), "custom_value")
+        self.assertEqual(os.environ.get("ANOTHER_VAR"), "123")
+        self.assertIn("ModelA", result)
+        self.assertEqual(mock_print_info.call_count, 2)
+        mock_print_info.assert_any_call("Set environment variable: MY_CUSTOM_VAR=custom_value")
+        mock_print_info.assert_any_call("Set environment variable: ANOTHER_VAR=123")
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_select_model_no_environment(self, mock_load_registry, mock_get_agent):
+        """Test /models without environment field does not set env vars"""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "OldModel"
+        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.llm_model.get_llm_model.return_value = "new_client"
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {
+            "ModelA": {"name": "ModelA", "api_base": "https://a.example.com", "api_key": "key_a"},
+        }
+
+        from topsailai.workspace.plugin_instruction.agent import select_model
+        result = select_model("ModelA")
+
+        self.assertNotIn("MY_CUSTOM_VAR", os.environ)
+        self.assertIn("ModelA", result)
+
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
     def test_select_model_not_found(self, mock_load_registry, mock_get_agent):

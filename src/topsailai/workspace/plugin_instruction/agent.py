@@ -11,7 +11,7 @@ from topsailai.utils import (
     env_tool,
     json_tool,
 )
-from topsailai.utils.print_tool import print_warning
+from topsailai.utils.print_tool import print_info, print_warning
 from topsailai.tools.base.common import get_tools_for_chat
 from topsailai.workspace.folder_constants import FOLDER_ROOT
 from topsailai.workspace.plugin_instruction.base.cache import get_ai_agent
@@ -86,6 +86,14 @@ def _apply_model_config(agent, config: dict) -> str:
         )
         llm_model.model_config = {"api_key": new_api_key, "api_base": new_api_base}
         llm_model.models = []
+
+    # Apply environment variable values recorded in the model configuration.
+    # The 'environment' field is a dict mapping env-var-name -> value.
+    environment = config.get("environment")
+    if isinstance(environment, dict):
+        for env_name, env_value in environment.items():
+            os.environ[env_name] = str(env_value)
+            print_info(f"Set environment variable: {env_name}={env_value}")
 
     result = (
         f"model_name: {old_model_name} -> {new_model_name}, "
