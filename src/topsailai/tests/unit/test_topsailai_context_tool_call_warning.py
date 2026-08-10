@@ -23,6 +23,7 @@ from topsailai.context.tool_call_warning import (
     match_rule,
     render_warning,
     count_calls_in_window,
+    count_calls_consecutive,
     evaluate_tool_call,
     detect_tool_call_warning,
     _get_trigger_state,
@@ -118,12 +119,18 @@ class TestParseRules(TestCase):
             rules = parse_rules(raw)
         self.assertEqual(rules[0].agent_role, "*")
 
-    def test_invalid_window_falls_back_to_default(self):
-        """Non-positive window_seconds falls back to the default."""
+    def test_non_positive_window_preserved_for_consecutive(self):
+        """Non-positive window_seconds is preserved for strict consecutive counting."""
         raw = json.dumps([{"tool_call": "t", "max_calls": 1, "warning": "W", "window_seconds": -5}])
+        rules = parse_rules(raw)
+        self.assertEqual(rules[0].window_seconds, -5)
+
+    def test_zero_window_preserved_for_consecutive(self):
+        """A zero window_seconds is preserved for strict consecutive counting."""
+        raw = json.dumps([{"tool_call": "t", "max_calls": 1, "warning": "W", "window_seconds": 0}])
         with self.assertLogs("topsailai.context.tool_call_warning", level="WARNING"):
             rules = parse_rules(raw)
-        self.assertEqual(rules[0].window_seconds, DEFAULT_WINDOW_SECONDS)
+        self.assertEqual(rules[0].window_seconds, 0)
 
     def test_missing_tool_call_skipped(self):
         """A rule without tool_call is skipped."""
@@ -216,14 +223,28 @@ class TestRenderWarning(TestCase):
     def test_all_placeholders_render(self):
         """All supported placeholders are replaced."""
         rendered = render_warning(
-            "{tool_call} {count} {agent_role} {window_seconds} {max_calls}",
+            "{tool_call} {count} {agent_role} {window_seconds} {max_calls} {member_suggestion}",
             tool_call="tool_a",
             count=5,
             agent_role="manager",
             window_seconds=60,
             max_calls=3,
+            member_suggestion="Consider delegating the task to a member agent to handle it.",
         )
-        self.assertEqual(rendered, "tool_a 5 manager 60 3")
+        self.assertEqual(
+            rendered,
+            "tool_a 5 manager 60 3 Consider delegating the task to a member agent to handle it.",
+        )
+
+    def test_member_suggestion_empty_by_default(self):
+        """member_suggestion renders empty when not provided."""
+        rendered = render_warning(
+            "{member_suggestion}",
+            tool_call="tool_a",
+            count=5,
+            agent_role="worker",
+        )
+        self.assertEqual(rendered, "")
 
     def test_unrelated_braces_preserved(self):
         """Braces that are not placeholders are preserved unchanged."""
@@ -274,6 +295,85 @@ class TestCountCallsInWindow(TestCase):
         stat = self._stat_with_calls("tool_a", [now - timedelta(seconds=10)])
         self.assertEqual(count_calls_in_window(stat, "tool_b", 60, now), 0)
 
+class TestCountCallsConsecutive(TestCase):
+    """Test strict consecutive counting (window_seconds <= 0)."""
+
+    def _stat_with_sequence(self, tool_sequence):
+        """Build a ToolStat with calls in the given tool order."""
+        stat = ToolStat()
+        now = datetime(2026, 8, 10, 12, 0, 0)
+        for idx, tool in enumerate(tool_sequence):
+            with patch("topsailai.context.tool_stat.datetime") as mock_dt:
+                mock_dt.now.return_value = now + timedelta(seconds=idx)
+                mock_dt.datetime = datetime
+                mock_dt.timedelta = timedelta
+                stat.record(tool, {"i": idx})
+        return stat
+
+    def test_consecutive_same_tool_counts(self):
+        """Trailing consecutive calls to the same tool are counted."""
+        stat = self._stat_with_sequence(["tool_a", "tool_a", "tool_a"])
+        self.assertEqual(count_calls_consecutive(stat, "tool_a"), 3)
+
+    def test_different_tool_in_between_resets(self):
+        """A different tool in between resets the consecutive counter."""
+        stat = self._stat_with_sequence(["tool_a", "tool_b", "tool_a"])
+        self.assertEqual(count_calls_consecutive(stat, "tool_a"), 1)
+
+    def test_trailing_other_tool_returns_zero(self):
+        """When the last call is a different tool, the count is zero."""
+        stat = self._stat_with_sequence(["tool_a", "tool_a", "tool_b"])
+        self.assertEqual(count_calls_consecutive(stat, "tool_a"), 0)
+
+    def test_empty_stat_returns_zero(self):
+        """An empty stat returns zero."""
+        stat = ToolStat()
+        self.assertEqual(count_calls_consecutive(stat, "tool_a"), 0)
+
+
+class TestEvaluateConsecutive(TestCase):
+    """Test evaluate_tool_call with strict consecutive semantics."""
+
+    def _stat_with_sequence(self, tool_sequence):
+        stat = ToolStat()
+        now = datetime(2026, 8, 10, 12, 0, 0)
+        for idx, tool in enumerate(tool_sequence):
+            with patch("topsailai.context.tool_stat.datetime") as mock_dt:
+                mock_dt.now.return_value = now + timedelta(seconds=idx)
+                mock_dt.datetime = datetime
+                mock_dt.timedelta = timedelta
+                stat.record(tool, {"i": idx})
+        return stat
+
+    def test_triggers_when_consecutive_exceeds_max(self):
+        """Consecutive calls exceeding max_calls trigger a warning."""
+        stat = self._stat_with_sequence(["tool_a", "tool_a", "tool_a"])
+        rules = [_rule(tool_call="tool_a", max_calls=2, window_seconds=0)]
+        result = evaluate_tool_call(stat, rules, "worker", "tool_a")
+        self.assertIsNotNone(result)
+        self.assertEqual(result[1], 3)
+
+    def test_no_trigger_when_interleaved(self):
+        """Interleaved calls do not count toward the consecutive threshold."""
+        stat = self._stat_with_sequence(["tool_a", "tool_b", "tool_a", "tool_a"])
+        rules = [_rule(tool_call="tool_a", max_calls=2, window_seconds=0)]
+        result = evaluate_tool_call(stat, rules, "worker", "tool_a")
+        self.assertIsNone(result)
+
+    def test_window_based_still_works(self):
+        """Positive window_seconds keeps the rolling-window behavior."""
+        now = datetime(2026, 8, 10, 12, 0, 0)
+        stat = ToolStat()
+        for i in range(3):
+            with patch("topsailai.context.tool_stat.datetime") as mock_dt:
+                mock_dt.now.return_value = now
+                mock_dt.datetime = datetime
+                mock_dt.timedelta = timedelta
+                stat.record("tool_a", {"i": i})
+        rules = [_rule(tool_call="tool_a", max_calls=2, window_seconds=60)]
+        result = evaluate_tool_call(stat, rules, "worker", "tool_a", now)
+        self.assertIsNotNone(result)
+        self.assertEqual(result[1], 3)
 
 class TestEvaluateToolCall(TestCase):
     """Test the evaluate_tool_call trigger decision."""

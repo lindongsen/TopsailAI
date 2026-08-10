@@ -759,11 +759,14 @@ TOPSAILAI_PRINT_TOOL_STAT=1
 # Repeated tool-call warning rules. JSON list of dicts. Empty or unset disables the feature.
 # Each rule keys: agent_role (default *), tool_call (required, exact or *), max_calls (required, >0),
 #   window_seconds (default 60), warning (required template), enabled (default true), dedup (default true).
-# Placeholders in warning: {tool_call} {count} {agent_role} {window_seconds} {max_calls}.
+# window_seconds: positive -> rolling time-window counting; non-positive (<=0) -> strict consecutive counting
+#   (only consecutive calls to the same tool count; a different tool in between resets the counter).
+# Placeholders in warning: {tool_call} {count} {agent_role} {window_seconds} {max_calls} {member_suggestion}.
+#   {member_suggestion} renders a delegation hint for manager-role rules (empty for other roles).
 # Matching: first matching rule wins (role match or * AND tool match or *).
 # Advisory only: config errors never interrupt tool execution.
-# Example:
-# TOPSAILAI_TOOL_CALL_WARNING_RULES='[{"agent_role":"manager","tool_call":"ai_team_tool-call_agent","max_calls":3,"window_seconds":60,"warning":"Manager warning: `{tool_call}` called {count} times within {window_seconds}s. Review the existing agent result."}]'
+# Example (manager, strict consecutive, >11 calls to skill_tool-call_skill):
+# TOPSAILAI_TOOL_CALL_WARNING_RULES='[{"agent_role":"manager","tool_call":"skill_tool-call_skill","max_calls":11,"window_seconds":0,"warning":"Manager warning: `{tool_call}` called {count} times consecutively. {member_suggestion}"}]'
 TOPSAILAI_TOOL_CALL_WARNING_RULES=""
 
 # default is 60 seconds

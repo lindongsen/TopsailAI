@@ -16,7 +16,10 @@ supports the following keys:
 - ``max_calls`` (required, > 0): maximum allowed call count within the window.
   A warning triggers when the count is strictly greater than this value.
 - ``window_seconds`` (optional, default 60): rolling time window in seconds.
-  Non-positive values fall back to 60.
+  When positive, counting is window-based (calls within the window). When
+  non-positive (<= 0), the time window is disabled and STRICT CONSECUTIVE
+  counting is used instead: only consecutive calls to the same tool (no other
+  tool call in between) are counted.
 - ``warning`` (required): warning template injected into the agent context.
 - ``enabled`` (optional, default true): whether the rule is active.
 - ``dedup`` (optional, default true): when true, the rule warns only once per
@@ -24,7 +27,9 @@ supports the following keys:
   below ``max_calls``.
 
 Supported warning-template placeholders: ``{tool_call}``, ``{count}``,
-``{agent_role}``, ``{window_seconds}``, ``{max_calls}``.
+``{agent_role}``, ``{window_seconds}``, ``{max_calls}``,
+``{member_suggestion}``. The ``{member_suggestion}`` placeholder renders a
+delegation hint for manager-role rules (empty for other roles).
 
 Rule matching uses declared order with first-match-wins precedence. A rule
 matches when both the role (exact or ``*``) and the tool (exact or ``*``)
@@ -70,7 +75,14 @@ _PLACEHOLDER_KEYS = (
     "agent_role",
     "window_seconds",
     "max_calls",
+    "member_suggestion",
 )
+
+# Delegation hint rendered for manager-role rules via {member_suggestion}.
+_MEMBER_SUGGESTION_MANAGER = (
+    "Consider delegating the task to a member agent to handle it."
+)
+
 
 
 @dataclass
@@ -203,14 +215,14 @@ def _parse_rule(item: Any, index: int) -> Optional[ToolCallWarningRule]:
         return None
 
     window_seconds = _as_int(item.get("window_seconds"), DEFAULT_WINDOW_SECONDS)
-    if window_seconds <= 0:
+    # A non-positive window_seconds enables strict consecutive counting; it is
+    # intentionally preserved (not clamped to the default) so the caller can
+    # distinguish window-based from consecutive-based counting.
+    if window_seconds == 0:
         logger.warning(
-            "invalid window_seconds %r at index %d, falling back to %d",
-            item.get("window_seconds"),
+            "window_seconds 0 at index %d treated as strict consecutive counting",
             index,
-            DEFAULT_WINDOW_SECONDS,
         )
-        window_seconds = DEFAULT_WINDOW_SECONDS
 
     return ToolCallWarningRule(
         agent_role=_normalize_role(item.get("agent_role")),
@@ -259,6 +271,7 @@ def render_warning(
     agent_role: str = "",
     window_seconds: int = 0,
     max_calls: int = 0,
+    member_suggestion: str = "",
 ) -> str:
     """Render a warning template by replacing supported placeholders.
 
@@ -272,6 +285,7 @@ def render_warning(
         agent_role: Current agent role.
         window_seconds: Configured time window.
         max_calls: Configured maximum call count.
+        member_suggestion: Optional delegation hint for manager-role rules.
 
     Returns:
         The rendered warning string.
@@ -282,6 +296,7 @@ def render_warning(
         "agent_role": str(agent_role),
         "window_seconds": str(window_seconds),
         "max_calls": str(max_calls),
+        "member_suggestion": str(member_suggestion),
     }
     result = template
     for key in _PLACEHOLDER_KEYS:
@@ -319,6 +334,35 @@ def count_calls_in_window(
             count += 1
     return count
 
+def count_calls_consecutive(
+    stat: Any,
+    tool_name: str,
+) -> int:
+    """Count consecutive calls to the same tool from the most recent record.
+
+    Only calls to ``tool_name`` that appear consecutively at the tail of the
+    recorded call history are counted. As soon as a different tool appears in
+    the history, the consecutive run for ``tool_name`` ends.
+
+    Args:
+        stat: A ``ToolStat`` instance exposing ``tool_calls``.
+        tool_name: The tool name to count.
+
+    Returns:
+        The number of trailing consecutive calls to ``tool_name``.
+    """
+    calls = getattr(stat, "tool_calls", None)
+    if calls is None:
+        # Fall back to the window-based helper's data source when available.
+        calls = stat.get_by_tool(tool_name)
+        return len(calls)
+    count = 0
+    for call in reversed(calls):
+        if call.get("tool_call") != tool_name:
+            break
+        count += 1
+    return count
+
 
 def evaluate_tool_call(
     stat: Any,
@@ -345,7 +389,10 @@ def evaluate_tool_call(
     rule = match_rule(rules, agent_role, tool_name)
     if rule is None:
         return None
-    count = count_calls_in_window(stat, tool_name, rule.window_seconds, now)
+    if rule.window_seconds <= 0:
+        count = count_calls_consecutive(stat, tool_name)
+    else:
+        count = count_calls_in_window(stat, tool_name, rule.window_seconds, now)
     if count > rule.max_calls:
         return rule, count
     return None
@@ -402,6 +449,7 @@ def _inject_warning(agent: Any, warning_text: str) -> None:
         )
     except Exception:
         logger.exception("failed to inject tool-call warning via file source")
+
 def _maybe_emit_warning(tool_name: str, tool_args: Any) -> None:
     """Evaluate and emit a tool-call warning after a tool has been recorded.
 
@@ -426,7 +474,10 @@ def _maybe_emit_warning(tool_name: str, tool_args: Any) -> None:
         if rule is None:
             return
 
-        count = count_calls_in_window(stat, tool_name, rule.window_seconds, now)
+        if rule.window_seconds <= 0:
+            count = count_calls_consecutive(stat, tool_name)
+        else:
+            count = count_calls_in_window(stat, tool_name, rule.window_seconds, now)
         key = _rule_key(rule)
         trigger_state = _get_trigger_state(stat)
 
@@ -441,6 +492,9 @@ def _maybe_emit_warning(tool_name: str, tool_args: Any) -> None:
 
         trigger_state[key] = True
 
+        member_suggestion = (
+            _MEMBER_SUGGESTION_MANAGER if agent_role == "manager" else ""
+        )
         warning_text = render_warning(
             rule.warning,
             tool_call=tool_name,
@@ -448,6 +502,7 @@ def _maybe_emit_warning(tool_name: str, tool_args: Any) -> None:
             agent_role=agent_role,
             window_seconds=rule.window_seconds,
             max_calls=rule.max_calls,
+            member_suggestion=member_suggestion,
         )
 
         logger.warning(
