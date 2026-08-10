@@ -787,6 +787,24 @@ class TestDeepseekDsmlToolCalls:
             "tool_args": {"cmd": "echo ok"},
         }]
 
+    def test_format_response_deepseek_malformed_wrapper_with_leading_text(self, monkeypatch):
+        """Verify text before a singular DSML wrapper is preserved as thought."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        monkeypatch.setenv("OPENAI_MODEL", "deepseek-chat")
+
+        text = self.DSML_SAMPLE_PATH.with_name("dsml-5.txt").read_text(encoding="utf-8")
+        result = format_response(text)
+
+        assert result == [
+            {"step_name": "thought", "raw_text": "hello-raw-text"},
+            {
+                "step_name": "action",
+                "tool_call": "cmd_tool-exec_cmd",
+                "tool_args": {"cmd": "echo ok"},
+            },
+        ]
+
     def test_format_response_deepseek_requires_model(self, monkeypatch):
         """Verify DSML is not parsed when the model is not DeepSeek."""
         from topsailai.ai_base.llm_control.message import format_response

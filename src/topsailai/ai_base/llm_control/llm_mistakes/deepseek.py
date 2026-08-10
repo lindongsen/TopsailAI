@@ -97,16 +97,22 @@ def _parse_dsml_tool_calls(response):
 
     malformed_open = "<｜DSML｜tool_call>"
     malformed_close = "</｜DSML｜tool_call>"
-    if response.startswith(malformed_open):
+    malformed_start_idx = response.find(malformed_open)
+    if malformed_start_idx >= 0:
+        leading_text = response[:malformed_start_idx].strip()
+        malformed_response = response[malformed_start_idx:]
         close_tag = next((
             tag for tag in (malformed_close, DSML_TOOL_CALLS_CLOSE)
-            if response.endswith(tag)
+            if malformed_response.endswith(tag)
         ), None)
         if close_tag:
-            body = response[len(malformed_open):-len(close_tag)].strip()
+            body = malformed_response[len(malformed_open):-len(close_tag)].strip()
             if body.startswith(DSML_INVOKE_OPEN):
                 normalized = DSML_TOOL_CALLS_OPEN + body + DSML_TOOL_CALLS_CLOSE
-                return _parse_dsml_tool_calls(normalized)
+                actions = _parse_dsml_tool_calls(normalized)
+                if actions and leading_text:
+                    actions.insert(0, {"step_name": "thought", "raw_text": leading_text})
+                return actions
 
             try:
                 malformed_action = simplejson.loads(body, strict=False)
@@ -117,11 +123,14 @@ def _parse_dsml_tool_calls(response):
                 tool_call = malformed_action.get("tool_call")
                 tool_args = malformed_action.get("tool_args")
                 if isinstance(tool_call, str) and tool_call and isinstance(tool_args, dict):
-                    return [{
+                    result = [{
                         "step_name": "action",
                         "tool_call": tool_call,
                         "tool_args": tool_args,
                     }]
+                    if leading_text:
+                        result.insert(0, {"step_name": "thought", "raw_text": leading_text})
+                    return result
 
     start_idx = response.find(DSML_TOOL_CALLS_OPEN)
     if start_idx < 0:
