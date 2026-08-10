@@ -242,7 +242,7 @@ instructions:
       bash -c "TOPSAILAI_SESSION_ID=$(date +%s) topsailai_llm_chats"
     environ:
       DEBUG: "0"
-      TOPSAILAI_INTERACTIVE_MODE: "1"
+      TOPSAILAI_INTERACTIVE_MODE: "0"
       TOPSAILAI_CLI_NEED_TIPS: "0"
       TOPSAILAI_HOME: "~/.topsailai"
     use_os_system: 1
