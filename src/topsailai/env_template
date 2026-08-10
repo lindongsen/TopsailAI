@@ -756,6 +756,16 @@ TOPSAILAI_MEMORY_WORKSPACE=""
 TOPSAILAI_ENABLE_TOOL_STAT=1
 TOPSAILAI_PRINT_TOOL_STAT=1
 
+# Repeated tool-call warning rules. JSON list of dicts. Empty or unset disables the feature.
+# Each rule keys: agent_role (default *), tool_call (required, exact or *), max_calls (required, >0),
+#   window_seconds (default 60), warning (required template), enabled (default true), dedup (default true).
+# Placeholders in warning: {tool_call} {count} {agent_role} {window_seconds} {max_calls}.
+# Matching: first matching rule wins (role match or * AND tool match or *).
+# Advisory only: config errors never interrupt tool execution.
+# Example:
+# TOPSAILAI_TOOL_CALL_WARNING_RULES='[{"agent_role":"manager","tool_call":"ai_team_tool-call_agent","max_calls":3,"window_seconds":60,"warning":"Manager warning: `{tool_call}` called {count} times within {window_seconds}s. Review the existing agent result."}]'
+TOPSAILAI_TOOL_CALL_WARNING_RULES=""
+
 # default is 60 seconds
 TOPSAILAI_LLM_SLOW_CHAT_THRESHOLD=60
 

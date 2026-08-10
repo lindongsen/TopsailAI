@@ -10,6 +10,7 @@ Test coverage:
 Author: mm-m25
 """
 
+import json
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -549,5 +550,92 @@ class TestStepCallToolMergePrecedingThoughts(unittest.TestCase):
         self.instance.complete_final({"raw_text": "Answer"})
         self.assertEqual(self.instance.result, "Answer")
         self.assertEqual(self.instance.code, self.instance.CODE_TASK_FINAL)
+class TestExecToolFuncToolCallWarning(unittest.TestCase):
+    """Integration tests: repeated tool-call warning wired into exec_tool_func.
+
+    These tests verify that when the ``detect_tool_call_warning`` decorator is
+    applied to ``exec_tool_func``, a warning is injected into the current agent
+    as a user-role message after the configured threshold is exceeded.
+    """
+
+    def setUp(self):
+        import os
+        from topsailai.utils import thread_local_tool
+        from topsailai.context.tool_stat import ToolStat
+
+        thread_local_tool.rid_all_thread_vars()
+        os.environ["TOPSAILAI_ENABLE_TOOL_STAT"] = "1"
+        self.agent = MagicMock()
+        self.agent.messages = []
+        self.agent.llm_model = MagicMock()
+        self.agent.llm_model.max_tokens = 30000
+        self.agent.llm_model.tool_stat = ToolStat()
+        self.agent.agent_role = "worker"
+        self.agent._tool_stat = None
+
+    def tearDown(self):
+        from topsailai.utils import thread_local_tool
+
+        thread_local_tool.rid_all_thread_vars()
+
+    def test_warning_injected_after_threshold_exceeded(self):
+        """Warning is injected as a user message after max_calls is exceeded."""
+        from topsailai.utils import thread_local_tool
+        from topsailai.ai_base.agent_types.tool import exec_tool_func
+
+        thread_local_tool.set_thread_var(
+            thread_local_tool.KEY_AGENT_OBJECT, self.agent
+        )
+        rules = json.dumps([
+            {
+                "agent_role": "worker",
+                "tool_call": "test_tool",
+                "max_calls": 2,
+                "window_seconds": 60,
+                "warning": "Warning: {tool_call} called {count} times",
+            }
+        ])
+        with patch(
+            "topsailai.context.tool_call_warning._get_rules_env_value",
+            return_value=rules,
+        ):
+            tool_func = MagicMock(return_value="ok")
+            for _ in range(3):
+                exec_tool_func(tool_func, {}, "test_tool")
+
+        # The warning should be injected once as a user-role observation.
+        self.assertEqual(self.agent.add_user_message.call_count, 1)
+        content = self.agent.add_user_message.call_args.args[0]
+        self.assertEqual(content["step_name"], "observation")
+        self.assertIn("called 3 times", content["raw_text"])
+
+    def test_no_warning_below_threshold(self):
+        """No warning is injected when the call count stays below max_calls."""
+        from topsailai.utils import thread_local_tool
+        from topsailai.ai_base.agent_types.tool import exec_tool_func
+
+        thread_local_tool.set_thread_var(
+            thread_local_tool.KEY_AGENT_OBJECT, self.agent
+        )
+        rules = json.dumps([
+            {
+                "agent_role": "worker",
+                "tool_call": "test_tool",
+                "max_calls": 5,
+                "window_seconds": 60,
+                "warning": "Warning: {tool_call} called {count} times",
+            }
+        ])
+        with patch(
+            "topsailai.context.tool_call_warning._get_rules_env_value",
+            return_value=rules,
+        ):
+            tool_func = MagicMock(return_value="ok")
+            for _ in range(3):
+                exec_tool_func(tool_func, {}, "test_tool")
+
+        self.assertEqual(self.agent.add_user_message.call_count, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

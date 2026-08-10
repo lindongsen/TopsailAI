@@ -12,6 +12,7 @@ from typing import Any, Callable
 from topsailai.logger import logger
 from topsailai.context import (
     tool_stat,
+    tool_call_warning,
     ctx_safe,
 )
 from topsailai.ai_base.tool_call import (
@@ -116,6 +117,7 @@ def with_tool_response_safe(exec_tool_func: Callable) -> Callable:
 
     return wrapper
 
+@tool_call_warning.detect_tool_call_warning
 @tool_stat.detect_duplicate_tool_call
 @with_tool_response_safe
 @with_tool_approval

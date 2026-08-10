@@ -234,6 +234,20 @@ For team agents, the effective offset is resolved in this order:
 | `TOPSAILAI_DUP_TOOL_CALL_ENABLED` | `1` | Master switch for duplicate tool call detection. `1` = enabled, `0` = disabled. |
 | `TOPSAILAI_DUP_TOOL_CALL_NOTICE` | `"Duplicate tool call detected: `{tool_name}` was already called with the same arguments and returned the same result. Please analyze the existing result instead of repeating the call."` | Custom notice template for duplicate tool calls. Must be English. Supports the `{tool_name}` placeholder and the `{consecutive_count}` placeholder. When non-empty, duplicate results are wrapped in a dictionary with keys `original_result`, `notice`, `reason`, and `consecutive_duplicate_count`. When empty or unset, detection still logs a warning but the original result is returned unchanged. |
 
+## Repeated Tool-Call Warning
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_TOOL_CALL_WARNING_RULES` | `""` | JSON list of dicts defining repeated tool-call warning rules. Empty or unset disables the feature. Each rule keys: `agent_role` (default `*`), `tool_call` (required, exact tool name or `*`), `max_calls` (required, positive integer), `window_seconds` (default `60`), `warning` (required template), `enabled` (default `true`), `dedup` (default `true`). Placeholders in `warning`: `{tool_call}`, `{count}`, `{agent_role}`, `{window_seconds}`, `{max_calls}`. Matching: first matching rule wins (role match or `*` AND tool match or `*`). Advisory only: configuration errors never interrupt tool execution. |
+
+### Details
+
+- **Semantics**: A warning is emitted when the number of calls to a matching tool within the rolling `window_seconds` window exceeds `max_calls`. The triggering call is included in the count.
+- **Matching/precedence**: Rules are evaluated in declared order; the first rule whose `agent_role` matches the current agent's role (or is `*`) AND whose `tool_call` matches the called tool (or is `*`) wins.
+- **Validation/fallback**: Invalid JSON or non-list JSON disables the feature with a warning. Invalid individual rules are skipped with a warning. Unknown `agent_role` is treated as `*`. Invalid `window_seconds` falls back to `60`. Missing/empty `warning` skips the rule.
+- **Dedup**: With `dedup=true` (default), a rule warns only once while the count stays above `max_calls` and re-arms after the count falls back to or below `max_calls`.
+- **Injection**: On trigger, the warning is injected into the Agent2LLM context as a `user`-role `observation` message before the next LLM call. The original tool result is never altered.
+
 ## Tool Configuration
 
 | Variable | Default | Description |
