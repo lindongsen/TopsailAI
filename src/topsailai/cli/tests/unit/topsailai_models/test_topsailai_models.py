@@ -80,6 +80,107 @@ class TestBuildAddRecord(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "model name is required"):
             models_cli._build_add_record("", [])
 
+class TestExpandEnvironmentEntries(unittest.TestCase):
+    """Verify ``environment.KEY`` expansion into the environment mapping."""
+
+    def test_expands_environment_key(self):
+        record = models_cli._expand_environment_entries(
+            {"environment.TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT": "300"}
+        )
+        self.assertEqual(
+            record,
+            {"environment": {"TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT": "300"}},
+        )
+
+    def test_merges_with_existing_environment(self):
+        record = models_cli._expand_environment_entries(
+            {
+                "environment": {"EXISTING": "1"},
+                "environment.NEW": "2",
+            }
+        )
+        self.assertEqual(record["environment"], {"EXISTING": "1", "NEW": "2"})
+
+    def test_empty_value_removes_key(self):
+        record = models_cli._expand_environment_entries(
+            {
+                "environment": {"TO_REMOVE": "1"},
+                "environment.TO_REMOVE": "",
+            }
+        )
+        self.assertEqual(record["environment"], {})
+
+    def test_stringifies_values(self):
+        record = models_cli._expand_environment_entries(
+            {"environment.TIMEOUT": 300}
+        )
+        self.assertEqual(record["environment"], {"TIMEOUT": "300"})
+
+    def test_rejects_missing_env_name(self):
+        with self.assertRaisesRegex(Exception, "environment key name is required"):
+            models_cli._expand_environment_entries({"environment.": "x"})
+
+
+class TestBuildAddRecordEnvironment(unittest.TestCase):
+    """Verify ``add`` supports environment entries."""
+
+    def test_add_with_environment_entries(self):
+        record = models_cli._build_add_record(
+            "GPT-4o",
+            [
+                "provider=openai",
+                "model=gpt-4o",
+                "environment.TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT=300",
+            ],
+        )
+        self.assertEqual(
+            record["environment"],
+            {"TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT": "300"},
+        )
+
+
+class TestBuildUpdateRecordEnvironment(unittest.TestCase):
+    """Verify ``update`` supports environment entries with merge semantics."""
+
+    def _make_model(self, environment=None):
+        record = {
+            "id": "gpt-4o",
+            "name": "GPT-4o",
+            "provider": "openai",
+            "protocol": "openai-compatible",
+            "model": "gpt-4o",
+        }
+        if environment:
+            record["environment"] = environment
+        return validate_model_record(record)
+
+    def test_update_sets_environment_entry(self):
+        model = self._make_model()
+        record = models_cli._build_update_record(
+            model,
+            ["environment.TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT=300"],
+        )
+        self.assertEqual(
+            record["environment"],
+            {"TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT": "300"},
+        )
+
+    def test_update_merges_with_existing_environment(self):
+        model = self._make_model({"EXISTING": "1"})
+        record = models_cli._build_update_record(
+            model,
+            ["environment.NEW=2"],
+        )
+        self.assertEqual(record["environment"], {"EXISTING": "1", "NEW": "2"})
+
+    def test_update_removes_environment_entry(self):
+        model = self._make_model({"TO_REMOVE": "1", "KEEP": "2"})
+        record = models_cli._build_update_record(
+            model,
+            ["environment.TO_REMOVE="],
+        )
+        self.assertEqual(record["environment"], {"KEEP": "2"})
+
 
 class TestModelsList(unittest.TestCase):
     """Verify ``topsailai models list``."""

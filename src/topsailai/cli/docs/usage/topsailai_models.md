@@ -61,6 +61,35 @@ topsailai models update GPT-4o --config tags='["prod","vision"]'
 topsailai models update GPT-4o --config metadata='{"temperature":0.7}'
 ```
 
+### Setting environment variables
+
+Use `--config environment.KEY=VALUE` to set an individual environment variable into the model's `environment` mapping. Existing entries are preserved (merge semantics).
+
+```bash
+# Set one environment variable
+topsailai models update GPT-4o --config environment.TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT=300
+
+# Set multiple environment variables
+topsailai models update GPT-4o \
+  --config environment.TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT=300 \
+  --config environment.TOPSAILAI_LOG_LEVEL=debug
+
+# Remove an environment variable (empty value)
+topsailai models update GPT-4o --config environment.TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT=
+```
+
+This also works with `add`:
+
+```bash
+topsailai models add GPT-4o \
+  --config provider=openai \
+  --config protocol=openai-compatible \
+  --config model=gpt-4o \
+  --config environment.TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT=300
+```
+
+Values are stringified. The `environment` field is applied to the process environment when the model is selected (e.g. via `/models`) and when launching an agent with this model.
+
 ### Security note
 
 Never pass literal secrets such as `api_key`, `organization`, or `project`. The CLI rejects them. Always use the `*_env` variants so secrets are read from your shell environment at runtime.

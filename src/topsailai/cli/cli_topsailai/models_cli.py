@@ -143,6 +143,33 @@ def _parse_config_value(value: str) -> Any:
         return stripped
 
 
+def _expand_environment_entries(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Expand ``environment.KEY`` config entries into the environment mapping.
+
+    An empty value removes the key from the mapping. Existing environment
+    entries are merged so individual variables can be set or removed without
+    losing the rest of the model's environment configuration.
+    """
+    environment = record.get("environment")
+    if not isinstance(environment, dict):
+        environment = {}
+    keys_to_remove = [key for key in record if key.startswith("environment.")]
+    for key in keys_to_remove:
+        env_name = key[len("environment."):]
+        if not env_name:
+            raise ModelConfigurationError(
+                "environment key name is required after 'environment.'"
+            )
+        value = record.pop(key)
+        if value == "":
+            environment.pop(env_name, None)
+        else:
+            environment[env_name] = str(value)
+    if environment:
+        record["environment"] = environment
+    return record
+
+
 def _model_to_record(model: ModelConfig) -> Dict[str, Any]:
     """Convert a ModelConfig back to a plain dictionary."""
     record: Dict[str, Any] = {
@@ -230,7 +257,7 @@ def _build_add_record(name: str, config_pairs: List[str]) -> Dict[str, Any]:
     record["name"] = name.strip()
     if not record.get("id"):
         record["id"] = _slugify_id(name)
-    return record
+    return _expand_environment_entries(record)
 
 
 def _build_update_record(
@@ -254,7 +281,7 @@ def _build_update_record(
                 env[k.strip()] = v.strip()
             value = env
         record[key] = value
-    return record
+    return _expand_environment_entries(record)
 
 
 def handle_models_list(args: Any) -> int:
