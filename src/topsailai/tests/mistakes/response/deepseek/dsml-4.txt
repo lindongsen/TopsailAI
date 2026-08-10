@@ -1,0 +1,6 @@
+<｜DSML｜tool_call>
+<｜DSML｜invoke name="cmd_tool-exec_cmd">
+<｜DSML｜parameter name="cmd">echo ok</｜DSML｜parameter>
+</｜DSML｜invoke>
+</｜DSML｜tool_calls>
+

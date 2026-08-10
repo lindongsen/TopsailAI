@@ -717,6 +717,11 @@ class TestDeepseekDsmlToolCalls:
             '<｜DSML｜invoke name="foo">\n'
             '<｜DSML｜parameter name="bar">baz</｜DSML｜parameter>\n'
         ) is None
+        assert _parse_dsml_tool_calls(
+            '<｜DSML｜tool_call>\n'
+            '<｜DSML｜invoke name="foo">\n'
+            '</｜DSML｜tool_call>'
+        ) is None
 
     def test_format_response_deepseek_dsml_sample(self, monkeypatch):
         """Verify the real DeepSeek sample is parsed into action steps."""
@@ -751,6 +756,37 @@ class TestDeepseekDsmlToolCalls:
             "tool_call": "file_tool-read_file",
             "tool_args": {"file_path": "/tmp/test.txt"},
         }]
+
+    def test_format_response_deepseek_singular_invoke_wrapper(self, monkeypatch):
+        """Verify a singular invoke wrapper is recovered into one action."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        monkeypatch.setenv("OPENAI_MODEL", "deepseek-chat")
+
+        text = self.DSML_SAMPLE_PATH.with_name("dsml-3.txt").read_text(encoding="utf-8")
+        result = format_response(text)
+
+        assert result == [{
+            "step_name": "action",
+            "tool_call": "cmd_tool-exec_cmd",
+            "tool_args": {"cmd": "echo ok"},
+        }]
+
+    def test_format_response_deepseek_mixed_invoke_wrapper(self, monkeypatch):
+        """Verify a singular-open plural-close invoke wrapper is recovered."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        monkeypatch.setenv("OPENAI_MODEL", "deepseek-chat")
+
+        text = self.DSML_SAMPLE_PATH.with_name("dsml-4.txt").read_text(encoding="utf-8")
+        result = format_response(text)
+
+        assert result == [{
+            "step_name": "action",
+            "tool_call": "cmd_tool-exec_cmd",
+            "tool_args": {"cmd": "echo ok"},
+        }]
+
     def test_format_response_deepseek_requires_model(self, monkeypatch):
         """Verify DSML is not parsed when the model is not DeepSeek."""
         from topsailai.ai_base.llm_control.message import format_response

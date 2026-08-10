@@ -80,7 +80,7 @@ def _parse_dsml_tool_calls(response):
         </｜DSML｜tool_calls>
 
     A narrow recovery also supports one malformed singular ``tool_call``
-    opening tag paired with the plural closing tag and one JSON action body.
+    wrapper with either a JSON action body or a standard ``invoke`` body.
     Leading text before the ``<｜DSML｜tool_calls>`` tag is preserved as a
     ``thought`` step. Each ``invoke`` block becomes an ``action`` step with
     ``tool_call`` and ``tool_args`` keys.
@@ -96,22 +96,32 @@ def _parse_dsml_tool_calls(response):
         return None
 
     malformed_open = "<｜DSML｜tool_call>"
-    if response.startswith(malformed_open) and response.endswith(DSML_TOOL_CALLS_CLOSE):
-        body = response[len(malformed_open):-len(DSML_TOOL_CALLS_CLOSE)].strip()
-        try:
-            malformed_action = simplejson.loads(body, strict=False)
-        except Exception:
-            malformed_action = None
+    malformed_close = "</｜DSML｜tool_call>"
+    if response.startswith(malformed_open):
+        close_tag = next((
+            tag for tag in (malformed_close, DSML_TOOL_CALLS_CLOSE)
+            if response.endswith(tag)
+        ), None)
+        if close_tag:
+            body = response[len(malformed_open):-len(close_tag)].strip()
+            if body.startswith(DSML_INVOKE_OPEN):
+                normalized = DSML_TOOL_CALLS_OPEN + body + DSML_TOOL_CALLS_CLOSE
+                return _parse_dsml_tool_calls(normalized)
 
-        if isinstance(malformed_action, dict):
-            tool_call = malformed_action.get("tool_call")
-            tool_args = malformed_action.get("tool_args")
-            if isinstance(tool_call, str) and tool_call and isinstance(tool_args, dict):
-                return [{
-                    "step_name": "action",
-                    "tool_call": tool_call,
-                    "tool_args": tool_args,
-                }]
+            try:
+                malformed_action = simplejson.loads(body, strict=False)
+            except Exception:
+                malformed_action = None
+
+            if isinstance(malformed_action, dict):
+                tool_call = malformed_action.get("tool_call")
+                tool_args = malformed_action.get("tool_args")
+                if isinstance(tool_call, str) and tool_call and isinstance(tool_args, dict):
+                    return [{
+                        "step_name": "action",
+                        "tool_call": tool_call,
+                        "tool_args": tool_args,
+                    }]
 
     start_idx = response.find(DSML_TOOL_CALLS_OPEN)
     if start_idx < 0:
