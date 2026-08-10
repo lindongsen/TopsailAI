@@ -465,6 +465,13 @@ def _handle_models_action(
     except (OSError, ModelConfigurationError) as error:
         print(f"{Colors.RED}[ERROR] Cannot save model selection: {error}{Colors.RESET}")
         return
+    if model.environment:
+        for env_name, env_value in model.environment.items():
+            os.environ[env_name] = str(env_value)
+            print(
+                f"{Colors.GREEN}[INFO] Set environment variable: "
+                f"{env_name}={env_value}{Colors.RESET}"
+            )
     scope_name = "project" if project_workspace else "workspace"
     print(
         f"{Colors.GREEN}[INFO] Selected {scope_name} model: "

@@ -159,7 +159,7 @@ Create `{TOPSAILAI_HOME}/.models.jsonl` with one model configuration object per 
 
 You can also manage the registry from the shell with the `topsailai models` subcommand (see below).
 
-Selections are stored in `.model_selection.json` with project overrides taking precedence over the workspace default. The selected OpenAI-compatible configuration is applied only to subsequently launched or resumed agent processes; it does not modify the parent shell environment.
+Selections are stored in `.model_selection.json` with project overrides taking precedence over the workspace default. When a model is selected, any `environment` entries defined in its registry record are applied to the current process environment (each variable is printed as an `[INFO] Set environment variable: name=value` message). The selected OpenAI-compatible configuration is otherwise applied only to subsequently launched or resumed agent processes.
 
 Registry entries must reference credentials by environment-variable name through `api_key_env`, `organization_env`, or `project_env`. Do not store credentials directly in `.models.jsonl`.
 

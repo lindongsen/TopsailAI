@@ -44,7 +44,7 @@ Use `--config KEY=VALUE` to set any of the following fields when calling `add` o
 | `tags` | no | List of tags, e.g. `["prod","vision"]`. |
 | `enabled` | no | `true` or `false`. Defaults to `true`. |
 | `metadata` | no | Arbitrary JSON object for extra settings. |
-| `environment` | no | Extra environment variables to set when launching an agent with this model. Must be an object of scalar values. |
+| `environment` | no | Extra environment variables to apply to the process environment when this model is selected (e.g. via `/models`), and when launching an agent with this model. Must be an object of scalar values. |
 
 ### Values are JSON-parsed
 

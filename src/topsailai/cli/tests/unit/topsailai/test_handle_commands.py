@@ -277,6 +277,72 @@ class TestInteractiveModelDisplay(unittest.TestCase):
         self.assertNotIn("other-id", output)
         self.assertNotIn("gpt-active", output)
         self.assertNotIn("gpt-other", output)
+
+    @patch("cli_topsailai.core._read_input_with_prompt", return_value="1")
+    @patch("cli_topsailai.models.resolve_effective_model")
+    @patch("cli_topsailai.models.load_models")
+    @patch("cli_topsailai.models.set_selected_model")
+    @patch("builtins.print")
+    def test_select_model_applies_environment(
+        self,
+        mock_print: MagicMock,
+        mock_set_selected_model: MagicMock,
+        mock_load_models: MagicMock,
+        mock_resolve_effective_model: MagicMock,
+        _mock_read_input: MagicMock,
+    ) -> None:
+        """Selecting a model with an environment dict sets os.environ vars."""
+        model = ModelConfig(
+            id="env-model",
+            name="Env Model",
+            provider="openai",
+            protocol="openai-compatible",
+            model="gpt-env",
+            environment={"OPENAI_TIMEOUT": "60", "CUSTOM_FLAG": "true"},
+        )
+        mock_load_models.return_value = ModelRegistry((model,))
+        mock_resolve_effective_model.return_value = EffectiveModel(
+            None, "inherited", None
+        )
+
+        _handle_models_action("select")
+
+        self.assertEqual(os.environ.get("OPENAI_TIMEOUT"), "60")
+        self.assertEqual(os.environ.get("CUSTOM_FLAG"), "true")
+        output = "\n".join(str(call.args[0]) for call in mock_print.call_args_list)
+        self.assertIn("Set environment variable: OPENAI_TIMEOUT=60", output)
+        self.assertIn("Set environment variable: CUSTOM_FLAG=true", output)
+
+    @patch("cli_topsailai.core._read_input_with_prompt", return_value="1")
+    @patch("cli_topsailai.models.resolve_effective_model")
+    @patch("cli_topsailai.models.load_models")
+    @patch("cli_topsailai.models.set_selected_model")
+    @patch("builtins.print")
+    def test_select_model_without_environment_sets_nothing(
+        self,
+        mock_print: MagicMock,
+        mock_set_selected_model: MagicMock,
+        mock_load_models: MagicMock,
+        mock_resolve_effective_model: MagicMock,
+        _mock_read_input: MagicMock,
+    ) -> None:
+        """Selecting a model without an environment dict sets no variables."""
+        model = ModelConfig(
+            id="plain-model",
+            name="Plain Model",
+            provider="openai",
+            protocol="openai-compatible",
+            model="gpt-plain",
+        )
+        mock_load_models.return_value = ModelRegistry((model,))
+        mock_resolve_effective_model.return_value = EffectiveModel(
+            None, "inherited", None
+        )
+
+        _handle_models_action("select")
+
+        output = "\n".join(str(call.args[0]) for call in mock_print.call_args_list)
+        self.assertNotIn("Set environment variable", output)
 class TestPerCommandHelp(unittest.TestCase):
     """Tests for -h/--help suffix on YAML commands."""
 
