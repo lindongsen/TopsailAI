@@ -8,6 +8,16 @@ Purpose: Fix DeepSeek-specific DSML tool-call output format.
 import simplejson
 
 from topsailai.ai_base.helper.model_name import get_current_model_name
+from topsailai.ai_base.llm_control.llm_mistakes.hook_script_runner import (
+    get_model_script_dir,
+    run_hook_scripts,
+)
+
+
+DEEPSEEK_HOOK_SCRIPTS_PACKAGE = (
+    "topsailai.ai_base.llm_control.llm_mistakes.deepseek_hook_scripts"
+)
+DEEPSEEK_HOOK_SCRIPTS_FOLDER = "deepseek_hook_scripts"
 
 
 DSML_TOOL_CALLS_OPEN = "<｜DSML｜tool_calls>"
@@ -234,6 +244,14 @@ def fix_deepseek_dsml_tool_calls(message, rsp_obj=None, **_):
 
     if not isinstance(message, str):
         return None
+
+    script_dir = get_model_script_dir(
+        DEEPSEEK_HOOK_SCRIPTS_PACKAGE, DEEPSEEK_HOOK_SCRIPTS_FOLDER
+    )
+    if script_dir:
+        script_result = run_hook_scripts(script_dir, model_name, message)
+        if script_result is not None:
+            return script_result
 
     return _parse_dsml_tool_calls(message)
 

@@ -167,3 +167,63 @@ Search `topsailai.log.ec` for `parsing response` and ignore entries whose tail c
 - If no `LLM Mistake` log follows, no repair method matched and the response will fail to parse.
 
 Use this distinction to decide whether to add a new mistake fixer or improve an existing one.
+
+## Model-Specific Hook Scripts (Subprocess Contract)
+
+Beyond the in-process `MISTAKES` fixers, a model may ship a folder of case
+scripts that run as independent subprocesses. This makes the fix logic
+extensible without modifying core code or restarting the agent.
+
+### Folder Layout
+
+Each model folder lives under `llm_mistakes/`, e.g.
+`deepseek_hook_scripts/`. Eligible scripts are `*.py` files whose name does
+not start with `_` and does not end with a temp/backup suffix (`.tmp`,
+`.new`, `.bak`, `~`, `.swp`, `.pyc`). Files are executed in lexicographic
+filename order, so use a `pNNN_<case>.py` prefix to control priority.
+
+### Discovery
+
+The folder is rescanned on every call (no import cache). Scripts added,
+removed, or changed between responses take effect on the next response
+without a restart.
+
+### Execution
+
+Each script is spawned as an independent subprocess via `sys.executable`
+(no shell, no executable-bit requirement). The working directory is the
+script folder. A timeout (default 5s) kills the whole process group; stdout
+is capped (default 1MB).
+
+### Environment Contract
+
+| Variable | Meaning |
+|---|---|
+| `TOPSAILAI_LLM_MISTAKE_MODEL` | Resolved model name (empty if unknown). |
+| `TOPSAILAI_LLM_MISTAKE_RESPONSE` | Raw response when small enough (default <= 64KB). |
+| `TOPSAILAI_LLM_MISTAKE_RESPONSE_FILE` | Temp file path for larger responses (default <= 10MB). |
+| `TOPSAILAI_LLM_MISTAKE_SCRIPT` | Absolute path of the executed script. |
+| `TOPSAILAI_LLM_MISTAKE_SCRIPT_DIR` | Absolute path of the script folder. |
+
+Responses above the hard cap (default 10MB) skip all scripts and fall back
+to the model's parser. The child environment is a minimal curated set
+(PATH, PYTHONPATH, LANG, LC_ALL, HOME plus the `TOPSAILAI_LLM_MISTAKE_*`
+variables) so parent secrets are not leaked.
+
+### Output Contract
+
+- **Success**: valid JSON on stdout that passes the agent step schema
+  (`list[dict]`, each with a non-empty `step_name`; `action` steps require a
+  non-empty `tool_call` and a `dict` `tool_args`). The first success
+  short-circuits.
+- **Not handled**: empty/whitespace stdout. Continue to the next script.
+- **Failure**: invalid JSON, oversized output, or timeout. Log the reason
+  and continue to the next script.
+- **stderr**: captured for diagnostics only; never a success/failure signal.
+
+### Wiring
+
+A model handler (e.g. `deepseek.py`) resolves the script folder via
+`importlib.resources.files()` and calls `run_hook_scripts(script_dir,
+model_name, message)`. If it returns a validated result, the handler returns
+it; otherwise the handler falls back to its in-process parser.

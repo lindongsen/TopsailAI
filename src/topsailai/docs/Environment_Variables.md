@@ -392,6 +392,17 @@ These variables are for runtime use only and should not be set manually.
 | `TOPSAILAI_LLM_RESPONSE_EVENTS_INCLUDE_RAW` | `1` | Include the raw provider response object (`response.to_dict()`) in the event payload. `1` = include, `0` = omit. The raw response is never leaked when serialization fails. |
 | `TOPSAILAI_LLM_RESPONSE_EVENTS_STREAM_CHUNK_SAMPLE` | `0` | Number of stream chunks to sample into the event payload. `0` disables chunk sampling. Positive values keep the first N and last N chunks. Sampling only occurs when response event recording is enabled. |
 
+## LLM Mistake Hook Scripts
+
+These variables control the subprocess-based model-specific LLM mistake hook scripts.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_LLM_MISTAKE_SCRIPT_TIMEOUT` | `5` | Per-script subprocess timeout in seconds for model-specific LLM mistake hook scripts. |
+| `TOPSAILAI_LLM_MISTAKE_RESPONSE_MAX_ENV` | `65536` | Maximum response bytes passed to hook scripts via `TOPSAILAI_LLM_MISTAKE_RESPONSE`. Above this, the response is written to a temporary file and its path is passed via `TOPSAILAI_LLM_MISTAKE_RESPONSE_FILE`. |
+| `TOPSAILAI_LLM_MISTAKE_RESPONSE_MAX_FILE` | `10485760` | Hard cap in bytes for the raw response passed to hook scripts. Responses above this cap skip all hook scripts and fall back to the model parser. |
+| `TOPSAILAI_LLM_MISTAKE_OUTPUT_MAX` | `1048576` | Maximum stdout bytes accepted from a hook script. Output above this cap is treated as a failure. |
+
 ## Session Metadata
 
 | Variable | Default | Description |

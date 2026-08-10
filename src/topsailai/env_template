@@ -818,3 +818,27 @@ TOPSAILAI_SESSION_META_RETENTION_DAYS=7
 # the limit is exceeded, oldest files are deleted first. Set to 0 to disable
 # count-based cleanup.
 TOPSAILAI_SESSION_META_MAX_COUNT=0
+
+
+# =============================================================================
+# LLM Mistake Hook Scripts
+# =============================================================================
+
+# Per-script subprocess timeout in seconds for model-specific LLM mistake
+# hook scripts. Default is 5.
+TOPSAILAI_LLM_MISTAKE_SCRIPT_TIMEOUT=5
+
+# Maximum response bytes passed to hook scripts via the
+# TOPSAILAI_LLM_MISTAKE_RESPONSE environment variable. Above this, the
+# response is written to a temporary file and its path is passed via
+# TOPSAILAI_LLM_MISTAKE_RESPONSE_FILE. Default is 65536 (64 KiB).
+TOPSAILAI_LLM_MISTAKE_RESPONSE_MAX_ENV=65536
+
+# Hard cap in bytes for the raw response passed to hook scripts. Responses
+# above this cap skip all hook scripts and fall back to the model parser.
+# Default is 10485760 (10 MiB).
+TOPSAILAI_LLM_MISTAKE_RESPONSE_MAX_FILE=10485760
+
+# Maximum stdout bytes accepted from a hook script. Output above this cap is
+# treated as a failure. Default is 1048576 (1 MiB).
+TOPSAILAI_LLM_MISTAKE_OUTPUT_MAX=1048576
