@@ -20,6 +20,7 @@ sys.path.insert(
 
 import cli_topsailai.state as cli_state
 from cli_topsailai.yaml_commands import (
+    build_command_env,
     handle_yaml_command,
     load_yaml_commands,
     match_yaml_command,
@@ -898,6 +899,143 @@ class TestGitCommand(unittest.TestCase):
         self.assertEqual(result, "yaml_handled")
         mock_print_error.assert_called_once()
         self.assertIn("Usage: /git", mock_print_error.call_args[0][0])
+
+
+class TestBuildCommandEnvModelSelection(unittest.TestCase):
+    """Tests for workspace-selected model environment merging in build_command_env."""
+
+    def tearDown(self):
+        cli_state.yaml_commands = []
+        cli_state.current_scope = "workspace"
+        cli_state.current_session_id = None
+
+    def _write_registry_and_selection(self, tmpdir, model_id="m1"):
+        """Write a model registry and a workspace selection into tmpdir."""
+        registry_path = os.path.join(tmpdir, ".models.jsonl")
+        with open(registry_path, "w", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "id": model_id,
+                        "name": "Test Model",
+                        "provider": "openai",
+                        "protocol": "openai-compatible",
+                        "model": "gpt-test",
+                        "base_url": "https://api.test/v1",
+                        "api_key_env": "TEST_API_KEY",
+                    }
+                )
+                + "\n"
+            )
+        selection_path = os.path.join(tmpdir, ".model_selection.json")
+        with open(selection_path, "w", encoding="utf-8") as f:
+            json.dump({"workspace": model_id, "projects": {}}, f)
+        return registry_path, selection_path
+
+    @patch("cli_topsailai.models.load_models")
+    @patch("cli_topsailai.models.resolve_effective_model")
+    @patch("cli_topsailai.models.build_model_environment")
+    def test_build_command_env_applies_selected_model(
+        self, mock_build_env, mock_resolve, mock_load
+    ):
+        """build_command_env merges the selected model environment."""
+        from cli_topsailai.models import EffectiveModel, ModelConfig
+
+        model = ModelConfig(
+            id="m1",
+            name="Test Model",
+            provider="openai",
+            protocol="openai-compatible",
+            model="gpt-test",
+            base_url="https://api.test/v1",
+            api_key_env="TEST_API_KEY",
+        )
+        mock_load.return_value = type("R", (), {"models": (model,)})()
+        mock_resolve.return_value = EffectiveModel(model, "workspace", "m1")
+        mock_build_env.return_value = (
+            {
+                "OPENAI_MODEL": "gpt-test",
+                "OPENAI_BASE_URL": "https://api.test/v1",
+                "OPENAI_API_KEY": "secret-key",
+            },
+            [],
+        )
+
+        with patch.dict(os.environ, {"TEST_API_KEY": "secret-key"}, clear=False):
+            env = build_command_env({"environ": {}}, {"session_id": "s1"})
+
+        self.assertEqual(env["OPENAI_MODEL"], "gpt-test")
+        self.assertEqual(env["OPENAI_BASE_URL"], "https://api.test/v1")
+        self.assertEqual(env["OPENAI_API_KEY"], "secret-key")
+        mock_resolve.assert_called_once()
+        self.assertEqual(mock_resolve.call_args.kwargs["project_workspace"], None)
+
+    @patch("cli_topsailai.models.load_models")
+    @patch("cli_topsailai.models.resolve_effective_model")
+    def test_build_command_env_no_selection_unchanged(
+        self, mock_resolve, mock_load
+    ):
+        """build_command_env leaves env unchanged when no model is selected."""
+        from cli_topsailai.models import EffectiveModel
+
+        mock_load.return_value = type("R", (), {"models": ()})()
+        mock_resolve.return_value = EffectiveModel(None, "inherited", None)
+
+        with patch.dict(os.environ, {"OPENAI_MODEL": "inherited-model"}, clear=False):
+            env = build_command_env({"environ": {}}, {"session_id": "s1"})
+
+        self.assertEqual(env["OPENAI_MODEL"], "inherited-model")
+        self.assertEqual(env["TOPSAILAI_SESSION_ID"], "s1")
+
+    @patch("cli_topsailai.models.load_models")
+    @patch("cli_topsailai.models.resolve_effective_model")
+    @patch("cli_topsailai.models.build_model_environment")
+    def test_handle_yaml_command_chat_and_agent_share_model_env(
+        self, mock_build_env, mock_resolve, mock_load
+    ):
+        """Both /chat and /agent child envs include the selected model env."""
+        from cli_topsailai.models import EffectiveModel, ModelConfig
+
+        model = ModelConfig(
+            id="m1",
+            name="Test Model",
+            provider="openai",
+            protocol="openai-compatible",
+            model="gpt-test",
+            base_url="https://api.test/v1",
+            api_key_env="TEST_API_KEY",
+        )
+        mock_load.return_value = type("R", (), {"models": (model,)})()
+        mock_resolve.return_value = EffectiveModel(model, "workspace", "m1")
+        mock_build_env.return_value = (
+            {
+                "OPENAI_MODEL": "gpt-test",
+                "OPENAI_BASE_URL": "https://api.test/v1",
+                "OPENAI_API_KEY": "secret-key",
+            },
+            [],
+        )
+
+        cli_state.current_scope = "workspace"
+        for cmd in ("/chat", "/agent", "/agent_plan"):
+            with self.subTest(cmd=cmd):
+                instruction = {
+                    "cmd": cmd,
+                    "scopes": ["workspace"],
+                    "shell": "bash -c 'echo hi'",
+                    "use_os_system": 1,
+                }
+                with patch(
+                    "cli_topsailai.process.run_external_command"
+                ) as mock_run:
+                    with patch.dict(
+                        os.environ, {"TEST_API_KEY": "secret-key"}, clear=False
+                    ):
+                        result = handle_yaml_command(instruction, {"session_id": "s1"})
+                self.assertEqual(result, "yaml_handled")
+                child_env = mock_run.call_args[0][1]
+                self.assertEqual(child_env["OPENAI_MODEL"], "gpt-test")
+                self.assertEqual(child_env["OPENAI_API_KEY"], "secret-key")
 
 
 if __name__ == "__main__":

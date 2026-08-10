@@ -322,6 +322,44 @@ def match_yaml_command(
     return None
 
 
+def _apply_workspace_model_environment(env: Dict[str, str]) -> Dict[str, str]:
+    """Merge the workspace-selected model environment into a child env.
+
+    Resolves the effective model for the workspace scope (``project_workspace``
+    is ``None``) and merges its OpenAI-compatible environment into ``env``
+    without mutating the parent ``os.environ``.  When no model is selected, or
+    the selection cannot be applied, ``env`` is returned unchanged.
+
+    Args:
+        env: The child environment to extend.
+
+    Returns:
+        The extended environment dictionary.
+    """
+    from cli_topsailai.models import (
+        ModelConfigurationError,
+        build_model_environment,
+        load_models,
+        resolve_effective_model,
+    )
+
+    registry = load_models()
+    try:
+        effective = resolve_effective_model(registry.models, project_workspace=None)
+        if effective.model is None:
+            return env
+        child_environment, warnings = build_model_environment(effective.model, env)
+    except ModelConfigurationError as error:
+        print_warning(f"Cannot apply selected model: {error}")
+        return env
+
+    for warning in warnings:
+        print_warning(warning)
+
+    env.update(child_environment)
+    return env
+
+
 def build_command_env(
     instruction: Dict[str, Any], variables: Dict[str, str]
 ) -> Dict[str, str]:
@@ -334,6 +372,12 @@ def build_command_env(
 
     Instruction-level ``environ`` overrides and extends defaults.  Variable
     placeholders like ``{session_id}`` are resolved from ``variables``.
+
+    The workspace-selected model environment (``OPENAI_MODEL``,
+    ``OPENAI_BASE_URL``, ``OPENAI_API_KEY``, etc.) is merged into the child
+    environment so workspace-scope commands such as ``/chat``, ``/agent`` and
+    ``/agent_plan`` use the currently selected model.  When no model is
+    selected, the environment is unchanged.
 
     Args:
         instruction: YAML instruction dictionary.
@@ -360,7 +404,7 @@ def build_command_env(
                 resolved = resolved.replace(f"{{{var_name}}}", var_value)
             env[key] = resolved
 
-    return env
+    return _apply_workspace_model_environment(env)
 
 
 def _prompt_call_instruction_wizard() -> Optional[str]:
