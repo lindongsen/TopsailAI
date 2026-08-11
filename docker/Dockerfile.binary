@@ -20,7 +20,7 @@ ENV PATH="/TopsailAI/src/topsailai/bin:/usr/local/bin:${PATH}"
 
 # Set up TopsailAI home: .env symlink + .env.local copy + skill symlink
 RUN mkdir -p /root/.topsailai/skill && \
-    ln -sf /TopsailAI/src/topsailai/env_template /root/.topsailai/.env && \
+    ln -sf /TopsailAI/topsailai/env_template /root/.topsailai/.env && \
     ln -sf /TopsailAI/src/topsailai_data/skills/topsailai_data /root/.topsailai/skill/topsailai_data
 
 # Copy local .env.local into the container
@@ -29,5 +29,8 @@ COPY .env.local /root/.topsailai/.env.local
 # Copy pause binary as PID 1
 COPY docker/pause /pause
 RUN chmod +x /pause
+
+# Fix skill internal bin symlink to point to the actual binary location
+RUN ln -sf /usr/local/bin/topsailai_data /TopsailAI/src/topsailai_data/skills/topsailai_data/bin/topsailai_data
 
 ENTRYPOINT ["/pause"]
