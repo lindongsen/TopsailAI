@@ -18,8 +18,13 @@ RUN dpkg -i /tmp/topsailai-1.0.deb /tmp/topsailai-data-1.0.deb \
 # Set up environment
 ENV PATH="/TopsailAI/src/topsailai/bin:/usr/local/bin:${PATH}"
 
-RUN mkdir -p /root/.topsailai && \
-    ln -sf /TopsailAI/src/topsailai/env_template /root/.topsailai/.env
+# Set up TopsailAI home: .env symlink + .env.local copy + skill symlink
+RUN mkdir -p /root/.topsailai/skill && \
+    ln -sf /TopsailAI/src/topsailai/env_template /root/.topsailai/.env && \
+    ln -sf /TopsailAI/src/topsailai_data/skills/topsailai_data /root/.topsailai/skill/topsailai_data
+
+# Copy local .env.local into the container
+COPY .env.local /root/.topsailai/.env.local
 
 # Copy pause binary as PID 1
 COPY docker/pause /pause
