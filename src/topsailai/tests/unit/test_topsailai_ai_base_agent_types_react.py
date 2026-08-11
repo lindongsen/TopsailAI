@@ -38,38 +38,6 @@ class TestReActConstants(unittest.TestCase):
 class TestStep4ReAct(unittest.TestCase):
     """Test cases for Step4ReAct class."""
 
-    def test_format_action_result_dict_to_json(self):
-        """Test dict result is converted to JSON string."""
-        from topsailai.ai_base.agent_types.react import Step4ReAct
-
-        instance = Step4ReAct()
-        result = {"key": "value", "num": 1}
-        formatted = instance._Step4ReAct__format_action_result(result)
-        self.assertEqual(formatted["step_name"], "observation")
-        self.assertIsInstance(formatted["raw_text"], str)
-        self.assertIn('"key": "value"', formatted["raw_text"])
-
-    def test_format_action_result_list_to_json(self):
-        """Test list result is converted to JSON string."""
-        from topsailai.ai_base.agent_types.react import Step4ReAct
-
-        instance = Step4ReAct()
-        result = [1, 2, 3]
-        formatted = instance._Step4ReAct__format_action_result(result)
-        self.assertEqual(formatted["step_name"], "observation")
-        self.assertIsInstance(formatted["raw_text"], str)
-        self.assertIn("1", formatted["raw_text"])
-
-    def test_format_action_result_string_unchanged(self):
-        """Test string result is preserved unchanged."""
-        from topsailai.ai_base.agent_types.react import Step4ReAct
-
-        instance = Step4ReAct()
-        result = "plain text result"
-        formatted = instance._Step4ReAct__format_action_result(result)
-        self.assertEqual(formatted["step_name"], "observation")
-        self.assertEqual(formatted["raw_text"], "plain text result")
-
     def test_inherits_from_step_call_tool(self):
         """Test Step4ReAct inherits from StepCallTool."""
         from topsailai.ai_base.agent_types.react import Step4ReAct

@@ -8,7 +8,6 @@
 from topsailai.utils import (
     env_tool,
 )
-from topsailai.utils.json_tool import to_json_str
 from topsailai.prompt_hub.prompt_tool import PromptHubExtractor
 from .tool import (
     StepCallTool,
@@ -27,13 +26,11 @@ class Step4ReAct(StepCallTool):
     """Implementation of the ReAct (Reasoning and Acting) framework for AI agents"""
 
     def __format_action_result(self, result):
-        # Convert object results (dict/list) to JSON string, preserve other types
-        if isinstance(result, (dict, list)):
-            result = to_json_str(result)
         return {
             "step_name": "observation",
             "raw_text": result,
         }
+
     def _execute(self, step:dict, tools:dict, response:list, index:int, rsp_msg_obj=None, **_):
         """
         Execute a single step in the ReAct framework
