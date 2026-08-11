@@ -1,6 +1,6 @@
 # Collaboration for subagents or team or group or multiple-agents
 
-> The manager needs to analyze task relationships and automatically allocate tasks to member/subagent. In the absence of any blocking situations, the `final_answer` should not be output directly.
+> @manager: when not blocked, automatically delegate tasks to members and keep advancing without outputting `final_answer`.
 
 Any problem should follow this step:
 1. Analyze the problem, Provide a detailed analysis report
