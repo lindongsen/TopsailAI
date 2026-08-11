@@ -1,10 +1,12 @@
-TopsailAI:
+topsailai:
   version: '1.0'
-  python_version: '3'
+  python_version: '3.13'
   src:
     include:
-      - topsailai
-    exclude: []
+      - topsailai/
+    exclude:
+      - topsailai_server
+      - topsailai_data
     lib_home: '/TopsailAI'
   control:
     template: 'build/data/template/control'
@@ -15,3 +17,12 @@ TopsailAI:
     params:
       lib_home: '/TopsailAI'
 
+topsailai-data:
+  version: '1.0'
+  non-src:
+    'src/topsailai_data/bin/topsailai_data': '/usr/local/bin/topsailai_data'
+    'src/topsailai_data/skills': '/TopsailAI/src/topsailai_data/skills'
+  control:
+    template: 'build/data/template/control'
+    params:
+      depends: ''

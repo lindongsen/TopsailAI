@@ -12,3 +12,4 @@ __pycache__/
 .task/
 .tmp/
 *.lock
+docker/deb-output/
