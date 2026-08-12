@@ -8,6 +8,7 @@
 from datetime import datetime
 import functools
 from typing import Any, Callable
+import yaml
 
 from topsailai.logger import logger
 from topsailai.context import (
@@ -488,6 +489,53 @@ class StepCallTool(StepCallBase):
             [idx for idx, _ in merge_texts],
         )
 
+    def _strip_task_manifest(self, text: str) -> str:
+        """Strip a task manifest frontmatter block from the start of text.
+
+        Detects a leading '---' block, parses it as YAML, and removes it
+        if it contains a 'task_id' field (indicating an unexpected manifest).
+        """
+        if not text:
+            return text
+
+        # Check if text starts with '---'
+        if not text.startswith("---"):
+            return text
+
+        lines = text.split("\n")
+        if len(lines) < 3:
+            return text
+
+        # First line is '---', find the closing '---' line
+        end_idx = None
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "---":
+                end_idx = i
+                break
+
+        if end_idx is None:
+            return text
+
+        # Extract YAML content between the '---' delimiters
+        yaml_content = "\n".join(lines[1:end_idx])
+
+        # Parse YAML; if parsing fails, do not process
+        try:
+            data = yaml.safe_load(yaml_content)
+        except Exception:
+            return text
+
+        # If YAML is a dict containing 'task_id', it's unexpected content
+        if isinstance(data, dict) and "task_id" in data:
+            logger.warning(
+                "Stripped task manifest frontmatter from final_answer: %s",
+                yaml_content.strip(),
+            )
+            # Remove frontmatter, keep remaining content
+            return "\n".join(lines[end_idx + 1:]).lstrip("\n")
+
+        return text
+
     def complete_final(self, step:dict, **_):
         """
         Handle the final answer step.
@@ -521,6 +569,8 @@ class StepCallTool(StepCallBase):
                 if isinstance(s, dict) and s.get(MSG_KEY_STEP_NAME) == STEP_NAME_FINAL_ANSWER:
                     self.result = s.get(MSG_KEY_RAW_TEXT, self.result)
                     break
+        # Strip unexpected task manifest frontmatter from the final answer
+        self.result = self._strip_task_manifest(self.result)
         self.code = self.CODE_TASK_FINAL
         return
 
