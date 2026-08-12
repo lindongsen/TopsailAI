@@ -23,7 +23,7 @@ topsailai:
 topsailai-data:
   version: '1.0'
   non-src:
-    'src/topsailai_data/bin/topsailai_data': '/usr/local/bin/topsailai_data'
+    'src/topsailai_data/bin/topsailai_data': '/TopsailAI/src/topsailai_data/bin/topsailai_data'
     'src/topsailai_data/skills': '/TopsailAI/src/topsailai_data/skills'
   control:
     template: 'build/data/template/control'

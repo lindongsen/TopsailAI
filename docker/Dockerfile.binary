@@ -40,6 +40,6 @@ COPY docker/pause /pause
 RUN chmod +x /pause
 
 # Fix skill internal bin symlink to point to the actual binary location
-RUN ln -sf /usr/local/bin/topsailai_data /TopsailAI/src/topsailai_data/skills/topsailai_data/bin/topsailai_data
+RUN ln -sf /TopsailAI/src/topsailai_data/bin/topsailai_data /TopsailAI/src/topsailai_data/skills/topsailai_data/bin/topsailai_data
 
 ENTRYPOINT ["/pause"]
