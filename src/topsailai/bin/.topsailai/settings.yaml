@@ -1,0 +1,47 @@
+# AI Agent TopsailAI-Launcher Configuration
+# This file tells topsailai_launch_agent.py which driver to run, which files
+# to inject into the agent context, and which environment variables to set.
+
+# AI Agent driver path or command.
+# Resolution order (first match wins):
+#   1. --driver CLI argument
+#   2. TOPSAILAI_AGENT_DRIVER environment variable from this file (item-specific or _)
+#   3. ai_agent_driver field below
+#   4. TOPSAILAI_AGENT_DRIVER from the OS environment
+ai_agent_driver: "topsailai_agent_plan_tasks"
+
+# Working directory for the launched driver.
+workspace: "."
+
+# Context configuration: each item corresponds to a set of context sources.
+# Each source is either a file path (string) or a dict describing a command
+# whose stdout will be captured and included as context.
+#
+# "_" is the 基础配置 (base configuration) shared by all items; item-specific
+# sources are appended after the 基础配置 sources. File paths are relative to
+# `workspace` unless they start with `/`.
+#
+# Command source example:
+#   - type: command
+#     command: "git log --oneline -10"
+#     timeout: 5
+#     label: "recent-commits"
+#
+# IMPORTANT: `context._` is currently empty. Fill it with the sources
+# you want every agent run to receive (e.g. project.yaml, docs, features).
+context:
+  _:
+    - "README.md"
+  default: []
+
+# Environment variable configuration: each item can define its own variables.
+# "_" variables are the 基础配置 (base configuration) and are applied first,
+# then item-specific variables override them. System environment variables are
+# inherited and can be overridden here.
+#
+# TOPSAILAI_INTERACTIVE_MODE enables interactive behavior in the agent driver.
+# Set to "1" to enable, "0" to disable.
+environment:
+  _:
+    TOPSAILAI_INTERACTIVE_MODE: "1"
+  default: {}

@@ -1,11 +1,16 @@
-TopsailAI:
+topsailai:
   version: '1.0'
-  python_version: '3'
+  python_version: '3.13'
   src:
     include:
-      - topsailai
-    exclude: []
-    lib_home: '/TopsailAI'
+      - topsailai/
+    exclude:
+      - topsailai_server
+      - topsailai_data
+    lib_home: '/TopsailAI/src'
+  non-src:
+    'pyproject.toml': '/TopsailAI/pyproject.toml'
+    'uv.lock': '/TopsailAI/uv.lock'
   control:
     template: 'build/data/template/control'
     params:
@@ -13,5 +18,14 @@ TopsailAI:
   prerm:
     template: 'build/data/template/prerm'
     params:
-      lib_home: '/TopsailAI'
+      lib_home: '/TopsailAI/src'
 
+topsailai-data:
+  version: '1.0'
+  non-src:
+    'src/topsailai_data/bin/topsailai_data': '/TopsailAI/src/topsailai_data/bin/topsailai_data'
+    'src/topsailai_data/skills': '/TopsailAI/src/topsailai_data/skills'
+  control:
+    template: 'build/data/template/control'
+    params:
+      depends: ''
