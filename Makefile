@@ -9,8 +9,10 @@
 #   DOCKER_TAG    - docker image tag (default: topsailai:YYYYMMDD.N, auto-increment)
 #   REQUIRE_NEW_SO- set to 1 to force recompilation (default: 0)
 
-PROJECT_HOME := /TopsailAI
-OUTPUT_DIR   ?= build/output
+# Auto-detect project home as the directory containing this Makefile (portable)
+PROJECT_HOME := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+# Absolute output dir based on PROJECT_HOME so dev-tools resolves it correctly
+OUTPUT_DIR   ?= $(PROJECT_HOME)/build/output
 # Docker image tag with date-based auto-increment (e.g. topsailai:20260812.1)
 BUILD_DATE := $(shell date +%Y%m%d)
 BUILD_SEQ := $(shell docker images --format '{{.Tag}}' topsailai 2>/dev/null | grep '^$(BUILD_DATE)\.' | sed 's/^$(BUILD_DATE)\.//' | sort -n | tail -1 | awk '{print $$1+1}')
