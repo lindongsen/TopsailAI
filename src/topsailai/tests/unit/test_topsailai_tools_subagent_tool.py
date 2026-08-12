@@ -650,6 +650,34 @@ class TestSubagentReuseGating:
         finally:
             os.environ.pop("TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS", None)
 
+    @patch("topsailai.workspace.agent_shell.get_agent_chat")
+    @patch("topsailai.tools.subagent_tool.get_task_id")
+    def test_reuse_resets_tool_stat_before_next_call(
+        self, mock_get_task_id, mock_get_agent_chat
+    ):
+        """A reused subagent must not carry tool calls into the next invocation."""
+        from topsailai.context.tool_stat import ToolStat
+        from topsailai.tools import subagent_tool
+
+        os.environ["TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS"] = "1"
+
+        try:
+            mock_agent = MagicMock()
+            mock_agent.ai_agent.llm_model.tool_stat = ToolStat()
+            mock_agent._run.return_value = "response"
+            mock_get_agent_chat.return_value = mock_agent
+            mock_get_task_id.return_value = "task_123"
+
+            subagent_tool.call_assistant("first task")
+            mock_agent.ai_agent.llm_model.tool_stat.record("file_tool-read_file")
+            assert mock_agent.ai_agent.llm_model.tool_stat.total_calls == 1
+
+            subagent_tool.call_assistant("second task")
+
+            assert mock_agent.ai_agent.llm_model.tool_stat.total_calls == 0
+        finally:
+            os.environ.pop("TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS", None)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
