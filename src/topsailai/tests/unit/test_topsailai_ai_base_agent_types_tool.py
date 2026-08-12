@@ -637,5 +637,81 @@ class TestExecToolFuncToolCallWarning(unittest.TestCase):
         self.assertEqual(self.agent.add_user_message.call_count, 0)
 
 
+class TestStepCallToolStripTaskManifest(unittest.TestCase):
+    """Tests for stripping unexpected task manifest frontmatter."""
+
+    def setUp(self):
+        """Create a StepCallTool instance for each test."""
+        from topsailai.ai_base.agent_types.tool import StepCallTool
+
+        self.instance = StepCallTool()
+
+    def test_strips_manifest_with_tool_call_count(self):
+        """A completed task manifest is removed from the final answer."""
+        text = "---\ntask_id: task-1\nstatus: done\ntool_call_count: 3\nnow: 2026-08-12T10:00:00\n---\nAnswer"
+
+        self.assertEqual(self.instance._strip_task_manifest(text), "Answer")
+
+    def test_strips_manifest_without_tool_call_count(self):
+        """An initializing task manifest is removed from the final answer."""
+        text = "---\ntask_id: task-1\nstatus: initializing\nnow: 2026-08-12T10:00:00\n---\nAnswer"
+
+        self.assertEqual(self.instance._strip_task_manifest(text), "Answer")
+
+    def test_does_not_strip_yaml_without_task_id(self):
+        """A different YAML frontmatter block remains unchanged."""
+        text = "---\nstatus: done\n---\nAnswer"
+
+        self.assertEqual(self.instance._strip_task_manifest(text), text)
+
+    def test_does_not_strip_invalid_yaml(self):
+        """An unparseable frontmatter block remains unchanged."""
+        text = "---\nkey: [unclosed\n---\nAnswer"
+
+        self.assertEqual(self.instance._strip_task_manifest(text), text)
+
+    def test_does_not_strip_text_not_starting_with_delimiter(self):
+        """Text without a leading delimiter remains unchanged."""
+        text = "Answer\n---\ntask_id: task-1\n---"
+
+        self.assertEqual(self.instance._strip_task_manifest(text), text)
+
+    def test_does_not_strip_without_closing_delimiter(self):
+        """An unterminated frontmatter block remains unchanged."""
+        text = "---\ntask_id: task-1\nstatus: done\nAnswer"
+
+        self.assertEqual(self.instance._strip_task_manifest(text), text)
+
+    def test_empty_string_is_unchanged(self):
+        """An empty final answer remains empty."""
+        self.assertEqual(self.instance._strip_task_manifest(""), "")
+
+    @patch("topsailai.ai_base.agent_types.tool.logger.warning")
+    def test_logs_warning_when_manifest_is_stripped(self, mock_warning):
+        """Stripping a manifest emits a warning containing its YAML content."""
+        text = "---\ntask_id: task-1\nstatus: done\n---\nAnswer"
+
+        self.instance._strip_task_manifest(text)
+
+        mock_warning.assert_called_once()
+        self.assertIn("task_id: task-1", mock_warning.call_args.args[1])
+
+    @patch("topsailai.ai_base.agent_types.tool.logger.warning")
+    def test_does_not_log_warning_when_manifest_is_not_stripped(self, mock_warning):
+        """Unchanged final answers do not emit a stripping warning."""
+        self.instance._strip_task_manifest("Answer")
+
+        mock_warning.assert_not_called()
+
+    def test_preserves_remaining_content_after_stripping(self):
+        """All answer content after the frontmatter is preserved."""
+        text = "---\ntask_id: task-1\nstatus: done\n---\n\nAnswer line one\nAnswer line two"
+
+        self.assertEqual(
+            self.instance._strip_task_manifest(text),
+            "Answer line one\nAnswer line two",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
