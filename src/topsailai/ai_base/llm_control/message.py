@@ -320,7 +320,8 @@ def format_response_finally(response, rsp_obj=None, messages=None):
                             pass
 
                     action_count = get_count_of_action(messages)
-                    if action_count > 0:
+                    # only convert to final answer when the raw text spans multiple lines
+                    if action_count > 0 and "\n" in item.get("raw_text", ""):
                         print_error(f"{LLM_KEYWORD_MISTAKE}: maybe final answer due to found action count [{action_count}]")
                         item["step_name"] = "final_answer"
                 except Exception as e:
@@ -528,7 +529,8 @@ def format_response(response, rsp_obj=None, messages=None):
             try:
                 if not get_tool_calls_of_rsp(rsp_obj):
                     action_count = get_count_of_action(messages)
-                    if action_count > 0:
+                    # only convert to final answer when the response spans multiple lines
+                    if action_count > 0 and "\n" in response:
                         print_error(f"{LLM_KEYWORD_MISTAKE}: change step to final answer due to found action count [{action_count}]")
                         step_name = format_tool.TOPSAILAI_STEP_FINAL
                     else:

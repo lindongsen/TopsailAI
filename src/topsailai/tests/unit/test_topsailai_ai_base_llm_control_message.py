@@ -824,3 +824,117 @@ class TestDeepseekDsmlToolCalls:
         assert len(result) == 1
         assert result[0]["step_name"] == "thought"
         assert "DSML" in result[0]["raw_text"]
+
+
+class TestFormatResponseSingleLineNoFinalAnswerConversion:
+    """Test suite for the single-line guard on final-answer conversion.
+
+    When the response raw content is a single line (no newline), the
+    'change step to final answer due to found action count' conversion must
+    NOT happen. Only multi-line responses are converted.
+    """
+
+    # ---- format_response_finally (list with single thought item) ----
+
+    def test_finally_single_line_with_action_keeps_thought(self):
+        """Single-line thought with existing action stays thought."""
+        from topsailai.ai_base.llm_control.message import format_response_finally
+
+        response = [{"step_name": "thought", "raw_text": "done"}]
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": '"step_name": "action"'},
+        ]
+        result = format_response_finally(response, rsp_obj=None, messages=messages)
+        assert result[0]["step_name"] == "thought"
+
+    def test_finally_multi_line_with_action_converts_to_final(self):
+        """Multi-line thought with existing action converts to final_answer."""
+        from topsailai.ai_base.llm_control.message import format_response_finally
+
+        response = [{"step_name": "thought", "raw_text": "first line\nsecond line"}]
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": '"step_name": "action"'},
+        ]
+        result = format_response_finally(response, rsp_obj=None, messages=messages)
+        assert result[0]["step_name"] == "final_answer"
+
+    def test_finally_single_line_without_action_keeps_thought(self):
+        """Single-line thought without action stays thought."""
+        from topsailai.ai_base.llm_control.message import format_response_finally
+
+        response = [{"step_name": "thought", "raw_text": "done"}]
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+        ]
+        result = format_response_finally(response, rsp_obj=None, messages=messages)
+        assert result[0]["step_name"] == "thought"
+
+    def test_finally_multi_line_without_action_keeps_thought(self):
+        """Multi-line thought without action stays thought."""
+        from topsailai.ai_base.llm_control.message import format_response_finally
+
+        response = [{"step_name": "thought", "raw_text": "first line\nsecond line"}]
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+        ]
+        result = format_response_finally(response, rsp_obj=None, messages=messages)
+        assert result[0]["step_name"] == "thought"
+
+    # ---- format_response (plain text string) ----
+
+    def test_format_single_line_with_action_keeps_thought(self):
+        """Single-line plain text with existing action stays thought."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": '"step_name": "action"'},
+        ]
+        result = format_response("done", rsp_obj=None, messages=messages)
+        assert len(result) == 1
+        assert result[0]["step_name"] == "thought"
+        assert "done" in result[0]["raw_text"]
+
+    def test_format_multi_line_with_action_converts_to_final(self):
+        """Multi-line plain text with existing action converts to final_answer."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": '"step_name": "action"'},
+        ]
+        result = format_response("first line\nsecond line", rsp_obj=None, messages=messages)
+        assert len(result) == 1
+        assert result[0]["step_name"] == "final_answer"
+
+    def test_format_single_line_without_action_keeps_thought(self):
+        """Single-line plain text without action stays thought."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+        ]
+        result = format_response("done", rsp_obj=None, messages=messages)
+        assert len(result) == 1
+        assert result[0]["step_name"] == "thought"
+
+    def test_format_multi_line_without_action_keeps_thought(self):
+        """Multi-line plain text without action stays thought."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+        ]
+        result = format_response("first line\nsecond line", rsp_obj=None, messages=messages)
+        assert len(result) == 1
+        assert result[0]["step_name"] == "thought"
