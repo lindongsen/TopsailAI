@@ -771,6 +771,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "chardet" },
     { name = "dotenv" },
+    { name = "httpx" },
     { name = "lxml" },
     { name = "openai" },
     { name = "pip" },
@@ -790,6 +791,7 @@ dev = [
 requires-dist = [
     { name = "chardet", specifier = ">=5.2.0" },
     { name = "dotenv", specifier = ">=0.9.9" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "lxml", specifier = ">=6.0.2" },
     { name = "openai", specifier = ">=2.3.0" },
     { name = "pip", specifier = ">=25.2" },
