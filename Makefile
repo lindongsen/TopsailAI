@@ -24,7 +24,7 @@ DOCKER_TAG ?= topsailai:$(BUILD_DATE).$(BUILD_SEQ)
 #            root cause instead of setting this variable to work around it.
 REQUIRE_NEW_SO ?= 0
 
-.PHONY: build-deb build-docker clean
+.PHONY: build-deb build-docker clean help
 
 ## Build TopsailAI binary deb packages (core-agent + topsailai_data)
 build-deb:
@@ -49,3 +49,14 @@ clean:
 	@rm -rf $(OUTPUT_DIR)
 	@rm -rf docker/deb-output
 	@echo "==> Done."
+
+## Show this help message
+help:
+	@echo "Usage:"
+	@echo "  make <target>"
+	@echo ""
+	@echo "Targets:"
+	@echo "  build-deb      Build TopsailAI binary deb packages (core-agent + topsailai_data)"
+	@echo "  build-docker   Build Docker image from the deb packages (Dockerfile.binary)"
+	@echo "  clean          Remove build artifacts"
+	@echo "  help           Show this help message"
