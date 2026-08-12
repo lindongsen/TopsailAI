@@ -96,3 +96,7 @@ Key logic:
 - `workspace/agent/agent_shell_base.py` updated `AgentChat._start_control_server()` to acquire the shared server and `_stop_control_server()` to release its reference.
 
 System impact: Subagent scenarios that create multiple `AgentChat` instances in the same process and session no longer collide on the control socket or start redundant servers. The control channel continues to serve the first registered `AgentChat` for the session; it does not add per-agent routing.
+
+## human_tool-ask_decision
+
+Added a new `human_tool` with an `ask_decision` function that lets the agent pause and obtain a structured human decision when a task becomes blocked (ambiguity, missing authorization, multi-branch choice, risky confirmation). The tool returns a status-bearing dict (`answered|timeout|cancelled|unavailable`) with answer, option_index, elapsed_ms, and asked_at_ms. It reuses existing input infrastructure (thread-local runtime input, workspace input utils, named-pipe transport) and degrades gracefully to `unavailable` in non-interactive or sub-agent contexts.

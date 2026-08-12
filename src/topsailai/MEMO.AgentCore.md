@@ -152,6 +152,7 @@ The immediate entry point for executing a single tool call is the standalone fun
 
 ### Note for maintainers
 When tracing how an agent invokes a tool, start at `StepCallTool.execute_step_action()` for the step-loop perspective, and at `exec_tool_func()` for the actual tool-function invocation, exception handling, and result truncation.
+- **Human decision tool:** see `src/topsailai/tools/human_tool.py` (`human_tool-ask_decision`) for asking users decisions when tasks are blocked.
 
 ### Context Archiving via `link_message`
 
