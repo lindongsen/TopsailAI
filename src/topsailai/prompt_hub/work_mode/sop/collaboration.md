@@ -1,6 +1,7 @@
 # Collaboration for subagents or team or group or multiple-agents
 
 > @manager: when not blocked, automatically delegate tasks to members and keep advancing without outputting `final_answer`.
+> @ALL: Always review your list of available tools, use them to complete tasks, and strictly prohibit falsifying results!
 
 Any problem should follow this step:
 1. Analyze the problem, Provide a detailed analysis report
