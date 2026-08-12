@@ -23,7 +23,7 @@ COPY uv.lock /TopsailAI/uv.lock
 RUN cd /TopsailAI && uv pip install --system -e .
 
 # Set up environment
-ENV PATH="/TopsailAI/src/topsailai/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV PATH="/TopsailAI/src/topsailai/bin:/TopsailAI/src/topsailai_data/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 ENV UV_NO_DEV=1
 ENV PYTHONPATH="/TopsailAI/src/topsailai/cli"
 
