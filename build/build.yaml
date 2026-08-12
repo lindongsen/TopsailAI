@@ -8,6 +8,9 @@ topsailai:
       - topsailai_server
       - topsailai_data
     lib_home: '/TopsailAI'
+  non-src:
+    'pyproject.toml': '/TopsailAI/pyproject.toml'
+    'uv.lock': '/TopsailAI/uv.lock'
   control:
     template: 'build/data/template/control'
     params:

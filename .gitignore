@@ -13,3 +13,4 @@ __pycache__/
 .tmp/
 *.lock
 docker/deb-output/
+build/output/

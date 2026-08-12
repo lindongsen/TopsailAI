@@ -15,8 +15,17 @@ COPY docker/deb-output/topsailai-data-1.0.deb /tmp/topsailai-data-1.0.deb
 RUN dpkg -i /tmp/topsailai-1.0.deb /tmp/topsailai-data-1.0.deb \
     && rm -f /tmp/topsailai-*.deb
 
+# Ensure pyproject.toml and uv.lock are present (deb may not install them correctly)
+COPY pyproject.toml /TopsailAI/pyproject.toml
+COPY uv.lock /TopsailAI/uv.lock
+
+# Install TopsailAI Python dependencies via uv (pyproject.toml + uv.lock are bundled in the deb)
+RUN cd /TopsailAI && uv pip install --system -e .
+
 # Set up environment
-ENV PATH="/TopsailAI/src/topsailai/bin:/usr/local/bin:${PATH}"
+ENV PATH="/TopsailAI/topsailai/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV UV_NO_DEV=1
+ENV PYTHONPATH="/TopsailAI/topsailai/cli"
 
 # Set up TopsailAI home: .env symlink + .env.local copy + skill symlink
 RUN mkdir -p /root/.topsailai/skill && \
