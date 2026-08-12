@@ -713,5 +713,65 @@ class TestStepCallToolStripTaskManifest(unittest.TestCase):
         )
 
 
+class TestStepCallToolCompleteFinalStripsMessageContent(unittest.TestCase):
+    """complete_final must strip the task manifest frontmatter from BOTH
+    self.result AND agent.messages[-1]["content"].
+    """
+
+    def setUp(self):
+        from topsailai.ai_base.agent_types.tool import StepCallTool
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
+        rid_all_thread_vars()
+        self.instance = StepCallTool()
+        self.agent = MagicMock()
+        self.agent.messages = []
+
+    def tearDown(self):
+        from topsailai.utils.thread_local_tool import rid_all_thread_vars
+        rid_all_thread_vars()
+
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_object")
+    def test_complete_final_strips_message_content_in_place(self, mock_get_agent):
+        """The final_answer raw_text inside agent.messages[-1] is also stripped."""
+        from topsailai.ai_base.agent_types.tool import STEP_NAME_FINAL_ANSWER, MSG_KEY_STEP_NAME, MSG_KEY_RAW_TEXT
+        from topsailai.utils.json_tool import json_load
+
+        unstripped = "---\ntask_id: task-1\nstatus: done\n---\nAnswer"
+        import json as _json
+        content_steps = [{"step_name": "final_answer", "raw_text": unstripped}]
+        self.agent.messages = [{
+            "role": "assistant",
+            "content": _json.dumps(content_steps),
+        }]
+        mock_get_agent.return_value = self.agent
+
+        self.instance.complete_final({"raw_text": unstripped})
+
+        # self.result is stripped
+        self.assertEqual(self.instance.result, "Answer")
+        # agent.messages[-1]["content"] is also stripped in-place
+        steps = json_load(self.agent.messages[-1]["content"])
+        self.assertEqual(steps[0][MSG_KEY_RAW_TEXT], "Answer")
+        self.assertEqual(steps[0][MSG_KEY_STEP_NAME], STEP_NAME_FINAL_ANSWER)
+
+    @patch("topsailai.ai_base.agent_types.tool.get_agent_object")
+    def test_complete_final_no_change_when_no_frontmatter(self, mock_get_agent):
+        """When no manifest exists, message content stays unchanged."""
+        from topsailai.utils.json_tool import json_load
+
+        text = "Plain answer"
+        self.agent.messages = [{
+            "role": "assistant",
+            "content": '[{"step_name": "final_answer", "raw_text": "Plain answer"}]',
+        }]
+        mock_get_agent.return_value = self.agent
+
+        self.instance.complete_final({"raw_text": text})
+
+        self.assertEqual(self.instance.result, "Plain answer")
+        steps = json_load(self.agent.messages[-1]["content"])
+        self.assertEqual(steps[0]["raw_text"], "Plain answer")
+
+
 if __name__ == "__main__":
     unittest.main()

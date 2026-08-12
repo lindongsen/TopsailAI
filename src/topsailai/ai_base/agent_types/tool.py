@@ -569,8 +569,19 @@ class StepCallTool(StepCallBase):
                 if isinstance(s, dict) and s.get(MSG_KEY_STEP_NAME) == STEP_NAME_FINAL_ANSWER:
                     self.result = s.get(MSG_KEY_RAW_TEXT, self.result)
                     break
-        # Strip unexpected task manifest frontmatter from the final answer
-        self.result = self._strip_task_manifest(self.result)
+            # Strip unexpected task manifest frontmatter from the final answer
+            stripped_result = self._strip_task_manifest(self.result)
+            if stripped_result != self.result:
+                self.result = stripped_result
+                # Update the underlying message content in-place so that any
+                # later read of agent.messages[-1] sees the stripped text too.
+                for s in final_steps:
+                    if isinstance(s, dict) and s.get(MSG_KEY_STEP_NAME) == STEP_NAME_FINAL_ANSWER:
+                        s[MSG_KEY_RAW_TEXT] = stripped_result
+                        break
+                final_msg["content"] = to_json_str(final_steps)
+        else:
+            self.result = self._strip_task_manifest(self.result)
         self.code = self.CODE_TASK_FINAL
         return
 

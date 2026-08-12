@@ -106,6 +106,7 @@ class TaskData(object):
         """
         tool_call_line = f"tool_call_count: {self.tool_call_count}\n" if self.status != self.TASK_STATUS_INITING else ""
         return f"""---
+# NOTE: This frontmatter is automatically managed by the agent. Do NOT generate, reproduce, or modify it.
 task_id: {self.task_id}
 status: {self.status}
 {tool_call_line}now: {time_tool.get_current_date(with_t=True)}
