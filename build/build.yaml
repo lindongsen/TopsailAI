@@ -7,7 +7,7 @@ topsailai:
     exclude:
       - topsailai_server
       - topsailai_data
-    lib_home: '/TopsailAI'
+    lib_home: '/TopsailAI/src'
   non-src:
     'pyproject.toml': '/TopsailAI/pyproject.toml'
     'uv.lock': '/TopsailAI/uv.lock'
@@ -18,7 +18,7 @@ topsailai:
   prerm:
     template: 'build/data/template/prerm'
     params:
-      lib_home: '/TopsailAI'
+      lib_home: '/TopsailAI/src'
 
 topsailai-data:
   version: '1.0'

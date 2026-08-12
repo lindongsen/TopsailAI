@@ -23,13 +23,13 @@ COPY uv.lock /TopsailAI/uv.lock
 RUN cd /TopsailAI && uv pip install --system -e .
 
 # Set up environment
-ENV PATH="/TopsailAI/topsailai/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV PATH="/TopsailAI/src/topsailai/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 ENV UV_NO_DEV=1
-ENV PYTHONPATH="/TopsailAI/topsailai/cli"
+ENV PYTHONPATH="/TopsailAI/src/topsailai/cli"
 
 # Set up TopsailAI home: .env symlink + .env.local copy + skill symlink
 RUN mkdir -p /root/.topsailai/skill && \
-    ln -sf /TopsailAI/topsailai/env_template /root/.topsailai/.env && \
+    ln -sf /TopsailAI/src/topsailai/env_template /root/.topsailai/.env && \
     ln -sf /TopsailAI/src/topsailai_data/skills/topsailai_data /root/.topsailai/skill/topsailai_data
 
 # Copy local .env.local into the container
