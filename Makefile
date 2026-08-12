@@ -11,7 +11,10 @@
 
 # Auto-detect project home as the directory containing this Makefile (portable)
 PROJECT_HOME := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-# Absolute output dir based on PROJECT_HOME so dev-tools resolves it correctly
+# Absolute output dir based on PROJECT_HOME so dev-tools resolves it correctly.
+# After a build, $(OUTPUT_DIR)/.deb/<pkg>/... holds the unpacked staging layout,
+# which lets you inspect the packaged folder structure before install.
+# Example: tree $(OUTPUT_DIR)/.deb/topsailai/TopsailAI/src | head
 OUTPUT_DIR   ?= $(PROJECT_HOME)/build/output
 # Docker image tag with date-based auto-increment (e.g. topsailai:20260812.1)
 BUILD_DATE := $(shell date +%Y%m%d)
