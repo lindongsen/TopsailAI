@@ -222,7 +222,10 @@ I am a sub-agent, and my name is ({role_name or agent_name})
         system_prompt += "\n\n" + role_content
         message = f"@{role}:\n{task}"
 
-    task_agent = g_subagents.get(agent_name)
+    keep_messages_across_turns = EnvReaderInstance.get(
+        "TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS"
+    ) == "1"
+    task_agent = g_subagents.get(agent_name) if keep_messages_across_turns else None
     if task_agent is None:
         task_agent = get_agent_chat(
             system_prompt=system_prompt,
@@ -233,7 +236,8 @@ I am a sub-agent, and my name is ({role_name or agent_name})
             need_project_workspace_lock=False,
             need_print_session=False,
         )
-        g_subagents[agent_name] = task_agent
+        if keep_messages_across_turns:
+            g_subagents[agent_name] = task_agent
 
     # init agent
     task_agent.reset(

@@ -593,5 +593,63 @@ class TestMainAgent:
         assert main_agent.plan_agent_kwargs["agent_type"] == "plan_and_execute"
 
 
+class TestSubagentReuseGating:
+    """Verify subagent object reuse is gated by TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS."""
+
+    def setup_method(self):
+        """Clear the global subagent cache before each test."""
+        from topsailai.tools import subagent_tool
+        subagent_tool.g_subagents.clear()
+
+    @patch("topsailai.workspace.agent_shell.get_agent_chat")
+    @patch("topsailai.tools.subagent_tool.get_task_id")
+    def test_reuse_disabled_by_default_creates_fresh_agent_each_call(
+        self, mock_get_task_id, mock_get_agent_chat
+    ):
+        """When env var is not '1', every call must create a fresh subagent."""
+        from topsailai.tools import subagent_tool
+
+        # Ensure the gate variable is unset or not "1"
+        os.environ.pop("TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS", None)
+
+        mock_agent = MagicMock()
+        mock_agent._run.return_value = "response"
+        mock_get_agent_chat.return_value = mock_agent
+        mock_get_task_id.return_value = "task_123"
+
+        subagent_tool.call_assistant("first task")
+        subagent_tool.call_assistant("second task")
+
+        # A fresh agent must be created for each call when reuse is disabled.
+        assert mock_get_agent_chat.call_count == 2
+        # Nothing should ever be cached in the module-level store.
+        assert subagent_tool.g_subagents == {}
+
+    @patch("topsailai.workspace.agent_shell.get_agent_chat")
+    @patch("topsailai.tools.subagent_tool.get_task_id")
+    def test_reuse_enabled_when_env_var_is_one(
+        self, mock_get_task_id, mock_get_agent_chat
+    ):
+        """When env var equals '1', the second call reuses the cached subagent."""
+        from topsailai.tools import subagent_tool
+
+        os.environ["TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS"] = "1"
+
+        try:
+            mock_agent = MagicMock()
+            mock_agent._run.return_value = "response"
+            mock_get_agent_chat.return_value = mock_agent
+            mock_get_task_id.return_value = "task_123"
+
+            subagent_tool.call_assistant("first task")
+            subagent_tool.call_assistant("second task")
+
+            # The agent is created only once; the second call reuses it.
+            assert mock_get_agent_chat.call_count == 1
+            assert len(subagent_tool.g_subagents) == 1
+        finally:
+            os.environ.pop("TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS", None)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
