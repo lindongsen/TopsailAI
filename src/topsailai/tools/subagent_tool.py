@@ -238,6 +238,10 @@ I am a sub-agent, and my name is ({role_name or agent_name})
         )
         if keep_messages_across_turns:
             g_subagents[agent_name] = task_agent
+    else:
+        from topsailai.context.tool_stat import get_agent_tool_stat
+
+        get_agent_tool_stat(task_agent.ai_agent).reset()
 
     # init agent
     task_agent.reset(
