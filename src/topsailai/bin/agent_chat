@@ -64,8 +64,17 @@ export SESSION_ID
 #   }
 # fi
 
-run_cli="uv run"
-[ "${UV_NO_DEV}" == "1" ] && run_cli="python"
+run_cli() {
+  local target="cli/$1"
+  shift
+  local runner="uv run"
+  [ "${UV_NO_DEV}" == "1" ] && runner="python"
+  if [ -x "${target}" ]; then
+    exec "${target}" "$@"
+  else
+    exec ${runner} "${target}.py" "$@"
+  fi
+}
 
 # start
-${run_cli} cli/agent_chat.py "${task} ${task_ex}"
+run_cli agent_chat "${task} ${task_ex}"

@@ -25,8 +25,17 @@ function error_quit() {
     exit 1
 }
 
-run_cli="uv run"
-[ "${UV_NO_DEV}" == "1" ] && run_cli="python"
+run_cli() {
+  local target="cli/$1"
+  shift
+  if [ -x "${target}" ]; then
+    exec "${target}" "$@"
+  else
+    cmd0="uv run"
+    [ "${UV_NO_DEV}" == "1" ] && cmd0="python"
+    exec ${cmd0} "${target}.py" "$@"
+  fi
+}
 
 get_args_id() {
   for i in $(seq $1 $2); do
@@ -39,5 +48,5 @@ get_args_id() {
 eval "
   CHAT_MULTI_LINE=1
   TOPSAILAI_AGENT_TYPE=${TOPSAILAI_AGENT_TYPE}
-  ${run_cli} cli/${BASE_NAME}.py $(get_args_id 1 $#)
+  run_cli ${BASE_NAME} $(get_args_id 1 $#)
 "

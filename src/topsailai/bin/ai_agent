@@ -44,9 +44,18 @@ fi
 ext_options=""
 [ -n "${SYSTEM_PROMPT}" ] && ext_options="${ext_options} -p ${SYSTEM_PROMPT}"
 
-run_cli="uv run"
-[ "${UV_NO_DEV}" == "1" ] && run_cli="python"
+run_cli() {
+  local target="cli/$1"
+  shift
+  local runner="uv run"
+  [ "${UV_NO_DEV}" == "1" ] && runner="python"
+  if [ -x "${target}" ]; then
+    exec "${target}" "$@"
+  else
+    exec ${runner} "${target}.py" "$@"
+  fi
+}
 
 [ "${ENABLED_TOOLS}" == "" ] && export ENABLED_TOOLS="${TOPSAILAI_ENABLED_TOOLS:-*}" # default to enable all tools
 [ "${DISABLED_TOOLS}" == "" ] && export DISABLED_TOOLS="${TOPSAILAI_DISABLED_TOOLS:-sandbox_tool,hook_tool,subagent_tool}"
-DEBUG=${DEBUG} ${run_cli} cli/AgentReAct.py -t "${task} ${task_ex}" ${ext_options}
+DEBUG=${DEBUG} run_cli AgentReAct -t "${task} ${task_ex}" ${ext_options}
