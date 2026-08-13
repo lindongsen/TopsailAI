@@ -289,6 +289,33 @@ def update_response_item(item:dict) -> dict:
                 item.update(item_generic)
     return item
 
+def maybe_convert_thought_to_final(item: dict, messages=None) -> bool:
+    """
+    Convert a single 'thought' step into 'final_answer' when it is likely an
+    unparsed final answer.
+
+    The conversion happens only when all of the following hold:
+      - TOPSAILAI_CONVERT_THOUGHT_TO_FINAL_ENABLED is explicitly set to a truthy value; it defaults to disabled (False);
+      - there was at least one prior tool action;
+      - the thought's raw_text contains a newline (multi-line).
+
+    Returns True if the item was rewritten as 'final_answer', False otherwise.
+    """
+    if not env_tool.EnvReaderInstance.check_bool(
+        "TOPSAILAI_CONVERT_THOUGHT_TO_FINAL_ENABLED",
+        default=False,
+    ):
+        return False
+
+    action_count = get_count_of_action(messages)
+    # only convert to final answer when the raw text spans multiple lines
+    if action_count > 0 and "\n" in item.get("raw_text", ""):
+        print_error(f"{LLM_KEYWORD_MISTAKE}: maybe final answer due to found action count [{action_count}]")
+        item["step_name"] = "final_answer"
+        return True
+    return False
+
+
 def format_response_finally(response, rsp_obj=None, messages=None):
     """ return new response """
     new_response = fix_llm_mistakes(response, rsp_obj)
@@ -319,11 +346,7 @@ def format_response_finally(response, rsp_obj=None, messages=None):
                         except Exception:
                             pass
 
-                    action_count = get_count_of_action(messages)
-                    # only convert to final answer when the raw text spans multiple lines
-                    if action_count > 0 and "\n" in item.get("raw_text", ""):
-                        print_error(f"{LLM_KEYWORD_MISTAKE}: maybe final answer due to found action count [{action_count}]")
-                        item["step_name"] = "final_answer"
+                    maybe_convert_thought_to_final(item, messages)
                 except Exception as e:
                     logger.exception(e)
         else:

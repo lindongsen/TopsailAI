@@ -328,6 +328,13 @@ TOPSAILAI_STREAM_PROGRESS=stats
 # instead of asking the user.
 TOPSAILAI_CHAT_INTERACTIVE_MODE=0
 
+# Whether to automatically convert a single thought step into final_answer.
+# Disabled by default; set to 1 to enable the conversion.
+# When enabled: if the LLM returns only one thought and there were prior tool
+# actions, that thought is rewritten as final_answer.
+# When disabled (default): the original thought is preserved unchanged.
+TOPSAILAI_CONVERT_THOUGHT_TO_FINAL_ENABLED=0
+
 # =============================================================================
 # System Prompt
 # =============================================================================

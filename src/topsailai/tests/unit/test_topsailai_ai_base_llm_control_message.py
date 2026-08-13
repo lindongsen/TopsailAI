@@ -849,10 +849,11 @@ class TestFormatResponseSingleLineNoFinalAnswerConversion:
         result = format_response_finally(response, rsp_obj=None, messages=messages)
         assert result[0]["step_name"] == "thought"
 
-    def test_finally_multi_line_with_action_converts_to_final(self):
-        """Multi-line thought with existing action converts to final_answer."""
+    def test_finally_multi_line_with_action_converts_to_final(self, monkeypatch):
+        """Multi-line thought with existing action converts to final_answer when enabled."""
         from topsailai.ai_base.llm_control.message import format_response_finally
 
+        monkeypatch.setenv("TOPSAILAI_CONVERT_THOUGHT_TO_FINAL_ENABLED", "1")
         response = [{"step_name": "thought", "raw_text": "first line\nsecond line"}]
         messages = [
             {"role": "system", "content": "You are a helpful assistant"},
@@ -938,3 +939,94 @@ class TestFormatResponseSingleLineNoFinalAnswerConversion:
         result = format_response("first line\nsecond line", rsp_obj=None, messages=messages)
         assert len(result) == 1
         assert result[0]["step_name"] == "thought"
+
+    # ---- TOPSAILAI_CONVERT_THOUGHT_TO_FINAL_ENABLED switch ----
+
+    def test_finally_env_disabled_keeps_thought(self, monkeypatch):
+        """When the convert-thought-to-final switch is off, multi-line thought with action stays thought."""
+        from topsailai.ai_base.llm_control.message import format_response_finally
+
+        monkeypatch.setenv("TOPSAILAI_CONVERT_THOUGHT_TO_FINAL_ENABLED", "0")
+        response = [{"step_name": "thought", "raw_text": "first line\nsecond line"}]
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": '"step_name": "action"'},
+        ]
+        result = format_response_finally(response, rsp_obj=None, messages=messages)
+        assert result[0]["step_name"] == "thought"
+
+    def test_finally_env_enabled_converts_to_final(self, monkeypatch):
+        """When the convert-thought-to-final switch is on, multi-line thought with action converts to final_answer."""
+        from topsailai.ai_base.llm_control.message import format_response_finally
+
+        monkeypatch.setenv("TOPSAILAI_CONVERT_THOUGHT_TO_FINAL_ENABLED", "1")
+        response = [{"step_name": "thought", "raw_text": "first line\nsecond line"}]
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": '"step_name": "action"'},
+        ]
+        result = format_response_finally(response, rsp_obj=None, messages=messages)
+        assert result[0]["step_name"] == "final_answer"
+
+
+class TestMaybeConvertThoughtToFinal:
+    """Unit tests for the standalone maybe_convert_thought_to_final helper."""
+
+    def test_maybe_convert_disabled_keeps_thought(self, monkeypatch):
+        from topsailai.ai_base.llm_control.message import maybe_convert_thought_to_final
+
+        monkeypatch.setenv("TOPSAILAI_CONVERT_THOUGHT_TO_FINAL_ENABLED", "0")
+        item = {"step_name": "thought", "raw_text": "first line\nsecond line"}
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": '"step_name": "action"'},
+        ]
+        changed = maybe_convert_thought_to_final(item, messages)
+        assert changed is False
+        assert item["step_name"] == "thought"
+
+    def test_maybe_convert_enabled_converts_to_final(self, monkeypatch):
+        from topsailai.ai_base.llm_control.message import maybe_convert_thought_to_final
+
+        monkeypatch.setenv("TOPSAILAI_CONVERT_THOUGHT_TO_FINAL_ENABLED", "1")
+        item = {"step_name": "thought", "raw_text": "first line\nsecond line"}
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": '"step_name": "action"'},
+        ]
+        changed = maybe_convert_thought_to_final(item, messages)
+        assert changed is True
+        assert item["step_name"] == "final_answer"
+
+    def test_maybe_convert_unset_defaults_to_disabled(self, monkeypatch):
+        from topsailai.ai_base.llm_control.message import maybe_convert_thought_to_final
+
+        monkeypatch.delenv("TOPSAILAI_CONVERT_THOUGHT_TO_FINAL_ENABLED", raising=False)
+        item = {"step_name": "thought", "raw_text": "first line\nsecond line"}
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": '"step_name": "action"'},
+        ]
+        changed = maybe_convert_thought_to_final(item, messages)
+        assert changed is False
+        assert item["step_name"] == "thought"
+
+    def test_maybe_convert_single_line_no_action_returns_false(self, monkeypatch):
+        from topsailai.ai_base.llm_control.message import maybe_convert_thought_to_final
+
+        monkeypatch.setenv("TOPSAILAI_CONVERT_THOUGHT_TO_FINAL_ENABLED", "1")
+        # single-line raw_text -> no newline -> not converted
+        item = {"step_name": "thought", "raw_text": "single line"}
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": '"step_name": "action"'},
+        ]
+        changed = maybe_convert_thought_to_final(item, messages)
+        assert changed is False
+        assert item["step_name"] == "thought"
