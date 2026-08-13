@@ -1090,7 +1090,8 @@ class TestShouldConvertThoughtToFinal:
             {"role": "user", "content": "Hello"},
             {"role": "assistant", "content": '"step_name": "action"'},
         ]
-        assert should_convert_thought_to_final("first line\nsecond line", messages) is False
+        converted, reason = should_convert_thought_to_final("first line\nsecond line", messages)
+        assert converted is False and reason == ""
 
     def test_enabled_with_multiline_and_action_returns_true(self, monkeypatch):
         from topsailai.ai_base.llm_control.message import should_convert_thought_to_final
@@ -1101,7 +1102,9 @@ class TestShouldConvertThoughtToFinal:
             {"role": "user", "content": "Hello"},
             {"role": "assistant", "content": '"step_name": "action"'},
         ]
-        assert should_convert_thought_to_final("first line\nsecond line", messages) is True
+        converted, reason = should_convert_thought_to_final("first line\nsecond line", messages)
+        assert converted is True
+        assert "found action count [1]" in reason
 
     def test_unset_defaults_to_false(self, monkeypatch):
         from topsailai.ai_base.llm_control.message import should_convert_thought_to_final
@@ -1112,7 +1115,8 @@ class TestShouldConvertThoughtToFinal:
             {"role": "user", "content": "Hello"},
             {"role": "assistant", "content": '"step_name": "action"'},
         ]
-        assert should_convert_thought_to_final("first line\nsecond line", messages) is False
+        converted, reason = should_convert_thought_to_final("first line\nsecond line", messages)
+        assert converted is False and reason == ""
 
     def test_enabled_single_line_returns_false(self, monkeypatch):
         from topsailai.ai_base.llm_control.message import should_convert_thought_to_final
@@ -1124,7 +1128,8 @@ class TestShouldConvertThoughtToFinal:
             {"role": "assistant", "content": '"step_name": "action"'},
         ]
         # single-line text -> no newline -> not converted
-        assert should_convert_thought_to_final("single line", messages) is False
+        converted, reason = should_convert_thought_to_final("single line", messages)
+        assert converted is False and reason == ""
 
     def test_enabled_no_action_returns_false(self, monkeypatch):
         from topsailai.ai_base.llm_control.message import should_convert_thought_to_final
@@ -1135,4 +1140,5 @@ class TestShouldConvertThoughtToFinal:
             {"role": "user", "content": "Hello"},
         ]
         # no prior tool action -> not converted even with multi-line text
-        assert should_convert_thought_to_final("first line\nsecond line", messages) is False
+        converted, reason = should_convert_thought_to_final("first line\nsecond line", messages)
+        assert converted is False and reason == ""
