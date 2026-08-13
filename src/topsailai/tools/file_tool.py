@@ -221,6 +221,9 @@ def write_file(file_path:str, content:str, seek:int=0, to_insert:bool=False):
 
 def write_file_simple(file_path:str, content:str):
     """Write content to a file.
+
+    Rule: When repeatedly writing a large file keeps failing, do not keep retrying the entire file at once. Instead, split the content into smaller chunks and write them incrementally, one portion at a time, until the full file is written successfully.
+
     Args:
         file_path (str):
         content (str): text
