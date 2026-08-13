@@ -158,11 +158,11 @@ These variables control when the agent archives or summarizes message history to
 | `TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD` | `3` | Consecutive duplicate tool call threshold for triggering Agent2LLM context summarization. When the agent's `consecutive_duplicate_count` exceeds this value, summarization is triggered. Set to `0` or negative to disable. The default `3` means summarization triggers at count `4` or higher (strictly greater than). |
 | `TOPSAILAI_REALTIME_TOKEN_CALCULATION` | `0` | When `1`, token counts for summarization thresholds are calculated from actual message content; when `0` (default), uses cached `TokenStat.current_tokens`. |
 | `TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES` | `1` | Keep session messages after summarizing. `1` = enabled (default), `0` = disabled. |
-| `TOPSAILAI_NEED_SYMBOL_FOR_ANSWER` | `0` | Runtime only. If `1` and `TOPSAILAI_SYMBOL_STARTSWITH_ANSWER` is unset, default symbol is the agent name. |
-| `TOPSAILAI_SYMBOL_STARTSWITH_ANSWER` | `""` | Runtime only. A symbol string prefixed to the answer. |
+| `TOPSAILAI_NEED_SYMBOL_FOR_ANSWER` | `0` | Runtime only. If `1` and `TOPSAILAI_SYMBOL_STARTSWITH_ANSWER` is unset, default symbol is the agent name. Also gates answer-prefix output in cli/team_chat.py and cli/team_agent.py (default off). |
 | `TOPSAILAI_SAVE_RESULT_TO_FILE` | `""` | Runtime only. A file path to save the answer. |
 | `TOPSAILAI_CONTEXT_SUMMARY_MODE` | `"runtime"` | Summary mode: `runtime` or `message`. |
 | `TOPSAILAI_SUMMARY_PROMPT` | `""` | Prompt for summary, file or content. |
+| `TOPSAILAI_SYMBOL_STARTSWITH_ANSWER` | `""` | Runtime only. A symbol string prefixed to the answer. |
 | `TOPSAILAI_SUMMARY_PROMPT_EXTRA_MAP` | `"react_community=context/summary/memory.md;"` | Extra summary prompt map. Format: `key1=value1,value2;key2=value2`, where key is `agent_type` and value is a file path. |
 | `TOPSAILAI_HOOK_FINAL_SUMMARIZE_INTO_SESSION` | `"0"` | Summarize Agent2LLM messages and save summary to User2Agent session. `1` = enabled, `0` = disabled. |
 | `TOPSAILAI_PROMPT_WHEN_NO_TOOL_CALL` | (long prompt) | Prompt embedded at the end of the response when no tool call is detected. |

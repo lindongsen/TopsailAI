@@ -83,36 +83,32 @@ def main():
     Environment Variables Used:
         TOPSAILAI_SYMBOL_STARTSWITH_ANSWER: Optional prefix for answer output
         TOPSAILAI_SAVE_RESULT_TO_FILE: Optional file path to save the result
-        
     Returns:
         None
-        
+
     Raises:
         Exception: Any exceptions from chat processing are handled internally
     """
     # team
     team_member_name = get_member_name()
 
-    # member prompt
-    member_prompt = get_member_prompt(team_member_name) + """
-# Output Required
-Directly output the content without any formatting.
-"""
+    # resolve whether to prepend the symbol start prefix (default off)
+    enable_symbol_start = env_tool.EnvReaderInstance.check_bool("TOPSAILAI_NEED_SYMBOL_FOR_ANSWER")
 
-    # llm chat
+    # member prompt
+    member_prompt = get_member_prompt(team_member_name) + """\n# Output Required\nDirectly output the content without any formatting.\n"""
     llm_chat = get_llm_chat(
         more_prompt=member_prompt,
         need_input_message=False,
         need_print_session=env_tool.is_debug_mode(),
         func_formatter_messages=format_messages,
     )
-
     answer = llm_chat.chat()
     if answer:
-        symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER") or (f"From '{team_member_name}':\n" if team_member_name else "")
-        if symbol_start and not answer.startswith(symbol_start.strip()):
-            answer = symbol_start + answer
-
+        if enable_symbol_start:
+            symbol_start = os.getenv("TOPSAILAI_SYMBOL_STARTSWITH_ANSWER") or (f"From '{team_member_name}':\n" if team_member_name else "")
+            if symbol_start and not answer.startswith(symbol_start.strip()):
+                answer = symbol_start + answer
         file_path_result = os.getenv("TOPSAILAI_SAVE_RESULT_TO_FILE")
         if file_path_result:
             with open(file_path_result, encoding='utf-8', mode='w') as fd:
