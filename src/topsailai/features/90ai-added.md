@@ -108,6 +108,6 @@ Added an `executor` field to the task-info YAML frontmatter, recording which age
 Key logic:
 - `TaskData.__init__` in `workspace/task/task_tool.py` initializes `self.executor = ""`.
 - The `manifest` property always emits `executor: {value}`, independent of task status.
-- In `workspace/agent/agent_shell_base.py`, right after setting `task.tool_call_count`, the code sets `task.executor = getattr(self.ai_agent, "agent_name", "") or ""`, so it records the active agent/member name (e.g., default `TopsailAI` from `TOPSAILAI_AGENT_NAME`, or a team member id).
+- In `workspace/agent/agent_shell_base.py`, as soon as a task is taken over (before the pre-run manifest is generated), the code assigns `task.executor = getattr(self.ai_agent, "agent_name", "") or env_tool.EnvReaderInstance.get("TOPSAILAI_TEAM_MEMBER_NAME") or ""`. This ensures even an `initializing` status frontmatter carries the real executing agent/member name instead of an empty value. The post-run assignment remains for consistency.
 
 System impact: The task frontmatter now always includes an `executor` line, enabling callers and users to identify which agent performed the work.

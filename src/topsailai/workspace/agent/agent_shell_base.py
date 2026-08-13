@@ -366,6 +366,14 @@ class AgentChat(AgentChatBase):
             if task:
                 if message:
                     task.task_content = message
+                    # Assign executor as soon as the task is taken over so that
+                    # pre-run manifests (status=initializing) carry the real
+                    # executing agent instead of an empty value.
+                    task.executor = (
+                        getattr(self.ai_agent, "agent_name", "")
+                        or env_tool.EnvReaderInstance.get("TOPSAILAI_TEAM_MEMBER_NAME")
+                        or ""
+                    )
                     message = task.manifest + message
 
             # run
