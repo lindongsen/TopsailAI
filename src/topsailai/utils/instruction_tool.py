@@ -58,6 +58,12 @@ class HookFunc(object):
             args (tuple, optional): Default positional arguments. Defaults to None.
             kwargs (dict, optional): Default keyword arguments. Defaults to None.
         """
+        if not description and not func.__doc__:
+            raise ValueError(
+                "HookFunc requires a docstring on %r when no explicit "
+                "description is provided; ensure docstrings are preserved "
+                "during packaging" % (getattr(func, "__name__", func),)
+            )
         self.description = description or (
             "\n" + print_tool.add_indent_to_lines(func.__doc__, indent=8)
         )

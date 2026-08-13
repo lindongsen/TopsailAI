@@ -274,6 +274,8 @@ def format_dict_to_md(d:dict) -> str:
     return s
 
 def add_indent_to_lines(s:str, indent=4) -> str:
+    if not s:
+        return ""
     new_s = ""
     for line in s.splitlines():
         new_s += " "*indent + line + "\n"
