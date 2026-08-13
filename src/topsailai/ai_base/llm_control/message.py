@@ -289,31 +289,48 @@ def update_response_item(item:dict) -> dict:
                 item.update(item_generic)
     return item
 
-def maybe_convert_thought_to_final(item: dict, messages=None) -> bool:
+def should_convert_thought_to_final(text: str, messages=None) -> bool:
     """
-    Convert a single 'thought' step into 'final_answer' when it is likely an
-    unparsed final answer.
+    Return whether a multi-line 'thought' with prior tool actions should be
+    converted into 'final_answer'.
 
     The conversion happens only when all of the following hold:
-      - TOPSAILAI_CONVERT_THOUGHT_TO_FINAL_ENABLED is explicitly set to a truthy value; it defaults to disabled (False);
+      - TOPSAILAI_CONVERT_THOUGHT_TO_FINAL_ENABLED is truthy; it defaults to disabled (False);
       - there was at least one prior tool action;
-      - the thought's raw_text contains a newline (multi-line).
+      - the given text contains a newline (multi-line).
 
-    Returns True if the item was rewritten as 'final_answer', False otherwise.
+    Args:
+        text: The thought content to inspect for a newline.
+        messages: Optional conversation history used to count prior tool actions.
+
+    Returns:
+        bool: True when the thought should be converted to 'final_answer'.
     """
     if not env_tool.EnvReaderInstance.check_bool(
         "TOPSAILAI_CONVERT_THOUGHT_TO_FINAL_ENABLED",
         default=False,
     ):
         return False
+    action_count = get_count_of_action(messages)
+    return action_count > 0 and "\n" in text
+
+
+def maybe_convert_thought_to_final(item: dict, messages=None) -> bool:
+    """
+    Convert a single 'thought' step into 'final_answer' when it is likely an
+    unparsed final answer.
+
+    Uses should_convert_thought_to_final() to decide whether the conversion
+    applies. Returns True if the item was rewritten as 'final_answer',
+    False otherwise.
+    """
+    if not should_convert_thought_to_final(item.get("raw_text", ""), messages):
+        return False
 
     action_count = get_count_of_action(messages)
-    # only convert to final answer when the raw text spans multiple lines
-    if action_count > 0 and "\n" in item.get("raw_text", ""):
-        print_error(f"{LLM_KEYWORD_MISTAKE}: maybe final answer due to found action count [{action_count}]")
-        item["step_name"] = "final_answer"
-        return True
-    return False
+    print_error(f"{LLM_KEYWORD_MISTAKE}: maybe final answer due to found action count [{action_count}]")
+    item["step_name"] = "final_answer"
+    return True
 
 
 def format_response_finally(response, rsp_obj=None, messages=None):
@@ -551,9 +568,9 @@ def format_response(response, rsp_obj=None, messages=None):
 
             try:
                 if not get_tool_calls_of_rsp(rsp_obj):
-                    action_count = get_count_of_action(messages)
-                    # only convert to final answer when the response spans multiple lines
-                    if action_count > 0 and "\n" in response:
+                    # only convert to final answer when explicitly enabled and the response spans multiple lines
+                    if should_convert_thought_to_final(response, messages):
+                        action_count = get_count_of_action(messages)
                         print_error(f"{LLM_KEYWORD_MISTAKE}: change step to final answer due to found action count [{action_count}]")
                         step_name = format_tool.TOPSAILAI_STEP_FINAL
                     else:
