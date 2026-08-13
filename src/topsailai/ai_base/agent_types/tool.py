@@ -91,6 +91,22 @@ def get_tool_func(tool_map: dict, tool_name: str):
         if _tool_name.replace('.', '-').strip() == new_tool_name:
             return tool_map[_tool_name]
 
+    # endswith unique-match fallback.
+    # Guarded by an environment switch; only applies when the stripped name is
+    # long enough to avoid accidental matches on short fragments.
+    if (
+        env_tool.EnvReaderInstance.check_bool("TOPSAILAI_TOOL_SUFFIX_MATCH_ENABLED", True)
+        and len(tool_name) >= 7
+    ):
+        candidates = [t for t in tool_map if t.endswith(tool_name)]
+        if len(candidates) == 1:
+            logger.warning(
+                "tool fuzzy match by suffix: raw=[%s], resolved=[%s]",
+                tool_name,
+                candidates[0],
+            )
+            return tool_map[candidates[0]]
+
     return None
 
 def with_tool_response_safe(exec_tool_func: Callable) -> Callable:

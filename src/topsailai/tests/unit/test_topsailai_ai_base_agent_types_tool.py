@@ -70,6 +70,114 @@ class TestGetToolFunc(unittest.TestCase):
         result = get_tool_func({"other_tool": lambda: None}, "test_tool")
         self.assertIsNone(result)
 
+    def test_suffix_unique_match_resolves_tool(self):
+        """Suffix unique match resolves to the single matching tool."""
+        from topsailai.ai_base.agent_types.tool import get_tool_func
+
+        func = lambda: "ok"
+        with patch(
+            "topsailai.ai_base.agent_types.tool.env_tool.EnvReaderInstance.check_bool",
+            return_value=True,
+        ):
+            result = get_tool_func({"cmd_tool-exec_cmd": func}, "exec_cmd")
+        self.assertIs(result, func)
+
+    def test_suffix_match_disabled_by_env(self):
+        """When env switch is disabled, fallback does not apply."""
+        from topsailai.ai_base.agent_types.tool import get_tool_func
+
+        func = lambda: "ok"
+        with patch(
+            "topsailai.ai_base.agent_types.tool.env_tool.EnvReaderInstance.check_bool",
+            return_value=False,
+        ):
+            result = get_tool_func({"cmd_tool-exec_cmd": func}, "exec_cmd")
+        self.assertIsNone(result)
+
+    def test_suffix_match_rejects_multiple_candidates(self):
+        """Multiple endswith candidates are rejected (return None)."""
+        from topsailai.ai_base.agent_types.tool import get_tool_func
+
+        f1 = lambda: "f1"
+        f2 = lambda: "f2"
+        with patch(
+            "topsailai.ai_base.agent_types.tool.env_tool.EnvReaderInstance.check_bool",
+            return_value=True,
+        ):
+            result = get_tool_func(
+                {"a_tool-read_file": f1, "b_tool-read_file": f2}, "read_file"
+            )
+        self.assertIsNone(result)
+
+    def test_suffix_match_zero_candidate_returns_none(self):
+        """No candidate ends with the name -> returns None."""
+        from topsailai.ai_base.agent_types.tool import get_tool_func
+
+        f1 = lambda: "f1"
+        with patch(
+            "topsailai.ai_base.agent_types.tool.env_tool.EnvReaderInstance.check_bool",
+            return_value=True,
+        ):
+            result = get_tool_func({"cmd_tool-exec_cmd": f1}, "no_such_suffix")
+        self.assertIsNone(result)
+
+    def test_suffix_match_ignores_too_short_name(self):
+        """Names shorter than 7 chars do not trigger the fallback."""
+        from topsailai.ai_base.agent_types.tool import get_tool_func
+
+        f1 = lambda: "f1"
+        with patch(
+            "topsailai.ai_base.agent_types.tool.env_tool.EnvReaderInstance.check_bool",
+            return_value=True,
+        ):
+            result = get_tool_func({"x_tool-ab": f1}, "ab")
+        self.assertIsNone(result)
+
+    def test_suffix_match_logs_warning_on_resolve(self):
+        """A warning log records raw and resolved names on success."""
+        from topsailai.ai_base.agent_types.tool import get_tool_func
+
+        func = lambda: "ok"
+        with patch(
+            "topsailai.ai_base.agent_types.tool.env_tool.EnvReaderInstance.check_bool",
+            return_value=True,
+        ), patch("topsailai.ai_base.agent_types.tool.logger.warning") as mock_warn:
+            result = get_tool_func({"cmd_tool-exec_cmd": func}, "exec_cmd")
+        self.assertIs(result, func)
+        mock_warn.assert_called_once()
+        joined = str(mock_warn.call_args[0])
+        self.assertIn("exec_cmd", joined)
+        self.assertIn("cmd_tool-exec_cmd", joined)
+
+    def test_suffix_match_preserves_exact_and_normalized_precedence(self):
+        """Normalized match takes precedence over suffix fallback."""
+        from topsailai.ai_base.agent_types.tool import get_tool_func
+
+        f1 = lambda: "f1"
+        f2 = lambda: "f2"
+        with patch(
+            "topsailai.ai_base.agent_types.tool.env_tool.EnvReaderInstance.check_bool",
+            return_value=True,
+        ):
+            # 'foo.bar-baz' normalizes to 'foo-bar-baz' which exactly matches f1;
+            # meanwhile 'xxx-foo.bar-baz' would be a suffix candidate for f2.
+            result = get_tool_func(
+                {"foo-bar-baz": f1, "xxx-foo.bar-baz": f2}, "foo.bar-baz"
+            )
+        self.assertIs(result, f1)
+
+    def test_suffix_match_boundary_length_seven(self):
+        """Exactly 7 characters triggers the fallback when uniquely matched."""
+        from topsailai.ai_base.agent_types.tool import get_tool_func
+
+        f1 = lambda: "f1"
+        with patch(
+            "topsailai.ai_base.agent_types.tool.env_tool.EnvReaderInstance.check_bool",
+            return_value=True,
+        ):
+            result = get_tool_func({"pkg_tool-abcdefg": f1}, "abcdefg")
+        self.assertIs(result, f1)
+
 
 class TestExecToolFunc(unittest.TestCase):
     """Test cases for exec_tool_func function."""

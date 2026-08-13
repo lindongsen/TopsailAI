@@ -548,6 +548,12 @@ TOPSAILAI_PLUGIN_TOOLS=""
 
 # default char is '-', example file_tool-read_file
 TOPSAILAI_TOOL_CONN_CHAR="-"
+# Enable endswith-based unique-match fallback for tool-name resolution.
+# When a tool name from the LLM does not exactly match any registered tool,
+# this fallback tries to find a single tool whose full name ends with the
+# provided name (e.g. 'exec_cmd' -> 'cmd_tool-exec_cmd'). It only applies when
+# the provided name length is at least 7 characters. Set to 0 to disable.
+TOPSAILAI_TOOL_SUFFIX_MATCH_ENABLED=1
 
 # White list for file extensions do not truncate, split by ';'
 TOPSAILAI_FILE_WHITE_LIST_NO_TRUNCATE_EXT=""

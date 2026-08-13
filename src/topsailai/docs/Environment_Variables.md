@@ -261,6 +261,7 @@ For team agents, the effective offset is resolved in this order:
 | `TOPSAILAI_EXTRA_TOOLS` | `""` | Additional external tools to include. File paths separated by `;`, each a Markdown `.md` file. |
 | `TOPSAILAI_PLUGIN_TOOLS` | `""` | External plugin tool directories separated by `;`. Each plugin is loaded from a separate directory and integrated via the `TOOLS` variable. |
 | `TOPSAILAI_TOOL_CONN_CHAR` | `"-"` | Connection character used in tool names, e.g. `file_tool-read_file`. |
+| `TOPSAILAI_TOOL_SUFFIX_MATCH_ENABLED` | `1` | Enable endswith-based unique-match fallback for tool-name resolution. When the LLM-provided tool name does not exactly match any registered tool, the system looks for a single tool whose full name ends with the given name (e.g. `exec_cmd` -> `cmd_tool-exec_cmd`) and uses it. Only applies when the provided name is at least 7 characters long. `1` = enabled, `0` = disabled. |
 | `TOPSAILAI_FILE_WHITE_LIST_NO_TRUNCATE_EXT` | `""` | White list of file extensions that should not be truncated, separated by `;`. |
 | `TOPSAILAI_OBTAIN_SYSTEM_PROMPT_SCRIPT` | `""` | Script for obtaining the system prompt. |
 | `TOPSAILAI_OBTAIN_TOOL_PROMPT_SCRIPT` | `""` | Script for obtaining the tool prompt. |
