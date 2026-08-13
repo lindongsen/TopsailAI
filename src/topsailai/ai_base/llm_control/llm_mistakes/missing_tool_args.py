@@ -34,12 +34,19 @@ def fix_raw_text(raw_text):
             }
         }
     """
+
     d = {}
     if isinstance(raw_text, str):
         try:
             d = simplejson.loads(raw_text)
         except Exception:
-            return None
+            # Tolerant repair for truncated/malformed JSON (e.g. missing closing brace).
+            from topsailai.utils.json_tool import to_json_str
+            repaired = to_json_str(raw_text)
+            try:
+                d = simplejson.loads(repaired)
+            except Exception:
+                return None
     elif isinstance(raw_text, dict):
         d = raw_text
     if not d:

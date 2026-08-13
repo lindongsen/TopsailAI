@@ -67,6 +67,48 @@ def _extract_first_balanced_json(content: str) -> str | None:
                 return None
 
     return None
+def _complete_unclosed_brackets(content):
+    """Complete unclosed brackets for truncated JSON.
+
+    When the content starts with an object or array but is missing its closing
+    bracket(s) (e.g. a truncated ``{...`` without the final ``}``), append the
+    required closing characters based on bracket-balance scanning and validate
+    that the repaired result parses as valid JSON before adopting it.
+    """
+    stripped = content.strip()
+    if not stripped or stripped[0] not in "{[":
+        return content
+
+    pairs = {"{": "}", "[": "]"}
+    stack = []
+    in_string = False
+    escaped = False
+    for ch in stripped:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append(pairs[ch])
+        elif ch in "}]":
+            if stack and ch == stack[-1]:
+                stack.pop()
+
+    if not stack:
+        return content
+
+    candidate = stripped + "".join(reversed(stack))
+    try:
+        simplejson.loads(candidate)
+        return candidate
+    except Exception:
+        return content
 
 def fix_llm_mistakes_on_json(content):
     """Fix common JSON formatting mistakes made by language models.
@@ -188,6 +230,12 @@ def fix_llm_mistakes_on_json(content):
     # case, \-
     if "\\-" in content:
         content = content.replace("\\-", "\\n-")
+
+    # case5: Missing closing bracket for object/array (truncated JSON)
+    fixed_content = _complete_unclosed_brackets(content)
+    if fixed_content != content:
+        print_error("!!! LLM makes a mistake, fix it: found missing closing bracket")
+        return fixed_content
 
     return content
 

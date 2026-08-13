@@ -295,10 +295,14 @@ class TestFixMistake2:
         assert result is None
 
     def test_action_without_closing_tag(self):
-        """Test string with <action> but no </action> returns None."""
+        """Test string with <action> but no </action> is repaired via JSON tolerance."""
         message = '<action>\n{"tool_call": "xxx"}'
         result = fix_mistake2(message)
-        assert result is None
+        assert len(result) == 1
+        assert result[0]["step_name"] == "action"
+        parsed = simplejson.loads(result[0]["raw_text"])
+        assert parsed["tool_call"] == "xxx"
+        assert parsed.get("tool_args") == {}
 
     def test_list_with_multiple_items(self):
         """Test list with multiple items returns None."""
@@ -333,12 +337,11 @@ class TestMistakesDict:
         """Test MISTAKES has exactly 2 entries."""
         assert len(MISTAKES) == 2
 
-
 class TestFixMistake2ListRawTextWithoutClosingTag:
     """Additional coverage for fix_mistake2 list input without closing </action> tag."""
 
     def test_list_raw_text_with_open_action_no_close(self):
-        """List with raw_text containing <action> but no </action> returns None."""
+        """List with raw_text containing <action> but no </action> is repaired."""
         from topsailai.ai_base.llm_control.llm_mistakes.missing_tool_args import fix_mistake2
 
         message = [{
@@ -346,4 +349,9 @@ class TestFixMistake2ListRawTextWithoutClosingTag:
             "raw_text": '<action>\n{"tool_call": "xxx"}',
         }]
         result = fix_mistake2(message)
-        assert result is None
+        assert len(result) == 2
+        # original entry preserved unchanged
+        assert result[0]["raw_text"] == '<action>\n{"tool_call": "xxx"}'
+        parsed = simplejson.loads(result[1]["raw_text"])
+        assert parsed["tool_call"] == "xxx"
+        assert parsed.get("tool_args") == {}

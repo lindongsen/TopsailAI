@@ -122,8 +122,43 @@ def test_safe_json_load():
     # Test empty string
     assert safe_json_load('') is None
     
-    # Test None input
+# Test None input
     assert safe_json_load(None) is None
+
+
+def test_fix_llm_mistakes_on_json_unclosed_object():
+    """Test fix_llm_mistakes_on_json repairs truncated object missing closing brace."""
+    # Truncated object (missing final '}') with nested object
+    content = '{\n  "tool_args": {\n    "cmd": "echo yyy"\n  },\n  "tool_call": "cmd_tool-exec_cmd"\n'
+    fixed = fix_llm_mistakes_on_json(content)
+    parsed = simplejson.loads(fixed)
+    assert parsed["tool_call"] == "cmd_tool-exec_cmd"
+    assert parsed["tool_args"] == {"cmd": "echo yyy"}
+
+
+def test_fix_llm_mistakes_on_json_unclosed_array():
+    """Test fix_llm_mistakes_on_json repairs truncated array missing closing bracket."""
+    content = '[1, 2, 3'
+    fixed = fix_llm_mistakes_on_json(content)
+    assert simplejson.loads(fixed) == [1, 2, 3]
+
+
+def test_complete_unclosed_brackets_non_truncation_preserved():
+    """Test that already-balanced JSON is returned unchanged by the repair helper."""
+    from topsailai.utils.json_tool import _complete_unclosed_brackets
+    balanced_obj = '{"a": {"b": 1}}'
+    assert _complete_unclosed_brackets(balanced_obj) == balanced_obj
+    balanced_arr = '[1, [2, 3]]'
+    assert _complete_unclosed_brackets(balanced_arr) == balanced_arr
+
+
+def test_complete_unclosed_brackets_nested_truncation():
+    """Test nested unclosed brackets are completed in correct order."""
+    from topsailai.utils.json_tool import _complete_unclosed_brackets
+    # Missing two closing braces: outer object + inner object
+    content = '{"a": {"b": 1}'
+    repaired = _complete_unclosed_brackets(content)
+    assert simplejson.loads(repaired) == {"a": {"b": 1}}
 
 
 if __name__ == "__main__":
