@@ -310,6 +310,16 @@ class TestPrintTool(unittest.TestCase):
         expected = "  line1\n  line2\n"
         self.assertEqual(result, expected)
 
+    def test_add_indent_to_lines_empty_string(self):
+        """Test add_indent_to_lines returns empty string for empty input."""
+        result = print_tool.add_indent_to_lines("")
+        self.assertEqual(result, "")
+
+    def test_add_indent_to_lines_none_input(self):
+        """Test add_indent_to_lines returns empty string for None input."""
+        result = print_tool.add_indent_to_lines(None)
+        self.assertEqual(result, "")
+
 
     @patch('topsailai.utils.print_tool.print')
     @patch('topsailai.utils.print_tool.datetime')

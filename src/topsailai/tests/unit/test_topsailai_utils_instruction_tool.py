@@ -63,6 +63,31 @@ class TestHookFunc(unittest.TestCase):
         self.assertIn("This is a docstring.", hook.description)
         self.assertEqual(hook.func, dummy_func)
 
+    def test_init_missing_docstring_no_description_raises(self):
+        """Test HookFunc raises ValueError when no docstring and empty description."""
+        dummy_func = _make_dummy_func(doc=None)
+        with self.assertRaises(ValueError):
+            HookFunc("", dummy_func)
+
+    def test_init_empty_string_docstring_raises(self):
+        """Test HookFunc raises ValueError when docstring is an empty string."""
+        dummy_func = _make_dummy_func()
+        dummy_func.__doc__ = ""
+        with self.assertRaises(ValueError):
+            HookFunc("", dummy_func)
+
+    def test_init_error_message_includes_function_name(self):
+        """Test ValueError message names the offending function."""
+        dummy_func = _make_dummy_func(doc=None)
+        with self.assertRaisesRegex(ValueError, "dummy_func"):
+            HookFunc("", dummy_func)
+
+    def test_init_explicit_description_bypasses_missing_docstring(self):
+        """Test explicit description allows a function without a docstring."""
+        dummy_func = _make_dummy_func(doc=None)
+        hook = HookFunc("explicit desc", dummy_func)
+        self.assertEqual(hook.description, "explicit desc")
+
     def test_init_with_args_and_kwargs(self):
         """Test HookFunc initialization with args and kwargs."""
         dummy_func = _make_dummy_func()
