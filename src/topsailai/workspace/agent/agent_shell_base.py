@@ -408,6 +408,7 @@ class AgentChat(AgentChatBase):
                         except Exception as e:
                             logger.debug("Failed to read task tool call count: %s", e)
                             task.tool_call_count = 0
+                        task.executor = getattr(self.ai_agent, "agent_name", "") or ""
 
             except HardInterruptError as e:
                 self.interrupted = True

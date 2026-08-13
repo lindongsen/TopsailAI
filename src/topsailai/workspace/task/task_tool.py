@@ -69,6 +69,7 @@ class TaskData(object):
         session_messages: List of messages in the session
         status: Current status of the task
         tool_call_count: Total number of recorded tool calls for the task
+        executor: Name/id of the agent or team member that executed the task
         result: Result of the task execution (if available)
     """
     TASK_STATUS_INITING = "initializing"
@@ -92,6 +93,7 @@ class TaskData(object):
 
         self.status = self.TASK_STATUS_INITING
         self.tool_call_count = 0
+        self.executor = ""
 
         # result
         self.result = None
@@ -102,14 +104,16 @@ class TaskData(object):
         Generate a YAML-formatted manifest containing task metadata.
 
         Returns:
-            str: YAML string containing task_id, status, tool_call_count and now
+            str: YAML string containing task_id, status, tool_call_count,
+                 executor and now
         """
         tool_call_line = f"tool_call_count: {self.tool_call_count}\n" if self.status != self.TASK_STATUS_INITING else ""
+        executor_line = f"executor: {self.executor}\n" if self.status != self.TASK_STATUS_INITING else ""
         return f"""---
 # NOTE: This frontmatter is automatically managed by the agent. Do NOT generate, reproduce, or modify it.
 task_id: {self.task_id}
 status: {self.status}
-{tool_call_line}now: {time_tool.get_current_date(with_t=True)}
+{tool_call_line}{executor_line}now: {time_tool.get_current_date(with_t=True)}
 ---
 """
 

@@ -92,6 +92,7 @@ class TestAgentChatRun(unittest.TestCase):
         mock_task_tool.ctxm_process_task.return_value.__exit__ = MagicMock(return_value=False)
         mock_tool_stat.get_agent_tool_stat.return_value.total_calls = 5
         self.mock_ai_agent.run.return_value = "Test response"
+        self.mock_ai_agent.agent_name = "test-agent"
 
         agent_chat = AgentChat(
             hook_instruction=self.hook_instruction,
@@ -102,6 +103,7 @@ class TestAgentChatRun(unittest.TestCase):
         agent_chat.run(message="Hello", times=1, task_id="task-id")
 
         self.assertEqual(mock_task.tool_call_count, 5)
+        self.assertEqual(mock_task.executor, "test-agent")
         mock_tool_stat.get_agent_tool_stat.assert_called_once_with(self.mock_ai_agent)
 
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")

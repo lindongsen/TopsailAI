@@ -100,3 +100,14 @@ System impact: Subagent scenarios that create multiple `AgentChat` instances in 
 ## human_tool-ask_decision
 
 Added a new `human_tool` with an `ask_decision` function that lets the agent pause and obtain a structured human decision when a task becomes blocked (ambiguity, missing authorization, multi-branch choice, risky confirmation). The tool returns a status-bearing dict (`answered|timeout|cancelled|unavailable`) with answer, option_index, elapsed_ms, and asked_at_ms. It reuses existing input infrastructure (thread-local runtime input, workspace input utils, named-pipe transport) and degrades gracefully to `unavailable` in non-interactive or sub-agent contexts.
+
+## Task Frontmatter Executor Field
+
+Added an `executor` field to the task-info YAML frontmatter, recording which agent or team member executed the task.
+
+Key logic:
+- `TaskData.__init__` in `workspace/task/task_tool.py` initializes `self.executor = ""`.
+- The `manifest` property emits `executor: {value}` only when status is not `initializing`, mirroring the existing `tool_call_count` visibility rule.
+- In `workspace/agent/agent_shell_base.py`, right after setting `task.tool_call_count`, the code sets `task.executor = getattr(self.ai_agent, "agent_name", "") or ""`, so it records the active agent/member name (e.g., default `TopsailAI` from `TOPSAILAI_AGENT_NAME`, or a team member id).
+
+System impact: The task frontmatter now includes an `executor` line for completed tasks, enabling callers and users to identify which agent performed the work.

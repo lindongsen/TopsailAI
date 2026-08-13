@@ -178,6 +178,7 @@ class TestTaskDataManifest(unittest.TestCase):
                 self.assertIn(f"task_id: {task.task_id}", manifest)
                 self.assertIn("status: initializing", manifest)
                 self.assertNotIn("tool_call_count", manifest)
+                self.assertNotIn("executor:", manifest)
                 self.assertLess(
                     manifest.index("status: initializing"),
                     manifest.index("now: 2026-04-19T10:00:00"),
@@ -193,10 +194,12 @@ class TestTaskDataManifest(unittest.TestCase):
                 task = TaskData("task_004")
                 task.status = TaskData.TASK_STATUS_WORKING
                 task.tool_call_count = 3
+                task.executor = "agent_x"
                 manifest = task.manifest
 
                 self.assertIn("status: working", manifest)
                 self.assertIn("tool_call_count: 3", manifest)
+                self.assertIn("executor: agent_x", manifest)
 
     def test_manifest_updates_with_tool_call_count(self):
         """Test manifest reflects the recorded tool call count when not initializing."""
