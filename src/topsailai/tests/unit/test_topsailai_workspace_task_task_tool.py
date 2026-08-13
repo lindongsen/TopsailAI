@@ -256,7 +256,7 @@ class TestTaskDataMethods(TestCase):
     @patch('topsailai.workspace.task.task_tool.time_tool')
     @patch('topsailai.workspace.task.task_tool.FOLDER_WORKSPACE_TASK', '/tmp/tasks')
     def test_manifest_omits_tool_call_count_when_initializing(self, mock_time, mock_env):
-        """Verify manifest omits tool_call_count and executor when status is initializing."""
+        """Verify manifest omits tool_call_count but includes executor when status is initializing."""
         mock_env.get_session_id.return_value = "test_session"
         mock_time.get_current_date.return_value = "2026-04-19"
 
@@ -267,7 +267,7 @@ class TestTaskDataMethods(TestCase):
         manifest = task.manifest
         self.assertIn('status: initializing', manifest)
         self.assertNotIn('tool_call_count', manifest)
-        self.assertNotIn('executor:', manifest)
+        self.assertIn('executor: ', manifest)
         self.assertIn('now: 2026-04-19', manifest)
 
 

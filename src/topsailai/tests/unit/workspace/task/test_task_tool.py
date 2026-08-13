@@ -165,7 +165,7 @@ class TestTaskDataManifest(unittest.TestCase):
     """Test cases for TaskData.manifest property."""
 
     def test_manifest_format(self):
-        """Test manifest returns valid YAML format without tool_call_count when initializing."""
+        """Test manifest returns valid YAML format with executor but without tool_call_count when initializing."""
         with patch('topsailai.workspace.task.task_tool.env_tool') as mock_env:
             with patch('topsailai.workspace.task.task_tool.time_tool') as mock_time:
                 mock_env.get_session_id.return_value = None
@@ -178,7 +178,7 @@ class TestTaskDataManifest(unittest.TestCase):
                 self.assertIn(f"task_id: {task.task_id}", manifest)
                 self.assertIn("status: initializing", manifest)
                 self.assertNotIn("tool_call_count", manifest)
-                self.assertNotIn("executor:", manifest)
+                self.assertIn("executor: ", manifest)
                 self.assertLess(
                     manifest.index("status: initializing"),
                     manifest.index("now: 2026-04-19T10:00:00"),

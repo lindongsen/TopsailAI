@@ -108,12 +108,12 @@ class TaskData(object):
                  executor and now
         """
         tool_call_line = f"tool_call_count: {self.tool_call_count}\n" if self.status != self.TASK_STATUS_INITING else ""
-        executor_line = f"executor: {self.executor}\n" if self.status != self.TASK_STATUS_INITING else ""
         return f"""---
 # NOTE: This frontmatter is automatically managed by the agent. Do NOT generate, reproduce, or modify it.
 task_id: {self.task_id}
 status: {self.status}
-{tool_call_line}{executor_line}now: {time_tool.get_current_date(with_t=True)}
+executor: {self.executor}
+{tool_call_line}now: {time_tool.get_current_date(with_t=True)}
 ---
 """
 
