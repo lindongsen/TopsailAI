@@ -317,7 +317,7 @@ I am Main-Agent(Manager)
             system_prompt=self.system_prompt,
             session_id=get_session_id(),
             disabled_tools=["agent_tool"],
-            enabled_tools=["story_memory_tool", "subagent_tool"],
+            enabled_tools=["story_memory_tool", "subagent_tool", "human_tool"],
             agent_type="plan_and_execute",
             agent_role="manager",
         )
