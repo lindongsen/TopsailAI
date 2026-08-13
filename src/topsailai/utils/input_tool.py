@@ -24,7 +24,7 @@ import textwrap
 import time
 import typing
 
-from topsailai.utils.env_tool import get_history_load_max_entries
+from topsailai.utils.env_tool import get_history_load_max_entries, resolve_python_interpreter
 
 logger = logging.getLogger(__name__)
 
@@ -812,7 +812,7 @@ else:
         if stdin_fd is not None:
             popen_kwargs["stdin"] = stdin_fd
         proc = subprocess.Popen(
-            [sys.executable, "-c", helper],
+            [resolve_python_interpreter(), "-c", helper],
             **popen_kwargs,
         )
         os.close(write_fd)

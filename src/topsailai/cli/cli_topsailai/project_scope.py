@@ -13,7 +13,6 @@ import re
 import shlex
 import shutil
 import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import TYPE_CHECKING, List
@@ -28,6 +27,7 @@ from cli_topsailai.projects import (
     build_managed_project_list as _build_managed_project_list,
     print_project_table as _print_managed_project_table,
 )
+from topsailai.utils.env_tool import resolve_python_interpreter
 
 
 # Maximum number of concurrent running-status checks per refresh.
@@ -203,7 +203,7 @@ def build_project_list(
     """
     script = _script_path()
     cmd = [
-        sys.executable,
+        resolve_python_interpreter(),
         script,
         "--json",
         "--has-project",

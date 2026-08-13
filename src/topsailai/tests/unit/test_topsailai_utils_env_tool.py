@@ -1,3 +1,4 @@
+import sys
 import os
 import pytest
 import tempfile
@@ -11,6 +12,7 @@ from topsailai.utils.env_tool import (
     is_input_pipe_enabled,
     get_input_pipe_timeout,
     is_true,
+    resolve_python_interpreter,
     EnvironmentReader,
     EnvReaderInstance
 )
@@ -376,3 +378,37 @@ class TestEnvReaderInstance:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestResolvePythonInterpreter:
+    """Test resolve_python_interpreter helper."""
+
+    def test_base_executable_preferred(self):
+        """Return sys._base_executable when it exists."""
+        fake = "/usr/bin/python3-fake"
+        with patch("topsailai.utils.env_tool.sys", _base_executable=fake), \
+             patch("os.path.exists", return_value=True) as mock_exists:
+            result = resolve_python_interpreter()
+            assert result == fake
+            mock_exists.assert_called_once_with(fake)
+
+    def test_fallback_to_python3_when_base_missing_or_invalid(self):
+        """Fall back to shutil.which('python3') when base executable invalid."""
+        fake = "/opt/venv/bin/python3"
+        with patch.object(sys, "_base_executable", None, create=True), \
+             patch("shutil.which", side_effect=lambda name: fake if name == "python3" else None):
+            assert resolve_python_interpreter() == fake
+
+    def test_fallback_to_python_when_python3_unavailable(self):
+        """Fall back to shutil.which('python') when python3 not found."""
+        fake = "/usr/local/bin/python"
+        with patch.object(sys, "_base_executable", None, create=True), \
+             patch("shutil.which", side_effect=lambda name: fake if name == "python" else None):
+            assert resolve_python_interpreter() == fake
+
+    def test_all_fallbacks_fail_raises_runtime_error(self):
+        """Raise RuntimeError when no interpreter can be resolved."""
+        with patch.object(sys, "_base_executable", None, create=True), \
+             patch("shutil.which", return_value=None):
+            with pytest.raises(RuntimeError, match="No usable Python interpreter"):
+                resolve_python_interpreter()

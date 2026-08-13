@@ -6,9 +6,35 @@ Purpose: Environment variable utilities and configuration helpers
 """
 
 import os
+import shutil
+import sys
 from contextlib import contextmanager
 
 from topsailai.logger import logger
+
+
+def resolve_python_interpreter() -> str:
+    """Resolve a usable Python interpreter path for spawning subprocesses.
+
+    When the project is compiled with Cython, ``sys.executable`` points to the
+    compiled binary rather than a real CPython interpreter. This helper returns
+    a reliable interpreter in priority order:
+
+    1. ``sys._base_executable`` when available (the original base interpreter).
+    2. ``python3`` resolved from PATH.
+    3. ``python`` resolved from PATH.
+
+    Raises:
+        RuntimeError: If no usable interpreter can be found.
+    """
+    candidate = getattr(sys, "_base_executable", None)
+    if candidate and os.path.exists(candidate):
+        return candidate
+    for name in ("python3", "python"):
+        path = shutil.which(name)
+        if path:
+            return path
+    raise RuntimeError("No usable Python interpreter found; set PYTHON or ensure python3/python are on PATH")
 
 
 # Values considered truthy when parsing boolean environment variables.

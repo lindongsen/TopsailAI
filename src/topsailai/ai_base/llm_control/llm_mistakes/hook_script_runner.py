@@ -6,7 +6,7 @@ Purpose: Subprocess-based runner for model-specific LLM mistake hook scripts.
 
 Each model may ship a folder of case scripts (e.g. ``deepseek_hook_scripts/``).
 The runner discovers eligible ``.py`` scripts on every call (no import cache),
-spawns each as an independent subprocess via ``sys.executable``, and treats a
+spawns each as an independent subprocess using a resolved Python interpreter, and treats a
 valid JSON list on stdout as the handled result. Empty stdout means "not
 handled"; invalid JSON, oversized output, or timeout means "failure" (the
 caller continues to the next script or falls back to its parser).
@@ -28,7 +28,6 @@ import importlib.resources
 import os
 import signal
 import subprocess
-import sys
 import tempfile
 import time
 import uuid
@@ -36,6 +35,7 @@ import uuid
 import simplejson
 
 from topsailai.logger.log_chat import logger
+from topsailai.utils.env_tool import resolve_python_interpreter
 
 
 # Default configuration values (overridable via environment variables).
@@ -237,7 +237,7 @@ def _run_single_script(script_path, script_dir, model_name, response, response_f
     proc = None
     try:
         proc = subprocess.Popen(
-            [sys.executable, script_path],
+            [resolve_python_interpreter(), script_path],
             env=env,
             cwd=script_dir,
             stdout=subprocess.PIPE,

@@ -13,6 +13,7 @@ import textwrap
 import pytest
 
 from topsailai.ai_base.llm_control.llm_mistakes import hook_script_runner as runner
+from topsailai.utils.env_tool import resolve_python_interpreter
 
 
 @pytest.fixture()
@@ -162,7 +163,7 @@ def test_env_contract_passes_model_and_response(script_dir, monkeypatch):
     assert captured["env"]["TOPSAILAI_LLM_MISTAKE_SCRIPT_DIR"] == script_dir
     assert captured["cwd"] == script_dir
     assert captured["start_new_session"] is True
-    assert captured["argv"][0] == sys.executable
+    assert captured["argv"][0] == resolve_python_interpreter()
 
 
 def test_env_contract_minimal_curated(script_dir, monkeypatch):
