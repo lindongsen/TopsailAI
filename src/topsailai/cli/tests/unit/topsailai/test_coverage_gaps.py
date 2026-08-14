@@ -1651,24 +1651,24 @@ class TestMainEntryPoint(unittest.TestCase):
         project_root = os.path.dirname(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         )
-        topsailai_path = os.path.join(project_root, "topsailai.py")
+        topsailai_path = os.path.join(project_root, "topsailai_cli.py")
 
         home = mock_home.return_value
         original_argv = sys.argv
+        original_cwd = os.getcwd()
         try:
             os.makedirs(os.path.join(home, "workspace", "task"), exist_ok=True)
             cli_state.running = True
             cli_state.yaml_commands = []
             cli_state.history_manager = None
-            # Clear any cached topsailai module so the script is loaded from the
-            # project root rather than a similarly-named package elsewhere on
-            # sys.path (e.g. src/topsailai from the agent codebase).
-            sys.modules.pop("topsailai", None)
-            sys.argv = ["topsailai.py"]
+            # The entry-point shim unconditionally chdirs to PROJECT_FOLDER_BASE,
+            # so capture and restore the working directory around execution.
+            sys.argv = ["topsailai_cli.py"]
             runpy.run_path(topsailai_path, run_name="__main__")
             mock_signal.assert_called()
         finally:
             sys.argv = original_argv
+            os.chdir(original_cwd)
             shutil.rmtree(home, ignore_errors=True)
 
 
