@@ -119,8 +119,6 @@ def _read_with_timeout(read_fn, timeout, *args):
 # Prompt rendering
 # ---------------------------------------------------------------------------
 
-_OWN_OPINION_OPTION = "Other (enter your own opinion)"
-
 def _render_options(options: list[str]) -> str:
     """Render numbered option menu text."""
     lines = []
@@ -138,8 +136,6 @@ def _build_prompt(
     """Build the full prompt string shown to the user."""
     template = _get_prompt_template()
     display_options = list(options or [])
-    if options and allow_free_text:
-        display_options.append(_OWN_OPINION_OPTION)
     opts_text = _render_options(display_options) if display_options else ""
 
     if template:
@@ -159,12 +155,12 @@ def _build_prompt(
     if default:
         suffix = f" (default: {default})"
     if display_options:
-        parts.append(
-            f"Enter your choice [0..{len(display_options)-1}], "
-            f"or type 'cancel' to abort{suffix}: "
-        )
+        choice_hint = f"Enter your choice [0..{len(display_options)-1}]"
+        if allow_free_text:
+            choice_hint += " or your own opinion"
+        parts.append(f"{choice_hint}, or type '/cancel' to abort{suffix}: ")
     else:
-        parts.append(f"Your answer (type 'cancel' to abort){suffix}: ")
+        parts.append(f"Your answer (type '/cancel' to abort){suffix}: ")
     return "\n".join(parts)
 
 
@@ -172,7 +168,7 @@ def _build_prompt(
 # Answer normalization & validation
 # ---------------------------------------------------------------------------
 
-_CANCEL_WORDS = {"cancel", "abort"}
+_CANCEL_WORDS = {"/cancel"}
 
 
 def _normalize_answer(raw: str) -> str:
@@ -242,8 +238,8 @@ def ask_decision(
             one option index or matching text.
         allow_free_text: Whether free-text answers are accepted. ``None`` uses
             TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT, which defaults to enabled.
-            With options, enabled free text adds a final choice for entering the
-            user's own opinion.
+            With options, any non-option input is accepted as the user's own
+            opinion.
         timeout_seconds: Max seconds to wait for an answer. ``None`` means use
             the configured default (see TOPSAILAI_HUMAN_DECISION_TIMEOUT);
             values less than or equal to 0 resolve to an infinite wait.
@@ -322,33 +318,6 @@ def ask_decision(
     if ans_raw.lower() in _CANCEL_WORDS:
         return build_result("cancelled", default, -1)
 
-    own_opinion_selected = bool(
-        options
-        and eff_allow_free_text
-        and (
-            ans_raw == str(len(options))
-            or ans_raw.lower() == _OWN_OPINION_OPTION.lower()
-        )
-    )
-    if own_opinion_selected:
-        opinion_prompt = "Enter your own opinion (or type 'cancel' to abort): "
-        try:
-            if with_timeout:
-                own_opinion = with_timeout(opinion_prompt, timeout_seconds)
-            elif plain:
-                own_opinion = _read_with_timeout(plain, timeout_seconds, opinion_prompt)
-            else:
-                own_opinion = _read_with_timeout(input, timeout_seconds, opinion_prompt)
-        except (KeyboardInterrupt, EOFError):
-            return build_result("cancelled", default, -1)
-        except TimeoutError:
-            return build_result("timeout", default, -1)
-        if own_opinion is None:
-            return build_result("timeout", default, -1)
-        ans_raw = _normalize_answer(str(own_opinion))
-        if ans_raw.lower() in _CANCEL_WORDS:
-            return build_result("cancelled", default, -1)
-
     # Option validation loop (strict reprompt when free text disabled).
     max_retries = 5
     attempts = 0
@@ -368,7 +337,7 @@ def ask_decision(
             attempts += 1
             hint = (
                 f"Please enter a valid option [0..{len(options)-1}] "
-                f"(or 'cancel'): "
+                f"(or '/cancel'): "
             )
             try:
                 if with_timeout:
@@ -417,8 +386,9 @@ structured human decision to continue. Typical situations:
 - Provide a clear, concise `question` describing exactly what blocks progress.
 - Use `options` to present discrete choices whenever possible. The user can
   select by index number or matching text.
-- When `allow_free_text=True`, an additional option lets the user enter their
-  own opinion. Set it to `False` when only listed options are acceptable.
+- When `allow_free_text=True`, any non-option input is accepted directly as the
+  user's own opinion. Set it to `False` when only listed options are acceptable.
+- Enter `/cancel` to cancel and use the configured `default` fallback.
 - Pass `default` as a safe fallback when the user does not respond or cancels.
 - Set `timeout_seconds` explicitly when the task cannot afford to block
   indefinitely. Leave it unset to honor the global configuration.
@@ -444,7 +414,7 @@ Interpretation:
 
 - `answered`: User provided a valid response (`answer` holds it).
 - `timeout`: No response within the allowed window; `answer` holds `default`.
-- `cancelled`: User aborted (Ctrl+C/EOF/'cancel'); `answer` holds `default`.
+- `cancelled`: User aborted (Ctrl+C/EOF/`/cancel`); `answer` holds `default`.
 - `unavailable`: No usable input channel (non-interactive, sub-agent, etc.).
   `answer` holds `default`.
 

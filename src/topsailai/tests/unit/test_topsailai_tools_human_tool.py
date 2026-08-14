@@ -129,18 +129,20 @@ class TestPromptRendering(unittest.TestCase):
     """Test option-menu rendering."""
 
     @patch('topsailai.tools.human_tool._get_prompt_template', return_value='')
-    def test_own_opinion_option_shown_when_free_text_enabled(self, _mock_template):
-        """Free-text mode adds a selectable own-opinion option."""
+    def test_free_text_prompt_accepts_direct_opinion(self, _mock_template):
+        """Free-text mode advertises direct opinion input without an extra option."""
         prompt = human_tool._build_prompt('q', ['a', 'b'], True, None)
-        self.assertIn('2) Other (enter your own opinion)', prompt)
-        self.assertIn('[0..2]', prompt)
+        self.assertNotIn('Other (enter your own opinion)', prompt)
+        self.assertIn('[0..1] or your own opinion', prompt)
+        self.assertIn("'/cancel'", prompt)
 
     @patch('topsailai.tools.human_tool._get_prompt_template', return_value='')
-    def test_own_opinion_option_hidden_when_free_text_disabled(self, _mock_template):
-        """Strict option mode does not display an own-opinion option."""
+    def test_strict_option_prompt_omits_own_opinion_hint(self, _mock_template):
+        """Strict option mode only advertises predefined choices."""
         prompt = human_tool._build_prompt('q', ['a', 'b'], False, None)
         self.assertNotIn('own opinion', prompt)
         self.assertIn('[0..1]', prompt)
+        self.assertIn("'/cancel'", prompt)
 
     @patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT': '0'}, clear=False)
     @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(lambda p, t: '0', None))
@@ -196,9 +198,9 @@ class TestAskDecisionDegradation(unittest.TestCase):
         self.assertEqual(result['answer'], 'dflt')
 
     @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
-    @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(lambda p, t: 'cancel', None))
-    def test_literal_cancel_word_is_cancelled(self, mock_resolve, mock_build):
-        """Literal 'cancel' word maps to cancelled status."""
+    @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(lambda p, t: '/cancel', None))
+    def test_slash_cancel_is_cancelled(self, mock_resolve, mock_build):
+        """The explicit '/cancel' command maps to cancelled status."""
         result = human_tool.ask_decision('q', default='dflt')
         self.assertEqual(result['status'], 'cancelled')
         self.assertEqual(result['answer'], 'dflt')
@@ -263,19 +265,23 @@ class TestAskDecisionAnswered(unittest.TestCase):
         self.assertEqual(result['option_index'], 1)
 
     @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
-    def test_own_opinion_option_collects_free_text(self, _mock_build):
-        """Selecting the additional option prompts for and returns an opinion."""
-        answers = iter(['2', 'Use a staged rollout'])
-
-        def fake_input(_prompt, _timeout):
-            return next(answers)
-
-        with patch('topsailai.tools.human_tool._resolve_input_funcs',
-                   return_value=(fake_input, None)):
-            result = human_tool.ask_decision('q', options=['Alpha', 'Beta'])
-
+    @patch('topsailai.tools.human_tool._resolve_input_funcs',
+           return_value=(lambda p, t: 'Use a staged rollout', None))
+    def test_non_option_input_is_direct_custom_opinion(self, _mock_resolve, _mock_build):
+        """Any non-option input is returned directly as the user's opinion."""
+        result = human_tool.ask_decision('q', options=['Alpha', 'Beta'])
         self.assertEqual(result['status'], 'answered')
         self.assertEqual(result['answer'], 'Use a staged rollout')
+        self.assertEqual(result['option_index'], -1)
+
+    @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
+    @patch('topsailai.tools.human_tool._resolve_input_funcs',
+           return_value=(lambda p, t: 'cancel', None))
+    def test_plain_cancel_is_custom_content(self, _mock_resolve, _mock_build):
+        """Plain 'cancel' is content because only '/cancel' cancels."""
+        result = human_tool.ask_decision('q', options=['Alpha', 'Beta'])
+        self.assertEqual(result['status'], 'answered')
+        self.assertEqual(result['answer'], 'cancel')
         self.assertEqual(result['option_index'], -1)
 
 
@@ -296,8 +302,8 @@ class TestOptionValidationLoop(unittest.TestCase):
 
     @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
     def test_cancel_during_reprompt_is_cancelled(self, mock_build):
-        """Cancelling during the reprompt loop yields cancelled status."""
-        answers = iter(['bad', 'cancel'])
+        """The '/cancel' command during strict reprompt yields cancelled status."""
+        answers = iter(['bad', '/cancel'])
         fake_input = lambda p, t: next(answers)
         with patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(fake_input, None)):
             result = human_tool.ask_decision('q', options=['x', 'y'], allow_free_text=False, default='dflt')
