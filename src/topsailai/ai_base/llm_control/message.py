@@ -565,8 +565,8 @@ def format_response(response, rsp_obj=None, messages=None):
             if '\n<FunctionCall>\n' in response or \
                 response.startswith("<FunctionCall>\n") or \
                 response.endswith("</FunctionCall>"):
-                    _msg = "llm maybe mistake: cannot to parse action"
-                    print_error(_msg)
+                    _msg = f"{LLM_KEYWORD_MISTAKE}: cannot to parse action"
+                    print_warning(_msg)
                     response += "\n---\n" + _msg
 
             step_name = format_tool.TOPSAILAI_STEP_THINK
