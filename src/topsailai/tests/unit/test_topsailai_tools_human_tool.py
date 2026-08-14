@@ -125,6 +125,33 @@ class TestAnswerNormalization(unittest.TestCase):
         self.assertEqual(idx, -1)
 
 
+class TestPromptRendering(unittest.TestCase):
+    """Test option-menu rendering."""
+
+    @patch('topsailai.tools.human_tool._get_prompt_template', return_value='')
+    def test_own_opinion_option_shown_when_free_text_enabled(self, _mock_template):
+        """Free-text mode adds a selectable own-opinion option."""
+        prompt = human_tool._build_prompt('q', ['a', 'b'], True, None)
+        self.assertIn('2) Other (enter your own opinion)', prompt)
+        self.assertIn('[0..2]', prompt)
+
+    @patch('topsailai.tools.human_tool._get_prompt_template', return_value='')
+    def test_own_opinion_option_hidden_when_free_text_disabled(self, _mock_template):
+        """Strict option mode does not display an own-opinion option."""
+        prompt = human_tool._build_prompt('q', ['a', 'b'], False, None)
+        self.assertNotIn('own opinion', prompt)
+        self.assertIn('[0..1]', prompt)
+
+    @patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT': '0'}, clear=False)
+    @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(lambda p, t: '0', None))
+    def test_omitted_free_text_parameter_uses_environment(self, _mock_resolve):
+        """Omitted free-text setting honors the environment configuration."""
+        with patch('topsailai.tools.human_tool._build_prompt', wraps=human_tool._build_prompt) as mock_build:
+            result = human_tool.ask_decision('q', options=['Alpha'])
+        self.assertEqual(result['answer'], 'Alpha')
+        self.assertFalse(mock_build.call_args.args[2])
+
+
 class TestAskDecisionDegradation(unittest.TestCase):
     """Test unavailable/cancelled/timeout paths and default fallback."""
 
@@ -188,8 +215,26 @@ class TestAskDecisionAnswered(unittest.TestCase):
         self.assertEqual(result['status'], 'answered')
         self.assertEqual(result['answer'], 'my answer')
         self.assertEqual(result['option_index'], -1)
-        self.assertIn('asked_at_ms', result)
-        self.assertIn('elapsed_ms', result)
+        self.assertIsInstance(result['asked_at'], str)
+        self.assertIsInstance(result['elapsed'], int)
+        self.assertNotIn('asked_at_ms', result)
+        self.assertNotIn('elapsed_ms', result)
+
+    @patch('topsailai.tools.human_tool.datetime')
+    @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
+    @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(lambda p, t: 'answer', None))
+    @patch('topsailai.tools.human_tool.time.time', side_effect=[1700000000.9, 1700000002.8])
+    def test_result_timing_uses_local_iso_seconds(
+        self, _mock_time, _mock_resolve, _mock_build, mock_datetime
+    ):
+        """Decision timing uses local ISO time and integer elapsed seconds."""
+        mock_local_time = mock_datetime.fromtimestamp.return_value
+        mock_local_time.isoformat.return_value = '2026-08-14T16:52:00'
+        result = human_tool.ask_decision('q')
+        mock_datetime.fromtimestamp.assert_called_once_with(1700000000.9)
+        mock_local_time.isoformat.assert_called_once_with(timespec='seconds')
+        self.assertEqual(result['asked_at'], '2026-08-14T16:52:00')
+        self.assertEqual(result['elapsed'], 1)
 
     @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
     @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(None, lambda p: 'plain answer'))
@@ -216,6 +261,23 @@ class TestAskDecisionAnswered(unittest.TestCase):
         self.assertEqual(result['status'], 'answered')
         self.assertEqual(result['answer'], 'Beta')
         self.assertEqual(result['option_index'], 1)
+
+    @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
+    def test_own_opinion_option_collects_free_text(self, _mock_build):
+        """Selecting the additional option prompts for and returns an opinion."""
+        answers = iter(['2', 'Use a staged rollout'])
+
+        def fake_input(_prompt, _timeout):
+            return next(answers)
+
+        with patch('topsailai.tools.human_tool._resolve_input_funcs',
+                   return_value=(fake_input, None)):
+            result = human_tool.ask_decision('q', options=['Alpha', 'Beta'])
+
+        self.assertEqual(result['status'], 'answered')
+        self.assertEqual(result['answer'], 'Use a staged rollout')
+        self.assertEqual(result['option_index'], -1)
+
 
 
 class TestOptionValidationLoop(unittest.TestCase):

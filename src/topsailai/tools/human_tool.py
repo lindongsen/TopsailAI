@@ -9,6 +9,7 @@ import os
 import sys
 import threading
 import time
+from datetime import datetime
 from typing import Callable
 
 from topsailai.logger import logger
@@ -118,6 +119,8 @@ def _read_with_timeout(read_fn, timeout, *args):
 # Prompt rendering
 # ---------------------------------------------------------------------------
 
+_OWN_OPINION_OPTION = "Other (enter your own opinion)"
+
 def _render_options(options: list[str]) -> str:
     """Render numbered option menu text."""
     lines = []
@@ -129,13 +132,15 @@ def _render_options(options: list[str]) -> str:
 def _build_prompt(
     question: str,
     options: list[str] | None,
+    allow_free_text: bool,
     default: str | None,
 ) -> str:
     """Build the full prompt string shown to the user."""
     template = _get_prompt_template()
-    opts_text = ""
-    if options:
-        opts_text = _render_options(options)
+    display_options = list(options or [])
+    if options and allow_free_text:
+        display_options.append(_OWN_OPINION_OPTION)
+    opts_text = _render_options(display_options) if display_options else ""
 
     if template:
         rendered = template.format(
@@ -153,8 +158,11 @@ def _build_prompt(
     suffix = ""
     if default:
         suffix = f" (default: {default})"
-    if options:
-        parts.append(f"Enter your choice [0..{len(options)-1}], or type 'cancel' to abort{suffix}: ")
+    if display_options:
+        parts.append(
+            f"Enter your choice [0..{len(display_options)-1}], "
+            f"or type 'cancel' to abort{suffix}: "
+        )
     else:
         parts.append(f"Your answer (type 'cancel' to abort){suffix}: ")
     return "\n".join(parts)
@@ -222,7 +230,7 @@ def _validate_and_resolve(
 def ask_decision(
     question: str,
     options: list[str] | None = None,
-    allow_free_text: bool = True,
+    allow_free_text: bool | None = None,
     timeout_seconds: float | None = None,
     default: str | None = None,
 ) -> dict:
@@ -231,9 +239,11 @@ def ask_decision(
     Args:
         question: Required. The blocking question presented to the user.
         options: Optional predefined choices. When provided, the user may pick
-            one option index instead of typing free text.
-        allow_free_text: Whether free-text answers are accepted. Default True.
-            Ignored when ``options`` is empty.
+            one option index or matching text.
+        allow_free_text: Whether free-text answers are accepted. ``None`` uses
+            TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT, which defaults to enabled.
+            With options, enabled free text adds a final choice for entering the
+            user's own opinion.
         timeout_seconds: Max seconds to wait for an answer. ``None`` means use
             the configured default (see TOPSAILAI_HUMAN_DECISION_TIMEOUT);
             values less than or equal to 0 resolve to an infinite wait.
@@ -243,17 +253,17 @@ def ask_decision(
         A structured dict. Never raises for normal degradation; always returns
         a status-bearing result.
     """
-    start_ms = int(time.time() * 1000)
-    asked_at_ms = start_ms
+    start = time.time()
+    asked_at = datetime.fromtimestamp(start).isoformat(timespec="seconds")
 
     def build_result(status, answer=None, option_index=-1):
-        elapsed_ms = int((time.time() * 1000) - start_ms)
+        elapsed = int(time.time() - start)
         return {
             "status": status,
             "answer": answer,
             "option_index": option_index,
-            "elapsed_ms": elapsed_ms,
-            "asked_at_ms": asked_at_ms,
+            "elapsed": elapsed,
+            "asked_at": asked_at,
         }
 
     # Validate inputs
@@ -283,7 +293,7 @@ def ask_decision(
         logger.info("[human_tool] No usable input source; returning unavailable.")
         return build_result("unavailable", default, -1)
 
-    prompt = _build_prompt(question, options, default)
+    prompt = _build_prompt(question, options, eff_allow_free_text, default)
 
     # Try reading input through available channels.
     raw_answer = None
@@ -311,6 +321,33 @@ def ask_decision(
     ans_raw = _normalize_answer(str(raw_answer))
     if ans_raw.lower() in _CANCEL_WORDS:
         return build_result("cancelled", default, -1)
+
+    own_opinion_selected = bool(
+        options
+        and eff_allow_free_text
+        and (
+            ans_raw == str(len(options))
+            or ans_raw.lower() == _OWN_OPINION_OPTION.lower()
+        )
+    )
+    if own_opinion_selected:
+        opinion_prompt = "Enter your own opinion (or type 'cancel' to abort): "
+        try:
+            if with_timeout:
+                own_opinion = with_timeout(opinion_prompt, timeout_seconds)
+            elif plain:
+                own_opinion = _read_with_timeout(plain, timeout_seconds, opinion_prompt)
+            else:
+                own_opinion = _read_with_timeout(input, timeout_seconds, opinion_prompt)
+        except (KeyboardInterrupt, EOFError):
+            return build_result("cancelled", default, -1)
+        except TimeoutError:
+            return build_result("timeout", default, -1)
+        if own_opinion is None:
+            return build_result("timeout", default, -1)
+        ans_raw = _normalize_answer(str(own_opinion))
+        if ans_raw.lower() in _CANCEL_WORDS:
+            return build_result("cancelled", default, -1)
 
     # Option validation loop (strict reprompt when free text disabled).
     max_retries = 5
@@ -380,8 +417,8 @@ structured human decision to continue. Typical situations:
 - Provide a clear, concise `question` describing exactly what blocks progress.
 - Use `options` to present discrete choices whenever possible. The user can
   select by index number or matching text.
-- Set `allow_free_text=False` when ONLY the listed options are acceptable;
-  otherwise leave it at its default so users can provide custom answers.
+- When `allow_free_text=True`, an additional option lets the user enter their
+  own opinion. Set it to `False` when only listed options are acceptable.
 - Pass `default` as a safe fallback when the user does not respond or cancels.
 - Set `timeout_seconds` explicitly when the task cannot afford to block
   indefinitely. Leave it unset to honor the global configuration.
@@ -395,10 +432,13 @@ The tool ALWAYS returns a structured dictionary (never raises):
   "status": "answered|timeout|cancelled|unavailable",
   "answer": "string or null",
   "option_index": -1,
-  "elapsed_ms": 1234,
-  "asked_at_ms": 1700000000000
+  "elapsed": 1,
+  "asked_at": "2026-08-14T16:52:00"
 }
 ```
+
+`elapsed` is the integer duration in seconds. `asked_at` is the local,
+timezone-naive ISO-8601 start timestamp with second precision.
 
 Interpretation:
 
