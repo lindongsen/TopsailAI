@@ -23,7 +23,13 @@ import _import_topsailai
 
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
 
+# Design: ai_team.py starts a single "manager" agent. A human interacts with
+# this manager agent, which delegates concrete tasks to team_agent.py /
+# team_chat.py through its tools/skills.
 # enable required team tools while preserving any pre-existing enabled-tools config
+# NOTE: this is an intentional EXCLUSIVE allowlist for the team-manager process;
+# only the listed tools remain enabled, and every other default-enabled tool
+# (cmd_tool, file_tool, time_tool, ctx_tool, etc.) is deliberately disabled.
 _enabled_base = ["story_memory_tool", "ai_team", "skill_tool", "human_tool"]
 _existing_enabled_parts = []
 for _env_name in ("TOPSAILAI_ENABLED_TOOLS", "ENABLED_TOOLS"):

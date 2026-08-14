@@ -15,6 +15,12 @@ AI Team Manager: route and coordinate team agents.
 
 Starts a coordinated multi-agent team session. The team workflow dispatches tasks to sub-agents and aggregates their outputs. This script is the CLI entry point for the `ai-team-flow-dev` driver and related team orchestration logic.
 
+## Design
+
+`topsailai_team.py` starts a single **manager** agent. A human interacts with this manager agent, which delegates concrete tasks to `team_agent.py` / `team_chat.py` through its tools/skills.
+
+The script also sets `TOPSAILAI_ENABLED_TOOLS` as an intentional exclusive allowlist (`story_memory_tool`, `ai_team`, `skill_tool`, `human_tool`) so that only the listed team tools are enabled; other default-enabled tools (e.g. `cmd_tool`, `file_tool`, `time_tool`, `ctx_tool`) are deliberately disabled for the manager process.
+
 ## Invocation
 
 ```bash
