@@ -1177,7 +1177,7 @@ class TestLlmMistakeWarningSuppressionNativeToolCalls:
              patch("topsailai.ai_base.llm_control.message.should_convert_thought_to_final",
                    return_value=(False, "")):
             format_response("just some text", rsp_obj=self._native_rsp(), messages=[])
-        mpw.assert_not_called()
+        assert not any("maybe only thought" in str(call.args[0]) for call in mpw.call_args_list)
 
     def test_format_response_non_native_still_warns_only_thought(self):
         """Non-native responses must still emit the 'maybe only thought' warning."""
@@ -1189,4 +1189,4 @@ class TestLlmMistakeWarningSuppressionNativeToolCalls:
              patch("topsailai.ai_base.llm_control.message.should_convert_thought_to_final",
                    return_value=(False, "")):
             format_response("just some text", rsp_obj=None, messages=[])
-        mpw.assert_called_once()
+        assert any("maybe only thought" in str(call.args[0]) for call in mpw.call_args_list)

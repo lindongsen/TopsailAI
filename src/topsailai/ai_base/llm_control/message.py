@@ -526,7 +526,7 @@ def format_response(response, rsp_obj=None, messages=None):
             raise e
         except Exception as e:
             if count == (max_count-1):
-                print_error(f"parsing response: {e}\n>>>\n{response}\n<<<\nretrying times: {count}")
+                print_warning(f"parsing response: {e}\n>>>\n{response}\n<<<\nretrying times: {count}")
                 logger.debug(e)
         finally:
             new_response = format_response_finally(response, rsp_obj, messages)
@@ -588,4 +588,7 @@ def format_response(response, rsp_obj=None, messages=None):
 
             return format_response(step_name + "\n" + response, rsp_obj=rsp_obj)
 
+    # Terminal case: all parsing/correction attempts failed and the result is
+    # still not a valid list/dict format. Only now emit an ERROR.
+    print_error(f"parsing response: unable to correct into a valid list/dict format\n>>>\n{response}\n<<<")
     raise JsonError("LLM mistake: invalid json string")
