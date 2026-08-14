@@ -186,7 +186,6 @@ def fix_llm_mistakes(response:list, rsp_obj=None):
             if "step_name" in item0 \
                 and item0["step_name"] != "action" \
                 and rsp_msg.tool_calls:
-                    print_warning(f"{LLM_KEYWORD_MISTAKE}: missing step_name=action")
                     response.append(
                         {"step_name": "action"}
                     )
@@ -570,11 +569,11 @@ def format_response(response, rsp_obj=None, messages=None):
                     print_error(_msg)
                     response += "\n---\n" + _msg
 
-            print_warning(f"{LLM_KEYWORD_MISTAKE}: maybe only thought")
             step_name = format_tool.TOPSAILAI_STEP_THINK
 
             try:
                 if not get_tool_calls_of_rsp(rsp_obj):
+                    print_warning(f"{LLM_KEYWORD_MISTAKE}: maybe only thought")
                     # only convert to final answer when explicitly enabled and the response spans multiple lines
                     converted, reason = should_convert_thought_to_final(response, messages)
                     if converted:

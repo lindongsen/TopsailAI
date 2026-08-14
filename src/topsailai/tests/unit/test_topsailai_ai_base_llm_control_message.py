@@ -1142,3 +1142,51 @@ class TestShouldConvertThoughtToFinal:
         # no prior tool action -> not converted even with multi-line text
         converted, reason = should_convert_thought_to_final("first line\nsecond line", messages)
         assert converted is False and reason == ""
+class TestLlmMistakeWarningSuppressionNativeToolCalls:
+    """Verify no mistake warnings are logged when the response arrives via native tool_calls."""
+
+    @staticmethod
+    def _native_rsp():
+        """Build a fake rsp object whose message carries native tool_calls."""
+        from openai.types.chat import ChatCompletionMessage
+
+        msg = MagicMock(spec=ChatCompletionMessage)
+        msg.tool_calls = [MagicMock()]
+        return msg
+
+    def test_fix_llm_mistakes_native_no_step_name_warning(self):
+        """fix_llm_mistakes must not warn 'missing step_name=action' for native tool_calls."""
+        from topsailai.ai_base.llm_control.message import fix_llm_mistakes
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning") as mpw:
+            out = fix_llm_mistakes(
+                [{"step_name": "thought"}],
+                rsp_obj=self._native_rsp(),
+            )
+        # behavioral contract preserved: missing action is still appended
+        assert out[-1] == {"step_name": "action"}
+        mpw.assert_not_called()
+
+    def test_format_response_native_no_only_thought_warning(self):
+        """format_response must not warn 'maybe only thought' for native tool_calls."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning") as mpw, \
+             patch("topsailai.ai_base.llm_control.message.hook_execute",
+                   side_effect=lambda *a, **k: None), \
+             patch("topsailai.ai_base.llm_control.message.should_convert_thought_to_final",
+                   return_value=(False, "")):
+            format_response("just some text", rsp_obj=self._native_rsp(), messages=[])
+        mpw.assert_not_called()
+
+    def test_format_response_non_native_still_warns_only_thought(self):
+        """Non-native responses must still emit the 'maybe only thought' warning."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        with patch("topsailai.ai_base.llm_control.message.print_warning") as mpw, \
+             patch("topsailai.ai_base.llm_control.message.hook_execute",
+                   side_effect=lambda *a, **k: None), \
+             patch("topsailai.ai_base.llm_control.message.should_convert_thought_to_final",
+                   return_value=(False, "")):
+            format_response("just some text", rsp_obj=None, messages=[])
+        mpw.assert_called_once()
