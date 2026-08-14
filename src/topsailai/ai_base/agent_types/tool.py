@@ -79,6 +79,9 @@ def get_tool_func(tool_map: dict, tool_name: str):
     if not tool_map or not tool_name:
         return None
 
+    if not isinstance(tool_name, str):
+        return None
+
     tool_name = tool_name.strip()
     if not tool_name:
         return None
