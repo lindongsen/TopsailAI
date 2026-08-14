@@ -525,3 +525,53 @@ class TestLLMModelBaseSpecialResponses:
         """Items should be stringified, stripped, and nulls filtered out."""
         result = test_model._get_special_responses_for_retry()
         assert result == ["a", "b"]
+class TestFormatNullResponseContent:
+    """Tests for LLMModelBase.format_null_response_content native tool_call handling."""
+
+    def _make_model(self):
+        from topsailai.ai_base.llm_control.base_class import LLMModelBase
+
+        class NativeToolModel(LLMModelBase):
+            def get_model_name(self, default=""):
+                return "test-model"
+            def get_llm_model(self, api_key=None, api_base=None):
+                return MagicMock()
+            def get_response_message(self, response):
+                msg = MagicMock()
+                msg.tool_calls = [MagicMock()]
+                return msg
+            def chat(self, *args, **kwargs):
+                pass
+        return NativeToolModel()
+
+    def test_native_tool_call_returns_action_without_warning(self, monkeypatch, caplog):
+        """Native tool_call on rsp_obj yields STEP_ACTION and logs no 'missing action'."""
+        from topsailai.utils.format_tool import TOPSAILAI_STEP_ACTION
+
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
+        model = self._make_model()
+        with caplog.at_level("WARNING"):
+            result = model.format_null_response_content(MagicMock(), "")
+        assert result == TOPSAILAI_STEP_ACTION
+        assert "missing action" not in caplog.text
+
+    def test_empty_content_no_tool_call_returns_empty(self, monkeypatch):
+        """Without native tool_calls, empty content stays unchanged (no crash)."""
+        from topsailai.ai_base.llm_control.base_class import LLMModelBase
+
+        monkeypatch.delenv("MAX_TOKENS", raising=False)
+
+        class NoToolModel(LLMModelBase):
+            def get_model_name(self, default=""):
+                return "test-model"
+            def get_llm_model(self, api_key=None, api_base=None):
+                return MagicMock()
+            def get_response_message(self, response):
+                msg = MagicMock()
+                msg.tool_calls = []
+                return msg
+            def chat(self, *args, **kwargs):
+                pass
+
+        model = NoToolModel()
+        assert model.format_null_response_content(MagicMock(), "") == ""

@@ -44,6 +44,7 @@ topsailai --help
 | [topsailai_session_info](topsailai_session_info.md) | Show detailed information about a session. |
 | [topsailai_session_status](topsailai_session_status.md) | Check whether a session is running and report basic status. |
 | [topsailai_stream_sessions](topsailai_stream_sessions.md) | Stream session output to stdout or another consumer. |
+| [topsailai_simulate_agent_execute](topsailai_simulate_agent_execute.md) | Simulate the agent execution phase for an LLM response without a live LLM. |
 | [topsailai_team](topsailai_team.md) | Launch or manage a multi-agent team workflow. |
 | [topsailai_test_tool_approval_rules](topsailai_test_tool_approval_rules.md) | Validate `tool_approval.json` rules. |
 

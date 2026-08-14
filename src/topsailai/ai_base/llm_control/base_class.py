@@ -449,7 +449,7 @@ class LLMModelBase(object):
 
         ccm = self.get_response_message(rsp_obj)
         if ccm.tool_calls:
-            print_error(f"{LLM_KEYWORD_MISTAKE}: missing action")
+            # Native tool_call carried on rsp_obj: no mistake log needed.
             return format_tool.TOPSAILAI_STEP_ACTION
         return rsp_content
 
