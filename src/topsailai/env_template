@@ -893,3 +893,29 @@ TOPSAILAI_HUMAN_DECISION_PROMPT_TEMPLATE=""
 
 # Maximum length of a free-text answer before truncation.
 TOPSAILAI_HUMAN_DECISION_MAX_ANSWER_LENGTH=30000
+
+# =============================================================================
+# Thought/Final-Answer Abnormal Line-Ratio Detection
+# =============================================================================
+# Detects LLM responses finally classified as thought/final_answer whose
+# non-empty lines contain a configurable substring beyond a ratio threshold.
+# For thought: appends a critical user observation warning the model.
+# For final/final_answer: converts the step back to thought (task NOT
+# terminated) and injects the same critical observation so the model gets
+# another chance to produce a well-formed step.
+# Master switch. Set to 1 to enable, 0 to disable (default off).
+TOPSAILAI_THOUGHT_LINE_PATTERN_ENABLED=0
+
+# JSON list of detection rules. Each rule:
+#   pattern       (required) substring a non-empty line must contain
+#   line_ratio    (required, 0 < value <= 1) trigger when matched/total STRICTLY > this
+#   min_lines     (optional, default 5) minimum non-empty lines before evaluation
+#   case_sensitive(optional, default true)
+#   enabled       (optional, default true)
+#   dedup         (optional, default true) warn once per sustained over-threshold period
+#   agent_role    (optional, default *) manager|worker|*
+#   warning       (optional) custom template; placeholders {pattern} {matched}
+#                 {total} {actual_ratio} {line_ratio} {agent_role} {step_type}
+# Example:
+# TOPSAILAI_THOUGHT_LINE_PATTERN_RULES='[{"pattern":"topsailai.","line_ratio":0.9,"min_lines":5}]'
+TOPSAILAI_THOUGHT_LINE_PATTERN_RULES=""

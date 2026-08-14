@@ -111,3 +111,16 @@ Key logic:
 - In `workspace/agent/agent_shell_base.py`, as soon as a task is taken over (before the pre-run manifest is generated), the code assigns `task.executor = getattr(self.ai_agent, "agent_name", "") or env_tool.EnvReaderInstance.get("TOPSAILAI_TEAM_MEMBER_NAME") or ""`. This ensures even an `initializing` status frontmatter carries the real executing agent/member name instead of an empty value. The post-run assignment remains for consistency.
 
 System impact: The task frontmatter now always includes an `executor` line, enabling callers and users to identify which agent performed the work.
+
+## Thought/Final-Answer Abnormal Line-Ratio Detection
+
+Added a configurable multi-rule detector for LLM responses finally classified as `thought` or `final_answer`. When more than a configured ratio of non-empty lines contain a specified substring, the response is treated as potentially malformed. For a `thought`, a critical user observation is appended warning the model to stop and re-check its output format. For a `final`/`final_answer`, the step is converted back to a `thought` (the task is NOT terminated) and the same critical observation is injected so the model gets another chance to produce a well-formed next step.
+
+Key logic:
+- Two environment variables: `TOPSAILAI_THOUGHT_LINE_PATTERN_ENABLED` (master switch, default off) and `TOPSAILAI_THOUGHT_LINE_PATTERN_RULES` (JSON list of rules).
+- Each rule supports `pattern`, `line_ratio` (`0 < value <= 1`), `min_lines` (default 5), `case_sensitive` (default true), `enabled`, `dedup`, `agent_role`, and optional custom `warning` template.
+- Text split via `splitlines()`; empty/whitespace-only lines excluded from both numerator and denominator. Fires only when `matched/total STRICTLY > line_ratio` and total meets `min_lines`.
+- Multiple rules use OR semantics; all firing rules are merged into one critical observation per response.
+- Per-agent dedup state stored on the agent-bound `ToolStat`; sustained over-threshold warns once, then re-arms after falling below threshold.
+- Only assistant `thought`/`final` steps are scanned; injected observations are never rescanned, preventing recursion.
+- Advisory only: configuration errors or evaluation failures are logged and swallowed, never interrupting agent execution.

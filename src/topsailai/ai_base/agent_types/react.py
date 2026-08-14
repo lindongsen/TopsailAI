@@ -7,12 +7,15 @@
 
 from topsailai.utils import (
     env_tool,
+    print_tool,
 )
 from topsailai.prompt_hub.prompt_tool import PromptHubExtractor
 from .tool import (
     StepCallTool,
     ExceptionStepCallEnd,
 )
+from topsailai.ai_base.constants import STEP_NAME_THOUGHT
+from topsailai.context import thought_line_pattern
 
 # define prompt of ReAct framework
 SYSTEM_PROMPT = PromptHubExtractor.prompt_mode_ReAct_toolPrompt
@@ -31,7 +34,7 @@ class Step4ReAct(StepCallTool):
             "raw_text": result,
         }
 
-    def _execute(self, step:dict, tools:dict, response:list, index:int, rsp_msg_obj=None, **_):
+    def _execute(self, step: dict, tools: dict, response: list, index: int, rsp_msg_obj=None, **_):
         """
         Execute a single step in the ReAct framework
 
@@ -68,18 +71,34 @@ class Step4ReAct(StepCallTool):
                 step=step,
                 tools=tools,
                 rsp_msg_obj=rsp_msg_obj,
-                # index=index,
-                # response=response,
                 **_
             )
         elif step_name == "thought":
-            self.complete_step_thought(
-                response=response
-            )
+            try:
+                thought_line_pattern.evaluate_and_maybe_inject(
+                    raw_text=str(step.get("raw_text", "")),
+                    step_type="thought",
+                )
+            except Exception:
+                pass
+            self.complete_step_thought(response=response)
         elif step_name.startswith('final'):
-            self.complete_final(
-                step=step,
-            )
+            # Malformed final/final_answer -> convert back to thought, do not terminate.
+            converted = False
+            try:
+                if thought_line_pattern.is_enabled():
+                    converted = thought_line_pattern.evaluate_and_maybe_inject(
+                        raw_text=str(step.get("raw_text", "")),
+                        step_type="final_answer",
+                        on_warning=print_tool.print_warning,
+                    )
+            except Exception:
+                converted = False
+            if converted:
+                # Actually change the step type to thought per requirement.
+                step["step_name"] = STEP_NAME_THOUGHT
+                return  # Do NOT call complete_final; no CODE_TASK_FINAL -> next round.
+            self.complete_final(step=step)
         else:
             self.complete_cannot_handle(
                 step_name=step_name,
@@ -91,6 +110,7 @@ class Step4ReAct(StepCallTool):
             )
 
         return
+
 
 # set common name
 AgentStepCall = Step4ReAct

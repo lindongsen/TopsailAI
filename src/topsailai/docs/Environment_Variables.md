@@ -471,3 +471,35 @@ Older records that were written before the `pid` field was introduced may omit i
 | `TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT` | `1` | Default value for `allow_free_text` when the argument is omitted. `1` = enabled. |
 | `TOPSAILAI_HUMAN_DECISION_PROMPT_TEMPLATE` | `""` | Optional custom prompt template with placeholders `{question}`, `{options}`, and `{default}`. Empty uses built-in rendering. |
 | `TOPSAILAI_HUMAN_DECISION_MAX_ANSWER_LENGTH` | `30000` | Maximum length of a free-text answer before truncation. |
+
+## Thought/Final-Answer Abnormal Line-Ratio Detection
+
+These variables detect LLM responses that are finally classified as `thought` or `final_answer` but whose non-empty lines contain a configurable substring beyond a ratio threshold. For a `thought`, a critical user observation is appended warning the model. For a `final`/`final_answer`, the step is converted back to a `thought` (the task is NOT terminated) and the same critical observation is injected so the model gets another chance.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOPSAILAI_THOUGHT_LINE_PATTERN_ENABLED` | `0` | Master switch. `1` enables detection, `0` disables it (default off). When disabled, no scanning occurs and existing behavior is preserved exactly. |
+| `TOPSAILAI_THOUGHT_LINE_PATTERN_RULES` | `""` | JSON list of rule dicts defining abnormal line-pattern detection. Empty/invalid disables the feature. See details below. |
+
+### Rule Fields
+
+Each element in `TOPSAILAI_THOUGHT_LINE_PATTERN_RULES` supports:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `pattern` | yes | — | Substring that a stripped non-empty line must contain. Unicode supported; matching is exact (no normalization). |
+| `line_ratio` | yes | — | Trigger ratio, must satisfy `0 < value <= 1`. A rule fires when `matched / total` is STRICTLY greater than this value. |
+| `min_lines` | no | `5` | Minimum number of non-empty lines required before evaluation. Below this, the rule never fires (avoids false positives on short text). |
+| `case_sensitive` | no | `true` | Whether substring matching is case-sensitive. |
+| `enabled` | no | `true` | Whether the rule is active. |
+| `dedup` | no | `true` | When true, warns only once per sustained over-threshold period and re-arms after the ratio falls back to or below the threshold. |
+| `agent_role` | no | `*` | Restrict to role: `manager`, `worker`, or `*`. Unknown roles treated as `*`. |
+| `warning` | no | built-in template | Custom warning template with placeholders `{pattern}`, `{matched}`, `{total}`, `{actual_ratio}`, `{line_ratio}`, `{agent_role}`, `{step_type}`. |
+
+### Details
+
+- **Line definition**: Text is split via `splitlines()`; each line is stripped; empty and whitespace-only lines are excluded from both numerator and denominator.
+- **Threshold semantics**: Strictly greater (`>`), matching the requirement "超过某个比例". E.g., `9/10 == 0.9` does not fire at threshold `0.90`; `10/11 ≈ 0.909` does.
+- **Multiple rules**: OR semantics — any enabled rule that fires contributes to a single merged critical observation per response.
+- **Scan scope**: Only assistant `thought`/`final` steps are scanned. Injected observations are never rescanned, preventing recursion.
+- **Advisory only**: Configuration errors or evaluation failures are logged and swallowed; they never interrupt agent execution.

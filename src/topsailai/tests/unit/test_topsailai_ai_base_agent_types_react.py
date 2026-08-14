@@ -85,12 +85,13 @@ class TestStep4ReAct(unittest.TestCase):
     def test_execute_handles_thought_step(self):
         """Test _execute handles 'thought' step_name."""
         from topsailai.ai_base.agent_types.react import Step4ReAct
-        
+
         instance = Step4ReAct()
         step = {"step_name": "thought", "raw_text": "Thinking..."}
-        
-        # Should not raise
-        instance._execute(step=step, tools={}, response=[step], index=0)
+        with patch.object(instance, "complete_step_thought") as complete_thought:
+            instance._execute(step=step, tools={}, response=[step], index=0)
+
+        complete_thought.assert_called_once_with(response=[step])
 
     def test_execute_handles_observation_step(self):
         """Test _execute handles 'observation' step_name."""
@@ -111,6 +112,81 @@ class TestStep4ReAct(unittest.TestCase):
         
         # Should not raise
         instance._execute(step=step, tools={}, response=[step], index=0)
+
+    def test_final_pattern_hit_converts_step_without_termination(self):
+        """A suspicious final prints its warning, becomes thought, and does not terminate."""
+        from topsailai.ai_base.agent_types.react import Step4ReAct
+
+        warning_text = "CRITICAL-SYSTEM-ALERT: malformed final response"
+
+        def evaluate_with_warning(*, on_warning, **_):
+            on_warning(warning_text)
+            return True
+
+        instance = Step4ReAct()
+        step = {"step_name": "final_answer", "raw_text": "\uff5cDSML\uff5c\n\uff5cDSML\uff5c\nok"}
+        with patch.object(instance, "pre_execute", return_value=("final_answer", step)), \
+             patch("topsailai.ai_base.agent_types.react.thought_line_pattern.is_enabled", return_value=True), \
+             patch("topsailai.ai_base.agent_types.react.thought_line_pattern.evaluate_and_maybe_inject", side_effect=evaluate_with_warning), \
+             patch("topsailai.ai_base.agent_types.react.print_tool.print_warning") as print_warning, \
+             patch.object(instance, "complete_final") as complete_final:
+            instance._execute(step=step, tools={}, response=[step], index=0)
+
+        self.assertEqual(step["step_name"], "thought")
+        print_warning.assert_called_once_with(warning_text)
+        complete_final.assert_not_called()
+
+    def test_dedup_suppressed_final_still_converts_without_printing(self):
+        """A sustained malformed final remains rejected while its warning is deduped."""
+        from topsailai.ai_base.agent_types.react import Step4ReAct
+
+        instance = Step4ReAct()
+        step = {"step_name": "final_answer", "raw_text": "repeated malformed output"}
+        with patch.object(instance, "pre_execute", return_value=("final_answer", step)), \
+             patch("topsailai.ai_base.agent_types.react.thought_line_pattern.is_enabled", return_value=True), \
+             patch("topsailai.ai_base.agent_types.react.thought_line_pattern.evaluate_and_maybe_inject", return_value=True), \
+             patch("topsailai.ai_base.agent_types.react.print_tool.print_warning") as print_warning, \
+             patch.object(instance, "complete_final") as complete_final:
+            instance._execute(step=step, tools={}, response=[step], index=0)
+
+        self.assertEqual(step["step_name"], "thought")
+        print_warning.assert_not_called()
+        complete_final.assert_not_called()
+
+    def test_disabled_final_pattern_uses_normal_termination(self):
+        """A disabled detector terminates normally without printing a warning."""
+        from topsailai.ai_base.agent_types.react import Step4ReAct
+
+        instance = Step4ReAct()
+        step = {"step_name": "final_answer", "raw_text": "Done"}
+        with patch.object(instance, "pre_execute", return_value=("final_answer", step)), \
+             patch("topsailai.ai_base.agent_types.react.thought_line_pattern.is_enabled", return_value=False), \
+             patch("topsailai.ai_base.agent_types.react.thought_line_pattern.evaluate_and_maybe_inject") as evaluate_pattern, \
+             patch("topsailai.ai_base.agent_types.react.print_tool.print_warning") as print_warning, \
+             patch.object(instance, "complete_final") as complete_final:
+            instance._execute(step=step, tools={}, response=[step], index=0)
+
+        self.assertEqual(step["step_name"], "final_answer")
+        evaluate_pattern.assert_not_called()
+        print_warning.assert_not_called()
+        complete_final.assert_called_once_with(step=step)
+
+    def test_non_matching_final_uses_normal_termination(self):
+        """An enabled detector miss terminates normally without printing a warning."""
+        from topsailai.ai_base.agent_types.react import Step4ReAct
+
+        instance = Step4ReAct()
+        step = {"step_name": "final_answer", "raw_text": "Done"}
+        with patch.object(instance, "pre_execute", return_value=("final_answer", step)), \
+             patch("topsailai.ai_base.agent_types.react.thought_line_pattern.is_enabled", return_value=True), \
+             patch("topsailai.ai_base.agent_types.react.thought_line_pattern.evaluate_and_maybe_inject", return_value=False), \
+             patch("topsailai.ai_base.agent_types.react.print_tool.print_warning") as print_warning, \
+             patch.object(instance, "complete_final") as complete_final:
+            instance._execute(step=step, tools={}, response=[step], index=0)
+
+        self.assertEqual(step["step_name"], "final_answer")
+        print_warning.assert_not_called()
+        complete_final.assert_called_once_with(step=step)
 
 
 class TestReActExports(unittest.TestCase):
