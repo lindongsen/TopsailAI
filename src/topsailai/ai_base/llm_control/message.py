@@ -163,11 +163,11 @@ def fix_llm_mistakes(response:list, rsp_obj=None):
         item = response[0]
         if len(item) == 2:
             if 'tool_call' in item and 'tool_args' in item:
-                print_error(f"{LLM_KEYWORD_MISTAKE}: missing step_name")
+                print_warning(f"{LLM_KEYWORD_MISTAKE}: missing step_name")
                 item["step_name"] = "action"
         elif len(item) == 1:
             if 'tool_call' in item:
-                print_error(f"{LLM_KEYWORD_MISTAKE}: missing step_name")
+                print_warning(f"{LLM_KEYWORD_MISTAKE}: missing step_name")
                 item["step_name"] = "action"
 
     # case: tool_calls in rsp_obj
@@ -282,7 +282,7 @@ def update_response_item(item:dict) -> dict:
                     else:
                         item_generic = _item
             if item_tool_call:
-                print_error(f"{LLM_KEYWORD_MISTAKE}: TOPSAILAI_HOOK_AFTER_LLM_CHAT, action content format is unexpected, current=[{item}], target=[{item_tool_call}]")
+                print_warning(f"{LLM_KEYWORD_MISTAKE}: TOPSAILAI_HOOK_AFTER_LLM_CHAT, action content format is unexpected, current=[{item}], target=[{item_tool_call}]")
                 # {'step_name': 'action', 'tool_call': ..., 'tool_args': ...}
                 item.update(item_tool_call)
             elif item_generic:
@@ -334,7 +334,7 @@ def maybe_convert_thought_to_final(item: dict, messages=None) -> bool:
     if not converted:
         return False
 
-    print_error(f"{LLM_KEYWORD_MISTAKE}: maybe final answer due to {reason}")
+    print_warning(f"{LLM_KEYWORD_MISTAKE}: maybe final answer due to {reason}")
     item["step_name"] = "final_answer"
     return True
 
@@ -548,7 +548,7 @@ def format_response(response, rsp_obj=None, messages=None):
     # hook after chat
     new_response = hook_execute("TOPSAILAI_HOOK_AFTER_LLM_CHAT", response)
     if new_response and new_response != response:
-        print_error(f"{LLM_KEYWORD_MISTAKE}: TOPSAILAI_HOOK_AFTER_LLM_CHAT")
+        print_warning(f"{LLM_KEYWORD_MISTAKE}: TOPSAILAI_HOOK_AFTER_LLM_CHAT")
         response = new_response
         if not isinstance(response, str):
             return response
@@ -577,7 +577,7 @@ def format_response(response, rsp_obj=None, messages=None):
                     # only convert to final answer when explicitly enabled and the response spans multiple lines
                     converted, reason = should_convert_thought_to_final(response, messages)
                     if converted:
-                        print_error(f"{LLM_KEYWORD_MISTAKE}: change step to final answer due to {reason}")
+                        print_warning(f"{LLM_KEYWORD_MISTAKE}: change step to final answer due to {reason}")
                         step_name = format_tool.TOPSAILAI_STEP_FINAL
                     else:
                         no_tool_call_prompt = env_tool.EnvReaderInstance.get("TOPSAILAI_PROMPT_WHEN_NO_TOOL_CALL")
