@@ -21,6 +21,7 @@ from topsailai.utils.print_tool import (
     print_debug,
     print_error,
     print_critical,
+    print_warning,
 )
 from topsailai.ai_base.constants import (
     LLM_KEYWORD_MISTAKE,
@@ -449,7 +450,7 @@ class LLMModelBase(object):
 
         ccm = self.get_response_message(rsp_obj)
         if ccm.tool_calls:
-            print_error(f"{LLM_KEYWORD_MISTAKE}: missing action")
+            print_warning(f"{LLM_KEYWORD_MISTAKE}: missing action")
             return format_tool.TOPSAILAI_STEP_ACTION
         return rsp_content
 

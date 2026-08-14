@@ -10,6 +10,7 @@ import simplejson
 from topsailai.logger.log_chat import logger
 from topsailai.utils.print_tool import (
     print_error,
+    print_warning,
 )
 from topsailai.ai_base.constants import (
     LLM_KEYWORD_MISTAKE,
@@ -185,7 +186,7 @@ def fix_llm_mistakes(response:list, rsp_obj=None):
             if "step_name" in item0 \
                 and item0["step_name"] != "action" \
                 and rsp_msg.tool_calls:
-                    print_error(f"{LLM_KEYWORD_MISTAKE}: missing step_name=action")
+                    print_warning(f"{LLM_KEYWORD_MISTAKE}: missing step_name=action")
                     response.append(
                         {"step_name": "action"}
                     )
@@ -569,7 +570,7 @@ def format_response(response, rsp_obj=None, messages=None):
                     print_error(_msg)
                     response += "\n---\n" + _msg
 
-            print_error(f"{LLM_KEYWORD_MISTAKE}: maybe only thought")
+            print_warning(f"{LLM_KEYWORD_MISTAKE}: maybe only thought")
             step_name = format_tool.TOPSAILAI_STEP_THINK
 
             try:
