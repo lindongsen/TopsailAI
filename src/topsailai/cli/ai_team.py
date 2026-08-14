@@ -23,6 +23,19 @@ import _import_topsailai
 
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
 
+# enable required team tools while preserving any pre-existing enabled-tools config
+_enabled_base = ["story_memory_tool", "ai_team", "skill_tool", "human_tool"]
+_existing_enabled_parts = []
+for _env_name in ("TOPSAILAI_ENABLED_TOOLS", "ENABLED_TOOLS"):
+    _val = os.environ.get(_env_name)
+    if _val:
+        _val = _val.replace(';', ',')
+        _existing_enabled_parts.extend(
+            part.strip() for part in _val.split(",") if part.strip()
+        )
+os.environ["TOPSAILAI_ENABLED_TOOLS"] = ",".join(
+    list(set([*_enabled_base, *_existing_enabled_parts]))
+)
 from topsailai.ai_team.manager import (
     get_members_cache,
     build_manager_message,
