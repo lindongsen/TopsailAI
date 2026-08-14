@@ -23,13 +23,16 @@ class TestThresholdContextHistory(unittest.TestCase):
         # Store original values for restoration
         self.original_env = {}
         for var in ["CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS", "CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH",
-                    "CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS"]:
+                    "CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS", "USE_TOOL_CALLS",
+                    "TOPSAILAI_USE_TOOL_CALLS"]:
             self.original_env[var] = os.environ.get(var)
         
         # EXPLICITLY SET to defaults to override .env pollution
         os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS"] = "128000"
         os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH"] = "43"
         os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS"] = "27000"
+        os.environ["USE_TOOL_CALLS"] = "0"
+        os.environ["TOPSAILAI_USE_TOOL_CALLS"] = "0"
 
     def tearDown(self):
         """Restore original environment variables after each test."""
