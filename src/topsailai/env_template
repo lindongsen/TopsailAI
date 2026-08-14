@@ -94,6 +94,8 @@ OPENAI_API_KEY=""
 # OpenAI API Base URL
 # Base URL for OpenAI-compatible API services
 OPENAI_API_BASE="https://openapi.coreshub.cn/v1"
+# Runtime note: selecting a registry model with /agent.models synchronizes
+# OPENAI_MODEL, OPENAI_BASE_URL, OPENAI_API_BASE, and referenced OPENAI_* credentials.
 
 # First byte timeout for streaming LLM responses in seconds.
 # If the first chunk takes longer than this threshold, a warning is logged.

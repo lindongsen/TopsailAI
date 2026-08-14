@@ -60,9 +60,12 @@ These variables define the agent's working environment and project access scope.
 ## OpenAI Configuration
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENAI_MODEL` | `"Kimi-K2.5"` | Default model used for LLM interactions. |
-| `OPENAI_API_KEY` | `""` | API key for OpenAI-compatible API endpoints. |
-| `OPENAI_API_BASE` | `"https://openapi.coreshub.cn/v1"` | Base URL for OpenAI-compatible API services. |
+| `OPENAI_MODEL` | `"Kimi-K2.5"` | Default model used for LLM interactions; `/agent.models` updates it to the selected registry model. |
+| `OPENAI_API_KEY` | `""` | API key for OpenAI-compatible API endpoints; `/agent.models` updates it from the selected model's `api_key_env` when configured and set. |
+| `OPENAI_BASE_URL` | (unset) | OpenAI-compatible endpoint alias; `/agent.models` sets it together with `OPENAI_API_BASE` from the selected model endpoint. |
+| `OPENAI_API_BASE` | `"https://openapi.coreshub.cn/v1"` | Base URL for OpenAI-compatible API services; `/agent.models` updates it to the selected model endpoint. |
+| `OPENAI_ORG_ID` | (unset) | OpenAI organization identifier; `/agent.models` updates it from the selected model's `organization_env` when configured and set. |
+| `OPENAI_PROJECT_ID` | (unset) | OpenAI project identifier; `/agent.models` updates it from the selected model's `project_env` when configured and set. |
 
 ## Multi-Model Configuration
 

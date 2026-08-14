@@ -56,11 +56,11 @@ def _load_models_registry() -> dict:
 
 def _apply_model_config(agent, config: dict) -> str:
     """
-    Apply a model configuration to the active agent's LLM model.
+    Apply a model configuration to the active agent and process environment.
 
     Args:
         agent: The current agent instance.
-        config (dict): Model configuration containing model_name, api_base, api_key, etc.
+        config (dict): Model configuration containing model, endpoint, credentials, and environment.
 
     Returns:
         str: Human-readable summary of the applied changes.
@@ -72,7 +72,9 @@ def _apply_model_config(agent, config: dict) -> str:
 
     new_model_name = config.get("model_name") or config.get("model") or config.get("name") or old_model_name
     new_api_base = config.get("api_base") or config.get("base_url") or old_api_base
-    new_api_key = config.get("api_key") or old_api_key
+    api_key_env = config.get("api_key_env")
+    configured_api_key = os.getenv(api_key_env) if api_key_env else config.get("api_key")
+    new_api_key = configured_api_key if configured_api_key is not None else old_api_key
 
     llm_model.model_name = new_model_name
 
@@ -87,13 +89,28 @@ def _apply_model_config(agent, config: dict) -> str:
         llm_model.model_config = {"api_key": new_api_key, "api_base": new_api_base}
         llm_model.models = []
 
-    # Apply environment variable values recorded in the model configuration.
-    # The 'environment' field is a dict mapping env-var-name -> value.
     environment = config.get("environment")
     if isinstance(environment, dict):
         for env_name, env_value in environment.items():
             os.environ[env_name] = str(env_value)
             print_info(f"Set environment variable: {env_name}={env_value}")
+
+    # Keep process-level OpenAI-compatible settings aligned with the selected
+    # model so later clients and model-dependent hooks observe the same provider.
+    os.environ["OPENAI_MODEL"] = str(new_model_name)
+    if new_api_base:
+        os.environ["OPENAI_BASE_URL"] = str(new_api_base)
+        os.environ["OPENAI_API_BASE"] = str(new_api_base)
+    if new_api_key:
+        os.environ["OPENAI_API_KEY"] = str(new_api_key)
+
+    credential_mappings = (
+        (config.get("organization_env"), "OPENAI_ORG_ID"),
+        (config.get("project_env"), "OPENAI_PROJECT_ID"),
+    )
+    for source_name, target_name in credential_mappings:
+        if source_name and os.getenv(source_name) is not None:
+            os.environ[target_name] = os.environ[source_name]
 
     result = (
         f"model_name: {old_model_name} -> {new_model_name}, "

@@ -533,6 +533,50 @@ class TestSelectModel(unittest.TestCase):
 
     @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
     @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
+    def test_select_model_synchronizes_openai_environment(self, mock_load_registry, mock_get_agent):
+        """Test /models synchronizes canonical OpenAI-compatible environment variables."""
+        mock_agent = MagicMock()
+        mock_agent.llm_model.model_name = "OldModel"
+        mock_agent.llm_model.model_config = {"api_key": "", "api_base": ""}
+        mock_agent.llm_model.get_llm_model.return_value = "new_client"
+        mock_get_agent.return_value = mock_agent
+        mock_load_registry.return_value = {
+            "ModelA": {
+                "name": "ModelA",
+                "model": "provider-model-a",
+                "base_url": "https://a.example.com/v1",
+                "api_key_env": "MODEL_A_API_KEY",
+                "organization_env": "MODEL_A_ORG",
+                "project_env": "MODEL_A_PROJECT",
+                "environment": {"OPENAI_MODEL": "stale-model"},
+            },
+        }
+
+        selected_keys = {
+            "MODEL_A_API_KEY": "key_a",
+            "MODEL_A_ORG": "org_a",
+            "MODEL_A_PROJECT": "project_a",
+        }
+        with patch.dict(os.environ, selected_keys, clear=False):
+            from topsailai.workspace.plugin_instruction.agent import select_model
+            result = select_model("ModelA")
+
+            self.assertEqual(os.environ["OPENAI_MODEL"], "provider-model-a")
+            self.assertEqual(os.environ["OPENAI_BASE_URL"], "https://a.example.com/v1")
+            self.assertEqual(os.environ["OPENAI_API_BASE"], "https://a.example.com/v1")
+            self.assertEqual(os.environ["OPENAI_API_KEY"], "key_a")
+            self.assertEqual(os.environ["OPENAI_ORG_ID"], "org_a")
+            self.assertEqual(os.environ["OPENAI_PROJECT_ID"], "project_a")
+
+        mock_agent.llm_model.get_llm_model.assert_called_once_with(
+            api_key="key_a",
+            api_base="https://a.example.com/v1",
+        )
+        self.assertIn("provider-model-a", result)
+
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    @patch("topsailai.workspace.plugin_instruction.agent._load_models_registry")
     def test_select_model_no_environment(self, mock_load_registry, mock_get_agent):
         """Test /models without environment field does not set env vars"""
         mock_agent = MagicMock()
