@@ -1,1 +1,52 @@
-topsailai.cli
+#!/bin/bash
+# Author: DawsonLin
+# Email: lin_dongsen@126.com
+# Created: 2025-10-19
+# Purpose:
+
+[ -n "${TOPSAILAI_PWD}" ] || export TOPSAILAI_PWD=${PWD}
+
+BASE_NAME=topsailai_cli
+
+# Environments
+
+# agent
+#if [[ "${BASE_NAME}" =~ ^topsailai_agent* ]]; then
+#  [ "${TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS}" == "" ] && \
+#    export TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS=1
+#fi
+
+CWD=$(dirname "$(readlink -f $0)")
+cd "${CWD}/../"
+
+function error_quit() {
+    echo "ERROR: $*"
+    echo ""
+    exit 1
+}
+
+run_cli() {
+  local target="cli/$1"
+  shift
+  if [ -x "${target}" ]; then
+    exec "${target}" "$@"
+  else
+    cmd0="uv run"
+    [ "${UV_NO_DEV}" == "1" ] && cmd0="python"
+    exec ${cmd0} "${target}.py" "$@"
+  fi
+}
+
+get_args_id() {
+  for i in $(seq $1 $2); do
+    echo -n " \"\${${i}}\""
+  done
+}
+
+[ -n "${TOPSAILAI_AGENT_TYPE}" ] || TOPSAILAI_AGENT_TYPE=react
+
+eval "
+  CHAT_MULTI_LINE=1
+  TOPSAILAI_AGENT_TYPE=${TOPSAILAI_AGENT_TYPE}
+  run_cli ${BASE_NAME} $(get_args_id 1 $#)
+"
