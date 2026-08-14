@@ -1416,16 +1416,18 @@ def _handle_stream_command(
             input_provider=input_provider,
         )
         return
-
     if cmd == "/ctx.btw":
-        _handle_stream_ctx_btw(cmd_line, task_dir, input_provider=input_provider)
+        _handle_stream_ctx_btw(
+            cmd_line,
+            task_dir,
+            default_pid=default_pid,
+            input_provider=input_provider,
+        )
         return
-
     if cmd == "/help":
         keyword = parts[1].strip() if len(parts) > 1 else None
         help_text.print_help(state.yaml_commands, state.current_scope, keyword=keyword)
         return
-
     # Delegate any other slash command to the YAML command engine so that
     # scope-aware instructions such as /git.status work in runtime scope.
     matched = yaml_commands.match_yaml_command(cmd_line, task_dir)
@@ -1530,6 +1532,7 @@ def _read_multiline_input_for_ctx_btw() -> Optional[str]:
 def _handle_stream_ctx_btw(
     cmd_line: str,
     task_dir: str,
+    default_pid: Optional[int] = None,
     input_provider: Optional[Callable[[str], Optional[str]]] = None,
 ) -> None:
     """
@@ -1569,6 +1572,12 @@ def _handle_stream_ctx_btw(
             return
         variables = dict(variables)
         variables["message"] = message
+
+    # In runtime scope deliver only to the watched session PID so the agent2llm
+    # message never broadcasts across other PIDs sharing the same session id.
+    if default_pid is not None:
+        variables = dict(variables)
+        variables["pid"] = str(default_pid)
 
     yaml_commands.handle_yaml_command(instruction, variables)
 

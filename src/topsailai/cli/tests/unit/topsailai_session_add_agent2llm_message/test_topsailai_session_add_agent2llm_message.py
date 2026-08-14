@@ -148,6 +148,37 @@ class TestDiscoverJsonlFiles:
         assert len(result) == 1
         assert result[0].endswith("abc.123.session.agent2llm_inject_messages.jsonl")
 
+    def test_single_pid_narrowing_when_multiple_share_session(self, tmp_path):
+        """With a real pid only that PID's JSONL target is returned."""
+        (tmp_path / "abc.123.session.stdout").write_text("")
+        (tmp_path / "abc.456.step-1.task.stdout").write_text("")
+
+        result = discover_jsonl_files(
+            str(tmp_path),
+            session_id="abc",
+            pid="123",
+            jsonl_suffix=JSONL_SUFFIX,
+        )
+        assert len(result) == 1
+        assert result[0].endswith("abc.123.session.agent2llm_inject_messages.jsonl")
+
+
+class TestGetParams:
+    def test_empty_strings_coerced_to_none(self, monkeypatch):
+        """Blank placeholder values must behave like unset for scanning."""
+        import topsailai_session_add_agent2llm_message as cli_module
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["script", "-s", "", "-p", "", "-m", "hello"],
+        )
+        params = cli_module.get_params()
+        assert params["session_id"] is None
+        assert params["pid"] is None
+        assert params["message"] == "hello"
+
+
 class TestWriteMessage:
     def test_appends_simple_message(self, tmp_path):
         jsonl = tmp_path / "messages.jsonl"

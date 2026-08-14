@@ -516,6 +516,12 @@ def handle_yaml_command(
             "'{session_id}'", shlex.quote(state.current_session_id or "")
         )
         shell_cmd = shell_cmd.replace("'{message}'", shlex.quote(message))
+        # Substitute an optional {pid} placeholder used by runtime scope so the
+        # agent2llm message targets exactly one watched process.
+        if "{pid}" in shell_cmd:
+            shell_cmd = shell_cmd.replace(
+                "'{pid}'", shlex.quote(variables.get("pid", ""))
+            )
         try:
             cmd_list = shlex.split(shell_cmd)
             cmd_env = build_command_env(instruction, variables)

@@ -155,9 +155,17 @@ def get_params() -> dict:
     )
 
     args = parser.parse_args()
+
+    # Treat an explicitly empty value as unset so session-scope usage that
+    # passes a blank placeholder keeps scanning/discovering as before.
+    def _clean(value: Optional[str]) -> Optional[str]:
+        if value is not None and value.strip() == "":
+            return None
+        return value
+
     return {
-        "session_id": args.session_id,
-        "pid": args.pid,
+        "session_id": _clean(args.session_id),
+        "pid": _clean(args.pid),
         "message": args.message,
         "file_path": args.file_path,
     }

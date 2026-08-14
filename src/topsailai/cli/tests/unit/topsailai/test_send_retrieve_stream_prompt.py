@@ -420,6 +420,55 @@ class TestStreamingCtxBtw(unittest.TestCase):
         joined = " ".join(cmd_list)
         self.assertIn("remember to check logs", joined)
 
+    @patch("cli_topsailai.process.run_external_command")
+    def test_handle_stream_ctx_btw_forwards_watched_pid(self, mock_run):
+        """Runtime /ctx.btw must pass the watched PID so delivery is single-PID."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [
+            {
+                "cmd": "/ctx.btw",
+                "scopes": ["session", "runtime"],
+                "shell": (
+                    "topsailai_session_add_agent2llm_message "
+                    "-s '{session_id}' -m '{message}' -p '{pid}'"
+                ),
+            }
+        ]
+        _handle_stream_ctx_btw(
+            "/ctx.btw remember to check logs",
+            "/tmp/task",
+            default_pid=424242,
+        )
+
+        mock_run.assert_called_once()
+        cmd_list = mock_run.call_args[0][0]
+        joined = " ".join(cmd_list)
+        self.assertIn("-p 424242", joined)
+
+    @patch("cli_topsailai.process.run_external_command")
+    def test_handle_stream_ctx_btw_without_pid_leaves_no_flag(self, mock_run):
+        """Without a watched PID no -p flag should be emitted (session scope)."""
+        cli_state.current_scope = "runtime"
+        cli_state.current_session_id = "s1"
+        cli_state.yaml_commands = [
+            {
+                "cmd": "/ctx.btw",
+                "scopes": ["session", "runtime"],
+                "shell": (
+                    "topsailai_session_add_agent2llm_message "
+                    "-s '{session_id}' -m '{message}' -p '{pid}'"
+                ),
+            }
+        ]
+        _handle_stream_ctx_btw("/ctx.btw hello world!", "/tmp/task")
+
+        mock_run.assert_called_once()
+        cmd_list = mock_run.call_args[0][0]
+        joined = " ".join(cmd_list)
+        # The {pid} placeholder resolves to an empty value; the shell template
+        # still contains '-p' but with nothing after it.
+        self.assertNotRegex(joined, r"-p\s+\d+")
 
 if __name__ == "__main__":
     unittest.main()
