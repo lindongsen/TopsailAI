@@ -2,6 +2,7 @@ import os
 import unittest
 from unittest.mock import patch, MagicMock
 from topsailai.utils import print_tool
+from topsailai.utils.ansi_color import Colors
 
 
 class TestPrintTool(unittest.TestCase):
@@ -173,7 +174,8 @@ class TestPrintTool(unittest.TestCase):
         print_tool.print_debug('test message')
 
         # Verify print_with_time was called
-        mock_print_with_time.assert_called_once_with('[DEBUG] test message', need_format=False)
+        mock_print_with_time.assert_called_once_with('[DEBUG] test message', need_format=False,
+                                                        color_kind='debug', color_enabled=None)
 
         # Verify get_thread_var was called
         mock_get_thread_var.assert_called_once_with('flag_debug')
@@ -195,7 +197,8 @@ class TestPrintTool(unittest.TestCase):
         print_tool.print_debug('test message')
 
         # Verify print_with_time was called
-        mock_print_with_time.assert_called_once_with('[DEBUG] test message', need_format=False)
+        mock_print_with_time.assert_called_once_with('[DEBUG] test message', need_format=False,
+                                                        color_kind='debug', color_enabled=None)
 
         # Verify get_thread_var was called
         mock_get_thread_var.assert_called_once_with('flag_debug')
@@ -254,7 +257,8 @@ class TestPrintTool(unittest.TestCase):
         print_tool.print_error('error message')
 
         # Verify print_with_time was called with error prefix
-        mock_print_with_time.assert_called_once_with('Error: error message', need_format=False)
+        mock_print_with_time.assert_called_once_with('Error: error message', need_format=False,
+                                                       color_kind='error', color_enabled=None)
 
     @patch('topsailai.utils.print_tool.print_with_time')
     def test_print_warning(self, mock_print_with_time):
@@ -262,7 +266,8 @@ class TestPrintTool(unittest.TestCase):
         print_tool.print_warning('warning message')
 
         # Verify print_with_time was called with warning prefix
-        mock_print_with_time.assert_called_once_with('Warning: warning message', need_format=False)
+        mock_print_with_time.assert_called_once_with('Warning: warning message', need_format=False,
+                                                         color_kind='warning', color_enabled=None)
 
 
     @patch('topsailai.utils.print_tool.print_with_time')
@@ -271,7 +276,8 @@ class TestPrintTool(unittest.TestCase):
         print_tool.print_critical('critical message')
 
         # Verify print_with_time was called with critical prefix
-        mock_print_with_time.assert_called_once_with('Critical: critical message', need_format=False)
+        mock_print_with_time.assert_called_once_with('Critical: critical message', need_format=False,
+                                                          color_kind='critical', color_enabled=None)
 
     def test_format_dict_to_md(self):
         """Test format_dict_to_md function."""
@@ -401,4 +407,140 @@ class TestPrintTool(unittest.TestCase):
         mock_print.assert_called_once_with('[TestAgent] [TestModel] [2026-01-01 00:00:00] test message')
 
 if __name__ == '__main__':
+    unittest.main()
+
+
+class TestPrintToolColor(unittest.TestCase):
+    """Test cases for ANSI color support added to print_tool."""
+
+    def setUp(self):
+        self._saved_env = {}
+        for k in ("TOPSAILAI_PRINT_COLOR_ENABLED", "NO_COLOR"):
+            self._saved_env[k] = os.environ.get(k)
+            if k in os.environ:
+                del os.environ[k]
+
+    def tearDown(self):
+        for k, v in self._saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    @patch("sys.stdout")
+    def test_is_color_enabled_explicit_param_overrides_env(self, mock_stdout):
+        """Explicit parameter takes precedence over env var."""
+        os.environ["TOPSAILAI_PRINT_COLOR_ENABLED"] = "1"
+        mock_stdout.isatty.return_value = False
+        # Explicit False wins despite env=1
+        self.assertFalse(print_tool._is_color_enabled(color_enabled=False))
+        # Explicit True wins despite env unset & non-tty
+        os.environ.pop("TOPSAILAI_PRINT_COLOR_ENABLED", None)
+        self.assertTrue(print_tool._is_color_enabled(color_enabled=True))
+
+    @patch("sys.stdout")
+    def test_is_color_enabled_env_var_true_values(self, mock_stdout):
+        """Env var truthy values enable color regardless of tty."""
+        mock_stdout.isatty.return_value = False
+        for val in ("1", "true", "yes", "on"):
+            os.environ["TOPSAILAI_PRINT_COLOR_ENABLED"] = val
+            self.assertTrue(print_tool._is_color_enabled(), msg=f"val={val!r}")
+
+    @patch("sys.stdout")
+    def test_is_color_enabled_no_color_disables_even_on_tty(self, mock_stdout):
+        """NO_COLOR disables color even when stdout is a tty."""
+        mock_stdout.isatty.return_value = True
+        os.environ["NO_COLOR"] = "1"
+        self.assertFalse(print_tool._is_color_enabled())
+
+    @patch("sys.stdout")
+    def test_is_color_enabled_falls_back_to_tty(self, mock_stdout):
+        """With no env vars set, falls back to sys.stdout.isatty()."""
+        mock_stdout.isatty.return_value = True
+        self.assertTrue(print_tool._is_color_enabled())
+        mock_stdout.isatty.return_value = False
+        self.assertFalse(print_tool._is_color_enabled())
+
+    @patch("builtins.print")
+    @patch("topsailai.utils.print_tool.datetime")
+    @patch("topsailai.utils.print_tool.thread_local_tool.get_thread_var")
+    @patch("topsailai.utils.env_tool.is_interactive_mode")
+    def test_level_methods_emit_ansi_when_enabled(self, mock_int, mock_gv, mock_dt, mock_print):
+        """Each level method emits its mapped ANSI code when color enabled."""
+        mock_int.return_value = True
+        mock_gv.return_value = None
+        mock_dt.now.return_value.strftime.return_value = "2026-01-01 00:00:00"
+
+        cases = [
+            (lambda: print_tool.print_info("m", color_enabled=True), Colors.CYAN),
+            (lambda: print_tool.print_debug("m", color_enabled=True), [Colors.GRAY, Colors.DIM]),
+            (lambda: print_tool.print_warning("m", color_enabled=True), Colors.YELLOW),
+            (lambda: print_tool.print_error("m", color_enabled=True), Colors.RED),
+            (lambda: print_tool.print_critical("m", color_enabled=True), Colors.BOLD + Colors.RED),
+        ]
+        for fn, expected_codes in cases:
+            mock_print.reset_mock()
+            fn()
+            out = mock_print.call_args[0][0]
+            if isinstance(expected_codes, str):
+                expected_codes = [expected_codes]
+            for code in expected_codes:
+                self.assertIn(code, out, f"missing ansi {code!r} in {out!r}")
+            self.assertIn(Colors.RESET, out)
+
+    @patch("builtins.print")
+    @patch("topsailai.utils.print_tool.datetime")
+    @patch("topsailai.utils.print_tool.thread_local_tool.get_thread_var")
+    @patch("topsailai.utils.env_tool.is_interactive_mode")
+    def test_level_methods_no_escape_when_disabled(self, mock_int, mock_gv, mock_dt, mock_print):
+        """No ANSI codes emitted when color explicitly disabled."""
+        mock_int.return_value = True
+        mock_gv.return_value = None
+        mock_dt.now.return_value.strftime.return_value = "2026-01-01 00:00:00"
+
+        print_tool.print_error("boom", color_enabled=False)
+        out = mock_print.call_args[0][0]
+        self.assertEqual(out, "[2026-01-01 00:00:00] Error: boom")
+        self.assertNotIn("\033[", out)
+
+    @patch("builtins.print")
+    @patch("topsailai.utils.print_tool.datetime")
+    @patch("topsailai.utils.print_tool.thread_local_tool.get_thread_var")
+    @patch("topsailai.utils.env_tool.is_interactive_mode")
+    def test_error_prefix_colored_with_body(self, mock_int, mock_gv, mock_dt, mock_print):
+        """Error:/Warning:/Critical: prefix is colored together with body."""
+        mock_int.return_value = True
+        mock_gv.return_value = None
+        mock_dt.now.return_value.strftime.return_value = "2026-01-01 00:00:00"
+
+        print_tool.print_error("boom", color_enabled=True)
+        out = mock_print.call_args[0][0]
+        # The whole line (prefix included) sits between RED start and RESET end
+        self.assertIn(f"{Colors.RED}[2026-01-01 00:00:00] Error: boom{Colors.RESET}", out)
+
+    @patch("builtins.print")
+    @patch("topsailai.utils.print_tool.datetime")
+    @patch("topsailai.utils.print_tool.thread_local_tool.get_thread_var")
+    @patch("topsailai.utils.env_tool.is_interactive_mode")
+    def test_truncated_reset_not_lost_and_plain_first(self, mock_int, mock_gv, mock_dt, mock_print):
+        """Truncation happens on plain text BEFORE wrapping; RESET survives."""
+        mock_int.return_value = True
+        mock_gv.return_value = None
+        mock_dt.now.return_value.strftime.return_value = "2026-01-01 00:00:00"
+        os.environ["DEBUG_PRINT_TRUNCATE_LENGTH"] = "10"
+
+        long_msg = {"step_name": "test", "raw_text": "x" * 500}
+        print_tool.print_info(long_msg, color_enabled=True)
+        out = mock_print.call_args[0][0]
+
+        # ANSI wrap must be outermost: starts with style, ends with RESET
+        self.assertTrue(out.startswith(Colors.CYAN), out[:20])
+        self.assertTrue(out.endswith(Colors.RESET), out[-20:])
+        # Truncation marker present inside the colored region => plain-text truncated first
+        self.assertIn("[Display truncated:", out)
+        # No stray raw escape sequences counted into the visible tail preview
+        self.assertIn("chars total", out)
+
+
+if __name__ == "__main__":
     unittest.main()
