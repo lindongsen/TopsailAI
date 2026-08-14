@@ -28,7 +28,7 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int, content: 
 
     Args:
         file_path (str): Path to the file to modify
-        start_num (int): The 1-based starting line number to begin replacement
+        start_num (int): The 1-based starting line number to begin replacement -> **include this line to replace**
         end_num (int): The 1-based ending line number (inclusive) to end replacement.
                        Pass 0 to replace from start_num to the end of the file.
         content (str): The new content to insert in place of the replaced lines.
