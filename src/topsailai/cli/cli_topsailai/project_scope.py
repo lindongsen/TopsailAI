@@ -564,6 +564,17 @@ def _tmux_supports_environment_option(tmux_path: str) -> bool:
     return (major, minor) >= (3, 2)
 
 
+def _tmux_safe_env_value(value: str) -> str:
+    """Escape ``;`` in a value passed to ``tmux new-session -e KEY=value``.
+
+    Tmux re-parses the environment VALUE as a command list separated by
+    semicolons, so an unescaped ``;`` makes tmux treat the following token
+    (for example ``-s`` or ``-e``) as a fresh standalone command.  Escape it
+    with a backslash so tmux keeps the literal character.
+    """
+    return value.replace(";", r"\;")
+
+
 def _wrap_command_for_agent_mode(
     command: str,
     mode: str,
@@ -612,7 +623,7 @@ def _wrap_command_for_agent_mode(
             if os.environ.get(key) is not None
         }
         env_args = " ".join(
-            f"-e {shlex.quote(f'{key}={value}')}"
+            f"-e {shlex.quote(_tmux_safe_env_value(f'{key}={value}'))}"
             for key, value in env_vars.items()
         )
         env_part = f" {env_args}" if env_args else ""
