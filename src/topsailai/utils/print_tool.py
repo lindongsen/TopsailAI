@@ -6,6 +6,8 @@ from topsailai.logger.log_chat import logger
 from topsailai.utils import thread_local_tool
 
 from topsailai.utils import env_tool
+from topsailai.utils.ansi_color import Colors, colored
+
 
 g_flag_print_step = None
 TAIL_PREVIEW_LENGTH = 300
@@ -24,6 +26,60 @@ def get_truncation_len() -> int|None:
     except Exception:
         pass
     return None
+
+
+def _is_color_enabled(color_enabled=None) -> bool:
+    """Resolve whether ANSI color should be emitted.
+
+    Priority chain: explicit parameter > TOPSAILAI_PRINT_COLOR_ENABLED > NO_COLOR > TTY.
+
+    Args:
+        color_enabled: Explicit override. ``None`` means auto-detect from env/TTY.
+
+    Returns:
+        True if colors should be applied, False otherwise.
+    """
+    if color_enabled is not None:
+        return bool(color_enabled)
+    env_val = os.getenv("TOPSAILAI_PRINT_COLOR_ENABLED")
+    if env_val is not None:
+        return env_val.strip().lower() in ("1", "true", "yes", "on")
+    if os.getenv("NO_COLOR"):
+        return False
+    try:
+        import sys
+        return sys.stdout.isatty()
+    except Exception:
+        return False
+
+_STYLE_MAP = {
+    "info":     (Colors.CYAN, False, False),
+    "debug":    (Colors.GRAY, False, True),
+    "warning":  (Colors.YELLOW, False, False),
+    "error":    (Colors.RED, False, False),
+    "critical": (Colors.RED, True, False),   # bold
+}
+
+def _style(msg, kind: str, color_enabled=None) -> str:
+    """Colorize *msg* according to semantic *kind*, unless disabled.
+
+    Caller MUST ensure plain-text truncation is done BEFORE invoking
+    this function; ANSI codes are wrapped afterward so escape sequences
+    and RESET cannot be lost by truncation.
+
+    Args:
+        msg: Message content to style.
+        kind: One of the keys in ``_STYLE_MAP``.
+        color_enabled: See :func:`_is_color_enabled`.
+
+    Returns:
+        The styled string (or original when coloring is disabled).
+    """
+    text = str(msg)
+    if not _is_color_enabled(color_enabled):
+        return text
+    color, bold, dim = _STYLE_MAP[kind]
+    return colored(text, color=color, bold=bold, dim=dim)
 
 def _format_truncated_msg(msg, truncation_len:int|None=None) -> str:
     if truncation_len is None:
@@ -104,11 +160,19 @@ def disable_flag_print_step():
     global g_flag_print_step
     g_flag_print_step = False
 
-def print_with_time(msg, need_format=False):
+def print_with_time(msg, need_format=False, color_kind=None, color_enabled=None):
     """Print a message with a timestamp and optional agent/model name prefix.
 
     Args:
         msg: Message string to print
+        need_format: Whether to format structured messages for display.
+        color_kind: Optional semantic style key (``info``/``debug``/``warning``/
+            ``error``/``critical``). When set, the fully-built output line is
+            wrapped with ANSI colors *after* any truncation/formatting so that
+            escape sequences are never counted toward truncation length and the
+            RESET code cannot be lost by truncation.
+        color_enabled: Explicit override for color enablement. See
+            :func:`_is_color_enabled` for the resolution priority.
 
     The output format includes:
     - Current timestamp in YYYY-MM-DD HH:MM:SS format
@@ -150,6 +214,9 @@ def print_with_time(msg, need_format=False):
     if prefix_parts:
         content = " ".join(prefix_parts) + " " + content
 
+    if color_kind is not None:
+        content = _style(content, color_kind, color_enabled)
+
     print(content)
 
 def print_step(msg, need_format=True, need_log=False):
@@ -181,16 +248,25 @@ def print_step(msg, need_format=True, need_log=False):
         print_with_time(msg, need_format=need_format)
     return
 
-def print_info(msg):
-    """ Print a message to both logger and console """
-    logger.info(msg)
-    print_with_time(msg, need_format=False)
+def print_info(msg, color_enabled=None):
+    """ Print a message to both logger and console.
 
-def print_debug(msg):
+    Args:
+        msg: Message content to log and print.
+        color_enabled: Explicit override for color enablement (see
+            :func:`_is_color_enabled`). Defaults to auto-detection.
+    """
+    logger.info(msg)
+    print_with_time(msg, need_format=False, color_kind="info",
+                    color_enabled=color_enabled)
+
+def print_debug(msg, color_enabled=None):
     """Print a debug message with step printing enabled.
 
     Args:
         msg: Debug message to print.
+        color_enabled: Explicit override for color enablement (see
+            :func:`_is_color_enabled`). Defaults to auto-detection.
     """
     logger.debug(msg)
     # thread required, refer to tools/agent_tool.py:
@@ -200,9 +276,10 @@ def print_debug(msg):
     ) == 0:
         return
     if g_flag_print_step or env_tool.is_need_print():
-        print_with_time(f"[DEBUG] {msg}", need_format=False)
+        print_with_time(f"[DEBUG] {msg}", need_format=False,
+                        color_kind="debug", color_enabled=color_enabled)
 
-def print_error(msg, exception=False):
+def print_error(msg, exception=False, color_enabled=None):
     """Print an error message to both logger and console.
 
     This function logs the error using the application's logger
@@ -210,15 +287,19 @@ def print_error(msg, exception=False):
 
     Args:
         msg: Error message to log and print
+        exception: Whether to treat *msg* as an exception for logging.
+        color_enabled: Explicit override for color enablement (see
+            :func:`_is_color_enabled`). Defaults to auto-detection.
     """
     if isinstance(msg, Exception) or exception:
         logger.exception(msg)
     else:
         logger.error(msg)
-    print_with_time(f"Error: {msg}", need_format=False)
+    print_with_time(f"Error: {msg}", need_format=False,
+                    color_kind="error", color_enabled=color_enabled)
     return
 
-def print_warning(msg):
+def print_warning(msg, color_enabled=None):
     """Print a warning message to both logger and console.
 
     This function logs the warning using the application's logger
@@ -226,12 +307,15 @@ def print_warning(msg):
 
     Args:
         msg: Warning message to log and print
+        color_enabled: Explicit override for color enablement (see
+            :func:`_is_color_enabled`). Defaults to auto-detection.
     """
     logger.warning(msg)
-    print_with_time(f"Warning: {msg}", need_format=False)
+    print_with_time(f"Warning: {msg}", need_format=False,
+                    color_kind="warning", color_enabled=color_enabled)
     return
 
-def print_critical(msg):
+def print_critical(msg, color_enabled=None):
     """Print a critical message to both logger and console.
 
     This function logs the critical message using the application's logger
@@ -239,9 +323,12 @@ def print_critical(msg):
 
     Args:
         msg: Critical message to log and print
+        color_enabled: Explicit override for color enablement (see
+            :func:`_is_color_enabled`). Defaults to auto-detection.
     """
     logger.critical(msg)
-    print_with_time(f"Critical: {msg}", need_format=False)
+    print_with_time(f"Critical: {msg}", need_format=False,
+                    color_kind="critical", color_enabled=color_enabled)
     return
 
 def format_dict_to_md(d:dict) -> str:

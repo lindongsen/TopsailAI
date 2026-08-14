@@ -230,6 +230,10 @@ TOPSAILAI_PROJECT_HISTORY_MAX_BACKUP=1
 # Print tool prompt content
 TOPSAILAI_PRINT_TOOL_PROMPT=0
 
+# Enable ANSI colors for utils/print_tool.py output methods.
+# Boolean flag. When unset, falls back to NO_COLOR / TTY detection.
+TOPSAILAI_PRINT_COLOR_ENABLED=
+
 # Agent Type, default is react
 # Input Messages
 TOPSAILAI_CHAT_MULTI_LINE=0

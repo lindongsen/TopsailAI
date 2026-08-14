@@ -55,6 +55,7 @@ These variables define the agent's working environment and project access scope.
 | `TOPSAILAI_DISABLE_ROOT_LOGGER_CONFIG` | `"0"` | When set to `1`, importing `topsailai.logger` will not automatically configure the Python root logger. Useful when integrating with external frameworks that manage their own root logger. |
 | `TOPSAILAI_AUTO_SESSION_NAME_ENABLED` | `1` | When `1`, creating a new session without an explicit `session_name` triggers an asynchronous LLM summarization that generates a session name from the initial task/message. Failures are silently ignored. Set to `0` to disable. |
 | `TOPSAILAI_AUTO_SESSION_NAME_MAX_LENGTH` | `30` | Maximum length in characters for auto-generated session names. |
+| `TOPSAILAI_PRINT_COLOR_ENABLED` | (unset) | Enable ANSI colors for `utils/print_tool.py` output methods. Boolean flag; when unset falls back to `NO_COLOR` / TTY detection. Valid values: `1`, `true`, `yes`, `on`. |
 
 ## OpenAI Configuration
 | Variable | Default | Description |
