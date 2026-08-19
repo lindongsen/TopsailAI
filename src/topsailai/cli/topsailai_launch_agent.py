@@ -25,6 +25,7 @@ import dataclasses
 import os
 import select
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -1189,6 +1190,22 @@ def _scan_workspace_files(workspace, project_folder=None):
     return "\n\n".join(parts)
 
 
+def _driver_exists(driver):
+    """Return True if the driver command is resolvable as an executable.
+
+    The driver may include arguments (e.g. "python app.py"), so only the
+    leading executable token is inspected. ``shutil.which`` resolves both
+    bare command names through PATH and explicit paths.
+    """
+    if not driver:
+        return False
+    try:
+        executable = shlex.split(driver)[0]
+    except ValueError:
+        return False
+    return shutil.which(executable) is not None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Launch AI Agent Driver based on .topsailai/settings.yaml"
@@ -1308,6 +1325,18 @@ def main():
             or os.getenv("TOPSAILAI_AGENT_DRIVER", "")
         )
     )
+
+    # If the resolved driver does not exist, degrade to the default driver so
+    # the launcher can still start an agent instead of failing outright.
+    if ai_agent_driver and not _driver_exists(ai_agent_driver):
+        fallback = DEFAULT_CONFIG["ai_agent_driver"]
+        print(
+            f"[TopsailAI-Launcher] Warning: driver '{ai_agent_driver}' not found. "
+            f"Degrading to '{fallback}'.",
+            file=sys.stderr,
+        )
+        ai_agent_driver = fallback
+
     context_map = settings.get("context", {}) or {}
 
     if not ai_agent_driver:

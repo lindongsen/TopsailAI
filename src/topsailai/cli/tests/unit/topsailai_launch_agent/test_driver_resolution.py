@@ -74,10 +74,12 @@ class TestAgentDriverResolution(unittest.TestCase):
         with open(project_path, "w", encoding="utf-8") as f:
             f.write("# dummy project file\n")
 
-    def _run_main(self, argv):
+    def _run_main(self, argv, driver_exists=True):
         sys.argv = argv
         with mock.patch("sys.stdout", self._stdout), mock.patch(
             "sys.stderr", self._stderr
+        ), mock.patch.object(
+            launcher, "_driver_exists", return_value=driver_exists
         ):
             with self.assertRaises(SystemExit) as cm:
                 launcher.main()
@@ -187,6 +189,46 @@ class TestAgentDriverResolution(unittest.TestCase):
             cmd_section = self._command_line_section(self._stdout.getvalue())
             self.assertIn("os-env-driver", cmd_section)
 
+    def test_missing_driver_degrades_to_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            self._write_settings(tmpdir, driver="nonexistent-driver")
+
+            exit_code = self._run_main(
+                ["topsailai_launch_agent.py", "--dry-run"], driver_exists=False
+            )
+
+            self.assertEqual(exit_code, 0)
+            cmd_section = self._command_line_section(self._stdout.getvalue())
+            self.assertIn(
+                launcher.DEFAULT_CONFIG["ai_agent_driver"], cmd_section
+            )
+            self.assertNotIn("nonexistent-driver", cmd_section)
+            self.assertIn(
+                "Degrading to", self._stderr.getvalue()
+            )
+
+    def test_existing_driver_is_not_replaced(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            self._write_settings(tmpdir, driver="existing-driver")
+
+            exit_code = self._run_main(
+                ["topsailai_launch_agent.py", "--dry-run"], driver_exists=True
+            )
+
+            self.assertEqual(exit_code, 0)
+            cmd_section = self._command_line_section(self._stdout.getvalue())
+            self.assertIn("existing-driver", cmd_section)
+            self.assertNotIn("Degrading to", self._stderr.getvalue())
+
+    def test_driver_exists_helper(self):
+        # A known executable resolves to a path.
+        self.assertTrue(launcher._driver_exists("python3"))
+        # A definitely-nonexistent command does not resolve.
+        self.assertFalse(launcher._driver_exists("definitely-no-such-cmd-xyz"))
+        # Empty driver is not considered existing.
+        self.assertFalse(launcher._driver_exists(""))
 
     def test_underscore_base_env_overrides_default_base_env(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -252,6 +294,7 @@ class TestAgentDriverResolution(unittest.TestCase):
             cmd_section = self._command_line_section(self._stdout.getvalue())
             self.assertIn("underscore-env-driver", cmd_section)
             self.assertNotIn("settings-driver", cmd_section)
+
 
 if __name__ == "__main__":
     unittest.main()

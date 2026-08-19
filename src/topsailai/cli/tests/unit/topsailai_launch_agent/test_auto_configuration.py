@@ -33,7 +33,7 @@ class TestAutoConfiguration(unittest.TestCase):
         sys.argv = argv
         with mock.patch("sys.stdout", self._stdout), mock.patch(
             "sys.stderr", self._stderr
-        ):
+        ), mock.patch.object(launcher, "_driver_exists", return_value=True):
             with self.assertRaises(SystemExit) as cm:
                 launcher.main()
         return cm.exception.code
@@ -45,7 +45,7 @@ class TestAutoConfiguration(unittest.TestCase):
             "sys.stderr", self._stderr
         ), mock.patch("sys.stdin.isatty", return_value=True), mock.patch(
             "builtins.input", side_effect=inputs
-        ):
+        ), mock.patch.object(launcher, "_driver_exists", return_value=True):
             with self.assertRaises(SystemExit) as cm:
                 launcher.main()
         return cm.exception.code
