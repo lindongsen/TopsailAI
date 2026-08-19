@@ -16,20 +16,27 @@ from topsailai.logger import logger
 def resolve_python_interpreter() -> str:
     """Resolve a usable Python interpreter path for spawning subprocesses.
 
-    When the project is compiled with Cython, ``sys.executable`` points to the
-    compiled binary rather than a real CPython interpreter. This helper returns
-    a reliable interpreter in priority order:
+    Compiled applications may expose their own binary through
+    ``sys.executable`` or ``sys._base_executable``. A normal virtual
+    environment, however, must keep using ``sys.executable`` so child
+    processes retain the active environment. Candidates are resolved in this
+    order:
 
-    1. ``sys._base_executable`` when available (the original base interpreter).
-    2. ``python3`` resolved from PATH.
-    3. ``python`` resolved from PATH.
+    1. ``sys.executable`` when it names an existing Python executable.
+    2. ``sys._base_executable`` when it names an existing Python executable.
+    3. ``python3`` resolved from PATH.
+    4. ``python`` resolved from PATH.
 
     Raises:
         RuntimeError: If no usable interpreter can be found.
     """
-    candidate = getattr(sys, "_base_executable", None)
-    if candidate and os.path.exists(candidate):
-        return candidate
+    for candidate in (
+        getattr(sys, "executable", None),
+        getattr(sys, "_base_executable", None),
+    ):
+        candidate_name = os.path.basename(candidate or "").lower()
+        if candidate_name.startswith("python") and os.path.exists(candidate):
+            return candidate
     for name in ("python3", "python"):
         path = shutil.which(name)
         if path:
