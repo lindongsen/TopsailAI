@@ -580,9 +580,12 @@ def format_response(response, rsp_obj=None, messages=None):
                         print_warning(f"{LLM_KEYWORD_MISTAKE}: change step to final answer due to {reason}")
                         step_name = format_tool.TOPSAILAI_STEP_FINAL
                     else:
-                        no_tool_call_prompt = env_tool.EnvReaderInstance.get("TOPSAILAI_PROMPT_WHEN_NO_TOOL_CALL")
-                        if no_tool_call_prompt:
-                            response += "\n---\n" + no_tool_call_prompt
+                        # Suppress the "NO ACTION DETECTED" alert when prior tool
+                        # actions already exist in the loop (bare text is a thought).
+                        if get_count_of_action(messages) == 0:
+                            no_tool_call_prompt = env_tool.EnvReaderInstance.get("TOPSAILAI_PROMPT_WHEN_NO_TOOL_CALL")
+                            if no_tool_call_prompt:
+                                response += "\n---\n" + no_tool_call_prompt
             except Exception as e:
                 logger.exception(e)
 

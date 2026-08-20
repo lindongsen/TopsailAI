@@ -1015,6 +1015,41 @@ class TestFormatResponseSingleLineNoFinalAnswerConversion:
         assert len(result) == 1
         assert result[0]["step_name"] == "thought"
 
+    def test_format_with_prior_action_suppresses_no_action_alert(self, monkeypatch):
+        """Bare text after a prior tool action stays thought without the NO ACTION alert."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        monkeypatch.setenv(
+            "TOPSAILAI_PROMPT_WHEN_NO_TOOL_CALL",
+            "CRITICAL-SYSTEM-ALERT: NO ACTION DETECTED",
+        )
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": '"step_name": "action"'},
+        ]
+        result = format_response("some bare text", rsp_obj=None, messages=messages)
+        assert len(result) == 1
+        assert result[0]["step_name"] == "thought"
+        assert "NO ACTION DETECTED" not in result[0]["raw_text"]
+
+    def test_format_without_prior_action_attaches_no_action_alert(self, monkeypatch):
+        """Bare text with no prior action still attaches the NO ACTION alert."""
+        from topsailai.ai_base.llm_control.message import format_response
+
+        monkeypatch.setenv(
+            "TOPSAILAI_PROMPT_WHEN_NO_TOOL_CALL",
+            "CRITICAL-SYSTEM-ALERT: NO ACTION DETECTED",
+        )
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+        ]
+        result = format_response("some bare text", rsp_obj=None, messages=messages)
+        assert len(result) == 1
+        assert result[0]["step_name"] == "thought"
+        assert "NO ACTION DETECTED" in result[0]["raw_text"]
+
 
 class TestMaybeConvertThoughtToFinal:
     """Unit tests for the standalone maybe_convert_thought_to_final helper."""
