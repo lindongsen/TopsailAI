@@ -287,6 +287,52 @@ class TestConfigureTerminal:
         assert value == "eof_tty_default"
 
 
+class TestTerminalInputSubprocessWatchdog:
+    """Tests for terminal helper lifecycle watchdog behavior."""
+
+    def test_helper_exits_when_parent_pid_changes(self):
+        """The helper must exit when its recorded parent is no longer present."""
+        master_fd, slave_fd = pty.openpty()
+        proc = None
+        result_fd = None
+        try:
+            with patch.object(input_tool.os, "getpid", return_value=-1):
+                proc, result_fd = input_tool._spawn_terminal_input_subprocess(
+                    "", stdin_fd=slave_fd
+                )
+            assert proc is not None
+            proc.wait(timeout=3.0)
+            assert proc.returncode == 0
+        finally:
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+                proc.wait(timeout=3.0)
+            if result_fd is not None:
+                os.close(result_fd)
+            os.close(master_fd)
+            os.close(slave_fd)
+
+    def test_helper_exits_when_terminal_is_invalid(self):
+        """The helper must exit when stdin no longer supports terminal access."""
+        stdin_fd, stdin_writer = os.pipe()
+        proc = None
+        result_fd = None
+        try:
+            proc, result_fd = input_tool._spawn_terminal_input_subprocess(
+                "", stdin_fd=stdin_fd
+            )
+            assert proc is not None
+            proc.wait(timeout=3.0)
+            assert proc.returncode == 0
+        finally:
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+                proc.wait(timeout=3.0)
+            if result_fd is not None:
+                os.close(result_fd)
+            os.close(stdin_fd)
+            os.close(stdin_writer)
+
 class TestInputFromPipe:
     """Tests for input_from_pipe using real FIFOs."""
 

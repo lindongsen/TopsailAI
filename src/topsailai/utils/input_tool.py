@@ -662,6 +662,7 @@ def _spawn_terminal_input_subprocess(
         prompt = ""
 
     read_fd, write_fd = os.pipe()
+    expected_parent_pid = os.getpid()
 
     helper = textwrap.dedent(
         f'''import json
@@ -677,6 +678,8 @@ timeout = {timeout!r}
 history_file = {history_file!r}
 completion_file = {completion_file!r}
 max_entries = {max_entries!r}
+expected_parent_pid = {expected_parent_pid}
+watchdog_interval = 1.0
 
 def _restore_termios():
     try:
@@ -684,13 +687,23 @@ def _restore_termios():
     except Exception:
         pass
 
-def _alarm_handler(signum, frame):
+def _exit_helper():
     _restore_termios()
     sys.exit(0)
 
+def _alarm_handler(signum, frame):
+    if timeout is not None:
+        _exit_helper()
+    if os.getppid() != expected_parent_pid:
+        _exit_helper()
+    try:
+        termios.tcgetattr(0)
+    except Exception:
+        _exit_helper()
+    signal.setitimer(signal.ITIMER_REAL, watchdog_interval)
+
 def _term_handler(signum, frame):
-    _restore_termios()
-    sys.exit(0)
+    _exit_helper()
 
 old_termios = None
 try:
@@ -777,10 +790,12 @@ if _candidates:
 
 eof_or_interrupt = False
 try:
-    if timeout is not None:
-        signal.setitimer(
-            signal.ITIMER_REAL, max(float(timeout), 0.001)
-        )
+    alarm_delay = (
+        max(float(timeout), 0.001)
+        if timeout is not None
+        else watchdog_interval
+    )
+    signal.setitimer(signal.ITIMER_REAL, alarm_delay)
     try:
         line = input(prompt)
     except (TimeoutError, EOFError, KeyboardInterrupt, OSError):
