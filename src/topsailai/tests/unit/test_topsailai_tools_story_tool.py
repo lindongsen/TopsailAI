@@ -299,22 +299,61 @@ class TestStoryFile(unittest.TestCase):
     @patch('topsailai.tools.story_tool.lock_tool.FileLock')
     @patch.object(story_tool.StoryFile, 'get_story_file')
     @patch('topsailai.tools.story_tool.file_tool.delete_file')
-    def test_delete_story(self, mock_delete, mock_get_file, mock_lock):
-        """Test delete_story deletes file correctly."""
+    @patch('topsailai.tools.story_tool.os.rmdir')
+    @patch.object(story_tool.logger, 'info')
+    def test_delete_story(self, mock_log, mock_rmdir, mock_delete, mock_get_file, mock_lock):
+        """Test delete_story deletes the file and its empty day folder."""
         mock_lock_instance = MagicMock()
         mock_lock.return_value.__enter__ = MagicMock(return_value=mock_lock_instance)
         mock_lock.return_value.__exit__ = MagicMock(return_value=False)
-        mock_get_file.return_value = '/workspace/story/test.md'
+        mock_get_file.return_value = '/workspace/story/2025-01-15/test.md'
 
         result = self.story_file.delete_story('/workspace', 'test.md')
 
-        mock_delete.assert_called_once_with('/workspace/story/test.md')
+        mock_delete.assert_called_once_with('/workspace/story/2025-01-15/test.md')
+        mock_rmdir.assert_called_once_with('/workspace/story/2025-01-15')
+        mock_log.assert_called_once_with(
+            "delete empty story folder: [%s]", '/workspace/story/2025-01-15'
+        )
         self.assertTrue(result)
 
     @patch('topsailai.tools.story_tool.lock_tool.FileLock')
     @patch.object(story_tool.StoryFile, 'get_story_file')
     @patch('topsailai.tools.story_tool.file_tool.delete_file')
-    def test_delete_story_not_found(self, mock_delete, mock_get_file, mock_lock):
+    @patch('topsailai.tools.story_tool.os.rmdir', side_effect=OSError)
+    def test_delete_story_keeps_non_empty_day_folder(
+        self, mock_rmdir, mock_delete, mock_get_file, mock_lock
+    ):
+        """Test a non-empty day folder does not affect successful deletion."""
+        mock_get_file.return_value = '/workspace/story/2025-01-15/test.md'
+
+        result = self.story_file.delete_story('/workspace', 'test.md')
+
+        mock_delete.assert_called_once_with('/workspace/story/2025-01-15/test.md')
+        mock_rmdir.assert_called_once_with('/workspace/story/2025-01-15')
+        self.assertTrue(result)
+
+    @patch('topsailai.tools.story_tool.lock_tool.FileLock')
+    @patch.object(story_tool.StoryFile, 'get_story_file')
+    @patch('topsailai.tools.story_tool.file_tool.delete_file')
+    @patch('topsailai.tools.story_tool.os.rmdir')
+    def test_delete_story_does_not_remove_story_root(
+        self, mock_rmdir, mock_delete, mock_get_file, mock_lock
+    ):
+        """Test delete_story never removes the story root folder."""
+        mock_get_file.return_value = '/workspace/story/test.md'
+
+        result = self.story_file.delete_story('/workspace', 'test.md')
+
+        mock_delete.assert_called_once_with('/workspace/story/test.md')
+        mock_rmdir.assert_not_called()
+        self.assertTrue(result)
+
+    @patch('topsailai.tools.story_tool.lock_tool.FileLock')
+    @patch.object(story_tool.StoryFile, 'get_story_file')
+    @patch('topsailai.tools.story_tool.file_tool.delete_file')
+    @patch('topsailai.tools.story_tool.os.rmdir')
+    def test_delete_story_not_found(self, mock_rmdir, mock_delete, mock_get_file, mock_lock):
         """Test delete_story when story doesn't exist."""
         mock_lock_instance = MagicMock()
         mock_lock.return_value.__enter__ = MagicMock(return_value=mock_lock_instance)
@@ -324,6 +363,7 @@ class TestStoryFile(unittest.TestCase):
         result = self.story_file.delete_story('/workspace', 'nonexistent.md')
 
         mock_delete.assert_not_called()
+        mock_rmdir.assert_not_called()
         self.assertTrue(result)
 
 

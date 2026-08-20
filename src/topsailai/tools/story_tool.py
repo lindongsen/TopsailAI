@@ -4,7 +4,7 @@
   Created: 2025-11-24
   Purpose:
 '''
-
+import logging
 import os
 import string
 
@@ -17,6 +17,8 @@ from topsailai.prompt_hub import prompt_tool
 from topsailai.workspace import (
     lock_tool,
 )
+
+logger = logging.getLogger(__name__)
 
 KEY_STORY = "story"
 
@@ -195,6 +197,14 @@ class StoryFile(StoryBase):
             _filepath = self.get_story_file(workspace, story_id, must_only_one=True)
             if _filepath:
                 file_tool.delete_file(_filepath)
+                parent_dir = os.path.dirname(_filepath)
+                story_root = os.path.join(workspace, KEY_STORY)
+                if os.path.normpath(parent_dir) != os.path.normpath(story_root):
+                    try:
+                        os.rmdir(parent_dir)
+                        logger.info("delete empty story folder: [%s]", parent_dir)
+                    except OSError:
+                        pass
             return True
 
 # init
