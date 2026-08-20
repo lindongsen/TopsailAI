@@ -42,20 +42,21 @@ class TestWriteMemory(unittest.TestCase):
     @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
     @patch('topsailai.tools.story_memory_tool.build_story_id')
     def test_write_memory_basic(self, mock_build_id, mock_story_instance):
-        """Test basic write_memory call."""
+        """Test basic write_memory call omits the timestamp prefix."""
         from topsailai.tools import story_memory_tool
-        
-        mock_build_id.return_value = "2026-04-19.story_title.md"
+
+        mock_build_id.return_value = "story_title.md"
         mock_story_instance.write_story.return_value = "/path/to/memory.md"
-        
+
         result = story_memory_tool.write_memory("story_title", "test content")
-        
-        mock_build_id.assert_called_once_with("story_title")
+
+        mock_build_id.assert_called_once_with("story_title", False)
         mock_story_instance.write_story.assert_called_once()
         call_kwargs = mock_story_instance.write_story.call_args[1]
+        self.assertEqual(call_kwargs['story_id'], "story_title.md")
         self.assertEqual(call_kwargs['story_content'], "test content")
         self.assertIn("/path/to/memory.md", result)
-    
+
     @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
     @patch('topsailai.tools.story_memory_tool.build_story_id')
     def test_write_memory_unicode_content(self, mock_build_id, mock_story_instance):

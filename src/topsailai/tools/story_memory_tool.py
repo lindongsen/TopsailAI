@@ -38,7 +38,8 @@ def write_memory(title:str, content:str, **_) -> str:
         title (str): A title contains core information and keywords.
         content (str):
     """
-    title = build_story_id(title)
+    # Memory filenames omit timestamps because their per-day folder conveys time.
+    title = build_story_id(title, False)
     memory_file = StoryFileInstance.write_story(
         workspace=WORKSPACE,
         story_id=title,

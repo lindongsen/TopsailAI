@@ -61,6 +61,18 @@ class TestBuildStoryId(unittest.TestCase):
             result = story_tool.build_story_id("   ")
             self.assertEqual(result, '2025-01-15T10-30-00.md')
 
+    def test_build_story_id_without_prefix(self):
+        """Test build_story_id can omit the timestamp prefix."""
+        with patch.object(story_tool.time_tool, 'get_current_date', return_value='2025-01-15T10-30-00'):
+            result = story_tool.build_story_id("My Story Title", with_prefix=False)
+            self.assertEqual(result, 'My_Story_Title.md')
+
+    def test_build_story_id_without_prefix_preserves_empty_fallback(self):
+        """Test empty titles retain the timestamp fallback without a prefix request."""
+        with patch.object(story_tool.time_tool, 'get_current_date', return_value='2025-01-15T10-30-00'):
+            result = story_tool.build_story_id("", with_prefix=False)
+            self.assertEqual(result, '2025-01-15T10-30-00.md')
+
 
 class TestStoryBase(unittest.TestCase):
     """Test cases for StoryBase abstract class."""

@@ -29,7 +29,7 @@ Use story_tool to save content.
 """ + env_tool.EnvReaderInstance.story_prompt_content
 
 
-def build_story_id(s:str):
+def build_story_id(s: str, with_prefix: bool = True) -> str:
     s = s.strip()
     if s.lower().endswith(".md"):
         s = s[:-3]
@@ -43,7 +43,8 @@ def build_story_id(s:str):
     s = s.translate(trans_table)
     if not s.endswith(".md"):
         s += ".md"
-    return now + "." + s.replace('__', '_')
+    s = s.replace('__', '_')
+    return (now + "." + s) if with_prefix else s
 
 
 class StoryBase(object):
