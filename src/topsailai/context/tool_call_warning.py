@@ -191,6 +191,17 @@ def parse_rules(env_value: Optional[str] = None) -> List[ToolCallWarningRule]:
     return rules
 
 
+@functools.lru_cache(maxsize=8)
+def _parse_cached_rules(env_value: Optional[str]) -> Tuple[ToolCallWarningRule, ...]:
+    """Parse and cache rules for a raw environment value."""
+    return tuple(parse_rules(env_value))
+
+
+def _get_cached_rules() -> Tuple[ToolCallWarningRule, ...]:
+    """Return cached rules while preserving runtime environment updates."""
+    return _parse_cached_rules(_get_rules_env_value())
+
+
 def _parse_rule(item: Any, index: int) -> Optional[ToolCallWarningRule]:
     """Parse and validate a single rule dict, or return None to skip it."""
     if not isinstance(item, dict):
@@ -219,7 +230,7 @@ def _parse_rule(item: Any, index: int) -> Optional[ToolCallWarningRule]:
     # intentionally preserved (not clamped to the default) so the caller can
     # distinguish window-based from consecutive-based counting.
     if window_seconds == 0:
-        logger.warning(
+        logger.debug(
             "window_seconds 0 at index %d treated as strict consecutive counting",
             index,
         )
@@ -457,7 +468,7 @@ def _maybe_emit_warning(tool_name: str, tool_args: Any) -> None:
     execution is never interrupted.
     """
     try:
-        rules = parse_rules()
+        rules = _get_cached_rules()
         if not rules:
             return
 

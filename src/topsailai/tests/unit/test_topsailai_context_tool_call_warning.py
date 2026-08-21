@@ -26,6 +26,8 @@ from topsailai.context.tool_call_warning import (
     count_calls_consecutive,
     evaluate_tool_call,
     detect_tool_call_warning,
+    _get_cached_rules,
+    _parse_cached_rules,
     _get_trigger_state,
     _rule_key,
     ENV_TOOL_CALL_WARNING_RULES,
@@ -126,10 +128,11 @@ class TestParseRules(TestCase):
         self.assertEqual(rules[0].window_seconds, -5)
 
     def test_zero_window_preserved_for_consecutive(self):
-        """A zero window_seconds is preserved for strict consecutive counting."""
+        """A zero window_seconds is preserved and reported at DEBUG level."""
         raw = json.dumps([{"tool_call": "t", "max_calls": 1, "warning": "W", "window_seconds": 0}])
-        with self.assertLogs("topsailai.context.tool_call_warning", level="WARNING"):
+        with self.assertLogs("topsailai.context.tool_call_warning", level="DEBUG") as logs:
             rules = parse_rules(raw)
+        self.assertIn("treated as strict consecutive counting", logs.output[0])
         self.assertEqual(rules[0].window_seconds, 0)
 
     def test_missing_tool_call_skipped(self):
@@ -167,6 +170,25 @@ class TestParseRules(TestCase):
         with patch.dict(os.environ, {ENV_TOOL_CALL_WARNING_RULES: raw}):
             rules = parse_rules()
         self.assertEqual(len(rules), 1)
+
+    def test_runtime_rules_are_cached_by_environment_value(self):
+        """Repeated runtime reads reuse parsed rules until the value changes."""
+        raw = json.dumps([{"tool_call": "t", "max_calls": 1, "warning": "W"}])
+        changed_raw = json.dumps([{"tool_call": "changed", "max_calls": 1, "warning": "W"}])
+        _parse_cached_rules.cache_clear()
+        with patch(
+            "topsailai.context.tool_call_warning._get_rules_env_value",
+            side_effect=[raw, raw, changed_raw],
+        ), patch(
+            "topsailai.context.tool_call_warning.parse_rules",
+            wraps=parse_rules,
+        ) as parse_mock:
+            first = _get_cached_rules()
+            second = _get_cached_rules()
+            changed = _get_cached_rules()
+        self.assertIs(first, second)
+        self.assertEqual(changed[0].tool_call, "changed")
+        self.assertEqual(parse_mock.call_count, 2)
 
 
 class TestMatchRule(TestCase):
