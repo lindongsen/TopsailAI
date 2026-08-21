@@ -1023,45 +1023,86 @@ def _run_context_setup(settings_path, settings):
     )
 
 
+_BUILTIN_GITIGNORE_PATTERNS = [
+    ".git", ".venv", "__pycache__",
+    ".log", ".db", ".env", ".env.*",
+    ".tmp", ".task",
+    ".DS_Store", ".cache", ".pnp",
+    "node_modules", "__mocks__",
+]
+
+
+def _strip_gitignore_line(raw_line):
+    """Strip a raw .gitignore line, dropping comments and blanks.
+
+    Returns the cleaned pattern string, or None when the line is blank or a
+    comment. Inline comments are removed but escaped \\# is preserved.
+    """
+    line = raw_line.rstrip("\n\r")
+    cleaned = []
+    escape = False
+    for ch in line:
+        if escape:
+            cleaned.append(ch)
+            escape = False
+        elif ch == "\\":
+            escape = True
+            cleaned.append(ch)
+        elif ch == "#":
+            break
+        else:
+            cleaned.append(ch)
+    line = "".join(cleaned).rstrip()
+    if not line:
+        return None
+    return line
+
+
 def _load_gitignore_patterns(workspace):
-    """Load .gitignore patterns from workspace root."""
+    """Load .gitignore patterns from workspace root.
+
+    Returns a list of ``(origin_dir, pattern)`` tuples. Built-in patterns are
+    rooted at ``workspace`` so they apply everywhere beneath it.
+    """
+    patterns = [(workspace, p) for p in _BUILTIN_GITIGNORE_PATTERNS]
     gitignore_path = os.path.join(workspace, ".gitignore")
-    patterns = [
-        ".git", ".venv", "__pycache__",
-        ".log", ".db", ".env", ".env.*",
-        ".tmp", ".task",
-        ".DS_Store", ".cache", ".pnp",
-        "node_modules", "__mocks__",
-    ]
     if not os.path.isfile(gitignore_path):
         return patterns
 
     with open(gitignore_path, "r", encoding="utf-8") as f:
         for raw_line in f:
-            line = raw_line.rstrip("\n\r")
-            # Remove inline comments, but not escaped #
-            cleaned = []
-            escape = False
-            for ch in line:
-                if escape:
-                    cleaned.append(ch)
-                    escape = False
-                elif ch == "\\":
-                    escape = True
-                    cleaned.append(ch)
-                elif ch == "#":
-                    break
-                else:
-                    cleaned.append(ch)
-            line = "".join(cleaned).rstrip()
-            if not line:
+            line = _strip_gitignore_line(raw_line)
+            if line is None:
                 continue
-            patterns.append(line)
+            patterns.append((workspace, line))
     return patterns
 
 
-def _match_gitignore_pattern(rel_path, name, is_dir, pattern):
-    """Check if a path matches a single gitignore pattern."""
+def _load_dir_gitignore(dir_path):
+    """Load patterns from a nested ``.gitignore`` in ``dir_path``.
+
+    Returns a list of ``(dir_path, pattern)`` tuples, or an empty list when no
+    ``.gitignore`` exists in ``dir_path``.
+    """
+    gitignore_path = os.path.join(dir_path, ".gitignore")
+    if not os.path.isfile(gitignore_path):
+        return []
+    patterns = []
+    with open(gitignore_path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = _strip_gitignore_line(raw_line)
+            if line is None:
+                continue
+            patterns.append((dir_path, line))
+    return patterns
+
+
+def _match_gitignore_pattern(full_path, name, is_dir, origin_dir, pattern):
+    """Check if a path matches a single gitignore pattern.
+
+    ``pattern`` originates from ``origin_dir``; the path is matched relative
+    to that directory so nested ``.gitignore`` rules anchor correctly.
+    """
     import fnmatch
 
     negation = False
@@ -1080,6 +1121,8 @@ def _match_gitignore_pattern(rel_path, name, is_dir, pattern):
 
     pattern = pattern.replace("\\", "/")
 
+    rel_path = os.path.relpath(full_path, origin_dir).replace("\\", "/")
+
     if "/" in pattern:
         # Anchored pattern: match against relative path
         if pattern.startswith("/"):
@@ -1096,11 +1139,13 @@ def _match_gitignore_pattern(rel_path, name, is_dir, pattern):
     return False, negation
 
 
-def _is_ignored(rel_path, name, is_dir, patterns):
+def _is_ignored(full_path, name, is_dir, patterns):
     """Check if a path is ignored by gitignore patterns."""
     ignored = False
-    for pattern in patterns:
-        matched, negation = _match_gitignore_pattern(rel_path, name, is_dir, pattern)
+    for origin_dir, pattern in patterns:
+        matched, negation = _match_gitignore_pattern(
+            full_path, name, is_dir, origin_dir, pattern
+        )
         if matched:
             ignored = not negation
     return ignored
@@ -1141,11 +1186,19 @@ def _scan_workspace_files(workspace, project_folder=None):
 
         entries = []
 
-        def walk(current_dir, prefix=""):
+        def walk(current_dir, prefix="", inherited_patterns=None):
+            if inherited_patterns is None:
+                inherited_patterns = []
             try:
                 items = sorted(os.listdir(current_dir))
             except (PermissionError, OSError):
                 return
+
+            # Patterns that apply within this directory come from ancestors
+            # plus any nested .gitignore located here.
+            local_patterns = list(inherited_patterns)
+            if current_dir != scan_root:
+                local_patterns.extend(_load_dir_gitignore(current_dir))
 
             visible_items = []
             for name in items:
@@ -1155,10 +1208,9 @@ def _scan_workspace_files(workspace, project_folder=None):
                 if name.startswith("."):
                     continue
                 full_path = os.path.join(current_dir, name)
-                rel_path = os.path.relpath(full_path, scan_root).replace("\\", "/")
                 is_symlink = os.path.islink(full_path)
                 is_dir = os.path.isdir(full_path) and not is_symlink
-                if _is_ignored(rel_path, name, is_dir, patterns):
+                if _is_ignored(full_path, name, is_dir, local_patterns):
                     continue
                 visible_items.append((name, full_path, is_dir))
 
@@ -1169,10 +1221,10 @@ def _scan_workspace_files(workspace, project_folder=None):
                 entries.append(f"{prefix}{connector}{name}")
                 if is_dir:
                     extension = "    " if is_last else "│   "
-                    walk(full_path, prefix + extension)
+                    walk(full_path, prefix + extension, local_patterns)
 
         entries.append(".")
-        walk(scan_root)
+        walk(scan_root, inherited_patterns=patterns)
         return "> " + scan_root + "\n" + "\n".join(entries)
 
     workspace = os.path.abspath(workspace)

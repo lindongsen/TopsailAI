@@ -117,6 +117,69 @@ class TestScanWorkspaceFiles(unittest.TestCase):
             self.assertIn("sub", tree)
             self.assertIn("nested.txt", tree)
 
+    def test_nested_gitignore_excludes_files_and_dirs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            deploy = os.path.join(tmpdir, "deploy")
+            os.makedirs(deploy)
+            with open(os.path.join(deploy, ".gitignore"), "w", encoding="utf-8") as f:
+                f.write("# protect secrets\nsecret.env\ncache_dir\npgdata/\n")
+            with open(os.path.join(deploy, "keep.txt"), "w", encoding="utf-8") as f:
+                f.write("keep\n")
+            with open(os.path.join(deploy, "secret.env"), "w", encoding="utf-8") as f:
+                f.write("SECRET\n")
+            os.makedirs(os.path.join(deploy, "cache_dir"))
+            os.makedirs(os.path.join(deploy, "pgdata"))
+
+            tree = launcher._scan_workspace_files(tmpdir)
+            self.assertIn("deploy", tree)
+            self.assertIn("keep.txt", tree)
+            self.assertNotIn("secret.env", tree)
+            self.assertNotIn("cache_dir", tree)
+            self.assertNotIn("pgdata", tree)
+
+    def test_nested_gitignore_does_not_leak_to_parent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            deploy = os.path.join(tmpdir, "deploy")
+            os.makedirs(deploy)
+            with open(os.path.join(deploy, ".gitignore"), "w", encoding="utf-8") as f:
+                f.write("secret.env\n")
+            with open(os.path.join(deploy, "secret.env"), "w", encoding="utf-8") as f:
+                f.write("SECRET\n")
+            # Same-named file at the workspace root must NOT be ignored.
+            with open(os.path.join(tmpdir, "secret.env"), "w", encoding="utf-8") as f:
+                f.write("ROOT SECRET\n")
+
+            tree = launcher._scan_workspace_files(tmpdir)
+            self.assertEqual(tree.count("secret.env"), 1)
+
+    def test_root_gitignore_still_applied(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, ".gitignore"), "w", encoding="utf-8") as f:
+                f.write("build.out\n")
+            with open(os.path.join(tmpdir, "build.out"), "w", encoding="utf-8") as f:
+                f.write("artifact\n")
+            with open(os.path.join(tmpdir, "keep.txt"), "w", encoding="utf-8") as f:
+                f.write("keep\n")
+
+            tree = launcher._scan_workspace_files(tmpdir)
+            self.assertNotIn("build.out", tree)
+            self.assertIn("keep.txt", tree)
+
+    def test_nested_gitignore_negation_unignores_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            deploy = os.path.join(tmpdir, "deploy")
+            os.makedirs(deploy)
+            with open(os.path.join(deploy, ".gitignore"), "w", encoding="utf-8") as f:
+                f.write("*.log\n!important.log\n")
+            with open(os.path.join(deploy, "debug.log"), "w", encoding="utf-8") as f:
+                f.write("debug\n")
+            with open(os.path.join(deploy, "important.log"), "w", encoding="utf-8") as f:
+                f.write("important\n")
+
+            tree = launcher._scan_workspace_files(tmpdir)
+            self.assertNotIn("debug.log", tree)
+            self.assertIn("important.log", tree)
+
     def test_hidden_files_and_directories_are_excluded(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             visible_dir = os.path.join(tmpdir, "visible")
