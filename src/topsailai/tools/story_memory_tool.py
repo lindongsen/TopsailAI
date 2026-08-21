@@ -142,6 +142,9 @@ PROMPT = """
 
 Memory content MUST be English, concise and NO NEED TITLE.
 
+When creating a memory, pass only the original title without a time prefix; the tool adds it automatically.
+When deleting a memory, pass `"{time_prefix}.{title}"` as the title, using the full prefixed filename stem.
+
 Whenever the user explicitly asks you to remember something (e.g., using phrases like "remember that...", "please save this:", "don't forget...", "make a note of...", "store this information: [information]"),
 you must use the `MemoryTool` to store the specified information.
 The information to be stored is the key detail(s) the user wants you to retain for future interactions.
