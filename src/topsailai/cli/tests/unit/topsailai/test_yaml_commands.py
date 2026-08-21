@@ -47,6 +47,15 @@ class TestYamlCommands(unittest.TestCase):
         commands = load_yaml_commands("/nonexistent/path.yaml")
         self.assertEqual(commands, [])
 
+    def test_agent_plan_enables_story_memory_tool(self):
+        """The workspace /agent_plan command must enable the real memory tool."""
+        commands = load_yaml_commands()
+        agent_plan = next(command for command in commands if command["cmd"] == "/agent_plan")
+        enabled_tools = agent_plan["environ"]["TOPSAILAI_ENABLED_TOOLS"].split(",")
+
+        self.assertIn("story_memory_tool", enabled_tools)
+        self.assertNotIn("memory_tool", enabled_tools)
+
 
 class TestMatchYamlCommand(unittest.TestCase):
     """Tests for match_yaml_command regex matching."""
