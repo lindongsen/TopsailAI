@@ -31,11 +31,20 @@ Use story_tool to save content.
 """ + env_tool.EnvReaderInstance.story_prompt_content
 
 
-def build_story_id(s: str, with_prefix: bool = True) -> str:
+def build_story_id(
+    s: str,
+    with_prefix: bool = True,
+    compact_prefix: bool = False,
+) -> str:
+    """Build a safe story filename with an optional timestamp prefix."""
     s = s.strip()
     if s.lower().endswith(".md"):
         s = s[:-3]
-    now = time_tool.get_current_date(with_t=True)
+    now = (
+        time_tool.get_current_compact_datetime()
+        if compact_prefix
+        else time_tool.get_current_date(with_t=True)
+    )
 
     if not s:
         return now + ".md"

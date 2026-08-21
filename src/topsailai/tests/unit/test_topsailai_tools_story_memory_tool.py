@@ -42,18 +42,18 @@ class TestWriteMemory(unittest.TestCase):
     @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
     @patch('topsailai.tools.story_memory_tool.build_story_id')
     def test_write_memory_basic(self, mock_build_id, mock_story_instance):
-        """Test basic write_memory call omits the timestamp prefix."""
+        """Test basic write_memory call enables the compact timestamp prefix."""
         from topsailai.tools import story_memory_tool
 
-        mock_build_id.return_value = "story_title.md"
+        mock_build_id.return_value = "20260821135200.story_title.md"
         mock_story_instance.write_story.return_value = "/path/to/memory.md"
 
         result = story_memory_tool.write_memory("story_title", "test content")
 
-        mock_build_id.assert_called_once_with("story_title", False)
+        mock_build_id.assert_called_once_with("story_title", compact_prefix=True)
         mock_story_instance.write_story.assert_called_once()
         call_kwargs = mock_story_instance.write_story.call_args[1]
-        self.assertEqual(call_kwargs['story_id'], "story_title.md")
+        self.assertEqual(call_kwargs['story_id'], "20260821135200.story_title.md")
         self.assertEqual(call_kwargs['story_content'], "test content")
         self.assertIn("/path/to/memory.md", result)
 
@@ -260,6 +260,18 @@ class TestBuildStoryId(unittest.TestCase):
         
         self.assertTrue(result.endswith(".md"))
         # Unicode chars should be preserved or converted appropriately
+
+    @patch(
+        'topsailai.tools.story_tool.time_tool.get_current_compact_datetime',
+        return_value='20260821135200',
+    )
+    def test_build_story_id_with_compact_prefix(self, _mock_current_datetime):
+        """Test compact timestamp prefixes use YYYYMMDDHHMMSS."""
+        from topsailai.tools.story_tool import build_story_id
+
+        result = build_story_id("memory title", compact_prefix=True)
+
+        self.assertEqual(result, "20260821135200.memory_title.md")
 
 
 class TestWorkspaceConfiguration(unittest.TestCase):

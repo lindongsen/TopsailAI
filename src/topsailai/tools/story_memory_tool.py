@@ -38,8 +38,10 @@ def write_memory(title:str, content:str, **_) -> str:
         title (str): A title contains core information and keywords.
         content (str):
     """
-    # Memory filenames omit timestamps because their per-day folder conveys time.
-    title = build_story_id(title, False)
+    # PROMPT injects memories into the system prompt, so filenames must expose their timeline.
+    # Day-level folders are too coarse, while this prefix preserves second-level ordering.
+    # It also avoids managing identical filenames across different timestamp folders.
+    title = build_story_id(title, compact_prefix=True)
     memory_file = StoryFileInstance.write_story(
         workspace=WORKSPACE,
         story_id=title,

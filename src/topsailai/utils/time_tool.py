@@ -27,6 +27,11 @@ def get_current_date(with_t=False, include_ms=False):
         time_format += ms
     return dt.strftime(f"%Y-%m-%d{c}{time_format}")
 
+
+def get_current_compact_datetime() -> str:
+    """Get the current local datetime in YYYYMMDDHHMMSS format."""
+    return datetime.now().strftime("%Y%m%d%H%M%S")
+
 def get_current_day():
     """Get the current date in YYYY-MM-DD format.
 
