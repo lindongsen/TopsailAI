@@ -46,6 +46,18 @@ The script is configured through environment variables and the session store:
 - `TOPSAILAI_ENABLED_TOOLS` — the script appends `subagent_tool` to the enabled tools list.
 - `SESSION_ID` / session manager — the agent resolves its target session at runtime.
 
+### Clean context per turn
+
+Unlike `topsailai_agent_chats`, this script does **not** set
+`TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS`. Consequently the flag stays at
+its default (`False`), so the Agent2LLM message list is reset at the start of
+each user2agent dialogue. Every invocation therefore begins with a clean
+context instead of carrying over history from a previous turn.
+
+By contrast, `bin/topsailai_agent_chats` exports
+`TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS=1`, which preserves the
+Agent2LLM history across turns so a multi-turn chat continues seamlessly.
+
 ## Examples
 
 ```bash
@@ -63,3 +75,4 @@ topsailai_agent_plan_tasks -h
 
 - Tasks are read from the active session; the agent has its own internal argument handling.
 - If the session or task context is missing, the agent runtime reports the error.
+- Because `TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS` is not set, sub-agent instances are not reused across turns either; each turn gets a fresh context.

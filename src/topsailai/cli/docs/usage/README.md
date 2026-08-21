@@ -32,6 +32,7 @@ topsailai --help
 |--------|---------|
 | [topsailai](topsailai.md) | Main interactive CLI: watch sessions, send messages, manage workspace task list. |
 | [topsailai_agent_call_instruction](topsailai_agent_call_instruction.md) | Send a one-off instruction to an agent session. |
+| [topsailai_agent_chats](topsailai_agent_chats.md) | Multi-turn interactive chat with a single AI agent (preserves Agent2LLM history across turns). |
 | [topsailai_agent_plan_task](topsailai_agent_plan_task.md) | Create a single plan/task for an agent session. |
 | [topsailai_agent_plan_tasks](topsailai_agent_plan_tasks.md) | Batch-create plans/tasks from a file or command-line list. |
 | [topsailai_agent_story](topsailai_agent_story.md) | Manage story memory for an agent session. |
