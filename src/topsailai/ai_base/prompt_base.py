@@ -28,7 +28,11 @@ from topsailai.utils import (
     thread_local_tool,
     message_tool,
 )
-from topsailai.utils.env_tool import EnvReaderInstance, is_use_tool_calls
+from topsailai.utils.env_tool import (
+    EnvReaderInstance,
+    is_archive_message_enabled,
+    is_use_tool_calls,
+)
 from topsailai.utils.thread_local_tool import (
     get_agent_name,
 )
@@ -185,7 +189,7 @@ class ThresholdContextHistory(object):
         # Native tool calls require an intact tool_calls/tool_call_id pairing.
         # Archiving (linking) breaks that pairing and causes provider errors
         # such as "No tool call found for function call output with call_id".
-        if is_use_tool_calls():
+        if not is_archive_message_enabled() or is_use_tool_calls():
             return False
         # check cached_tokens first
         agent = thread_local_tool.get_agent_object()
@@ -315,7 +319,7 @@ class PromptBase(object):
         # Native tool calls require an intact tool_calls/tool_call_id pairing;
         # archiving (linking) breaks that pairing and causes provider errors
         # such as "No tool call found for function call output with call_id".
-        if is_use_tool_calls():
+        if not is_archive_message_enabled() or is_use_tool_calls():
             return
         if self.threshold_ctx_history.is_exceeded(self.messages):
             for hook in self.hooks_ctx_history:

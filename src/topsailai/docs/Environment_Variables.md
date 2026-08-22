@@ -148,6 +148,7 @@ These variables control when the agent archives or summarizes message history to
 | `TOPSAILAI_CONTEXT_ONE_MESSAGE_MAX_KB` | `30` | Maximum size in KB for a single message before truncation. |
 | `TOPSAILAI_SESSION_HEAD_TAIL_OFFSET` | `0` | Number of messages to keep from head and tail when truncating session history. Falls back to `DEFAULT_HEAD_TAIL_OFFSET` (`7`) if unset. Set to `0` to keep all messages. |
 | `TOPSAILAI_AGENT2LLM_KEEP_MESSAGES_ACROSS_TURNS` | `0` | When `1`, Agent2LLM messages persist across User2Agent turns. Each turn appends the current User2Agent session messages to the existing Agent2LLM context instead of resetting it. Duplicates are skipped. When `0` (default), Agent2LLM messages are reset each turn and rebuilt from the session. |
+| `TOPSAILAI_ARCHIVE_MESSAGE_ENABLED` | `1` | Enable archive/link-message processing for large context messages. `0` disables archiving; native tool calls always keep it disabled to preserve tool-call pairing. |
 | `CONTEXT_HISTORY_MANAGERS` | `"sql.ChatHistorySQLAlchemy conn=sqlite:///memory.db;"` | Chat history manager classes separated by semicolons (`;`). Each manager is `class_name parameters`. If not set, context management is disabled. |
 | `CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH` | `43` | Maximum number of messages allowed before context slimming is considered. Effective minimum is `27`. |
 | `CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS` | `128000` | Token budget used as the denominator for the cached-token ratio threshold check. |

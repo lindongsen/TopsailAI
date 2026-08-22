@@ -24,7 +24,7 @@ class TestThresholdContextHistory(unittest.TestCase):
         self.original_env = {}
         for var in ["CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS", "CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH",
                     "CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS", "USE_TOOL_CALLS",
-                    "TOPSAILAI_USE_TOOL_CALLS"]:
+                    "TOPSAILAI_USE_TOOL_CALLS", "TOPSAILAI_ARCHIVE_MESSAGE_ENABLED"]:
             self.original_env[var] = os.environ.get(var)
         
         # EXPLICITLY SET to defaults to override .env pollution
@@ -33,6 +33,7 @@ class TestThresholdContextHistory(unittest.TestCase):
         os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS"] = "27000"
         os.environ["USE_TOOL_CALLS"] = "0"
         os.environ["TOPSAILAI_USE_TOOL_CALLS"] = "0"
+        os.environ["TOPSAILAI_ARCHIVE_MESSAGE_ENABLED"] = "1"
 
     def tearDown(self):
         """Restore original environment variables after each test."""
@@ -246,6 +247,15 @@ class TestThresholdContextHistory(unittest.TestCase):
 
         result = instance.is_exceeded(messages)
         self.assertTrue(result)
+
+    def test_is_exceeded_returns_false_when_archive_disabled(self):
+        """Test the archive switch short-circuits threshold evaluation."""
+        from topsailai.ai_base.prompt_base import ThresholdContextHistory
+
+        os.environ["TOPSAILAI_ARCHIVE_MESSAGE_ENABLED"] = "0"
+        instance = ThresholdContextHistory()
+
+        self.assertFalse(instance.is_exceeded([{"role": "user", "content": "test"}]))
 
     @patch("topsailai.ai_base.prompt_base.thread_local_tool")
     def test_is_exceeded_by_uncached_token_max(self, mock_thread_local_tool):

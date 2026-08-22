@@ -413,11 +413,12 @@ class TestPromptBase(unittest.TestCase):
 
         mock_hook.add_session_message.assert_called()
 
+    @patch("topsailai.ai_base.prompt_base.is_archive_message_enabled", return_value=True)
     @patch("topsailai.ai_base.prompt_base.is_use_tool_calls")
     @patch("topsailai.ai_base.prompt_base.count_tokens")
     @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
     @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
-    def test_call_hooks_ctx_history_threshold_exceeded(self, mock_generate_prompt, mock_get_managers, mock_count_tokens, mock_is_use_tool_calls):
+    def test_call_hooks_ctx_history_threshold_exceeded(self, mock_generate_prompt, mock_get_managers, mock_count_tokens, mock_is_use_tool_calls, mock_archive_enabled):
         """Test link_messages called when threshold exceeded."""
         from topsailai.ai_base.prompt_base import PromptBase
 
@@ -438,11 +439,12 @@ class TestPromptBase(unittest.TestCase):
 
         mock_hook.link_messages.assert_called()
 
+    @patch("topsailai.ai_base.prompt_base.is_archive_message_enabled", return_value=True)
     @patch("topsailai.ai_base.prompt_base.is_use_tool_calls")
     @patch("topsailai.ai_base.prompt_base.count_tokens")
     @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
     @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
-    def test_call_hooks_ctx_history_skips_link_when_tool_calls_enabled(self, mock_generate_prompt, mock_get_managers, mock_count_tokens, mock_is_use_tool_calls):
+    def test_call_hooks_ctx_history_skips_link_when_tool_calls_enabled(self, mock_generate_prompt, mock_get_managers, mock_count_tokens, mock_is_use_tool_calls, mock_archive_enabled):
         """Test link_messages is skipped when native tool calls are enabled."""
         from topsailai.ai_base.prompt_base import PromptBase
 
@@ -462,6 +464,27 @@ class TestPromptBase(unittest.TestCase):
             pb.add_user_message(f"message {i}")
 
         mock_hook.link_messages.assert_not_called()
+
+    @patch("topsailai.ai_base.prompt_base.is_archive_message_enabled", return_value=False)
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_call_hooks_ctx_history_skips_link_when_archive_disabled(
+        self, mock_generate_prompt, mock_get_managers, mock_archive_enabled
+    ):
+        """Test the archive switch skips linking at the prompt entry point."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+        pb = PromptBase(system_prompt="test")
+        mock_hook = MagicMock()
+        pb.hooks_ctx_history.append(mock_hook)
+        pb.threshold_ctx_history.is_exceeded = MagicMock(return_value=True)
+
+        pb.call_hooks_ctx_history()
+
+        mock_hook.link_messages.assert_not_called()
+        pb.threshold_ctx_history.is_exceeded.assert_not_called()
 
     # =========================================================================
     # Group D: Session Management Tests

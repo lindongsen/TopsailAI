@@ -124,3 +124,7 @@ Key logic:
 - Per-agent dedup state stored on the agent-bound `ToolStat`; sustained over-threshold warns once, then re-arms after falling below threshold.
 - Only assistant `thought`/`final` steps are scanned; injected observations are never rescanned, preventing recursion.
 - Advisory only: configuration errors or evaluation failures are logged and swallowed, never interrupting agent execution.
+
+## Archive Message Switch
+
+Added `TOPSAILAI_ARCHIVE_MESSAGE_ENABLED` (default `1`) to let operators disable archive/link-message processing independently, while native tool calls continue to force archiving off to preserve tool-call pairing; session message persistence remains unchanged.
