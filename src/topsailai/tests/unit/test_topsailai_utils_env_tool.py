@@ -470,3 +470,88 @@ class TestResolvePythonInterpreter:
              patch("topsailai.utils.env_tool.shutil.which", return_value=None):
             with pytest.raises(RuntimeError, match="No usable Python interpreter"):
                 resolve_python_interpreter()
+
+
+class TestQuickUseFunctions:
+    """Test module-level shortcuts backed by the shared environment reader."""
+
+    def test_get_supports_value_default_and_formatter(self):
+        """Get values, defaults, and formatted values through the shortcut."""
+        from topsailai.utils import env_tool
+
+        with patch.dict(os.environ, {}, clear=True):
+            assert env_tool.get("TEST_QUICK_GET") is None
+            assert env_tool.get("TEST_QUICK_GET", default="fallback") == "fallback"
+        with patch.dict(os.environ, {"TEST_QUICK_GET": "42"}):
+            assert env_tool.get("TEST_QUICK_GET") == "42"
+            assert env_tool.get("TEST_QUICK_GET", formatter=int) == 42
+
+    def test_get_bool(self):
+        """Get boolean environment values through the shortcut."""
+        from topsailai.utils import env_tool
+
+        with patch.dict(os.environ, {"TEST_QUICK_BOOL": "yes"}):
+            assert env_tool.get_bool("TEST_QUICK_BOOL") is True
+        with patch.dict(os.environ, {}, clear=True):
+            assert env_tool.get_bool("TEST_QUICK_BOOL", default="0") is False
+
+    def test_get_list(self):
+        """Get normalized list values through the shortcut."""
+        from topsailai.utils import env_tool
+
+        with patch.dict(os.environ, {"TEST_QUICK_LIST": "A, b, A"}):
+            result = env_tool.get_list(
+                "TEST_QUICK_LIST",
+                separator=",",
+                to_lower=True,
+            )
+        assert set(result) == {"a", "b"}
+
+    def test_get_int(self):
+        """Get integer values and defaults through the shortcut."""
+        from topsailai.utils import env_tool
+
+        with patch.dict(os.environ, {"TEST_QUICK_INT": "17"}):
+            assert env_tool.get_int("TEST_QUICK_INT", default=3) == 17
+        with patch.dict(os.environ, {}, clear=True):
+            assert env_tool.get_int("TEST_QUICK_INT", default=3) == 3
+
+    def test_get_float(self):
+        """Get float values and defaults through the shortcut."""
+        from topsailai.utils import env_tool
+
+        with patch.dict(os.environ, {"TEST_QUICK_FLOAT": "2.5"}):
+            assert env_tool.get_float("TEST_QUICK_FLOAT", default=1.0) == 2.5
+        with patch.dict(os.environ, {}, clear=True):
+            assert env_tool.get_float("TEST_QUICK_FLOAT", default=1.0) == 1.0
+
+    def test_has(self):
+        """Report whether an environment variable is configured."""
+        from topsailai.utils import env_tool
+
+        with patch.dict(os.environ, {}, clear=True):
+            assert env_tool.has("TEST_QUICK_HAS") is False
+        with patch.dict(os.environ, {"TEST_QUICK_HAS": ""}):
+            assert env_tool.has("TEST_QUICK_HAS") is True
+
+    def test_read_file_or_content(self, tmp_path):
+        """Read either file content or direct content through the shortcut."""
+        from topsailai.utils import env_tool
+
+        content_file = tmp_path / "env-content.txt"
+        content_file.write_text("file content\n", encoding="utf-8")
+        with patch.dict(os.environ, {"TEST_QUICK_CONTENT": str(content_file)}):
+            assert env_tool.read_file_or_content("TEST_QUICK_CONTENT") == "file content"
+        with patch.dict(os.environ, {"TEST_QUICK_CONTENT": "direct content"}):
+            assert env_tool.read_file_or_content("TEST_QUICK_CONTENT") == "direct content"
+
+    def test_get_project_folder(self):
+        """Resolve the project folder through the shortcut."""
+        from topsailai.utils import env_tool
+
+        with patch.dict(
+                os.environ,
+                {"TOPSAILAI_PROJECT_WORKSPACE": "/project/workspace"},
+                clear=True,
+        ):
+            assert env_tool.get_project_folder() == "/project/workspace"

@@ -456,3 +456,51 @@ class EnvironmentReader(object):
 
 # init
 EnvReaderInstance = EnvironmentReader()
+
+
+def get(name, default=None, formatter=None):
+    """Get an environment variable through the shared reader."""
+    return EnvReaderInstance.get(name, default=default, formatter=formatter)
+
+
+def get_bool(name, default=None) -> bool:
+    """Get an environment variable as a boolean through the shared reader."""
+    return EnvReaderInstance.check_bool(name, default=default)
+
+
+def get_list(
+        name: str,
+        separator: str = ';',
+        to_lower=False,
+) -> list[str] | None | str:
+    """Get an environment variable as a list through the shared reader."""
+    return EnvReaderInstance.get_list_str(
+        name,
+        separator=separator,
+        to_lower=to_lower,
+    )
+
+
+def get_int(name, default=None):
+    """Get an environment variable as an integer through the shared reader."""
+    return EnvReaderInstance.get(name, default=default, formatter=int)
+
+
+def get_float(name, default=None):
+    """Get an environment variable as a float through the shared reader."""
+    return EnvReaderInstance.get(name, default=default, formatter=float)
+
+
+def has(name) -> bool:
+    """Return whether an environment variable is configured."""
+    return not EnvReaderInstance.is_not_config(name)
+
+
+def read_file_or_content(env_key: str) -> str:
+    """Read file content or a raw value from an environment variable."""
+    return EnvReaderInstance.read_file_or_content(env_key)
+
+
+def get_project_folder() -> str | None:
+    """Get the current project folder through the shared reader."""
+    return EnvReaderInstance.project_folder
