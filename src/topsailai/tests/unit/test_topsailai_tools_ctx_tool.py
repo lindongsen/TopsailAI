@@ -271,3 +271,59 @@ class TestRetrieveMsgNativeToolCallsDisabled(unittest.TestCase):
         mod = importlib.import_module("topsailai.tools.ctx_tool")
         importlib.reload(mod)
         self.assertTrue(mod.FLAG_TOOL_ENABLED)
+
+
+class TestRetrieveMsgAvailability(unittest.TestCase):
+    """Test retrieve_msg availability across archive and tool-call modes."""
+
+    def test_retrieve_msg_available_when_archive_enabled_and_tool_calls_disabled(self):
+        """Test retrieval when archiving is enabled and native tool calls are disabled."""
+        mock_agent = MagicMock()
+        mock_manager = MagicMock()
+        mock_manager.retrieve_message.return_value = "archived message"
+        mock_agent.hooks_ctx_history = [mock_manager]
+
+        with patch("topsailai.tools.ctx_tool.is_use_tool_calls", return_value=False):
+            with patch("topsailai.tools.ctx_tool.is_archive_message_enabled", return_value=True):
+                with patch("topsailai.tools.ctx_tool.get_agent_object", return_value=mock_agent):
+                    result = retrieve_msg("msg_enabled")
+
+        self.assertEqual(result, "archived message")
+        mock_manager.retrieve_message.assert_called_once_with("msg_enabled")
+
+    def test_retrieve_msg_disabled_when_archive_disabled(self):
+        """Test retrieval short-circuits when archiving is disabled."""
+        with patch("topsailai.tools.ctx_tool.is_use_tool_calls", return_value=False):
+            with patch("topsailai.tools.ctx_tool.is_archive_message_enabled", return_value=False):
+                with patch("topsailai.tools.ctx_tool.get_agent_object") as mock_get_agent:
+                    result = retrieve_msg("msg_disabled")
+
+        self.assertEqual(result, "")
+        mock_get_agent.assert_not_called()
+
+    def test_retrieve_msg_disabled_when_native_tool_calls_enabled(self):
+        """Test native tool calls still disable retrieval when archiving is enabled."""
+        with patch("topsailai.tools.ctx_tool.is_use_tool_calls", return_value=True):
+            with patch("topsailai.tools.ctx_tool.is_archive_message_enabled", return_value=True):
+                with patch("topsailai.tools.ctx_tool.get_agent_object") as mock_get_agent:
+                    result = retrieve_msg("msg_native_tools")
+
+        self.assertEqual(result, "")
+        mock_get_agent.assert_not_called()
+
+    def test_flag_tool_enabled_false_when_archive_disabled(self):
+        """Test the tool registry flag is false when archiving is disabled."""
+        import importlib
+
+        original = os.environ.get("TOPSAILAI_ARCHIVE_MESSAGE_ENABLED")
+        mod = importlib.import_module("topsailai.tools.ctx_tool")
+        try:
+            os.environ["TOPSAILAI_ARCHIVE_MESSAGE_ENABLED"] = "0"
+            importlib.reload(mod)
+            self.assertFalse(mod.FLAG_TOOL_ENABLED)
+        finally:
+            if original is None:
+                os.environ.pop("TOPSAILAI_ARCHIVE_MESSAGE_ENABLED", None)
+            else:
+                os.environ["TOPSAILAI_ARCHIVE_MESSAGE_ENABLED"] = original
+            importlib.reload(mod)

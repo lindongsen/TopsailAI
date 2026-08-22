@@ -6,7 +6,7 @@
 '''
 
 from topsailai.logger import logger
-from topsailai.utils.env_tool import is_use_tool_calls
+from topsailai.utils.env_tool import is_archive_message_enabled, is_use_tool_calls
 from topsailai.utils.thread_local_tool import (
     get_agent_object,
 )
@@ -26,6 +26,10 @@ def retrieve_msg(msg_id:str):
         logger.warning("retrieve_msg is unavailable because native tool calls are enabled")
         return ""
 
+    if not is_archive_message_enabled():
+        logger.warning("retrieve_msg is unavailable because archive messages are disabled")
+        return ""
+
     agent = get_agent_object()
     if agent is None:
         logger.error("no found agent object")
@@ -42,8 +46,9 @@ def retrieve_msg(msg_id:str):
 
 
 # Context archiving (which produces retrievable messages) is disabled under
-# native tool calls, so hide this tool from the registry in that mode.
-FLAG_TOOL_ENABLED = not is_use_tool_calls()
+# native tool calls or when the archive-message switch is off, so hide this
+# tool from the registry in either mode.
+FLAG_TOOL_ENABLED = not is_use_tool_calls() and is_archive_message_enabled()
 
 
 TOOLS = dict(
