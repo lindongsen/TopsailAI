@@ -219,3 +219,55 @@ class TestRetrieveMsgInvalidInputs(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestRetrieveMsgNativeToolCallsDisabled(unittest.TestCase):
+    """Test retrieve_msg short-circuits when native tool calls are enabled."""
+
+    def setUp(self):
+        self._orig_use = os.environ.get("USE_TOOL_CALLS")
+        self._orig_topsailai_use = os.environ.get("TOPSAILAI_USE_TOOL_CALLS")
+
+    def tearDown(self):
+        if self._orig_use is None:
+            os.environ.pop("USE_TOOL_CALLS", None)
+        else:
+            os.environ["USE_TOOL_CALLS"] = self._orig_use
+        if self._orig_topsailai_use is None:
+            os.environ.pop("TOPSAILAI_USE_TOOL_CALLS", None)
+        else:
+            os.environ["TOPSAILAI_USE_TOOL_CALLS"] = self._orig_topsailai_use
+
+    def test_retrieve_msg_disabled_when_native_tool_calls_enabled(self):
+        """Test that retrieve_msg returns empty when native tool calls are enabled."""
+        os.environ["TOPSAILAI_USE_TOOL_CALLS"] = "1"
+        with patch('topsailai.tools.ctx_tool.get_agent_object') as mock_get_agent:
+            result = retrieve_msg("any_msg_id")
+            self.assertEqual(result, "")
+            # Agent lookup must not happen when disabled.
+            mock_get_agent.assert_not_called()
+
+    def test_retrieve_msg_logs_warning_when_disabled(self):
+        """Test that retrieve_msg logs a warning (not an error) when disabled."""
+        os.environ["TOPSAILAI_USE_TOOL_CALLS"] = "1"
+        with patch('topsailai.tools.ctx_tool.logger') as mock_logger:
+            retrieve_msg("any_msg_id")
+            mock_logger.warning.assert_called_once()
+            mock_logger.error.assert_not_called()
+
+    def test_flag_tool_enabled_false_when_native_tool_calls_enabled(self):
+        """Test that FLAG_TOOL_ENABLED is False when native tool calls are enabled."""
+        os.environ["TOPSAILAI_USE_TOOL_CALLS"] = "1"
+        import importlib
+        mod = importlib.import_module("topsailai.tools.ctx_tool")
+        importlib.reload(mod)
+        self.assertFalse(mod.FLAG_TOOL_ENABLED)
+
+    def test_flag_tool_enabled_true_when_native_tool_calls_disabled(self):
+        """Test that FLAG_TOOL_ENABLED is True when native tool calls are disabled."""
+        os.environ.pop("TOPSAILAI_USE_TOOL_CALLS", None)
+        os.environ.pop("USE_TOOL_CALLS", None)
+        import importlib
+        mod = importlib.import_module("topsailai.tools.ctx_tool")
+        importlib.reload(mod)
+        self.assertTrue(mod.FLAG_TOOL_ENABLED)
