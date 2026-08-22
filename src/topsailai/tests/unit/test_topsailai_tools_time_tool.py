@@ -14,6 +14,16 @@ from unittest.mock import patch, MagicMock
 from datetime import datetime
 
 
+class TestToolConfiguration(unittest.TestCase):
+    """Test cases for time tool configuration."""
+
+    def test_disabled_by_default(self):
+        """Test that time tooling requires explicit enablement."""
+        from topsailai.tools.time_tool import FLAG_TOOL_ENABLED
+
+        self.assertFalse(FLAG_TOOL_ENABLED)
+
+
 class TestGetLocalDate(unittest.TestCase):
     """Test cases for get_local_date() function."""
 

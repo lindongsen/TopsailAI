@@ -9,6 +9,9 @@ import time
 
 from topsailai.utils import time_tool
 
+# Disabled by default. Enable explicitly when local time tooling is needed.
+FLAG_TOOL_ENABLED = False
+
 def get_local_date():
     """ get current date.
     return local time in 'ISO 8601'. example: '2025-10-19T21:17:07'
