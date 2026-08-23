@@ -9,7 +9,7 @@ import os
 from collections import OrderedDict
 
 from topsailai.context.token import count_tokens
-from topsailai.utils import time_tool
+from topsailai.utils import env_tool, time_tool
 from topsailai.workspace.folder_constants import FOLDER_MEMORY
 from .memory_tool_utils import memory_hooks, memory_reconcile, memory_stat
 from .story_tool import (
@@ -133,9 +133,25 @@ def delete_memory(title:str) -> bool:
     )
 
 
+def _memory_retention_limit(name: str, default: int) -> int:
+    """Read one non-negative memory retention limit from the environment."""
+    return max(0, env_tool.get_int(name, default=default))
+
+
 def reconcile_memories(dry_run: bool = True) -> dict:
-    """Reconcile memory stats and return a JSON-friendly summary."""
-    summary = memory_reconcile.reconcile_memory_stats(WORKSPACE, dry_run=dry_run)
+    """Reconcile memory stats using boundary-resolved retention settings."""
+    max_age_days = _memory_retention_limit(
+        "TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_AGE_DAYS", 30
+    )
+    max_count = _memory_retention_limit(
+        "TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_COUNT", 100
+    )
+    summary = memory_reconcile.reconcile_memory_stats(
+        WORKSPACE,
+        dry_run=dry_run,
+        quarantine_max_age_days=max_age_days,
+        quarantine_max_count=max_count,
+    )
     return summary.to_dict()
 
 def get_all_memories() -> dict:

@@ -764,6 +764,14 @@ TOPSAILAI_MEMORY_WORKSPACE=""
 # Maximum memory tokens loaded into startup context. 0 means unlimited.
 TOPSAILAI_CONTEXT_MEMORY_LOAD_MAX_TOKENS=0
 
+# Delete quarantined memory stat files older than this many days.
+# Default is 30. Set to 0 to disable age-based cleanup.
+TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_AGE_DAYS=30
+
+# Maximum quarantined memory stat files to retain; oldest files are deleted first.
+# Default is 100. Set to 0 to disable count-based cleanup.
+TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_COUNT=100
+
 # =============================================================================
 # Task Configuration
 # =============================================================================

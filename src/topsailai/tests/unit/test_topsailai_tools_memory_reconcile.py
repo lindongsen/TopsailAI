@@ -185,3 +185,88 @@ class TestMemoryReconcile(TestCase):
         self.assertEqual(summary.errors, 1)
         self.assertEqual(summary.purged_orphan, 1)
         self.assertEqual(len(calls), 2)
+
+
+    def _write_quarantine_file(self, name: str, mtime: float) -> str:
+        """Create a quarantined stat fixture with a controlled mtime."""
+        folder = os.path.join(
+            self.workspace,
+            "story",
+            memory_stat.STAT_FOLDER,
+            memory_reconcile.QUARANTINE_FOLDER,
+        )
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, name)
+        with open(path, "w", encoding="utf-8") as fd:
+            fd.write("quarantined")
+        os.utime(path, (mtime, mtime))
+        return path
+
+    def test_retention_removes_expired_quarantine_with_log(self):
+        """Verify live age retention deletes expired files observably."""
+        now = 2_000_000_000.0
+        expired = self._write_quarantine_file("expired.json", now - 31 * 86400)
+        recent = self._write_quarantine_file("recent.json", now - 29 * 86400)
+
+        with mock.patch.object(memory_reconcile.time, "time", return_value=now), \
+                mock.patch.object(memory_reconcile.logger, "info") as mock_info:
+            memory_reconcile.reconcile_memory_stats(
+                self.workspace,
+                dry_run=False,
+                quarantine_max_age_days=30,
+            )
+
+        self.assertFalse(os.path.exists(expired))
+        self.assertTrue(os.path.exists(recent))
+        mock_info.assert_called_once_with(
+            "delete %s quarantine memory stat: [%s]", "expired", expired
+        )
+
+    def test_retention_count_removes_oldest_first(self):
+        """Verify count retention keeps only the newest quarantined files."""
+        oldest = self._write_quarantine_file("oldest.json", 100.0)
+        middle = self._write_quarantine_file("middle.json", 200.0)
+        newest = self._write_quarantine_file("newest.json", 300.0)
+
+        memory_reconcile.reconcile_memory_stats(
+            self.workspace,
+            dry_run=False,
+            quarantine_max_count=2,
+        )
+
+        self.assertFalse(os.path.exists(oldest))
+        self.assertTrue(os.path.exists(middle))
+        self.assertTrue(os.path.exists(newest))
+
+    def test_zero_retention_limits_disable_cleanup(self):
+        """Verify zero disables both age-based and count-based cleanup."""
+        first = self._write_quarantine_file("first.json", 1.0)
+        second = self._write_quarantine_file("second.json", 2.0)
+
+        memory_reconcile.reconcile_memory_stats(
+            self.workspace,
+            dry_run=False,
+            quarantine_max_age_days=0,
+            quarantine_max_count=0,
+        )
+
+        self.assertTrue(os.path.exists(first))
+        self.assertTrue(os.path.exists(second))
+
+    def test_dry_run_reports_retention_without_deleting(self):
+        """Verify dry-run logs planned retention while preserving files."""
+        quarantine_file = self._write_quarantine_file("planned.json", 1.0)
+
+        with mock.patch.object(memory_reconcile.logger, "info") as mock_info:
+            memory_reconcile.reconcile_memory_stats(
+                self.workspace,
+                quarantine_max_count=0,
+                quarantine_max_age_days=1,
+            )
+
+        self.assertTrue(os.path.exists(quarantine_file))
+        mock_info.assert_called_once_with(
+            "would delete %s quarantine memory stat: [%s]",
+            "expired",
+            quarantine_file,
+        )

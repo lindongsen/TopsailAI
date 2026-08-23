@@ -58,6 +58,51 @@ def _list_stat_files(stats_root: str) -> list[str]:
     )
 
 
+def _list_quarantine_files(quarantine_root: str) -> list[tuple[str, float]]:
+    """List quarantined files with mtimes in deterministic order."""
+    try:
+        names = os.listdir(quarantine_root)
+    except FileNotFoundError:
+        return []
+    files = []
+    for name in names:
+        path = os.path.join(quarantine_root, name)
+        if os.path.isfile(path):
+            files.append((path, os.path.getmtime(path)))
+    return sorted(files, key=lambda item: (item[1], item[0]))
+
+
+def _delete_quarantine_file(path: str, reason: str, dry_run: bool) -> None:
+    """Delete or report one quarantined file with an observable log."""
+    if dry_run:
+        logger.info("would delete %s quarantine memory stat: [%s]", reason, path)
+        return
+    os.remove(path)
+    logger.info("delete %s quarantine memory stat: [%s]", reason, path)
+
+
+def _cleanup_quarantine(
+    quarantine_root: str,
+    max_age_days: int,
+    max_count: int,
+    dry_run: bool,
+    now: float | None = None,
+) -> None:
+    """Apply independent age and count limits to quarantined stat files."""
+    files = _list_quarantine_files(quarantine_root)
+    current_time = time.time() if now is None else now
+    max_age_seconds = max_age_days * 86400 if max_age_days > 0 else 0
+    surviving = []
+    for path, mtime in files:
+        if max_age_seconds and current_time - mtime > max_age_seconds:
+            _delete_quarantine_file(path, "expired", dry_run)
+            continue
+        surviving.append((path, mtime))
+
+    if max_count <= 0 or len(surviving) <= max_count:
+        return
+    for path, _mtime in surviving[: len(surviving) - max_count]:
+        _delete_quarantine_file(path, "excess", dry_run)
 
 
 def _mtime_timestamp(memory_file: str) -> str:
@@ -140,8 +185,13 @@ def _process_stat(
     return embedded_id
 
 
-def reconcile_memory_stats(workspace: str, dry_run: bool = True) -> ReconSummary:
-    """Classify and reconcile memory/stat inconsistencies under the story lock."""
+def reconcile_memory_stats(
+    workspace: str,
+    dry_run: bool = True,
+    quarantine_max_age_days: int = 0,
+    quarantine_max_count: int = 0,
+) -> ReconSummary:
+    """Reconcile memory stats and enforce optional quarantine retention."""
     started = time.perf_counter()
     summary = ReconSummary(dry_run=dry_run)
     story_root = os.path.join(workspace, "story")
@@ -185,6 +235,18 @@ def reconcile_memory_stats(workspace: str, dry_run: bool = True) -> ReconSummary
                     summary.rebuilt -= 1
                     summary.errors += 1
                     logger.exception("failed to rebuild memory stat: [%s]", memory_id)
+
+        quarantine_root = os.path.join(stats_root, QUARANTINE_FOLDER)
+        try:
+            _cleanup_quarantine(
+                quarantine_root,
+                max(0, quarantine_max_age_days),
+                max(0, quarantine_max_count),
+                dry_run,
+            )
+        except Exception:
+            summary.errors += 1
+            logger.exception("failed to clean quarantine: [%s]", quarantine_root)
 
     summary.elapsed_ms = int((time.perf_counter() - started) * 1000)
     return summary

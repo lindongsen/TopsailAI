@@ -385,6 +385,8 @@ These variables configure the optional runtime message source that injects messa
 |----------|---------|-------------|
 | `TOPSAILAI_MEMORY_WORKSPACE` | `""` | Workspace folder where memories are saved. |
 | `TOPSAILAI_CONTEXT_MEMORY_LOAD_MAX_TOKENS` | `0` | Maximum tokens loaded from memories into startup context. Positive integers load memories most-recently-used first without exceeding the limit; `0`, negative, empty, or invalid values mean unlimited. |
+| `TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_AGE_DAYS` | `30` | Maximum age in days for quarantined memory stat files; older files are deleted during reconciliation. Non-negative integer; `0` disables age-based cleanup. |
+| `TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_COUNT` | `100` | Maximum quarantined memory stat files retained during reconciliation; excess files are deleted oldest first. Non-negative integer; `0` disables count-based cleanup. |
 
 ## Task Configuration
 

@@ -482,8 +482,8 @@ class TestMemoryStatLifecycle(unittest.TestCase):
     @patch(
         'topsailai.tools.story_memory_tool.memory_reconcile.reconcile_memory_stats'
     )
-    def test_reconcile_memories_forwards_workspace_and_dry_run(self, mock_reconcile):
-        """Verify the facade forwards configuration and returns a summary dict."""
+    def test_reconcile_memories_forwards_default_retention(self, mock_reconcile):
+        """Verify the facade forwards approved retention defaults."""
         from topsailai.tools import story_memory_tool
         from topsailai.tools.memory_tool_utils.memory_reconcile import ReconSummary
 
@@ -492,9 +492,64 @@ class TestMemoryStatLifecycle(unittest.TestCase):
         result = story_memory_tool.reconcile_memories(dry_run=False)
 
         mock_reconcile.assert_called_once_with(
-            story_memory_tool.WORKSPACE, dry_run=False
+            story_memory_tool.WORKSPACE,
+            dry_run=False,
+            quarantine_max_age_days=30,
+            quarantine_max_count=100,
         )
         self.assertEqual(result, mock_reconcile.return_value.to_dict())
+
+    @patch(
+        'topsailai.tools.story_memory_tool.memory_reconcile.reconcile_memory_stats'
+    )
+    @patch.dict(
+        os.environ,
+        {
+            'TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_AGE_DAYS': '7',
+            'TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_COUNT': '12',
+        },
+    )
+    def test_reconcile_memories_forwards_env_retention(self, mock_reconcile):
+        """Verify configured retention values are resolved at the facade."""
+        from topsailai.tools import story_memory_tool
+        from topsailai.tools.memory_tool_utils.memory_reconcile import ReconSummary
+
+        mock_reconcile.return_value = ReconSummary()
+
+        story_memory_tool.reconcile_memories()
+
+        mock_reconcile.assert_called_once_with(
+            story_memory_tool.WORKSPACE,
+            dry_run=True,
+            quarantine_max_age_days=7,
+            quarantine_max_count=12,
+        )
+
+    @patch(
+        'topsailai.tools.story_memory_tool.memory_reconcile.reconcile_memory_stats'
+    )
+    @patch.dict(
+        os.environ,
+        {
+            'TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_AGE_DAYS': '-1',
+            'TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_COUNT': '-2',
+        },
+    )
+    def test_reconcile_memories_clamps_negative_retention(self, mock_reconcile):
+        """Verify negative retention values safely disable cleanup."""
+        from topsailai.tools import story_memory_tool
+        from topsailai.tools.memory_tool_utils.memory_reconcile import ReconSummary
+
+        mock_reconcile.return_value = ReconSummary()
+
+        story_memory_tool.reconcile_memories()
+
+        mock_reconcile.assert_called_once_with(
+            story_memory_tool.WORKSPACE,
+            dry_run=True,
+            quarantine_max_age_days=0,
+            quarantine_max_count=0,
+        )
 
 
 if __name__ == '__main__':
