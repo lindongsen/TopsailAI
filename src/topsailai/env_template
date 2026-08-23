@@ -757,6 +757,9 @@ TOPSAILAI_STORY_WORKSPACE=""
 # Save memories to the workspace
 TOPSAILAI_MEMORY_WORKSPACE=""
 
+# Maximum memory tokens loaded into startup context. 0 means unlimited.
+TOPSAILAI_CONTEXT_MEMORY_LOAD_MAX_TOKENS=0
+
 # =============================================================================
 # Task Configuration
 # =============================================================================

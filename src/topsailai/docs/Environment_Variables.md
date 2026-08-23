@@ -383,6 +383,7 @@ These variables configure the optional runtime message source that injects messa
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOPSAILAI_MEMORY_WORKSPACE` | `""` | Workspace folder where memories are saved. |
+| `TOPSAILAI_CONTEXT_MEMORY_LOAD_MAX_TOKENS` | `0` | Maximum tokens loaded from memories into startup context. Positive integers load memories most-recently-used first without exceeding the limit; `0`, negative, empty, or invalid values mean unlimited. |
 
 ## Task Configuration
 

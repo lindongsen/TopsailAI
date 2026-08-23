@@ -8,6 +8,7 @@
 import os
 from collections import OrderedDict
 
+from topsailai.context.token import count_tokens
 from topsailai.workspace.folder_constants import FOLDER_MEMORY
 from .memory_tool_utils import memory_stat
 from .story_tool import (
@@ -111,16 +112,58 @@ def delete_memory(title:str) -> bool:
 
 def get_all_memories() -> dict:
     mem_map = OrderedDict()
-    for _title in sorted(list_memories()):
+    for _title in sorted(list_memories() or []):
         try:
             mem_map[_title] = read_memory_without_count(_title)
-        except:
+        except Exception:
             pass
     return mem_map
 
+
+def _parse_max_tokens(value) -> int:
+    """Parse the startup memory token budget; zero means unlimited."""
+    try:
+        max_tokens = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, max_tokens)
+
+
+def _load_memories_lru(max_tokens: int) -> OrderedDict:
+    """Load memories most-recently-used first without changing their stats."""
+    scored = []
+    for title in list_memories() or []:
+        stat = memory_stat.read_memory_stat(WORKSPACE, title)
+        scored.append((title, stat))
+
+    scored.sort(key=lambda item: (item[1] or {}).get("memory_id", item[0]))
+    scored.sort(
+        key=lambda item: (item[1] or {}).get("created_at", ""), reverse=True
+    )
+    scored.sort(
+        key=lambda item: (item[1] or {}).get("last_activity_at", ""), reverse=True
+    )
+
+    memories = OrderedDict()
+    used_tokens = 0
+    for title, _stat in scored:
+        try:
+            content = read_memory_without_count(title)
+        except Exception:
+            continue
+        if content is None:
+            continue
+        memory_tokens = count_tokens(content)
+        if max_tokens > 0 and used_tokens + memory_tokens > max_tokens:
+            break
+        memories[title] = content
+        used_tokens += memory_tokens
+    return memories
+
+
 def get_all_memories_markdown(all_memories:dict=None) -> str:
     result = ""
-    if not all_memories:
+    if all_memories is None:
         all_memories = get_all_memories()
     for _title, _content in all_memories.items():
         result += f"\n## {_title}\n" + _content + "\n"
@@ -140,8 +183,11 @@ if not WORKSPACE:
 
 
 def get_prompt_memory():
-    """ refer to context/prompt_env.py """
-    all_memories = get_all_memories()
+    """Build the bounded, non-counting startup memory observation."""
+    max_tokens = _parse_max_tokens(os.getenv("TOPSAILAI_CONTEXT_MEMORY_LOAD_MAX_TOKENS"))
+    all_memories = (
+        _load_memories_lru(max_tokens) if max_tokens > 0 else get_all_memories()
+    )
     return \
 f"""
 # Current Memories
