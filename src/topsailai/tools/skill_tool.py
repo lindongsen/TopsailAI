@@ -529,21 +529,20 @@ PROMPT_SKILL_TOOL_RULE = """
 
 PROMPT_SKILL = prompt_tool.read_prompt("skills/skill.md") + PROMPT_SKILL_TOOL_RULE
 
-PROMPT_PLUGIN_SKILLS = ""
-PROMPT = ""
+OBSERVATION = ""
+PROMPT = PROMPT_SKILL
 FLAG_TOOL_ENABLED = False
 
-def reload():
-    """ reload prompt """
-    global PROMPT_PLUGIN_SKILLS
-    PROMPT_PLUGIN_SKILLS = get_skill_markdown()
 
-    global PROMPT
-    PROMPT = PROMPT_SKILL + PROMPT_PLUGIN_SKILLS
+def reload():
+    """Reload the plugin skill observation."""
+    global OBSERVATION
+    OBSERVATION = get_skill_markdown()
 
     global FLAG_TOOL_ENABLED
-    FLAG_TOOL_ENABLED = True if PROMPT_PLUGIN_SKILLS else False
+    FLAG_TOOL_ENABLED = True if OBSERVATION else False
 
     return
+
 
 reload()

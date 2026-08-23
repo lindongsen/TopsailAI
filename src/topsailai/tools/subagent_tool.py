@@ -376,8 +376,8 @@ def init_doc():
         skill_tool,
     )
 
-    if skill_tool.PROMPT_PLUGIN_SKILLS:
-        call_assistant.__doc__ += "\n>>> SKILL START\n" + skill_tool.PROMPT_PLUGIN_SKILLS + "\n<<< SKILL END"
+    if skill_tool.OBSERVATION:
+        call_assistant.__doc__ += "\n>>> SKILL START\n" + skill_tool.OBSERVATION + "\n<<< SKILL END"
 
     return
 
