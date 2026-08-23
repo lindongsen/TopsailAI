@@ -105,7 +105,12 @@ def match_file(
 # Shell
 ##########################################################
 
-def find_files_by_name(folder_path: str, file_name: str, fuzzy_match: bool = True) -> list[str]:
+def find_files_by_name(
+        folder_path: str,
+        file_name: str,
+        fuzzy_match: bool = True,
+        to_exclude_dot_start: bool = True,
+    ) -> list[str]:
     """Find all files matching a name within a directory tree.
 
     This function recursively searches through a directory and all its
@@ -117,6 +122,8 @@ def find_files_by_name(folder_path: str, file_name: str, fuzzy_match: bool = Tru
         fuzzy_match: If True (default), match files whose names contain
             ``file_name`` as a substring (case-sensitive). If False, only
             return files whose names exactly equal ``file_name``.
+        to_exclude_dot_start: If True (default), skip dot-start files and
+            do not descend into dot-start directories.
 
     Returns:
         list[str]: List of full paths to matching files
@@ -133,7 +140,12 @@ def find_files_by_name(folder_path: str, file_name: str, fuzzy_match: bool = Tru
     """
     results = []
     for root, dirs, files in os.walk(folder_path):
+        if to_exclude_dot_start:
+            dirs[:] = [directory for directory in dirs if not directory.startswith(".")]
+
         for file in files:
+            if to_exclude_dot_start and file.startswith("."):
+                continue
             if fuzzy_match:
                 if file_name in file:
                     file_path = os.path.join(root, file)

@@ -156,7 +156,27 @@ class TestStoryFile(unittest.TestCase):
         mock_find_files.return_value = ['/workspace/story/test.md']
         result = self.story_file.get_story_file('/workspace', 'test.md')
         self.assertEqual(result, '/workspace/story/test.md')
-        mock_find_files.assert_called_once_with('/workspace/story', 'test.md')
+        mock_find_files.assert_called_once_with(
+            '/workspace/story',
+            'test.md',
+            to_exclude_dot_start=True,
+        )
+
+    @patch('topsailai.tools.story_tool.file_tool.find_files_by_name')
+    def test_get_story_file_can_include_dot_start_paths(self, mock_find_files):
+        """Test get_story_file can retain the broad search when requested."""
+        mock_find_files.return_value = ['/workspace/story/.stats/test.md']
+        result = self.story_file.get_story_file(
+            '/workspace',
+            'test.md',
+            to_exclude_dot_start=False,
+        )
+        self.assertEqual(result, '/workspace/story/.stats/test.md')
+        mock_find_files.assert_called_once_with(
+            '/workspace/story',
+            'test.md',
+            to_exclude_dot_start=False,
+        )
 
     @patch('topsailai.tools.story_tool.file_tool.find_files_by_name')
     def test_get_story_file_not_found(self, mock_find_files):
@@ -164,7 +184,11 @@ class TestStoryFile(unittest.TestCase):
         mock_find_files.return_value = []
         result = self.story_file.get_story_file('/workspace', 'nonexistent.md')
         self.assertIsNone(result)
-        mock_find_files.assert_called_once_with('/workspace/story', 'nonexistent.md')
+        mock_find_files.assert_called_once_with(
+            '/workspace/story',
+            'nonexistent.md',
+            to_exclude_dot_start=True,
+        )
 
     @patch('topsailai.tools.story_tool.file_tool.find_files_by_name')
     def test_get_story_file_default_fuzzy_multiple_returns_first(self, mock_find_files):
@@ -172,7 +196,11 @@ class TestStoryFile(unittest.TestCase):
         mock_find_files.return_value = ['/workspace/story/test.md', '/workspace/story/test2.md']
         result = self.story_file.get_story_file('/workspace', 'test')
         self.assertEqual(result, '/workspace/story/test.md')
-        mock_find_files.assert_called_once_with('/workspace/story', 'test')
+        mock_find_files.assert_called_once_with(
+            '/workspace/story',
+            'test',
+            to_exclude_dot_start=True,
+        )
 
     @patch('topsailai.tools.story_tool.file_tool.find_files_by_name')
     def test_get_story_file_must_only_one_found(self, mock_find_files):
@@ -180,7 +208,11 @@ class TestStoryFile(unittest.TestCase):
         mock_find_files.return_value = ['/workspace/story/test.md']
         result = self.story_file.get_story_file('/workspace', 'test.md', must_only_one=True)
         self.assertEqual(result, '/workspace/story/test.md')
-        mock_find_files.assert_called_once_with('/workspace/story', 'test.md')
+        mock_find_files.assert_called_once_with(
+            '/workspace/story',
+            'test.md',
+            to_exclude_dot_start=True,
+        )
 
     @patch('topsailai.tools.story_tool.file_tool.find_files_by_name')
     def test_get_story_file_must_only_one_not_found(self, mock_find_files):
@@ -188,7 +220,11 @@ class TestStoryFile(unittest.TestCase):
         mock_find_files.return_value = []
         result = self.story_file.get_story_file('/workspace', 'nonexistent.md', must_only_one=True)
         self.assertIsNone(result)
-        mock_find_files.assert_called_once_with('/workspace/story', 'nonexistent.md')
+        mock_find_files.assert_called_once_with(
+            '/workspace/story',
+            'nonexistent.md',
+            to_exclude_dot_start=True,
+        )
 
     @patch('topsailai.tools.story_tool.file_tool.find_files_by_name')
     def test_get_story_file_must_only_one_multiple_raises(self, mock_find_files):
@@ -197,7 +233,11 @@ class TestStoryFile(unittest.TestCase):
         with self.assertRaises(Exception) as context:
             self.story_file.get_story_file('/workspace', 'test', must_only_one=True)
         self.assertIn("found multiple stories", str(context.exception))
-        mock_find_files.assert_called_once_with('/workspace/story', 'test')
+        mock_find_files.assert_called_once_with(
+            '/workspace/story',
+            'test',
+            to_exclude_dot_start=True,
+        )
 
     @patch('topsailai.tools.story_tool.lock_tool.FileLock')
     @patch('topsailai.tools.story_tool.os.makedirs')
@@ -227,6 +267,8 @@ class TestStoryFile(unittest.TestCase):
         with patch('builtins.open', mock_open(read_data='Test story content')):
             result = self.story_file.read_story('/workspace', 'test.md')
             self.assertEqual(result, 'Test story content')
+
+        mock_get_file.assert_called_once_with('/workspace', 'test.md')
 
     @patch('topsailai.tools.story_tool.lock_tool.FileLock')
     @patch.object(story_tool.StoryFile, 'get_story_file')
@@ -310,6 +352,7 @@ class TestStoryFile(unittest.TestCase):
 
         result = self.story_file.delete_story('/workspace', 'test.md')
 
+        mock_get_file.assert_called_once_with('/workspace', 'test.md', must_only_one=True)
         mock_delete.assert_called_once_with('/workspace/story/2025-01-15/test.md')
         mock_rmdir.assert_called_once_with('/workspace/story/2025-01-15')
         mock_log.assert_called_once_with(

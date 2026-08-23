@@ -177,6 +177,35 @@ def test_find_files_by_name_exact():
         assert file1 in results
         assert file2 not in results
 
+
+def test_find_files_by_name_excludes_dot_start_paths_by_default(tmp_path):
+    """Dot-start files and directories are excluded unless explicitly enabled."""
+    date_dir = tmp_path / "2026-08-23"
+    stats_dir = tmp_path / ".stats"
+    date_dir.mkdir()
+    stats_dir.mkdir()
+
+    story_file = date_dir / "memory.md"
+    hidden_story_file = date_dir / ".memory.md"
+    hidden_stats_file = stats_dir / "memory.md"
+    story_file.write_text("story", encoding="utf-8")
+    hidden_story_file.write_text("hidden story", encoding="utf-8")
+    hidden_stats_file.write_text("stats", encoding="utf-8")
+
+    default_results = find_files_by_name(str(tmp_path), "memory.md")
+    assert default_results == [str(story_file)]
+
+    broad_results = find_files_by_name(
+        str(tmp_path),
+        "memory.md",
+        to_exclude_dot_start=False,
+    )
+    assert set(broad_results) == {
+        str(story_file),
+        str(hidden_story_file),
+        str(hidden_stats_file),
+    }
+
 def test_list_files():
     """Test list_files function with various filters."""
     with tempfile.TemporaryDirectory() as tmp_dir:

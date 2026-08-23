@@ -92,19 +92,30 @@ class StoryBase(object):
 
 class StoryFile(StoryBase):
 
-    def get_story_file(self, workspace:str, story_id:str, must_only_one:bool=False):
+    def get_story_file(
+            self,
+            workspace: str,
+            story_id: str,
+            must_only_one: bool = False,
+            to_exclude_dot_start: bool = True,
+        ):
         """get a file path for the story content.
 
         Args:
             workspace (str): folder path.
             story_id (str): story id.
+            to_exclude_dot_start (bool): exclude dot-start files and directories.
 
         Return:
             str, a file path.
             none, failed to get file.
         """
         story_folder = os.path.join(workspace, KEY_STORY)
-        files = file_tool.find_files_by_name(story_folder, story_id)
+        files = file_tool.find_files_by_name(
+            story_folder,
+            story_id,
+            to_exclude_dot_start=to_exclude_dot_start,
+        )
         if files:
             if must_only_one and len(files) > 1:
                 raise Exception(f"found multiple stories: {files}")
