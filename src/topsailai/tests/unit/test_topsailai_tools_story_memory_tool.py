@@ -479,5 +479,23 @@ class TestMemoryStatLifecycle(unittest.TestCase):
         mock_read_memory.assert_not_called()
 
 
+    @patch(
+        'topsailai.tools.story_memory_tool.memory_reconcile.reconcile_memory_stats'
+    )
+    def test_reconcile_memories_forwards_workspace_and_dry_run(self, mock_reconcile):
+        """Verify the facade forwards configuration and returns a summary dict."""
+        from topsailai.tools import story_memory_tool
+        from topsailai.tools.memory_tool_utils.memory_reconcile import ReconSummary
+
+        mock_reconcile.return_value = ReconSummary(healthy=2, dry_run=False)
+
+        result = story_memory_tool.reconcile_memories(dry_run=False)
+
+        mock_reconcile.assert_called_once_with(
+            story_memory_tool.WORKSPACE, dry_run=False
+        )
+        self.assertEqual(result, mock_reconcile.return_value.to_dict())
+
+
 if __name__ == '__main__':
     unittest.main()

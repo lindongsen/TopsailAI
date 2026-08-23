@@ -11,7 +11,7 @@ from collections import OrderedDict
 from topsailai.context.token import count_tokens
 from topsailai.utils import time_tool
 from topsailai.workspace.folder_constants import FOLDER_MEMORY
-from .memory_tool_utils import memory_hooks, memory_stat
+from .memory_tool_utils import memory_hooks, memory_reconcile, memory_stat
 from .story_tool import (
     StoryFileInstance,
     build_story_id,
@@ -131,6 +131,12 @@ def delete_memory(title:str) -> bool:
             WORKSPACE, memory_stat.get_memory_id(path)
         ),
     )
+
+
+def reconcile_memories(dry_run: bool = True) -> dict:
+    """Reconcile memory stats and return a JSON-friendly summary."""
+    summary = memory_reconcile.reconcile_memory_stats(WORKSPACE, dry_run=dry_run)
+    return summary.to_dict()
 
 def get_all_memories() -> dict:
     mem_map = OrderedDict()
