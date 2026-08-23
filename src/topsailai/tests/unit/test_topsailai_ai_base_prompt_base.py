@@ -635,6 +635,88 @@ class TestPromptBase(unittest.TestCase):
         self.assertEqual(len(user_messages), 1)
         self.assertEqual(user_messages[0]["content"], "user task")
 
+    @patch("topsailai.prompt_hub.prompt_tool.get_observation_by_tools")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_context_message_appends_tool_observation_after_env(
+        self, mock_generate_prompt, mock_get_managers, mock_get_observation
+    ):
+        """Test tool observation follows the environment context fragment."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+        mock_get_observation.return_value = (
+            '<observation source="cmd_tool">\ntool context\n</observation>'
+        )
+        os.environ["TOPSAILAI_CONTEXT_USER_MESSAGE"] = "env context"
+        pb = PromptBase(system_prompt="test")
+        pb.available_tools = {"cmd_tool-exec_cmd": MagicMock()}
+
+        result = pb._build_context_message()
+
+        self.assertEqual(
+            result,
+            '---\nenv context\n'
+            '---\n<observation source="cmd_tool">\ntool context\n</observation>\n'
+            '---\n',
+        )
+        mock_get_observation.assert_called_once_with(["cmd_tool-exec_cmd"])
+
+    @patch("topsailai.prompt_hub.prompt_tool.get_observation_by_tools")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_tool_observation_is_injected_only_once(
+        self, mock_generate_prompt, mock_get_managers, mock_get_observation
+    ):
+        """Test one PromptBase instance collects tool observations only once."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+        mock_get_observation.return_value = (
+            '<observation source="cmd_tool">\ntool context\n</observation>'
+        )
+        pb = PromptBase(system_prompt="test")
+        pb.available_tools = {"cmd_tool-exec_cmd": MagicMock()}
+
+        first_result = pb._build_context_message()
+        second_result = pb._build_context_message()
+
+        self.assertIn("tool context", first_result)
+        self.assertIsNone(second_result)
+        mock_get_observation.assert_called_once()
+
+    @patch("topsailai.prompt_hub.prompt_tool.get_observation_by_tools")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_persisted_tool_observation_is_not_duplicated(
+        self, mock_generate_prompt, mock_get_managers, mock_get_observation
+    ):
+        """Test a tool observation loaded from session is not appended again."""
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+        tool_observation = (
+            '<observation source="cmd_tool">\ntool context\n</observation>'
+        )
+        mock_get_observation.return_value = tool_observation
+        pb = PromptBase(system_prompt="test")
+        pb.available_tools = {"cmd_tool-exec_cmd": MagicMock()}
+        pb.messages.append({
+            "role": "user",
+            "content": json.dumps({
+                "step_name": "observation",
+                "raw_text": f"---\n{tool_observation}\n---\n",
+            }),
+        })
+
+        result = pb._build_context_message()
+
+        self.assertIsNone(result)
+        mock_get_observation.assert_called_once()
+
     @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
     @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
     def test_reset_messages_preserves_context_user_messages(self, mock_generate_prompt, mock_get_managers):

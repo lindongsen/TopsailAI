@@ -271,6 +271,7 @@ class PromptBase(object):
         self.reset_messages(to_suppress_log=True)
 
         # set flags
+        self._tool_observation_injected = False
         if os.getenv("TOPSAILAI_FLAG_DUMP_MESSAGES") == "1":
             self.flag_dump_messages = True
 
@@ -410,6 +411,22 @@ class PromptBase(object):
                 logger.exception("failed to call hook [%s]: %s", hook, e)
         return
 
+    def _has_tool_observation(self, tool_observation:str) -> bool:
+        """Return whether active messages already contain the tool observation."""
+        for message in self.messages:
+            if message.get("role") != ROLE_USER:
+                continue
+            content = message.get("content", "")
+            try:
+                content = json_load(content)
+            except Exception:
+                pass
+            if isinstance(content, dict):
+                content = content.get("raw_text", "")
+            if isinstance(content, str) and tool_observation in content:
+                return True
+        return False
+
     def _build_context_message(self) -> str | None:
         """Build a single combined context message from a list of fragments.
 
@@ -423,6 +440,16 @@ class PromptBase(object):
         context_user_message = EnvReaderInstance.context_user_message_content
         if context_user_message:
             message_list.append(context_user_message)
+
+        if not self._tool_observation_injected:
+            from topsailai.prompt_hub.prompt_tool import get_observation_by_tools
+
+            tool_observation = get_observation_by_tools(
+                list(getattr(self, "available_tools", {}).keys())
+            )
+            if tool_observation and not self._has_tool_observation(tool_observation):
+                message_list.append(tool_observation)
+            self._tool_observation_injected = True
 
         # ONLY ONCE: clean context xxx messages in env
         EnvReaderInstance.clean_context_x_message()

@@ -619,5 +619,48 @@ class TestPromptConstructionOrder(unittest.TestCase):
         self.assertEqual(set(called_keys), {"tools/z_module.md", "tools/a_module.md", "tools/m_module.md"})
 
 
+class TestGetObservationByTools(unittest.TestCase):
+    """Test collection of enabled tool observations."""
+
+    @patch('topsailai.prompt_hub.prompt_tool.get_prompt_from_module')
+    def test_observations_are_sorted_annotated_and_deduplicated(self, mock_get_prompt):
+        """Verify deterministic XML output with one contribution per module."""
+        from topsailai.prompt_hub.prompt_tool import get_observation_by_tools
+
+        mock_get_prompt.side_effect = lambda module_name, key: {
+            "a_tool": " alpha context ",
+            "z_tool": "zeta context",
+        }[module_name]
+
+        result = get_observation_by_tools([
+            "z_tool-run", "a_tool-read", "z_tool-write",
+        ])
+
+        self.assertEqual(
+            result,
+            '<observation source="a_tool">\nalpha context\n</observation>\n'
+            '<observation source="z_tool">\nzeta context\n</observation>',
+        )
+        self.assertEqual(
+            mock_get_prompt.call_args_list,
+            [
+                unittest.mock.call("a_tool", key="OBSERVATION"),
+                unittest.mock.call("z_tool", key="OBSERVATION"),
+            ],
+        )
+
+    @patch('topsailai.prompt_hub.prompt_tool.get_prompt_from_module')
+    def test_empty_and_non_string_observations_are_skipped(self, mock_get_prompt):
+        """Verify missing, blank, and invalid observations do not emit XML."""
+        from topsailai.prompt_hub.prompt_tool import get_observation_by_tools
+
+        mock_get_prompt.side_effect = ["", "   ", None]
+
+        result = get_observation_by_tools([
+            "a_tool-run", "b_tool-run", "c_tool-run",
+        ])
+
+        self.assertEqual(result, "")
+
 if __name__ == '__main__':
     unittest.main()

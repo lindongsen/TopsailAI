@@ -253,22 +253,39 @@ def reload_prompt_on_module(module_name:str, key:str="reload"):
         logger.exception(e)
     return
 
+def get_tool_module_names(tools:list[str]) -> list[str]:
+    """Return sorted unique module names represented by tool names."""
+    from topsailai.tools.base.init import CONN_CHAR
+
+    modules = set()
+    for tool_name in tools:
+        module_name = tool_name.split(CONN_CHAR, 1)[0]
+        modules.add(module_name)
+    return sorted(modules)
+
+
+def get_observation_by_tools(tools:list[str]) -> str:
+    """Return XML-annotated observations from enabled tool modules."""
+    observations = []
+    for module_name in get_tool_module_names(tools):
+        tool_observation = get_prompt_from_module(module_name, key="OBSERVATION")
+        if not isinstance(tool_observation, str) or not tool_observation.strip():
+            continue
+        observations.append(
+            f'<observation source="{module_name}">\n'
+            f'{tool_observation.strip()}\n'
+            f'</observation>'
+        )
+    return "\n".join(observations)
+
+
 def get_prompt_by_tools(tools:list[str], need_reload=False) -> str:
     """ return prompt content from prompt_hub """
     logger.debug("getting prompt by tools: %s", tools)
     prompt_keys = set()
     prompt_content = ""
 
-    modules = set()
-
-    from topsailai.tools.base.init import CONN_CHAR
-
-    for tool_name in tools:
-        # tool_name: agent_tool.WritingAssistant or x_tool-func1
-        module_name = tool_name.split(CONN_CHAR, 1)[0]
-        modules.add(module_name)
-
-    for module_name in sorted(list(modules)):
+    for module_name in get_tool_module_names(tools):
         # from prompt_hub
         key = f"tools/{module_name}.md"
         if exists_prompt_file(key):
