@@ -57,7 +57,7 @@ class YieldData(object):
 
 
 @contextmanager
-def FileLock(name: str):
+def FileLock(name: str, delete_on_release: bool = True):
     """
     Context manager for file-based locking.
 
@@ -69,6 +69,8 @@ def FileLock(name: str):
         name (str): The name of the lock. If the name doesn't end with
                    ".lock", the extension will be automatically added.
                    The lock file will be created in the FOLDER_LOCK directory.
+        delete_on_release (bool): Delete the lock path after release. Set to
+            False when the lock inode must remain stable across contenders.
 
     Yields:
         fd: A file descriptor (writeable) representing the acquired lock.
@@ -95,14 +97,15 @@ def FileLock(name: str):
         name += ".lock"
 
     # Construct the full path to the lock file
-    file_path = folder_constants.FOLDER_LOCK + "/" + name
+    file_path = os.path.join(folder_constants.FOLDER_LOCK, name)
 
     # Acquire the lock and yield control to the critical section
     with ctxm_file_lock(file_path) as fd:
         try:
             yield fd
         finally:
-            delete_file(file_path)
+            if delete_on_release:
+                delete_file(file_path)
 
     # Lock is automatically released when context exits
     # No need to manually delete the lock file

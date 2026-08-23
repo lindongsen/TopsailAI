@@ -9,6 +9,7 @@ import os
 from collections import OrderedDict
 
 from topsailai.workspace.folder_constants import FOLDER_MEMORY
+from .memory_tool_utils import memory_stat
 from .story_tool import (
     StoryFileInstance,
     build_story_id,
@@ -46,29 +47,41 @@ def write_memory(title:str, content:str, **_) -> str:
         workspace=WORKSPACE,
         story_id=title,
         story_content=content,
+        after_write=lambda path: memory_stat.ensure_memory_stat(
+            WORKSPACE, memory_stat.get_memory_id(path)
+        ),
     )
     return f"new_memory_file={memory_file}" + _PROMPT_NEW_MEMORY
 
+
+def _resolve_memory_title(title: str) -> str:
+    for candidate in (title, title + ".md"):
+        if os.path.exists(candidate):
+            return candidate
+    return title
+
+
+def _read_memory(title: str, count_read: bool) -> str | None:
+    after_read = None
+    if count_read:
+        after_read = lambda path: memory_stat.record_memory_event(
+            WORKSPACE, memory_stat.get_memory_id(path), "read"
+        )
+    return StoryFileInstance.read_story(
+        workspace=WORKSPACE,
+        story_id=_resolve_memory_title(title),
+        after_read=after_read,
+    )
+
+
 def read_memory(title:str) -> str|None:
-    """
-    Read history context information
+    """Read a memory and record one successful read."""
+    return _read_memory(title, count_read=True)
 
-    Args:
-        title (str): use `list_memories` to get title
 
-    Return:
-        str, memory content.
-        none, no found memory.
-    """
-    for _file in [
-        title,
-        title+".md",
-    ]:
-        if os.path.exists(_file):
-            title = _file
-            break
-
-    return StoryFileInstance.read_story(workspace=WORKSPACE, story_id=title)
+def read_memory_without_count(title: str) -> str | None:
+    """Read a memory without changing observability counters."""
+    return _read_memory(title, count_read=False)
 
 def list_memories() -> list[str]|None:
     """
@@ -88,13 +101,19 @@ def delete_memory(title:str) -> bool:
     Args:
         title (str): one title from `list_memories`
     """
-    return StoryFileInstance.delete_story(workspace=WORKSPACE, story_id=title)
+    return StoryFileInstance.delete_story(
+        workspace=WORKSPACE,
+        story_id=title,
+        before_delete=lambda path: memory_stat.delete_memory_stat(
+            WORKSPACE, memory_stat.get_memory_id(path)
+        ),
+    )
 
 def get_all_memories() -> dict:
     mem_map = OrderedDict()
     for _title in sorted(list_memories()):
         try:
-            mem_map[_title] = read_memory(_title)
+            mem_map[_title] = read_memory_without_count(_title)
         except:
             pass
     return mem_map

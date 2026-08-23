@@ -350,7 +350,7 @@ class TestGetAllMemoriesOrdering(unittest.TestCase):
     """Tests verifying deterministic ordering in memory retrieval."""
 
     @patch('topsailai.tools.story_memory_tool.list_memories')
-    @patch('topsailai.tools.story_memory_tool.read_memory')
+    @patch('topsailai.tools.story_memory_tool.read_memory_without_count')
     def test_get_all_memories_sorts_by_title(self, mock_read_memory, mock_list_memories):
         """Verify get_all_memories returns memories sorted by title."""
         from topsailai.tools import story_memory_tool
@@ -363,7 +363,7 @@ class TestGetAllMemoriesOrdering(unittest.TestCase):
         self.assertEqual(list(result.keys()), ["a_memory.md", "m_memory.md", "z_memory.md"])
 
     @patch('topsailai.tools.story_memory_tool.list_memories')
-    @patch('topsailai.tools.story_memory_tool.read_memory')
+    @patch('topsailai.tools.story_memory_tool.read_memory_without_count')
     def test_get_all_memories_markdown_sorts_by_title(self, mock_read_memory, mock_list_memories):
         """Verify get_all_memories_markdown emits titles in sorted order."""
         from topsailai.tools import story_memory_tool
@@ -377,6 +377,106 @@ class TestGetAllMemoriesOrdering(unittest.TestCase):
         import re
         headings = re.findall(r"## ([^\n]+)", result)
         self.assertEqual(headings, ["a_memory.md", "m_memory.md", "z_memory.md"])
+
+
+class TestMemoryStatLifecycle(unittest.TestCase):
+    """Test memory API integration with stat callbacks."""
+
+    @patch('topsailai.tools.story_memory_tool.memory_stat.record_memory_event')
+    @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
+    def test_counting_read_records_resolved_canonical_memory(
+        self, mock_story_instance, mock_record_event
+    ):
+        from topsailai.tools import story_memory_tool
+
+        def read_story(**kwargs):
+            kwargs['after_read']('/workspace/story/2026-08-23/canonical.md')
+            return 'content'
+
+        mock_story_instance.read_story.side_effect = read_story
+
+        result = story_memory_tool.read_memory('query')
+
+        self.assertEqual(result, 'content')
+        mock_record_event.assert_called_once_with(
+            story_memory_tool.WORKSPACE, 'canonical.md', 'read'
+        )
+
+    @patch('topsailai.tools.story_memory_tool.memory_stat.record_memory_event')
+    @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
+    def test_not_found_read_does_not_record_event(
+        self, mock_story_instance, mock_record_event
+    ):
+        from topsailai.tools import story_memory_tool
+
+        mock_story_instance.read_story.return_value = None
+
+        self.assertIsNone(story_memory_tool.read_memory('missing'))
+        mock_record_event.assert_not_called()
+
+    @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
+    def test_non_counting_read_passes_no_callback(self, mock_story_instance):
+        from topsailai.tools import story_memory_tool
+
+        mock_story_instance.read_story.return_value = 'content'
+
+        result = story_memory_tool.read_memory_without_count('memory.md')
+
+        self.assertEqual(result, 'content')
+        self.assertIsNone(mock_story_instance.read_story.call_args.kwargs['after_read'])
+
+    @patch('topsailai.tools.story_memory_tool.memory_stat.ensure_memory_stat')
+    @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
+    @patch('topsailai.tools.story_memory_tool.build_story_id')
+    def test_write_creates_zero_stat_inside_story_callback(
+        self, mock_build_id, mock_story_instance, mock_ensure_stat
+    ):
+        from topsailai.tools import story_memory_tool
+
+        mock_build_id.return_value = 'canonical.md'
+
+        def write_story(**kwargs):
+            kwargs['after_write']('/workspace/story/2026-08-23/canonical.md')
+            return '/workspace/story/2026-08-23/canonical.md'
+
+        mock_story_instance.write_story.side_effect = write_story
+
+        story_memory_tool.write_memory('title', 'content')
+
+        mock_ensure_stat.assert_called_once_with(story_memory_tool.WORKSPACE, 'canonical.md')
+
+    @patch('topsailai.tools.story_memory_tool.memory_stat.delete_memory_stat')
+    @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
+    def test_delete_stat_error_propagates(self, mock_story_instance, mock_delete_stat):
+        from topsailai.tools import story_memory_tool
+
+        mock_delete_stat.side_effect = PermissionError('denied')
+
+        def delete_story(**kwargs):
+            kwargs['before_delete']('/workspace/story/2026-08-23/canonical.md')
+            self.fail('Markdown deletion must not continue after stat deletion fails')
+
+        mock_story_instance.delete_story.side_effect = delete_story
+
+        with self.assertRaises(PermissionError):
+            story_memory_tool.delete_memory('canonical.md')
+
+    @patch('topsailai.tools.story_memory_tool.list_memories')
+    @patch('topsailai.tools.story_memory_tool.read_memory_without_count')
+    @patch('topsailai.tools.story_memory_tool.read_memory')
+    def test_prompt_bulk_loading_never_uses_counting_reader(
+        self, mock_read_memory, mock_read_without_count, mock_list_memories
+    ):
+        from topsailai.tools import story_memory_tool
+
+        mock_list_memories.return_value = ['memory.md']
+        mock_read_without_count.return_value = 'content'
+
+        prompt = story_memory_tool.get_prompt_memory()
+
+        self.assertIn('content', prompt)
+        mock_read_without_count.assert_called_once_with('memory.md')
+        mock_read_memory.assert_not_called()
 
 
 if __name__ == '__main__':

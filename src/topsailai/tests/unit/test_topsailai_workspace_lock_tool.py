@@ -88,6 +88,18 @@ class TestFileLock(TestCase):
         self.assertFalse(os.path.exists(expected_lock_path))
 
     @mock.patch("topsailai.workspace.lock_tool.folder_constants")
+    def test_filelock_can_keep_stable_lock_path(self, mock_folder_constants):
+        """Test stable locks retain their inode path after release."""
+        mock_folder_constants.FOLDER_LOCK = self.mock_folder_lock
+        os.makedirs(self.mock_folder_lock, exist_ok=True)
+
+        with FileLock("stable_resource", delete_on_release=False) as fd:
+            self.assertIsNotNone(fd)
+
+        expected = os.path.join(self.mock_folder_lock, "stable_resource.lock")
+        self.assertTrue(os.path.exists(expected))
+
+    @mock.patch("topsailai.workspace.lock_tool.folder_constants")
     def test_filelock_with_extension(self, mock_folder_constants):
         """Test FileLock with .lock extension already present."""
         mock_folder_constants.FOLDER_LOCK = self.mock_folder_lock

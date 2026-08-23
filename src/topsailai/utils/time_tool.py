@@ -32,6 +32,12 @@ def get_current_compact_datetime() -> str:
     """Get the current local datetime in YYYYMMDDHHMMSS format."""
     return datetime.now().strftime("%Y%m%d%H%M%S")
 
+
+def get_current_local_datetime_with_offset() -> str:
+    """Get local time in YYYY-MM-DD HH:MM:SS ±HH:MM format."""
+    timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+    return timestamp[:-2] + ":" + timestamp[-2:]
+
 def get_current_day():
     """Get the current date in YYYY-MM-DD format.
 

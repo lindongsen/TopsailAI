@@ -122,7 +122,9 @@ class StoryFile(StoryBase):
             return files[0]
         return None
 
-    def write_story(self, workspace:str, story_id:str, story_content:str):
+    def write_story(
+            self, workspace:str, story_id:str, story_content:str, after_write=None
+        ):
         """save story content.
 
         Args:
@@ -132,15 +134,17 @@ class StoryFile(StoryBase):
         """
         # max length of file name
         story_id = story_id[:230]
-        with lock_tool.FileLock(self.name):
+        with lock_tool.FileLock(self.name, delete_on_release=False):
             folder_path = os.path.join(workspace, KEY_STORY, time_tool.get_current_day())
             file_path = os.path.join(folder_path, story_id)
             os.makedirs(folder_path, exist_ok=True)
             with open(file_path, "w+", encoding="utf-8") as fd:
                 fd.write(story_content)
+            if after_write:
+                after_write(file_path)
             return file_path
 
-    def read_story(self, workspace:str, story_id:str):
+    def read_story(self, workspace:str, story_id:str, after_read=None):
         """read story content.
 
         Args:
@@ -151,13 +155,15 @@ class StoryFile(StoryBase):
         str, story content.
         none, no found story.
         """
-        with lock_tool.FileLock(self.name):
+        with lock_tool.FileLock(self.name, delete_on_release=False):
             story_file = self.get_story_file(workspace, story_id)
             if not story_file:
                 return None
             with open(story_file, encoding='utf-8') as fd:
-                return fd.read()
-            return None
+                content = fd.read()
+            if after_read:
+                after_read(story_file)
+            return content
 
     def list_stories(self, workspace:str) -> list[str]|None:
         """List all of stories from workspace.
@@ -169,7 +175,7 @@ class StoryFile(StoryBase):
             list[str]:
             None: no found
         """
-        with lock_tool.FileLock(self.name):
+        with lock_tool.FileLock(self.name, delete_on_release=False):
             # find all of them
             results = file_tool.list_files(workspace)
 
@@ -186,7 +192,7 @@ class StoryFile(StoryBase):
             workspace (str): folder path.
             keywords (str): split by '|', example: 'A|B' is A or B
         """
-        with lock_tool.FileLock(self.name):
+        with lock_tool.FileLock(self.name, delete_on_release=False):
             file_set = file_tool.list_files(
                 workspace,
                 included_filename_keywords=keywords.split('|'),
@@ -206,17 +212,20 @@ class StoryFile(StoryBase):
 
             return results
 
-    def delete_story(self, workspace:str, story_id:str):
+    def delete_story(self, workspace:str, story_id:str, before_delete=None):
         """delete a story.
 
         Args:
             workspace (str): folder path
             story_id (str):
         """
-        with lock_tool.FileLock(self.name):
+        with lock_tool.FileLock(self.name, delete_on_release=False):
             _filepath = self.get_story_file(workspace, story_id, must_only_one=True)
             if _filepath:
+                if before_delete:
+                    before_delete(_filepath)
                 file_tool.delete_file(_filepath)
+                logger.info("delete story file: [%s]", _filepath)
                 parent_dir = os.path.dirname(_filepath)
                 story_root = os.path.join(workspace, KEY_STORY)
                 if os.path.normpath(parent_dir) != os.path.normpath(story_root):

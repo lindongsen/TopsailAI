@@ -355,7 +355,10 @@ class TestStoryFile(unittest.TestCase):
         mock_get_file.assert_called_once_with('/workspace', 'test.md', must_only_one=True)
         mock_delete.assert_called_once_with('/workspace/story/2025-01-15/test.md')
         mock_rmdir.assert_called_once_with('/workspace/story/2025-01-15')
-        mock_log.assert_called_once_with(
+        mock_log.assert_any_call(
+            "delete story file: [%s]", '/workspace/story/2025-01-15/test.md'
+        )
+        mock_log.assert_any_call(
             "delete empty story folder: [%s]", '/workspace/story/2025-01-15'
         )
         self.assertTrue(result)
@@ -511,6 +514,72 @@ class TestIntegration(unittest.TestCase):
         with patch('builtins.open', mock_file):
             results = story_file.retrieve_stories('/workspace', 'story1|story2')
             self.assertEqual(len(results), 2)
+
+
+class TestStoryLifecycleCallbacks(unittest.TestCase):
+    """Verify callbacks execute before the global story lock is released."""
+
+    @patch('topsailai.tools.story_tool.lock_tool.FileLock')
+    @patch.object(story_tool.StoryFile, 'get_story_file')
+    @patch('builtins.open', new_callable=mock_open, read_data='content')
+    def test_read_callback_runs_after_successful_read_inside_lock(
+        self, mock_file, mock_get_file, mock_lock
+    ):
+        events = []
+        mock_get_file.return_value = '/workspace/story/day/canonical.md'
+        mock_lock.return_value.__enter__.side_effect = lambda: events.append('lock-enter')
+        mock_lock.return_value.__exit__.side_effect = (
+            lambda *args: events.append('lock-exit') or False
+        )
+
+        result = story_tool.StoryFile().read_story(
+            '/workspace', 'canonical.md',
+            after_read=lambda path: events.append(('callback', path)),
+        )
+
+        self.assertEqual(result, 'content')
+        self.assertEqual(events, [
+            'lock-enter',
+            ('callback', '/workspace/story/day/canonical.md'),
+            'lock-exit',
+        ])
+
+    @patch('topsailai.tools.story_tool.lock_tool.FileLock')
+    @patch.object(story_tool.StoryFile, 'get_story_file')
+    @patch('topsailai.tools.story_tool.file_tool.delete_file')
+    @patch('topsailai.tools.story_tool.os.rmdir', side_effect=OSError)
+    def test_delete_callback_runs_before_markdown_delete(
+        self, mock_rmdir, mock_delete_file, mock_get_file, mock_lock
+    ):
+        events = []
+        mock_get_file.return_value = '/workspace/story/day/canonical.md'
+        mock_delete_file.side_effect = lambda path: events.append(('markdown', path))
+
+        story_tool.StoryFile().delete_story(
+            '/workspace', 'canonical.md',
+            before_delete=lambda path: events.append(('stat', path)),
+        )
+
+        self.assertEqual(events, [
+            ('stat', '/workspace/story/day/canonical.md'),
+            ('markdown', '/workspace/story/day/canonical.md'),
+        ])
+
+    @patch('topsailai.tools.story_tool.lock_tool.FileLock')
+    @patch.object(story_tool.StoryFile, 'get_story_file')
+    @patch('topsailai.tools.story_tool.file_tool.delete_file')
+    def test_delete_callback_failure_stops_markdown_delete(
+        self, mock_delete_file, mock_get_file, mock_lock
+    ):
+        mock_get_file.return_value = '/workspace/story/day/canonical.md'
+
+        with self.assertRaises(PermissionError):
+            story_tool.StoryFile().delete_story(
+                '/workspace', 'canonical.md',
+                before_delete=lambda path: (_ for _ in ()).throw(PermissionError('denied')),
+            )
+
+        mock_delete_file.assert_not_called()
 
 
 if __name__ == '__main__':
