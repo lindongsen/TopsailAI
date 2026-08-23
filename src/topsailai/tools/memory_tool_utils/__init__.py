@@ -5,6 +5,6 @@
   Purpose:
 '''
 
-from . import memory_hooks, memory_stat
+from . import memory_hooks, memory_reconcile, memory_stat
 
-__all__ = ["memory_hooks", "memory_stat"]
+__all__ = ["memory_hooks", "memory_reconcile", "memory_stat"]
