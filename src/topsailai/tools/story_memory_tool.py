@@ -172,4 +172,7 @@ Proactively retrieve relevant memory whenever the user's input contains personal
 ## Action & Output
 - **Synthesize**: Seamlessly integrate retrieved memory into the response to provide a personalized answer.
 - **Verify**: If the memory is ambiguous, ask for clarification rather than assuming.
-""" + get_prompt_memory()
+"""
+
+OBSERVATION = get_prompt_memory()
+
