@@ -129,6 +129,64 @@ class TestMemoryStatValidation(TestCase):
         self.assertEqual(stat["memory_id"], self.memory_id)
         self.assertEqual(stat["read_count"], 0)
 
+    def test_non_rebuilding_reader_returns_valid_stat(self):
+        """Read a valid stat without changing its persisted content."""
+        expected = memory_stat.ensure_memory_stat(self.workspace, self.memory_id)
+        stat_file = memory_stat.get_stat_file(self.workspace, self.memory_id)
+
+        self.assertEqual(
+            memory_stat.read_memory_stat_file(stat_file, self.memory_id), expected
+        )
+
+    def test_non_rebuilding_reader_returns_none_when_missing(self):
+        """Return None for a missing stat without creating a file."""
+        stat_file = memory_stat.get_stat_file(self.workspace, self.memory_id)
+
+        self.assertIsNone(
+            memory_stat.read_memory_stat_file(stat_file, self.memory_id)
+        )
+        self.assertFalse(os.path.exists(stat_file))
+
+    def test_non_rebuilding_reader_surfaces_corrupt_json(self):
+        """Propagate JSON corruption without rebuilding the stat."""
+        stat_file = memory_stat.get_stat_file(self.workspace, self.memory_id)
+        os.makedirs(os.path.dirname(stat_file), exist_ok=True)
+        with open(stat_file, "w", encoding="utf-8") as fd:
+            fd.write("{")
+
+        with self.assertRaises(json.JSONDecodeError):
+            memory_stat.read_memory_stat_file(stat_file, self.memory_id)
+        with open(stat_file, encoding="utf-8") as fd:
+            self.assertEqual(fd.read(), "{")
+
+    def test_non_rebuilding_reader_rejects_version_mismatch(self):
+        """Surface an unsupported schema version without rewriting it."""
+        stat = memory_stat._new_stat(
+            self.memory_id, "2026-08-23 15:45:00 +08:00"
+        )
+        stat["version"] = memory_stat.STAT_VERSION + 1
+        stat_file = memory_stat.get_stat_file(self.workspace, self.memory_id)
+        os.makedirs(os.path.dirname(stat_file), exist_ok=True)
+        with open(stat_file, "w", encoding="utf-8") as fd:
+            json.dump(stat, fd)
+
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            memory_stat.read_memory_stat_file(stat_file, self.memory_id)
+
+    def test_non_rebuilding_reader_rejects_identity_mismatch(self):
+        """Surface a mismatch against the caller's expected memory identity."""
+        stat = memory_stat._new_stat(
+            "different.md", "2026-08-23 15:45:00 +08:00"
+        )
+        stat_file = memory_stat.get_stat_file(self.workspace, self.memory_id)
+        os.makedirs(os.path.dirname(stat_file), exist_ok=True)
+        with open(stat_file, "w", encoding="utf-8") as fd:
+            json.dump(stat, fd)
+
+        with self.assertRaisesRegex(ValueError, "identity mismatch"):
+            memory_stat.read_memory_stat_file(stat_file, self.memory_id)
+
+
     def test_rejects_unknown_event(self):
         with self.assertRaisesRegex(ValueError, "unsupported memory stat event"):
             memory_stat.record_memory_event(self.workspace, self.memory_id, "unknown")

@@ -79,12 +79,30 @@ READ_RETRY_ATTEMPTS = 3
 READ_RETRY_DELAY_SECONDS = 0.05
 
 
-def _read_stat_file(stat_file: str, memory_id: str) -> dict | None:
+def read_memory_stat_file(
+    stat_file: str, memory_id: str | None = None
+) -> dict | None:
+    """Read and validate one stat file without rebuilding or modifying it.
+
+    When ``memory_id`` is omitted, the persisted identity is used for schema
+    validation. Callers that know the expected identity should pass it so an
+    identity mismatch is surfaced as ``ValueError``. Missing files return
+    ``None``; malformed JSON and invalid records propagate their exceptions.
+    """
     try:
         with open(stat_file, encoding="utf-8") as fd:
-            return _validate_stat(json.load(fd), memory_id)
+            stat = json.load(fd)
     except FileNotFoundError:
         return None
+    expected_id = memory_id
+    if expected_id is None and isinstance(stat, dict):
+        expected_id = stat.get("memory_id")
+    return _validate_stat(stat, expected_id or "")
+
+
+def _read_stat_file(stat_file: str, memory_id: str) -> dict | None:
+    """Read one stat file through the non-rebuilding validated primitive."""
+    return read_memory_stat_file(stat_file, memory_id)
 
 
 def _read_stat_file_with_retry(stat_file: str, memory_id: str) -> dict | None:

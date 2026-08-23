@@ -58,12 +58,6 @@ def _list_stat_files(stats_root: str) -> list[str]:
     )
 
 
-def _read_stat(stat_file: str) -> dict:
-    """Read one stat without invoking the normal auto-rebuild behavior."""
-    with open(stat_file, encoding="utf-8") as fd:
-        stat = json.load(fd)
-    memory_id = stat.get("memory_id") if isinstance(stat, dict) else ""
-    return memory_stat._validate_stat(stat, memory_id)
 
 
 def _mtime_timestamp(memory_file: str) -> str:
@@ -114,7 +108,7 @@ def _process_stat(
     }
     path_memory_id = digest_to_ids.get(stat_name)
     try:
-        stat = _read_stat(stat_file)
+        stat = memory_stat.read_memory_stat_file(stat_file)
         embedded_id = stat["memory_id"]
     except (OSError, json.JSONDecodeError, ValueError, TypeError):
         summary.quarantined += 1
