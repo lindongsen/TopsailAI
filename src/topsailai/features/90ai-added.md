@@ -8,6 +8,10 @@ programming_language: python
 ---
 
 # AI-Added Features
+## Memory Create and Update Hooks
+
+Added ordered, fail-open in-process hooks for successful story memory create and update operations, followed by optional external scripts configured through `TOPSAILAI_HOOK_SCRIPTS_MEMORY_WRITE`; hook events expose the operation, canonical memory identity, original title, content, file, workspace, and timestamp without affecting memory statistics or startup loading.
+
 
 ## LRU-Bounded Startup Memory Loading
 

@@ -4,17 +4,20 @@
   Created: 2026-04-03
   Purpose:
 '''
-
+import logging
 import os
 from collections import OrderedDict
 
 from topsailai.context.token import count_tokens
+from topsailai.utils import time_tool
 from topsailai.workspace.folder_constants import FOLDER_MEMORY
-from .memory_tool_utils import memory_stat
+from .memory_tool_utils import memory_hooks, memory_stat
 from .story_tool import (
     StoryFileInstance,
     build_story_id,
 )
+
+logger = logging.getLogger(__name__)
 
 # memory workspace folder, save memory data to it
 WORKSPACE = os.getenv("TOPSAILAI_STORY_WORKSPACE") or \
@@ -40,10 +43,16 @@ def write_memory(title:str, content:str, **_) -> str:
         title (str): A title contains core information and keywords.
         content (str):
     """
+    original_title = title
     # PROMPT injects memories into the system prompt, so filenames must expose their timeline.
     # Day-level folders are too coarse, while this prefix preserves second-level ordering.
     # It also avoids managing identical filenames across different timestamp folders.
     title = build_story_id(title, compact_prefix=True)
+    operation = (
+        memory_hooks.UPDATE
+        if StoryFileInstance.get_story_file(WORKSPACE, title)
+        else memory_hooks.CREATE
+    )
     memory_file = StoryFileInstance.write_story(
         workspace=WORKSPACE,
         story_id=title,
@@ -52,6 +61,19 @@ def write_memory(title:str, content:str, **_) -> str:
             WORKSPACE, memory_stat.get_memory_id(path)
         ),
     )
+    event = {
+        "op": operation,
+        "memory_id": memory_stat.get_memory_id(memory_file),
+        "title": original_title,
+        "content": content,
+        "memory_file": memory_file,
+        "workspace": WORKSPACE,
+        "timestamp": time_tool.get_current_local_datetime_with_offset(),
+    }
+    try:
+        memory_hooks.fire_memory_hooks(operation, event)
+    except Exception:
+        logger.exception("memory hook dispatch failed: operation=%s", operation)
     return f"new_memory_file={memory_file}" + _PROMPT_NEW_MEMORY
 
 

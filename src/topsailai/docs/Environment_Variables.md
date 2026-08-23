@@ -331,6 +331,7 @@ These variables configure the optional tool-call approval gate. When enabled, ea
 | `TOPSAILAI_HOOK_AFTER_LLM_CHAT` | `""` | Module paths separated by `;`. Hook function signature: `hook_func(content:str) -> list[dict]\|str`. |
 | `TOPSAILAI_HOOK_BEFORE_LLM_CHAT` | `""` | Module paths separated by `;`. Hook function signature: `hook_func(content:list[dict]) -> list[dict]`. |
 | `TOPSAILAI_HOOK_SCRIPTS_POST_FINAL_ANSWER` | `""` | Scripts to run after the final answer. Format: `"{script_file} {cmd_options};"`. |
+| `TOPSAILAI_HOOK_SCRIPTS_MEMORY_WRITE` | `""` | Scripts called after successful memory create or update operations, after in-process hooks. Format: `"{script_file} {cmd_options};"`. |
 
 
 ## Agent2LLM Runtime Message Injection
