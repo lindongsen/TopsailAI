@@ -5,24 +5,54 @@ import hashlib
 import json
 import logging
 import os
+import socket
 import sys
 import time
 from pathlib import Path
 from typing import Callable
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-PROJECT_DIR = str(Path(__file__).resolve().parent.parent)
+from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
+SCRIPT_DIR = Path(__file__).resolve().parent
+SCRIPT_ENV_FILE = SCRIPT_DIR / (Path(__file__).stem + ".env")
+
+
+def _load_script_env(env_file: Path = SCRIPT_ENV_FILE) -> None:
+    """Load the script-specific dotenv file without overriding process values."""
+    if not env_file.is_file():
+        return
+    try:
+        load_dotenv(env_file, override=False)
+    except Exception as error:
+        logger.warning("failed to load script environment file %s: %s", env_file, error)
+
+
+_load_script_env()
+
+PROJECT_DIR = str(SCRIPT_DIR.parent)
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
 from topsailai.scripts import mem_graph_sync_outbox as outbox
 from topsailai.tools.memory_tool_utils import memory_stat
 
-logger = logging.getLogger(__name__)
+# This identifies the account; it is not a per-memory or per-node key.
+EXTERNAL_USER_ID_ENV = "TOPSAILAI_MEMORY_SYNC_EXTERNAL_USER_ID"
+EXTERNAL_USER_ID_COMPAT_ENV = "EXTERNAL_USER_ID"
+DEFAULT_EXTERNAL_USER_ID = "test"
 
-# This identifies the test account; it is not a per-memory or per-node key.
-EXTERNAL_USER_ID = "test"
+
+def _external_user_id() -> str:
+    """Resolve the account identity from primary, compatible, or default configuration."""
+    primary = os.environ.get(EXTERNAL_USER_ID_ENV, "").strip()
+    compatible = os.environ.get(EXTERNAL_USER_ID_COMPAT_ENV, "").strip()
+    return primary or compatible or DEFAULT_EXTERNAL_USER_ID
+
+
 SUPPORTED_EVENTS = {"create", "update"}
 REQUIRED_FIELDS = {
     "schema_version",
@@ -37,6 +67,8 @@ REQUIRED_FIELDS = {
 }
 DEFAULT_BASE_URL = "http://localhost:8004"
 DEFAULT_TIMEOUT_SECONDS = 5.0
+DEFAULT_PORT_CHECK_ENABLED = True
+DEFAULT_PORT_CHECK_TIMEOUT_SECONDS = 0.5
 DEFAULT_RETRY_ATTEMPTS = 3
 DEFAULT_BACKOFF_SECONDS = 0.25
 
@@ -90,7 +122,7 @@ class MemGraphTransport:
         """Send one JSON request and validate its common success envelope."""
         headers = {"accept": "application/json"}
         if authenticated:
-            headers["x-external-user-id"] = EXTERNAL_USER_ID
+            headers["x-external-user-id"] = _external_user_id()
         if idempotency_key:
             headers["idempotency-key"] = idempotency_key
         payload = None
@@ -139,6 +171,36 @@ def _positive_number(name: str, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return value if value > 0 else default
+
+
+def _enabled(name: str, default: bool) -> bool:
+    """Read one boolean setting with a safe default."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
+def check_port(
+    base_url: str,
+    timeout_seconds: float,
+    *,
+    connect: Callable = socket.create_connection,
+) -> None:
+    """Fail quickly unless the configured API host and port accept TCP connections."""
+    endpoint = urlsplit(base_url)
+    try:
+        host = endpoint.hostname
+        port = endpoint.port or {"http": 80, "https": 443}.get(endpoint.scheme)
+    except ValueError as error:
+        raise SyncError("invalid mem-graph API endpoint") from error
+    if not host or not port:
+        raise SyncError("invalid mem-graph API endpoint")
+    try:
+        connection = connect((host, port), timeout=timeout_seconds)
+        connection.close()
+    except OSError as error:
+        raise SyncError(f"mem-graph port is unreachable: {host}:{port}") from error
 
 
 def _retry(operation: Callable[[], None], sleep: Callable[[float], None]) -> None:
@@ -226,6 +288,21 @@ def main() -> int:
         logger.warning("reject invalid memory sync stdin payload")
         return 2
     transport = build_transport()
+    port_check_enabled = _enabled(
+        "TOPSAILAI_MEMORY_SYNC_PORT_CHECK_ENABLED", DEFAULT_PORT_CHECK_ENABLED
+    )
+    port_check_timeout = _positive_number(
+        "TOPSAILAI_MEMORY_SYNC_PORT_CHECK_TIMEOUT",
+        DEFAULT_PORT_CHECK_TIMEOUT_SECONDS,
+    )
+    if port_check_enabled:
+        try:
+            check_port(transport.base_url, port_check_timeout)
+        except SyncError as error:
+            outbox.enqueue(event["workspace"], event)
+            _record_sync(event, synced=False, error=str(error))
+            logger.warning("queued memory sync event: %s", error)
+            return 1
     retry_outbox(event["workspace"], transport)
     return 0 if process_event(event, transport) else 1
 

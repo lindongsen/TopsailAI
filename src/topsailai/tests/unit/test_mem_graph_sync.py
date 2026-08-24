@@ -104,7 +104,8 @@ class TestMemGraphSync(TestCase):
         self.assertEqual(outbox.read(self.temp_dir.name), [self.event])
         self.assertEqual(transport.created, [second])
 
-    def test_live_transport_uses_personal_create_and_test_account_header(self):
+    def test_live_transport_uses_personal_create_and_default_account_header(self):
+        """Authenticated creates use the default account when configuration is absent."""
         responses = []
 
         class Response:
@@ -124,7 +125,9 @@ class TestMemGraphSync(TestCase):
             return Response()
 
         transport = mem_graph_sync.MemGraphTransport("http://example.test", 4)
-        with mock.patch.object(mem_graph_sync, "urlopen", side_effect=fake_urlopen):
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            mem_graph_sync, "urlopen", side_effect=fake_urlopen
+        ):
             transport.readiness()
             transport.create_snapshot(self.event)
 
@@ -223,6 +226,55 @@ class TestMemGraphSyncBoundaries(TestCase):
         ):
             mem_graph_sync._record_sync(self.event, synced=True)
 
+    def test_script_env_loads_named_file_without_overriding_process(self):
+        """The script-specific dotenv file fills only missing process values."""
+        env_file = mem_graph_sync.Path(self.temp_dir.name) / "mem_graph_sync.env"
+        env_file.write_text(
+            "FILE_ONLY=from-file\nPROCESS_WINS=from-file\n", encoding="utf-8"
+        )
+
+        with mock.patch.dict(os.environ, {"PROCESS_WINS": "from-process"}, clear=True):
+            mem_graph_sync._load_script_env(env_file)
+            self.assertEqual(os.environ["FILE_ONLY"], "from-file")
+            self.assertEqual(os.environ["PROCESS_WINS"], "from-process")
+
+    def test_external_user_id_honors_primary_compatible_and_default_precedence(self):
+        """Account identity resolves from the primary key, compatible key, then default."""
+        primary = mem_graph_sync.EXTERNAL_USER_ID_ENV
+        compatible = mem_graph_sync.EXTERNAL_USER_ID_COMPAT_ENV
+        env_file = mem_graph_sync.Path(self.temp_dir.name) / "mem_graph_sync.env"
+        env_file.write_text(f"{compatible}=from-file\n", encoding="utf-8")
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            mem_graph_sync._load_script_env(env_file)
+            self.assertEqual(mem_graph_sync._external_user_id(), "from-file")
+        with mock.patch.dict(
+            os.environ,
+            {primary: "from-primary", compatible: "from-compatible"},
+            clear=True,
+        ):
+            mem_graph_sync._load_script_env(env_file)
+            self.assertEqual(mem_graph_sync._external_user_id(), "from-primary")
+        with mock.patch.dict(os.environ, {compatible: "from-process"}, clear=True):
+            mem_graph_sync._load_script_env(env_file)
+            self.assertEqual(mem_graph_sync._external_user_id(), "from-process")
+        for environment in ({}, {primary: "", compatible: ""}, {primary: "   ", compatible: "   "}):
+            with mock.patch.dict(os.environ, environment, clear=True):
+                self.assertEqual(mem_graph_sync._external_user_id(), "test")
+
+    def test_script_env_ignores_missing_file_and_warns_on_loader_failure(self):
+        """A missing dotenv file is harmless and loader failures are isolated."""
+        env_file = mem_graph_sync.Path(self.temp_dir.name) / "mem_graph_sync.env"
+        mem_graph_sync._load_script_env(env_file)
+        env_file.write_text("BROKEN=value\n", encoding="utf-8")
+
+        with mock.patch.object(
+            mem_graph_sync, "load_dotenv", side_effect=ValueError("malformed")
+        ), self.assertLogs(mem_graph_sync.logger, level="WARNING") as captured:
+            mem_graph_sync._load_script_env(env_file)
+
+        self.assertIn("failed to load script environment file", captured.output[0])
+
     def test_build_transport_uses_boundary_configuration(self):
         """Transport construction resolves URL and timeout at the script boundary."""
         with mock.patch.dict(
@@ -236,8 +288,29 @@ class TestMemGraphSyncBoundaries(TestCase):
         self.assertEqual(transport.base_url, "http://configured.test")
         self.assertEqual(transport.timeout_seconds, 7.5)
 
-    def test_main_handles_invalid_success_and_queued_event(self):
-        """The CLI boundary maps invalid, synced, and queued outcomes to stable codes."""
+    def test_port_check_uses_endpoint_port_and_short_timeout(self):
+        """The fast probe derives host and port and closes its TCP connection."""
+        connection = mock.Mock()
+        connect = mock.Mock(return_value=connection)
+
+        mem_graph_sync.check_port("https://example.test/path", 0.4, connect=connect)
+
+        connect.assert_called_once_with(("example.test", 443), timeout=0.4)
+        connection.close.assert_called_once_with()
+
+    def test_port_check_rejects_invalid_and_unreachable_endpoints(self):
+        """Invalid endpoints and connection failures become clear SyncError values."""
+        with self.assertRaisesRegex(mem_graph_sync.SyncError, "invalid"):
+            mem_graph_sync.check_port("not-an-endpoint", 0.5, connect=mock.Mock())
+        with self.assertRaisesRegex(mem_graph_sync.SyncError, "unreachable: host.test:8004"):
+            mem_graph_sync.check_port(
+                "http://host.test:8004",
+                0.5,
+                connect=mock.Mock(side_effect=OSError("refused")),
+            )
+
+    def test_main_handles_invalid_success_queued_and_unreachable_port(self):
+        """The CLI boundary maps invalid, synced, queued, and fast-fail outcomes."""
         with mock.patch.object(mem_graph_sync.sys, "stdin", mock.Mock()), \
              mock.patch.object(mem_graph_sync.json, "load", side_effect=ValueError("bad")):
             self.assertEqual(mem_graph_sync.main(), 2)
@@ -245,6 +318,7 @@ class TestMemGraphSyncBoundaries(TestCase):
         with mock.patch.object(mem_graph_sync.sys, "stdin", mock.Mock()), \
              mock.patch.object(mem_graph_sync.json, "load", return_value=self.event), \
              mock.patch.object(mem_graph_sync, "build_transport", return_value=mock.Mock()), \
+             mock.patch.object(mem_graph_sync, "check_port"), \
              mock.patch.object(mem_graph_sync, "retry_outbox") as retry_pending, \
              mock.patch.object(mem_graph_sync, "process_event", return_value=True):
             self.assertEqual(mem_graph_sync.main(), 0)
@@ -253,9 +327,24 @@ class TestMemGraphSyncBoundaries(TestCase):
         with mock.patch.object(mem_graph_sync.sys, "stdin", mock.Mock()), \
              mock.patch.object(mem_graph_sync.json, "load", return_value=self.event), \
              mock.patch.object(mem_graph_sync, "build_transport", return_value=mock.Mock()), \
+             mock.patch.object(mem_graph_sync, "check_port"), \
              mock.patch.object(mem_graph_sync, "retry_outbox"), \
              mock.patch.object(mem_graph_sync, "process_event", return_value=False):
             self.assertEqual(mem_graph_sync.main(), 1)
+
+        with mock.patch.object(mem_graph_sync.sys, "stdin", mock.Mock()), \
+             mock.patch.object(mem_graph_sync.json, "load", return_value=self.event), \
+             mock.patch.object(mem_graph_sync, "build_transport", return_value=mock.Mock()), \
+             mock.patch.object(
+                 mem_graph_sync,
+                 "check_port",
+                 side_effect=mem_graph_sync.SyncError("mem-graph port is unreachable"),
+             ), \
+             mock.patch.object(mem_graph_sync, "retry_outbox") as retry_pending, \
+             mock.patch.object(mem_graph_sync.outbox, "enqueue") as enqueue:
+            self.assertEqual(mem_graph_sync.main(), 1)
+            retry_pending.assert_not_called()
+            enqueue.assert_called_once_with(self.event["workspace"], self.event)
 
     def test_outbox_invalid_limits_corrupt_records_and_byte_bound(self):
         """Outbox falls back on bad limits, skips corruption, and drops oversized data."""
