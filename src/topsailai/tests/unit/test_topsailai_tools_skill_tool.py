@@ -1192,3 +1192,72 @@ class TestSymlinkPathHandling(unittest.TestCase):
             g_skills.pop(self.skill_folder, None)
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestDocumentedSkillValidationHelpers(unittest.TestCase):
+    """Direct tests for documented timeout and path-validation helpers."""
+
+    def test_parse_timeout_value_accepts_positive_integer_forms(self):
+        """Positive integer strings and integers normalize to seconds."""
+        from topsailai.tools.skill_tool import _parse_timeout_value
+
+        self.assertEqual(_parse_timeout_value("42", "demo"), 42)
+        self.assertEqual(_parse_timeout_value(7, "demo"), 7)
+
+    def test_parse_timeout_value_rejects_non_integer_and_non_positive_values(self):
+        """Invalid timeout forms raise SkillToolError with the key name."""
+        from topsailai.tools.skill_tool import _parse_timeout_value
+
+        for value in ("bad", None, 0, -1):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(SkillToolError, "demo"):
+                    _parse_timeout_value(value, "demo")
+
+    def test_is_normalized_path_inside_skill_folder_checks_boundary(self):
+        """The normalized folder itself and descendants pass; siblings do not."""
+        from topsailai.tools.skill_tool import _is_normalized_path_inside_skill_folder
+
+        with tempfile.TemporaryDirectory() as root:
+            skill_folder = os.path.join(root, "skill")
+            sibling = os.path.join(root, "skill-other", "file.txt")
+            self.assertTrue(
+                _is_normalized_path_inside_skill_folder(skill_folder, skill_folder)
+            )
+            self.assertTrue(
+                _is_normalized_path_inside_skill_folder(
+                    skill_folder, os.path.join(skill_folder, "scripts", "run.py")
+                )
+            )
+            self.assertFalse(
+                _is_normalized_path_inside_skill_folder(skill_folder, sibling)
+            )
+
+    def test_is_normalized_path_inside_skill_folder_handles_commonpath_error(self):
+        """Path-normalization errors produce False instead of escaping validation."""
+        from topsailai.tools.skill_tool import _is_normalized_path_inside_skill_folder
+
+        with patch("topsailai.tools.skill_tool.os.path.commonpath", side_effect=ValueError):
+            self.assertFalse(
+                _is_normalized_path_inside_skill_folder("/skill", "/candidate")
+            )
+
+    def test_validate_skill_file_name_accepts_inside_paths(self):
+        """Relative and absolute paths that normalize inside the skill are accepted."""
+        from topsailai.tools.skill_tool import _validate_skill_file_name
+
+        with tempfile.TemporaryDirectory() as skill_folder:
+            _validate_skill_file_name(skill_folder, "scripts/../README.md")
+            _validate_skill_file_name(
+                skill_folder, os.path.join(skill_folder, "scripts", "run.py")
+            )
+
+    def test_validate_skill_file_name_rejects_unsafe_names(self):
+        """Empty, prefixed, and traversal paths are rejected."""
+        from topsailai.tools.skill_tool import _validate_skill_file_name
+
+        with tempfile.TemporaryDirectory() as skill_folder:
+            unsafe_names = ("", "~/secret", "\\\\server\\share", "../escape.txt")
+            for file_name in unsafe_names:
+                with self.subTest(file_name=file_name):
+                    with self.assertRaises(SkillToolError):
+                        _validate_skill_file_name(skill_folder, file_name)

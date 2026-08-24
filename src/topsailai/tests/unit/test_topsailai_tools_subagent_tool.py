@@ -681,3 +681,112 @@ class TestSubagentReuseGating:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestDocumentedSubagentRoleHelpers:
+    """Direct tests for documented subagent role and tool-map helpers."""
+
+    def test_get_subagent_role_folder_uses_default_and_expands_configured_path(self):
+        """Role-folder resolution falls back and normalizes configured paths."""
+        from topsailai.tools import subagent_tool
+
+        with patch.object(subagent_tool.EnvReaderInstance, "get", return_value=""):
+            assert subagent_tool._get_subagent_role_folder() == os.path.abspath(
+                subagent_tool.DEFAULT_SUBAGENT_ROLE_FOLDER
+            )
+        with patch.object(
+            subagent_tool.EnvReaderInstance,
+            "get",
+            return_value="~/configured-subagents",
+        ), patch.object(
+            subagent_tool.os.path,
+            "expanduser",
+            return_value="/home/test/configured-subagents",
+        ):
+            assert subagent_tool._get_subagent_role_folder() == os.path.abspath(
+                "/home/test/configured-subagents"
+            )
+
+    def test_discover_subagent_roles_returns_sorted_nonempty_member_files(self, tmp_path):
+        """Discovery ignores unrelated and empty files and preserves sorted insertion."""
+        from topsailai.tools import subagent_tool
+
+        for name in ("zeta.member", "alpha.member", "README.md", "nested.member.txt"):
+            (tmp_path / name).write_text(name, encoding="utf-8")
+
+        contents = {
+            str(tmp_path / "alpha.member"): "Alpha role",
+            str(tmp_path / "zeta.member"): "Zeta role",
+        }
+        with patch.object(
+            subagent_tool.EnvReaderInstance,
+            "try_read_file",
+            side_effect=lambda path: contents.get(path, ""),
+        ):
+            roles = subagent_tool._discover_subagent_roles(str(tmp_path))
+
+        assert list(roles) == ["alpha", "zeta"]
+        assert roles == {"alpha": "Alpha role", "zeta": "Zeta role"}
+
+    def test_discover_subagent_roles_returns_empty_for_missing_folder(self, tmp_path):
+        """A missing role directory is treated as an empty role catalog."""
+        from topsailai.tools import subagent_tool
+
+        assert subagent_tool._discover_subagent_roles(str(tmp_path / "missing")) == {}
+
+    def test_escape_role_content_uses_fence_longer_than_embedded_ticks(self):
+        """Role content is wrapped with a fence longer than any embedded run."""
+        from topsailai.tools.subagent_tool import _escape_role_content
+
+        assert _escape_role_content("plain") == "```text\nplain\n```"
+        escaped = _escape_role_content("before ``` inside")
+        assert escaped.startswith("````text\n")
+        assert escaped.endswith("\n````")
+
+    def test_build_role_catalog_is_empty_or_sorted_with_escaped_details(self):
+        """Catalog output is deterministic and includes fenced full role definitions."""
+        from topsailai.tools.subagent_tool import _build_role_catalog
+
+        assert _build_role_catalog({}) == ""
+        catalog = _build_role_catalog({"zeta": "Z role", "alpha": "A role"})
+        assert catalog.index("- ``alpha``") < catalog.index("- ``zeta``")
+        assert catalog.index("### alpha") < catalog.index("### zeta")
+        assert "```text\nA role\n```" in catalog
+        assert "```text\nZ role\n```" in catalog
+
+    def test_print_members_handles_empty_and_prints_sorted_roles(self, capsys):
+        """Member output is omitted when empty and alphabetized when populated."""
+        from topsailai.tools import subagent_tool
+
+        agent = object.__new__(subagent_tool.MainAgent)
+        with patch.object(subagent_tool, "_SUBAGENT_ROLES", {}):
+            agent._print_members()
+        assert capsys.readouterr().out == ""
+
+        with patch.object(
+            subagent_tool,
+            "_SUBAGENT_ROLES",
+            {"zeta": "Z role", "alpha": "A role"},
+        ):
+            agent._print_members()
+        output = capsys.readouterr().out
+        assert output.index("  - alpha") < output.index("  - zeta")
+
+    def test_tool_map_prefixes_all_readonly_tool_names(self):
+        """The manager tool map exposes each read-only file handler with its prefix."""
+        from topsailai.tools import file_readonly_tool, subagent_tool
+
+        read = MagicMock()
+        stat = MagicMock()
+        agent = object.__new__(subagent_tool.MainAgent)
+        with patch.object(
+            file_readonly_tool,
+            "FILE_RO_TOOLS",
+            {"read_file": read, "get_file_size": stat},
+        ):
+            result = agent.tool_map
+
+        assert result == {
+            "file_readonly_tool-read_file": read,
+            "file_readonly_tool-get_file_size": stat,
+        }

@@ -192,3 +192,14 @@ def test_failed_write_does_not_fire_hooks(monkeypatch):
         story_memory_tool.write_memory("memory", "content")
 
     fire.assert_not_called()
+
+
+def test_unregister_create_hook_reports_presence_and_removes_hook():
+    """A registered create hook is removed once and absent thereafter."""
+    hook = mock.Mock()
+    memory_hooks.register_create_hook(hook)
+
+    assert memory_hooks.unregister_create_hook(hook) is True
+    assert memory_hooks.unregister_create_hook(hook) is False
+    memory_hooks.fire_memory_hooks(memory_hooks.CREATE, {"operation": "create"})
+    hook.assert_not_called()

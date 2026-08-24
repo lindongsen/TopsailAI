@@ -64,3 +64,14 @@ class TestAwaitOrTransferTask(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFinishTask(unittest.TestCase):
+    """Test cases for finish_task function."""
+
+    def test_finish_task_rejects_direct_execution(self):
+        """finish_task is a hook marker and must not execute as a normal tool."""
+        from topsailai.tools.collaboration_tool import finish_task
+
+        with self.assertRaisesRegex(Exception, "BUG: no need execute the tool"):
+            finish_task("final answer")
