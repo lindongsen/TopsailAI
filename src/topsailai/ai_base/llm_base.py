@@ -105,6 +105,7 @@ class LLMModel(LLMModelBase):
         total_tool_calls = len(tool_calls)
         responses = []
         for index, tool_call in enumerate(tool_calls):
+            # Keep all raw content in the first unit so response hooks observe it once.
             synthetic_content = rsp_content if index == 0 else ""
             synthetic_rsp_msg = ChatCompletionMessage(
                 role=ROLE_ASSISTANT,
