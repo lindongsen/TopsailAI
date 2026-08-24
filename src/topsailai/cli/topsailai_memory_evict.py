@@ -12,8 +12,9 @@ try:
 except ImportError:
     import _import_topsailai
 
+from topsailai.tools import story_memory_tool
 from topsailai.tools.memory_tool_utils import memory_evict, memory_stat
-from topsailai.workspace.folder_constants import TOPSAILAI_HOME
+from topsailai.workspace.folder_constants import FOLDER_MEMORY
 
 SORT_DESCRIPTION = "oldest last_activity_at first, then lexicographic memory_id"
 
@@ -37,7 +38,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--workspace",
-        help="Memory workspace containing the story folder (default: TOPSAILAI_HOME).",
+        help="Memory workspace containing the story folder (default: TOPSAILAI_HOME/memory).",
     )
     parser.add_argument(
         "--max-count",
@@ -54,9 +55,15 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 
 def resolve_workspace(value: str | None) -> str:
-    """Resolve an explicit workspace or use the configured TOPSAILAI_HOME."""
+    """Resolve an explicit workspace or use the configured memory workspace.
+
+    The memory functions operate on the *memory workspace*, i.e. the folder
+    that directly contains the ``story/`` directory. Its default comes from
+    ``story_memory_tool.WORKSPACE`` (normally ``TOPSAILAI_HOME/memory``),
+    NOT from ``TOPSAILAI_HOME`` itself.
+    """
     if value is None:
-        return TOPSAILAI_HOME
+        return story_memory_tool.WORKSPACE or FOLDER_MEMORY
     expanded = os.path.expanduser(value)
     if os.path.isabs(expanded):
         return os.path.abspath(expanded)
