@@ -1,6 +1,7 @@
 """Unit tests for raw-response story-memory reference accounting."""
 
 import os
+from types import SimpleNamespace
 from unittest import TestCase
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -25,9 +26,18 @@ class TestMemoryRefScanHook(TestCase):
             return_value=(1, 2, 3),
         )
         self.get_signature = self.signature_patcher.start()
+        self.agent = SimpleNamespace(
+            available_tools={"memory": story_memory_tool.write_memory}
+        )
+        self.agent_patcher = patch(
+            "topsailai.utils.thread_local_tool.get_agent_object",
+            return_value=self.agent,
+        )
+        self.get_agent = self.agent_patcher.start()
 
     def tearDown(self):
-        """Remove signature patches and cached state after each test."""
+        """Remove agent/signature patches and cached state after each test."""
+        self.agent_patcher.stop()
         self.signature_patcher.stop()
         memory_ref_scan_hook._reset_title_index_cache()
 
@@ -113,6 +123,38 @@ class TestMemoryRefScanHook(TestCase):
             {"TOPSAILAI_MEMORY_REFERENCE_SCAN_ENABLED": "0"},
         ):
             result = memory_ref_scan_hook.hook_execute(self.response)
+
+        self.assertIs(result, self.response)
+        self.get_signature.assert_not_called()
+        list_memories.assert_not_called()
+
+    @patch("topsailai.tools.story_memory_tool.list_memories")
+    def test_globally_disabled_memory_tool_is_fast_noop(self, list_memories):
+        """Skip scanning when the story-memory tool is globally disabled."""
+        with patch.object(story_memory_tool, "FLAG_TOOL_ENABLED", False):
+            result = memory_ref_scan_hook.hook_execute(self.response)
+
+        self.assertIs(result, self.response)
+        self.get_signature.assert_not_called()
+        list_memories.assert_not_called()
+
+    @patch("topsailai.tools.story_memory_tool.list_memories")
+    def test_agent_without_memory_tool_is_fast_noop(self, list_memories):
+        """Skip scanning when memory functions are absent from agent tools."""
+        self.agent.available_tools = {"other": object()}
+
+        result = memory_ref_scan_hook.hook_execute(self.response)
+
+        self.assertIs(result, self.response)
+        self.get_signature.assert_not_called()
+        list_memories.assert_not_called()
+
+    @patch("topsailai.tools.story_memory_tool.list_memories")
+    def test_missing_agent_is_fast_noop(self, list_memories):
+        """Skip scanning gracefully when called outside an agent runtime."""
+        self.get_agent.return_value = None
+
+        result = memory_ref_scan_hook.hook_execute(self.response)
 
         self.assertIs(result, self.response)
         self.get_signature.assert_not_called()

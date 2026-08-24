@@ -12,6 +12,23 @@ _TITLE_INDEX_SIGNATURE = None
 _TITLE_INDEX_WORKSPACE = None
 
 
+def _is_memory_tool_available(story_memory_tool):
+    """Return whether memory is enabled and available to the current agent."""
+    if not story_memory_tool.FLAG_TOOL_ENABLED:
+        return False
+
+    from topsailai.utils.thread_local_tool import get_agent_object
+
+    agent = get_agent_object()
+    available_tools = getattr(agent, "available_tools", {}) if agent else {}
+    memory_functions = tuple(story_memory_tool.TOOLS.values())
+    return any(
+        tool_func is memory_func
+        for tool_func in available_tools.values()
+        for memory_func in memory_functions
+    )
+
+
 def _reset_title_index_cache():
     """Clear cached title-index state for isolated callers and tests."""
     global _TITLE_INDEX_CACHE, _TITLE_INDEX_SIGNATURE, _TITLE_INDEX_WORKSPACE
@@ -68,6 +85,10 @@ def hook_execute(content):
 
     try:
         from topsailai.tools import story_memory_tool
+
+        if not _is_memory_tool_available(story_memory_tool):
+            return content
+
         from topsailai.tools.memory_tool_utils import memory_ref_parser, memory_stat
 
         title_index = _get_title_index(story_memory_tool, memory_ref_parser)
