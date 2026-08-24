@@ -5,7 +5,9 @@ import os
 import tempfile
 from unittest import TestCase, mock
 
-from topsailai.tools.memory_tool_utils import memory_reconcile, memory_stat
+from topsailai.scripts import mem_graph_sync
+from topsailai.scripts import mem_graph_sync_outbox as outbox
+from topsailai.tools.memory_tool_utils import memory_hooks, memory_reconcile, memory_stat
 
 
 class TestMemoryReconcile(TestCase):
@@ -269,4 +271,171 @@ class TestMemoryReconcile(TestCase):
             "would delete %s quarantine memory stat: [%s]",
             "expired",
             quarantine_file,
+        )
+
+
+    def test_unsynced_memory_dispatches_create_snapshot(self):
+        """An unsynced stat dispatches the current local content as a create."""
+        memory_id = "20260824175009.File_Exploration.md"
+        memory_file = self._write_memory(memory_id)
+        memory_stat.ensure_memory_stat(self.workspace, memory_id)
+
+        with mock.patch.object(
+            memory_hooks,
+            "fire_memory_hooks",
+            return_value={"sync": [(0, "ok", "")]},
+        ) as fire:
+            summary = memory_reconcile.reconcile_memory_stats(
+                self.workspace, dry_run=False
+            )
+
+        self.assertEqual(summary.sync_candidates, 1)
+        self.assertEqual(summary.sync_dispatched, 1)
+        operation, event = fire.call_args.args
+        self.assertEqual(operation, memory_hooks.CREATE)
+        self.assertEqual(event["memory_id"], memory_id)
+        self.assertEqual(event["title"], "File_Exploration")
+        self.assertEqual(event["content"], "content")
+        self.assertEqual(event["memory_file"], memory_file)
+        self.assertEqual(event["version"], 1)
+
+    def test_newer_local_content_dispatches_monotonic_update(self):
+        """A direct file rewrite advances beyond the last successful snapshot."""
+        memory_id = "newer.md"
+        memory_file = self._write_memory(memory_id)
+        memory_stat.record_memory_sync(
+            self.workspace,
+            memory_id,
+            synced=True,
+            event_version=1,
+            content_digest=memory_stat.get_content_digest("content"),
+        )
+        with open(memory_file, "w", encoding="utf-8") as stream:
+            stream.write("new content")
+
+        with mock.patch.object(
+            memory_hooks,
+            "fire_memory_hooks",
+            return_value={"sync": [(0, "ok", "")]},
+        ) as fire:
+            summary = memory_reconcile.reconcile_memory_stats(
+                self.workspace, dry_run=False
+            )
+
+        self.assertEqual(summary.sync_candidates, 1)
+        operation, event = fire.call_args.args
+        self.assertEqual(operation, memory_hooks.UPDATE)
+        self.assertEqual(event["version"], 2)
+        self.assertEqual(event["content"], "new content")
+
+    def test_missing_stat_is_rebuilt_and_synced_in_same_live_run(self):
+        """A Markdown file without a stat is rebuilt before sync candidate scan."""
+        memory_id = "missing-stat.md"
+        self._write_memory(memory_id)
+
+        with mock.patch.object(
+            memory_hooks,
+            "fire_memory_hooks",
+            return_value={"sync": [(0, "ok", "")]},
+        ) as fire:
+            summary = memory_reconcile.reconcile_memory_stats(
+                self.workspace, dry_run=False
+            )
+
+        self.assertEqual(summary.rebuilt, 1)
+        self.assertEqual(summary.sync_candidates, 1)
+        self.assertEqual(summary.sync_dispatched, 1)
+        self.assertIsNotNone(memory_stat.read_memory_stat(self.workspace, memory_id))
+        self.assertEqual(fire.call_args.args[0], memory_hooks.CREATE)
+
+    def test_failed_sync_consumer_queues_reconciled_event(self):
+        """A consumer failure preserves a reconciled event in the standard outbox."""
+        memory_id = "failed.md"
+        self._write_memory(memory_id)
+        memory_stat.ensure_memory_stat(self.workspace, memory_id)
+        transport = mock.Mock()
+        transport.readiness.side_effect = mem_graph_sync.SyncError("unavailable")
+
+        def consume(operation, event):
+            payload = memory_hooks._build_sync_event(operation, event)
+            mem_graph_sync.process_event(payload, transport, sleep=mock.Mock())
+            return {"sync": [(0, "queued", "")]}
+
+        with mock.patch.object(memory_hooks, "fire_memory_hooks", side_effect=consume):
+            summary = memory_reconcile.reconcile_memory_stats(
+                self.workspace, dry_run=False
+            )
+
+        queued = outbox.read(self.workspace)
+        self.assertEqual(summary.sync_dispatched, 1)
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["memory_id"], memory_id)
+        self.assertFalse(
+            memory_stat.read_memory_stat(self.workspace, memory_id)["synced"]
+        )
+
+    def test_missing_or_invalid_binding_is_reported_as_sync_failure(self):
+        """A candidate is not counted as dispatched when no consumer runs."""
+        memory_id = "missing-binding.md"
+        self._write_memory(memory_id)
+        memory_stat.ensure_memory_stat(self.workspace, memory_id)
+
+        with mock.patch.object(
+            memory_hooks, "fire_memory_hooks", return_value={"sync": []}
+        ):
+            summary = memory_reconcile.reconcile_memory_stats(
+                self.workspace, dry_run=False
+            )
+
+        self.assertEqual(summary.sync_dispatched, 0)
+        self.assertEqual(summary.sync_failed, 1)
+        self.assertEqual(summary.errors, 1)
+
+    def test_start_failure_and_nonzero_exit_are_sync_failures(self):
+        """Failed-to-start and non-zero consumers never produce false success."""
+        for memory_id in ("start-failed.md", "nonzero.md"):
+            self._write_memory(memory_id)
+            memory_stat.ensure_memory_stat(self.workspace, memory_id)
+
+        results = [
+            {"sync": [None]},
+            {"sync": [(1, "", "consumer failed")]},
+        ]
+        with mock.patch.object(
+            memory_hooks, "fire_memory_hooks", side_effect=results
+        ):
+            summary = memory_reconcile.reconcile_memory_stats(
+                self.workspace, dry_run=False
+            )
+
+        self.assertEqual(summary.sync_dispatched, 0)
+        self.assertEqual(summary.sync_failed, 2)
+        self.assertEqual(summary.errors, 2)
+
+    def test_sync_batch_limit_and_global_lock_bound_dispatch(self):
+        """The global reconcile lock encloses only the configured candidate batch."""
+        for memory_id in ("a.md", "b.md", "c.md"):
+            self._write_memory(memory_id)
+            memory_stat.ensure_memory_stat(self.workspace, memory_id)
+
+        with mock.patch.object(
+            memory_hooks,
+            "fire_memory_hooks",
+            return_value={"sync": [(0, "ok", "")]},
+        ) as fire, \
+             mock.patch.object(
+                 memory_reconcile.lock_tool,
+                 "FileLock",
+                 wraps=memory_reconcile.lock_tool.FileLock,
+             ) as file_lock:
+            summary = memory_reconcile.reconcile_memory_stats(
+                self.workspace, dry_run=False, sync_batch_limit=2
+            )
+
+        self.assertEqual(summary.sync_candidates, 3)
+        self.assertEqual(summary.sync_dispatched, 2)
+        self.assertEqual(summary.sync_skipped_limit, 1)
+        self.assertEqual(fire.call_count, 2)
+        self.assertTrue(
+            any(call.args == ("story_tool",) for call in file_lock.call_args_list)
         )

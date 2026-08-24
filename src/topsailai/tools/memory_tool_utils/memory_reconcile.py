@@ -3,17 +3,20 @@
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 
 from topsailai.workspace import lock_tool
 
-from . import memory_stat
+from . import memory_hooks, memory_stat
 
 logger = logging.getLogger(__name__)
 
 QUARANTINE_FOLDER = "_quarantine"
+TIMESTAMPED_MEMORY_ID = re.compile(r"^\d{14}\.(.+)\.md$", re.DOTALL)
+DEFAULT_SYNC_BATCH_LIMIT = 100
 
 
 @dataclass
@@ -25,6 +28,10 @@ class ReconSummary:
     rebuilt: int = 0
     purged_orphan: int = 0
     quarantined: int = 0
+    sync_candidates: int = 0
+    sync_dispatched: int = 0
+    sync_failed: int = 0
+    sync_skipped_limit: int = 0
     errors: int = 0
     dry_run: bool = True
     elapsed_ms: int = 0
@@ -185,13 +192,120 @@ def _process_stat(
     return embedded_id
 
 
+def _memory_title(memory_id: str) -> str:
+    """Derive the original title from a compact timestamped memory identifier."""
+    match = TIMESTAMPED_MEMORY_ID.match(memory_id)
+    return match.group(1) if match else os.path.splitext(memory_id)[0]
+
+
+def _read_memory_content(memory_file: str) -> str:
+    """Read one local Markdown memory exactly as the sync payload content."""
+    with open(memory_file, encoding="utf-8") as stream:
+        return stream.read()
+
+
+def _local_event_version(stat: dict, content: str) -> int:
+    """Return a monotonic event version for the current local snapshot."""
+    counted_version = stat["update_count"] + 1
+    synced_version = stat.get("last_synced_version") or 0
+    synced_digest = stat.get("last_synced_content_digest")
+    current_digest = memory_stat.get_content_digest(content)
+    if synced_digest and synced_digest != current_digest:
+        return max(counted_version, synced_version + 1)
+    return max(counted_version, synced_version)
+
+
+def _needs_sync(stat: dict, content: str, event_version: int) -> bool:
+    """Return whether local state is newer than the last successful snapshot."""
+    if not memory_stat.is_memory_synced(stat):
+        return True
+    if stat.get("last_synced_version") != event_version:
+        return True
+    return stat.get("last_synced_content_digest") != memory_stat.get_content_digest(
+        content
+    )
+
+
+def _build_sync_event(
+    workspace: str,
+    memory_id: str,
+    memory_file: str,
+    content: str,
+    stat: dict,
+) -> tuple[str, dict]:
+    """Build a standard internal sync event for one current local snapshot."""
+    event_version = _local_event_version(stat, content)
+    operation = (
+        memory_hooks.UPDATE
+        if memory_stat.is_memory_synced(stat)
+        or stat.get("last_synced_version") is not None
+        else memory_hooks.CREATE
+    )
+    event = {
+        "op": operation,
+        "memory_id": memory_id,
+        "title": _memory_title(memory_id),
+        "content": content,
+        "memory_file": memory_file,
+        "workspace": workspace,
+        "timestamp": _mtime_timestamp(memory_file),
+        "version": event_version,
+    }
+    return operation, event
+
+
+def _dispatch_missing_syncs(
+    workspace: str,
+    markdown_by_id: dict[str, list[str]],
+    summary: ReconSummary,
+    dry_run: bool,
+    sync_batch_limit: int,
+) -> None:
+    """Dispatch a bounded set of missing local snapshots through standard hooks."""
+    candidates = []
+    for memory_id in sorted(markdown_by_id):
+        paths = markdown_by_id[memory_id]
+        if len(paths) != 1:
+            continue
+        stat = memory_stat.read_memory_stat(workspace, memory_id)
+        if stat is None:
+            continue
+        content = _read_memory_content(paths[0])
+        event_version = _local_event_version(stat, content)
+        if _needs_sync(stat, content, event_version):
+            candidates.append((memory_id, paths[0], content, stat))
+
+    summary.sync_candidates = len(candidates)
+    bounded = candidates[:sync_batch_limit]
+    summary.sync_skipped_limit = len(candidates) - len(bounded)
+    if dry_run:
+        return
+    for memory_id, memory_file, content, stat in bounded:
+        try:
+            operation, event = _build_sync_event(
+                workspace, memory_id, memory_file, content, stat
+            )
+            hook_result = memory_hooks.fire_memory_hooks(operation, event)
+            if memory_hooks.sync_dispatch_succeeded(hook_result):
+                summary.sync_dispatched += 1
+                continue
+            summary.sync_failed += 1
+            summary.errors += 1
+            logger.error("no memory sync consumer succeeded: [%s]", memory_id)
+        except Exception:
+            summary.sync_failed += 1
+            summary.errors += 1
+            logger.exception("failed to dispatch memory sync: [%s]", memory_id)
+
+
 def reconcile_memory_stats(
     workspace: str,
     dry_run: bool = True,
     quarantine_max_age_days: int = 0,
     quarantine_max_count: int = 0,
+    sync_batch_limit: int = DEFAULT_SYNC_BATCH_LIMIT,
 ) -> ReconSummary:
-    """Reconcile memory stats and enforce optional quarantine retention."""
+    """Reconcile memory stats, missing syncs, and quarantine retention."""
     started = time.perf_counter()
     summary = ReconSummary(dry_run=dry_run)
     story_root = os.path.join(workspace, "story")
@@ -235,6 +349,18 @@ def reconcile_memory_stats(
                     summary.rebuilt -= 1
                     summary.errors += 1
                     logger.exception("failed to rebuild memory stat: [%s]", memory_id)
+
+        try:
+            _dispatch_missing_syncs(
+                workspace,
+                markdown_by_id,
+                summary,
+                dry_run,
+                max(0, sync_batch_limit),
+            )
+        except Exception:
+            summary.errors += 1
+            logger.exception("failed to reconcile memory syncs: [%s]", story_root)
 
         quarantine_root = os.path.join(stats_root, QUARANTINE_FOLDER)
         try:

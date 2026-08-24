@@ -12,8 +12,8 @@ from topsailai.workspace import lock_tool
 
 logger = logging.getLogger(__name__)
 
-STAT_VERSION = 2
-LEGACY_STAT_VERSIONS = {1}
+STAT_VERSION = 3
+LEGACY_STAT_VERSIONS = {1, 2}
 STAT_FOLDER = ".stats"
 EVENT_FIELDS = {
     "read": ("read_count", "last_read_at"),
@@ -34,6 +34,11 @@ def get_stat_file(workspace: str, memory_id: str) -> str:
     return os.path.join(workspace, "story", STAT_FOLDER, encoded_id + ".json")
 
 
+def get_content_digest(content: str) -> str:
+    """Return a stable digest for one exact memory snapshot."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
 def _new_stat(memory_id: str, timestamp: str) -> dict:
     """Build a new versioned stat record with zero activity counters."""
     return {
@@ -42,6 +47,8 @@ def _new_stat(memory_id: str, timestamp: str) -> dict:
         "synced": False,
         "last_sync_at": None,
         "last_sync_error": None,
+        "last_synced_version": None,
+        "last_synced_content_digest": None,
         "read_count": 0,
         "cite_count": 0,
         "query_count": 0,
@@ -72,10 +79,21 @@ def _validate_stat(stat: dict, memory_id: str) -> dict:
     for field in ("created_at", "last_activity_at"):
         if not isinstance(stat.get(field), str) or not stat[field]:
             raise ValueError(f"invalid memory stat timestamp: {field}")
-    if stat.get("version") == STAT_VERSION:
+    if stat.get("version") >= 2:
         for field in ("last_sync_at", "last_sync_error"):
             if stat.get(field) is not None and not isinstance(stat[field], str):
                 raise ValueError(f"invalid memory stat sync field: {field}")
+    if stat.get("version") == STAT_VERSION:
+        synced_version = stat.get("last_synced_version")
+        if synced_version is not None and (
+            not isinstance(synced_version, int)
+            or isinstance(synced_version, bool)
+            or synced_version < 1
+        ):
+            raise ValueError("invalid memory stat synced version")
+        digest = stat.get("last_synced_content_digest")
+        if digest is not None and (not isinstance(digest, str) or not digest):
+            raise ValueError("invalid memory stat content digest")
     return stat
 
 
@@ -198,19 +216,40 @@ def record_memory_event(workspace: str, memory_id: str, event: str) -> dict:
 
 
 def record_memory_sync(
-    workspace: str, memory_id: str, *, synced: bool, error: str | None = None
+    workspace: str,
+    memory_id: str,
+    *,
+    synced: bool,
+    error: str | None = None,
+    event_version: int | None = None,
+    content_digest: str | None = None,
 ) -> dict:
-    """Record the latest best-effort external synchronization outcome."""
+    """Record the latest external sync outcome and successful snapshot identity."""
     if not isinstance(synced, bool):
         raise ValueError("memory sync state must be boolean")
     if error is not None and not isinstance(error, str):
         raise ValueError("memory sync error must be text or None")
+    if event_version is not None and (
+        not isinstance(event_version, int)
+        or isinstance(event_version, bool)
+        or event_version < 1
+    ):
+        raise ValueError("memory sync event version must be a positive integer")
+    if content_digest is not None and (
+        not isinstance(content_digest, str) or not content_digest
+    ):
+        raise ValueError("memory sync content digest must be non-empty text")
 
     def update_sync(stat: dict, timestamp: str) -> None:
         stat["version"] = STAT_VERSION
+        stat.setdefault("last_synced_version", None)
+        stat.setdefault("last_synced_content_digest", None)
         stat["synced"] = synced
         stat["last_sync_at"] = timestamp
         stat["last_sync_error"] = None if synced else (error or "sync failed")
+        if synced:
+            stat["last_synced_version"] = event_version
+            stat["last_synced_content_digest"] = content_digest
 
     return mutate_memory_stat(workspace, memory_id, update_sync)
 

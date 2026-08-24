@@ -166,8 +166,11 @@ def _memory_retention_limit(name: str, default: int) -> int:
     return max(0, env_tool.get_int(name, default=default))
 
 
-def reconcile_memories(dry_run: bool = True) -> dict:
-    """Reconcile memory stats using boundary-resolved retention settings."""
+def reconcile_memories(
+    dry_run: bool = True,
+    sync_batch_limit: int = memory_reconcile.DEFAULT_SYNC_BATCH_LIMIT,
+) -> dict:
+    """Reconcile memory stats and bounded missing syncs."""
     max_age_days = _memory_retention_limit(
         "TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_AGE_DAYS", 30
     )
@@ -179,6 +182,7 @@ def reconcile_memories(dry_run: bool = True) -> dict:
         dry_run=dry_run,
         quarantine_max_age_days=max_age_days,
         quarantine_max_count=max_count,
+        sync_batch_limit=max(0, sync_batch_limit),
     )
     return summary.to_dict()
 

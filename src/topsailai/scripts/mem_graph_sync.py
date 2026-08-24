@@ -223,7 +223,14 @@ def _record_sync(event: dict, *, synced: bool, error: str | None = None) -> None
     """Persist sync observability after the bounded network operation exits."""
     try:
         memory_stat.record_memory_sync(
-            event["workspace"], event["memory_id"], synced=synced, error=error
+            event["workspace"],
+            event["memory_id"],
+            synced=synced,
+            error=error,
+            event_version=event["version"] if synced else None,
+            content_digest=(
+                memory_stat.get_content_digest(event["content"]) if synced else None
+            ),
         )
     except Exception:
         logger.exception("failed to record memory sync state")

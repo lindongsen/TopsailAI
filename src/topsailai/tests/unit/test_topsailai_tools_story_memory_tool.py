@@ -625,7 +625,7 @@ class TestMemoryStatLifecycle(unittest.TestCase):
         'topsailai.tools.story_memory_tool.memory_reconcile.reconcile_memory_stats'
     )
     def test_reconcile_memories_forwards_default_retention(self, mock_reconcile):
-        """Verify the facade forwards approved retention defaults."""
+        """Verify the facade forwards approved retention and sync defaults."""
         from topsailai.tools import story_memory_tool
         from topsailai.tools.memory_tool_utils.memory_reconcile import ReconSummary
 
@@ -638,6 +638,7 @@ class TestMemoryStatLifecycle(unittest.TestCase):
             dry_run=False,
             quarantine_max_age_days=30,
             quarantine_max_count=100,
+            sync_batch_limit=100,
         )
         self.assertEqual(result, mock_reconcile.return_value.to_dict())
 
@@ -658,13 +659,14 @@ class TestMemoryStatLifecycle(unittest.TestCase):
 
         mock_reconcile.return_value = ReconSummary()
 
-        story_memory_tool.reconcile_memories()
+        story_memory_tool.reconcile_memories(sync_batch_limit=8)
 
         mock_reconcile.assert_called_once_with(
             story_memory_tool.WORKSPACE,
             dry_run=True,
             quarantine_max_age_days=7,
             quarantine_max_count=12,
+            sync_batch_limit=8,
         )
 
     @patch(
@@ -677,20 +679,21 @@ class TestMemoryStatLifecycle(unittest.TestCase):
             'TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_COUNT': '-2',
         },
     )
-    def test_reconcile_memories_clamps_negative_retention(self, mock_reconcile):
-        """Verify negative retention values safely disable cleanup."""
+    def test_reconcile_memories_clamps_negative_limits(self, mock_reconcile):
+        """Verify negative retention and batch values safely disable actions."""
         from topsailai.tools import story_memory_tool
         from topsailai.tools.memory_tool_utils.memory_reconcile import ReconSummary
 
         mock_reconcile.return_value = ReconSummary()
 
-        story_memory_tool.reconcile_memories()
+        story_memory_tool.reconcile_memories(sync_batch_limit=-3)
 
         mock_reconcile.assert_called_once_with(
             story_memory_tool.WORKSPACE,
             dry_run=True,
             quarantine_max_age_days=0,
             quarantine_max_count=0,
+            sync_batch_limit=0,
         )
 
 

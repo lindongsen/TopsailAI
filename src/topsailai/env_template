@@ -710,7 +710,7 @@ TOPSAILAI_HOOK_SCRIPTS_MEMORY_WRITE=""
 
 # JSON object keyed by create/update; empty or invalid JSON disables sync hooks.
 # Each binding supports script, timeout, enabled, and env_keys.
-# Example: {"create":[{"script":"scripts/mem_graph_sync.py","timeout":300,"enabled":true,"env_keys":[]}],"update":[{"script":"scripts/mem_graph_sync.py","timeout":300,"enabled":true,"env_keys":[]}]}
+# Example: {"create":[{"script":"/TopsailAI/src/topsailai/scripts/mem_graph_sync.py","timeout":300,"enabled":true,"env_keys":[]}],"update":[{"script":"/TopsailAI/src/topsailai/scripts/mem_graph_sync.py","timeout":300,"enabled":true,"env_keys":[]}]}
 TOPSAILAI_MEMORY_SYNC_HOOKS=""
 
 # =============================================================================

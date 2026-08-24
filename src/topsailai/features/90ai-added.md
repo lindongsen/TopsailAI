@@ -18,8 +18,9 @@ Added ordered, fail-open in-process hooks for successful story memory create and
 
 ## Append-Only Mem-Graph Memory Sync
 
-Added optional append-only snapshot synchronization of personal memory `create`/`update` events to mem-graph under the test account `EXTERNAL_USER_ID="test"`, using `TOPSAILAI_MEMORY_SYNC_HOOKS`, the external `scripts/mem_graph_sync.py` consumer, and a bounded durable outbox for graceful degradation.
+Added optional append-only snapshot synchronization of personal memory `create`/`update` events to mem-graph under the test account `EXTERNAL_USER_ID="test"`, using `TOPSAILAI_MEMORY_SYNC_HOOKS`, the external `scripts/mem_graph_sync.py` consumer, and a bounded durable outbox for graceful degradation. Reconcile counts a dispatch only when at least one configured consumer actually exits successfully; missing, invalid, failed-to-start, and non-zero consumers are reported as sync failures.
 
+Memory reconciliation can recover writes that bypass the managed story-memory API. It scans missing or unsynchronized statistics and compares the local event version and content digest with the last successful sync snapshot, then dispatches bounded `create`/`update` events through the standard hooks. The existing global story lock prevents concurrent reconcile runs, and failed deliveries continue to use the durable outbox.
 
 ## LRU-Bounded Startup Memory Loading
 

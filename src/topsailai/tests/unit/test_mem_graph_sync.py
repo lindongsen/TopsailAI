@@ -69,6 +69,11 @@ class TestMemGraphSync(TestCase):
         stat = memory_stat.read_memory_stat(self.temp_dir.name, self.event["memory_id"])
         self.assertTrue(stat["synced"])
         self.assertIsNone(stat["last_sync_error"])
+        self.assertEqual(stat["last_synced_version"], 2)
+        self.assertEqual(
+            stat["last_synced_content_digest"],
+            memory_stat.get_content_digest("new body"),
+        )
 
     def test_readiness_failure_queues_event_and_records_failure(self):
         transport = FakeTransport(readiness_failures=10)

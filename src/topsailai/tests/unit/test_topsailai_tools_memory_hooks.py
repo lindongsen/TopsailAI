@@ -406,3 +406,19 @@ def test_sync_dispatch_reports_nonzero_exit(monkeypatch, caplog):
 
     assert result == [(1, "", "failed")]
     assert "exited non-zero" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        ({"sync": [(0, "ok", "")]}, True),
+        ({"sync": [None]}, False),
+        ({"sync": [(1, "", "failed")]}, False),
+        ({"sync": []}, False),
+        ({}, False),
+        (None, False),
+    ],
+)
+def test_sync_dispatch_succeeded_requires_zero_exit(result, expected):
+    """Only an actually executed zero-exit consumer is a successful dispatch."""
+    assert memory_hooks.sync_dispatch_succeeded(result) is expected

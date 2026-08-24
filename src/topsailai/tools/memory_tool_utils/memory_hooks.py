@@ -181,6 +181,21 @@ def dispatch_memory_sync_hooks(operation: str, event: dict) -> list[object | Non
     ]
 
 
+def sync_dispatch_succeeded(hook_result: object) -> bool:
+    """Return whether at least one sync consumer executed successfully."""
+    if not isinstance(hook_result, dict):
+        return False
+    results = hook_result.get("sync")
+    if not isinstance(results, list):
+        return False
+    return any(
+        isinstance(result, (tuple, list))
+        and bool(result)
+        and result[0] == 0
+        for result in results
+    )
+
+
 def fire_memory_hooks(operation: str, event: dict) -> dict:
     """Run in-process, legacy external, and event-keyed sync hooks."""
     in_process = REGISTRY.call(operation, event)
