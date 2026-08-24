@@ -217,6 +217,43 @@ class TestGetTools(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestGetToolsObservation(unittest.TestCase):
+    """Test get_tools_observation() function."""
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_observation_by_tools")
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_reuses_observation_helper(self, mock_get_agent, mock_get_observation):
+        """Test active tool names are passed to the shared observation helper."""
+        mock_agent = MagicMock()
+        mock_agent.available_tools = {"skill_tool-read": {}, "cmd_tool-exec": {}}
+        mock_get_agent.return_value = mock_agent
+        mock_get_observation.return_value = '<observation source="skill_tool">data</observation>'
+
+        from topsailai.workspace.plugin_instruction.agent import get_tools_observation
+        result = get_tools_observation()
+
+        mock_get_observation.assert_called_once_with([
+            "cmd_tool-exec",
+            "skill_tool-read",
+        ])
+        self.assertEqual(
+            result,
+            '<observation source="skill_tool">data</observation>',
+        )
+
+    @patch("topsailai.workspace.plugin_instruction.agent.get_observation_by_tools")
+    @patch("topsailai.workspace.plugin_instruction.agent.get_ai_agent")
+    def test_no_agent(self, mock_get_agent, mock_get_observation):
+        """Test no observation is requested when no agent is active."""
+        mock_get_agent.return_value = None
+
+        from topsailai.workspace.plugin_instruction.agent import get_tools_observation
+        result = get_tools_observation()
+
+        mock_get_observation.assert_not_called()
+        self.assertIsNone(result)
+
+
 class TestGetMessages(unittest.TestCase):
     """Test get_messages() function"""
 
@@ -688,6 +725,11 @@ class TestInstructions(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
         self.assertIn("tools", INSTRUCTIONS)
 
+    def test_has_tools_observation_key(self):
+        """Test INSTRUCTIONS has 'tools_observation' key."""
+        from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
+        self.assertIn("tools_observation", INSTRUCTIONS)
+
     def test_has_set_llm_key(self):
         """Test INSTRUCTIONS has 'set_llm' key"""
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
@@ -711,7 +753,7 @@ class TestInstructions(unittest.TestCase):
     def test_correct_count(self):
         """Test INSTRUCTIONS has correct number of entries"""
         from topsailai.workspace.plugin_instruction.agent import INSTRUCTIONS
-        self.assertEqual(len(INSTRUCTIONS), 8)
+        self.assertEqual(len(INSTRUCTIONS), 9)
 
     def test_values_are_callable(self):
         """Test all INSTRUCTIONS values are callable"""

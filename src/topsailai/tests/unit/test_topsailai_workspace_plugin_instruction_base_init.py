@@ -216,6 +216,10 @@ class TestRealInstructions:
         """INSTRUCTIONS should contain agent.system_prompt."""
         assert "agent.system_prompt" in init_mod.INSTRUCTIONS
 
+    def test_real_instructions_has_agent_tools_observation(self):
+        """INSTRUCTIONS should contain agent.tools_observation."""
+        assert "agent.tools_observation" in init_mod.INSTRUCTIONS
+
     def test_real_instructions_has_skill_show(self):
         """INSTRUCTIONS should contain skill.show."""
         assert "skill.show" in init_mod.INSTRUCTIONS
