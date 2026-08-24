@@ -6,7 +6,7 @@ ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
 references:
-  - /TopsailAI/src/topsailai/env_template
+  - env_template
 ---
 
 # Environment Variables
@@ -332,7 +332,8 @@ These variables configure the optional tool-call approval gate. When enabled, ea
 | `TOPSAILAI_HOOK_AFTER_LLM_RESPONSE` | `"topsailai.tools.memory_tool_utils.memory_ref_scan_hook"` | Module paths separated by `;` for observing raw LLM response text before formatting. Hook function signature: `hook_func(content:str) -> str`. |
 | `TOPSAILAI_HOOK_BEFORE_LLM_CHAT` | `""` | Module paths separated by `;`. Hook function signature: `hook_func(content:list[dict]) -> list[dict]`. |
 | `TOPSAILAI_HOOK_SCRIPTS_POST_FINAL_ANSWER` | `""` | Scripts to run after the final answer. Format: `"{script_file} {cmd_options};"`. |
-| `TOPSAILAI_HOOK_SCRIPTS_MEMORY_WRITE` | `""` | Scripts called after successful memory create or update operations, after in-process hooks. Format: `"{script_file} {cmd_options};"`. |
+| `TOPSAILAI_HOOK_SCRIPTS_MEMORY_WRITE` | `""` | Legacy scripts called after successful memory create or update operations, after in-process hooks. Format: `"{script_file} {cmd_options};"`. |
+| `TOPSAILAI_MEMORY_SYNC_HOOKS` | `""` | JSON object keyed by `create`/`update`; each binding supports `script`, `timeout` (default `300`), `enabled`, and `env_keys`. Empty or invalid JSON disables sync hooks; unknown events including `delete` are ignored. Coexists with `TOPSAILAI_HOOK_SCRIPTS_MEMORY_WRITE`. |
 
 
 ## Agent2LLM Runtime Message Injection

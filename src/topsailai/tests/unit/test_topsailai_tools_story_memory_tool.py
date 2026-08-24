@@ -434,6 +434,7 @@ class TestMemoryStatLifecycle(unittest.TestCase):
         from topsailai.tools import story_memory_tool
 
         mock_build_id.return_value = 'canonical.md'
+        mock_story_instance.get_story_file.return_value = None
 
         def write_story(**kwargs):
             kwargs['after_write']('/workspace/story/2026-08-23/canonical.md')

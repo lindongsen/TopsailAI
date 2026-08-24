@@ -16,6 +16,10 @@ LLM responses now scan assistant steps for unique `@memory[TITLE]` references an
 
 Added ordered, fail-open in-process hooks for successful story memory create and update operations, followed by optional external scripts configured through `TOPSAILAI_HOOK_SCRIPTS_MEMORY_WRITE`; hook events expose the operation, canonical memory identity, original title, content, file, workspace, and timestamp without affecting memory statistics or startup loading.
 
+## Append-Only Mem-Graph Memory Sync
+
+Added optional append-only snapshot synchronization of personal memory `create`/`update` events to mem-graph under the test account `EXTERNAL_USER_ID="test"`, using `TOPSAILAI_MEMORY_SYNC_HOOKS`, the external `scripts/mem_graph_sync.py` consumer, and a bounded durable outbox for graceful degradation.
+
 
 ## LRU-Bounded Startup Memory Loading
 

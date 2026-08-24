@@ -10,6 +10,19 @@ This document collects design notes, conventions, and known pitfalls for the **A
 
 ## Core Modules
 
+### Memory Lifecycle Sync Dispatch
+
+References:
+- `tools/story_memory_tool.py`
+- `tools/memory_tool_utils/memory_hooks.py`
+- `tools/memory_tool_utils/memory_stat.py`
+- `scripts/mem_graph_sync.py`
+- `scripts/mem_graph_sync_outbox.py`
+
+Successful personal memory `create` and `update` operations broadcast a versioned lifecycle event after the local write succeeds. `TOPSAILAI_MEMORY_SYNC_HOOKS` optionally maps either event to external script bindings (`script`, `timeout`, `enabled`, and `env_keys`); the dispatcher sends the complete v1 event as JSON on stdin, ignores unknown events such as `delete`, fails open, and coexists with the legacy `TOPSAILAI_HOOK_SCRIPTS_MEMORY_WRITE` scripts.
+
+The core dispatcher is transport-neutral and contains no mem-graph API logic. The external `scripts/mem_graph_sync.py` consumer owns readiness checks, retries, stat updates, and the bounded durable outbox; it creates a new personal-scope node for every event under the account-level test identity `EXTERNAL_USER_ID="test"`. This is append-only snapshot synchronization: existing nodes are never queried, updated, or deleted, and local memory remains authoritative when the remote service is unavailable.
+
 ### Thread-Local Agent Object
 
 References:

@@ -130,6 +130,17 @@ class TestExecCmd:
         assert 'test_value' in stdout
 
 
+    def test_exec_cmd_passes_utf8_stdin_text(self):
+        """Test UTF-8 text is encoded and passed through subprocess stdin."""
+        completed = subprocess.CompletedProcess(["consumer"], 0, b"ok", b"")
+        with patch("topsailai.utils.cmd_tool.subprocess.run", return_value=completed) as run:
+            result = exec_cmd(["consumer"], stdin_text="記憶")
+
+        assert result == (0, "ok", "")
+        assert run.call_args.kwargs["input"] == "記憶".encode("utf-8")
+        assert run.call_args.kwargs["text"] is False
+
+
 class TestExecCmdInRemote:
     """Test cases for exec_cmd_in_remote function."""
 

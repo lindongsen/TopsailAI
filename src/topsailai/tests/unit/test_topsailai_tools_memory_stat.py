@@ -21,9 +21,11 @@ class TestMemoryStat(TestCase):
     def test_ensure_creates_versioned_zero_stat_with_offset_timestamp(self):
         stat = memory_stat.ensure_memory_stat(self.workspace, self.memory_id)
 
-        self.assertEqual(stat["version"], 1)
+        self.assertEqual(stat["version"], memory_stat.STAT_VERSION)
         self.assertEqual(stat["memory_id"], self.memory_id)
         self.assertFalse(stat["synced"])
+        self.assertIsNone(stat["last_sync_at"])
+        self.assertIsNone(stat["last_sync_error"])
         for event in ("read", "cite", "query", "update"):
             self.assertEqual(stat[event + "_count"], 0)
         self.assertRegex(
@@ -51,6 +53,18 @@ class TestMemoryStat(TestCase):
 
         with open(stat_file, encoding="utf-8") as fd:
             self.assertEqual(json.load(fd), expected)
+
+    def test_memory_version_is_update_count_plus_one(self):
+        """Return one for create and advance after a recorded update."""
+        self.assertEqual(
+            memory_stat.get_memory_version(self.workspace, self.memory_id), 1
+        )
+
+        memory_stat.record_memory_event(self.workspace, self.memory_id, "update")
+
+        self.assertEqual(
+            memory_stat.get_memory_version(self.workspace, self.memory_id), 2
+        )
 
     def test_mutation_holds_stable_per_memory_lock(self):
         with mock.patch.object(memory_stat.lock_tool, "FileLock", wraps=memory_stat.lock_tool.FileLock) as lock:
@@ -130,12 +144,14 @@ class TestMemoryStatValidation(TestCase):
         self.assertEqual(stat["memory_id"], self.memory_id)
         self.assertEqual(stat["read_count"], 0)
 
-    def test_legacy_stat_without_synced_remains_valid_and_unsynced(self):
-        """Accept legacy v1 stats and treat their missing synced flag as false."""
+    def test_legacy_v1_stat_remains_valid_and_unsynced(self):
+        """Accept legacy v1 stats and treat their missing sync fields as false."""
         legacy = memory_stat._new_stat(
             self.memory_id, "2026-08-23 15:45:00 +08:00"
         )
-        legacy.pop("synced")
+        legacy["version"] = 1
+        for field in ("synced", "last_sync_at", "last_sync_error"):
+            legacy.pop(field)
 
         self.assertIs(memory_stat._validate_stat(legacy, self.memory_id), legacy)
         self.assertFalse(memory_stat.is_memory_synced(legacy))
@@ -146,16 +162,24 @@ class TestMemoryStatValidation(TestCase):
         self.assertFalse(memory_stat.is_memory_synced({"synced": False}))
         self.assertFalse(memory_stat.is_memory_synced({}))
 
-    def test_synced_true_round_trips_through_mutation(self):
-        """Preserve an explicit synced flag through the stat mutation path."""
-        memory_stat.mutate_memory_stat(
-            self.workspace,
-            self.memory_id,
-            lambda stat, _timestamp: stat.update(synced=True),
-        )
+    def test_record_memory_sync_persists_success_and_failure(self):
+        """Persist latest synchronization time, status, and safe error text."""
+        with mock.patch.object(
+            memory_stat.time_tool,
+            "get_current_local_datetime_with_offset",
+            side_effect=["2026-08-24 15:00:00 +08:00", "2026-08-24 15:01:00 +08:00"],
+        ):
+            success = memory_stat.record_memory_sync(
+                self.workspace, self.memory_id, synced=True
+            )
+            failure = memory_stat.record_memory_sync(
+                self.workspace, self.memory_id, synced=False, error="unavailable"
+            )
 
-        stat = memory_stat.read_memory_stat(self.workspace, self.memory_id)
-        self.assertTrue(memory_stat.is_memory_synced(stat))
+        self.assertTrue(success["synced"])
+        self.assertIsNone(success["last_sync_error"])
+        self.assertEqual(failure["last_sync_at"], "2026-08-24 15:01:00 +08:00")
+        self.assertEqual(failure["last_sync_error"], "unavailable")
 
     def test_non_rebuilding_reader_returns_valid_stat(self):
         """Read a valid stat without changing its persisted content."""
@@ -234,15 +258,16 @@ class TestMemoryStatSchemaBranches(TestCase):
             "canonical.md",
         )
 
-    def test_validation_rejects_malformed_v1_records(self):
+    def test_validation_rejects_malformed_records(self):
         timestamp = "2026-08-23 15:45:00 +08:00"
         valid = memory_stat._new_stat("canonical.md", timestamp)
         invalid_records = [
             ([], "JSON object"),
-            ({**valid, "version": 2}, "unsupported"),
+            ({**valid, "version": memory_stat.STAT_VERSION + 1}, "unsupported"),
             ({**valid, "read_count": -1}, "counter"),
             ({key: value for key, value in valid.items() if key != "last_read_at"}, "timestamp"),
             ({**valid, "last_activity_at": ""}, "timestamp"),
+            ({**valid, "last_sync_error": 3}, "sync field"),
         ]
 
         for record, message in invalid_records:

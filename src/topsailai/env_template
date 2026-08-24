@@ -704,9 +704,14 @@ TOPSAILAI_HOOK_BEFORE_LLM_CHAT=""
 # e.g. "script_file1 k1=v1 k2=v2; script_file2 k1=v1 k2=v2"
 TOPSAILAI_HOOK_SCRIPTS_POST_FINAL_ANSWER=""
 
-# Scripts called after successful memory create or update operations.
+# Legacy scripts called after successful memory create or update operations.
 # In-process memory hooks run first. Format: "{script_file} {cmd_options};"
 TOPSAILAI_HOOK_SCRIPTS_MEMORY_WRITE=""
+
+# JSON object keyed by create/update; empty or invalid JSON disables sync hooks.
+# Each binding supports script, timeout, enabled, and env_keys.
+# Example: {"create":[{"script":"scripts/mem_graph_sync.py","timeout":300,"enabled":true,"env_keys":[]}],"update":[{"script":"scripts/mem_graph_sync.py","timeout":300,"enabled":true,"env_keys":[]}]}
+TOPSAILAI_MEMORY_SYNC_HOOKS=""
 
 # =============================================================================
 # Team Configuration

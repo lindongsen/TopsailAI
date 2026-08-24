@@ -113,7 +113,7 @@ class TestMemoryReconcile(TestCase):
         version_stat = memory_stat._new_stat(
             first_id, "2026-08-24 04:00:00 +00:00"
         )
-        version_stat["version"] = 2
+        version_stat["version"] = memory_stat.STAT_VERSION + 1
         self._write_raw_stat(first_id, version_stat)
         self._write_raw_stat(
             second_id,

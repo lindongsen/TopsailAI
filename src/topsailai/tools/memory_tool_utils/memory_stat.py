@@ -12,7 +12,8 @@ from topsailai.workspace import lock_tool
 
 logger = logging.getLogger(__name__)
 
-STAT_VERSION = 1
+STAT_VERSION = 2
+LEGACY_STAT_VERSIONS = {1}
 STAT_FOLDER = ".stats"
 EVENT_FIELDS = {
     "read": ("read_count", "last_read_at"),
@@ -34,10 +35,13 @@ def get_stat_file(workspace: str, memory_id: str) -> str:
 
 
 def _new_stat(memory_id: str, timestamp: str) -> dict:
+    """Build a new versioned stat record with zero activity counters."""
     return {
         "version": STAT_VERSION,
         "memory_id": memory_id,
         "synced": False,
+        "last_sync_at": None,
+        "last_sync_error": None,
         "read_count": 0,
         "cite_count": 0,
         "query_count": 0,
@@ -52,10 +56,10 @@ def _new_stat(memory_id: str, timestamp: str) -> dict:
 
 
 def _validate_stat(stat: dict, memory_id: str) -> dict:
-    """Validate persisted identity and required v1 fields."""
+    """Validate persisted identity and supported stat fields."""
     if not isinstance(stat, dict):
         raise ValueError("memory stat must be a JSON object")
-    if stat.get("version") != STAT_VERSION:
+    if stat.get("version") not in LEGACY_STAT_VERSIONS | {STAT_VERSION}:
         raise ValueError(f"unsupported memory stat version: {stat.get('version')}")
     if stat.get("memory_id") != memory_id:
         raise ValueError("memory stat identity mismatch")
@@ -68,6 +72,10 @@ def _validate_stat(stat: dict, memory_id: str) -> dict:
     for field in ("created_at", "last_activity_at"):
         if not isinstance(stat.get(field), str) or not stat[field]:
             raise ValueError(f"invalid memory stat timestamp: {field}")
+    if stat.get("version") == STAT_VERSION:
+        for field in ("last_sync_at", "last_sync_error"):
+            if stat.get(field) is not None and not isinstance(stat[field], str):
+                raise ValueError(f"invalid memory stat sync field: {field}")
     return stat
 
 
@@ -167,6 +175,14 @@ def ensure_memory_stat(workspace: str, memory_id: str) -> dict:
     return mutate_memory_stat(workspace, memory_id)
 
 
+def get_memory_version(workspace: str, memory_id: str) -> int:
+    """Return the next local revision label derived from update_count."""
+    stat = read_memory_stat(workspace, memory_id)
+    if stat is None:
+        stat = ensure_memory_stat(workspace, memory_id)
+    return stat["update_count"] + 1
+
+
 def record_memory_event(workspace: str, memory_id: str, event: str) -> dict:
     """Increment one activity counter and refresh its timestamps."""
     if event not in EVENT_FIELDS:
@@ -179,6 +195,24 @@ def record_memory_event(workspace: str, memory_id: str, event: str) -> dict:
         stat["last_activity_at"] = timestamp
 
     return mutate_memory_stat(workspace, memory_id, increment)
+
+
+def record_memory_sync(
+    workspace: str, memory_id: str, *, synced: bool, error: str | None = None
+) -> dict:
+    """Record the latest best-effort external synchronization outcome."""
+    if not isinstance(synced, bool):
+        raise ValueError("memory sync state must be boolean")
+    if error is not None and not isinstance(error, str):
+        raise ValueError("memory sync error must be text or None")
+
+    def update_sync(stat: dict, timestamp: str) -> None:
+        stat["version"] = STAT_VERSION
+        stat["synced"] = synced
+        stat["last_sync_at"] = timestamp
+        stat["last_sync_error"] = None if synced else (error or "sync failed")
+
+    return mutate_memory_stat(workspace, memory_id, update_sync)
 
 
 def delete_memory_stat(workspace: str, memory_id: str) -> bool:

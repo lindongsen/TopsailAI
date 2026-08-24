@@ -66,6 +66,7 @@ def exec_cmd(
         need_error_log=False,
         env_keys:list=None,
         env_info:dict=None,
+        stdin_text:str=None,
         **options
     ):
     """Execute a shell command and return the result.
@@ -80,6 +81,7 @@ def exec_cmd(
         timeout (int, optional): Timeout in seconds. If the command does not finish
                                  within this time, a subprocess.TimeoutExpired
                                  exception will be raised. Defaults to None.
+        stdin_text (str, optional): UTF-8 text passed to the command through stdin.
 
     Returns:
         tuple: (return_code, stdout, stderr) where stdout and stderr are strings.
@@ -103,6 +105,7 @@ def exec_cmd(
         stderr=subprocess.PIPE,
         text=False,
         timeout=timeout,
+        input=stdin_text.encode("utf-8") if stdin_text is not None else None,
         **options
     )
     ret = (

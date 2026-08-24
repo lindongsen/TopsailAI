@@ -66,23 +66,32 @@ def write_memory(title:str, content:str, **_) -> str:
         if StoryFileInstance.get_story_file(WORKSPACE, title)
         else memory_hooks.CREATE
     )
+
+    def update_stat(path: str) -> None:
+        """Ensure the stat and count a successful rewrite before hook dispatch."""
+        memory_id = memory_stat.get_memory_id(path)
+        if operation == memory_hooks.UPDATE:
+            memory_stat.record_memory_event(WORKSPACE, memory_id, "update")
+            return
+        memory_stat.ensure_memory_stat(WORKSPACE, memory_id)
+
     memory_file = StoryFileInstance.write_story(
         workspace=WORKSPACE,
         story_id=title,
         story_content=content,
-        after_write=lambda path: memory_stat.ensure_memory_stat(
-            WORKSPACE, memory_stat.get_memory_id(path)
-        ),
+        after_write=update_stat,
     )
     _maybe_evict_memories()
+    memory_id = memory_stat.get_memory_id(memory_file)
     event = {
         "op": operation,
-        "memory_id": memory_stat.get_memory_id(memory_file),
+        "memory_id": memory_id,
         "title": original_title,
         "content": content,
         "memory_file": memory_file,
         "workspace": WORKSPACE,
         "timestamp": time_tool.get_current_local_datetime_with_offset(),
+        "version": memory_stat.get_memory_version(WORKSPACE, memory_id),
     }
     try:
         memory_hooks.fire_memory_hooks(operation, event)
