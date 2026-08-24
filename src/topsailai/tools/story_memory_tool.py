@@ -11,7 +11,7 @@ from collections import OrderedDict
 from topsailai.context.token import count_tokens
 from topsailai.utils import env_tool, time_tool
 from topsailai.workspace.folder_constants import FOLDER_MEMORY
-from .memory_tool_utils import memory_hooks, memory_reconcile, memory_stat
+from .memory_tool_utils import memory_evict, memory_hooks, memory_reconcile, memory_stat
 from .story_tool import (
     StoryFileInstance,
     build_story_id,
@@ -33,6 +33,19 @@ if WORKSPACE:
 _PROMPT_NEW_MEMORY = """
 > [Note] You should only keep the latest memory, and for 'repeated old memories', either merge them into new memory or delete them
 """
+
+
+def _maybe_evict_memories() -> None:
+    """Run configured live eviction without failing the originating operation."""
+    max_count = _memory_retention_limit("TOPSAILAI_MEMORY_STAT_MAX_COUNT", 0)
+    if max_count <= 0:
+        return
+    try:
+        memory_evict.maybe_evict_memory_stats(
+            WORKSPACE, max_count, dry_run=False
+        )
+    except Exception:
+        logger.exception("automatic memory eviction failed")
 
 
 def write_memory(title:str, content:str, **_) -> str:
@@ -61,6 +74,7 @@ def write_memory(title:str, content:str, **_) -> str:
             WORKSPACE, memory_stat.get_memory_id(path)
         ),
     )
+    _maybe_evict_memories()
     event = {
         "op": operation,
         "memory_id": memory_stat.get_memory_id(memory_file),
@@ -78,6 +92,7 @@ def write_memory(title:str, content:str, **_) -> str:
 
 
 def _resolve_memory_title(title: str) -> str:
+    """Resolve a memory title with an optional Markdown extension."""
     for candidate in (title, title + ".md"):
         if os.path.exists(candidate):
             return candidate
@@ -85,16 +100,20 @@ def _resolve_memory_title(title: str) -> str:
 
 
 def _read_memory(title: str, count_read: bool) -> str | None:
+    """Read one memory and optionally record its read event and run eviction."""
     after_read = None
     if count_read:
         after_read = lambda path: memory_stat.record_memory_event(
             WORKSPACE, memory_stat.get_memory_id(path), "read"
         )
-    return StoryFileInstance.read_story(
+    content = StoryFileInstance.read_story(
         workspace=WORKSPACE,
         story_id=_resolve_memory_title(title),
         after_read=after_read,
     )
+    if count_read and content is not None:
+        _maybe_evict_memories()
+    return content
 
 
 def read_memory(title:str) -> str|None:

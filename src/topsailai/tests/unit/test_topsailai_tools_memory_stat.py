@@ -23,6 +23,7 @@ class TestMemoryStat(TestCase):
 
         self.assertEqual(stat["version"], 1)
         self.assertEqual(stat["memory_id"], self.memory_id)
+        self.assertFalse(stat["synced"])
         for event in ("read", "cite", "query", "update"):
             self.assertEqual(stat[event + "_count"], 0)
         self.assertRegex(
@@ -128,6 +129,33 @@ class TestMemoryStatValidation(TestCase):
 
         self.assertEqual(stat["memory_id"], self.memory_id)
         self.assertEqual(stat["read_count"], 0)
+
+    def test_legacy_stat_without_synced_remains_valid_and_unsynced(self):
+        """Accept legacy v1 stats and treat their missing synced flag as false."""
+        legacy = memory_stat._new_stat(
+            self.memory_id, "2026-08-23 15:45:00 +08:00"
+        )
+        legacy.pop("synced")
+
+        self.assertIs(memory_stat._validate_stat(legacy, self.memory_id), legacy)
+        self.assertFalse(memory_stat.is_memory_synced(legacy))
+
+    def test_is_memory_synced_handles_true_false_and_missing_values(self):
+        """Normalize persisted synced values through the shared accessor."""
+        self.assertTrue(memory_stat.is_memory_synced({"synced": True}))
+        self.assertFalse(memory_stat.is_memory_synced({"synced": False}))
+        self.assertFalse(memory_stat.is_memory_synced({}))
+
+    def test_synced_true_round_trips_through_mutation(self):
+        """Preserve an explicit synced flag through the stat mutation path."""
+        memory_stat.mutate_memory_stat(
+            self.workspace,
+            self.memory_id,
+            lambda stat, _timestamp: stat.update(synced=True),
+        )
+
+        stat = memory_stat.read_memory_stat(self.workspace, self.memory_id)
+        self.assertTrue(memory_stat.is_memory_synced(stat))
 
     def test_non_rebuilding_reader_returns_valid_stat(self):
         """Read a valid stat without changing its persisted content."""

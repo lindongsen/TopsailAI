@@ -37,6 +37,7 @@ def _new_stat(memory_id: str, timestamp: str) -> dict:
     return {
         "version": STAT_VERSION,
         "memory_id": memory_id,
+        "synced": False,
         "read_count": 0,
         "cite_count": 0,
         "query_count": 0,
@@ -68,6 +69,11 @@ def _validate_stat(stat: dict, memory_id: str) -> dict:
         if not isinstance(stat.get(field), str) or not stat[field]:
             raise ValueError(f"invalid memory stat timestamp: {field}")
     return stat
+
+
+def is_memory_synced(stat: dict) -> bool:
+    """Return whether a stat reports successful external synchronization."""
+    return bool(stat.get("synced", False))
 
 
 def _lock_name(memory_id: str) -> str:

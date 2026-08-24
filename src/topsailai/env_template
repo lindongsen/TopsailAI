@@ -764,6 +764,11 @@ TOPSAILAI_MEMORY_WORKSPACE=""
 # Maximum memory tokens loaded into startup context. 0 means unlimited.
 TOPSAILAI_CONTEXT_MEMORY_LOAD_MAX_TOKENS=0
 
+# Maximum healthy memory stat pairs retained locally. Excess synchronized memories
+# are deleted least-recently-active first after stat writes. Default is 0 (disabled).
+# Use a non-negative integer; negative values are treated as 0. Unsynced memories are protected.
+TOPSAILAI_MEMORY_STAT_MAX_COUNT=0
+
 # Delete quarantined memory stat files older than this many days.
 # Default is 30. Set to 0 to disable age-based cleanup.
 TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_AGE_DAYS=30

@@ -478,6 +478,143 @@ class TestMemoryStatLifecycle(unittest.TestCase):
         mock_read_without_count.assert_called_once_with('memory.md')
         mock_read_memory.assert_not_called()
 
+    @patch(
+        'topsailai.tools.story_memory_tool.memory_evict.maybe_evict_memory_stats'
+    )
+    @patch.dict(
+        os.environ, {'TOPSAILAI_MEMORY_STAT_MAX_COUNT': '7'}, clear=False
+    )
+    @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
+    @patch('topsailai.tools.story_memory_tool.build_story_id')
+    def test_write_triggers_live_eviction_after_stat_callback(
+        self, mock_build_id, mock_story_instance, mock_evict
+    ):
+        """Verify a successful write runs configured eviction after stat creation."""
+        from topsailai.tools import story_memory_tool
+
+        mock_build_id.return_value = 'canonical.md'
+        events = []
+
+        def write_story(**kwargs):
+            kwargs['after_write']('/workspace/story/canonical.md')
+            events.append('stat')
+            return '/workspace/story/canonical.md'
+
+        mock_story_instance.write_story.side_effect = write_story
+        mock_evict.side_effect = lambda *args, **kwargs: events.append('evict')
+
+        story_memory_tool.write_memory('title', 'content')
+
+        self.assertEqual(events, ['stat', 'evict'])
+        mock_evict.assert_called_once_with(
+            story_memory_tool.WORKSPACE, 7, dry_run=False
+        )
+
+    @patch(
+        'topsailai.tools.story_memory_tool.memory_evict.maybe_evict_memory_stats'
+    )
+    @patch.dict(
+        os.environ, {'TOPSAILAI_MEMORY_STAT_MAX_COUNT': '9'}, clear=False
+    )
+    @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
+    def test_counting_read_triggers_live_eviction_after_event(
+        self, mock_story_instance, mock_evict
+    ):
+        """Verify a counted read runs configured eviction after its stat event."""
+        from topsailai.tools import story_memory_tool
+
+        events = []
+
+        def read_story(**kwargs):
+            kwargs['after_read']('/workspace/story/canonical.md')
+            events.append('stat')
+            return 'content'
+
+        mock_story_instance.read_story.side_effect = read_story
+        mock_evict.side_effect = lambda *args, **kwargs: events.append('evict')
+
+        self.assertEqual(story_memory_tool.read_memory('canonical.md'), 'content')
+
+        self.assertEqual(events, ['stat', 'evict'])
+        mock_evict.assert_called_once_with(
+            story_memory_tool.WORKSPACE, 9, dry_run=False
+        )
+
+    @patch(
+        'topsailai.tools.story_memory_tool.memory_evict.maybe_evict_memory_stats'
+    )
+    @patch.dict(
+        os.environ, {'TOPSAILAI_MEMORY_STAT_MAX_COUNT': '0'}, clear=False
+    )
+    @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
+    @patch('topsailai.tools.story_memory_tool.build_story_id')
+    def test_zero_limit_disables_write_eviction(
+        self, mock_build_id, mock_story_instance, mock_evict
+    ):
+        """Verify a zero limit avoids calling the eviction engine."""
+        from topsailai.tools import story_memory_tool
+
+        mock_build_id.return_value = 'canonical.md'
+        mock_story_instance.write_story.return_value = '/workspace/story/canonical.md'
+
+        story_memory_tool.write_memory('title', 'content')
+
+        mock_evict.assert_not_called()
+
+    @patch(
+        'topsailai.tools.story_memory_tool.memory_evict.maybe_evict_memory_stats'
+    )
+    @patch.dict(
+        os.environ, {'TOPSAILAI_MEMORY_STAT_MAX_COUNT': '-4'}, clear=False
+    )
+    def test_negative_limit_is_clamped_and_disables_eviction(self, mock_evict):
+        """Verify a negative configured limit is clamped to the disabled value."""
+        from topsailai.tools import story_memory_tool
+
+        story_memory_tool._maybe_evict_memories()
+
+        mock_evict.assert_not_called()
+
+    @patch(
+        'topsailai.tools.story_memory_tool.memory_evict.maybe_evict_memory_stats',
+        side_effect=RuntimeError('eviction failed'),
+    )
+    @patch.dict(
+        os.environ, {'TOPSAILAI_MEMORY_STAT_MAX_COUNT': '1'}, clear=False
+    )
+    @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
+    @patch('topsailai.tools.story_memory_tool.build_story_id')
+    def test_eviction_failure_does_not_break_write(
+        self, mock_build_id, mock_story_instance, _mock_evict
+    ):
+        """Verify eviction failures are contained after a successful write."""
+        from topsailai.tools import story_memory_tool
+
+        mock_build_id.return_value = 'canonical.md'
+        mock_story_instance.write_story.return_value = '/workspace/story/canonical.md'
+
+        result = story_memory_tool.write_memory('title', 'content')
+
+        self.assertIn('/workspace/story/canonical.md', result)
+
+    @patch(
+        'topsailai.tools.story_memory_tool.memory_evict.maybe_evict_memory_stats',
+        side_effect=RuntimeError('eviction failed'),
+    )
+    @patch.dict(
+        os.environ, {'TOPSAILAI_MEMORY_STAT_MAX_COUNT': '1'}, clear=False
+    )
+    @patch('topsailai.tools.story_memory_tool.StoryFileInstance')
+    def test_eviction_failure_does_not_break_counting_read(
+        self, mock_story_instance, _mock_evict
+    ):
+        """Verify eviction failures are contained after a successful counted read."""
+        from topsailai.tools import story_memory_tool
+
+        mock_story_instance.read_story.return_value = 'content'
+
+        self.assertEqual(story_memory_tool.read_memory('canonical.md'), 'content')
+
 
     @patch(
         'topsailai.tools.story_memory_tool.memory_reconcile.reconcile_memory_stats'
