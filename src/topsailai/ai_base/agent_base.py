@@ -231,40 +231,6 @@ class AgentRun(AgentBase):
             # loop terminates rather than continuing under an interrupt.
         raise HardInterruptError("Hard interrupt requested via control channel")
 
-    def _scan_memory_refs(self, response) -> None:
-        """Record unique story-memory references found in one LLM response."""
-        if os.environ.get("TOPSAILAI_MEMORY_REFERENCE_SCAN_ENABLED", "1") == "0":
-            return
-
-        try:
-            from topsailai.tools import story_memory_tool
-            from topsailai.tools.memory_tool_utils import (
-                memory_ref_parser,
-                memory_stat,
-            )
-
-            response_text = "\n".join(
-                step.get("raw_text", "")
-                for step in response
-                if isinstance(step, dict)
-                and isinstance(step.get("raw_text", ""), str)
-            )
-            title_index = memory_ref_parser.build_title_index(
-                story_memory_tool.list_memories()
-            )
-            result = memory_ref_parser.collect_canonical_ids(
-                response_text, title_index
-            )
-            for memory_id in result.resolved_ids:
-                memory_stat.record_memory_event(
-                    story_memory_tool.WORKSPACE, memory_id, "cite"
-                )
-        except Exception:
-            logger.warning(
-                "Failed to record story-memory references from LLM response",
-                exc_info=True,
-            )
-
     def _run(self, step_call:StepCallBase, user_input:str):
         """
         Execute the agent run process with step-by-step processing.
@@ -316,7 +282,6 @@ class AgentRun(AgentBase):
             # Response message object
             rsp_msg = self.llm_model.get_response_message(rsp_obj)
             self.add_assistant_message(response, tool_calls=rsp_msg.tool_calls)
-            self._scan_memory_refs(response)
 
             # Current message count
             ctx_count = len(self.messages)

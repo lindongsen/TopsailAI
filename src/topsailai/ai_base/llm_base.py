@@ -69,6 +69,7 @@ from .llm_control.message import (
 from .llm_control.base_class import (
     LLMModelBase,
 )
+from .llm_hooks.executor import hook_execute
 
 # Module-level singleton visualizer used by all LLMModel instances.
 _state_visualizer = StateVisualizer()
@@ -142,6 +143,10 @@ class LLMModel(LLMModelBase):
         if for_raw:
             return rsp_content
 
+        if get_agent_object() is not None:
+            rsp_content = hook_execute(
+                "TOPSAILAI_HOOK_AFTER_LLM_RESPONSE", rsp_content
+            )
         result = format_response(rsp_content, rsp_obj, messages=messages)
         if not result:
             raise TypeError("null of response content: [%s]" % rsp_content)

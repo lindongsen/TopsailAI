@@ -692,6 +692,10 @@ TOPSAILAI_USER_MESSAGE=""
 # hook_func(content:str) -> list[dict]|str
 TOPSAILAI_HOOK_AFTER_LLM_CHAT=""
 
+# Observe raw LLM response text before response formatting.
+# hook_func(content:str) -> str
+TOPSAILAI_HOOK_AFTER_LLM_RESPONSE="topsailai.tools.memory_tool_utils.memory_ref_scan_hook"
+
 # Format: Module paths separated by semicolons (';')
 # hook_func(content:list[dict]) -> list[dict]
 TOPSAILAI_HOOK_BEFORE_LLM_CHAT=""

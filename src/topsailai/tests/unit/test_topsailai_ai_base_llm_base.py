@@ -1689,5 +1689,78 @@ class TestLLMModelChatAgentRuntimeInput(unittest.TestCase):
         mock_builtin.assert_called_once_with(">>> LLM Retry [yes/no] ")
 
 
+class TestLLMModelAfterResponseHook(unittest.TestCase):
+    """Test the raw-response observation hook before response formatting."""
+
+    @patch("topsailai.ai_base.llm_base.format_response", return_value=["formatted"])
+    @patch("topsailai.ai_base.llm_base.hook_execute", return_value="observed")
+    @patch("topsailai.ai_base.llm_base.get_agent_object", return_value=object())
+    def test_hook_runs_before_format_response(
+        self, get_agent_object, hook_execute, format_response
+    ):
+        """Pass raw response text through the registered hook before formatting."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        model = object.__new__(LLMModel)
+        response_object = object()
+        messages = [{"role": "user", "content": "hello"}]
+
+        result = model._return_chat_response(
+            response_object, "raw", messages
+        )
+
+        self.assertEqual(result, ["formatted"])
+        get_agent_object.assert_called_once_with()
+        hook_execute.assert_called_once_with(
+            "TOPSAILAI_HOOK_AFTER_LLM_RESPONSE", "raw"
+        )
+        format_response.assert_called_once_with(
+            "observed", response_object, messages=messages
+        )
+
+    @patch("topsailai.ai_base.llm_base.format_response", return_value=["formatted"])
+    @patch("topsailai.ai_base.llm_base.hook_execute")
+    @patch("topsailai.ai_base.llm_base.get_agent_object", return_value=None)
+    def test_hook_is_skipped_without_agent(
+        self, get_agent_object, hook_execute, format_response
+    ):
+        """Do not run agent observation hooks outside an active agent context."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        model = object.__new__(LLMModel)
+        response_object = object()
+
+        result = model._return_chat_response(
+            response_object, "raw", [], for_response=True
+        )
+
+        self.assertEqual(result, (response_object, ["formatted"]))
+        get_agent_object.assert_called_once_with()
+        hook_execute.assert_not_called()
+        format_response.assert_called_once_with(
+            "raw", response_object, messages=[]
+        )
+
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.hook_execute")
+    @patch("topsailai.ai_base.llm_base.get_agent_object")
+    def test_for_raw_skips_hook_and_formatting(
+        self, get_agent_object, hook_execute, format_response
+    ):
+        """Keep the existing raw passthrough path free of observation hooks."""
+        from topsailai.ai_base.llm_base import LLMModel
+
+        model = object.__new__(LLMModel)
+
+        result = model._return_chat_response(
+            object(), "raw", [], for_raw=True
+        )
+
+        self.assertEqual(result, "raw")
+        get_agent_object.assert_not_called()
+        hook_execute.assert_not_called()
+        format_response.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
