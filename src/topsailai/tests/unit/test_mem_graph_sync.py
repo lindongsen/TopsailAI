@@ -144,6 +144,61 @@ class TestMemGraphSync(TestCase):
         self.assertIn("#version=1#event=create", body["source_reference"])
         self.assertEqual(create_request.method, "POST")
 
+    def test_live_transport_trims_trailing_content_and_rejects_empty_content(self):
+        """Outbound content is normalized without mutating the source event."""
+        requests = []
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"code":0}'
+
+        def capture_request(request, timeout):
+            del timeout
+            requests.append(request)
+            return Response()
+
+        event = {**self.event, "content": "snapshot body \n\t"}
+        transport = mem_graph_sync.MemGraphTransport("http://example.test", 4)
+        with mock.patch.object(
+            mem_graph_sync, "urlopen", side_effect=capture_request
+        ):
+            transport.create_snapshot(event)
+
+        self.assertEqual(json.loads(requests[0].data)["content"], "snapshot body")
+        self.assertEqual(event["content"], "snapshot body \n\t")
+        with self.assertRaisesRegex(
+            mem_graph_sync.SyncError, "invalid mem-graph content"
+        ):
+            transport.create_snapshot({**self.event, "content": " \n\t"})
+
+    def test_outbox_replays_trailing_content_and_records_original_digest(self):
+        """A legacy queued event converges while stat tracks the local snapshot."""
+        event = {**self.event, "content": "snapshot body\n"}
+        outbox.enqueue(self.temp_dir.name, event)
+        transport = mem_graph_sync.MemGraphTransport("http://example.test", 4)
+
+        with mock.patch.object(transport, "readiness"), mock.patch.object(
+            transport, "_request"
+        ) as request:
+            succeeded = mem_graph_sync.retry_outbox(
+                self.temp_dir.name, transport, sleep=mock.Mock()
+            )
+
+        self.assertEqual(succeeded, 1)
+        self.assertEqual(outbox.read(self.temp_dir.name), [])
+        self.assertEqual(request.call_args.kwargs["body"]["content"], "snapshot body")
+        stat = memory_stat.read_memory_stat(self.temp_dir.name, event["memory_id"])
+        self.assertEqual(
+            stat["last_synced_content_digest"],
+            memory_stat.get_content_digest("snapshot body\n"),
+        )
+
     def test_outbox_is_deduplicated_and_bounded_by_entry_count(self):
         with mock.patch.dict(os.environ, {"TOPSAILAI_MEMORY_SYNC_OUTBOX_MAX_ENTRIES": "2"}):
             outbox.enqueue(self.temp_dir.name, self.event)
@@ -207,6 +262,27 @@ class TestMemGraphSyncBoundaries(TestCase):
         with mock.patch.object(mem_graph_sync, "urlopen", return_value=Response()), \
              self.assertRaisesRegex(mem_graph_sync.SyncError, "unsuccessful"):
             transport.readiness()
+
+    def test_http_validation_error_is_classified_without_reading_response_body(self):
+        """Validation failures expose a safe category and no provider payload."""
+        response_body = mock.Mock()
+        error = mem_graph_sync.HTTPError(
+            "http://example.test/v1/memories",
+            422,
+            "unprocessable",
+            hdrs=None,
+            fp=response_body,
+        )
+        transport = mem_graph_sync.MemGraphTransport("http://example.test", 2)
+
+        with mock.patch.object(mem_graph_sync, "urlopen", side_effect=error), \
+             self.assertRaisesRegex(
+                 mem_graph_sync.SyncError,
+                 "^mem-graph request failed: validation error$",
+             ):
+            transport.create_snapshot(self.event)
+
+        response_body.read.assert_not_called()
 
     def test_retry_fallbacks_and_exhaustion(self):
         """Invalid retry settings fall back and persistent failure is re-raised."""

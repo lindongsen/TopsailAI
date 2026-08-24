@@ -299,6 +299,45 @@ class TestMemoryReconcile(TestCase):
         self.assertEqual(event["memory_file"], memory_file)
         self.assertEqual(event["version"], 1)
 
+    def test_trailing_newline_sync_converges_without_repeated_candidate(self):
+        """Consumer normalization preserves the local digest used by reconcile."""
+        memory_id = "trailing-newline.md"
+        memory_file = self._write_memory(memory_id)
+        with open(memory_file, "w", encoding="utf-8") as stream:
+            stream.write("content\n")
+        memory_stat.ensure_memory_stat(self.workspace, memory_id)
+        transport = mem_graph_sync.MemGraphTransport("http://example.test", 2)
+
+        def consume(operation, event):
+            payload = memory_hooks._build_sync_event(operation, event)
+            succeeded = mem_graph_sync.process_event(
+                payload, transport, sleep=mock.Mock()
+            )
+            return {"sync": [(0 if succeeded else 1, "", "")]}
+
+        with mock.patch.object(transport, "readiness"), mock.patch.object(
+            transport, "_request"
+        ) as request, mock.patch.object(
+            memory_hooks, "fire_memory_hooks", side_effect=consume
+        ) as fire:
+            first = memory_reconcile.reconcile_memory_stats(
+                self.workspace, dry_run=False
+            )
+            second = memory_reconcile.reconcile_memory_stats(
+                self.workspace, dry_run=False
+            )
+
+        self.assertEqual(first.sync_candidates, 1)
+        self.assertEqual(first.sync_dispatched, 1)
+        self.assertEqual(second.sync_candidates, 0)
+        self.assertEqual(fire.call_count, 1)
+        self.assertEqual(request.call_args.kwargs["body"]["content"], "content")
+        stat = memory_stat.read_memory_stat(self.workspace, memory_id)
+        self.assertEqual(
+            stat["last_synced_content_digest"],
+            memory_stat.get_content_digest("content\n"),
+        )
+
     def test_newer_local_content_dispatches_monotonic_update(self):
         """A direct file rewrite advances beyond the last successful snapshot."""
         memory_id = "newer.md"

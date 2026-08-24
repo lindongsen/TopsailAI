@@ -91,10 +91,13 @@ class MemGraphTransport:
 
     def create_snapshot(self, event: dict) -> None:
         """Create one new personal memory node without reading old nodes."""
+        content = event["content"].rstrip()
+        if not content:
+            raise SyncError("invalid mem-graph content")
         body = {
             "memory_class": "episodic",
             "title": event["title"],
-            "content": event["content"],
+            "content": content,
             "source_kind": "topsailai-story-memory",
             "source_reference": _source_reference(event),
             "sensitivity": "normal",
@@ -133,7 +136,11 @@ class MemGraphTransport:
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 envelope = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, OSError, ValueError) as error:
+        except HTTPError as error:
+            if error.code in {400, 422}:
+                raise SyncError("mem-graph request failed: validation error") from error
+            raise SyncError("mem-graph request failed") from error
+        except (URLError, OSError, ValueError) as error:
             raise SyncError("mem-graph request failed") from error
         if not isinstance(envelope, dict) or envelope.get("code") != 0:
             raise SyncError("mem-graph returned an unsuccessful response")
