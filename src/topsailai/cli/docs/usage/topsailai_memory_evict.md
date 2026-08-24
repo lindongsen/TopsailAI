@@ -18,9 +18,9 @@ Runs the memory-stat eviction engine in dry-run mode and reports the healthy syn
 ## Invocation
 
 ```bash
-topsailai_memory_evict --max-count 100
-topsailai_memory_evict --workspace /path/to/topsailai-home/memory --max-count 100
-topsailai_memory_evict --max-count 100 --json
+topsailai_memory_evict
+topsailai_memory_evict --workspace /path/to/topsailai-home/memory
+topsailai_memory_evict --max-count 50 --json
 ```
 
 The module can also be invoked through its executable module entry point.
@@ -30,7 +30,7 @@ The module can also be invoked through its executable module entry point.
 | Option | Description |
 |--------|-------------|
 | `--workspace <path>` | Memory workspace containing the `story` folder. Defaults to `TOPSAILAI_HOME/memory` (the memory workspace resolved by the folder constants). |
-| `--max-count <count>` | Required positive integer maximum for healthy memory/stat pairs. This value never falls back to `TOPSAILAI_MEMORY_STAT_MAX_COUNT`. |
+| `--max-count <count>` | Positive integer maximum for healthy memory/stat pairs. Defaults to `100`; this value never falls back to `TOPSAILAI_MEMORY_STAT_MAX_COUNT`. |
 | `--json` | Output a structured object containing the victim list and summary. |
 
 ## Selection and Safety

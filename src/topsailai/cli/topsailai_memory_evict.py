@@ -42,9 +42,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--max-count",
-        required=True,
         type=positive_int,
-        help="Positive maximum number of healthy memory/stat pairs to retain.",
+        default=100,
+        help="Positive maximum number of healthy memory/stat pairs to retain "
+        "(default: 100).",
     )
     parser.add_argument(
         "--json",

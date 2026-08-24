@@ -18,11 +18,10 @@ import topsailai_memory_evict as cli
 class TestArguments:
     """Validate command-line argument handling."""
 
-    def test_max_count_is_required(self):
-        """Reject invocation without a max-count argument."""
-        with pytest.raises(SystemExit) as exc_info:
-            cli.parse_args([])
-        assert exc_info.value.code == 2
+    def test_max_count_defaults_to_100(self):
+        """Use a safe default when max-count is omitted."""
+        args = cli.parse_args([])
+        assert args.max_count == 100
 
     def test_valid_options(self):
         """Parse a workspace, max-count, and json option."""
