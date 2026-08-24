@@ -8,6 +8,10 @@ programming_language: python
 ---
 
 # AI-Added Features
+## Memory Reference Citation Tracking
+
+LLM responses now scan assistant steps for unique `@memory[TITLE]` references and record `cite_count` and `last_cited_at` statistics; `TOPSAILAI_MEMORY_REFERENCE_SCAN_ENABLED` controls this behavior and defaults to enabled.
+
 ## Memory Create and Update Hooks
 
 Added ordered, fail-open in-process hooks for successful story memory create and update operations, followed by optional external scripts configured through `TOPSAILAI_HOOK_SCRIPTS_MEMORY_WRITE`; hook events expose the operation, canonical memory identity, original title, content, file, workspace, and timestamp without affecting memory statistics or startup loading.

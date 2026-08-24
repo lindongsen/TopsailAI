@@ -799,6 +799,10 @@ TOPSAILAI_MEMORY_STAT_QUARANTINE_MAX_COUNT=100
 TOPSAILAI_ENABLE_TOOL_STAT=1
 TOPSAILAI_PRINT_TOOL_STAT=1
 
+# Scan LLM responses for @memory[TITLE] references and record cite statistics.
+# Set to 1 to enable, 0 to disable.
+TOPSAILAI_MEMORY_REFERENCE_SCAN_ENABLED=1
+
 # Repeated tool-call warning rules. JSON list of dicts. Empty or unset disables the feature.
 # Each rule keys: agent_role (default *), tool_call (required, exact or *), max_calls (required, >0),
 #   window_seconds (default 60), warning (required template), enabled (default true), dedup (default true).
