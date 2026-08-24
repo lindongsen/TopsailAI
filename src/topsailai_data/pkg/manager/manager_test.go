@@ -30,6 +30,8 @@ func newTestManager(t *testing.T) *Manager {
 		ActualDataAdapter:   "local",
 		CeasedRetentionDays: 30,
 		LogLevel:            "INFO",
+		TrackStat:           true,
+		StatFlush:           config.DefaultStatFlush,
 		AdapterConfig:       map[string]string{},
 	}
 	mgr, err := New(cfg)
@@ -120,6 +122,39 @@ func TestNew(t *testing.T) {
 			t.Fatal("expected error when local adapter root is empty")
 		}
 	})
+}
+
+func TestNewWiresStatConfiguration(t *testing.T) {
+	cfg := &config.Config{
+		Root:                t.TempDir(),
+		MetadataAdapter:     "local",
+		ActualDataAdapter:   "local",
+		CeasedRetentionDays: 30,
+		TrackStat:           false,
+		StatFlush:           "async",
+		AdapterConfig:       map[string]string{},
+	}
+	mgr, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close() })
+
+	if mgr.TrackStat {
+		t.Fatal("expected stat tracking disabled from config")
+	}
+	if mgr.StatFlush != "async" {
+		t.Fatalf("expected async stat flush, got %q", mgr.StatFlush)
+	}
+
+	obj := createTestObject(t, mgr, "stat-config-disabled")
+	stat, err := local.ReadStat(obj.DataRef)
+	if err != nil {
+		t.Fatalf("ReadStat failed: %v", err)
+	}
+	if stat.ReadCount != 0 || stat.WriteCount != 0 {
+		t.Fatalf("disabled tracking changed stat: %+v", stat)
+	}
 }
 
 func TestCreateObject(t *testing.T) {
@@ -220,6 +255,8 @@ func TestGetObjectWithReadLock(t *testing.T) {
 		ActualDataAdapter:   "local",
 		CeasedRetentionDays: 30,
 		LogLevel:            "INFO",
+		TrackStat:           true,
+		StatFlush:           config.DefaultStatFlush,
 		ReadLock:            false,
 		AdapterConfig:       map[string]string{},
 	}
@@ -243,6 +280,8 @@ func TestGetObjectWithReadLock(t *testing.T) {
 		ActualDataAdapter:   "local",
 		CeasedRetentionDays: 30,
 		LogLevel:            "INFO",
+		TrackStat:           true,
+		StatFlush:           config.DefaultStatFlush,
 		ReadLock:            true,
 		AdapterConfig:       map[string]string{},
 	}
@@ -388,6 +427,8 @@ func TestReadActualFileWithReadLock(t *testing.T) {
 		ActualDataAdapter:   "local",
 		CeasedRetentionDays: 30,
 		LogLevel:            "INFO",
+		TrackStat:           true,
+		StatFlush:           config.DefaultStatFlush,
 		ReadLock:            false,
 		AdapterConfig:       map[string]string{},
 	}
@@ -414,6 +455,8 @@ func TestReadActualFileWithReadLock(t *testing.T) {
 		ActualDataAdapter:   "local",
 		CeasedRetentionDays: 30,
 		LogLevel:            "INFO",
+		TrackStat:           true,
+		StatFlush:           config.DefaultStatFlush,
 		ReadLock:            true,
 		AdapterConfig:       map[string]string{},
 	}
@@ -483,6 +526,8 @@ func TestReadActualArchiveWithReadLock(t *testing.T) {
 		ActualDataAdapter:   "local",
 		CeasedRetentionDays: 30,
 		LogLevel:            "INFO",
+		TrackStat:           true,
+		StatFlush:           config.DefaultStatFlush,
 		ReadLock:            false,
 		AdapterConfig:       map[string]string{},
 	}
@@ -509,6 +554,8 @@ func TestReadActualArchiveWithReadLock(t *testing.T) {
 		ActualDataAdapter:   "local",
 		CeasedRetentionDays: 30,
 		LogLevel:            "INFO",
+		TrackStat:           true,
+		StatFlush:           config.DefaultStatFlush,
 		ReadLock:            true,
 		AdapterConfig:       map[string]string{},
 	}
@@ -1117,6 +1164,8 @@ func TestGCZeroRetention(t *testing.T) {
 		ActualDataAdapter:   "local",
 		CeasedRetentionDays: 0,
 		LogLevel:            "INFO",
+		TrackStat:           true,
+		StatFlush:           config.DefaultStatFlush,
 		AdapterConfig:       map[string]string{},
 	}
 	mgr, err := New(cfg)
@@ -1253,6 +1302,8 @@ func TestCloseError(t *testing.T) {
 		ActualDataAdapter:   "local",
 		CeasedRetentionDays: 30,
 		LogLevel:            "INFO",
+		TrackStat:           true,
+		StatFlush:           config.DefaultStatFlush,
 		AdapterConfig:       map[string]string{},
 	}
 	mgr, err := New(cfg)
@@ -1656,4 +1707,234 @@ func TestCreateObjectTarMissingMarkdown(t *testing.T) {
 	if !errors.Is(err, apperrors.ErrMissingMarkdown) {
 		t.Fatalf("expected ErrMissingMarkdown, got %v", err)
 	}
+}
+
+func readObjectStat(t *testing.T, mgr *Manager, id models.ObjectID) *models.ObjectStat {
+	t.Helper()
+	obj, err := mgr.meta.Get(context.Background(), id, true)
+	if err != nil {
+		t.Fatalf("get object %s for stat: %v", id, err)
+	}
+	stat, err := local.ReadStat(obj.DataRef)
+	if err != nil {
+		t.Fatalf("read object %s stat: %v", id, err)
+	}
+	return stat
+}
+
+func TestManagerRecordsObjectStats(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+	createTestObject(t, mgr, "stat-obj")
+
+	stat := readObjectStat(t, mgr, "stat-obj")
+	if stat.WriteCount != 1 || stat.ReadCount != 0 {
+		t.Fatalf("expected create stat writes=1 reads=0, got writes=%d reads=%d", stat.WriteCount, stat.ReadCount)
+	}
+
+	rc, err := mgr.ReadActualFile(ctx, "stat-obj", "stat-obj.md")
+	if err != nil {
+		t.Fatalf("ReadActualFile failed: %v", err)
+	}
+	_ = rc.Close()
+	archive, err := mgr.ReadActualArchive(ctx, "stat-obj")
+	if err != nil {
+		t.Fatalf("ReadActualArchive failed: %v", err)
+	}
+	_ = archive.Close()
+
+	description := "updated"
+	if _, err := mgr.UpdateObject(ctx, "stat-obj", UpdateObjectOptions{Description: &description}); err != nil {
+		t.Fatalf("UpdateObject failed: %v", err)
+	}
+	if err := mgr.WriteActualFile(ctx, "stat-obj", "note.txt", strings.NewReader("note")); err != nil {
+		t.Fatalf("WriteActualFile failed: %v", err)
+	}
+	if err := mgr.UpdateActualData(ctx, "stat-obj", newMarkdownData(t, "stat-obj", "updated archive")); err != nil {
+		t.Fatalf("UpdateActualData failed: %v", err)
+	}
+	if err := mgr.AddTag(ctx, "stat-obj", "observed"); err != nil {
+		t.Fatalf("AddTag failed: %v", err)
+	}
+	if err := mgr.RemoveTag(ctx, "stat-obj", "observed"); err != nil {
+		t.Fatalf("RemoveTag failed: %v", err)
+	}
+	if err := mgr.MoveObject(ctx, "stat-obj", []string{"observed"}); err != nil {
+		t.Fatalf("MoveObject failed: %v", err)
+	}
+
+	stat = readObjectStat(t, mgr, "stat-obj")
+	if stat.ReadCount != 2 {
+		t.Fatalf("expected 2 reads, got %d", stat.ReadCount)
+	}
+	if stat.WriteCount != 7 {
+		t.Fatalf("expected 7 writes, got %d", stat.WriteCount)
+	}
+	if stat.LastReadAt == nil || stat.LastWrittenAt == nil {
+		t.Fatalf("expected read and write timestamps, got %+v", stat)
+	}
+}
+
+func TestManagerStatTrackingGuardsAndEnumeration(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+	createTestObject(t, mgr, "guarded-stat")
+
+	before := readObjectStat(t, mgr, "guarded-stat")
+	if _, err := mgr.ListObjects(ctx, models.ListOptions{}); err != nil {
+		t.Fatalf("ListObjects failed: %v", err)
+	}
+	if _, err := mgr.SearchObjects(ctx, []string{"guarded"}, models.ListOptions{}); err != nil {
+		t.Fatalf("SearchObjects failed: %v", err)
+	}
+	afterEnumeration := readObjectStat(t, mgr, "guarded-stat")
+	if afterEnumeration.ReadCount != before.ReadCount || afterEnumeration.WriteCount != before.WriteCount {
+		t.Fatalf("list/search changed stat: before=%+v after=%+v", before, afterEnumeration)
+	}
+
+	mgr.TrackStat = false
+	rc, err := mgr.ReadActualFile(ctx, "guarded-stat", "guarded-stat.md")
+	if err != nil {
+		t.Fatalf("ReadActualFile failed: %v", err)
+	}
+	_ = rc.Close()
+	if err := mgr.WriteActualFile(ctx, "guarded-stat", "disabled.txt", strings.NewReader("data")); err != nil {
+		t.Fatalf("WriteActualFile failed: %v", err)
+	}
+	afterDisabled := readObjectStat(t, mgr, "guarded-stat")
+	if afterDisabled.ReadCount != before.ReadCount || afterDisabled.WriteCount != before.WriteCount {
+		t.Fatalf("disabled tracking changed stat: before=%+v after=%+v", before, afterDisabled)
+	}
+
+	mgr.TrackStat = true
+	obj, err := mgr.meta.Get(ctx, "guarded-stat", true)
+	if err != nil {
+		t.Fatalf("Get object failed: %v", err)
+	}
+	obj.Status = models.ObjectStatusDeleted
+	mgr.recordRead(obj)
+	mgr.recordWrite(obj)
+	afterDeleted := readObjectStat(t, mgr, "guarded-stat")
+	if afterDeleted.ReadCount != before.ReadCount || afterDeleted.WriteCount != before.WriteCount {
+		t.Fatalf("non-active recording changed stat: before=%+v after=%+v", before, afterDeleted)
+	}
+}
+
+func TestStatLifecycleFreezeRecoverAndResume(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+	obj := createTestObject(t, mgr, "stat-lifecycle")
+
+	beforeDelete, err := local.ReadStat(obj.DataRef)
+	if err != nil {
+		t.Fatalf("ReadStat before delete failed: %v", err)
+	}
+	if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+		t.Fatalf("DeleteObject failed: %v", err)
+	}
+	frozen, err := local.ReadStat(obj.DataRef)
+	if err != nil {
+		t.Fatalf("ReadStat after delete failed: %v", err)
+	}
+	if frozen.ReadCount != beforeDelete.ReadCount || frozen.WriteCount != beforeDelete.WriteCount {
+		t.Fatalf("delete changed stat: before=%+v after=%+v", beforeDelete, frozen)
+	}
+	if _, err := mgr.ReadActualFile(ctx, obj.ID, obj.Name+".md"); err == nil {
+		t.Fatal("deleted object read should fail")
+	}
+	afterRejectedRead, err := local.ReadStat(obj.DataRef)
+	if err != nil {
+		t.Fatalf("ReadStat after rejected read failed: %v", err)
+	}
+	if afterRejectedRead.ReadCount != frozen.ReadCount {
+		t.Fatalf("deleted object stat was not frozen: got %d want %d", afterRejectedRead.ReadCount, frozen.ReadCount)
+	}
+
+	if err := mgr.RestoreObject(ctx, obj.ID, nil); err != nil {
+		t.Fatalf("RestoreObject failed: %v", err)
+	}
+	restored, err := local.ReadStat(obj.DataRef)
+	if err != nil {
+		t.Fatalf("ReadStat after restore failed: %v", err)
+	}
+	if restored.ReadCount != frozen.ReadCount || restored.WriteCount != frozen.WriteCount {
+		t.Fatalf("restore reset stat: frozen=%+v restored=%+v", frozen, restored)
+	}
+	reader, err := mgr.ReadActualFile(ctx, obj.ID, obj.Name+".md")
+	if err != nil {
+		t.Fatalf("ReadActualFile after restore failed: %v", err)
+	}
+	_ = reader.Close()
+	resumed, err := local.ReadStat(obj.DataRef)
+	if err != nil {
+		t.Fatalf("ReadStat after resumed read failed: %v", err)
+	}
+	if resumed.ReadCount != frozen.ReadCount+1 {
+		t.Fatalf("read count after recover = %d, want %d", resumed.ReadCount, frozen.ReadCount+1)
+	}
+}
+
+func TestStatLifecycleCleanupRemovesStatFiles(t *testing.T) {
+	t.Run("finalize", func(t *testing.T) {
+		mgr := newTestManager(t)
+		ctx := context.Background()
+		obj := createTestObject(t, mgr, "stat-finalize")
+		if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+			t.Fatalf("soft delete failed: %v", err)
+		}
+		if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+			t.Fatalf("finalize failed: %v", err)
+		}
+		if _, err := os.Stat(local.StatFilePath(obj.DataRef)); !os.IsNotExist(err) {
+			t.Fatalf("finalize left an orphan stat file: %v", err)
+		}
+	})
+
+	t.Run("ceased gc", func(t *testing.T) {
+		mgr := newTestManager(t)
+		ctx := context.Background()
+		obj := createTestObject(t, mgr, "stat-ceased-gc")
+		if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+			t.Fatalf("soft delete failed: %v", err)
+		}
+		if err := mgr.DeleteObject(ctx, obj.ID); err != nil {
+			t.Fatalf("finalize failed: %v", err)
+		}
+		if err := local.WriteStat(obj.DataRef, &models.ObjectStat{SchemaVersion: models.ObjectStatSchemaVersion, ReadCount: 3}); err != nil {
+			t.Fatalf("restore residual stat for GC test: %v", err)
+		}
+		if err := mgr.GCObjects(ctx, true); err != nil {
+			t.Fatalf("GCObjects failed: %v", err)
+		}
+		if _, err := os.Stat(local.StatFilePath(obj.DataRef)); !os.IsNotExist(err) {
+			t.Fatalf("ceased GC left an orphan stat file: %v", err)
+		}
+		if _, err := os.Stat(obj.DataRef); !os.IsNotExist(err) {
+			t.Fatalf("ceased GC left object directory: %v", err)
+		}
+	})
+
+	t.Run("creating gc", func(t *testing.T) {
+		mgr := newTestManager(t)
+		ctx := context.Background()
+		now := time.Now()
+		path := buildObjectPathForTest(t, now, nil, "stat-creating")
+		dir := filepath.Join(mgr.Root(), path)
+		obj := &models.Object{ID: "stat-creating", Name: "stat-creating", Path: path, Status: models.ObjectStatusCreating, CreatedAt: now, UpdatedAt: now, DataRef: dir}
+		if err := mgr.meta.Create(ctx, obj); err != nil {
+			t.Fatalf("create creating metadata failed: %v", err)
+		}
+		if err := local.WriteStat(dir, &models.ObjectStat{SchemaVersion: models.ObjectStatSchemaVersion, WriteCount: 1}); err != nil {
+			t.Fatalf("WriteStat failed: %v", err)
+		}
+		if err := mgr.CleanupCreatingObject(ctx, obj.ID); err != nil {
+			t.Fatalf("CleanupCreatingObject failed: %v", err)
+		}
+		if _, err := os.Stat(local.StatFilePath(dir)); !os.IsNotExist(err) {
+			t.Fatalf("creating cleanup left an orphan stat file: %v", err)
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Fatalf("creating cleanup left object directory: %v", err)
+		}
+	})
 }

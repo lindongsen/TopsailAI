@@ -37,6 +37,22 @@ func (s ObjectStatus) IsFinal() bool {
 	return s == ObjectStatusCeased
 }
 
+const (
+	// CurrentSchemaVersion is the persistent schema version assigned to new objects.
+	CurrentSchemaVersion = 2
+	// ObjectStatSchemaVersion is the current schema version of per-object stat records.
+	ObjectStatSchemaVersion = 1
+)
+
+// ObjectStat contains observable read and write statistics for an object.
+type ObjectStat struct {
+	SchemaVersion int        `json:"schema_version" yaml:"schema_version"`
+	ReadCount     uint64     `json:"read_count" yaml:"read_count"`
+	LastReadAt    *time.Time `json:"last_read_at,omitempty" yaml:"last_read_at,omitempty"`
+	WriteCount    uint64     `json:"write_count" yaml:"write_count"`
+	LastWrittenAt *time.Time `json:"last_written_at,omitempty" yaml:"last_written_at,omitempty"`
+}
+
 // Object is the core data model shared by all adapters and the manager.
 type Object struct {
 	// ID is the stable object identifier.

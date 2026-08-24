@@ -131,3 +131,22 @@ func TestAdapterConfig(t *testing.T) {
 		t.Fatalf("expected bucket my-bucket, got %q", cfg["bucket"])
 	}
 }
+
+func TestObjectStatZeroValue(t *testing.T) {
+	var stat ObjectStat
+	if stat.ReadCount != 0 || stat.WriteCount != 0 {
+		t.Fatalf("zero-value counts = (%d, %d), want (0, 0)", stat.ReadCount, stat.WriteCount)
+	}
+	if stat.LastReadAt != nil || stat.LastWrittenAt != nil {
+		t.Fatalf("zero-value timestamps = (%v, %v), want nil", stat.LastReadAt, stat.LastWrittenAt)
+	}
+}
+
+func TestSchemaVersions(t *testing.T) {
+	if CurrentSchemaVersion != 2 {
+		t.Fatalf("CurrentSchemaVersion = %d, want 2", CurrentSchemaVersion)
+	}
+	if ObjectStatSchemaVersion != 1 {
+		t.Fatalf("ObjectStatSchemaVersion = %d, want 1", ObjectStatSchemaVersion)
+	}
+}

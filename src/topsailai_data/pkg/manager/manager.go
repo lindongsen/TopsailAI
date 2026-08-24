@@ -9,6 +9,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,10 +26,15 @@ import (
 // Manager combines a MetadataAdapter and an ActualDataAdapter to implement the
 // complete object lifecycle.
 type Manager struct {
-	cfg      *config.Config
-	meta     adapters.MetadataAdapter
-	actual   adapters.ActualDataAdapter
-	metaRoot string
+	// TrackStat controls best-effort object stat recording. It defaults to true.
+	TrackStat bool
+	// StatFlush records the configured stat persistence mode. Async currently
+	// uses the synchronous best-effort writer until buffered flushing is added.
+	StatFlush string
+	cfg       *config.Config
+	meta      adapters.MetadataAdapter
+	actual    adapters.ActualDataAdapter
+	metaRoot  string
 }
 
 // New creates a Manager from configuration. It initializes both adapters and
@@ -36,6 +42,11 @@ type Manager struct {
 func New(cfg *config.Config) (*Manager, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("%w: nil config", errors.ErrInvalidArgument)
+	}
+
+	statFlush := cfg.StatFlush
+	if statFlush == "" {
+		statFlush = config.DefaultStatFlush
 	}
 
 	// Register local factories if not already present.
@@ -65,10 +76,12 @@ func New(cfg *config.Config) (*Manager, error) {
 	}
 
 	return &Manager{
-		cfg:      cfg,
-		meta:     meta,
-		actual:   actual,
-		metaRoot: cfg.Root,
+		TrackStat: cfg.TrackStat,
+		StatFlush: statFlush,
+		cfg:       cfg,
+		meta:      meta,
+		actual:    actual,
+		metaRoot:  cfg.Root,
 	}, nil
 }
 
@@ -190,7 +203,7 @@ func (m *Manager) CreateObject(ctx context.Context, name string, opts CreateObje
 		Name:          name,
 		Path:          objectPath,
 		Status:        models.ObjectStatusCreating,
-		SchemaVersion: 1,
+		SchemaVersion: models.CurrentSchemaVersion,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		DataRef:       objectDir,
@@ -239,6 +252,7 @@ func (m *Manager) CreateObject(ctx context.Context, name string, opts CreateObje
 	}
 
 	success = true
+	m.recordWrite(obj)
 	return m.GetObject(ctx, id, false)
 }
 
@@ -313,6 +327,7 @@ func (m *Manager) UpdateObject(ctx context.Context, id models.ObjectID, opts Upd
 		}
 	}
 
+	m.recordWrite(obj)
 	return obj, nil
 }
 
@@ -347,7 +362,11 @@ func (m *Manager) UpdateActualData(ctx context.Context, id models.ObjectID, r io
 	}
 
 	obj.UpdatedAt = time.Now()
-	return m.meta.Update(ctx, obj)
+	if err := m.meta.Update(ctx, obj); err != nil {
+		return err
+	}
+	m.recordWrite(obj)
+	return nil
 }
 
 // WriteActualFile writes a single file into the object's actual data.
@@ -368,7 +387,11 @@ func (m *Manager) WriteActualFile(ctx context.Context, id models.ObjectID, filen
 	}
 
 	obj.UpdatedAt = time.Now()
-	return m.meta.Update(ctx, obj)
+	if err := m.meta.Update(ctx, obj); err != nil {
+		return err
+	}
+	m.recordWrite(obj)
+	return nil
 }
 
 // ReadActualArchive returns a tar archive stream of the object's actual data.
@@ -383,6 +406,7 @@ func (m *Manager) ReadActualArchive(ctx context.Context, id models.ObjectID) (io
 		if err != nil {
 			return nil, fmt.Errorf("acquire read lock: %w", err)
 		}
+		m.recordRead(obj)
 		archiveReader, err := m.actual.ReadArchive(ctx, obj.DataRef)
 		if err != nil {
 			_ = lock.Release()
@@ -395,7 +419,12 @@ func (m *Manager) ReadActualArchive(ctx context.Context, id models.ObjectID) (io
 		}, nil
 	}
 
-	return m.actual.ReadArchive(ctx, obj.DataRef)
+	m.recordRead(obj)
+	archiveReader, err := m.actual.ReadArchive(ctx, obj.DataRef)
+	if err != nil {
+		return nil, err
+	}
+	return archiveReader, nil
 }
 
 // ReadActualFile returns a stream for a single file from the object's actual data.
@@ -415,10 +444,16 @@ func (m *Manager) ReadActualFile(ctx context.Context, id models.ObjectID, filena
 			_ = lock.Release()
 			return nil, err
 		}
+		m.recordRead(obj)
 		return &lockedReadCloser{ReadCloser: f, lock: lock}, nil
 	}
 
-	return m.actual.ReadFile(ctx, obj.DataRef, filename)
+	f, err := m.actual.ReadFile(ctx, obj.DataRef, filename)
+	if err != nil {
+		return nil, err
+	}
+	m.recordRead(obj)
+	return f, nil
 }
 
 // DeleteObject soft-deletes an active object or finalizes a deleted object.
@@ -465,6 +500,9 @@ func (m *Manager) DeleteObject(ctx context.Context, id models.ObjectID) error {
 
 		if err := m.meta.FinalizeDelete(ctx, id); err != nil {
 			return fmt.Errorf("finalize delete: %w", err)
+		}
+		if err := local.RemoveStatFile(obj.DataRef); err != nil {
+			return fmt.Errorf("remove finalized object stat: %w", err)
 		}
 
 		// The object has ceased; remove the advisory lock file and clean up
@@ -538,6 +576,7 @@ func (m *Manager) MoveObject(ctx context.Context, id models.ObjectID, classify [
 	// any empty parent directories.
 	_ = os.RemoveAll(oldRef)
 	_ = local.RemoveEmptyParents(oldRef, m.metaRoot)
+	m.recordWrite(obj)
 	return nil
 }
 
@@ -653,6 +692,9 @@ func (m *Manager) cleanupCreatingObject(ctx context.Context, obj *models.Object)
 	// object folder entirely. They are never auto-activated because creation
 	// should always be atomic through the create command.
 	_ = m.actual.Delete(ctx, obj.DataRef)
+	if err := local.RemoveStatFile(objectDir); err != nil {
+		return fmt.Errorf("remove creating object stat: %w", err)
+	}
 	_ = os.RemoveAll(objectDir)
 	_ = local.RemoveEmptyParents(objectDir, m.metaRoot)
 	return nil
@@ -704,6 +746,9 @@ func (m *Manager) gcCeasedObject(ctx context.Context, obj *models.Object) error 
 
 	// Remove actual data if any remains.
 	_ = m.actual.Delete(ctx, obj.DataRef)
+	if err := local.RemoveStatFile(objectDir); err != nil {
+		return fmt.Errorf("remove ceased object stat: %w", err)
+	}
 
 	// Remove metadata and the entire object folder.
 	if err := os.RemoveAll(objectDir); err != nil {
@@ -742,10 +787,15 @@ func (m *Manager) AddTag(ctx context.Context, id models.ObjectID, tag string) er
 	if err := local.ValidateTag(tag); err != nil {
 		return fmt.Errorf("%w: %v", errors.ErrInvalidTag, err)
 	}
-	if _, err := m.requireActive(ctx, id); err != nil {
+	obj, err := m.requireActive(ctx, id)
+	if err != nil {
 		return err
 	}
-	return m.meta.AddTag(ctx, id, tag)
+	if err := m.meta.AddTag(ctx, id, tag); err != nil {
+		return err
+	}
+	m.recordWrite(obj)
+	return nil
 }
 
 // RemoveTag removes a tag from an active object.
@@ -753,10 +803,58 @@ func (m *Manager) RemoveTag(ctx context.Context, id models.ObjectID, tag string)
 	if err := local.ValidateTag(tag); err != nil {
 		return fmt.Errorf("%w: %v", errors.ErrInvalidTag, err)
 	}
-	if _, err := m.requireActive(ctx, id); err != nil {
+	obj, err := m.requireActive(ctx, id)
+	if err != nil {
 		return err
 	}
-	return m.meta.RemoveTag(ctx, id, tag)
+	if err := m.meta.RemoveTag(ctx, id, tag); err != nil {
+		return err
+	}
+	m.recordWrite(obj)
+	return nil
+}
+
+const statReadDebounce = time.Minute
+
+// recordRead records a successful actual-data read without affecting its result.
+func (m *Manager) recordRead(obj *models.Object) {
+	if !m.TrackStat || obj == nil || obj.Status != models.ObjectStatusActive {
+		return
+	}
+	objectDir := m.statObjectDir(obj)
+	if objectDir == "" {
+		slog.Warn("skipping object read stat without data reference", "object_id", obj.ID)
+		return
+	}
+	if err := local.IncrementRead(objectDir, time.Now(), statReadDebounce); err != nil {
+		slog.Warn("failed to record object read stat", "object_id", obj.ID, "error", err)
+	}
+}
+
+// recordWrite records a successful object mutation without affecting its result.
+func (m *Manager) recordWrite(obj *models.Object) {
+	if !m.TrackStat || obj == nil || obj.Status != models.ObjectStatusActive {
+		return
+	}
+	objectDir := m.statObjectDir(obj)
+	if objectDir == "" {
+		slog.Warn("skipping object write stat without data reference", "object_id", obj.ID)
+		return
+	}
+	if err := local.IncrementWrite(objectDir, time.Now()); err != nil {
+		slog.Warn("failed to record object write stat", "object_id", obj.ID, "error", err)
+	}
+}
+
+// statObjectDir resolves the local object directory from DataRef or Path.
+func (m *Manager) statObjectDir(obj *models.Object) string {
+	if obj.DataRef != "" {
+		return obj.DataRef
+	}
+	if obj.Path != "" {
+		return filepath.Join(m.metaRoot, obj.Path)
+	}
+	return ""
 }
 
 // requireActive returns the active object or an error if it is not active.

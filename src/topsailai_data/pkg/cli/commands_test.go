@@ -31,6 +31,8 @@ func setupManager(t *testing.T) (*manager.Manager, string, context.Context) {
 		IncludeDeleted:      false,
 		CeasedRetentionDays: 30,
 		LogLevel:            "ERROR",
+		TrackStat:           true,
+		StatFlush:           config.DefaultStatFlush,
 	}
 	mgr, err := manager.New(cfg)
 	if err != nil {

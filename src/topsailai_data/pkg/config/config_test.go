@@ -17,6 +17,8 @@ func TestLoadDefaults(t *testing.T) {
 		EnvPrefix + "INCLUDE_DELETED",
 		EnvPrefix + "CEASED_RETENTION_DAYS",
 		EnvPrefix + "LOG_LEVEL",
+		EnvPrefix + "TRACK_STAT",
+		EnvPrefix + "STAT_FLUSH",
 	} {
 		t.Setenv(key, "")
 	}
@@ -44,6 +46,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.IncludeDeleted {
 		t.Fatal("expected IncludeDeleted to be false by default")
 	}
+	if !cfg.TrackStat {
+		t.Fatal("expected TrackStat to be true by default")
+	}
+	if cfg.StatFlush != DefaultStatFlush {
+		t.Fatalf("expected default stat flush %q, got %q", DefaultStatFlush, cfg.StatFlush)
+	}
 
 	home, _ := os.UserHomeDir()
 	wantRoot := filepath.Join(home, ".topsailai", "data")
@@ -61,6 +69,8 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv(EnvPrefix+"INCLUDE_DELETED", "true")
 	t.Setenv(EnvPrefix+"CEASED_RETENTION_DAYS", "7")
 	t.Setenv(EnvPrefix+"LOG_LEVEL", "debug")
+	t.Setenv(EnvPrefix+"TRACK_STAT", "0")
+	t.Setenv(EnvPrefix+"STAT_FLUSH", "ASYNC")
 	t.Setenv(EnvPrefix+"ADAPTER_BUCKET", "my-bucket")
 	t.Setenv(EnvPrefix+"ADAPTER_DSN", "postgres://localhost")
 
@@ -90,6 +100,12 @@ func TestLoadFromEnv(t *testing.T) {
 	if cfg.LogLevel != "DEBUG" {
 		t.Fatalf("expected log level DEBUG, got %q", cfg.LogLevel)
 	}
+	if cfg.TrackStat {
+		t.Fatal("expected TrackStat to be false")
+	}
+	if cfg.StatFlush != "async" {
+		t.Fatalf("expected stat flush async, got %q", cfg.StatFlush)
+	}
 	if cfg.AdapterConfig["bucket"] != "my-bucket" {
 		t.Fatalf("expected adapter bucket my-bucket, got %q", cfg.AdapterConfig["bucket"])
 	}
@@ -113,6 +129,15 @@ func TestLoadNegativeCeasedRetentionDays(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error for negative CEASED_RETENTION_DAYS")
+	}
+}
+
+func TestLoadInvalidStatFlush(t *testing.T) {
+	t.Setenv(EnvPrefix+"STAT_FLUSH", "later")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid STAT_FLUSH")
 	}
 }
 

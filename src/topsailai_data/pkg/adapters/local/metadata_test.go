@@ -78,8 +78,8 @@ func TestMetadataAdapterCreateAndGet(t *testing.T) {
 	if got.Status != models.ObjectStatusActive {
 		t.Fatalf("Status mismatch: got %q", got.Status)
 	}
-	if got.SchemaVersion != 1 {
-		t.Fatalf("SchemaVersion mismatch: got %d", got.SchemaVersion)
+	if got.SchemaVersion != models.CurrentSchemaVersion {
+		t.Fatalf("SchemaVersion mismatch: got %d, want %d", got.SchemaVersion, models.CurrentSchemaVersion)
 	}
 
 	// Duplicate create should fail.
@@ -929,11 +929,17 @@ func TestMetadataAdapterPurgeRemovesCeasedObject(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(objectDir, name+".ceased"), []byte{}, 0o644); err != nil {
 		t.Fatalf("write ceased marker: %v", err)
 	}
+	if err := WriteStat(objectDir, &models.ObjectStat{SchemaVersion: models.ObjectStatSchemaVersion, ReadCount: 2}); err != nil {
+		t.Fatalf("write stat: %v", err)
+	}
 
 	if err := adapter.Purge(ctx, id); err != nil {
 		t.Fatalf("purge ceased object: %v", err)
 	}
 
+	if _, err := os.Stat(StatFilePath(objectDir)); !os.IsNotExist(err) {
+		t.Fatalf("expected stat file to be removed, got err=%v", err)
+	}
 	if _, err := os.Stat(objectDir); !os.IsNotExist(err) {
 		t.Fatalf("expected object directory to be removed, got err=%v", err)
 	}

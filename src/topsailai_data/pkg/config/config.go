@@ -19,6 +19,9 @@ const (
 
 	// DefaultLogLevel is the default log level.
 	DefaultLogLevel = "INFO"
+
+	// DefaultStatFlush is the default object-stat flush mode.
+	DefaultStatFlush = "sync"
 )
 
 // Config holds the runtime configuration for topsailai_data.
@@ -44,6 +47,12 @@ type Config struct {
 	// LogLevel is the log level for the CLI.
 	LogLevel string
 
+	// TrackStat indicates whether successful object operations update usage stats.
+	TrackStat bool
+
+	// StatFlush controls object-stat persistence and accepts sync or async.
+	StatFlush string
+
 	// AdapterConfig holds adapter-specific key-value settings.
 	AdapterConfig map[string]string
 }
@@ -58,6 +67,8 @@ func Load() (*Config, error) {
 		ActualDataAdapter:   os.Getenv(EnvPrefix + "ACTUAL_DATA_ADAPTER"),
 		CeasedRetentionDays: DefaultCeasedRetentionDays,
 		LogLevel:            DefaultLogLevel,
+		TrackStat:           true,
+		StatFlush:           DefaultStatFlush,
 		AdapterConfig:       make(map[string]string),
 	}
 
@@ -68,7 +79,6 @@ func Load() (*Config, error) {
 		}
 		cfg.Root = filepath.Join(home, ".topsailai", "data")
 	}
-
 
 	if cfg.MetadataAdapter == "" {
 		cfg.MetadataAdapter = "local"
@@ -92,6 +102,12 @@ func Load() (*Config, error) {
 	}
 	if v := os.Getenv(EnvPrefix + "LOG_LEVEL"); v != "" {
 		cfg.LogLevel = strings.ToUpper(v)
+	}
+	if v := os.Getenv(EnvPrefix + "TRACK_STAT"); v != "" {
+		cfg.TrackStat = parseBool(v)
+	}
+	if v := os.Getenv(EnvPrefix + "STAT_FLUSH"); v != "" {
+		cfg.StatFlush = strings.ToLower(strings.TrimSpace(v))
 	}
 
 	for _, e := range os.Environ() {
@@ -131,6 +147,12 @@ func (c *Config) Validate() error {
 	}
 	if c.CeasedRetentionDays < 0 {
 		return fmt.Errorf("%sCEASED_RETENTION_DAYS must be non-negative", EnvPrefix)
+	}
+	if c.StatFlush == "" {
+		c.StatFlush = DefaultStatFlush
+	}
+	if c.StatFlush != "sync" && c.StatFlush != "async" {
+		return fmt.Errorf("%sSTAT_FLUSH must be sync or async", EnvPrefix)
 	}
 	return nil
 }

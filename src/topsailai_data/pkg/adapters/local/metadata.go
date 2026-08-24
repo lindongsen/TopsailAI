@@ -50,7 +50,7 @@ func (a *MetadataAdapter) Create(ctx context.Context, obj *models.Object) error 
 	}
 
 	if obj.SchemaVersion == 0 {
-		obj.SchemaVersion = 1
+		obj.SchemaVersion = models.CurrentSchemaVersion
 	}
 	data, err := json.MarshalIndent(obj, "", "  ")
 	if err != nil {
@@ -287,6 +287,9 @@ func (a *MetadataAdapter) Purge(ctx context.Context, id models.ObjectID) error {
 		return fmt.Errorf("%w: object %s is %s, expected ceased", errors.ErrObjectNotActive, id, obj.Status)
 	}
 
+	if err := RemoveStatFile(objectDir); err != nil {
+		return fmt.Errorf("purge object stat: %w", err)
+	}
 	if err := os.RemoveAll(objectDir); err != nil {
 		return fmt.Errorf("purge object directory %q: %w", objectDir, err)
 	}

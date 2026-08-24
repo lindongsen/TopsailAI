@@ -11,10 +11,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/spf13/pflag"
+	"github.com/topsailai/topsailai_data/pkg/adapters/local"
 	apperrors "github.com/topsailai/topsailai_data/pkg/errors"
 	"github.com/topsailai/topsailai_data/pkg/manager"
 	"github.com/topsailai/topsailai_data/pkg/models"
@@ -120,6 +122,11 @@ func runShow(ctx context.Context, mgr *manager.Manager, args []string) error {
 		return fmt.Errorf("show: %w", err)
 	}
 	printObject(obj)
+	stat, statErr := readObjectStat(obj)
+	if statErr != nil {
+		return fmt.Errorf("show: read stat: %w", statErr)
+	}
+	printStatHuman(stat)
 
 	if obj.Status != models.ObjectStatusActive {
 		fmt.Println()
@@ -227,7 +234,7 @@ func printObjectTreeEntries(dir string, entries []os.DirEntry, prefix string) er
 
 // isMetadataMarkerName reports whether name is a reserved metadata marker.
 func isMetadataMarkerName(name string) bool {
-	if name == "metadata.json" {
+	if name == "metadata.json" || name == ".stat.json" {
 		return true
 	}
 	for _, suffix := range []string{".tags", ".lock", ".deleted", ".ceased"} {
@@ -236,6 +243,206 @@ func isMetadataMarkerName(name string) bool {
 		}
 	}
 	return false
+}
+
+// runStat implements the "stat" command and its "top" subcommand.
+func runStat(ctx context.Context, mgr *manager.Manager, args []string) error {
+	if len(args) > 0 && args[0] == "top" {
+		return runStatTop(ctx, mgr, args[1:])
+	}
+	return runStatOne(ctx, mgr, args)
+}
+
+// runStatOne prints stat metrics for one object.
+func runStatOne(ctx context.Context, mgr *manager.Manager, args []string) error {
+	fs := newFlagSet("stat")
+	format := fs.String("format", "yaml", "output format: yaml or json")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := requireArgs(fs.Args(), 1, 1); err != nil {
+		return fmt.Errorf("stat: %w", err)
+	}
+	if err := validateListFormat(*format); err != nil {
+		return fmt.Errorf("stat: %w", err)
+	}
+	obj, err := mgr.GetObject(ctx, models.ObjectID(fs.Args()[0]), true)
+	if err != nil {
+		return fmt.Errorf("stat: %w", err)
+	}
+	stat, err := readObjectStat(obj)
+	if err != nil {
+		return fmt.Errorf("stat: %w", err)
+	}
+	if *format == "json" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(stat)
+	}
+	out, err := yaml.Marshal(stat)
+	if err != nil {
+		return fmt.Errorf("stat: marshal yaml: %w", err)
+	}
+	_, err = os.Stdout.Write(out)
+	return err
+}
+
+// statRankRow is one row in stat top output.
+type statRankRow struct {
+	Rank          int                 `json:"rank" yaml:"rank"`
+	ID            string              `json:"id" yaml:"id"`
+	Path          string              `json:"path" yaml:"path"`
+	Status        models.ObjectStatus `json:"status" yaml:"status"`
+	ReadCount     uint64              `json:"read_count" yaml:"read_count"`
+	LastReadAt    *time.Time          `json:"last_read_at,omitempty" yaml:"last_read_at,omitempty"`
+	WriteCount    uint64              `json:"write_count" yaml:"write_count"`
+	LastWrittenAt *time.Time          `json:"last_written_at,omitempty" yaml:"last_written_at,omitempty"`
+}
+
+// runStatTop ranks objects by a selected stat metric.
+func runStatTop(ctx context.Context, mgr *manager.Manager, args []string) error {
+	fs := newFlagSet("stat top")
+	by := fs.String("by", "read", "sort key: read, write, or last_read")
+	order := fs.String("order", "desc", "sort order: desc or asc")
+	limit := fs.Int("limit", 10, "maximum number of rows")
+	status := fs.String("status", "active", "status filter: active, deleted, ceased, or all")
+	format := fs.String("format", "yaml", "output format: yaml or json")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := requireArgs(fs.Args(), 0, 0); err != nil {
+		return fmt.Errorf("stat top: %w", err)
+	}
+	if *by != "read" && *by != "write" && *by != "last_read" {
+		return fmt.Errorf("stat top: invalid by %q", *by)
+	}
+	if *order != "desc" && *order != "asc" {
+		return fmt.Errorf("stat top: invalid order %q", *order)
+	}
+	if *limit < 0 {
+		return fmt.Errorf("stat top: limit must be non-negative")
+	}
+	if *status != "active" && *status != "deleted" && *status != "ceased" && *status != "all" {
+		return fmt.Errorf("stat top: invalid status %q", *status)
+	}
+	if err := validateListFormat(*format); err != nil {
+		return fmt.Errorf("stat top: %w", err)
+	}
+
+	objects, err := mgr.ListObjects(ctx, models.ListOptions{IncludeDeleted: *status != "active"})
+	if err != nil {
+		return fmt.Errorf("stat top: %w", err)
+	}
+	rows := make([]statRankRow, 0, len(objects))
+	for _, obj := range objects {
+		if *status != "all" && string(obj.Status) != *status {
+			continue
+		}
+		stat, err := readObjectStat(obj)
+		if err != nil {
+			return fmt.Errorf("stat top: read %s: %w", obj.ID, err)
+		}
+		rows = append(rows, statRankRow{ID: string(obj.ID), Path: obj.Path, Status: obj.Status, ReadCount: stat.ReadCount, LastReadAt: stat.LastReadAt, WriteCount: stat.WriteCount, LastWrittenAt: stat.LastWrittenAt})
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		comparison := compareStatRows(rows[i], rows[j], *by)
+		if comparison == 0 {
+			return rows[i].ID < rows[j].ID
+		}
+		if *order == "asc" {
+			return comparison < 0
+		}
+		return comparison > 0
+	})
+	if *limit < len(rows) {
+		rows = rows[:*limit]
+	}
+	for i := range rows {
+		rows[i].Rank = i + 1
+	}
+	if *format == "json" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(rows)
+	}
+	out, err := yaml.Marshal(rows)
+	if err != nil {
+		return fmt.Errorf("stat top: marshal yaml: %w", err)
+	}
+	_, err = os.Stdout.Write(out)
+	return err
+}
+
+// compareStatRows returns a negative, zero, or positive sort-key comparison.
+func compareStatRows(a, b statRankRow, by string) int {
+	switch by {
+	case "write":
+		if a.WriteCount != b.WriteCount {
+			return compareUint64(a.WriteCount, b.WriteCount)
+		}
+		return compareTimePointers(a.LastWrittenAt, b.LastWrittenAt)
+	case "last_read":
+		return compareTimePointers(a.LastReadAt, b.LastReadAt)
+	default:
+		if a.ReadCount != b.ReadCount {
+			return compareUint64(a.ReadCount, b.ReadCount)
+		}
+		return compareTimePointers(a.LastReadAt, b.LastReadAt)
+	}
+}
+
+func compareUint64(a, b uint64) int {
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
+}
+
+func compareTimePointers(a, b *time.Time) int {
+	if a == nil && b == nil {
+		return 0
+	}
+	if a == nil {
+		return -1
+	}
+	if b == nil {
+		return 1
+	}
+	if a.Before(*b) {
+		return -1
+	}
+	if a.After(*b) {
+		return 1
+	}
+	return 0
+}
+
+// readObjectStat loads stat data directly from the local object reference.
+func readObjectStat(obj *models.Object) (*models.ObjectStat, error) {
+	if obj == nil || obj.DataRef == "" {
+		return &models.ObjectStat{}, nil
+	}
+	return local.ReadStat(obj.DataRef)
+}
+
+// printStatHuman prints a human-readable stat section.
+func printStatHuman(stat *models.ObjectStat) {
+	fmt.Println()
+	fmt.Println("Stat:")
+	fmt.Printf("  ReadCount:     %d\n", stat.ReadCount)
+	fmt.Printf("  LastReadAt:    %s\n", formatStatTime(stat.LastReadAt))
+	fmt.Printf("  WriteCount:    %d\n", stat.WriteCount)
+	fmt.Printf("  LastWrittenAt: %s\n", formatStatTime(stat.LastWrittenAt))
+}
+
+func formatStatTime(value *time.Time) string {
+	if value == nil {
+		return "never"
+	}
+	return value.Local().Format(time.RFC3339)
 }
 
 // runList implements the "list" command.
@@ -247,6 +454,7 @@ func runList(ctx context.Context, mgr *manager.Manager, args []string) error {
 	format := fs.String("format", "yaml", "output format: yaml or json")
 	sort := fs.String("sort", "time:desc", "sort order: time:desc (newest first) or time:asc (oldest first)")
 	tagList := fs.String("tag", "", "comma-separated tags to filter results")
+	withStat := fs.Bool("with-stat", false, "include object stat fields")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -271,7 +479,9 @@ func runList(ctx context.Context, mgr *manager.Manager, args []string) error {
 	if err != nil {
 		return fmt.Errorf("list: %w", err)
 	}
-	printObjectList(objects, *format)
+	if err := printObjectList(objects, *format, *withStat); err != nil {
+		return fmt.Errorf("list: %w", err)
+	}
 	return nil
 }
 
@@ -443,6 +653,7 @@ func runSearch(ctx context.Context, mgr *manager.Manager, args []string) error {
 	limit := fs.Int("limit", 0, "maximum number of results to return")
 	format := fs.String("format", "yaml", "output format: yaml or json")
 	sort := fs.String("sort", "time:desc", "sort order: time:desc (newest first) or time:asc (oldest first)")
+	withStat := fs.Bool("with-stat", false, "include object stat fields")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -470,7 +681,9 @@ func runSearch(ctx context.Context, mgr *manager.Manager, args []string) error {
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
-	printObjectList(objects, *format)
+	if err := printObjectList(objects, *format, *withStat); err != nil {
+		return fmt.Errorf("search: %w", err)
+	}
 	return nil
 }
 
@@ -718,38 +931,14 @@ func validateSortOption(sort string) error {
 }
 
 // printObjectList prints objects using the requested format.
-func printObjectList(objects []*models.Object, format string) {
-	switch format {
-	case "json":
-		printObjectListJSON(objects)
-	default:
-		printObjectListYAML(objects)
-	}
-}
-
-// listObjectJSON is the JSON representation of an object used by list/search output.
-type listObjectJSON struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	Path          string    `json:"path"`
-	Description   string    `json:"description"`
-	Status        string    `json:"status"`
-	Tags          []string  `json:"tags"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	SchemaVersion int       `json:"schema_version"`
-	DataRef       string    `json:"data_ref"`
-}
-
-// printObjectListJSON prints objects as a pretty-printed JSON array.
-func printObjectListJSON(objects []*models.Object) {
-	items := make([]listObjectJSON, 0, len(objects))
+func printObjectList(objects []*models.Object, format string, withStat bool) error {
+	items := make([]listObject, 0, len(objects))
 	for _, obj := range objects {
 		tags := obj.Tags
 		if tags == nil {
 			tags = []string{}
 		}
-		items = append(items, listObjectJSON{
+		item := listObject{
 			ID:            string(obj.ID),
 			Name:          obj.Name,
 			Path:          obj.Path,
@@ -760,54 +949,49 @@ func printObjectListJSON(objects []*models.Object) {
 			UpdatedAt:     obj.UpdatedAt,
 			SchemaVersion: obj.SchemaVersion,
 			DataRef:       obj.DataRef,
-		})
-	}
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(items)
-}
-
-// listObjectYAML is the YAML representation of an object used by list/search output.
-type listObjectYAML struct {
-	ID            string    `yaml:"id"`
-	Name          string    `yaml:"name"`
-	Path          string    `yaml:"path"`
-	Description   string    `yaml:"description"`
-	Status        string    `yaml:"status"`
-	Tags          []string  `yaml:"tags"`
-	CreatedAt     time.Time `yaml:"created_at"`
-	UpdatedAt     time.Time `yaml:"updated_at"`
-	SchemaVersion int       `yaml:"schema_version"`
-	DataRef       string    `yaml:"data_ref"`
-}
-
-// printObjectListYAML prints objects as a pretty-printed YAML list.
-func printObjectListYAML(objects []*models.Object) {
-	items := make([]listObjectYAML, 0, len(objects))
-	for _, obj := range objects {
-		tags := obj.Tags
-		if tags == nil {
-			tags = []string{}
 		}
-		items = append(items, listObjectYAML{
-			ID:            string(obj.ID),
-			Name:          obj.Name,
-			Path:          obj.Path,
-			Description:   obj.Description,
-			Status:        string(obj.Status),
-			Tags:          tags,
-			CreatedAt:     obj.CreatedAt,
-			UpdatedAt:     obj.UpdatedAt,
-			SchemaVersion: obj.SchemaVersion,
-			DataRef:       obj.DataRef,
-		})
+		if withStat {
+			stat, err := readObjectStat(obj)
+			if err != nil {
+				return err
+			}
+			item.ReadCount = &stat.ReadCount
+			item.LastReadAt = stat.LastReadAt
+			item.WriteCount = &stat.WriteCount
+			item.LastWrittenAt = stat.LastWrittenAt
+		}
+		items = append(items, item)
+	}
+
+	if format == "json" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(items)
 	}
 	out, err := yaml.Marshal(items)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to marshal yaml: %v\n", err)
-		return
+		return fmt.Errorf("marshal yaml: %w", err)
 	}
-	_, _ = os.Stdout.Write(out)
+	_, err = os.Stdout.Write(out)
+	return err
+}
+
+// listObject is the optional-stat representation used by list/search output.
+type listObject struct {
+	ID            string     `json:"id" yaml:"id"`
+	Name          string     `json:"name" yaml:"name"`
+	Path          string     `json:"path" yaml:"path"`
+	Description   string     `json:"description" yaml:"description"`
+	Status        string     `json:"status" yaml:"status"`
+	Tags          []string   `json:"tags" yaml:"tags"`
+	CreatedAt     time.Time  `json:"created_at" yaml:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at" yaml:"updated_at"`
+	SchemaVersion int        `json:"schema_version" yaml:"schema_version"`
+	DataRef       string     `json:"data_ref" yaml:"data_ref"`
+	ReadCount     *uint64    `json:"read_count,omitempty" yaml:"read_count,omitempty"`
+	LastReadAt    *time.Time `json:"last_read_at,omitempty" yaml:"last_read_at,omitempty"`
+	WriteCount    *uint64    `json:"write_count,omitempty" yaml:"write_count,omitempty"`
+	LastWrittenAt *time.Time `json:"last_written_at,omitempty" yaml:"last_written_at,omitempty"`
 }
 
 // isTarBytes reports whether buf looks like a tar archive by inspecting its

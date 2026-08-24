@@ -18,6 +18,7 @@ import (
 // lifecycle and metadata management.
 var metadataMarkerNames = map[string]bool{
 	"metadata.json": true,
+	statFileName:    true,
 }
 
 // metadataMarkerSuffixes lists name suffixes that identify reserved marker
