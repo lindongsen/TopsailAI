@@ -30,6 +30,6 @@ When a tool registers a function in `TOOLS`, its function `__doc__`, module-leve
 - Put concise tool-specific user context in `OBSERVATION`. Each enabled tool module is identified with `<observation source="tool_module">...</observation>` in the first user observation message.
 - Use the function `__doc__` for **function-specific documentation**: signature, parameters, return value, and usage examples.
   - Example: `subagent_tool.py` keeps `call_assistant.__doc__` focused on the `role` parameter, explaining that a matching `{role}.member` file will prefix the message with `@{role}:` and inject the role definition into the sub-agent system prompt.
-- Treat every tool function docstring as an LLM-facing interface contract. Every tool function docstring MUST have corresponding unit-test coverage.
+- Treat the docstring of every function registered in `TOOLS` as an LLM-facing interface contract. Every such docstring MUST have corresponding unit-test coverage. Docstrings of internal helper functions not registered in `TOOLS` do not require unit-test coverage.
 
 Do not duplicate the same catalog or overview in both places.
