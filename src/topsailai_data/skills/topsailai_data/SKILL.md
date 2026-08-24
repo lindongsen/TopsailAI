@@ -634,6 +634,77 @@ When scanning for objects, the adapter stops at any directory that contains a fi
 
 A file such as `hello/sub/hello.md` does **not** make `sub` an object folder; only `hello/hello.md` makes `hello` an object folder.
 
+## Object Stat Observability (`stat`)
+
+Each object maintains usage statistics in `.stat.json` inside its object
+directory. The record contains `schema_version`, `read_count`, `last_read_at`,
+`write_count`, and `last_written_at`. The statistics help identify frequently
+used objects and objects that have not been used recently.
+
+### Counting rules
+
+- Read operations (`show`, `get`, and `get-archive`) increment `read_count` and
+  update `last_read_at`.
+- Write operations (`create`, `put`, `put-archive`, `update`, `tag`, and `move`)
+  increment `write_count` and update `last_written_at`.
+- `list` and `search` do not change usage statistics.
+- Only `active` objects accumulate statistics. Statistics are frozen while an
+  object is `deleted` or `ceased`; after `recover`, accumulation resumes.
+
+### Stat commands
+
+Always invoke the topsailai_data binary with its full relative path for stat
+commands so it is not confused with the Unix `stat` utility.
+
+Display statistics for one object in YAML (default) or JSON:
+
+```
+bin/topsailai_data stat <id>
+bin/topsailai_data stat <id> --format yaml
+bin/topsailai_data stat <id> --format json
+```
+
+Rank objects by read or write usage:
+
+```
+bin/topsailai_data stat top --by read --order desc --limit 10
+bin/topsailai_data stat top --by write --order asc --limit 10 --status active --format json
+```
+
+`stat top` supports `--by read|write`, `--order desc|asc`, `--limit n`,
+`--status <status>`, and `--format yaml|json`.
+
+Attach each object's statistics to normal list or search results without
+incrementing its counters:
+
+```
+bin/topsailai_data list --with-stat
+bin/topsailai_data search <query> --with-stat
+```
+
+### Tracking configuration
+
+Stat tracking is enabled by default. Set `TOPSAILAI_DATA_TRACK_STAT` to `0` or
+`false` to disable read and write statistic updates; use `1` or `true` to
+enable them explicitly.
+
+### Fault tolerance and persistence
+
+- A missing `.stat.json` is treated as a zero-value statistic record.
+- A corrupt `.stat.json` produces a WARN log and is treated as a zero-value
+  record instead of crashing the CLI.
+- Statistic records are written atomically through a temporary file followed
+  by rename.
+
+### Lifecycle integration
+
+- Soft delete freezes the current statistics. After recovery, the preserved
+  counters continue accumulating.
+- Delete finalization and garbage collection of `creating` or `ceased` objects
+  remove `.stat.json` with the object metadata cleanup.
+- `show` treats `.stat.json` as a metadata marker and excludes it from the
+  displayed folder-structure tree.
+
 ## Environment variables
 
 | Variable | Required | Default | Description |
