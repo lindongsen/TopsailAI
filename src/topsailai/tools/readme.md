@@ -33,3 +33,7 @@ When a tool registers a function in `TOOLS`, its function `__doc__`, module-leve
 - Treat the docstring of every function registered in `TOOLS` as an LLM-facing interface contract. Every such docstring MUST have corresponding unit-test coverage. Docstrings of internal helper functions not registered in `TOOLS` do not require unit-test coverage.
 
 Do not duplicate the same catalog or overview in both places.
+
+## Utility Placement
+
+Public/common methods closely related to tools in general belong in `base/`; public methods related to a specific tool belong in `{tool}_utils/`.
