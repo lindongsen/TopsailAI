@@ -39,6 +39,16 @@ class TestParseArgs:
         """No arguments keep reconciliation in dry-run mode."""
         assert cli._parse_args([]).dry_run is True
 
+    def test_help_explains_actions_and_safe_default(self, capsys):
+        """Explain reconciliation actions and how to apply them."""
+        with pytest.raises(SystemExit) as exc_info:
+            cli._parse_args(["--help"])
+        help_text = " ".join(capsys.readouterr().out.split())
+        assert exc_info.value.code == 0
+        assert "Missing stats may be rebuilt" in help_text
+        assert "malformed stats quarantined" in help_text
+        assert "--no-dry-run to apply" in help_text
+
     def test_explicit_dry_run_enables_dry_run(self):
         """The positive flag explicitly enables dry-run mode."""
         assert cli._parse_args(["--dry-run"]).dry_run is True

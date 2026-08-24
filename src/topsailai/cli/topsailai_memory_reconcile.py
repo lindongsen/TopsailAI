@@ -20,13 +20,24 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     """Parse memory reconciliation command-line arguments."""
     parser = argparse.ArgumentParser(
         prog="topsailai_memory_reconcile",
-        description="Reconcile memory stat records with Markdown memories.",
+        description=(
+            "Check consistency between story-memory Markdown files and their "
+            "stat JSON records. Missing stats may be rebuilt, orphan stats "
+            "purged, and malformed stats quarantined."
+        ),
+        epilog=(
+            "The default is a safe preview. Review the JSON summary first, then "
+            "use --no-dry-run to apply repairs, cleanup, and quarantine actions."
+        ),
     )
     parser.add_argument(
         "--dry-run",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Report planned actions without changing files (default: enabled).",
+        help=(
+            "Preview planned reconciliation actions without changing files "
+            "(default). Use --no-dry-run to apply them."
+        ),
     )
     return parser.parse_args(argv)
 

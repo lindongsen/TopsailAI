@@ -23,6 +23,16 @@ class TestArguments:
         args = cli.parse_args([])
         assert args.max_count == 100
 
+    def test_help_explains_preview_and_deletion_safety(self, capsys):
+        """Explain candidate selection and that eviction never deletes files."""
+        with pytest.raises(SystemExit) as exc_info:
+            cli.parse_args(["--help"])
+        help_text = " ".join(capsys.readouterr().out.split())
+        assert exc_info.value.code == 0
+        assert "never deletes files" in help_text
+        assert "eviction candidates" in help_text
+        assert "topsailai_memory_delete" in help_text
+
     def test_valid_options(self):
         """Parse a workspace, max-count, and json option."""
         args = cli.parse_args(["--workspace", "/mem", "--max-count", "5", "--json"])

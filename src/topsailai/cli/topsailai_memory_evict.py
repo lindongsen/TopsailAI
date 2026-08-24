@@ -34,23 +34,38 @@ def parse_args(argv=None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         prog="topsailai_memory_evict",
-        description="Preview synchronized story memories eligible for LRU eviction.",
+        description=(
+            "Preview old synchronized story memories that exceed the retention "
+            "limit. Memories are ordered by least-recent activity, but this "
+            "command never deletes files."
+        ),
+        epilog=(
+            "Use topsailai_memory_delete to delete a reviewed memory explicitly. "
+            "Example: topsailai_memory_evict --max-count 50 --json"
+        ),
     )
     parser.add_argument(
         "--workspace",
-        help="Memory workspace containing the story folder (default: TOPSAILAI_HOME/memory).",
+        metavar="PATH",
+        help=(
+            "Memory workspace that directly contains story/ "
+            "(default: TOPSAILAI_HOME/memory)."
+        ),
     )
     parser.add_argument(
         "--max-count",
         type=positive_int,
         default=100,
-        help="Positive maximum number of healthy memory/stat pairs to retain "
-        "(default: 100).",
+        metavar="COUNT",
+        help=(
+            "Maximum healthy synchronized memory/stat pairs to retain; older "
+            "excess pairs are reported as eviction candidates (default: 100)."
+        ),
     )
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Output structured JSON instead of human-readable text.",
+        help="Print the dry-run summary and candidate list as JSON.",
     )
     return parser.parse_args(argv)
 
