@@ -69,14 +69,23 @@ class TestSelection:
 class TestOutput:
     """Validate structured and human-readable output."""
 
-    def test_build_result_preserves_order(self):
-        """Represent memories as an ordered JSON-compatible list."""
+    def test_build_result_preserves_order_and_reports_all_memory_count(self):
+        """Report selected and total memory counts with distinct fields."""
         loaded = OrderedDict((("new", "N"), ("old", "O")))
-        with patch.object(cli, "load_top_memories", return_value=loaded):
+        with (
+            patch.object(cli, "load_top_memories", return_value=loaded),
+            patch.object(
+                cli.story_memory_tool,
+                "list_memories",
+                return_value=["new", "old", "older"],
+            ),
+        ):
             result = cli.build_result(10, 2)
         assert [item["title"] for item in result["memories"]] == ["new", "old"]
-        assert result["count"] == 2
-        assert result["total"] == 2
+        assert result["current_count"] == 2
+        assert result["total_count"] == 3
+        assert "count" not in result
+        assert "total" not in result
 
     def test_format_text_is_markdown_with_frontmatter(self):
         """Place metadata, main title, and title summary before memory details."""
@@ -84,21 +93,24 @@ class TestOutput:
             "max_tokens": 10,
             "max_count": 2,
             "sort": cli.SORT_DESCRIPTION,
-            "count": 2,
-            "total": 2,
+            "current_count": 2,
+            "total_count": 3,
             "memories": [
                 {"title": "new", "content": "N"},
                 {"title": "old", "content": "O"},
             ],
         }
         output = cli.format_text(result)
-        assert output.startswith("---\ntotal: 2\nmax_tokens: 10\nmax_count: 2\n")
+        assert output.startswith(
+            "---\nmax_tokens: 10\nmax_count: 2\n"
+            "current_count: 2\ntotal_count: 3\n"
+        )
         assert "\n---\n\n# Top Memories\n" in output
         assert "\n## Titles\n\n1. new\n2. old\n" in output
         assert output.index("2. old") < output.index("### new")
 
     def test_main_prints_json(self, capsys):
-        """Print valid JSON with a total for automation."""
+        """Print valid JSON with selected and total counts for automation."""
         with patch.object(
             cli,
             "build_result",
@@ -106,15 +118,16 @@ class TestOutput:
                 "max_tokens": 10,
                 "max_count": 1,
                 "sort": cli.SORT_DESCRIPTION,
-                "count": 1,
-                "total": 1,
+                "current_count": 1,
+                "total_count": 3,
                 "memories": [{"title": "new", "content": "N"}],
             },
         ):
             rc = cli.main(["--max-tokens", "10", "--max-count", "1", "--json"])
         assert rc == 0
         result = json.loads(capsys.readouterr().out)
-        assert result["total"] == 1
+        assert result["current_count"] == 1
+        assert result["total_count"] == 3
         assert result["memories"][0]["title"] == "new"
 
     def test_main_returns_one_on_failure(self, capsys):

@@ -86,14 +86,15 @@ def load_top_memories(max_tokens: int, max_count: int) -> OrderedDict:
 
 def build_result(max_tokens: int, max_count: int) -> dict:
     """Build the structured CLI result while preserving memory order."""
+    total_count = len(story_memory_tool.list_memories() or [])
     memories = load_top_memories(max_tokens, max_count)
-    total = len(memories)
+    current_count = len(memories)
     return {
         "max_tokens": max_tokens,
         "max_count": max_count,
         "sort": SORT_DESCRIPTION,
-        "count": total,
-        "total": total,
+        "current_count": current_count,
+        "total_count": total_count,
         "memories": [
             {"title": title, "content": content}
             for title, content in memories.items()
@@ -106,9 +107,10 @@ def format_text(result: dict) -> str:
     sort = json.dumps(result["sort"], ensure_ascii=False)
     lines = [
         "---",
-        f"total: {result['total']}",
         f"max_tokens: {result['max_tokens']}",
         f"max_count: {result['max_count']}",
+        f"current_count: {result['current_count']}",
+        f"total_count: {result['total_count']}",
         f"sort: {sort}",
         "---",
         "",

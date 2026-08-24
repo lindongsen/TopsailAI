@@ -30,7 +30,9 @@ topsailai_memory_top --max-tokens 12000 --max-count 10
 
 ## Output
 
-The default output is a standard Markdown document. It starts with YAML frontmatter containing `total`, `max_tokens`, `max_count`, and `sort`, followed by the `# Top Memories` main title, a numbered `## Titles` summary in MRU order, and detailed memories under `## Memories`. JSON output remains machine-friendly and includes the integer `total` field and ordered `memories` list.
+The default output is a standard Markdown document. It starts with YAML frontmatter containing `max_tokens`, `max_count`, `current_count`, `total_count`, and `sort`, followed by the `# Top Memories` main title, a numbered `## Titles` summary in MRU order, and detailed memories under `## Memories`. JSON output remains machine-friendly and includes the same count fields and ordered `memories` list.
+
+`max_count` is the requested output limit, `current_count` is the number of memories actually selected after token and count limits, and `total_count` is the total number of stored memories before either limit is applied.
 
 ## Ordering and Limits
 
