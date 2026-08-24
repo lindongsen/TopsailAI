@@ -475,6 +475,10 @@ class TestMemoryStatLifecycle(unittest.TestCase):
         prompt = story_memory_tool.get_prompt_memory()
 
         self.assertIn('content', prompt)
+        self.assertIn('## Citing Memories', prompt)
+        self.assertIn('@memory[<TITLE>]', prompt)
+        self.assertIn('at most once per\nresponse', prompt)
+        self.assertIn('Only cite memories that are actually listed above.', prompt)
         mock_read_without_count.assert_called_once_with('memory.md')
         mock_read_memory.assert_not_called()
 

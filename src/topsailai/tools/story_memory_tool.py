@@ -263,6 +263,11 @@ Titles:
 
 # Memory Requirements
 {_PROMPT_NEW_MEMORY}
+
+## Citing Memories
+When your answer relies on a memory shown above, cite it inline with the exact
+title, e.g. `@memory[<TITLE>]`. Cite each relied-upon memory at most once per
+response. Only cite memories that are actually listed above.
 """
 
 PROMPT = """
