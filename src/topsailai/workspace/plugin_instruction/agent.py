@@ -13,6 +13,7 @@ from topsailai.utils import (
 )
 from topsailai.utils.print_tool import print_info, print_warning
 from topsailai.tools.base.common import get_tools_for_chat
+from topsailai.prompt_hub.prompt_tool import get_observation_by_tools
 from topsailai.workspace.folder_constants import FOLDER_ROOT
 from topsailai.workspace.plugin_instruction.base.cache import get_ai_agent
 
@@ -170,6 +171,16 @@ def get_tools() -> list[str]:
         print(sorted(list(agent.available_tools.keys())))
     return
 
+
+def get_tools_observation() -> str:
+    """Return observations exposed by the active agent's tool modules."""
+    agent = get_ai_agent()
+    if not agent:
+        return
+
+    tool_names = sorted(agent.available_tools.keys())
+    return get_observation_by_tools(tool_names)
+
 def set_llm(*args) -> str:
     """
     Change LLM configuration for the active agent.
@@ -290,6 +301,7 @@ INSTRUCTIONS = dict(
     env_prompt=get_env_prompt,
     tool_prompt=get_tool_prompt,
     tools=get_tools,
+    tools_observation=get_tools_observation,
     set_llm=set_llm,
     models=select_model,
     llm=get_llm,
