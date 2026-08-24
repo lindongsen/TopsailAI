@@ -249,3 +249,75 @@ class TestMemoryStatSchemaBranches(TestCase):
             with self.subTest(message=message, record=record):
                 with self.assertRaisesRegex(ValueError, message):
                     memory_stat._validate_stat(record, "canonical.md")
+
+
+class TestDocumentedMemoryStatHelpers(TestCase):
+    """Direct tests for documented memory-stat persistence helpers."""
+
+    def test_read_stat_file_with_retry_returns_after_transient_corruption(self):
+        """Transient corrupt reads are retried and the later valid value is returned."""
+        expected = {"memory_id": "memory.md"}
+        with mock.patch.object(
+            memory_stat,
+            "_read_stat_file",
+            side_effect=[ValueError("corrupt"), expected],
+        ) as read_stat, mock.patch.object(memory_stat.time, "sleep") as sleep:
+            result = memory_stat._read_stat_file_with_retry("stat.json", "memory.md")
+
+        self.assertIs(result, expected)
+        self.assertEqual(read_stat.call_count, 2)
+        sleep.assert_called_once_with(memory_stat.READ_RETRY_DELAY_SECONDS)
+
+    def test_read_stat_file_with_retry_raises_after_all_attempts(self):
+        """Persistent corruption raises after the configured number of attempts."""
+        with mock.patch.object(
+            memory_stat,
+            "_read_stat_file",
+            side_effect=ValueError("corrupt"),
+        ) as read_stat, mock.patch.object(memory_stat.time, "sleep") as sleep:
+            with self.assertRaisesRegex(ValueError, "remains corrupt"):
+                memory_stat._read_stat_file_with_retry("stat.json", "memory.md")
+
+        self.assertEqual(read_stat.call_count, memory_stat.READ_RETRY_ATTEMPTS)
+        self.assertEqual(sleep.call_count, memory_stat.READ_RETRY_ATTEMPTS - 1)
+
+    def test_write_stat_creates_parent_and_writes_sorted_utf8_json(self):
+        """The direct writer creates its parent and emits newline-terminated JSON."""
+        with tempfile.TemporaryDirectory() as workspace:
+            stat_file = os.path.join(workspace, "nested", "stat.json")
+            memory_stat._write_stat(stat_file, {"z": 1, "title": "记忆"})
+
+            with open(stat_file, encoding="utf-8") as stream:
+                content = stream.read()
+            self.assertTrue(content.endswith("\n"))
+            self.assertLess(content.index('"title"'), content.index('"z"'))
+            self.assertEqual(json.loads(content), {"z": 1, "title": "记忆"})
+
+    def test_mutate_memory_stat_creates_and_applies_mutation_timestamp(self):
+        """Mutation receives the creation timestamp and its valid changes persist."""
+        with tempfile.TemporaryDirectory() as workspace, mock.patch.object(
+            memory_stat.time_tool,
+            "get_current_local_datetime_with_offset",
+            return_value="2026-08-24 05:00:00 +00:00",
+        ):
+            def mutate(stat, timestamp):
+                stat["read_count"] += 1
+                stat["last_read_at"] = timestamp
+                stat["last_activity_at"] = timestamp
+
+            result = memory_stat.mutate_memory_stat(workspace, "memory.md", mutate)
+            persisted = memory_stat.read_memory_stat(workspace, "memory.md")
+
+        self.assertEqual(result["read_count"], 1)
+        self.assertEqual(result["last_read_at"], "2026-08-24 05:00:00 +00:00")
+        self.assertEqual(persisted, result)
+
+    def test_mutate_memory_stat_rejects_invalid_mutation(self):
+        """Mutations that violate the stat schema fail before persistence."""
+        with tempfile.TemporaryDirectory() as workspace:
+            with self.assertRaisesRegex(ValueError, "counter"):
+                memory_stat.mutate_memory_stat(
+                    workspace,
+                    "memory.md",
+                    lambda stat, _timestamp: stat.update(read_count=-1),
+                )

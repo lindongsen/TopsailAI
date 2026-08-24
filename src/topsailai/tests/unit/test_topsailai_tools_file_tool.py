@@ -862,3 +862,68 @@ class TestIntegration:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestDocumentedPrivateFileHelpers:
+    """Test documented private helpers exposed by file_tool internals."""
+
+    def test_do_step_read_bytes_reads_small_requested_size(self):
+        """A request up to one block reads exactly the requested bytes."""
+        import io
+        from topsailai.tools.file_tool import _do_step_read_bytes
+
+        assert _do_step_read_bytes(io.BytesIO(b"abcdef"), 3) == b"abc"
+
+    def test_do_step_read_bytes_reads_across_blocks_to_exact_size(self):
+        """A multi-block request returns no more than the requested size."""
+        import io
+        from topsailai.tools.file_tool import _do_step_read_bytes
+
+        payload = b"a" * 2500
+        assert _do_step_read_bytes(io.BytesIO(payload), 1500) == payload[:1500]
+
+    def test_do_step_read_bytes_reads_to_eof_when_size_is_unbounded(self):
+        """A non-positive size reads until EOF when truncation is not needed."""
+        import io
+        from topsailai.tools.file_tool import _do_step_read_bytes
+
+        payload = b"a" * 1500
+        with patch("topsailai.tools.file_tool.ctx_safe.is_need_truncate", return_value=False):
+            assert _do_step_read_bytes(io.BytesIO(payload), -1) == payload
+
+    def test_do_step_read_bytes_stops_when_context_requires_truncation(self):
+        """An unbounded read stops after the block that reaches the context limit."""
+        import io
+        from topsailai.tools.file_tool import _do_step_read_bytes
+
+        payload = b"a" * 3000
+        with patch("topsailai.tools.file_tool.ctx_safe.is_need_truncate", return_value=True):
+            assert _do_step_read_bytes(io.BytesIO(payload), -1) == payload[:1024]
+
+    def test_insert_data_to_file_before_and_adds_newline(self, tmp_path):
+        """Insertion before a line is 1-based and normalizes the inserted newline."""
+        from topsailai.tools.file_tool import _insert_data_to_file
+
+        target = tmp_path / "before.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        result = _insert_data_to_file(str(target), "inserted", 2, "before")
+        assert result == "one\ninserted\ntwo\n"
+        assert target.read_text(encoding="utf-8") == result
+
+    def test_insert_data_to_file_after_and_clamps_past_eof(self, tmp_path):
+        """Insertion after an excessive line number appends at EOF."""
+        from topsailai.tools.file_tool import _insert_data_to_file
+
+        target = tmp_path / "after.txt"
+        target.write_text("one\n", encoding="utf-8")
+        result = _insert_data_to_file(str(target), "tail\n", 99, "after")
+        assert result == "one\ntail\n"
+
+    def test_insert_data_to_file_rejects_invalid_position(self, tmp_path):
+        """Only before and after are accepted as insertion modes."""
+        from topsailai.tools.file_tool import _insert_data_to_file
+
+        target = tmp_path / "invalid.txt"
+        target.write_text("one\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="before_or_after"):
+            _insert_data_to_file(str(target), "x", 1, "middle")

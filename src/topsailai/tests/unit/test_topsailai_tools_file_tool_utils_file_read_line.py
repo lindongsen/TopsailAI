@@ -657,5 +657,52 @@ class TestLargeFileStreaming:
         assert result == ""
 
 
+class TestDocumentedStreamingHelpers:
+    """Test the documented streaming and decoding helpers directly."""
+
+    def test_detect_encoding_defaults_to_utf8_for_empty_or_unknown_sample(self):
+        """Empty input and undetected encodings fall back to UTF-8."""
+        from unittest.mock import patch
+        from topsailai.tools.file_tool_utils.file_read_line import _detect_encoding
+
+        assert _detect_encoding(b"") == "utf-8"
+        with patch(
+            "topsailai.tools.file_tool_utils.file_read_line.chardet.detect",
+            return_value={"encoding": None},
+        ):
+            assert _detect_encoding(b"sample") == "utf-8"
+
+    def test_detect_encoding_returns_detector_result(self):
+        """A detector-provided encoding is returned unchanged."""
+        from unittest.mock import patch
+        from topsailai.tools.file_tool_utils.file_read_line import _detect_encoding
+
+        with patch(
+            "topsailai.tools.file_tool_utils.file_read_line.chardet.detect",
+            return_value={"encoding": "ISO-8859-1"},
+        ):
+            assert _detect_encoding(b"sample") == "ISO-8859-1"
+
+    @pytest.mark.parametrize(
+        ("line", "expected"),
+        [("a\r\n", "a"), ("a\n", "a"), ("a\r", "a"), ("a", "a")],
+    )
+    def test_strip_line_ending_handles_supported_endings(self, line, expected):
+        """CRLF, LF, and CR are stripped while unterminated text is preserved."""
+        from topsailai.tools.file_tool_utils.file_read_line import _strip_line_ending
+
+        assert _strip_line_ending(line) == expected
+
+    def test_open_text_stream_detects_encoding_rewinds_and_closes(self, tmp_path):
+        """The context manager decodes from the beginning and closes its wrapper."""
+        from topsailai.tools.file_tool_utils.file_read_line import _open_text_stream
+
+        target = tmp_path / "latin1.txt"
+        target.write_bytes(b"caf\xe9\nsecond\n")
+        with _open_text_stream(str(target)) as stream:
+            assert list(stream) == ["caf\xe9\n", "second\n"]
+        assert stream.closed is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

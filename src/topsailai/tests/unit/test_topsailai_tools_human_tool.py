@@ -434,3 +434,37 @@ class TestRepromptRobustness(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestDocumentedInputHelpers(unittest.TestCase):
+    """Direct tests for documented input and option-rendering helpers."""
+
+    def test_read_with_timeout_reads_synchronously_without_deadline(self):
+        """Falsy deadlines call the reader directly with its arguments."""
+        reader = MagicMock(return_value="answer")
+        self.assertEqual(human_tool._read_with_timeout(reader, None, "prompt"), "answer")
+        reader.assert_called_once_with("prompt")
+
+    def test_read_with_timeout_returns_completed_thread_result(self):
+        """A reader that completes before its deadline returns its value."""
+        self.assertEqual(human_tool._read_with_timeout(lambda: "answer", 1), "answer")
+
+    def test_read_with_timeout_returns_none_when_deadline_expires(self):
+        """A blocked daemon reader yields None when its deadline expires."""
+        import threading
+
+        blocker = threading.Event()
+        self.assertIsNone(human_tool._read_with_timeout(blocker.wait, 0.01))
+
+    def test_read_with_timeout_propagates_reader_exception(self):
+        """Exceptions raised by a completed reader reach the caller."""
+        def fail():
+            raise RuntimeError("reader failed")
+
+        with self.assertRaisesRegex(RuntimeError, "reader failed"):
+            human_tool._read_with_timeout(fail, 1)
+
+    def test_render_options_numbers_entries_and_handles_empty_list(self):
+        """Options use zero-based menu labels and empty input renders empty text."""
+        self.assertEqual(human_tool._render_options(["yes", "no"]), "  0) yes\n  1) no")
+        self.assertEqual(human_tool._render_options([]), "")

@@ -556,3 +556,83 @@ class TestEdgeCases:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestDocumentedSSHHelpers:
+    """Direct tests for documented SSH normalization and execution helpers."""
+
+    def test_normalize_options_merges_string_list_and_dict_values(self):
+        """Supported option forms override defaults and normalize values."""
+        ctx = object.__new__(SSHContext)
+
+        string_result = ctx._normalize_options("Compression")
+        assert string_result["Compression"] == "yes"
+        assert string_result["StrictHostKeyChecking"] == "no"
+
+        list_result = ctx._normalize_options([" Port = 2200 ", "", "ForwardAgent"])
+        assert list_result["Port"] == "2200"
+        assert list_result["ForwardAgent"] == "yes"
+
+        dict_result = ctx._normalize_options({" LogLevel ": " DEBUG "})
+        assert dict_result["LogLevel"] == "DEBUG"
+
+    def test_ssh_options_string_joins_generated_arguments(self):
+        """The string helper returns the ordered option argument representation."""
+        ctx = SSHContext(
+            "example.test",
+            private_key="/keys/id_ed25519",
+            options={"Compression": "yes"},
+        )
+
+        assert ctx.ssh_options_string() == " ".join(ctx.ssh_option_args())
+        assert "-o Compression=yes" in ctx.ssh_options_string()
+        assert ctx.ssh_options_string().endswith("-i /keys/id_ed25519")
+
+    @pytest.mark.parametrize(
+        ("source", "target", "direction", "error_fragment"),
+        [
+            ("relative.txt", "/remote/file", "to_remote", "source"),
+            ("/local/file", "relative.txt", "to_remote", "target"),
+            ("relative.txt", "/local/file", "from_remote", "source"),
+            ("/remote/file", "relative.txt", "from_remote", "target"),
+        ],
+    )
+    def test_validate_copy_paths_rejects_non_absolute_paths(
+        self, source, target, direction, error_fragment
+    ):
+        """Copy validation identifies the non-absolute endpoint."""
+        from topsailai.tools.ssh_tool import _validate_copy_paths
+
+        result = _validate_copy_paths(source, target, direction)
+        assert result[0] == 1
+        assert error_fragment in result[2]
+
+    @pytest.mark.parametrize("direction", ["to_remote", "from_remote"])
+    def test_validate_copy_paths_accepts_absolute_paths(self, direction):
+        """Absolute local and remote endpoints pass in either direction."""
+        from topsailai.tools.ssh_tool import _validate_copy_paths
+
+        assert _validate_copy_paths("/source/file", "/target/file", direction) is None
+
+    def test_exec_remote_shell_forwards_list_args_stdin_and_timeout(self):
+        """Remote execution passes a list command and encoded script to exec_cmd."""
+        from topsailai.tools import ssh_tool
+
+        ctx = SSHContext(
+            "example.test",
+            port=2222,
+            username="alice",
+            options={"Compression": "yes"},
+            timeout=17,
+        )
+        expected = (0, "ok", "")
+        with patch.object(ssh_tool, "exec_cmd", return_value=expected) as exec_cmd:
+            result = ssh_tool._exec_remote_shell(ctx, "printf 'hello'")
+
+        assert result == expected
+        command = exec_cmd.call_args.args[0]
+        assert command[0] == "ssh"
+        assert command[-4:] == ["2222", "alice@example.test", "bash", "-s"]
+        exec_cmd.assert_called_once_with(
+            command, input=b"printf 'hello'", timeout=17
+        )
