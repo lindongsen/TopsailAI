@@ -30,7 +30,7 @@ ENV PYTHONPATH="/TopsailAI/src/topsailai/cli"
 # Set up TopsailAI home: .env symlink + .env.local copy + skill symlink
 RUN mkdir -p /root/.topsailai/skill && \
     ln -sf /TopsailAI/src/topsailai/env_template /root/.topsailai/.env && \
-    ln -sf /TopsailAI/src/topsailai_data/skills/topsailai_data /root/.topsailai/skill/topsailai_data
+    ln -sf /TopsailAI/src/topsailai_data/skills/topsailai-data /root/.topsailai/skill/topsailai-data
 
 # Copy local .env.local into the container
 COPY .env.local /root/.topsailai/.env.local
@@ -40,6 +40,6 @@ COPY docker/pause /pause
 RUN chmod +x /pause
 
 # Fix skill internal bin symlink to point to the actual binary location
-RUN ln -sf /TopsailAI/src/topsailai_data/bin/topsailai_data /TopsailAI/src/topsailai_data/skills/topsailai_data/bin/topsailai_data
+RUN ln -sf /TopsailAI/src/topsailai_data/bin/topsailai-data /TopsailAI/src/topsailai_data/skills/topsailai-data/bin/topsailai-data
 
 ENTRYPOINT ["/pause"]
