@@ -11,6 +11,11 @@ class HeavyTaskError(Exception):
     pass
 
 
+class ContextWindowLimitError(Exception):
+    """Raised when context cannot be reduced below the model send limit."""
+    pass
+
+
 class HardInterruptError(Exception):
     """Raised when a hard interrupt is requested via the control channel.
 

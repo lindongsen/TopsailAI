@@ -1204,5 +1204,338 @@ class TestTaskMessageHelpersWithSemanticEquality(unittest.TestCase):
         self.assertEqual(result, [pred_b, task])
 
 
+class TestDynamicContextWatermarks(unittest.TestCase):
+    """Test model-aware context limits and watermark classification."""
+
+    def setUp(self):
+        """Create an isolated runtime for each watermark test."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        self.runtime = ContextRuntimeBase()
+
+    @patch("topsailai.workspace.context.base.env_tool")
+    def test_resolve_model_max_context_exact_map_hit(self, mock_env_tool):
+        """An exact model-name map entry takes precedence over the fallback."""
+        def _get(key, **kwargs):
+            values = {
+                "TOPSAILAI_MODEL_MAX_CONTEXT_MAP": '{"model-a": 131072}',
+                "TOPSAILAI_MODEL_MAX_CONTEXT_DEFAULT": 65536,
+            }
+            return values.get(key, kwargs.get("default"))
+
+        mock_env_tool.EnvReaderInstance.get.side_effect = _get
+
+        self.assertEqual(
+            self.runtime._resolve_model_max_context("model-a"),
+            131072,
+        )
+
+    @patch("topsailai.workspace.context.base.env_tool")
+    def test_resolve_model_max_context_uses_default_for_unknown_model(
+        self, mock_env_tool
+    ):
+        """An unknown model uses the configured positive fallback context."""
+        def _get(key, **kwargs):
+            values = {
+                "TOPSAILAI_MODEL_MAX_CONTEXT_MAP": '{"model-a": 131072}',
+                "TOPSAILAI_MODEL_MAX_CONTEXT_DEFAULT": 65536,
+            }
+            return values.get(key, kwargs.get("default"))
+
+        mock_env_tool.EnvReaderInstance.get.side_effect = _get
+
+        self.assertEqual(
+            self.runtime._resolve_model_max_context("model-b"),
+            65536,
+        )
+
+    @patch("topsailai.workspace.context.base.env_tool")
+    def test_resolve_model_max_context_invalid_map_disables_guard(
+        self, mock_env_tool
+    ):
+        """Invalid non-empty map JSON disables dynamic model resolution."""
+        mock_env_tool.EnvReaderInstance.get.return_value = "not-json"
+
+        self.assertIsNone(
+            self.runtime._resolve_model_max_context("model-a")
+        )
+
+    @patch("topsailai.workspace.context.base.env_tool")
+    def test_resolve_model_max_context_is_not_cached(self, mock_env_tool):
+        """Every resolution observes the current active configuration."""
+        maps = iter([
+            '{"model-a": 131072}',
+            '{"model-a": 65536}',
+        ])
+
+        def _get(key, **kwargs):
+            if key == "TOPSAILAI_MODEL_MAX_CONTEXT_MAP":
+                return next(maps)
+            return kwargs.get("default")
+
+        mock_env_tool.EnvReaderInstance.get.side_effect = _get
+
+        self.assertEqual(
+            self.runtime._resolve_model_max_context("model-a"),
+            131072,
+        )
+        self.assertEqual(
+            self.runtime._resolve_model_max_context("model-a"),
+            65536,
+        )
+
+    @patch("topsailai.workspace.context.base.env_tool")
+    def test_get_watermark_ratios_defaults_are_exact(self, mock_env_tool):
+        """The documented LOW and HIGH defaults are exactly 0.73 and 0.93."""
+        mock_env_tool.EnvReaderInstance.get.side_effect = (
+            lambda key, **kwargs: kwargs.get("default")
+        )
+
+        self.assertEqual(
+            self.runtime._get_watermark_ratios(),
+            (0.73, 0.93),
+        )
+
+    @patch("topsailai.workspace.context.base.env_tool")
+    def test_get_watermark_ratios_invalid_order_uses_defaults(
+        self, mock_env_tool
+    ):
+        """Ratios not satisfying zero-low-high-one use safe defaults."""
+        def _get(key, **kwargs):
+            values = {
+                "TOPSAILAI_CONTEXT_LOW_WATERMARK_RATIO": 0.95,
+                "TOPSAILAI_CONTEXT_HIGH_WATERMARK_RATIO": 0.90,
+            }
+            return values.get(key, kwargs.get("default"))
+
+        mock_env_tool.EnvReaderInstance.get.side_effect = _get
+
+        self.assertEqual(
+            self.runtime._get_watermark_ratios(),
+            (0.73, 0.93),
+        )
+
+    @patch.object(
+        __import__(
+            "topsailai.workspace.context.base",
+            fromlist=["ContextRuntimeBase"],
+        ).ContextRuntimeBase,
+        "_resolve_model_max_context",
+        return_value=131072,
+    )
+    @patch("topsailai.workspace.context.base.env_tool")
+    def test_compute_context_limits_reserves_output_and_summary_margin(
+        self, mock_env_tool, mock_resolve
+    ):
+        """Limits reserve MAX_TOKENS first and summary overhead second."""
+        mock_env_tool.EnvReaderInstance.get.return_value = 8192
+
+        self.assertEqual(
+            self.runtime._compute_context_limits("model-a", 30000),
+            (131072, 92880, 101072),
+        )
+
+    @patch("topsailai.workspace.context.base.env_tool")
+    def test_estimate_safe_tokens_rounds_up(self, mock_env_tool):
+        """The conservative token estimate applies its coefficient and rounds up."""
+        mock_env_tool.EnvReaderInstance.get.return_value = 1.05
+
+        self.assertEqual(self.runtime._estimate_safe_tokens(101), 107)
+
+    def test_classification_priority_and_all_levels(self):
+        """Classification returns one level with HARD-to-NORMAL priority."""
+        from topsailai.workspace.context.base import (
+            CONTEXT_WATERMARK_HARD,
+            CONTEXT_WATERMARK_HIGH,
+            CONTEXT_WATERMARK_LOW,
+            CONTEXT_WATERMARK_NORMAL,
+        )
+
+        with patch.object(
+            self.runtime,
+            "_compute_context_limits",
+            return_value=(1000, 800, 900),
+        ), patch.object(
+            self.runtime,
+            "_estimate_safe_tokens",
+            side_effect=lambda value: value,
+        ), patch.object(
+            self.runtime,
+            "_get_watermark_ratios",
+            return_value=(0.73, 0.93),
+        ):
+            normal = self.runtime._classify_context_watermark(
+                current_tokens=583,
+                model_name="model-a",
+                max_tokens=100,
+            )
+            low = self.runtime._classify_context_watermark(
+                current_tokens=584,
+                model_name="model-a",
+                max_tokens=100,
+            )
+            high = self.runtime._classify_context_watermark(
+                current_tokens=744,
+                model_name="model-a",
+                max_tokens=100,
+            )
+            hard = self.runtime._classify_context_watermark(
+                current_tokens=900,
+                model_name="model-a",
+                max_tokens=100,
+            )
+
+        self.assertEqual(normal.level, CONTEXT_WATERMARK_NORMAL)
+        self.assertEqual(low.level, CONTEXT_WATERMARK_LOW)
+        self.assertEqual(high.level, CONTEXT_WATERMARK_HIGH)
+        self.assertEqual(hard.level, CONTEXT_WATERMARK_HARD)
+
+    def test_classification_reads_active_model_each_time(self):
+        """Model switches and output-budget changes are used without stale limits."""
+        from topsailai.workspace.context.base import (
+            CONTEXT_WATERMARK_HARD,
+            CONTEXT_WATERMARK_NORMAL,
+        )
+
+        self.runtime.ai_agent = MagicMock()
+        self.runtime.ai_agent.llm_model.model_name = "large-model"
+        self.runtime.ai_agent.llm_model.max_tokens = 100
+
+        def _limits(model_name, max_tokens):
+            if model_name == "large-model" and max_tokens == 100:
+                return (2000, 1700, 1900)
+            return (1000, 700, 800)
+
+        with patch.object(
+            self.runtime,
+            "_compute_context_limits",
+            side_effect=_limits,
+        ), patch.object(
+            self.runtime,
+            "_estimate_safe_tokens",
+            side_effect=lambda value: value,
+        ), patch.object(
+            self.runtime,
+            "_get_watermark_ratios",
+            return_value=(0.73, 0.93),
+        ):
+            first = self.runtime._classify_context_watermark(current_tokens=850)
+            self.runtime.ai_agent.llm_model.model_name = "small-model"
+            self.runtime.ai_agent.llm_model.max_tokens = 200
+            second = self.runtime._classify_context_watermark(current_tokens=850)
+
+        self.assertEqual(first.level, CONTEXT_WATERMARK_NORMAL)
+        self.assertEqual(second.level, CONTEXT_WATERMARK_HARD)
+
+    def test_classification_non_positive_safe_budget_is_hard(self):
+        """Invalid configuration with no safe input budget is always HARD."""
+        from topsailai.workspace.context.base import CONTEXT_WATERMARK_HARD
+
+        with patch.object(
+            self.runtime,
+            "_compute_context_limits",
+            return_value=(1000, -100, 0),
+        ), patch.object(
+            self.runtime,
+            "_estimate_safe_tokens",
+            return_value=0,
+        ), patch.object(
+            self.runtime,
+            "_get_watermark_ratios",
+            return_value=(0.73, 0.93),
+        ):
+            result = self.runtime._classify_context_watermark(
+                current_tokens=0,
+                model_name="model-a",
+                max_tokens=1000,
+            )
+
+        self.assertEqual(result.level, CONTEXT_WATERMARK_HARD)
+
+    def test_summary_feasibility_rejects_input_above_model_context(self):
+        """Summary input above the model context is a hard rejection."""
+        self.runtime.ai_agent = MagicMock()
+        self.runtime.ai_agent.llm_model.model_name = "model-a"
+        self.runtime.ai_agent.llm_model.max_tokens = 100
+
+        with patch.object(
+            self.runtime,
+            "_compute_context_limits",
+            return_value=(1000, 800, 900),
+        ), patch.object(
+            self.runtime,
+            "_get_current_tokens",
+            return_value=1001,
+        ), patch.object(
+            self.runtime,
+            "_estimate_safe_tokens",
+            side_effect=lambda value: value,
+        ):
+            allowed, reason, input_tokens, safe_limit = (
+                self.runtime._check_dynamic_summary_feasibility([], 100, 50)
+            )
+
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "summary_input_exceeds_model_context")
+        self.assertEqual(input_tokens, 1001)
+        self.assertEqual(safe_limit, 800)
+
+    def test_summary_feasibility_rejects_input_above_safe_limit(self):
+        """Summary input above the summary-safe limit is rejected preflight."""
+        self.runtime.ai_agent = MagicMock()
+        self.runtime.ai_agent.llm_model.model_name = "model-a"
+        self.runtime.ai_agent.llm_model.max_tokens = 100
+
+        with patch.object(
+            self.runtime,
+            "_compute_context_limits",
+            return_value=(1000, 800, 900),
+        ), patch.object(
+            self.runtime,
+            "_get_current_tokens",
+            return_value=801,
+        ), patch.object(
+            self.runtime,
+            "_estimate_safe_tokens",
+            side_effect=lambda value: value,
+        ):
+            allowed, reason, input_tokens, safe_limit = (
+                self.runtime._check_dynamic_summary_feasibility([], 100, 50)
+            )
+
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "summary_input_exceeds_safe_limit")
+        self.assertEqual(input_tokens, 801)
+        self.assertEqual(safe_limit, 800)
+
+    def test_summary_feasibility_rejects_preserved_budget_above_safe_limit(self):
+        """Preserved input plus summary reserve must fit the safe limit."""
+        self.runtime.ai_agent = MagicMock()
+        self.runtime.ai_agent.llm_model.model_name = "model-a"
+        self.runtime.ai_agent.llm_model.max_tokens = 100
+
+        with patch.object(
+            self.runtime,
+            "_compute_context_limits",
+            return_value=(1000, 800, 900),
+        ), patch.object(
+            self.runtime,
+            "_get_current_tokens",
+            return_value=700,
+        ), patch.object(
+            self.runtime,
+            "_estimate_safe_tokens",
+            side_effect=lambda value: value,
+        ):
+            allowed, reason, input_tokens, safe_limit = (
+                self.runtime._check_dynamic_summary_feasibility([], 751, 50)
+            )
+
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "preserved_budget_exceeds_safe_limit")
+        self.assertEqual(input_tokens, 700)
+        self.assertEqual(safe_limit, 800)
+
+
 if __name__ == '__main__':
     unittest.main()

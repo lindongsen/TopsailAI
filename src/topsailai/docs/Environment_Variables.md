@@ -141,6 +141,12 @@ These variables control when the agent archives or summarizes message history to
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `TOPSAILAI_MODEL_MAX_CONTEXT_MAP` | `""` | JSON object mapping exact, case-sensitive model names to positive maximum-context token counts. Empty or invalid JSON provides no mappings. |
+| `TOPSAILAI_MODEL_MAX_CONTEXT_DEFAULT` | `0` | Positive fallback maximum-context token count for unmapped models. `0` disables the dynamic guard when no valid model mapping exists. |
+| `TOPSAILAI_CONTEXT_LOW_WATERMARK_RATIO` | `0.73` | LOW ratio of the summary-safe input limit. Must satisfy `0 < LOW < HIGH < 1`; invalid LOW/HIGH values fall back to `0.73` and `0.93`. |
+| `TOPSAILAI_CONTEXT_HIGH_WATERMARK_RATIO` | `0.93` | HIGH ratio of the summary-safe input limit. Must satisfy `0 < LOW < HIGH < 1`; invalid LOW/HIGH values fall back to `0.73` and `0.93`. |
+| `TOPSAILAI_CONTEXT_SUMMARY_OP_MARGIN` | `8192` | Non-negative token margin reserved so a summarization request remains below the ordinary-request input limit. Invalid values fall back to `8192`. |
+| `TOPSAILAI_CONTEXT_TOKEN_SAFETY_COEF` | `1.05` | Conservative multiplier applied to measured context tokens. Must be a float greater than or equal to `1`; invalid values fall back to `1.05`. |
 | `SESSION_ID` | (unset) | When set, enables session-based chat history persistence. Example: `SESSION_ID=001 llm_chat "your message here"`. |
 | `TOPSAILAI_ENABLE_SESSION_LOCK` | `0` | Lock session during agent execution. `agent_shell`: start -> lock session -> refresh session -> agent_run. |
 | `TOPSAILAI_SESSION_LOCK_WAIT_TIMEOUT` | `1` | Wait time in seconds for session lock acquisition. |

@@ -485,13 +485,20 @@ class TestSummarizeMessages(TestContextRuntimeData):
         self.guard_patcher.stop()
         self.guard_patcher = None
 
-    def _can_summarize_with_real_guard(self, messages, head_offset, tail_offset):
+    def _can_summarize_with_real_guard(
+            self,
+            messages,
+            head_offset,
+            tail_offset,
+            force=False,
+        ):
         """Invoke the class implementation hidden by the legacy-test patch."""
         return type(self.runtime)._can_summarize_user2agent_messages(
             self.runtime,
             messages,
             head_offset,
             tail_offset,
+            force=force,
         )
 
     def _budget_messages(self):
@@ -604,6 +611,117 @@ class TestSummarizeMessages(TestContextRuntimeData):
         self.assertIsNone(result)
         mock_summary.assert_not_called()
         self.assertEqual(self.runtime.messages, messages)
+
+    def test_force_summarize_bypasses_conservative_budget_guard(self):
+        """Forced summarization may bypass ordinary profitability estimates."""
+        self._use_real_summary_guard()
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = self._budget_messages()
+        self.runtime.messages = list(messages)
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Forced summary"}
+        ]
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "64000",
+            "TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE": "4096",
+        }):
+            with patch.object(
+                self.runtime,
+                '_get_current_tokens',
+                side_effect=[70000, 63000, 5000],
+            ):
+                with patch.object(
+                    self.runtime,
+                    '_summarize_messages',
+                    return_value=(mock_llm_chat, "Forced summary"),
+                ) as mock_summary:
+                    with patch.object(self.runtime, 'set_messages'):
+                        result = self.runtime.summarize_messages_for_processed(
+                            messages=messages,
+                            head_offset_to_keep=0,
+                            force=True,
+                        )
+
+        self.assertEqual(result, "Forced summary")
+        mock_summary.assert_called_once()
+
+    def test_force_summarize_rejects_no_compressible_messages(self):
+        """Forced summarization must preserve the no-compressible hard guard."""
+        self._use_real_summary_guard()
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = self._budget_messages()
+        self.runtime.messages = list(messages)
+        with patch.object(
+            self.runtime,
+            '_get_tail_offset_to_keep_in_summary',
+            return_value=len(messages),
+        ):
+            with patch.object(self.runtime, '_summarize_messages') as mock_summary:
+                result = self.runtime.summarize_messages_for_processed(
+                    messages=messages,
+                    head_offset_to_keep=0,
+                    force=True,
+                )
+
+        self.assertIsNone(result)
+        mock_summary.assert_not_called()
+        self.assertEqual(self.runtime.messages, messages)
+
+    def test_force_summarize_rejects_dynamic_capacity_failure(self):
+        """Forced User2Agent summary must obey dynamic capacity constraints."""
+        self._use_real_summary_guard()
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = self._budget_messages()
+        self.runtime.messages = list(messages)
+
+        with patch.object(
+            self.runtime,
+            "_check_dynamic_summary_feasibility",
+            return_value=(
+                False,
+                "preserved_budget_exceeds_safe_limit",
+                700,
+                600,
+            ),
+        ):
+            with patch.object(self.runtime, "_summarize_messages") as mock_summary:
+                result = self.runtime.summarize_messages_for_processed(
+                    messages=messages,
+                    head_offset_to_keep=0,
+                    force=True,
+                )
+
+        self.assertIsNone(result)
+        mock_summary.assert_not_called()
+        self.assertEqual(self.runtime.messages, messages)
+
+    def test_force_summarize_bypasses_session_threshold_recheck(self):
+        """Forced session summarization must not depend on legacy thresholds."""
+        self.runtime.session_id = "force-session"
+        self.runtime.messages = self._budget_messages()
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Forced summary"}
+        ]
+        with patch.object(self.runtime, 'reset_messages'):
+            with patch.object(
+                self.runtime,
+                'is_need_summarize_for_processed',
+                return_value=False,
+            ) as mock_need:
+                with patch.object(
+                    self.runtime,
+                    '_summarize_messages',
+                    return_value=(mock_llm_chat, "Forced summary"),
+                ):
+                    self.mock_ctx_manager.get_messages_by_session.return_value = []
+                    result = self.runtime.summarize_messages_for_processed(
+                        force=True,
+                    )
+
+        self.assertEqual(result, "Forced summary")
+        mock_need.assert_not_called()
 
     def test_budget_skip_does_not_mutate_persistent_or_memory_state(self):
         """Repeated guarded calls leave persistent and in-memory messages intact."""

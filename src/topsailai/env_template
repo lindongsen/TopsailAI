@@ -368,6 +368,21 @@ PURE_SYSTEM_PROMPT=0
 # Context Management
 # =============================================================================
 
+# Model-aware context-window guard. Exact, case-sensitive model names map to
+# positive maximum-context token counts. Empty or invalid JSON disables mappings.
+TOPSAILAI_MODEL_MAX_CONTEXT_MAP=""
+# Positive fallback maximum-context token count for unmapped models. 0 disables
+# the dynamic guard when the active model has no valid mapping.
+TOPSAILAI_MODEL_MAX_CONTEXT_DEFAULT=0
+# LOW and HIGH ratios of the summary-safe input limit. They must satisfy
+# 0 < LOW < HIGH < 1; invalid values fall back together to 0.73 and 0.93.
+TOPSAILAI_CONTEXT_LOW_WATERMARK_RATIO=0.73
+TOPSAILAI_CONTEXT_HIGH_WATERMARK_RATIO=0.93
+# Non-negative token margin reserved so a summarization request remains safe.
+TOPSAILAI_CONTEXT_SUMMARY_OP_MARGIN=8192
+# Token-estimate safety coefficient. Must be a float greater than or equal to 1.
+TOPSAILAI_CONTEXT_TOKEN_SAFETY_COEF=1.05
+
 # Session Management
 # SESSION_ID=
 # When set, enables session-based chat history persistence

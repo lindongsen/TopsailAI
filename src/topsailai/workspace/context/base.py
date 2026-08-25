@@ -32,6 +32,39 @@ from topsailai.workspace.llm_shell import get_llm_chat
 from topsailai.workspace.context import summary_tool
 
 
+CONTEXT_WATERMARK_NORMAL = "NORMAL"
+CONTEXT_WATERMARK_LOW = "LOW"
+CONTEXT_WATERMARK_HIGH = "HIGH"
+CONTEXT_WATERMARK_HARD = "HARD"
+
+
+class ContextWatermarkResult(object):
+    """Immutable-style result of one dynamic context-watermark evaluation."""
+
+    def __init__(
+            self,
+            level: str,
+            current_tokens: int,
+            safe_tokens: int,
+            model_max_context: int,
+            max_tokens: int,
+            summary_safe_limit: int,
+            send_limit: int,
+            low_limit: float,
+            high_limit: float,
+        ):
+        """Store the computed values so callers do not recalculate boundaries."""
+        self.level = level
+        self.current_tokens = current_tokens
+        self.safe_tokens = safe_tokens
+        self.model_max_context = model_max_context
+        self.max_tokens = max_tokens
+        self.summary_safe_limit = summary_safe_limit
+        self.send_limit = send_limit
+        self.low_limit = low_limit
+        self.high_limit = high_limit
+
+
 class ContextRuntimeBase(object):
     """
     Context manager for runtime (session).
@@ -477,6 +510,205 @@ class ContextRuntimeBase(object):
     ###############################################################
     # Env
     ###############################################################
+
+    def _resolve_model_max_context(self, model_name: str) -> int | None:
+        """Resolve the active model's maximum context window from environment."""
+        raw_map = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_MODEL_MAX_CONTEXT_MAP", default=""
+        )
+        context_map = {}
+        if raw_map and str(raw_map).strip():
+            context_map = json_tool.safe_json_load(str(raw_map).strip())
+            if not isinstance(context_map, dict):
+                logger.warning(
+                    "TOPSAILAI_MODEL_MAX_CONTEXT_MAP must be a valid JSON object"
+                )
+                return None
+
+        mapped_value = context_map.get(model_name) if model_name else None
+        if mapped_value is not None:
+            try:
+                mapped_value = int(mapped_value)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "TOPSAILAI_MODEL_MAX_CONTEXT_MAP value for model %s must be a positive integer",
+                    model_name,
+                )
+                return None
+            if mapped_value > 0:
+                return mapped_value
+            logger.warning(
+                "TOPSAILAI_MODEL_MAX_CONTEXT_MAP value for model %s must be positive",
+                model_name,
+            )
+            return None
+
+        default_value = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_MODEL_MAX_CONTEXT_DEFAULT",
+            default=0,
+            formatter=int,
+        ) or 0
+        return default_value if default_value > 0 else None
+
+    def _get_watermark_ratios(self) -> tuple[float, float]:
+        """Read valid low/high ratios or return the documented defaults."""
+        low_ratio = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_CONTEXT_LOW_WATERMARK_RATIO",
+            default=0.73,
+            formatter=float,
+        )
+        high_ratio = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_CONTEXT_HIGH_WATERMARK_RATIO",
+            default=0.93,
+            formatter=float,
+        )
+        if (
+                low_ratio is None
+                or high_ratio is None
+                or not 0 < low_ratio < high_ratio < 1
+            ):
+            logger.warning(
+                "invalid context watermark ratios low=%s high=%s; using defaults 0.73 and 0.93",
+                low_ratio,
+                high_ratio,
+            )
+            return 0.73, 0.93
+        return low_ratio, high_ratio
+
+    def _estimate_safe_tokens(self, raw_tokens: int) -> int:
+        """Apply the configured conservative coefficient to a token estimate."""
+        coefficient = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_CONTEXT_TOKEN_SAFETY_COEF",
+            default=1.05,
+            formatter=float,
+        )
+        if coefficient is None or coefficient < 1.0:
+            logger.warning(
+                "invalid TOPSAILAI_CONTEXT_TOKEN_SAFETY_COEF=%s; using 1.05",
+                coefficient,
+            )
+            coefficient = 1.05
+        return int((max(0, raw_tokens) * coefficient) + 0.999999999)
+
+    def _compute_context_limits(
+            self,
+            model_name: str,
+            max_tokens: int,
+        ) -> tuple[int, int, int] | None:
+        """Compute model maximum, summary-safe limit, and absolute send limit."""
+        model_max_context = self._resolve_model_max_context(model_name)
+        if model_max_context is None:
+            return None
+
+        try:
+            max_tokens = int(max_tokens)
+        except (TypeError, ValueError):
+            max_tokens = 0
+        margin = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_CONTEXT_SUMMARY_OP_MARGIN",
+            default=8192,
+            formatter=int,
+        )
+        if margin is None or margin < 0:
+            logger.warning(
+                "invalid TOPSAILAI_CONTEXT_SUMMARY_OP_MARGIN=%s; using 8192",
+                margin,
+            )
+            margin = 8192
+
+        send_limit = model_max_context - max(0, max_tokens)
+        summary_safe_limit = send_limit - margin
+        return model_max_context, summary_safe_limit, send_limit
+
+    def _resolve_summary_input_messages(self, messages):
+        """Resolve the exact message list that the summary LLM will receive."""
+        if env_tool.EnvReaderInstance.get(
+                "TOPSAILAI_CONTEXT_SUMMARY_MODE"
+            ) != "runtime":
+            return messages
+
+        all_messages = self._get_token_calculation_messages()
+        if not all_messages:
+            all_messages = messages
+        if all_messages and messages and len(all_messages) < len(messages):
+            all_messages = messages
+        return all_messages
+
+    def _check_dynamic_summary_feasibility(
+            self,
+            summary_messages,
+            preserved_tokens: int,
+            summary_token_reserve: int,
+        ) -> tuple[bool, str, int | None, int | None]:
+        """Check hard model-capacity limits before invoking the summary LLM."""
+        llm_model = getattr(self.ai_agent, "llm_model", None) if self.ai_agent else None
+        model_name = getattr(llm_model, "model_name", "")
+        max_tokens = getattr(llm_model, "max_tokens", 0)
+        limits = self._compute_context_limits(model_name, max_tokens)
+        if limits is None:
+            return True, "", None, None
+
+        model_max_context, summary_safe_limit, _send_limit = limits
+        input_tokens = self._get_current_tokens(summary_messages)
+        if input_tokens is None:
+            return False, "summary_input_tokens_unavailable", None, summary_safe_limit
+
+        safe_input_tokens = self._estimate_safe_tokens(input_tokens)
+        safe_preserved_tokens = self._estimate_safe_tokens(preserved_tokens)
+        if safe_input_tokens > model_max_context:
+            return False, "summary_input_exceeds_model_context", input_tokens, summary_safe_limit
+        if safe_input_tokens > summary_safe_limit:
+            return False, "summary_input_exceeds_safe_limit", input_tokens, summary_safe_limit
+        if safe_preserved_tokens + summary_token_reserve > summary_safe_limit:
+            return False, "preserved_budget_exceeds_safe_limit", input_tokens, summary_safe_limit
+        return True, "", input_tokens, summary_safe_limit
+
+    def _classify_context_watermark(
+            self,
+            current_tokens: int | None = None,
+            model_name: str | None = None,
+            max_tokens: int | None = None,
+        ) -> ContextWatermarkResult | None:
+        """Classify one token snapshot in HARD, HIGH, LOW, NORMAL priority."""
+        llm_model = getattr(self.ai_agent, "llm_model", None) if self.ai_agent else None
+        if model_name is None:
+            model_name = getattr(llm_model, "model_name", "")
+        if max_tokens is None:
+            max_tokens = getattr(llm_model, "max_tokens", 0)
+        if current_tokens is None:
+            current_tokens = self._get_current_tokens(realtime=True)
+        if current_tokens is None:
+            return None
+
+        limits = self._compute_context_limits(model_name, max_tokens)
+        if limits is None:
+            return None
+        model_max_context, summary_safe_limit, send_limit = limits
+        safe_tokens = self._estimate_safe_tokens(int(current_tokens))
+        low_ratio, high_ratio = self._get_watermark_ratios()
+        low_limit = low_ratio * summary_safe_limit
+        high_limit = high_ratio * summary_safe_limit
+
+        if send_limit <= 0 or summary_safe_limit <= 0 or safe_tokens >= send_limit:
+            level = CONTEXT_WATERMARK_HARD
+        elif safe_tokens >= high_limit:
+            level = CONTEXT_WATERMARK_HIGH
+        elif safe_tokens >= low_limit:
+            level = CONTEXT_WATERMARK_LOW
+        else:
+            level = CONTEXT_WATERMARK_NORMAL
+
+        return ContextWatermarkResult(
+            level=level,
+            current_tokens=int(current_tokens),
+            safe_tokens=safe_tokens,
+            model_max_context=model_max_context,
+            max_tokens=max(0, int(max_tokens or 0)),
+            summary_safe_limit=summary_safe_limit,
+            send_limit=send_limit,
+            low_limit=low_limit,
+            high_limit=high_limit,
+        )
 
     def _get_head_offset_to_keep_in_summary(
             self,

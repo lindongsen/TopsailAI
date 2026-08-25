@@ -380,6 +380,28 @@ class TestPromptBase(unittest.TestCase):
         # Should not raise
         pb.call_hooks_pre_chat()
 
+
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_call_hooks_pre_chat_propagates_context_window_limit(
+        self, mock_generate_prompt, mock_get_managers
+    ):
+        """Test context-window control flow is not swallowed by hook handling."""
+        from topsailai.ai_base.exception import ContextWindowLimitError
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+        pb = PromptBase(system_prompt="test")
+
+        def failing_hook(_obj):
+            raise ContextWindowLimitError("context remains above send limit")
+
+        pb.hooks_pre_chat.append(failing_hook)
+
+        with self.assertRaisesRegex(ContextWindowLimitError, "above send limit"):
+            pb.call_hooks_pre_chat()
+
     @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
     @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
     def test_call_hooks_ctx_history_no_hooks(self, mock_generate_prompt, mock_get_managers):

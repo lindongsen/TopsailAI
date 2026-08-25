@@ -33,6 +33,7 @@ from topsailai.ai_base.agent_types import (
     exception as agent_exception,
 )
 from topsailai.ai_base.exception import (
+    ContextWindowLimitError,
     HardInterruptError,
     HeavyTaskError,
 )
@@ -426,6 +427,12 @@ class AgentChat(AgentChatBase):
             except agent_exception.AgentEndProcess:
                 self.last_message = self.messages[-1]
                 self.call_hooks_post_fail_run(agent_exception.AgentEndProcess())
+            except ContextWindowLimitError as e:
+                logger.warning("ContextWindowLimitError caught in agent chat loop: %s", e)
+                answer = f"Task terminated: {e}"
+                self.last_message = answer
+                self.call_hooks_post_fail_run(e)
+                break
             except HeavyTaskError as e:
                 logger.warning("HeavyTaskError caught in agent chat loop: %s", e)
                 answer = f"Task terminated: {e}"

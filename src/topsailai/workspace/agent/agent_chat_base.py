@@ -17,6 +17,7 @@ from topsailai.ai_base.constants import (
     ROLE_SYSTEM,
 )
 from topsailai.ai_base.exception import (
+    ContextWindowLimitError,
     HeavyTaskError,
 )
 from topsailai.ai_base.prompt_base import (
@@ -25,6 +26,11 @@ from topsailai.ai_base.prompt_base import (
 from topsailai.context import ctx_manager
 from topsailai.workspace.context.ctx_runtime import (
     ContextRuntimeData,
+)
+from topsailai.workspace.context.base import (
+    CONTEXT_WATERMARK_HARD,
+    CONTEXT_WATERMARK_HIGH,
+    CONTEXT_WATERMARK_LOW,
 )
 from topsailai.workspace.context.agent import (
     ContextRuntimeAIAgent,
@@ -225,29 +231,71 @@ class AgentChatBase(object):
             return
 
         def hook_summarize_messages(_ai_agent):
-            """Summarize context messages to reduce token usage.
-
-            Checks if message summarization is needed for either processed Q&A messages
-            or currently processing agent messages, and performs summarization if required.
-
-            Args:
-                _ai_agent: The agent instance to operate on.
-            """
+            """Summarize context messages and enforce the model send limit."""
             _answer = None
 
             self.heavy_task.block_heavy_task()
 
-            # the processed Q&A messages
-            if ctx_runtime_data.is_need_summarize_for_processed():
-                ctx_runtime_data.summarize_messages_for_processed()
+            watermark = ctx_runtime_data._classify_context_watermark()
+            dynamic_level = watermark.level if watermark else None
+            dynamic_summary = dynamic_level in (
+                CONTEXT_WATERMARK_LOW,
+                CONTEXT_WATERMARK_HIGH,
+                CONTEXT_WATERMARK_HARD,
+            )
+            force_summary = dynamic_level in (
+                CONTEXT_WATERMARK_HIGH,
+                CONTEXT_WATERMARK_HARD,
+            )
 
-            # the processing agent messages
-            if ctx_runtime_data.is_need_summarize_for_processing():
-                _answer = ctx_runtime_data.summarize_messages_for_processing()
-                if _answer:
-                    self.heavy_task.continuous_summary_times += 1
-                else:
-                    self.heavy_task.continuous_summary_times = 0
+            if dynamic_summary:
+                need_processed_summary = ctx_runtime_data.is_need_summarize_for_processed()
+                need_processing_summary = ctx_runtime_data.is_need_summarize_for_processing()
+                ctx_runtime_data.summarize_messages_for_processed(force=force_summary)
+                _answer = ctx_runtime_data.summarize_messages_for_processing(
+                    force=force_summary
+                )
+            else:
+                need_processing_summary = False
+                if ctx_runtime_data.is_need_summarize_for_processed():
+                    ctx_runtime_data.summarize_messages_for_processed()
+                need_processing_summary = ctx_runtime_data.is_need_summarize_for_processing()
+                if need_processing_summary:
+                    _answer = ctx_runtime_data.summarize_messages_for_processing()
+
+            if dynamic_summary:
+                updated_watermark = ctx_runtime_data._classify_context_watermark()
+                if (
+                        watermark
+                        and updated_watermark
+                        and updated_watermark.current_tokens >= watermark.current_tokens
+                    ):
+                    logger.error(
+                        "Context summarization did not reduce tokens: before=%s after=%s level=%s",
+                        watermark.current_tokens,
+                        updated_watermark.current_tokens,
+                        dynamic_level,
+                    )
+                if (
+                        dynamic_level == CONTEXT_WATERMARK_HARD
+                        and (
+                            updated_watermark is None
+                            or updated_watermark.level == CONTEXT_WATERMARK_HARD
+                        )
+                    ):
+                    current_tokens = (
+                        updated_watermark.current_tokens
+                        if updated_watermark else watermark.current_tokens
+                    )
+                    raise ContextWindowLimitError(
+                        "Context remains above the model send limit after forced summarization: "
+                        f"current_tokens={current_tokens}, send_limit={watermark.send_limit}"
+                    )
+
+            if _answer:
+                self.heavy_task.continuous_summary_times += 1
+            elif dynamic_summary or need_processing_summary:
+                self.heavy_task.continuous_summary_times = 0
 
             # heavy task
             if _answer and self.heavy_task.is_heavy_task():

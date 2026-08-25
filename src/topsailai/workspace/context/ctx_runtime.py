@@ -262,8 +262,9 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             messages: list,
             head_offset_to_keep: int,
             tail_offset_to_keep: int,
+            force: bool = False,
         ) -> tuple[bool, int | None]:
-        """Check whether User2Agent summarization can fit its token budget."""
+        """Check hard feasibility and, unless forced, ordinary summary value."""
         current_tokens = self._get_current_tokens(messages)
         token_threshold = env_tool.EnvReaderInstance.get(
             "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD",
@@ -280,28 +281,43 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         preserved_tokens = self._get_current_tokens(preserved_messages) or 0
         summary_token_reserve = self._get_user2agent_summary_token_reserve()
         estimated_after_tokens = preserved_tokens + summary_token_reserve
+        summary_messages = self._resolve_summary_input_messages(messages)
+        dynamic_allowed, dynamic_reason, summary_input_tokens, summary_safe_limit = (
+            self._check_dynamic_summary_feasibility(
+                summary_messages,
+                preserved_tokens,
+                summary_token_reserve,
+            )
+        )
 
         reason = ""
         if not compressible_messages:
             reason = "no_compressible_messages"
-        elif token_threshold > 0 and estimated_after_tokens > token_threshold:
-            reason = "preserved_budget_exceeds_threshold"
-        elif current_tokens is not None and estimated_after_tokens >= current_tokens:
-            reason = "estimated_summary_not_smaller"
+        elif not dynamic_allowed:
+            reason = dynamic_reason
+        elif not force:
+            if token_threshold > 0 and estimated_after_tokens > token_threshold:
+                reason = "preserved_budget_exceeds_threshold"
+            elif current_tokens is not None and estimated_after_tokens >= current_tokens:
+                reason = "estimated_summary_not_smaller"
 
         if not reason:
             return True, current_tokens
 
         logger.warning(
             "[summarize_messages_for_processed] skip User2Agent summarization: "
-            "reason=%s, current_tokens=%s, preserved_tokens=%s, "
+            "reason=%s, force=%s, current_tokens=%s, preserved_tokens=%s, "
             "summary_token_reserve=%s, estimated_after_tokens=%s, "
+            "summary_input_tokens=%s, summary_safe_limit=%s, "
             "token_threshold=%s, session_id=%s",
             reason,
+            force,
             current_tokens,
             preserved_tokens,
             summary_token_reserve,
             estimated_after_tokens,
+            summary_input_tokens,
+            summary_safe_limit,
             token_threshold,
             self.session_id or "",
         )
@@ -313,6 +329,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             messages: list = None,
             head_offset_to_keep: int = None,
             need_interactive: bool = False,
+            force: bool = False,
         ) -> str | None:
         """
         Summarize the processed conversation messages into a single text.
@@ -342,6 +359,8 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                                                  If None, uses default threshold.
             need_interactive (bool): If True, prompts user to confirm
                                      the summarized answer. Defaults to False.
+            force (bool): Bypass ordinary profitability checks while retaining
+                          hard summarization constraints. Defaults to False.
 
         Returns:
             str | None: The summarized text if successful, None otherwise.
@@ -360,7 +379,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             # check again
             if self.session_id:
                 self.reset_messages()
-                if not self.is_need_summarize_for_processed():
+                if not force and not self.is_need_summarize_for_processed():
                     print_info(f"!!! [User2Agent] [Summarization] No need summarize, current msg_len=[{len(self.messages)}]")
                     return None
 
@@ -385,6 +404,7 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             messages,
             head_offset_to_keep,
             tail_offset_to_keep,
+            force=force,
         )
         if not can_summarize:
             return None

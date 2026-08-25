@@ -350,6 +350,33 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.assertIsNone(result)
             mock_print_error.assert_called()
 
+    def test_force_summarize_bypasses_short_message_guard(self):
+        """Forced summarization must bypass the ordinary short-message guard."""
+        self.test_instance._ai_agent.messages = [
+            {
+                "role": "user",
+                "content": {"step_name": "task", "raw_text": "task"},
+            },
+            {"role": "assistant", "content": "large observation"},
+        ]
+        self.test_instance._first_position = 0
+
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
+        }):
+            with patch.object(
+                self.test_instance,
+                '_summarize_messages',
+                wraps=self.test_instance._summarize_messages,
+            ) as mock_summary:
+                result = self.test_instance.summarize_messages_for_processing(
+                    head_offset_to_keep=0,
+                    force=True,
+                )
+
+        self.assertEqual(result, "Summarized content")
+        mock_summary.assert_called_once()
+
     def _budget_messages(self):
         """Return Agent2LLM messages with overlapping preserved partitions."""
         task = {
@@ -442,6 +469,91 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
         mock_summary.assert_not_called()
         self.assertEqual(self.test_instance._ai_agent.messages, original_messages)
 
+    def test_force_summarize_bypasses_conservative_budget_guard(self):
+        """Forced summarization may bypass an ordinary profitability estimate."""
+        messages = self._budget_messages()
+        self.test_instance._ai_agent.messages = list(messages)
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD": "64000",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_TOKEN_RESERVE": "4096",
+        }):
+            with patch.object(
+                self.test_instance,
+                '_get_current_tokens',
+                side_effect=[10000, 6000, 5000],
+            ):
+                with patch.object(
+                    self.test_instance,
+                    '_summarize_messages',
+                    wraps=self.test_instance._summarize_messages,
+                ) as mock_summary:
+                    result = self.test_instance.summarize_messages_for_processing(
+                        head_offset_to_keep=0,
+                        force=True,
+                    )
+
+        self.assertEqual(result, "Summarized content")
+        mock_summary.assert_called_once()
+
+    def test_force_summarize_rejects_no_compressible_messages(self):
+        """Forced summarization must preserve the no-compressible hard guard."""
+        messages = self._budget_messages()
+        original_messages = list(messages)
+        self.test_instance._ai_agent.messages = list(messages)
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
+        }):
+            with patch.object(
+                self.test_instance,
+                '_get_tail_offset_to_keep_in_summary',
+                return_value=len(messages),
+            ):
+                with patch.object(
+                    self.test_instance,
+                    '_summarize_messages',
+                ) as mock_summary:
+                    result = self.test_instance.summarize_messages_for_processing(
+                        head_offset_to_keep=0,
+                        force=True,
+                    )
+
+        self.assertIsNone(result)
+        mock_summary.assert_not_called()
+        self.assertEqual(self.test_instance._ai_agent.messages, original_messages)
+
+    def test_force_summarize_rejects_dynamic_capacity_failure(self):
+        """Forced Agent2LLM summary must obey dynamic capacity constraints."""
+        messages = self._budget_messages()
+        original_messages = list(messages)
+        self.test_instance._ai_agent.messages = list(messages)
+
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
+        }):
+            with patch.object(
+                self.test_instance,
+                "_check_dynamic_summary_feasibility",
+                return_value=(
+                    False,
+                    "summary_input_exceeds_safe_limit",
+                    900,
+                    800,
+                ),
+            ):
+                with patch.object(
+                    self.test_instance,
+                    "_summarize_messages",
+                ) as mock_summary:
+                    result = self.test_instance.summarize_messages_for_processing(
+                        head_offset_to_keep=0,
+                        force=True,
+                    )
+
+        self.assertIsNone(result)
+        mock_summary.assert_not_called()
+        self.assertEqual(self.test_instance._ai_agent.messages, original_messages)
+
     def test_summary_budget_disabled_threshold_does_not_intercept(self):
         """A non-positive threshold disables the feasibility guard."""
         messages = self._budget_messages()
@@ -454,7 +566,7 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             with patch.object(
                 self.test_instance,
                 '_get_current_tokens',
-                side_effect=[100, 150],
+                side_effect=[100, 150, 50],
             ):
                 with patch.object(
                     self.test_instance,
@@ -774,7 +886,7 @@ class TestEdgeCases(TestContextRuntimeAgent2LLM):
             {"role": "assistant", "content": "Reply 1"},
             {"role": "user", "content": "Message 2"},
         ]
-        self.test_instance._ai_agent.messages = normal_messages + [task_msg]
+        self.test_instance._ai_agent.messages = [task_msg] + normal_messages
         self.test_instance._first_position = 0
 
         captured = []
@@ -788,9 +900,13 @@ class TestEdgeCases(TestContextRuntimeAgent2LLM):
         self.test_instance._summarize_messages_impl = mock_summarize
 
         with patch.dict(os.environ, {"TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0"}):
-            with patch('topsailai.workspace.context.agent2llm.logger'):
-                with patch('topsailai.workspace.context.agent2llm.print_info'):
-                    self.test_instance.summarize_messages_for_processing()
+            with patch.object(self.test_instance, '_get_tail_offset_to_keep_in_summary', return_value=0):
+                with patch('topsailai.workspace.context.agent2llm.logger'):
+                    with patch('topsailai.workspace.context.agent2llm.print_info'):
+                        self.test_instance.summarize_messages_for_processing(
+                            head_offset_to_keep=0,
+                            force=True,
+                        )
 
         self.assertEqual(len(captured), 1)
         # Runtime messages (including task messages) are forwarded to the
@@ -918,8 +1034,8 @@ class TestEdgeCases(TestContextRuntimeAgent2LLM):
         self.assertNotIn("msg0", final_contents)
         self.assertNotIn("msg2", final_contents)
 
-    def test_summarize_tail_offset_larger_than_messages_keeps_all(self):
-        """Test that tail offset larger than message count keeps all messages."""
+    def test_summarize_tail_offset_larger_than_messages_skips_without_compressible_content(self):
+        """Test that preserving every message skips summarization."""
         task_msg = {"role": "user", "content": {"step_name": "task", "raw_text": "Task tail big"}}
         self.test_instance._ai_agent.messages = [
             task_msg,
@@ -928,34 +1044,17 @@ class TestEdgeCases(TestContextRuntimeAgent2LLM):
             {"role": "assistant", "content": "msg2"},
         ]
         self.test_instance._messages = [{"role": "user", "content": "msg1"}]
-
-        mock_llm_chat = MagicMock()
-        mock_llm_chat.prompt_ctl.messages = [
-            {"role": "assistant", "content": "Summary"}
-        ]
+        original_messages = list(self.test_instance._ai_agent.messages)
 
         with patch.dict(os.environ, {"TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES": "0"}):
-            with patch.object(self.test_instance, '_summarize_messages', return_value=(mock_llm_chat, "Summary")):
+            with patch.object(self.test_instance, '_summarize_messages') as mock_summarize:
                 with patch.object(self.test_instance, '_get_head_offset_to_keep_in_summary', return_value=0):
                     with patch.object(self.test_instance, '_get_tail_offset_to_keep_in_summary', return_value=100):
-                        self.test_instance.summarize_messages_for_processing()
+                        result = self.test_instance.summarize_messages_for_processing(force=True)
 
-        final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
-        # All original messages plus summary should be present.
-        self.assertIn({"step_name": "task", "raw_text": "Task tail big"}, final_contents)
-        self.assertIn("msg0", final_contents)
-        self.assertIn("msg1", final_contents)
-        self.assertIn("msg2", final_contents)
-        self.assertIn("Summary", final_contents)
-
-        # Verify required order: head_portion + tail_portion + summary + last_user_message.
-        # msg1 is also the User2Agent session message, so it is preserved in the head/session
-        # portion and appears before the summary; tail_offset here covers the remaining messages.
-        idx_task = final_contents.index({"step_name": "task", "raw_text": "Task tail big"})
-        idx_summary = final_contents.index("Summary")
-        self.assertLess(idx_task, idx_summary)
-        idx_msg1 = final_contents.index("msg1")
-        self.assertLess(idx_msg1, idx_summary)
+        self.assertIsNone(result)
+        mock_summarize.assert_not_called()
+        self.assertEqual(self.test_instance._ai_agent.messages, original_messages)
 
 
 class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):

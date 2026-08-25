@@ -95,14 +95,14 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             return default_reserve
         return reserve
 
-    def _build_agent2llm_preserved_messages(
+    def _build_agent2llm_summary_partitions(
             self,
             messages: list,
             head_offset_to_keep: int,
             tail_offset_to_keep: int,
             need_session_messages: bool,
-        ) -> list:
-        """Build the deduplicated messages that survive Agent2LLM summarization."""
+        ) -> tuple[list, list]:
+        """Build deduplicated preserved and compressible Agent2LLM messages."""
         preserved_messages = []
         message_groups = [
             self._get_messages_before_first_user_task_message(messages),
@@ -121,6 +121,27 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             for message in message_group:
                 if not self._message_in_list(message, preserved_messages):
                     preserved_messages.append(message)
+
+        compressible_messages = [
+            message for message in messages
+            if not self._message_in_list(message, preserved_messages)
+        ]
+        return preserved_messages, compressible_messages
+
+    def _build_agent2llm_preserved_messages(
+            self,
+            messages: list,
+            head_offset_to_keep: int,
+            tail_offset_to_keep: int,
+            need_session_messages: bool,
+        ) -> list:
+        """Build the deduplicated messages that survive Agent2LLM summarization."""
+        preserved_messages, _ = self._build_agent2llm_summary_partitions(
+            messages,
+            head_offset_to_keep,
+            tail_offset_to_keep,
+            need_session_messages,
+        )
         return preserved_messages
 
     def _can_summarize_agent2llm_messages(
@@ -129,46 +150,63 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             head_offset_to_keep: int,
             tail_offset_to_keep: int,
             need_session_messages: bool,
+            force: bool = False,
         ) -> tuple[bool, int | None]:
-        """Check whether Agent2LLM summarization can fit its token budget."""
+        """Check hard feasibility and, unless forced, ordinary summary value."""
         current_tokens = self._get_current_tokens(self.ai_agent.messages)
+        preserved_messages, compressible_messages = (
+            self._build_agent2llm_summary_partitions(
+                messages,
+                head_offset_to_keep,
+                tail_offset_to_keep,
+                need_session_messages,
+            )
+        )
+        preserved_tokens = self._get_current_tokens(preserved_messages) or 0
+        summary_token_reserve = self._get_agent2llm_summary_token_reserve()
+        estimated_after_tokens = preserved_tokens + summary_token_reserve
         token_threshold = env_tool.EnvReaderInstance.get(
             "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD",
             default=128000,
             formatter=int,
         )
-        if not isinstance(token_threshold, int) or token_threshold <= 0:
-            return True, current_tokens
-
-        preserved_messages = self._build_agent2llm_preserved_messages(
-            messages,
-            head_offset_to_keep,
-            tail_offset_to_keep,
-            need_session_messages,
+        summary_messages = self._resolve_summary_input_messages(messages)
+        dynamic_allowed, dynamic_reason, summary_input_tokens, summary_safe_limit = (
+            self._check_dynamic_summary_feasibility(
+                summary_messages,
+                preserved_tokens,
+                summary_token_reserve,
+            )
         )
-        preserved_tokens = self._get_current_tokens(preserved_messages) or 0
-        summary_token_reserve = self._get_agent2llm_summary_token_reserve()
-        estimated_after_tokens = preserved_tokens + summary_token_reserve
 
         reason = ""
-        if estimated_after_tokens > token_threshold:
-            reason = "preserved_budget_exceeds_threshold"
-        elif current_tokens is not None and estimated_after_tokens >= current_tokens:
-            reason = "estimated_summary_not_smaller"
+        if not compressible_messages:
+            reason = "no_compressible_messages"
+        elif not dynamic_allowed:
+            reason = dynamic_reason
+        elif not force and isinstance(token_threshold, int) and token_threshold > 0:
+            if estimated_after_tokens > token_threshold:
+                reason = "preserved_budget_exceeds_threshold"
+            elif current_tokens is not None and estimated_after_tokens >= current_tokens:
+                reason = "estimated_summary_not_smaller"
 
         if not reason:
             return True, current_tokens
 
         logger.warning(
             "[summarize_messages_for_processing] skip Agent2LLM summarization: "
-            "reason=%s, current_tokens=%s, preserved_tokens=%s, "
+            "reason=%s, force=%s, current_tokens=%s, preserved_tokens=%s, "
             "summary_token_reserve=%s, estimated_after_tokens=%s, "
+            "summary_input_tokens=%s, summary_safe_limit=%s, "
             "token_threshold=%s, session_id=%s",
             reason,
+            force,
             current_tokens,
             preserved_tokens,
             summary_token_reserve,
             estimated_after_tokens,
+            summary_input_tokens,
+            summary_safe_limit,
             token_threshold,
             self.session_id or "",
         )
@@ -179,6 +217,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             self,
             messages: list | str = None,
             head_offset_to_keep: int = None,
+            force: bool = False,
         ) -> str | None:
         """
         Summarize messages into a single text for processing.
@@ -256,7 +295,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         if need_session_messages:
             total_len += session_msg_len
 
-        if total_len <= 2:
+        if total_len <= 2 and not force:
             print_error(f"!!! [Agent2LLM] [Summarization] no need summarize due to messages too short: [{total_len}]")
             return None
 
@@ -270,7 +309,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             if min_extra_messages is None or min_extra_messages < 0:
                 logger.warning("invalid TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES [%s], using default 17", min_extra_messages)
                 min_extra_messages = 17
-            if msg_len < (session_msg_len + min_extra_messages):
+            if msg_len < (session_msg_len + min_extra_messages) and not force:
                 print_info(f"!!! [Agent2LLM] [Summarization] no need summarize due to messages too short: [{msg_len}]")
                 return None
 
@@ -286,6 +325,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             head_offset_to_keep,
             tail_offset_to_keep,
             need_session_messages,
+            force=force,
         )
         if not can_summarize:
             return None

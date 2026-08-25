@@ -149,3 +149,7 @@ Key logic:
 ## Archive Message Switch
 
 Added `TOPSAILAI_ARCHIVE_MESSAGE_ENABLED` (default `1`) to let operators disable archive/link-message processing independently, while native tool calls continue to force archiving off to preserve tool-call pairing; session message persistence remains unchanged.
+
+## Dynamic Model Context Window Guard
+
+Added a dynamic model context window guard that anticipates request overflow from each model's configured maximum context before ordinary LLM calls: it derives `send_limit` and `summary_safe_limit`, dynamically recalculates model and output-token budgets, and classifies usage in `HARD -> HIGH -> LOW -> NORMAL` order so LOW summarizes normally at the current checkpoint, HIGH forces summarization, and HARD blocks the request with `ContextWindowLimitError` when compression cannot restore safety. The guard is configured through `TOPSAILAI_MODEL_MAX_CONTEXT_*` and `TOPSAILAI_CONTEXT_*` environment variables, while the existing fixed-threshold behavior remains unchanged when no dynamic model limit is configured.
