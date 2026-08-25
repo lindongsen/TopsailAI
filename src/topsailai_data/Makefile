@@ -3,8 +3,8 @@
 # Language: Go
 
 # Binary and path configuration
-BINARY_NAME := topsailai_data
-CMD_PATH := ./cmd/topsailai_data
+BINARY_NAME := topsailai-data
+CMD_PATH := ./cmd/topsailai-data
 BIN_DIR := ./bin
 BIN := $(BIN_DIR)/$(BINARY_NAME)
 
@@ -64,7 +64,7 @@ install: build
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  build   - Compile the CLI binary to bin/topsailai_data"
+	@echo "  build   - Compile the CLI binary to bin/topsailai-data"
 	@echo "  test    - Run go test ./... -count=1"
 	@echo "  vet     - Run go vet ./..."
 	@echo "  fmt     - Run go fmt ./..."

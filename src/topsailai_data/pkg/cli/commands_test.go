@@ -107,7 +107,7 @@ func TestNoArgsPrintsUsage(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(out, "Usage: topsailai_data") {
+	if !strings.Contains(out, "Usage: topsailai-data") {
 		t.Fatalf("expected usage output, got %s", out)
 	}
 	if !strings.Contains(out, "create") {
@@ -1319,7 +1319,7 @@ func TestHelpPrintsUsage(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(out, "Usage: topsailai_data") {
+	if !strings.Contains(out, "Usage: topsailai-data") {
 		t.Fatalf("help output missing usage: %s", out)
 	}
 	if !strings.Contains(out, "create") {

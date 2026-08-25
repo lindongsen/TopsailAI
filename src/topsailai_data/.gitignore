@@ -1,6 +1,5 @@
 # Build artifacts
 /bin/
-/skills/topsailai_data/bin/
 *.exe
 *test
 *out

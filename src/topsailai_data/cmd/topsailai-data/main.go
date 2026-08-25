@@ -1,4 +1,4 @@
-// topsailai_data is the command-line interface for the topsailai_data object
+// topsailai-data is the command-line interface for the topsailai_data object
 // storage system. It loads configuration from environment variables, initializes
 // the configured metadata and actual-data adapters, and dispatches user
 // commands through the cli package.

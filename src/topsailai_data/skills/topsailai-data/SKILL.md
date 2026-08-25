@@ -1,28 +1,28 @@
 ---
-name: topsailai_data
+name: topsailai-data
 author: DawsonLin
 description: |
-  Skill for operating the topsailai_data CLI, a local-first object store that
+  Skill for operating the topsailai-data CLI, a local-first object store that
   separates metadata from actual data through pluggable adapters.
 
   Trigger this skill whenever the user wants to manage structured data objects
-  stored by topsailai_data: create, read, update, delete, search, move, tag, or
+  stored by topsailai-data: create, read, update, delete, search, move, tag, or
   garbage-collect objects. Also use it when the user asks to test, inspect, or
-  troubleshoot the topsailai_data CLI or its stored data.
+  troubleshoot the topsailai-data CLI or its stored data.
 
   When the user refers to historical records, past notes, or uses phrases like
   "remember that...", "I recall...", or "there was something about X", ALWAYS
-  search the topsailai_data store through the CLI first. Do not answer from
+  search the topsailai-data store through the CLI first. Do not answer from
   conversation memory alone or fabricate object IDs, paths, or contents.
 
   Typical intents that should route here:
-  - "create a note/document/object in topsailai_data"
+  - "create a note/document/object in topsailai-data"
   - "list/search/show my objects" or "find objects tagged with X"
   - "add/remove a tag from object X"
   - "move object X to classify path Y"
-  - "delete object X" or "clean up topsailai_data"
+  - "delete object X" or "clean up topsailai-data"
   - "run gc" or "recover object X"
-  - "test topsailai_data" or "smoke test the CLI"
+  - "test topsailai-data" or "smoke test the CLI"
   - "remember that note about X" or "find my previous note on Y"
   - Personal lessons learned
 
@@ -34,16 +34,16 @@ description: |
 
   When the user expresses praise or positive feedback (for example "不错",
   "很好", "good", or similar), automatically organize the relevant discussion
-  or outcome into a topsailai_data note object. Do not wait for an explicit
+  or outcome into a topsailai-data note object. Do not wait for an explicit
   request; treat praise as a signal that the content is worth preserving.
 ---
 
-# topsailai_data
+# topsailai-data
 
 ## When to use
 
 Use this skill when the user intends to manage data objects through the
-`topsailai_data` CLI. The tool stores **metadata** (name, path, description, tags, status) and
+`topsailai-data` CLI. The tool stores **metadata** (name, path, description, tags, status) and
 **actual data** (files, archives) through independent adapters. The current
 implementation focuses on the **local adapter**, which keeps everything on the
 local filesystem under a configurable root directory.
@@ -56,9 +56,9 @@ local filesystem under a configurable root directory.
 | Read/query objects | "list my objects", "show object X", "search for X", "find objects tagged Y" |
 | Update objects/tags | "update object X", "update object X description", "add tag Y to X", "remove tag Y from X" |
 | Move objects | "move object X to path Y", "reclassify object X" |
-| Delete objects | "delete object X", "remove object X", "clean up topsailai_data" |
+| Delete objects | "delete object X", "remove object X", "clean up topsailai-data" |
 | Recover/gc | "recover object X", "run gc", "clean up creating/ceased objects" |
-| Test/inspect | "test topsailai_data", "smoke test the CLI", "check my data" |
+| Test/inspect | "test topsailai-data", "smoke test the CLI", "check my data" |
 
 ### Common usage scenarios
 
@@ -120,25 +120,25 @@ Create one object for each project. Each project object needs markdown
 content and a description:
 
 ```
-bin/topsailai_data create project--qrew--data-hub --classify projects --description "Data hub project notes" --from ./projects/qrew/data-hub/project.md
-bin/topsailai_data create project--qrew--qguard --classify projects --description "QGuard project notes" --from ./projects/qrew/qguard/project.md
-bin/topsailai_data create project--qrew--skill-hub --classify projects --description "Skill hub project notes" --from ./projects/qrew/skill-hub/project.md
+bin/topsailai-data create project--qrew--data-hub --classify projects --description "Data hub project notes" --from ./projects/qrew/data-hub/project.md
+bin/topsailai-data create project--qrew--qguard --classify projects --description "QGuard project notes" --from ./projects/qrew/qguard/project.md
+bin/topsailai-data create project--qrew--skill-hub --classify projects --description "Skill hub project notes" --from ./projects/qrew/skill-hub/project.md
 ```
 
 Add or replace an individual project note with `put`. When the source already
 exists as a file, always use `--from`:
 
 ```
-bin/topsailai_data put project--qrew--skill-hub overview.md --from ./notes/overview.md
-bin/topsailai_data put project--qrew--skill-hub design/architecture.md --from ./notes/architecture.md
-bin/topsailai_data put project--qrew--skill-hub meetings/2026-07-23.md --from ./notes/2026-07-23.md
+bin/topsailai-data put project--qrew--skill-hub overview.md --from ./notes/overview.md
+bin/topsailai-data put project--qrew--skill-hub design/architecture.md --from ./notes/architecture.md
+bin/topsailai-data put project--qrew--skill-hub meetings/2026-07-23.md --from ./notes/2026-07-23.md
 ```
 
 Inspect the project and read a specific note through the CLI:
 
 ```
-bin/topsailai_data show project--qrew--skill-hub
-bin/topsailai_data get project--qrew--skill-hub design/architecture.md
+bin/topsailai-data show project--qrew--skill-hub
+bin/topsailai-data get project--qrew--skill-hub design/architecture.md
 ```
 
 In this model:
@@ -159,7 +159,7 @@ In this model:
   note path are known.
 
 If the request is about general file-system operations outside the
-`topsailai_data` root, or about editing the source code of topsailai_data
+`topsailai-data` root, or about editing the source code of topsailai-data
 itself, use the appropriate development tools instead of this skill.
 
 ## Object Markdown frontmatter
@@ -204,7 +204,7 @@ From the project root:
 make build
 ```
 
-This compiles the CLI to `bin/topsailai_data`.
+This compiles the CLI to `bin/topsailai-data`.
 
 Other useful targets:
 
@@ -217,13 +217,13 @@ make install
 
 ## Run
 
-The CLI is invoked through the `bin/topsailai_data` binary. Place or build the binary at `skills/topsailai_data/bin/topsailai_data` (or `bin/topsailai_data` from the project root) before using the skill.
+The CLI is invoked through the `bin/topsailai-data` binary. Place or build the binary at `skills/topsailai-data/bin/topsailai-data` (or `bin/topsailai-data` from the project root) before using the skill.
 
 The CLI requires a root directory. Set it through an environment variable or a `.env` file:
 
 ```
 export TOPSAILAI_DATA_ROOT=${HOME}/.topsailai/data
-bin/topsailai_data <command> [args]
+bin/topsailai-data <command> [args]
 ```
 
 If `TOPSAILAI_DATA_ROOT` is not set, the CLI defaults to `${HOME}/.topsailai/data/`.
@@ -231,7 +231,7 @@ If `TOPSAILAI_DATA_ROOT` is not set, the CLI defaults to `${HOME}/.topsailai/dat
 Invoke without arguments to show usage and available commands:
 
 ```
-bin/topsailai_data
+bin/topsailai-data
 ```
 
 ## Mandatory input rule
@@ -243,15 +243,15 @@ This rule applies to commands that accept `--from`, such as `create` and `put`.
 Correct:
 
 ```
-bin/topsailai_data create note --description "Note description" --from /path/to/note.md
-bin/topsailai_data put note attachment.txt --from /path/to/attachment.txt
+bin/topsailai-data create note --description "Note description" --from /path/to/note.md
+bin/topsailai-data put note attachment.txt --from /path/to/attachment.txt
 ```
 
 Incorrect:
 
 ```
-cat /path/to/note.md | bin/topsailai_data create note
-bin/topsailai_data create note < /path/to/note.md
+cat /path/to/note.md | bin/topsailai-data create note
+bin/topsailai-data create note < /path/to/note.md
 ```
 
 Only use `stdin` when the data is generated in memory and has no corresponding file.
@@ -269,37 +269,37 @@ Only use `stdin` when the data is generated in memory and has no corresponding f
 > description: Inline note
 > ---
 >
-> inline content" | bin/topsailai_data create note --tag quickstart
-> echo "attachment data" | bin/topsailai_data put note attachment.txt --from -
-> tar -cf - ./files | bin/topsailai_data put-archive note -
+> inline content" | bin/topsailai-data create note --tag quickstart
+> echo "attachment data" | bin/topsailai-data put note attachment.txt --from -
+> tar -cf - ./files | bin/topsailai-data put-archive note -
 > ```
 >
 > Incorrect (missing parameters cause the CLI to hang):
 >
 > ```
-> echo "inline content" | bin/topsailai_data create
-> echo "attachment data" | bin/topsailai_data put note --from -
-> tar -cf - ./files | bin/topsailai_data put-archive
+> echo "inline content" | bin/topsailai-data create
+> echo "attachment data" | bin/topsailai-data put note --from -
+> tar -cf - ./files | bin/topsailai-data put-archive
 > ```
 
 ## Skill layout
 
 ```text
-skills/topsailai_data/
-  bin/topsailai_data      # the CLI binary consumed by this skill
+skills/topsailai-data/
+  bin/topsailai-data      # the CLI binary consumed by this skill
   config/example.env      # example environment variables
 ```
 
-The `bin/` directory holds the executable. Helper shell scripts are intentionally not provided; all operations go through `bin/topsailai_data`.
+The `bin/` directory holds the executable. Helper shell scripts are intentionally not provided; all operations go through `bin/topsailai-data`.
 
 ## Quick start
 
 ```
 export TOPSAILAI_DATA_ROOT=./data
 make build
-echo "# Hello" | bin/topsailai_data create hello --description "A hello object" --tag quickstart
-bin/topsailai_data list
-bin/topsailai_data show hello
+echo "# Hello" | bin/topsailai-data create hello --description "A hello object" --tag quickstart
+bin/topsailai-data list
+bin/topsailai-data show hello
 ```
 
 ## Commands
@@ -326,35 +326,35 @@ bin/topsailai_data show hello
 Create:
 
 ```
-bin/topsailai_data create note --classify work/2026 --description "Work notes for 2026" --tag work,important <<'EOF'
+bin/topsailai-data create note --classify work/2026 --description "Work notes for 2026" --tag work,important <<'EOF'
 ---
 description: Work notes for 2026
 ---
 
 # Work Notes
 EOF
-bin/topsailai_data create report --description "Monthly report" --from report.md
-bin/topsailai_data create bundle --description "Bundle archive" --from bundle.tar
+bin/topsailai-data create report --description "Monthly report" --from report.md
+bin/topsailai-data create bundle --description "Bundle archive" --from bundle.tar
 echo "---
 description: Inline note
 ---
 
-inline content" | bin/topsailai_data create inline-note
+inline content" | bin/topsailai-data create inline-note
 ```
 
 Update metadata:
 
 ```
-bin/topsailai_data update <id> --description "Updated description"
-bin/topsailai_data update <id> --description ""  # clear description
+bin/topsailai-data update <id> --description "Updated description"
+bin/topsailai-data update <id> --description ""  # clear description
 ```
 
 Read metadata:
 
 ```
-bin/topsailai_data show <id>
-bin/topsailai_data list [--include-deleted] [--offset 0] [--limit 10] [--format yaml|json]
-bin/topsailai_data search <query> [--include-deleted] [--offset 0] [--limit 10] [--format yaml|json]
+bin/topsailai-data show <id>
+bin/topsailai-data list [--include-deleted] [--offset 0] [--limit 10] [--format yaml|json]
+bin/topsailai-data search <query> [--include-deleted] [--offset 0] [--limit 10] [--format yaml|json]
 ```
 
 #### Search query syntax
@@ -373,39 +373,39 @@ Both `list` and `search` accept a `--sort` option that orders results by the tim
 Examples:
 
 ```
-bin/topsailai_data list --sort time:desc
-bin/topsailai_data search work --sort time:asc
+bin/topsailai-data list --sort time:desc
+bin/topsailai-data search work --sort time:asc
 ```
 
 Modify tags:
 
 ```
-bin/topsailai_data tag add <id> <tag>
-bin/topsailai_data tag remove <id> <tag>
+bin/topsailai-data tag add <id> <tag>
+bin/topsailai-data tag remove <id> <tag>
 ```
 
 Move:
 
 ```
-bin/topsailai_data move <id> <new-classify...>
-bin/topsailai_data move hello archive/2026
+bin/topsailai-data move <id> <new-classify...>
+bin/topsailai-data move hello archive/2026
 ```
 
 Delete and cleanup:
 
 ```
-bin/topsailai_data delete <id>
-bin/topsailai_data gc [--dry-run] [--status creating|deleted|ceased]
-bin/topsailai_data recover <id> [--from <archive|->]
+bin/topsailai-data delete <id>
+bin/topsailai-data gc [--dry-run] [--status creating|deleted|ceased]
+bin/topsailai-data recover <id> [--from <archive|->]
 ```
 
 Actual data I/O:
 
 ```
-bin/topsailai_data get <id> <object-file>
-bin/topsailai_data get-archive <id> > backup.tar
-bin/topsailai_data put <id> <dest-file> [--from <file|->]
-bin/topsailai_data put-archive <id> <archive|->
+bin/topsailai-data get <id> <object-file>
+bin/topsailai-data get-archive <id> > backup.tar
+bin/topsailai-data put <id> <dest-file> [--from <file|->]
+bin/topsailai-data put-archive <id> <archive|->
 ```
 
 #### Binary files with `get`
@@ -415,8 +415,8 @@ bin/topsailai_data put-archive <id> <archive|->
 To save the binary data to a file, redirect stdout directly to a file:
 
 ```
-bin/topsailai_data put myobj photo.png --from ./photo.png
-bin/topsailai_data get myobj photo.png > photo-copy.png
+bin/topsailai-data put myobj photo.png --from ./photo.png
+bin/topsailai-data get myobj photo.png > photo-copy.png
 ```
 
 The redirected file is an exact byte-for-byte copy of the stored file. You can then open or process it with normal tools:
@@ -653,22 +653,22 @@ used objects and objects that have not been used recently.
 
 ### Stat commands
 
-Always invoke the topsailai_data binary with its full relative path for stat
+Always invoke the topsailai-data binary with its full relative path for stat
 commands so it is not confused with the Unix `stat` utility.
 
 Display statistics for one object in YAML (default) or JSON:
 
 ```
-bin/topsailai_data stat <id>
-bin/topsailai_data stat <id> --format yaml
-bin/topsailai_data stat <id> --format json
+bin/topsailai-data stat <id>
+bin/topsailai-data stat <id> --format yaml
+bin/topsailai-data stat <id> --format json
 ```
 
 Rank objects by read or write usage:
 
 ```
-bin/topsailai_data stat top --by read --order desc --limit 10
-bin/topsailai_data stat top --by write --order asc --limit 10 --status active --format json
+bin/topsailai-data stat top --by read --order desc --limit 10
+bin/topsailai-data stat top --by write --order asc --limit 10 --status active --format json
 ```
 
 `stat top` supports `--by read|write`, `--order desc|asc`, `--limit n`,
@@ -678,8 +678,8 @@ Attach each object's statistics to normal list or search results without
 incrementing its counters:
 
 ```
-bin/topsailai_data list --with-stat
-bin/topsailai_data search <query> --with-stat
+bin/topsailai-data list --with-stat
+bin/topsailai-data search <query> --with-stat
 ```
 
 ### Tracking configuration
@@ -743,13 +743,13 @@ TOPSAILAI_DATA_CEASED_RETENTION_DAYS=30
 
 ## See also
 
-- `bin/topsailai_data` — the CLI binary used by this skill
+- `bin/topsailai-data` — the CLI binary used by this skill
 - `config/example.env`
 
 ## Lesson learned: use the CLI as the only abstraction layer
 
-When managing topsailai_data objects (notes or any other type), ALWAYS use
-the topsailai_data CLI as the primary abstraction layer. Use commands such as
+When managing topsailai-data objects (notes or any other type), ALWAYS use
+the topsailai-data CLI as the primary abstraction layer. Use commands such as
 `list`, `show`, `get`, `put`, `tag`, `move`, `delete`, `recover`, and `gc` to
 locate, read, and modify objects. Do NOT use shell commands such as `find`,
 `ls`, or direct filesystem access to probe the storage backend, adapter

@@ -42,7 +42,7 @@ func Run(ctx context.Context, mgr *manager.Manager, args []string) error {
 		if cmd.Name == name {
 			for _, a := range args[1:] {
 				if a == "-h" || a == "--help" {
-					fmt.Fprintf(os.Stdout, "Usage: topsailai_data %s\n", cmd.Usage)
+					fmt.Fprintf(os.Stdout, "Usage: topsailai-data %s\n", cmd.Usage)
 					return nil
 				}
 			}
@@ -108,7 +108,7 @@ func registeredCommands() []Command {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: topsailai_data <command> [arguments]")
+	fmt.Fprintln(w, "Usage: topsailai-data <command> [arguments]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Commands:")
 	for _, cmd := range registeredCommands() {

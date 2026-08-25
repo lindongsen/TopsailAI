@@ -15,7 +15,7 @@ import (
 	"github.com/topsailai/topsailai_data/pkg/manager"
 )
 
-// binaryPath is the path to a freshly built topsailai_data binary used by the
+// binaryPath is the path to a freshly built topsailai-data binary used by the
 // os/exec integration tests. It is built once in TestMain and removed after all
 // tests finish.
 var binaryPath string
@@ -27,9 +27,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	binaryPath = filepath.Join(tmpDir, "topsailai_data")
+	binaryPath = filepath.Join(tmpDir, "topsailai-data")
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
-	cmd.Dir = "/TopsailAI/src/topsailai_data/cmd/topsailai_data"
+	cmd.Dir = "/TopsailAI/src/topsailai_data/cmd/topsailai-data"
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "build binary: %v\n%s\n", err, out)
 		os.Exit(1)
@@ -160,7 +160,7 @@ func TestRunHelp(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(out, "Usage: topsailai_data") {
+	if !strings.Contains(out, "Usage: topsailai-data") {
 		t.Fatalf("help output missing usage: %s", out)
 	}
 	if !strings.Contains(out, "create") {
@@ -221,7 +221,7 @@ func TestMainFunction(t *testing.T) {
 	t.Setenv("TOPSAILAI_DATA_ROOT", root)
 
 	oldArgs := os.Args
-	os.Args = []string{"topsailai_data", "list"}
+	os.Args = []string{"topsailai-data", "list"}
 	defer func() { os.Args = oldArgs }()
 
 	var exitCode int
@@ -241,7 +241,7 @@ func TestMainFunctionError(t *testing.T) {
 	t.Setenv("TOPSAILAI_DATA_ROOT", root)
 
 	oldArgs := os.Args
-	os.Args = []string{"topsailai_data", "unknown-command"}
+	os.Args = []string{"topsailai-data", "unknown-command"}
 	defer func() { os.Args = oldArgs }()
 
 	var exitCode int
@@ -264,7 +264,7 @@ func TestBinaryExitCodeSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("help command failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "Usage: topsailai_data") {
+	if !strings.Contains(string(out), "Usage: topsailai-data") {
 		t.Fatalf("help output missing usage: %s", out)
 	}
 }
