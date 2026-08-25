@@ -140,6 +140,24 @@ class TestExecCmd:
         assert run.call_args.kwargs["input"] == "記憶".encode("utf-8")
         assert run.call_args.kwargs["text"] is False
 
+    def test_exec_cmd_passes_input_option_without_collision(self):
+        """Test an input option is forwarded without a duplicate keyword error."""
+        completed = subprocess.CompletedProcess(["consumer"], 0, b"ok", b"")
+        with patch("topsailai.utils.cmd_tool.subprocess.run", return_value=completed) as run:
+            result = exec_cmd(["consumer"], input=b"raw input")
+
+        assert result == (0, "ok", "")
+        assert run.call_args.kwargs["input"] == b"raw input"
+
+    def test_exec_cmd_stdin_text_overrides_input_option(self):
+        """Test explicit stdin_text takes precedence over the input option."""
+        completed = subprocess.CompletedProcess(["consumer"], 0, b"ok", b"")
+        with patch("topsailai.utils.cmd_tool.subprocess.run", return_value=completed) as run:
+            result = exec_cmd(["consumer"], stdin_text="explicit", input=b"raw input")
+
+        assert result == (0, "ok", "")
+        assert run.call_args.kwargs["input"] == b"explicit"
+
 
 class TestExecCmdInRemote:
     """Test cases for exec_cmd_in_remote function."""

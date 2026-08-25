@@ -96,6 +96,9 @@ def exec_cmd(
     """
     cmd = format_cmd(cmd)
     env = build_env(env_info, env_keys)
+    subprocess_input = options.pop("input", None)
+    if stdin_text is not None:
+        subprocess_input = stdin_text.encode("utf-8")
     result = subprocess.run(
         cmd,
         env=env,
@@ -105,7 +108,7 @@ def exec_cmd(
         stderr=subprocess.PIPE,
         text=False,
         timeout=timeout,
-        input=stdin_text.encode("utf-8") if stdin_text is not None else None,
+        input=subprocess_input,
         **options
     )
     ret = (
