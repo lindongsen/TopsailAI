@@ -47,6 +47,7 @@ context:
 environment:
   _default:
     TOPSAILAI_INTERACTIVE_MODE: "1"
+    TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD: "128000"
 
   memo:
     TOPSAILAI_AGENT_DRIVER: "topsailai_agent_chats"
