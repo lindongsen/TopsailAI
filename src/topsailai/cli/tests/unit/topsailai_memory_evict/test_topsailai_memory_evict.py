@@ -34,9 +34,9 @@ class TestArguments:
         assert "topsailai_memory_delete" in help_text
 
     def test_valid_options(self):
-        """Parse a workspace, max-count, and json option."""
-        args = cli.parse_args(["--workspace", "/mem", "--max-count", "5", "--json"])
-        assert args.workspace == "/mem"
+        """Parse a home, max-count, and json option."""
+        args = cli.parse_args(["--home", "/mem", "--max-count", "5", "--json"])
+        assert args.home == "/mem"
         assert args.max_count == 5
         assert args.json is True
 
@@ -59,36 +59,35 @@ class TestArguments:
         assert exc_info.value.code == 2
 
 
-class TestWorkspaceResolution:
-    """Validate workspace source and path resolution."""
+class TestHomeResolution:
+    """Validate home source and memory-path resolution."""
 
-    def test_default_uses_memory_workspace(self, monkeypatch):
+    def test_default_uses_memory_home(self, monkeypatch):
         """Use the configured memory workspace when no option is supplied."""
         monkeypatch.setattr(cli.story_memory_tool, "WORKSPACE", "/configured/memory")
-        assert cli.resolve_workspace(None) == "/configured/memory"
+        assert cli.resolve_home(None) == "/configured/memory"
 
-    def test_default_falls_back_to_folder_memory(self, monkeypatch):
-        """Fall back to FOLDER_MEMORY when the tool workspace is empty."""
-        monkeypatch.setattr(cli.story_memory_tool, "WORKSPACE", "")
-        monkeypatch.setattr(cli, "FOLDER_MEMORY", "/fallback/memory")
-        assert cli.resolve_workspace(None) == "/fallback/memory"
+    def test_absolute_home_appends_memory(self, tmp_path):
+        """Append memory to an explicit TOPSAILAI_HOME path."""
+        assert cli.resolve_home(str(tmp_path)) == str(tmp_path / "memory")
 
-    def test_absolute_workspace_is_preserved(self, tmp_path):
-        """Normalize an explicit absolute workspace path."""
-        assert cli.resolve_workspace(str(tmp_path)) == str(tmp_path)
+    def test_memory_root_with_story_is_preserved(self, tmp_path):
+        """Keep an explicit home that already contains story/."""
+        (tmp_path / "story").mkdir()
+        assert cli.resolve_home(str(tmp_path)) == str(tmp_path)
 
-    def test_relative_workspace_uses_original_pwd(self, tmp_path, monkeypatch):
+    def test_relative_home_uses_original_pwd(self, tmp_path, monkeypatch):
         """Resolve relative paths against TOPSAILAI_PWD."""
         monkeypatch.setenv("TOPSAILAI_PWD", str(tmp_path))
-        assert cli.resolve_workspace("memory") == str(tmp_path / "memory")
+        assert cli.resolve_home("memory") == str(tmp_path / "memory" / "memory")
 
-    def test_relative_workspace_falls_back_to_current_directory(
+    def test_relative_home_falls_back_to_current_directory(
         self, tmp_path, monkeypatch
     ):
         """Resolve relative paths against cwd when TOPSAILAI_PWD is absent."""
         monkeypatch.delenv("TOPSAILAI_PWD", raising=False)
         monkeypatch.chdir(tmp_path)
-        assert cli.resolve_workspace("memory") == str(tmp_path / "memory")
+        assert cli.resolve_home("memory") == str(tmp_path / "memory" / "memory")
 
 
 class TestCollectVictims:
@@ -182,7 +181,7 @@ class TestMain:
     def test_main_json_output(self, capsys):
         """Print valid JSON when --json is supplied."""
         with (
-            patch.object(cli, "resolve_workspace", return_value="/m"),
+            patch.object(cli, "resolve_home", return_value="/m"),
             patch.object(
                 cli,
                 "build_result",
@@ -204,7 +203,7 @@ class TestMain:
     def test_main_text_output(self, capsys):
         """Print human-readable text by default."""
         with (
-            patch.object(cli, "resolve_workspace", return_value="/m"),
+            patch.object(cli, "resolve_home", return_value="/m"),
             patch.object(
                 cli,
                 "build_result",
@@ -231,7 +230,7 @@ class TestMain:
     def test_main_error_returns_one(self, capsys):
         """Return exit code 1 and print an error on failure."""
         with (
-            patch.object(cli, "resolve_workspace", return_value="/m"),
+            patch.object(cli, "resolve_home", return_value="/m"),
             patch.object(
                 cli, "build_result", side_effect=RuntimeError("boom")
             ),

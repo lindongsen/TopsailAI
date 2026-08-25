@@ -37,7 +37,9 @@ class TestParseArgs:
 
     def test_default_enables_dry_run(self):
         """No arguments keep reconciliation in dry-run mode."""
-        assert cli._parse_args([]).dry_run is True
+        args = cli._parse_args([])
+        assert args.dry_run is True
+        assert args.home is None
 
     def test_help_explains_actions_and_safe_default(self, capsys):
         """Explain reconciliation actions and how to apply them."""
@@ -48,6 +50,10 @@ class TestParseArgs:
         assert "Missing stats may be rebuilt" in help_text
         assert "malformed stats quarantined" in help_text
         assert "--no-dry-run to apply" in help_text
+
+    def test_home_option_is_parsed(self):
+        """Accept an explicit TOPSAILAI_HOME."""
+        assert cli._parse_args(["--home", "/w"]).home == "/w"
 
     def test_explicit_dry_run_enables_dry_run(self):
         """The positive flag explicitly enables dry-run mode."""
@@ -66,13 +72,34 @@ class TestMain:
         self, mock_reconcile, capsys
     ):
         """Default execution forwards dry-run and prints every summary field."""
-        code = cli.main([])
+        with patch.object(
+            cli, "resolve_memory_home", return_value="/w/memory"
+        ) as resolver:
+            code = cli.main([])
 
         captured = capsys.readouterr()
+        resolver.assert_called_once_with(None)
+        assert cli.story_memory_tool.WORKSPACE == "/w/memory"
         assert code == 0
         assert json.loads(captured.out) == SUMMARY
         assert captured.err == ""
         mock_reconcile.assert_called_once_with(dry_run=True)
+
+    @patch.object(cli.story_memory_tool, "reconcile_memories", return_value=SUMMARY)
+    def test_explicit_home_is_resolved_and_bound(
+        self, mock_reconcile, capsys
+    ):
+        """Resolve and bind an explicit home before reconciliation."""
+        with patch.object(
+            cli, "resolve_memory_home", return_value="/w/memory"
+        ) as resolver:
+            code = cli.main(["--home", "/w"])
+
+        assert code == 0
+        resolver.assert_called_once_with("/w")
+        assert cli.story_memory_tool.WORKSPACE == "/w/memory"
+        mock_reconcile.assert_called_once_with(dry_run=True)
+        assert json.loads(capsys.readouterr().out) == SUMMARY
 
     @patch.object(cli.story_memory_tool, "reconcile_memories")
     def test_no_dry_run_forwards_execute_mode(self, mock_reconcile, capsys):

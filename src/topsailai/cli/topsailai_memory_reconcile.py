@@ -15,6 +15,11 @@ import _import_topsailai
 
 from topsailai.tools import story_memory_tool
 
+try:
+    from ._memory_home import resolve_memory_home
+except ImportError:
+    from _memory_home import resolve_memory_home
+
 
 def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     """Parse memory reconciliation command-line arguments."""
@@ -28,6 +33,14 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         epilog=(
             "The default is a safe preview. Review the JSON summary first, then "
             "use --no-dry-run to apply repairs, cleanup, and quarantine actions."
+        ),
+    )
+    parser.add_argument(
+        "--home",
+        metavar="PATH",
+        help=(
+            "TOPSAILAI_HOME; memory resolves to {home}/memory "
+            "(default: TOPSAILAI_HOME/memory)."
         ),
     )
     parser.add_argument(
@@ -45,6 +58,7 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[list[str]] = None) -> int:
     """Run memory reconciliation and print its structured summary."""
     args = _parse_args(argv)
+    story_memory_tool.WORKSPACE = resolve_memory_home(args.home)
     try:
         summary = story_memory_tool.reconcile_memories(dry_run=args.dry_run)
     except Exception as exc:

@@ -20,6 +20,11 @@ except ImportError:
 
 from topsailai.tools import story_memory_tool
 
+try:
+    from ._memory_home import resolve_memory_home
+except ImportError:
+    from _memory_home import resolve_memory_home
+
 MAX_TOKENS_ENV = "TOPSAILAI_CONTEXT_MEMORY_LOAD_MAX_TOKENS"
 SORT_DESCRIPTION = (
     "newest last_activity_at first, then newest created_at, then memory_id"
@@ -49,6 +54,14 @@ def parse_args(argv=None) -> argparse.Namespace:
         description=(
             "Display top story memories in most-recently-used order without "
             "updating their read statistics."
+        ),
+    )
+    parser.add_argument(
+        "--home",
+        metavar="PATH",
+        help=(
+            "TOPSAILAI_HOME; memory resolves to {home}/memory "
+            "(default: TOPSAILAI_HOME/memory)."
         ),
     )
     parser.add_argument(
@@ -132,6 +145,7 @@ def format_text(result: dict) -> str:
 def main(argv=None) -> int:
     """Run the top-memory CLI."""
     args = parse_args(argv)
+    story_memory_tool.WORKSPACE = resolve_memory_home(args.home)
     try:
         result = build_result(args.max_tokens, args.max_count)
     except Exception as exc:

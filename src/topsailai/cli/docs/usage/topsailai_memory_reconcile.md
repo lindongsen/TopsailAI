@@ -26,7 +26,7 @@ pass `--no-dry-run` to apply the changes.
 
 ```bash
 topsailai_memory_reconcile
-topsailai_memory_reconcile --dry-run
+topsailai_memory_reconcile --home /path/to/topsailai-home --dry-run
 topsailai_memory_reconcile --no-dry-run
 ```
 
@@ -36,12 +36,12 @@ The module can also be invoked through its executable module entry point.
 
 | Option | Description |
 |--------|-------------|
+| `--home <path>` | TOPSAILAI_HOME; memory resolves to `{home}/memory`. If the path already contains `story/`, it is used as the memory root. Defaults to the configured memory workspace. |
 | `--dry-run` | Report planned actions without changing files. Enabled by default. |
 | `--no-dry-run` | Disable dry-run mode and apply the reconciliation changes. |
 
-The memory workspace is resolved internally from the story memory workspace
-(`TOPSAILAI_STORY_WORKSPACE`, falling back to `TOPSAILAI_MEMORY_WORKSPACE`,
-then the configured memory folder). There is no `--workspace` option.
+Without `--home`, the memory root uses `TOPSAILAI_STORY_WORKSPACE`,
+then `TOPSAILAI_MEMORY_WORKSPACE`, then the configured memory folder.
 
 ## Reconciliation Actions
 

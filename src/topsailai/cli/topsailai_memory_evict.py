@@ -4,7 +4,6 @@
 
 import argparse
 import json
-import os
 import sys
 
 try:
@@ -14,7 +13,10 @@ except ImportError:
 
 from topsailai.tools import story_memory_tool
 from topsailai.tools.memory_tool_utils import memory_evict, memory_stat
-from topsailai.workspace.folder_constants import FOLDER_MEMORY
+try:
+    from ._memory_home import resolve_memory_home
+except ImportError:
+    from _memory_home import resolve_memory_home
 
 SORT_DESCRIPTION = "oldest last_activity_at first, then lexicographic memory_id"
 
@@ -45,10 +47,10 @@ def parse_args(argv=None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--workspace",
+        "--home",
         metavar="PATH",
         help=(
-            "Memory workspace that directly contains story/ "
+            "TOPSAILAI_HOME; memory resolves to {home}/memory "
             "(default: TOPSAILAI_HOME/memory)."
         ),
     )
@@ -70,21 +72,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def resolve_workspace(value: str | None) -> str:
-    """Resolve an explicit workspace or use the configured memory workspace.
-
-    The memory functions operate on the *memory workspace*, i.e. the folder
-    that directly contains the ``story/`` directory. Its default comes from
-    ``story_memory_tool.WORKSPACE`` (normally ``TOPSAILAI_HOME/memory``),
-    NOT from ``TOPSAILAI_HOME`` itself.
-    """
-    if value is None:
-        return story_memory_tool.WORKSPACE or FOLDER_MEMORY
-    expanded = os.path.expanduser(value)
-    if os.path.isabs(expanded):
-        return os.path.abspath(expanded)
-    original_pwd = os.getenv("TOPSAILAI_PWD") or os.getcwd()
-    return os.path.abspath(os.path.join(original_pwd, expanded))
+def resolve_home(value: str | None) -> str:
+    """Resolve an optional TOPSAILAI_HOME to its memory root."""
+    return resolve_memory_home(value)
 
 
 def collect_victims(workspace: str, max_count: int) -> list[dict]:
@@ -146,7 +136,7 @@ def format_text(result: dict) -> str:
 def main(argv=None) -> int:
     """Run the always-dry-run memory eviction preview CLI."""
     args = parse_args(argv)
-    workspace = resolve_workspace(args.workspace)
+    workspace = resolve_home(args.home)
     try:
         result = build_result(workspace, args.max_count)
     except Exception as exc:

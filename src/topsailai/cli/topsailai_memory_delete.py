@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from typing import Optional
 
@@ -20,7 +19,10 @@ except ImportError:
     import _import_topsailai
 
 from topsailai.tools import story_memory_tool
-from topsailai.workspace.folder_constants import FOLDER_MEMORY
+try:
+    from ._memory_home import resolve_memory_home
+except ImportError:
+    from _memory_home import resolve_memory_home
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -37,9 +39,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--workspace",
+        "--home",
         help=(
-            "Memory workspace containing the story folder "
+            "TOPSAILAI_HOME; memory resolves to {home}/memory "
             "(default: TOPSAILAI_HOME/memory)."
         ),
     )
@@ -56,21 +58,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def resolve_workspace(value: Optional[str]) -> str:
-    """Resolve an explicit workspace or use the configured memory workspace.
-
-    The memory functions operate on the *memory workspace*, i.e. the folder
-    that directly contains the ``story/`` directory. Its default comes from
-    ``story_memory_tool.WORKSPACE`` (normally ``TOPSAILAI_HOME/memory``),
-    NOT from ``TOPSAILAI_HOME`` itself.
-    """
-    if value is None:
-        return story_memory_tool.WORKSPACE or FOLDER_MEMORY
-    expanded = os.path.expanduser(value)
-    if os.path.isabs(expanded):
-        return os.path.abspath(expanded)
-    original_pwd = os.getenv("TOPSAILAI_PWD") or os.getcwd()
-    return os.path.abspath(os.path.join(original_pwd, expanded))
+def resolve_home(value: Optional[str]) -> str:
+    """Resolve an optional TOPSAILAI_HOME to its memory root."""
+    return resolve_memory_home(value)
 
 
 def resolve_memory_file(workspace: str, title: str) -> Optional[str]:
@@ -107,7 +97,7 @@ def build_result(
 def main(argv: Optional[list[str]] = None) -> int:
     """Run the memory deletion CLI."""
     args = parse_args(argv)
-    workspace = resolve_workspace(args.workspace)
+    workspace = resolve_home(args.home)
     # Bind the resolved workspace onto the module so delete_memory targets it.
     story_memory_tool.WORKSPACE = workspace
 

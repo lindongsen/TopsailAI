@@ -15,7 +15,7 @@ Display story memories in most-recently-used order without changing their read s
 
 ```bash
 topsailai_memory_top
-topsailai_memory_top --max-tokens 12000
+topsailai_memory_top --home /path/to/topsailai-home --max-tokens 12000
 topsailai_memory_top --max-count 10 --json
 topsailai_memory_top --max-tokens 12000 --max-count 10
 ```
@@ -24,6 +24,7 @@ topsailai_memory_top --max-tokens 12000 --max-count 10
 
 | Option | Description |
 |--------|-------------|
+| `--home <path>` | TOPSAILAI_HOME; memory resolves to `{home}/memory`. If the path already contains `story/`, it is used as the memory root. Defaults to the configured memory workspace. |
 | `--max-tokens <tokens>` | Maximum cumulative memory-content tokens. `0` means unlimited. Defaults to `TOPSAILAI_CONTEXT_MEMORY_LOAD_MAX_TOKENS`, then `0`. |
 | `--max-count <count>` | Maximum number of ranked memories to print. `0` means unlimited and is the default. |
 | `--json` | Print a structured object whose `memories` list preserves MRU order. |

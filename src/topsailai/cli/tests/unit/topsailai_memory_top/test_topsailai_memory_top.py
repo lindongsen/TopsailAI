@@ -23,9 +23,14 @@ class TestArguments:
         """Use the existing memory-load environment variable by default."""
         monkeypatch.setenv(cli.MAX_TOKENS_ENV, "321")
         args = cli.parse_args([])
+        assert args.home is None
         assert args.max_tokens == 321
         assert args.max_count == 0
         assert args.json is False
+
+    def test_home_option_is_parsed(self):
+        """Accept an explicit TOPSAILAI_HOME."""
+        assert cli.parse_args(["--home", "/w"]).home == "/w"
 
     def test_explicit_bounds_and_json(self):
         """Parse explicit token, count, and JSON options."""
@@ -112,6 +117,8 @@ class TestOutput:
     def test_main_prints_json(self, capsys):
         """Print valid JSON with selected and total counts for automation."""
         with patch.object(
+            cli, "resolve_memory_home", return_value="/w/memory"
+        ) as resolver, patch.object(
             cli,
             "build_result",
             return_value={
@@ -125,10 +132,35 @@ class TestOutput:
         ):
             rc = cli.main(["--max-tokens", "10", "--max-count", "1", "--json"])
         assert rc == 0
+        resolver.assert_called_once_with(None)
+        assert cli.story_memory_tool.WORKSPACE == "/w/memory"
         result = json.loads(capsys.readouterr().out)
         assert result["current_count"] == 1
         assert result["total_count"] == 3
         assert result["memories"][0]["title"] == "new"
+
+    def test_explicit_home_is_resolved_and_bound(self, capsys):
+        """Resolve and bind an explicit home before loading memories."""
+        with patch.object(
+            cli, "resolve_memory_home", return_value="/w/memory"
+        ) as resolver, patch.object(
+            cli,
+            "build_result",
+            return_value={
+                "max_tokens": 0,
+                "max_count": 0,
+                "sort": cli.SORT_DESCRIPTION,
+                "current_count": 0,
+                "total_count": 0,
+                "memories": [],
+            },
+        ):
+            rc = cli.main(["--home", "/w", "--json"])
+
+        assert rc == 0
+        resolver.assert_called_once_with("/w")
+        assert cli.story_memory_tool.WORKSPACE == "/w/memory"
+        assert json.loads(capsys.readouterr().out)["memories"] == []
 
     def test_main_returns_one_on_failure(self, capsys):
         """Return one and report selection failures on stderr."""

@@ -21,7 +21,7 @@ so the command prompts for confirmation unless `--yes` is passed.
 
 ```bash
 topsailai_memory_delete 20260101T000000.My_Memory
-topsailai_memory_delete --workspace /path/to/topsailai-home 20260101T000000.My_Memory
+topsailai_memory_delete --home /path/to/topsailai-home 20260101T000000.My_Memory
 topsailai_memory_delete --yes 20260101T000000.My_Memory
 topsailai_memory_delete --yes --json 20260101T000000.My_Memory
 ```
@@ -38,7 +38,7 @@ The module can also be invoked through its executable module entry point.
 
 | Option | Description |
 |--------|-------------|
-| `--workspace <path>` | Memory workspace containing the `story` folder. Defaults to `TOPSAILAI_HOME/memory` (the configured memory workspace). |
+| `--home <path>` | TOPSAILAI_HOME; memory resolves to `{home}/memory`. If the path already contains `story/`, it is used as the memory root. Defaults to the configured memory workspace. |
 | `--yes` | Skip the confirmation prompt. |
 | `--json` | Output a structured object instead of human-readable text. |
 

@@ -8,6 +8,10 @@ programming_language: python
 ---
 
 # AI-Added Features
+## Memory CLI Workspace Resolution
+
+The delete, evict, reconcile, and top memory CLIs now interpret an explicit `--home` as a TOPSAILAI_HOME and use `{home}/memory`, while preserving paths that already contain a `story/` directory as existing memory roots.
+
 ## Memory Reference Citation Tracking
 
 LLM responses now scan assistant steps for unique `@memory[TITLE]` references and record `cite_count` and `last_cited_at` statistics; `TOPSAILAI_MEMORY_REFERENCE_SCAN_ENABLED` controls this behavior and defaults to enabled.
