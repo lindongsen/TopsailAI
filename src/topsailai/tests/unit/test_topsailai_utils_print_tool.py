@@ -13,11 +13,14 @@ class TestPrintTool(unittest.TestCase):
         # Store original environment variables
         self.original_debug = os.environ.get('DEBUG')
         self.original_truncate_len = os.environ.get('DEBUG_PRINT_TRUNCATE_LENGTH')
+        self.original_print_step_mode = os.environ.get('TOPSAILAI_PRINT_STEP_MODE')
 
         # Set default test environment
         if 'DEBUG' in os.environ:
             del os.environ['DEBUG']
         os.environ['DEBUG_PRINT_TRUNCATE_LENGTH'] = '100'
+        os.environ.pop('TOPSAILAI_PRINT_STEP_MODE', None)
+        print_tool._print_step_invalid_mode_warned = False
 
     def tearDown(self):
         """Clean up after tests."""
@@ -31,6 +34,12 @@ class TestPrintTool(unittest.TestCase):
             os.environ['DEBUG_PRINT_TRUNCATE_LENGTH'] = self.original_truncate_len
         elif 'DEBUG_PRINT_TRUNCATE_LENGTH' in os.environ:
             del os.environ['DEBUG_PRINT_TRUNCATE_LENGTH']
+
+        if self.original_print_step_mode is not None:
+            os.environ['TOPSAILAI_PRINT_STEP_MODE'] = self.original_print_step_mode
+        else:
+            os.environ.pop('TOPSAILAI_PRINT_STEP_MODE', None)
+        print_tool._print_step_invalid_mode_warned = False
 
     def test_get_truncation_len_default(self):
         """Test get_truncation_len with no environment variable."""
@@ -227,28 +236,205 @@ class TestPrintTool(unittest.TestCase):
         # Verify get_thread_var was called
         mock_get_thread_var.assert_called_once_with('flag_debug')
 
+    def test_get_print_step_mode(self):
+        """Step mode defaults, normalizes, and accepts supported values."""
+        cases = [
+            (None, "simple"),
+            ("", "simple"),
+            ("simple", "simple"),
+            ("normal", "normal"),
+            ("  NoRmAl  ", "normal"),
+        ]
+        for value, expected in cases:
+            with self.subTest(value=value):
+                if value is None:
+                    os.environ.pop('TOPSAILAI_PRINT_STEP_MODE', None)
+                else:
+                    os.environ['TOPSAILAI_PRINT_STEP_MODE'] = value
+                self.assertEqual(print_tool.get_print_step_mode(), expected)
+
+    @patch('topsailai.utils.print_tool.logger.warning')
+    def test_get_print_step_mode_invalid_warns_once(self, mock_warning):
+        """Invalid step modes safely fall back and warn once per process."""
+        os.environ['TOPSAILAI_PRINT_STEP_MODE'] = 'verbose'
+
+        self.assertEqual(print_tool.get_print_step_mode(), 'simple')
+        self.assertEqual(print_tool.get_print_step_mode(), 'simple')
+
+        mock_warning.assert_called_once()
+
+    def test_format_print_step_simple_structured_messages(self):
+        """Ordinary structured steps use bounded first-line summaries."""
+        result = print_tool.format_print_step_simple([
+            {'step_name': 'action', 'raw_text': '\n  first   line  \nsecond line'},
+            {'step_name': 'observation', 'raw_text': 'short'},
+        ])
+
+        lines = result.splitlines()
+        self.assertEqual(lines[0], '[action] first line [truncated, 29 chars total]')
+        self.assertEqual(lines[1], '[observation] short')
+
+    def test_format_print_step_simple_long_content(self):
+        """Long ordinary structured and plain content is capped with a size marker."""
+        long_text = 'x' * 200
+
+        structured = print_tool.format_print_step_simple(
+            {'step_name': 'action', 'raw_text': long_text}
+        )
+        plain = print_tool.format_print_step_simple(long_text)
+
+        expected = f"{'x' * 160} [truncated, 200 chars total]"
+        self.assertEqual(structured, f'[action] {expected}')
+        self.assertEqual(plain, expected)
+
+    def test_format_print_step_simple_full_prefixes_keep_complete_content(self):
+        """Task, thought, final, and inquiry prefixes remain complete in simple mode."""
+        raw_text = 'first line\n' + ('details ' * 40)
+        step_names = (
+            'task', 'task_input',
+            'thought', 'thought_process',
+            'final', 'final_answer',
+            'inquiry', 'inquiry_user',
+        )
+
+        for step_name in step_names:
+            with self.subTest(step_name=step_name):
+                result = print_tool.format_print_step_simple(
+                    {'step_name': step_name, 'raw_text': raw_text}
+                )
+                self.assertEqual(result, f'[{step_name}] {raw_text}')
+                self.assertNotIn('[truncated,', result)
+
+    def test_format_print_step_simple_formatted_string_honors_full_prefixes(self):
+        """Canonical formatted strings apply full-prefix and summary rules per step."""
+        result = print_tool.format_print_step_simple(
+            'topsailai.thought\nfirst line\nsecond line\n'
+            'topsailai.action\naction line\naction detail'
+        )
+
+        self.assertEqual(
+            result,
+            '[thought] first line\nsecond line\n'
+            '[action] action line [truncated, 25 chars total]',
+        )
+
+    def test_format_print_step_simple_tool_calls(self):
+        """Tool-call summaries expose names and count but no arguments or IDs."""
+        tool_calls = [
+            {'id': 'call-1', 'function': {'name': 'read_file', 'arguments': '{"secret": 1}'}},
+            {'id': 'call-2', 'function': {'name': 'read_file', 'arguments': '{}'}},
+            {'id': 'call-3', 'function': {'name': 'exec_cmd', 'arguments': 'danger'}},
+        ]
+
+        result = print_tool.format_print_step_simple(tool_calls)
+
+        self.assertEqual(result, '[tool_calls] count=3 names=read_file,exec_cmd')
+        self.assertNotIn('call-1', result)
+        self.assertNotIn('secret', result)
+        self.assertNotIn('danger', result)
+
+    def test_format_print_step_simple_empty_and_unknown(self):
+        """Empty messages disappear and unknown objects are summarized safely."""
+        class Unknown:
+            def __str__(self):
+                return 'unknown object\nextra detail'
+
+        for value in (None, '', '   ', []):
+            with self.subTest(value=value):
+                self.assertEqual(print_tool.format_print_step_simple(value), '')
+        self.assertEqual(
+            print_tool.format_print_step_simple(Unknown()),
+            'unknown object [truncated, 27 chars total]',
+        )
+
     @patch('topsailai.utils.print_tool.print_with_time')
-    def test_print_step(self, mock_print_with_time):
-        """Test print_step function."""
-        # Enable the flag
+    def test_print_step_simple_default(self, mock_print_with_time):
+        """The default mode keeps thought steps complete on the console."""
         print_tool.enable_flag_print_step()
 
-        # Call print_step
-        print_tool.print_step('test message')
+        print_tool.print_step({'step_name': 'thought', 'raw_text': 'first\nsecond'})
 
-        # Verify print_with_time was called
-        mock_print_with_time.assert_called_once_with('test message', need_format=True)
+        mock_print_with_time.assert_called_once_with(
+            '[thought] first\nsecond', need_format=False
+        )
 
     @patch('topsailai.utils.print_tool.print_with_time')
-    def test_print_step_disabled(self, mock_print_with_time):
-        """Test print_step function when flag is disabled."""
-        # Disable the flag
+    def test_print_step_simple_empty_skips_output(self, mock_print_with_time):
+        """Simple mode does not print empty content."""
+        print_tool.enable_flag_print_step()
+
+        print_tool.print_step('   ')
+
+        mock_print_with_time.assert_not_called()
+
+    @patch('topsailai.utils.print_tool.print_with_time')
+    def test_print_step_normal_preserves_legacy_behavior(self, mock_print_with_time):
+        """Normal mode passes messages and formatting flags through unchanged."""
+        os.environ['TOPSAILAI_PRINT_STEP_MODE'] = 'normal'
+        print_tool.enable_flag_print_step()
+        tool_calls = [{'id': 'call-1', 'function': {'name': 'read_file', 'arguments': '{}'}}]
+
+        print_tool.print_step('test message')
+        print_tool.print_step(tool_calls, need_format=False)
+
+        self.assertEqual(mock_print_with_time.call_args_list, [
+            unittest.mock.call('test message', need_format=True),
+            unittest.mock.call(tool_calls, need_format=False),
+        ])
+
+    @patch('topsailai.utils.print_tool.logger.info')
+    @patch('topsailai.utils.print_tool.print_with_time')
+    def test_print_step_simple_logs_full_message(self, mock_print_with_time, mock_info):
+        """Simple mode retains complete console and log content for thought steps."""
+        print_tool.enable_flag_print_step()
+        msg = {'step_name': 'thought', 'raw_text': 'first\nsecond'}
+
+        print_tool.print_step(msg, need_log=True)
+
+        mock_info.assert_called_once_with(msg)
+        mock_print_with_time.assert_called_once_with(
+            '[thought] first\nsecond', need_format=False
+        )
+
+    @patch('topsailai.utils.print_tool.format_print_step_simple')
+    @patch('topsailai.utils.print_tool.print_with_time')
+    def test_print_step_disabled(self, mock_print_with_time, mock_format):
+        """The explicit step-print flag suppresses output before formatting."""
         print_tool.disable_flag_print_step()
 
-        # Call print_step
         print_tool.print_step('test message')
 
-        # Verify print_with_time was NOT called
+        mock_format.assert_not_called()
+        mock_print_with_time.assert_not_called()
+
+    @patch('topsailai.utils.print_tool.format_print_step_simple')
+    @patch('topsailai.utils.print_tool.print_with_time')
+    @patch('topsailai.utils.print_tool.thread_local_tool.get_thread_var')
+    def test_print_step_thread_debug_disabled(
+        self, mock_get_thread_var, mock_print_with_time, mock_format
+    ):
+        """The thread-local debug gate suppresses output before formatting."""
+        mock_get_thread_var.return_value = 0
+        print_tool.enable_flag_print_step()
+
+        print_tool.print_step('test message')
+
+        mock_format.assert_not_called()
+        mock_print_with_time.assert_not_called()
+
+    @patch('topsailai.utils.print_tool.format_print_step_simple')
+    @patch('topsailai.utils.print_tool.print_with_time')
+    @patch('topsailai.utils.print_tool.env_tool.is_need_print')
+    def test_print_step_environment_gate_disabled(
+        self, mock_is_need_print, mock_print_with_time, mock_format
+    ):
+        """The environment print gate suppresses output before formatting."""
+        mock_is_need_print.return_value = False
+        print_tool.enable_flag_print_step()
+
+        print_tool.print_step('test message')
+
+        mock_format.assert_not_called()
         mock_print_with_time.assert_not_called()
 
     @patch('topsailai.utils.print_tool.print_with_time')

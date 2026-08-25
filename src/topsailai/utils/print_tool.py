@@ -11,6 +11,150 @@ from topsailai.utils.ansi_color import Colors, colored
 
 g_flag_print_step = None
 TAIL_PREVIEW_LENGTH = 300
+PRINT_STEP_SIMPLE_PREVIEW_LENGTH = 160
+PRINT_STEP_MODE_ENV = "TOPSAILAI_PRINT_STEP_MODE"
+PRINT_STEP_MODES = {"simple", "normal"}
+PRINT_STEP_FULL_PREFIXES = ("task", "thought", "final", "inquiry")
+_print_step_invalid_mode_warned = False
+
+
+def get_print_step_mode() -> str:
+    """Return the configured console detail mode for step messages."""
+    global _print_step_invalid_mode_warned
+
+    mode = os.getenv(PRINT_STEP_MODE_ENV, "").strip().lower() or "simple"
+    if mode in PRINT_STEP_MODES:
+        return mode
+    if not _print_step_invalid_mode_warned:
+        logger.warning(
+            "Invalid %s value %r; falling back to 'simple'",
+            PRINT_STEP_MODE_ENV,
+            mode,
+        )
+        _print_step_invalid_mode_warned = True
+    return "simple"
+
+
+def _safe_step_text(value) -> str:
+    """Convert a step value to text without propagating conversion errors."""
+    try:
+        return str(value)
+    except Exception:
+        return repr(type(value))
+
+
+def _format_simple_preview(value) -> str:
+    """Return a bounded preview of the first non-empty line in a value."""
+    text = _safe_step_text(value)
+    lines = text.splitlines()
+    first_line = next((line for line in lines if line.strip()), "")
+    preview = " ".join(first_line.split())
+    if not preview:
+        return ""
+
+    is_truncated = len(preview) > PRINT_STEP_SIMPLE_PREVIEW_LENGTH
+    is_truncated = is_truncated or any(
+        line.strip() for line in lines[lines.index(first_line) + 1:]
+    )
+    preview = preview[:PRINT_STEP_SIMPLE_PREVIEW_LENGTH]
+    if is_truncated:
+        preview += f" [truncated, {len(text)} chars total]"
+    return preview
+
+
+def _tool_call_name(tool_call) -> str:
+    """Extract a tool name without serializing tool-call arguments."""
+    function = None
+    if isinstance(tool_call, dict):
+        function = tool_call.get("function")
+        name = tool_call.get("name")
+    else:
+        function = getattr(tool_call, "function", None)
+        name = getattr(tool_call, "name", None)
+
+    if isinstance(function, dict):
+        name = function.get("name") or name
+    elif function is not None:
+        name = getattr(function, "name", None) or name
+    return _safe_step_text(name) if name else "unknown"
+
+
+def _as_tool_calls(msg):
+    """Return tool-call items when the message has a recognizable shape."""
+    if isinstance(msg, dict) and "tool_calls" in msg:
+        tool_calls = msg.get("tool_calls")
+        return tool_calls if isinstance(tool_calls, list) else None
+    if not isinstance(msg, list) or not msg:
+        return None
+
+    for item in msg:
+        if isinstance(item, dict):
+            if not any(key in item for key in ("function", "name", "arguments", "id")):
+                return None
+        elif not any(hasattr(item, key) for key in ("function", "name", "arguments", "id")):
+            return None
+    return msg
+
+
+def _format_simple_tool_calls(tool_calls: list) -> str:
+    """Return a tool-call summary that excludes IDs and arguments."""
+    names = []
+    for tool_call in tool_calls:
+        name = _tool_call_name(tool_call)
+        if name not in names:
+            names.append(name)
+    return f"[tool_calls] count={len(tool_calls)} names={','.join(names)}"
+
+
+def _parse_step_message(msg):
+    """Parse structured JSON or TopsailAI step text, leaving plain strings unchanged."""
+    if not isinstance(msg, str):
+        return msg
+    try:
+        parsed = simplejson.loads(msg)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, (dict, list)):
+        return parsed
+
+    from topsailai.utils import format_tool
+    parsed_steps = format_tool.parse_topsailai_format(msg)
+    if not parsed_steps:
+        return msg
+    return [
+        {"step_name": step_name, "raw_text": raw_text}
+        for step_name, raw_text in parsed_steps.items()
+    ]
+
+
+def format_print_step_simple(msg) -> str:
+    """Format a step message as bounded, low-noise console output."""
+    if msg is None or msg == "" or msg == []:
+        return ""
+
+    parsed_msg = _parse_step_message(msg)
+    tool_calls = _as_tool_calls(parsed_msg)
+    if tool_calls is not None:
+        return _format_simple_tool_calls(tool_calls) if tool_calls else ""
+
+    items = parsed_msg if isinstance(parsed_msg, list) else [parsed_msg]
+    output = []
+    for item in items:
+        if isinstance(item, dict) and "step_name" in item:
+            step_name = _safe_step_text(item.get("step_name"))
+            raw_text = _safe_step_text(item.get("raw_text", ""))
+            if step_name.startswith(PRINT_STEP_FULL_PREFIXES):
+                if raw_text.strip():
+                    output.append(f"[{step_name}] {raw_text}")
+                continue
+            preview = _format_simple_preview(raw_text)
+            if preview:
+                output.append(f"[{step_name}] {preview}")
+            continue
+        preview = _format_simple_preview(item)
+        if preview:
+            output.append(preview)
+    return "\n".join(output)
 
 def get_truncation_len() -> int|None:
     """Get the truncation length for debug printing from environment.
@@ -244,8 +388,16 @@ def print_step(msg, need_format=True, need_log=False):
         return
     if g_flag_print_step is False:
         return
-    if env_tool.is_need_print():
+    if not env_tool.is_need_print():
+        return
+
+    if get_print_step_mode() == "normal":
         print_with_time(msg, need_format=need_format)
+        return
+
+    simple_msg = format_print_step_simple(msg)
+    if simple_msg:
+        print_with_time(simple_msg, need_format=False)
     return
 
 def print_info(msg, color_enabled=None):
