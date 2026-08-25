@@ -6,9 +6,9 @@ Purpose: Unit tests for workspace/context/base.py - ContextRuntimeBase class.
 """
 
 import unittest
+import json
+import os
 from unittest.mock import MagicMock, patch
-
-
 class TestContextRuntimeBaseInitialization(unittest.TestCase):
     """Test suite for ContextRuntimeBase initialization."""
 
@@ -1839,6 +1839,338 @@ class TestDynamicContextWatermarkExpansion(unittest.TestCase):
                     )
                     self.assertIsNone(self.runtime._resolve_model_max_context("model-a"))
 
+
+
+class TestCachedTokensRuntimeSummarySource(unittest.TestCase):
+    """Lock in cached-token utilization via the runtime (Agent2LLM) summary source.
+
+    The summarizer intentionally consumes the runtime message store so the
+    summary request reuses the prompt prefix from the immediately preceding
+    Agent2LLM inference, enabling provider KV-cache reuse. After rebuilding,
+    only the configured head/session/tail prefix remains stable for next inference.
+    These tests pin source selection, prefix stability, mode switching,
+    forwarded-length equivalence, defensive fallback, and extreme-length differential.
+    """
+
+    def _make_messages(self, count, prefix="msg"):
+        """Create a list of distinct message dictionaries."""
+        return [
+            {"role": "user", "content": f"{prefix}-{i}"}
+            for i in range(count)
+        ]
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.file_tool')
+    @patch('topsailai.workspace.context.base.summary_tool')
+    @patch('topsailai.workspace.context.base.story_tool')
+    def test_ct1_runtime_summary_consumes_agent_messages_when_agent_present(
+        self, mock_story_tool, mock_summary_tool, mock_file_tool,
+        mock_env_tool, mock_get_llm_chat, mock_agent_base
+    ):
+        """CT-1a: agent present -> forward ai_agent.messages (complete runtime)."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.get.return_value = "runtime"
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
+        mock_summary_tool.get_summary_prompt.return_value = None
+        mock_story_tool.PROMPT_SUMMARY_TASK = "default prompt"
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = "Summarized content"
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = MagicMock()
+        agent_messages = self._make_messages(25, "agent")
+        runtime.ai_agent.messages = agent_messages
+        runtime.messages = self._make_messages(20, "session")
+
+        runtime._summarize_runtime_messages([])
+
+        # The forwarded prompt must be the exact agent runtime list.
+        self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 25)
+        self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "agent-0")
+        self.assertEqual(mock_llm_chat.prompt_ctl.messages[-1]["content"], "agent-24")
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.file_tool')
+    @patch('topsailai.workspace.context.base.summary_tool')
+    @patch('topsailai.workspace.context.base.story_tool')
+    def test_ct1_runtime_summary_consumes_session_messages_when_agent_absent(
+        self, mock_story_tool, mock_summary_tool, mock_file_tool,
+        mock_env_tool, mock_get_llm_chat, mock_agent_base
+    ):
+        """CT-1b: absent agent -> summary LLM receives session fallback."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.get.return_value = "runtime"
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
+        mock_summary_tool.get_summary_prompt.return_value = None
+        mock_story_tool.PROMPT_SUMMARY_TASK = "default prompt"
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = "Summarized content"
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = None
+        expected_session_messages = self._make_messages(15, "session")
+        runtime.messages = expected_session_messages
+        runtime._get_summary_prompt = MagicMock(return_value="summary prompt")
+
+        runtime._summarize_runtime_messages([])
+
+        self.assertEqual(mock_llm_chat.prompt_ctl.messages, expected_session_messages)
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.file_tool')
+    @patch('topsailai.workspace.context.base.summary_tool')
+    @patch('topsailai.workspace.context.base.story_tool')
+    def test_ct2_summary_request_reuses_previous_agent2llm_prompt_prefix(
+        self, mock_story_tool, mock_summary_tool, mock_file_tool,
+        mock_env_tool, mock_get_llm_chat, mock_agent_base
+    ):
+        """CT-2: summary request reuses the preceding inference prefix."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.get.return_value = "runtime"
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
+        mock_summary_tool.get_summary_prompt.return_value = None
+        mock_story_tool.PROMPT_SUMMARY_TASK = "default prompt"
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = MagicMock()
+        runtime.ai_agent.agent_type = "test_agent"
+        previous_inference_messages = [
+            {"role": "system", "content": "stable system"},
+            {"role": "user", "content": {"step_name": "task", "raw_text": "stable task"}},
+            {"role": "assistant", "content": {"tool_calls": [{"id": "call-1"}]}},
+            {"role": "tool", "content": "stable result", "tool_call_id": "call-1"},
+        ]
+        runtime.ai_agent.messages = previous_inference_messages
+        runtime._get_summary_prompt = MagicMock(return_value="summary prompt")
+        summary_chat = MagicMock()
+        summary_chat.chat.return_value = "Summary"
+        mock_get_llm_chat.return_value = summary_chat
+
+        runtime._summarize_runtime_messages(list(previous_inference_messages))
+
+        expected_prefix = json.dumps(previous_inference_messages, sort_keys=True, separators=(",", ":"))
+        actual_prefix = json.dumps(
+            summary_chat.prompt_ctl.messages,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        self.assertEqual(actual_prefix, expected_prefix)
+        self.assertEqual(summary_chat.prompt_ctl.messages, previous_inference_messages)
+        summary_chat.chat.assert_called_once()
+        self.assertIn("DONOT INVOKE ANY TOOLS", summary_chat.chat.call_args.args[0])
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.file_tool')
+    @patch('topsailai.workspace.context.base.summary_tool')
+    @patch('topsailai.workspace.context.base.story_tool')
+    def test_ct3_summary_mode_toggle_runtime_vs_message(
+        self, mock_story_tool, mock_summary_tool, mock_file_tool,
+        mock_env_tool, mock_get_llm_chat, mock_agent_base
+    ):
+        """CT-3: SUMMARY_MODE toggle re-selects runtime vs message feed."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
+        mock_summary_tool.get_summary_prompt.return_value = None
+        mock_story_tool.PROMPT_SUMMARY_TASK = "default prompt"
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = MagicMock()
+        runtime.ai_agent.messages = self._make_messages(8, "agent")
+
+        mock_env_tool.EnvReaderInstance.get.return_value = "runtime"
+        runtime_chat = MagicMock()
+        runtime_chat.chat.return_value = "Runtime summary"
+        mock_get_llm_chat.return_value = runtime_chat
+        _, answer = runtime._summarize_messages(self._make_messages(3, "caller"))
+        self.assertEqual(answer, "Runtime summary")
+        self.assertEqual(len(runtime_chat.prompt_ctl.messages), 8)
+        self.assertEqual(runtime_chat.prompt_ctl.messages[0]["content"], "agent-0")
+
+        mock_env_tool.EnvReaderInstance.get.return_value = "message"
+        message_chat = MagicMock()
+        message_chat.chat.return_value = "Message summary"
+        mock_get_llm_chat.return_value = message_chat
+        _, answer = runtime._summarize_messages(self._make_messages(3, "caller"))
+        self.assertEqual(answer, "Message summary")
+        last_call_kwargs = mock_get_llm_chat.call_args.kwargs
+        self.assertIn("message", last_call_kwargs)
+        self.assertIn("caller-0", last_call_kwargs["message"])
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.file_tool')
+    @patch('topsailai.workspace.context.base.summary_tool')
+    @patch('topsailai.workspace.context.base.story_tool')
+    def test_ct6_forwards_full_runtime_length_equals_pre_summary_inference(
+        self, mock_story_tool, mock_summary_tool, mock_file_tool,
+        mock_env_tool, mock_get_llm_chat, mock_agent_base
+    ):
+        """CT-6: summary feed equals the pre-summary runtime inference prompt."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.get.return_value = "runtime"
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
+        mock_summary_tool.get_summary_prompt.return_value = None
+        mock_story_tool.PROMPT_SUMMARY_TASK = "default prompt"
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = "Summarized content"
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = MagicMock()
+        pre_summary_inference_prompt = self._make_messages(30, "agent")
+        runtime.ai_agent.messages = pre_summary_inference_prompt
+        runtime._summarize_runtime_messages(list(pre_summary_inference_prompt))
+
+        self.assertEqual(mock_llm_chat.prompt_ctl.messages, pre_summary_inference_prompt)
+        self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), len(pre_summary_inference_prompt))
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.file_tool')
+    @patch('topsailai.workspace.context.base.summary_tool')
+    @patch('topsailai.workspace.context.base.story_tool')
+    def test_ct7_force_does_not_disarm_defensive_fallback(
+        self, mock_story_tool, mock_summary_tool, mock_file_tool,
+        mock_env_tool, mock_get_llm_chat, mock_agent_base
+    ):
+        """CT-7: public forced summarization still uses the longer caller list."""
+        from topsailai.workspace.context.agent2llm import ContextRuntimeAgent2LLM
+
+        def _env_get(key, **kwargs):
+            if key == "TOPSAILAI_CONTEXT_SUMMARY_MODE":
+                return "runtime"
+            return kwargs.get("default")
+
+        mock_env_tool.EnvReaderInstance.get.side_effect = _env_get
+        mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
+        mock_summary_tool.get_summary_prompt.return_value = None
+        mock_story_tool.PROMPT_SUMMARY_TASK = "default prompt"
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = "Summarized content"
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        runtime = ContextRuntimeAgent2LLM()
+        runtime.ai_agent = MagicMock()
+        runtime.ai_agent.agent_type = "test_agent"
+        runtime.ai_agent.get_work_memory_first_position.return_value = 0
+        runtime.ai_agent.llm_model.tokenStat.current_tokens = 0
+        runtime.ai_agent.messages = self._make_messages(2, "agent")
+        caller = self._make_messages(40, "caller")
+        runtime._can_summarize_agent2llm_messages = MagicMock(return_value=(True, 0))
+
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
+        }), patch.object(runtime, "_get_head_offset_to_keep_in_summary", return_value=0), \
+                patch.object(runtime, "_get_tail_offset_to_keep_in_summary", return_value=0):
+            answer = runtime.summarize_messages_for_processing(caller, force=True)
+
+        self.assertEqual(answer, "Summarized content")
+        mock_llm_chat.chat.assert_called_once()
+        self.assertEqual(mock_llm_chat.prompt_ctl.messages, caller)
+        self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), len(caller))
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    @patch('topsailai.workspace.context.base.env_tool')
+    def test_p1b_preflight_input_matches_actual_summary_input(
+        self, mock_env_tool, mock_get_llm_chat, mock_agent_base
+    ):
+        """Preflight resolves the same messages that the summary LLM receives."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.is_interactive_mode.return_value = False
+        cases = (
+            ("runtime-longer", "runtime", True, 4, 2),
+            ("caller-longer", "runtime", True, 2, 4),
+            ("runtime-empty", "runtime", True, 0, 3),
+            ("agent-absent", "runtime", False, 0, 3),
+            ("message-mode", "message", True, 4, 2),
+        )
+        for name, mode, has_agent, runtime_len, caller_len in cases:
+            with self.subTest(name=name):
+                def env_get(key, **kwargs):
+                    if key == "TOPSAILAI_CONTEXT_SUMMARY_MODE":
+                        return mode
+                    return kwargs.get("default")
+
+                mock_env_tool.EnvReaderInstance.get.side_effect = env_get
+                runtime = ContextRuntimeBase()
+                runtime._get_summary_prompt = MagicMock(return_value="summary prompt")
+                caller = self._make_messages(caller_len, "caller")
+                runtime.messages = self._make_messages(3, "session")
+                if has_agent:
+                    runtime.ai_agent = MagicMock()
+                    runtime.ai_agent.messages = self._make_messages(runtime_len, "runtime")
+                else:
+                    runtime.ai_agent = None
+                    runtime.messages = self._make_messages(runtime_len, "session")
+
+                expected = runtime._resolve_summary_input_messages(caller)
+                mock_llm_chat = MagicMock()
+                mock_llm_chat.chat.return_value = "Summary"
+                mock_get_llm_chat.return_value = mock_llm_chat
+                runtime._summarize_messages(caller)
+
+                if mode == "runtime":
+                    actual = mock_llm_chat.prompt_ctl.messages
+                else:
+                    serialized = mock_get_llm_chat.call_args.kwargs["message"]
+                    actual = json.loads(serialized[serialized.index("["):])
+                self.assertEqual(actual, expected)
+
+    @patch('topsailai.workspace.context.base.AgentBase')
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    @patch('topsailai.workspace.context.base.env_tool')
+    @patch('topsailai.workspace.context.base.file_tool')
+    @patch('topsailai.workspace.context.base.summary_tool')
+    @patch('topsailai.workspace.context.base.story_tool')
+    def test_ct8_extreme_length_differential_uses_longer_caller(
+        self, mock_story_tool, mock_summary_tool, mock_file_tool,
+        mock_env_tool, mock_get_llm_chat, mock_agent_base
+    ):
+        """CT-8: huge caller >> tiny runtime picks the longer caller list."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        mock_env_tool.EnvReaderInstance.get.return_value = "runtime"
+        mock_env_tool.is_interactive_mode.return_value = False
+        mock_file_tool.get_file_content_fuzzy.return_value = (None, "")
+        mock_summary_tool.get_summary_prompt.return_value = None
+        mock_story_tool.PROMPT_SUMMARY_TASK = "default prompt"
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.chat.return_value = "Summarized content"
+        mock_get_llm_chat.return_value = mock_llm_chat
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = MagicMock()
+        runtime.ai_agent.messages = self._make_messages(1, "tiny")
+        caller = self._make_messages(200, "huge")
+
+        runtime._summarize_runtime_messages(caller)
+
+        self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 200)
+        self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "huge-0")
+        self.assertEqual(mock_llm_chat.prompt_ctl.messages[-1]["content"], "huge-199")
 
 if __name__ == '__main__':
     unittest.main()

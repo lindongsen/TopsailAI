@@ -1151,6 +1151,69 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             result = self.test_instance.is_need_summarize_for_processing()
             self.assertFalse(result)
 
+    def test_ct5_keep_session_preserves_forwarded_prefix(self):
+        """CT-5: Summary input and rebuilt context preserve configured order.
+
+        The summary request receives the complete pre-summary Agent2LLM runtime
+        messages. After summarization, only the configured head/session/tail
+        messages remain stable; this is distinct from reusing the full summary
+        prefix for a later inference request.
+        """
+        task_msg = {"role": "user", "content": {"step_name": "task", "raw_text": "CT5 task"}}
+        agent_messages = [
+            task_msg,
+            {"role": "assistant", "content": "agent-obs-0"},
+            {"role": "user", "content": "agent-q-1"},
+            {"role": "assistant", "content": "agent-obs-1"},
+            {"role": "user", "content": "agent-q-2"},
+        ]
+        session_messages = [
+            {"role": "user", "content": "session-msg-0"},
+            {"role": "user", "content": "session-msg-1"},
+        ]
+
+        combinations = (
+            ("keep-head0-tail0", "1", 0, 0, [task_msg, *session_messages, {"role": "assistant", "content": "Summarized content"}]),
+            ("drop-head0-tail0", "0", 0, 0, [task_msg, {"role": "assistant", "content": "Summarized content"}, session_messages[-1]]),
+            ("keep-head2-tail1", "1", 2, 1, [task_msg, agent_messages[1], *session_messages, agent_messages[-1], {"role": "assistant", "content": "Summarized content"}]),
+            ("drop-head2-tail1", "0", 2, 1, [task_msg, agent_messages[1], agent_messages[-1], {"role": "assistant", "content": "Summarized content"}, session_messages[-1]]),
+        )
+
+        for name, keep, head_offset, tail_offset, expected_messages in combinations:
+            with self.subTest(name=name):
+                self.test_instance._ai_agent.messages = list(agent_messages)
+                self.test_instance._messages = list(session_messages)
+                self.test_instance._first_position = 0
+                captured = []
+
+                def mock_summarize(messages):
+                    captured.append(list(messages))
+                    mock_llm_chat = MagicMock()
+                    mock_llm_chat.prompt_ctl.messages = [
+                        {"role": "assistant", "content": "Summarized content"}
+                    ]
+                    return mock_llm_chat, "Summarized content"
+
+                self.test_instance._summarize_messages_impl = mock_summarize
+                with patch.dict(os.environ, {
+                    "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": keep,
+                    "TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES": "0",
+                }):
+                    with patch.object(
+                        self.test_instance,
+                        "_get_tail_offset_to_keep_in_summary",
+                        return_value=tail_offset,
+                    ):
+                        with patch("topsailai.workspace.context.agent2llm.logger"):
+                            with patch("topsailai.workspace.context.agent2llm.print_info"):
+                                self.test_instance.summarize_messages_for_processing(
+                                    head_offset_to_keep=head_offset,
+                                    force=True,
+                                )
+
+                self.assertEqual(captured, [agent_messages])
+                self.assertEqual(self.test_instance._ai_agent.messages, expected_messages)
+
     def test_duplicate_count_equal_threshold_returns_false(self):
         """Test count equal to threshold returns False (strictly greater)."""
         self.test_instance._get_quantity_threshold = MagicMock(return_value=0)

@@ -1421,6 +1421,62 @@ class TestSummarizeRuntimeMessagesForProcessed(TestContextRuntimeData):
             self.assertEqual(len(mock_llm_chat.prompt_ctl.messages), 10)
             self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "fallback-msg-0")
 
+    @patch('topsailai.workspace.context.base.get_llm_chat')
+    def test_ct4_branch_select_with_and_without_ai_agent(self, mock_get_llm_chat):
+        """CT-4: User2Agent runtime summary selects agent store when present,
+        else falls back to the session store.
+
+        The runtime summarizer consumes the complete pre-summary Agent2LLM
+        runtime context when available, allowing the summary request to reuse
+        the prompt prefix from the immediately preceding Agent2LLM inference.
+        When no agent exists, it falls back to the session store.
+        """
+        with patch.dict(os.environ, {"TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime"}):
+            self.runtime.session_id = None
+
+            # --- Branch A: ai_agent present -> forwards ai_agent.messages ---
+            self.runtime.messages = self._make_messages(10, "session")
+            self.runtime.ai_agent = MagicMock()
+            self.runtime.ai_agent.messages = self._make_messages(15, "agent")
+
+            mock_a = MagicMock()
+            mock_a.prompt_ctl.messages = [{"role": "assistant", "content": "Summary"}]
+            mock_get_llm_chat.return_value = mock_a
+
+            with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=1):
+                with patch.object(self.runtime, 'set_messages'):
+                    with patch.object(
+                        type(self.runtime),
+                        'last_user_message',
+                        new_callable=PropertyMock,
+                        return_value={"role": "user", "content": "agent-msg-14"},
+                    ):
+                        self.runtime.summarize_messages_for_processed()
+
+            self.assertEqual(len(mock_a.prompt_ctl.messages), 15)
+            self.assertEqual(mock_a.prompt_ctl.messages[0]["content"], "agent-msg-0")
+
+            # --- Branch B: ai_agent absent -> forwards self.messages ---
+            self.runtime.ai_agent = None
+            self.runtime.messages = self._make_messages(12, "session")
+
+            mock_b = MagicMock()
+            mock_b.prompt_ctl.messages = [{"role": "assistant", "content": "Summary"}]
+            mock_get_llm_chat.return_value = mock_b
+
+            with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=1):
+                with patch.object(self.runtime, 'set_messages'):
+                    with patch.object(
+                        type(self.runtime),
+                        'last_user_message',
+                        new_callable=PropertyMock,
+                        return_value={"role": "user", "content": "session-msg-11"},
+                    ):
+                        self.runtime.summarize_messages_for_processed()
+
+            self.assertEqual(len(mock_b.prompt_ctl.messages), 12)
+            self.assertEqual(mock_b.prompt_ctl.messages[0]["content"], "session-msg-0")
+
 
 if __name__ == '__main__':
     unittest.main()
