@@ -58,19 +58,23 @@ from . import context as agent_ctx
 from . import exception as agent_exception
 
 
+def _normalize_tool_name(tool_name: str) -> str:
+    """Remove separator characters that LLMs may interchange in tool names."""
+    return tool_name.translate(str.maketrans("", "", ".-_"))
+
+
 def get_tool_func(tool_map: dict, tool_name: str):
     """
     Retrieve a callable tool function from a tool map by name.
 
-    This function looks up a tool function in the provided dictionary using the tool name.
-    It handles compatibility with different connection characters (dots and hyphens) to avoid
-    mistakes made by LLM when generating tool calls.
+    Exact names take precedence. If no exact match exists, dots, hyphens, and
+    underscores are removed from both names so LLM separator variations resolve
+    to the registered tool. The existing suffix fallback runs last.
 
     Args:
         tool_map (dict): A dictionary where keys are tool names (strings) and values are
             the corresponding callable tool functions.
-        tool_name (str): The name of the tool to retrieve. Can use either '.' or '-' as
-            connection characters.
+        tool_name (str): The name of the tool to retrieve.
 
     Returns:
         callable|None: The tool function if found, None otherwise. Returns None if either
@@ -89,10 +93,10 @@ def get_tool_func(tool_map: dict, tool_name: str):
     if tool_name in tool_map:
         return tool_map[tool_name]
 
-    new_tool_name = tool_name.replace('.', '-')
-    for _tool_name in tool_map:
-        if _tool_name.replace('.', '-').strip() == new_tool_name:
-            return tool_map[_tool_name]
+    normalized_tool_name = _normalize_tool_name(tool_name)
+    for registered_tool_name in tool_map:
+        if _normalize_tool_name(registered_tool_name.strip()) == normalized_tool_name:
+            return tool_map[registered_tool_name]
 
     # endswith unique-match fallback.
     # Guarded by an environment switch; only applies when the stripped name is

@@ -55,6 +55,21 @@ class TestGetToolFunc(unittest.TestCase):
         result = get_tool_func({"test-tool": tool_func}, "test.tool")
         self.assertEqual(result(), "result")
 
+    def test_returns_tool_for_separator_variants(self):
+        """Dots, hyphens, and underscores are interchangeable in tool names."""
+        from topsailai.ai_base.agent_types.tool import get_tool_func
+
+        tool_func = lambda: "result"
+        tool_map = {"cmd_tool-exec_cmd": tool_func}
+
+        for tool_name in (
+            "cmd_tool-exec-cmd",
+            "cmd_tool.exec.cmd",
+            "cmd_tool_exec_cmd",
+        ):
+            with self.subTest(tool_name=tool_name):
+                self.assertIs(get_tool_func(tool_map, tool_name), tool_func)
+
     def test_strips_whitespace_from_tool_name(self):
         """Test function strips whitespace from tool name."""
         from topsailai.ai_base.agent_types.tool import get_tool_func
