@@ -30,8 +30,8 @@ context:
     - ai_base/llm_control/llm_mistakes/readme.md
     - ai_base/llm_hooks/hook_after_chat/README.md
     - type: command
-      command: topsailai_data search "topsailai"
-      label: topsailai_data-search-topsailai
+      command: topsailai-data search "topsailai"
+      label: topsailai-data-search-topsailai
 
   approval:
     - features/91-tool_approval.md
