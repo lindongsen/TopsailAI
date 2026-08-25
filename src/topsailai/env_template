@@ -430,6 +430,9 @@ TOPSAILAI_USER2AGENT_MESSAGES_QUANTITY_THRESHOLD=17
 # When the current Agent2LLM token usage exceeds this threshold, summarization is triggered.
 # Set to 0 to disable the token-based check.
 TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD=128000
+# Token budget reserved for the future Agent2LLM summary during feasibility checks.
+# Non-negative integer; negative or invalid values fall back to 4096, and 0 disables the reserve.
+TOPSAILAI_AGENT2LLM_SUMMARY_TOKEN_RESERVE=4096
 
 # When the current User2Agent (session) token usage exceeds this threshold, summarization is triggered.
 # Set to 0 to disable the token-based check (default).

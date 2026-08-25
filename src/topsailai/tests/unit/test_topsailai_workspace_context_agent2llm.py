@@ -18,8 +18,13 @@ class TestContextRuntimeAgent2LLM(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
+        self.summary_guard_patcher = patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD": "0",
+        })
+        self.summary_guard_patcher.start()
+
         from topsailai.workspace.context.agent2llm import ContextRuntimeAgent2LLM
-        
+
         class TestableAgent2LLM(ContextRuntimeAgent2LLM):
             def __init__(self):
                 self._ai_agent = MagicMock()
@@ -31,22 +36,22 @@ class TestContextRuntimeAgent2LLM(unittest.TestCase):
                 # The implementation reads the first position from the ai_agent mock,
                 # so wire the mock to return the current test value.
                 self._ai_agent.get_work_memory_first_position.side_effect = lambda: self._first_position
-            
+
             @property
             def ai_agent(self):
                 return self._ai_agent
-            
+
             @property
             def messages(self):
                 return self._messages
-            
+
             @property
             def session_id(self):
                 return self._session_id
-            
+
             def get_work_memory_first_position(self):
                 return self._first_position
-            
+
             def _summarize_messages(self, messages):
                 if self._summarize_messages_impl is not None:
                     return self._summarize_messages_impl(messages)
@@ -55,10 +60,10 @@ class TestContextRuntimeAgent2LLM(unittest.TestCase):
                     {"role": "assistant", "content": "Summarized content"}
                 ]
                 return mock_prompt, "Summarized content"
-            
+
             def _get_head_offset_to_keep_in_summary(self, offset=None):
                 return offset if offset is not None else 5
-            
+
             def _get_quantity_threshold(self):
                 return 50
         self.test_instance = TestableAgent2LLM()
@@ -66,6 +71,7 @@ class TestContextRuntimeAgent2LLM(unittest.TestCase):
     def tearDown(self):
         """Clean up after tests."""
         self.test_instance = None
+        self.summary_guard_patcher.stop()
 
 
 class TestDelAgentMessages(TestContextRuntimeAgent2LLM):
@@ -343,6 +349,139 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             result = self.test_instance.summarize_messages_for_processing()
             self.assertIsNone(result)
             mock_print_error.assert_called()
+
+    def _budget_messages(self):
+        """Return Agent2LLM messages with overlapping preserved partitions."""
+        task = {
+            "role": "user",
+            "content": {"step_name": "task", "raw_text": "task"},
+        }
+        return [
+            task,
+            {"role": "assistant", "content": "compressible"},
+            {"role": "user", "content": "last user"},
+        ]
+
+    def test_summary_budget_normal_path_calls_summarizer(self):
+        """A useful summary below the threshold must follow the normal path."""
+        messages = self._budget_messages()
+        self.test_instance._ai_agent.messages = list(messages)
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD": "64000",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_TOKEN_RESERVE": "4096",
+        }):
+            with patch.object(
+                self.test_instance,
+                '_get_current_tokens',
+                side_effect=[70000, 1000, 5000],
+            ):
+                with patch.object(
+                    self.test_instance,
+                    '_summarize_messages',
+                    wraps=self.test_instance._summarize_messages,
+                ) as mock_summary:
+                    result = self.test_instance.summarize_messages_for_processing(
+                        head_offset_to_keep=0,
+                    )
+
+        self.assertEqual(result, "Summarized content")
+        mock_summary.assert_called_once()
+
+    def test_summary_budget_above_threshold_skips_without_mutation(self):
+        """P plus R above T must skip before calling the summary LLM."""
+        messages = self._budget_messages()
+        original_messages = list(messages)
+        self.test_instance._ai_agent.messages = list(messages)
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD": "64000",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_TOKEN_RESERVE": "4096",
+        }):
+            with patch.object(
+                self.test_instance,
+                '_get_current_tokens',
+                side_effect=[70000, 63000],
+            ):
+                with patch.object(
+                    self.test_instance,
+                    '_summarize_messages',
+                ) as mock_summary:
+                    result = self.test_instance.summarize_messages_for_processing(
+                        head_offset_to_keep=0,
+                    )
+
+        self.assertIsNone(result)
+        mock_summary.assert_not_called()
+        self.assertEqual(self.test_instance._ai_agent.messages, original_messages)
+
+    def test_summary_budget_not_smaller_skips_without_mutation(self):
+        """P plus R at current usage must skip an unprofitable summary."""
+        messages = self._budget_messages()
+        original_messages = list(messages)
+        self.test_instance._ai_agent.messages = list(messages)
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD": "64000",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_TOKEN_RESERVE": "4096",
+        }):
+            with patch.object(
+                self.test_instance,
+                '_get_current_tokens',
+                side_effect=[10000, 6000],
+            ):
+                with patch.object(
+                    self.test_instance,
+                    '_summarize_messages',
+                ) as mock_summary:
+                    result = self.test_instance.summarize_messages_for_processing(
+                        head_offset_to_keep=0,
+                    )
+
+        self.assertIsNone(result)
+        mock_summary.assert_not_called()
+        self.assertEqual(self.test_instance._ai_agent.messages, original_messages)
+
+    def test_summary_budget_disabled_threshold_does_not_intercept(self):
+        """A non-positive threshold disables the feasibility guard."""
+        messages = self._budget_messages()
+        self.test_instance._ai_agent.messages = list(messages)
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD": "0",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_TOKEN_RESERVE": "4096",
+        }):
+            with patch.object(
+                self.test_instance,
+                '_get_current_tokens',
+                side_effect=[100, 150],
+            ):
+                with patch.object(
+                    self.test_instance,
+                    '_summarize_messages',
+                    wraps=self.test_instance._summarize_messages,
+                ) as mock_summary:
+                    result = self.test_instance.summarize_messages_for_processing(
+                        head_offset_to_keep=0,
+                    )
+
+        self.assertEqual(result, "Summarized content")
+        mock_summary.assert_called_once()
+
+    def test_summary_budget_deduplicates_overlapping_preserved_messages(self):
+        """Head, session, tail, and last-user overlap must count once."""
+        messages = self._budget_messages()
+        self.test_instance._messages = [messages[0], messages[2]]
+
+        preserved = self.test_instance._build_agent2llm_preserved_messages(
+            messages,
+            head_offset_to_keep=1,
+            tail_offset_to_keep=1,
+            need_session_messages=True,
+        )
+
+        self.assertEqual(preserved, [messages[0], messages[2]])
+
     def test_summarize_with_custom_messages(self):
         """Test summarization with custom messages."""
         custom_messages = [

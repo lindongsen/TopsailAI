@@ -82,6 +82,99 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         return deleted_list
 
 
+    @staticmethod
+    def _get_agent2llm_summary_token_reserve() -> int:
+        """Return the token budget reserved for a future Agent2LLM summary."""
+        default_reserve = 4096
+        reserve = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_AGENT2LLM_SUMMARY_TOKEN_RESERVE",
+            default=default_reserve,
+            formatter=int,
+        )
+        if not isinstance(reserve, int) or reserve < 0:
+            return default_reserve
+        return reserve
+
+    def _build_agent2llm_preserved_messages(
+            self,
+            messages: list,
+            head_offset_to_keep: int,
+            tail_offset_to_keep: int,
+            need_session_messages: bool,
+        ) -> list:
+        """Build the deduplicated messages that survive Agent2LLM summarization."""
+        preserved_messages = []
+        message_groups = [
+            self._get_messages_before_first_user_task_message(messages),
+            messages[:head_offset_to_keep],
+        ]
+        if need_session_messages:
+            message_groups.append(self.messages)
+        if tail_offset_to_keep > 0:
+            message_groups.append(messages[-tail_offset_to_keep:])
+
+        last_user_msg = self.last_user_message
+        if last_user_msg:
+            message_groups.append([last_user_msg])
+
+        for message_group in message_groups:
+            for message in message_group:
+                if not self._message_in_list(message, preserved_messages):
+                    preserved_messages.append(message)
+        return preserved_messages
+
+    def _can_summarize_agent2llm_messages(
+            self,
+            messages: list,
+            head_offset_to_keep: int,
+            tail_offset_to_keep: int,
+            need_session_messages: bool,
+        ) -> tuple[bool, int | None]:
+        """Check whether Agent2LLM summarization can fit its token budget."""
+        current_tokens = self._get_current_tokens(self.ai_agent.messages)
+        token_threshold = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD",
+            default=128000,
+            formatter=int,
+        )
+        if not isinstance(token_threshold, int) or token_threshold <= 0:
+            return True, current_tokens
+
+        preserved_messages = self._build_agent2llm_preserved_messages(
+            messages,
+            head_offset_to_keep,
+            tail_offset_to_keep,
+            need_session_messages,
+        )
+        preserved_tokens = self._get_current_tokens(preserved_messages) or 0
+        summary_token_reserve = self._get_agent2llm_summary_token_reserve()
+        estimated_after_tokens = preserved_tokens + summary_token_reserve
+
+        reason = ""
+        if estimated_after_tokens > token_threshold:
+            reason = "preserved_budget_exceeds_threshold"
+        elif current_tokens is not None and estimated_after_tokens >= current_tokens:
+            reason = "estimated_summary_not_smaller"
+
+        if not reason:
+            return True, current_tokens
+
+        logger.warning(
+            "[summarize_messages_for_processing] skip Agent2LLM summarization: "
+            "reason=%s, current_tokens=%s, preserved_tokens=%s, "
+            "summary_token_reserve=%s, estimated_after_tokens=%s, "
+            "token_threshold=%s, session_id=%s",
+            reason,
+            current_tokens,
+            preserved_tokens,
+            summary_token_reserve,
+            estimated_after_tokens,
+            token_threshold,
+            self.session_id or "",
+        )
+        return False, current_tokens
+
+
     def summarize_messages_for_processing(
             self,
             messages: list | str = None,
@@ -181,26 +274,29 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 print_info(f"!!! [Agent2LLM] [Summarization] no need summarize due to messages too short: [{msg_len}]")
                 return None
 
-        # print info
-        print_info(f"!!! [Agent2LLM] [Summarization] Summarizing context messages for processing: msg_len=[{len(messages)}]")
-
-        # Preserve task messages (role=user, step_name=task) from summarization/deletion.
+        # Resolve the complete preserved set before invoking the summary LLM.
         original_messages = list(messages)
         keeping_messages = self._get_messages_before_first_user_task_message(messages)
         print_info(f"!!! [Agent2LLM] [Summarization] head_messages_before_first_user_task_message_to_keep(session_messages)={len(keeping_messages)}")
 
-        # Log message count and token usage before summarization
-        _token_count_before = self._get_current_tokens()
+        head_offset_to_keep = self._get_head_offset_to_keep_in_summary(head_offset_to_keep)
+        tail_offset_to_keep = self._get_tail_offset_to_keep_in_summary()
+        can_summarize, _token_count_before = self._can_summarize_agent2llm_messages(
+            messages,
+            head_offset_to_keep,
+            tail_offset_to_keep,
+            need_session_messages,
+        )
+        if not can_summarize:
+            return None
+
+        print_info(f"!!! [Agent2LLM] [Summarization] Summarizing context messages for processing: msg_len=[{len(messages)}]")
         logger.info("[summarize_processing] before: messages=%s, tokens=%s", len(messages), _token_count_before)
 
         llm_chat, answer = self._summarize_messages(messages)
         if not answer:
             print_critical("!!! [Agent2LLM] [Summarization] NO ANSWER")
             return None
-
-        # head_offset_to_keep
-        head_offset_to_keep = self._get_head_offset_to_keep_in_summary(head_offset_to_keep)
-        tail_offset_to_keep = self._get_tail_offset_to_keep_in_summary()
 
         # keep last user message
         # IMPORTANT DESIGN NOTE:

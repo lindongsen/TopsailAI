@@ -297,6 +297,8 @@ class TestSummarizeMessagesForProcessing:
                 return kwargs.get("default", 0.5)
             if key == "TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES":
                 return kwargs.get("default", 17)
+            if key == "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD":
+                return 0
             return kwargs.get("default")
 
         mock_env_reader.get.side_effect = _get_side_effect
@@ -342,7 +344,9 @@ class TestSummarizeMessagesForProcessing:
         ]
         mock_agent2llm.messages = [f'{{"role": "user", "content": "session{i}"}}' for i in range(60)]
         mock_env_reader.check_bool.return_value = True
-        mock_env_reader.get.return_value = 100
+        mock_env_reader.get.side_effect = lambda key, **kwargs: (
+            0 if key == "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD" else 100
+        )
         with patch.object(mock_agent2llm, '_get_head_offset_to_keep_in_summary', return_value=0), \
              patch.object(mock_agent2llm, '_get_tail_offset_to_keep_in_summary', return_value=0):
             mock_llm_chat = MagicMock()
