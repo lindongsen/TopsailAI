@@ -402,6 +402,70 @@ class TestPromptBase(unittest.TestCase):
         with self.assertRaisesRegex(ContextWindowLimitError, "above send limit"):
             pb.call_hooks_pre_chat()
 
+
+    def test_context_window_limit_error_preserves_message(self):
+        """ContextWindowLimitError exposes the original diagnostic message."""
+        from topsailai.ai_base.exception import ContextWindowLimitError
+
+        error = ContextWindowLimitError("context remains above model send limit")
+
+        self.assertEqual(str(error), "context remains above model send limit")
+        self.assertEqual(error.args, ("context remains above model send limit",))
+
+    @patch("topsailai.ai_base.prompt_base.logger")
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_call_hooks_pre_chat_swallows_generic_before_domain_error(
+        self, mock_generate_prompt, mock_get_managers, mock_logger
+    ):
+        """A generic hook failure is logged before a later domain error propagates."""
+        from topsailai.ai_base.exception import ContextWindowLimitError
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+        pb = PromptBase(system_prompt="test")
+        calls = []
+
+        def generic_hook(_obj):
+            calls.append("generic")
+            raise ValueError("ordinary hook failure")
+
+        def context_hook(_obj):
+            calls.append("context")
+            raise ContextWindowLimitError("context hard limit")
+
+        trailing_hook = MagicMock()
+        pb.hooks_pre_chat.extend([generic_hook, context_hook, trailing_hook])
+
+        with self.assertRaisesRegex(ContextWindowLimitError, "context hard limit"):
+            pb.call_hooks_pre_chat()
+
+        self.assertEqual(calls, ["generic", "context"])
+        mock_logger.exception.assert_called_once()
+        trailing_hook.assert_not_called()
+
+    @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
+    @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
+    def test_call_hooks_pre_chat_propagates_heavy_task_error_distinctly(
+        self, mock_generate_prompt, mock_get_managers
+    ):
+        """HeavyTaskError remains a separate propagating control-flow signal."""
+        from topsailai.ai_base.exception import HeavyTaskError
+        from topsailai.ai_base.prompt_base import PromptBase
+
+        mock_generate_prompt.return_value = "env_prompt"
+        mock_get_managers.return_value = []
+        pb = PromptBase(system_prompt="test")
+
+        def heavy_hook(_obj):
+            raise HeavyTaskError("task is too heavy")
+
+        pb.hooks_pre_chat.append(heavy_hook)
+
+        with self.assertRaisesRegex(HeavyTaskError, "task is too heavy"):
+            pb.call_hooks_pre_chat()
+
     @patch("topsailai.ai_base.prompt_base.get_managers_by_env")
     @patch("topsailai.ai_base.prompt_base.generate_prompt_for_env")
     def test_call_hooks_ctx_history_no_hooks(self, mock_generate_prompt, mock_get_managers):

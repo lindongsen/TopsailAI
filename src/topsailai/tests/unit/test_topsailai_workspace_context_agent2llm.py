@@ -1194,5 +1194,217 @@ class TestSummarizeRuntimeMessagesForProcessing(TestContextRuntimeAgent2LLM):
         self.assertTrue(result)
 
 
+
+
+class TestDynamicContextGuardExpansion(TestContextRuntimeAgent2LLM):
+    """Additional force, partition, and compatibility guard coverage."""
+
+    @staticmethod
+    def _guard_messages():
+        """Return one preserved task, one compressible reply, and a last user message."""
+        return [
+            {"role": "user", "content": {"step_name": "task", "raw_text": "task"}},
+            {"role": "assistant", "content": "compressible"},
+            {"role": "user", "content": "last user"},
+        ]
+
+    def _can_summarize(self, messages, force=False):
+        """Invoke the Agent2LLM guard with deterministic offsets."""
+        return self.test_instance._can_summarize_agent2llm_messages(
+            messages,
+            head_offset_to_keep=0,
+            tail_offset_to_keep=0,
+            need_session_messages=False,
+            force=force,
+        )
+
+    def test_force_bypasses_preserved_budget_soft_guard_as_explicit_pair(self):
+        """Only force may bypass a preserved budget above the legacy threshold."""
+        messages = self._guard_messages()
+        self.test_instance._ai_agent.messages = list(messages)
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD": "100",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_TOKEN_RESERVE": "10",
+        }), patch.object(
+            self.test_instance, "_get_current_tokens", side_effect=[200, 95, 200, 95]
+        ), patch.object(
+            self.test_instance,
+            "_check_dynamic_summary_feasibility",
+            return_value=(True, "", 200, 1000),
+        ):
+            ordinary, _ = self._can_summarize(messages, force=False)
+            forced, _ = self._can_summarize(messages, force=True)
+
+        self.assertFalse(ordinary)
+        self.assertTrue(forced)
+
+    def test_force_bypasses_not_smaller_soft_guard_as_explicit_pair(self):
+        """Force bypasses only the estimated-summary-not-smaller decision."""
+        messages = self._guard_messages()
+        self.test_instance._ai_agent.messages = list(messages)
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD": "1000",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_TOKEN_RESERVE": "100",
+        }), patch.object(
+            self.test_instance, "_get_current_tokens", side_effect=[150, 50, 150, 50]
+        ), patch.object(
+            self.test_instance,
+            "_check_dynamic_summary_feasibility",
+            return_value=(True, "", 150, 1000),
+        ):
+            ordinary, _ = self._can_summarize(messages, force=False)
+            forced, _ = self._can_summarize(messages, force=True)
+
+        self.assertFalse(ordinary)
+        self.assertTrue(forced)
+
+    def test_force_rejects_unavailable_summary_input_tokens(self):
+        """Force cannot bypass unavailable dynamic summary token accounting."""
+        messages = self._guard_messages()
+        self.test_instance._ai_agent.messages = list(messages)
+        with patch.object(
+            self.test_instance, "_get_current_tokens", side_effect=[100, 10]
+        ), patch.object(
+            self.test_instance,
+            "_check_dynamic_summary_feasibility",
+            return_value=(False, "summary_input_tokens_unavailable", None, 800),
+        ):
+            allowed, current_tokens = self._can_summarize(messages, force=True)
+
+        self.assertFalse(allowed)
+        self.assertEqual(current_tokens, 100)
+
+    def test_disabled_threshold_does_not_bypass_no_compressible_hard_guard(self):
+        """A disabled legacy threshold still rejects a fully preserved context."""
+        messages = self._guard_messages()
+        self.test_instance._ai_agent.messages = list(messages)
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD": "0",
+        }), patch.object(
+            self.test_instance,
+            "_build_agent2llm_summary_partitions",
+            return_value=(list(messages), []),
+        ), patch.object(
+            self.test_instance, "_get_current_tokens", side_effect=[100, 100, 100, 100]
+        ), patch.object(
+            self.test_instance,
+            "_check_dynamic_summary_feasibility",
+            return_value=(True, "", 100, 800),
+        ):
+            ordinary, _ = self._can_summarize(messages, force=False)
+            forced, _ = self._can_summarize(messages, force=True)
+
+        self.assertFalse(ordinary)
+        self.assertFalse(forced)
+
+    def test_partitions_remain_valid_when_work_memory_boundary_is_missing(self):
+        """A missing work-memory position does not corrupt direct partition building."""
+        messages = self._guard_messages()
+        self.test_instance._first_position = None
+        self.test_instance._messages = []
+
+        preserved, compressible = self.test_instance._build_agent2llm_summary_partitions(
+            messages, 0, 0, False
+        )
+
+        self.assertEqual(preserved, [messages[0]])
+        self.assertEqual(compressible, messages[1:])
+
+    def test_partitions_include_session_messages_only_when_requested(self):
+        """Non-final session messages enter the preserved partition only when enabled."""
+        messages = self._guard_messages()
+        earlier_session_message = {"role": "assistant", "content": "session earlier"}
+        last_session_message = {"role": "user", "content": "session last"}
+        self.test_instance._messages = [earlier_session_message, last_session_message]
+
+        without_session, _ = self.test_instance._build_agent2llm_summary_partitions(
+            messages, 0, 0, False
+        )
+        with_session, _ = self.test_instance._build_agent2llm_summary_partitions(
+            messages, 0, 0, True
+        )
+
+        self.assertNotIn(earlier_session_message, without_session)
+        self.assertIn(last_session_message, without_session)
+        self.assertIn(earlier_session_message, with_session)
+        self.assertIn(last_session_message, with_session)
+
+    def test_zero_tail_partition_tracks_last_user_presence(self):
+        """With no tail offset, only a real session user message is added separately."""
+        messages = self._guard_messages()
+        self.test_instance._messages = []
+        without_last_user, _ = self.test_instance._build_agent2llm_summary_partitions(
+            messages, 0, 0, False
+        )
+        self.test_instance._messages = [messages[-1]]
+        with_last_user, _ = self.test_instance._build_agent2llm_summary_partitions(
+            messages, 0, 0, False
+        )
+
+        self.assertEqual(without_last_user, [messages[0]])
+        self.assertEqual(with_last_user, [messages[0], messages[-1]])
+
+    def test_leading_system_and_tool_pair_are_preserved_with_task_prefix(self):
+        """The complete structural prefix through the first task stays preserved."""
+        messages = [
+            {"role": "system", "content": "system"},
+            {"role": "assistant", "content": "call", "tool_calls": [{"id": "c1"}]},
+            {"role": "tool", "content": "result", "tool_call_id": "c1"},
+            {"role": "user", "content": {"step_name": "task", "raw_text": "task"}},
+            {"role": "assistant", "content": "compressible"},
+        ]
+        self.test_instance._messages = []
+
+        preserved, compressible = self.test_instance._build_agent2llm_summary_partitions(
+            messages, 0, 0, False
+        )
+
+        self.assertEqual(preserved, messages[:4])
+        self.assertEqual(compressible, messages[4:])
+
+    def test_unconfigured_dynamic_guard_preserves_legacy_soft_decision(self):
+        """Without dynamic limits, the legacy threshold still controls feasibility."""
+        messages = self._guard_messages()
+        self.test_instance._ai_agent.messages = list(messages)
+        with patch.dict(os.environ, {
+            "TOPSAILAI_MODEL_MAX_CONTEXT_MAP": "",
+            "TOPSAILAI_MODEL_MAX_CONTEXT_DEFAULT": "0",
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD": "100",
+            "TOPSAILAI_AGENT2LLM_SUMMARY_TOKEN_RESERVE": "10",
+        }), patch.object(
+            self.test_instance, "_get_current_tokens", side_effect=[200, 95]
+        ), patch.object(
+            self.test_instance,
+            "_check_dynamic_summary_feasibility",
+            return_value=(True, "", None, None),
+        ):
+            allowed, _ = self._can_summarize(messages)
+
+        self.assertFalse(allowed)
+
+    def test_force_with_session_retention_disabled_proceeds_when_feasible(self):
+        """A feasible forced summary proceeds while session retention is disabled."""
+        messages = self._guard_messages()
+        self.test_instance._ai_agent.messages = list(messages)
+        self.test_instance._messages = [{"role": "user", "content": "session only"}]
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
+        }), patch.object(
+            self.test_instance,
+            "_check_dynamic_summary_feasibility",
+            return_value=(True, "", 100, 800),
+        ), patch.object(
+            self.test_instance,
+            "_summarize_messages",
+            wraps=self.test_instance._summarize_messages,
+        ) as mock_summary:
+            result = self.test_instance.summarize_messages_for_processing(
+                messages=messages,
+                head_offset_to_keep=0,
+                force=True,
+            )
+
+        self.assertEqual(result, "Summarized content")
+        mock_summary.assert_called_once()
 if __name__ == '__main__':
     unittest.main()

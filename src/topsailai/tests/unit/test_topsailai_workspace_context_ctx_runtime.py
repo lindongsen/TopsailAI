@@ -1163,6 +1163,134 @@ class TestSummarizeMessages(TestContextRuntimeData):
         self.assertLess(idx_task, idx_summary)
         self.assertLess(idx_summary, idx_msg1)
 
+
+    def test_force_flag_differentiates_preserved_budget_soft_guard(self):
+        """Force bypasses the fixed-threshold budget guard, but not by default."""
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = self._budget_messages()
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "64000",
+            "TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE": "4096",
+        }):
+            with patch.object(
+                self.runtime,
+                "_get_current_tokens",
+                side_effect=[70000, 63000, 70000, 63000],
+            ):
+                ordinary, _ = self._can_summarize_with_real_guard(
+                    messages, 0, 0, force=False
+                )
+                forced, _ = self._can_summarize_with_real_guard(
+                    messages, 0, 0, force=True
+                )
+
+        self.assertFalse(ordinary)
+        self.assertTrue(forced)
+
+    def test_force_flag_differentiates_no_reduction_soft_guard(self):
+        """Force bypasses an unprofitable size estimate while ordinary mode rejects."""
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = self._budget_messages()
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "0",
+            "TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE": "4096",
+        }):
+            with patch.object(
+                self.runtime,
+                "_get_current_tokens",
+                side_effect=[5000, 1000, 5000, 1000],
+            ):
+                ordinary, _ = self._can_summarize_with_real_guard(
+                    messages, 0, 0, force=False
+                )
+                forced, _ = self._can_summarize_with_real_guard(
+                    messages, 0, 0, force=True
+                )
+
+        self.assertFalse(ordinary)
+        self.assertTrue(forced)
+
+    def test_force_rejects_unavailable_summary_input_tokens(self):
+        """Force cannot bypass unavailable dynamic summary-input accounting."""
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = self._budget_messages()
+        with patch.object(
+            self.runtime,
+            "_get_current_tokens",
+            side_effect=[70000, 1000],
+        ):
+            with patch.object(
+                self.runtime,
+                "_check_dynamic_summary_feasibility",
+                return_value=(
+                    False,
+                    "summary_input_tokens_unavailable",
+                    None,
+                    50000,
+                ),
+            ):
+                allowed, current_tokens = self._can_summarize_with_real_guard(
+                    messages, 0, 0, force=True
+                )
+
+        self.assertFalse(allowed)
+        self.assertEqual(current_tokens, 70000)
+
+    def test_disabled_threshold_still_rejects_no_compressible_messages(self):
+        """A disabled fixed threshold does not disable the hard partition guard."""
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = [{"role": "user", "content": "only preserved user"}]
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "0",
+        }):
+            with patch.object(
+                self.runtime,
+                "_get_current_tokens",
+                side_effect=[100, 100, 100, 100],
+            ):
+                ordinary, _ = self._can_summarize_with_real_guard(
+                    messages, 0, 0, force=False
+                )
+                forced, _ = self._can_summarize_with_real_guard(
+                    messages, 0, 0, force=True
+                )
+
+        self.assertFalse(ordinary)
+        self.assertFalse(forced)
+
+    def test_summary_partitions_without_user_message_preserve_head_portion(self):
+        """Assistant-only history preserves the capped head but not an implicit tail."""
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = [
+            {"role": "assistant", "content": f"message-{index}"}
+            for index in range(12)
+        ]
+
+        preserved, compressible = self.runtime._build_user2agent_summary_partitions(
+            messages,
+            head_offset_to_keep=1,
+            tail_offset_to_keep=0,
+        )
+
+        self.assertEqual(preserved, messages[:9])
+        self.assertEqual(compressible, messages[9:])
+        self.assertNotIn(messages[-1], preserved)
+
+    def test_summary_partitions_deduplicate_fully_overlapping_offsets(self):
+        """Overlapping head, tail, and last-user ranges preserve each item once."""
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = self._budget_messages()
+
+        preserved, compressible = self.runtime._build_user2agent_summary_partitions(
+            messages,
+            head_offset_to_keep=len(messages),
+            tail_offset_to_keep=len(messages),
+        )
+
+        self.assertEqual(preserved, messages)
+        self.assertEqual(len(preserved), len(messages))
+        self.assertEqual(compressible, [])
+
 class TestSummarizeRuntimeMessagesForProcessed(TestContextRuntimeData):
     """Test runtime-mode summarization source selection for User2Agent."""
 

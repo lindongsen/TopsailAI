@@ -5,6 +5,7 @@ Created: 2026-03-23
 Purpose: Context runtime base module for managing chat sessions and message handling.
 """
 
+import math
 import copy
 import random
 
@@ -582,7 +583,11 @@ class ContextRuntimeBase(object):
             default=1.05,
             formatter=float,
         )
-        if coefficient is None or coefficient < 1.0:
+        try:
+            coefficient = float(coefficient)
+        except (TypeError, ValueError):
+            coefficient = None
+        if coefficient is None or not math.isfinite(coefficient) or coefficient < 1.0:
             logger.warning(
                 "invalid TOPSAILAI_CONTEXT_TOKEN_SAFETY_COEF=%s; using 1.05",
                 coefficient,

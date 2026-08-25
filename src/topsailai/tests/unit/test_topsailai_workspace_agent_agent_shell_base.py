@@ -504,7 +504,7 @@ class TestAgentChatRun(unittest.TestCase):
         self, mock_get_agent_step_call, mock_task_tool, mock_lock_tool,
         mock_env_tool, mock_set_ai_agent, mock_get_hooks
     ):
-        """Test an unrecoverable context limit terminates the turn gracefully."""
+        """Test an unrecoverable context limit terminates without retrying."""
         from topsailai.ai_base.exception import ContextWindowLimitError
         from topsailai.workspace.agent.agent_shell_base import AgentChat
 
@@ -519,21 +519,23 @@ class TestAgentChatRun(unittest.TestCase):
         mock_env_tool.is_debug_mode.return_value = False
         mock_lock_tool.ctxm_void.return_value.__enter__ = MagicMock(return_value={})
         mock_lock_tool.ctxm_void.return_value.__exit__ = MagicMock(return_value=False)
-        self.mock_ai_agent.run.side_effect = ContextWindowLimitError(
-            "context remains above model send limit"
-        )
+        error = ContextWindowLimitError("context remains above model send limit")
+        self.mock_ai_agent.run.side_effect = error
 
         agent_chat = AgentChat(
             hook_instruction=self.hook_instruction,
             ctx_rt_aiagent=self.ctx_rt_aiagent,
             ctx_rt_instruction=self.ctx_rt_instruction,
         )
+        agent_chat.call_hooks_post_fail_run = MagicMock()
 
-        result = agent_chat.run(message="Hello", times=1)
+        result = agent_chat.run(message="Hello", times=3)
 
         expected = "Task terminated: context remains above model send limit"
         self.assertEqual(result, expected)
         self.assertEqual(agent_chat.last_message, expected)
+        self.mock_ai_agent.run.assert_called_once()
+        agent_chat.call_hooks_post_fail_run.assert_called_once_with(error)
 
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
     @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
