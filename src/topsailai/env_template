@@ -644,6 +644,9 @@ TOPSAILAI_TOOL_APPROVAL_DEFAULT_POLICY=deny
 # Format: directory paths separated by semicolons (';')
 TOPSAILAI_PLUGIN_SKILLS=""     # support to search folder with max depth TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH(default 5)
 TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH=5
+# Skills excluded from discovery and prompt registration. Separate entries with
+# semicolons. Each entry may be an exact case-sensitive SKILL.md name, a skill
+# folder basename, or a folder path/prefix. Use * to disable all skills.
 TOPSAILAI_DISABLED_SKILLS=""
 TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS=""
 

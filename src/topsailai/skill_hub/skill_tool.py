@@ -260,6 +260,22 @@ def is_disabled_skill(folder_path:str) -> bool:
             return True
     return False
 
+
+def is_disabled_skill_by_name(skill_name: str) -> bool:
+    """Check whether an exact skill name is disabled."""
+    if not skill_name:
+        return False
+
+    disabled_list = EnvReaderInstance.get_list_str(
+        "TOPSAILAI_DISABLED_SKILLS", separator=""
+    )
+    if not disabled_list:
+        return False
+    if disabled_list == "*" or "*" in disabled_list:
+        return True
+    return skill_name in disabled_list
+
+
 def parse_skill_folder(folder_path: str) -> SkillInfo:
     """Parse a skill folder to extract skill information.
 
@@ -297,6 +313,25 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
 
     skill_info.skill_md_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
+    # Parse YAML frontmatter (--- delimited)
+    match = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
+    if match:
+        yaml_content = match.group(1)
+        try:
+            data = yaml.safe_load(yaml_content)
+            if data:
+                skill_info.all = data
+                skill_info.name = data.get("name", "")
+                skill_info.description = data.get("description", "")
+                if "flag_overview" in data and data["flag_overview"] != "":
+                    skill_info.flag_overview = True if to_int(data.get("flag_overview", 0)) else False
+        except yaml.YAMLError as e:
+            logger.exception(e)
+
+    if is_disabled_skill_by_name(skill_info.name):
+        skill_info.name = ""
+        return skill_info
+
     # Block duplicate skill folder basenames. A skill whose folder basename
     # matches an already-loaded skill from a different path is handled based on
     # the content of its SKILL.md: identical content is treated as a harmless
@@ -317,29 +352,14 @@ def parse_skill_folder(folder_path: str) -> SkillInfo:
                 skill_basename, folder_path, existing_folder
             )
             return existing_info
-        else:
-            logger.error(
-                "Conflicting skill folder name detected: basename '%s' of '%s' "
-                "matches already loaded skill '%s' but SKILL.md content differs. "
-                "Rejecting '%s'.",
-                skill_basename, folder_path, existing_folder, folder_path
-            )
+        logger.error(
+            "Conflicting skill folder name detected: basename '%s' of '%s' "
+            "matches already loaded skill '%s' but SKILL.md content differs. "
+            "Rejecting '%s'.",
+            skill_basename, folder_path, existing_folder, folder_path
+        )
+        skill_info.name = ""
         return skill_info
-
-    # Parse YAML frontmatter (--- delimited)
-    match = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
-    if match:
-        yaml_content = match.group(1)
-        try:
-            data = yaml.safe_load(yaml_content)
-            if data:
-                skill_info.all = data
-                skill_info.name = data.get("name", "")
-                skill_info.description = data.get("description", "")
-                if "flag_overview" in data and data["flag_overview"] != "":
-                    skill_info.flag_overview = True if to_int(data.get("flag_overview", 0)) else False
-        except yaml.YAMLError as e:
-            logger.exception(e)
 
     if skill_info.name:
         preload = bool(skill_info.all.get("preload_docs"))

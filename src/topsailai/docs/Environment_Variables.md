@@ -303,7 +303,7 @@ These variables configure the optional tool-call approval gate. When enabled, ea
 |----------|---------|-------------|
 | `TOPSAILAI_PLUGIN_SKILLS` | `""` | Plugin skill directories separated by `;`. Supports searching folders up to `TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH`. |
 | `TOPSAILAI_SEARCH_SKILLS_MAX_DEPTH` | `5` | Maximum depth when searching for plugin skills. |
-| `TOPSAILAI_DISABLED_SKILLS` | `""` | Skills to disable. |
+| `TOPSAILAI_DISABLED_SKILLS` | `""` | Skills excluded from discovery and prompt registration. Accepts `;`-separated exact case-sensitive `SKILL.md` names, folder basenames, or folder paths/prefixes; `*` disables all. This does not block direct calls made with a known skill folder. |
 | `TOPSAILAI_LOAD_OVERVIEW_INTO_PROMPT_SKILLS` | `""` | Skills whose overview should be loaded into the prompt. Can be a `;`-separated list of skill names or `*` for all. |
 | `TOPSAILAI_SESSION_LOCK_ON_SKILLS` | `""` | Lock session before calling these skills. |
 | `TOPSAILAI_SESSION_REFRESH_ON_SKILLS` | `""` | Refresh session after calling these skills. |

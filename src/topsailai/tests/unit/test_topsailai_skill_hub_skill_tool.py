@@ -19,6 +19,7 @@ from topsailai.skill_hub.skill_tool import (
     SkillInfo,
     get_file_skill_md,
     is_disabled_skill,
+    is_disabled_skill_by_name,
     parse_skill_folder,
     get_skill_markdown_with_subfolders,
     get_skill_markdown,
@@ -301,6 +302,45 @@ class TestIsDisabledSkill(unittest.TestCase):
         result = is_disabled_skill("/disabled/subfolder")
         self.assertTrue(result)
 
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_skill_name_entry_does_not_change_folder_only_matching(self, mock_env):
+        """The folder matcher keeps its original path-only behavior."""
+        mock_env.get_list_str.return_value = ["NamedSkill"]
+
+        self.assertFalse(is_disabled_skill("/skills/folder-name"))
+
+
+class TestIsDisabledSkillByName(unittest.TestCase):
+    """Test cases for is_disabled_skill_by_name function."""
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_exact_skill_name_match(self, mock_env):
+        """An exact SKILL.md name disables the skill."""
+        mock_env.get_list_str.return_value = ["NamedSkill"]
+
+        self.assertTrue(is_disabled_skill_by_name("NamedSkill"))
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_skill_name_match_is_case_sensitive(self, mock_env):
+        """A differently-cased skill name does not match."""
+        mock_env.get_list_str.return_value = ["namedskill"]
+
+        self.assertFalse(is_disabled_skill_by_name("NamedSkill"))
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_unknown_skill_name_does_not_disable(self, mock_env):
+        """An unknown configured name does not disable another skill."""
+        mock_env.get_list_str.return_value = ["OtherSkill"]
+
+        self.assertFalse(is_disabled_skill_by_name("NamedSkill"))
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_wildcard_disables_name(self, mock_env):
+        """A wildcard disables every non-empty skill name."""
+        mock_env.get_list_str.return_value = ["*"]
+
+        self.assertTrue(is_disabled_skill_by_name("NamedSkill"))
+
 
 class TestParseSkillFolder(unittest.TestCase):
     """Test cases for parse_skill_folder function."""
@@ -403,6 +443,19 @@ description: A skill without preload docs
             self.assertIn("Skill loaded:", logged_message)
             self.assertIn("preload=False", logged_message)
             self.assertIn("load_overview=False", logged_message)
+
+    @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
+    def test_name_disabled_skill_is_not_cached(self, mock_env):
+        """A skill disabled by its SKILL.md name is not registered."""
+        mock_env.get_list_str.return_value = ["DisabledByName"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: DisabledByName\ndescription: Hidden skill\n---\n")
+
+            result = parse_skill_folder(tmpdir)
+
+            self.assertEqual(result.name, "")
+            self.assertNotIn(tmpdir, g_skills)
 
 class TestDuplicateSkillFolderBlocking(unittest.TestCase):
     """Test duplicate skill folder basename handling with SKILL.md comparison."""
