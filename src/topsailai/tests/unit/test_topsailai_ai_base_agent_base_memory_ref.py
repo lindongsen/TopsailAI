@@ -7,7 +7,11 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from topsailai.tools import story_memory_tool
-from topsailai.tools.memory_tool_utils import memory_ref_parser, memory_ref_scan_hook
+from topsailai.tools.memory_tool_utils import (
+    memory_ref_parser,
+    memory_ref_scan_hook,
+    memory_stat,
+)
 
 
 class TestMemoryRefScanHook(TestCase):
@@ -56,6 +60,41 @@ class TestMemoryRefScanHook(TestCase):
         workspace, memory_id, event = record_memory_event.call_args.args
         self.assertTrue(workspace)
         self.assertEqual((memory_id, event), ("Known.md", "cite"))
+
+    @patch("topsailai.tools.story_memory_tool.list_memories")
+    def test_bare_title_increments_canonical_cite_stat(self, list_memories):
+        """Resolve a unique bare title and persist one canonical cite event."""
+        memory_id = "20260303140000.Notes.md"
+        list_memories.return_value = [memory_id]
+        with TemporaryDirectory() as workspace, patch.object(
+            story_memory_tool, "WORKSPACE", workspace
+        ):
+            response = "Use @memory[Notes] for this answer."
+
+            result = memory_ref_scan_hook.hook_execute(response)
+            stat = memory_stat.read_memory_stat(workspace, memory_id)
+
+        self.assertIs(result, response)
+        self.assertIsNotNone(stat)
+        self.assertEqual(stat["cite_count"], 1)
+        self.assertIsNotNone(stat["last_cited_at"])
+
+    @patch("topsailai.tools.memory_tool_utils.memory_stat.record_memory_event")
+    @patch("topsailai.tools.story_memory_tool.list_memories")
+    def test_bare_title_env_toggle_disables_fallback(
+        self, list_memories, record_memory_event
+    ):
+        """Honor the boundary toggle without disabling full reference scanning."""
+        list_memories.return_value = ["20260303140000.Notes.md"]
+        response = "Use @memory[Notes] for this answer."
+        with patch.dict(
+            os.environ,
+            {"TOPSAILAI_MEMORY_REF_BARE_TITLE_ENABLED": "0"},
+        ):
+            result = memory_ref_scan_hook.hook_execute(response)
+
+        self.assertIs(result, response)
+        record_memory_event.assert_not_called()
 
     @patch("topsailai.tools.memory_tool_utils.memory_stat.record_memory_event")
     @patch("topsailai.tools.story_memory_tool.list_memories")

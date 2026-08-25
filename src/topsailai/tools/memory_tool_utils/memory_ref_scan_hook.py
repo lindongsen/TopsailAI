@@ -90,9 +90,17 @@ def hook_execute(content):
             return content
 
         from topsailai.tools.memory_tool_utils import memory_ref_parser, memory_stat
+        from topsailai.utils import env_tool
 
         title_index = _get_title_index(story_memory_tool, memory_ref_parser)
-        result = memory_ref_parser.collect_canonical_ids(content, title_index)
+        bare_title_enabled = env_tool.get_bool(
+            "TOPSAILAI_MEMORY_REF_BARE_TITLE_ENABLED", default=True
+        )
+        result = memory_ref_parser.collect_canonical_ids(
+            content,
+            title_index,
+            bare_title_enabled=bare_title_enabled,
+        )
         for memory_id in result.resolved_ids:
             memory_stat.record_memory_event(
                 story_memory_tool.WORKSPACE, memory_id, "cite"
