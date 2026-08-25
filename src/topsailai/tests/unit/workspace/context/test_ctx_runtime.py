@@ -647,16 +647,17 @@ class TestSummarizeTokenReduction:
         mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
         mock_llm_chat.prompt_ctl = mock_prompt_ctl
 
-        with patch.object(runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
-            with patch.object(runtime, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
-                with patch.object(runtime, '_get_current_tokens', side_effect=[100, 100]):
-                    result = runtime.summarize_messages_for_processed()
-                    assert result == "summarized answer"
-                    mock_logger.critical.assert_called_once()
-                    call_args = mock_logger.critical.call_args[0]
-                    assert "summarize_messages_for_processed" in call_args[0]
-                    assert "before_tokens=100" in call_args[0]
-                    assert "after_tokens=100" in call_args[0]
+        with patch.object(runtime, '_can_summarize_user2agent_messages', return_value=(True, 100)):
+            with patch.object(runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+                with patch.object(runtime, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
+                    with patch.object(runtime, '_get_current_tokens', return_value=100):
+                        result = runtime.summarize_messages_for_processed()
+                        assert result == "summarized answer"
+                        mock_logger.critical.assert_called_once()
+                        call_args = mock_logger.critical.call_args[0]
+                        assert "summarize_messages_for_processed" in call_args[0]
+                        assert "before_tokens=100" in call_args[0]
+                        assert "after_tokens=100" in call_args[0]
 
     @patch('topsailai.workspace.context.base.logger')
     @patch('topsailai.workspace.context.ctx_runtime.env_tool.EnvReaderInstance')
@@ -683,12 +684,13 @@ class TestSummarizeTokenReduction:
         mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
         mock_llm_chat.prompt_ctl = mock_prompt_ctl
 
-        with patch.object(runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
-            with patch.object(runtime, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
-                with patch.object(runtime, '_get_current_tokens', side_effect=[100, 50]):
-                    result = runtime.summarize_messages_for_processed()
-                    assert result == "summarized answer"
-                    mock_logger.critical.assert_not_called()
+        with patch.object(runtime, '_can_summarize_user2agent_messages', return_value=(True, 100)):
+            with patch.object(runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+                with patch.object(runtime, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
+                    with patch.object(runtime, '_get_current_tokens', return_value=50):
+                        result = runtime.summarize_messages_for_processed()
+                        assert result == "summarized answer"
+                        mock_logger.critical.assert_not_called()
 
     @patch('topsailai.workspace.context.base.logger')
     @patch('topsailai.workspace.context.ctx_runtime.env_tool.EnvReaderInstance')
@@ -718,15 +720,16 @@ class TestSummarizeTokenReduction:
         mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
         mock_llm_chat.prompt_ctl = mock_prompt_ctl
 
-        with patch.object(runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
-            with patch.object(runtime, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
-                with patch.object(runtime, '_get_current_tokens', side_effect=[100, 150]):
-                    with patch.object(runtime, 'is_need_summarize_for_processed', return_value=True):
-                        result = runtime.summarize_messages_for_processed()
-                        assert result == "summarized answer"
-                        mock_logger.critical.assert_called_once()
-                        call_args = mock_logger.critical.call_args[0]
-                        assert "processed_session" in call_args[0]
+        with patch.object(runtime, '_can_summarize_user2agent_messages', return_value=(True, 100)):
+            with patch.object(runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+                with patch.object(runtime, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
+                    with patch.object(runtime, '_get_current_tokens', return_value=150):
+                        with patch.object(runtime, 'is_need_summarize_for_processed', return_value=True):
+                            result = runtime.summarize_messages_for_processed()
+                            assert result == "summarized answer"
+                            mock_logger.critical.assert_called_once()
+                            call_args = mock_logger.critical.call_args[0]
+                            assert "processed_session" in call_args[0]
 
 
 # ==============================================================================

@@ -27,6 +27,8 @@ class TestContextRuntimeData(unittest.TestCase):
         self.env_patcher = patch.dict(os.environ, {
             "TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD": "50",
             "TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP": "5",
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "0",
+            "TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE": "0",
         })
         self.env_patcher.start()
 
@@ -461,6 +463,170 @@ class TestIsNeedSummarize(TestContextRuntimeData):
 
 class TestSummarizeMessages(TestContextRuntimeData):
     """Test cases for summarize_messages_for_processed() method."""
+
+    def setUp(self):
+        """Disable the new guard for legacy summarization behavior tests."""
+        super().setUp()
+        self.guard_patcher = patch.object(
+            self.runtime,
+            '_can_summarize_user2agent_messages',
+            return_value=(True, 100),
+        )
+        self.guard_patcher.start()
+
+    def tearDown(self):
+        """Restore the real guard after each summarization test."""
+        if self.guard_patcher is not None:
+            self.guard_patcher.stop()
+        super().tearDown()
+
+    def _use_real_summary_guard(self):
+        """Restore the real guard for a guard-specific integration test."""
+        self.guard_patcher.stop()
+        self.guard_patcher = None
+
+    def _can_summarize_with_real_guard(self, messages, head_offset, tail_offset):
+        """Invoke the class implementation hidden by the legacy-test patch."""
+        return type(self.runtime)._can_summarize_user2agent_messages(
+            self.runtime,
+            messages,
+            head_offset,
+            tail_offset,
+        )
+
+    def _budget_messages(self):
+        """Return messages containing overlapping preserved partitions."""
+        task = {"role": "user", "content": {"step_name": "task", "raw_text": "task"}}
+        return [
+            task,
+            {"role": "assistant", "content": "compressible"},
+            {"role": "user", "content": "last user"},
+        ]
+
+    def test_summary_partitions_deduplicate_overlapping_preserved_messages(self):
+        """Head, tail, and last-user overlap must not duplicate token input."""
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = self._budget_messages()
+
+        preserved, compressible = self.runtime._build_user2agent_summary_partitions(
+            messages,
+            head_offset_to_keep=1,
+            tail_offset_to_keep=1,
+        )
+
+        self.assertEqual(preserved, [messages[0], messages[2]])
+        self.assertEqual(compressible, [messages[1]])
+
+    def test_preserved_budget_above_threshold_skips_correct_formula(self):
+        """P=63000 and R=4096 must be rejected for T=64000."""
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = self._budget_messages()
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "64000",
+            "TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE": "4096",
+        }):
+            with patch.object(self.runtime, '_get_current_tokens', side_effect=[70000, 63000]):
+                allowed, current_tokens = self._can_summarize_with_real_guard(
+                    messages, 0, 0
+                )
+
+        self.assertFalse(allowed)
+        self.assertEqual(current_tokens, 70000)
+
+    def test_preserved_budget_equal_threshold_is_allowed(self):
+        """P plus R equal to T remains feasible when it reduces tokens."""
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = self._budget_messages()
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "64000",
+            "TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE": "4096",
+        }):
+            with patch.object(self.runtime, '_get_current_tokens', side_effect=[70000, 59904]):
+                allowed, _ = self._can_summarize_with_real_guard(messages, 0, 0)
+
+        self.assertTrue(allowed)
+
+    def test_zero_threshold_disables_only_threshold_budget_check(self):
+        """T=0 permits a useful summary while retaining no-growth protection."""
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = self._budget_messages()
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "0",
+            "TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE": "4096",
+        }):
+            with patch.object(self.runtime, '_get_current_tokens', side_effect=[10000, 5000]):
+                allowed, _ = self._can_summarize_with_real_guard(messages, 0, 0)
+
+        self.assertTrue(allowed)
+
+    def test_zero_reserve_reduces_check_to_preserved_above_threshold(self):
+        """R=0 allows P equal to T and rejects P above T."""
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = self._budget_messages()
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "64000",
+            "TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE": "0",
+        }):
+            with patch.object(self.runtime, '_get_current_tokens', side_effect=[70000, 64000]):
+                allowed_equal, _ = self._can_summarize_with_real_guard(messages, 0, 0)
+            with patch.object(self.runtime, '_get_current_tokens', side_effect=[70000, 64001]):
+                allowed_above, _ = self._can_summarize_with_real_guard(messages, 0, 0)
+
+        self.assertTrue(allowed_equal)
+        self.assertFalse(allowed_above)
+
+    def test_negative_and_invalid_reserve_fall_back_to_default(self):
+        """Negative and invalid reserve values use the 4096 default."""
+        for value in ("-1", "invalid"):
+            with self.subTest(value=value):
+                with patch.dict(os.environ, {
+                    "TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE": value,
+                }):
+                    self.assertEqual(
+                        self.runtime._get_user2agent_summary_token_reserve(),
+                        4096,
+                    )
+
+    def test_no_compressible_messages_skip_without_calling_llm(self):
+        """A fully preserved message list must not invoke the summary LLM."""
+        self._use_real_summary_guard()
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = [{"role": "user", "content": "only message"}]
+        self.runtime.messages = list(messages)
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "64000",
+            "TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE": "4096",
+        }):
+            with patch.object(self.runtime, '_get_current_tokens', side_effect=[10000, 5000]):
+                with patch.object(self.runtime, '_summarize_messages') as mock_summary:
+                    result = self.runtime.summarize_messages_for_processed(messages=messages)
+
+        self.assertIsNone(result)
+        mock_summary.assert_not_called()
+        self.assertEqual(self.runtime.messages, messages)
+
+    def test_budget_skip_does_not_mutate_persistent_or_memory_state(self):
+        """Repeated guarded calls leave persistent and in-memory messages intact."""
+        self._use_real_summary_guard()
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        messages = self._budget_messages()
+        self.runtime.session_id = "budget-session"
+        self.runtime.messages = list(messages)
+        with patch.dict(os.environ, {
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD": "64000",
+            "TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE": "4096",
+        }):
+            with patch.object(self.runtime, '_get_current_tokens', side_effect=[70000, 63000] * 2):
+                with patch.object(self.runtime, '_summarize_messages') as mock_summary:
+                    first = self.runtime.summarize_messages_for_processed(messages=messages)
+                    second = self.runtime.summarize_messages_for_processed(messages=messages)
+
+        self.assertIsNone(first)
+        self.assertIsNone(second)
+        mock_summary.assert_not_called()
+        self.mock_ctx_manager.add_session_message.assert_not_called()
+        self.mock_ctx_manager.del_session_messages.assert_not_called()
+        self.assertEqual(self.runtime.messages, messages)
 
     def test_summarize_messages_success(self):
         """Test successful message summarization."""

@@ -208,6 +208,105 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
 
         return deleted_list
 
+    def _build_user2agent_summary_partitions(
+            self,
+            messages: list,
+            head_offset_to_keep: int,
+            tail_offset_to_keep: int,
+        ) -> tuple[list, list]:
+        """Build deduplicated preserved and compressible User2Agent messages."""
+        preserved_messages = []
+        preserved_indexes = set()
+
+        head_portion = self._get_messages_before_first_user_task_message(messages)
+        preserved_indexes.update(range(min(len(head_portion), len(messages))))
+        preserved_indexes.update(range(min(head_offset_to_keep, len(messages))))
+        if tail_offset_to_keep > 0:
+            preserved_indexes.update(
+                range(max(len(messages) - tail_offset_to_keep, 0), len(messages))
+            )
+
+        for index in range(len(messages) - 1, -1, -1):
+            msg_dict = json_tool.json_load(messages[index])
+            if msg_dict["role"] == ROLE_USER:
+                preserved_indexes.add(index)
+                break
+
+        for index, message in enumerate(messages):
+            if index not in preserved_indexes:
+                continue
+            if not self._message_in_list(message, preserved_messages):
+                preserved_messages.append(message)
+
+        compressible_messages = [
+            message for message in messages
+            if not self._message_in_list(message, preserved_messages)
+        ]
+        return preserved_messages, compressible_messages
+
+    @staticmethod
+    def _get_user2agent_summary_token_reserve() -> int:
+        """Return the configured token budget reserved for a future summary."""
+        default_reserve = 4096
+        reserve = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE",
+            default=default_reserve,
+            formatter=int,
+        )
+        if reserve is None or reserve < 0:
+            return default_reserve
+        return reserve
+
+    def _can_summarize_user2agent_messages(
+            self,
+            messages: list,
+            head_offset_to_keep: int,
+            tail_offset_to_keep: int,
+        ) -> tuple[bool, int | None]:
+        """Check whether User2Agent summarization can fit its token budget."""
+        current_tokens = self._get_current_tokens(messages)
+        token_threshold = env_tool.EnvReaderInstance.get(
+            "TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD",
+            default=0,
+            formatter=int,
+        ) or 0
+        preserved_messages, compressible_messages = (
+            self._build_user2agent_summary_partitions(
+                messages,
+                head_offset_to_keep,
+                tail_offset_to_keep,
+            )
+        )
+        preserved_tokens = self._get_current_tokens(preserved_messages) or 0
+        summary_token_reserve = self._get_user2agent_summary_token_reserve()
+        estimated_after_tokens = preserved_tokens + summary_token_reserve
+
+        reason = ""
+        if not compressible_messages:
+            reason = "no_compressible_messages"
+        elif token_threshold > 0 and estimated_after_tokens > token_threshold:
+            reason = "preserved_budget_exceeds_threshold"
+        elif current_tokens is not None and estimated_after_tokens >= current_tokens:
+            reason = "estimated_summary_not_smaller"
+
+        if not reason:
+            return True, current_tokens
+
+        logger.warning(
+            "[summarize_messages_for_processed] skip User2Agent summarization: "
+            "reason=%s, current_tokens=%s, preserved_tokens=%s, "
+            "summary_token_reserve=%s, estimated_after_tokens=%s, "
+            "token_threshold=%s, session_id=%s",
+            reason,
+            current_tokens,
+            preserved_tokens,
+            summary_token_reserve,
+            estimated_after_tokens,
+            token_threshold,
+            self.session_id or "",
+        )
+        return False, current_tokens
+
 
     def summarize_messages_for_processed(
             self,
@@ -271,19 +370,26 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         if not messages:
             return None
 
-        # Build the head_portion: messages from the beginning up to and
-        # including the first role=user, step_name=task message. This is
-        # stored in keeping_messages and later merged back so the final
-        # structure remains head_portion + [summary_answer] + [last_user_message].
+        # Resolve all messages that will survive summarization before invoking
+        # the LLM so an incompressible prefix cannot make the session grow.
         original_messages = list(messages)
         keeping_messages = self._get_messages_before_first_user_task_message(messages)
         print_info(f"!!! [User2Agent] [Summarization] head_messages_before_first_user_task_message_to_keep(session_messages)={len(keeping_messages)}")
 
-        # print info
-        print_info(f"!!! [User2Agent] [Summarization] Summarizing context messages for processed: msg_len=[{len(messages)}]")
+        head_offset_to_keep = self._get_head_offset_to_keep_in_summary(head_offset_to_keep)
+        if head_offset_to_keep and len(messages) <= head_offset_to_keep:
+            head_offset_to_keep = 1
+        tail_offset_to_keep = self._get_tail_offset_to_keep_in_summary()
 
-        # Log message count and token usage before summarization
-        _token_count_before = self._get_current_tokens(self.messages)
+        can_summarize, _token_count_before = self._can_summarize_user2agent_messages(
+            messages,
+            head_offset_to_keep,
+            tail_offset_to_keep,
+        )
+        if not can_summarize:
+            return None
+
+        print_info(f"!!! [User2Agent] [Summarization] Summarizing context messages for processed: msg_len=[{len(messages)}]")
         logger.info("[summarize_processed] before: messages=%s, tokens=%s", len(messages), _token_count_before)
 
         # The summarizer is called with the current runtime messages. In
@@ -309,14 +415,6 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         #         content=answer,
         #     )
         #     logger.info("new memory with story: [%s]", story_file)
-
-        # head_offset_to_keep
-        head_offset_to_keep = self._get_head_offset_to_keep_in_summary(head_offset_to_keep)
-        if head_offset_to_keep and len(self.messages) <= head_offset_to_keep:
-            head_offset_to_keep = 1
-
-        # tail_offset_to_keep
-        tail_offset_to_keep = self._get_tail_offset_to_keep_in_summary()
 
         print_info(f"!!! [User2Agent] [Summarization] head_offset_to_keep={head_offset_to_keep}, tail_offset_to_keep={tail_offset_to_keep}, last_user_message_to_keep=1")
 
