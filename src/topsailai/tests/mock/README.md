@@ -15,7 +15,7 @@ programming_language: python
 
 The server canonicalizes each message and compares complete messages from the beginning of the current request with every retained historical request. `usage.prompt_tokens_details.cached_tokens` is the token estimate for the best exact common message prefix. The estimate uses `ceil(canonical_message_characters / chars_per_token)` per message.
 
-This is an intentionally idealized KV-cache model. Real providers can impose token-block minimums, TTLs, routing constraints, and model-specific cache policies.
+This is an intentionally idealized KV-cache model. The cache key includes only the canonicalized `messages`; request fields such as `model`, `tools`, and `tool_choice` are intentionally ignored. Real providers can impose token-block minimums, TTLs, routing constraints, model-specific cache policies, and broader cache-key scopes.
 
 ## Start
 
@@ -57,7 +57,7 @@ LLM_RESPONSE_STREAM=0
 - `GET /debug/state` — cache capacity, retained prompt count, total request count, and bounded per-request cache results
 - `DELETE /debug/state` — clear retained prompts and counters
 
-Requests with `stream=true` return an explicit `400` error because Phase B requires non-streaming support only.
+Requests with `stream=true` return an explicit `400` error because this mock server intentionally supports only the non-streaming mode required by the cached-token BDD tests.
 
 ## Verify Cache Reuse
 

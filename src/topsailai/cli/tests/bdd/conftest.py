@@ -13,4 +13,6 @@ pytest_plugins = [
     "tests.bdd.steps.project_steps",
     "tests.bdd.steps.models_steps",
     "tests.bdd.steps.docs_steps",
+    "tests.bdd.steps.cached_tokens_steps",
+    "tests.bdd.steps.session_context_steps",
 ]
