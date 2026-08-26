@@ -14,6 +14,10 @@ import argparse
 import _import_topsailai
 
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
+# Force non-interactive, non-debug behavior for single-turn instruction calls.
+os.environ.setdefault("DEBUG", "0")
+os.environ.setdefault("TOPSAILAI_INTERACTIVE_MODE", "0")
+
 
 from topsailai.workspace.agent_shell import get_agent_chat
 
