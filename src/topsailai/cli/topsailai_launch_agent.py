@@ -819,6 +819,15 @@ def load_yaml(path):
         return yaml.safe_load(f)
 
 
+def _load_settings_if_exists(settings_path):
+    """Load settings.yaml if it exists, otherwise return an empty dict.
+
+    Lightweight loader used by paths that must honor ``self_environs`` without
+    triggering interactive setup or the missing-settings prompt (e.g. --scan).
+    """
+    if os.path.isfile(settings_path):
+        return load_yaml(settings_path) or {}
+    return {}
 
 
 def print_available_items(context_map):
@@ -1368,6 +1377,13 @@ def main():
     )
     args = parser.parse_args()
     if args.scan is not None:
+        # Honor the top-level self_environs section so scan exclusions
+        # (e.g. TOPSAILAI_SCAN_EXCLUDE_DIRS) take effect without requiring
+        # the full launch flow. Silently skip when settings.yaml is absent.
+        scan_settings = _load_settings_if_exists(
+            os.path.join(os.getcwd(), ".topsailai", "settings.yaml")
+        )
+        _apply_self_environs(scan_settings)
         _scan_folder(args.scan)
         return
 

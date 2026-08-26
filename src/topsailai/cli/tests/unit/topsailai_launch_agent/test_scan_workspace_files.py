@@ -349,3 +349,89 @@ class TestScanEnvExclusions(unittest.TestCase):
         self.assertTrue(launcher._matches_any("node_modules", ["node_modules"]))
         self.assertFalse(launcher._matches_any("keep.txt", ["*.log"]))
         self.assertFalse(launcher._matches_any("anything", []))
+
+
+class TestScanSelfEnvirons(unittest.TestCase):
+    """Verify the --scan path honors self_environs from settings.yaml."""
+
+    SCAN_EXCLUDE_ENVS = [
+        "TOPSAILAI_SCAN_EXCLUDE",
+        "TOPSAILAI_SCAN_EXCLUDE_DIRS",
+        "TOPSAILAI_SCAN_EXCLUDE_FILES",
+    ]
+
+    def setUp(self):
+        self._saved = {}
+        for key in self.SCAN_EXCLUDE_ENVS:
+            self._saved[key] = os.environ.pop(key, None)
+
+    def tearDown(self):
+        for key in self.SCAN_EXCLUDE_ENVS:
+            if self._saved.get(key) is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = self._saved[key]
+
+    def _write_settings(self, tmpdir, content):
+        cfg_dir = os.path.join(tmpdir, ".topsailai")
+        os.makedirs(cfg_dir, exist_ok=True)
+        cfg_path = os.path.join(cfg_dir, "settings.yaml")
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return cfg_path
+
+    def test_load_settings_if_exists_returns_dict(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = self._write_settings(
+                tmpdir, "self_environs:\n  TOPSAILAI_SCAN_EXCLUDE_DIRS: vendor\n"
+            )
+            settings = launcher._load_settings_if_exists(cfg_path)
+            self.assertEqual(
+                settings.get("self_environs", {}),
+                {"TOPSAILAI_SCAN_EXCLUDE_DIRS": "vendor"},
+            )
+
+    def test_load_settings_if_exists_missing_returns_empty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = os.path.join(tmpdir, "nonexistent", "settings.yaml")
+            self.assertEqual(launcher._load_settings_if_exists(missing), {})
+
+    def test_scan_path_applies_self_environs_exclusion(self):
+        """Reproduce the main() --scan branch: settings drive scan exclusions."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = self._write_settings(
+                tmpdir,
+                "self_environs:\n  TOPSAILAI_SCAN_EXCLUDE_DIRS: \"vendor,dist\"\n",
+            )
+            # Build a tree with a vendor dir that must be excluded.
+            os.makedirs(os.path.join(tmpdir, "vendor"))
+            with open(os.path.join(tmpdir, "vendor", "x.js"), "w", encoding="utf-8") as f:
+                f.write("// js\n")
+            os.makedirs(os.path.join(tmpdir, "src"))
+            with open(os.path.join(tmpdir, "src", "main.py"), "w", encoding="utf-8") as f:
+                f.write("print('hi')\n")
+
+            # Mirror the main() --scan dispatch.
+            scan_settings = launcher._load_settings_if_exists(cfg_path)
+            launcher._apply_self_environs(scan_settings)
+            tree = launcher._scan_workspace_files(tmpdir, tmpdir)
+
+            self.assertIn("src", tree)
+            self.assertIn("main.py", tree)
+            self.assertNotIn("vendor", tree)
+            self.assertNotIn("x.js", tree)
+
+    def test_scan_path_without_settings_filters_nothing(self):
+        """With no settings.yaml, --scan leaves the tree unfiltered."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "vendor"))
+            with open(os.path.join(tmpdir, "vendor", "x.js"), "w", encoding="utf-8") as f:
+                f.write("// js\n")
+
+            missing = os.path.join(tmpdir, "absent", "settings.yaml")
+            scan_settings = launcher._load_settings_if_exists(missing)
+            launcher._apply_self_environs(scan_settings)
+            tree = launcher._scan_workspace_files(tmpdir, tmpdir)
+
+            self.assertIn("vendor", tree)
+            self.assertIn("x.js", tree)
