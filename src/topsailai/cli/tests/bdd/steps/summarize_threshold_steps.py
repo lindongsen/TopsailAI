@@ -196,3 +196,23 @@ def tokens_disabled(threshold_context) -> None:
     """Assert disabled token thresholds do not trigger either layer."""
     assert threshold_context["user_needed"] is False
     assert threshold_context["agent_needed"] is False
+
+
+@given(parsers.parse("the Agent2LLM duplicate-tool-call threshold is {threshold:d}"))
+def duplicate_tool_threshold(threshold_context, threshold: int) -> None:
+    """Configure the Agent2LLM duplicate-tool-call threshold."""
+    _harness(threshold_context).monkeypatch.setenv(
+        "TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD",
+        str(threshold),
+    )
+
+
+@given(parsers.parse("the consecutive duplicate tool call count is {count:d}"))
+def consecutive_duplicate_count(threshold_context, count: int) -> None:
+    """Attach deterministic duplicate-call statistics to the agent model."""
+    tool_stat = type(
+        "ToolStatStub",
+        (),
+        {"get_consecutive_duplicate_count": lambda self: count},
+    )()
+    _harness(threshold_context).agent.llm_model.tool_stat = tool_stat

@@ -91,3 +91,25 @@ Feature: Fixed context summarization thresholds
     And both layers use 100000 tokens
     When each layer summary need is evaluated
     Then neither layer is triggered by token usage
+
+
+  Scenario Outline: Agent2LLM duplicate-tool-call threshold is strictly exceeded
+    Given a deterministic summarize threshold harness
+    And the Agent2LLM duplicate-tool-call threshold is <threshold>
+    And the consecutive duplicate tool call count is <count>
+    When Agent2LLM summary need is evaluated
+    Then Agent2LLM summarization is <needed>
+
+    Examples:
+      | threshold | count | needed     |
+      | 3         | 3     | not needed |
+      | 3         | 4     | needed     |
+      | 0         | 500   | not needed |
+
+  Scenario: A zero layer threshold falls back to a positive shared threshold
+    Given a deterministic summarize threshold harness
+    And the User2Agent quantity threshold is 0 messages
+    And the shared quantity threshold is 67 messages
+    And User2Agent contains 68 messages
+    When User2Agent summary need is evaluated
+    Then User2Agent summarization is needed

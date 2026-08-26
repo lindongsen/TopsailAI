@@ -262,14 +262,22 @@ class SummarizeWatermarkHarness:
 
 
     def evaluate_feasibility(
-        self, input_tokens: int, preserved_tokens: int, reserve: int
+        self,
+        input_tokens: int,
+        preserved_tokens: int,
+        reserve: int,
+        maximum: int = 1000,
+        margin: int = 100,
     ) -> None:
         """Evaluate the real dynamic summary-feasibility boundary."""
         self.monkeypatch.setenv(
-            "TOPSAILAI_MODEL_MAX_CONTEXT_MAP", json.dumps({"bdd-model": 1000})
+            "TOPSAILAI_MODEL_MAX_CONTEXT_MAP",
+            json.dumps({"bdd-model": maximum}),
         )
         self.monkeypatch.setenv("TOPSAILAI_MODEL_MAX_CONTEXT_DEFAULT", "0")
-        self.monkeypatch.setenv("TOPSAILAI_CONTEXT_SUMMARY_OP_MARGIN", "100")
+        self.monkeypatch.setenv(
+            "TOPSAILAI_CONTEXT_SUMMARY_OP_MARGIN", str(margin)
+        )
         self.monkeypatch.setenv("TOPSAILAI_CONTEXT_TOKEN_SAFETY_COEF", "1.0")
         self.agent.llm_model.model_name = "bdd-model"
         self.agent.llm_model.max_tokens = 0
@@ -281,3 +289,144 @@ class SummarizeWatermarkHarness:
             preserved_tokens,
             reserve,
         )
+
+
+    def evaluate_agent_profitability_force(self) -> None:
+        """Compare ordinary, forced, and hard-denied Agent2LLM feasibility."""
+        from unittest.mock import patch
+
+        messages = [
+            {"role": "assistant", "content": "compressible-1"},
+            {"role": "assistant", "content": "compressible-2"},
+        ]
+        self.agent.messages = messages
+        self.runtime.messages = []
+        self.monkeypatch.setenv(
+            "TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE", "0"
+        )
+        self.monkeypatch.setenv(
+            "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD", "1000"
+        )
+        self.monkeypatch.setenv(
+            "TOPSAILAI_AGENT2LLM_SUMMARY_TOKEN_RESERVE", "50"
+        )
+
+        def token_count(selected=None, realtime=False):
+            return 100 if selected is self.agent.messages else 50
+
+        with patch.object(self.runtime, "_get_current_tokens", token_count), patch.object(
+            self.runtime,
+            "_check_dynamic_summary_feasibility",
+            return_value=(True, "", 100, 900),
+        ):
+            self.trace["ordinary_profitability"] = (
+                self.runtime._can_summarize_agent2llm_messages(
+                    messages, 0, 0, False, force=False
+                )[0]
+            )
+            self.trace["forced_profitability"] = (
+                self.runtime._can_summarize_agent2llm_messages(
+                    messages, 0, 0, False, force=True
+                )[0]
+            )
+
+        with patch.object(self.runtime, "_get_current_tokens", token_count), patch.object(
+            self.runtime,
+            "_check_dynamic_summary_feasibility",
+            return_value=(False, "summary_input_exceeds_safe_limit", 901, 900),
+        ):
+            self.trace["forced_hard_feasibility"] = (
+                self.runtime._can_summarize_agent2llm_messages(
+                    messages, 0, 0, False, force=True
+                )[0]
+            )
+
+    def resolve_summary_head(self, keep_first_task: bool) -> None:
+        """Resolve the real intrinsic summary head for a task-bearing prefix."""
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "user",
+                "content": {"step_name": "observation", "content": "context"},
+            },
+            {
+                "role": "user",
+                "content": {"step_name": "task", "content": "task"},
+            },
+            {"role": "assistant", "content": "work"},
+        ]
+        self.monkeypatch.setenv(
+            "TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE",
+            "1" if keep_first_task else "0",
+        )
+        self.trace["summary_head"] = self.base._get_summary_head_messages(messages)
+
+    def rebuild_agent_messages(
+        self,
+        keep_session: bool,
+        head_offset: int,
+        tail_offset: int,
+    ) -> None:
+        """Run real Agent2LLM reconstruction with the external LLM stubbed."""
+        from unittest.mock import Mock, patch
+
+        system = {"role": "system", "content": "system-head"}
+        observation = {
+            "role": "user",
+            "content": {"step_name": "observation", "content": "startup"},
+        }
+        middle = {"role": "assistant", "content": "middle"}
+        internal_user = {"role": "user", "content": "internal-user"}
+        tail = {"role": "assistant", "content": "tail"}
+        session_marker = {"role": "assistant", "content": "session-marker"}
+        session_user = {"role": "user", "content": "session-human"}
+        summary = {"role": "assistant", "content": "summary"}
+        agent_messages = [system, observation, middle, internal_user, tail]
+        self.agent.messages = agent_messages[:]
+        self.runtime.messages = [session_marker, session_user]
+        self.monkeypatch.setenv(
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES",
+            "1" if keep_session else "0",
+        )
+        self.monkeypatch.setenv(
+            "TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE", "0"
+        )
+        self.monkeypatch.setenv(
+            "TOPSAILAI_CONTEXT_MESSAGES_TAIL_OFFSET_TO_KEEP", str(tail_offset)
+        )
+        self.monkeypatch.setenv(
+            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD", "100"
+        )
+        self.monkeypatch.setenv(
+            "TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO", "1.0"
+        )
+        fake_chat = SimpleNamespace(prompt_ctl=SimpleNamespace(messages=[summary]))
+        with patch.object(
+            self.runtime,
+            "_can_summarize_agent2llm_messages",
+            return_value=(True, 100),
+        ), patch.object(
+            self.runtime,
+            "_summarize_messages",
+            return_value=(fake_chat, "summary"),
+        ), patch.object(
+            self.runtime,
+            "_get_current_tokens",
+            return_value=50,
+        ), patch.object(
+            self.agent.llm_model.tokenStat,
+            "add_msgs",
+            Mock(),
+        ):
+            self.runtime.summarize_messages_for_processing(
+                head_offset_to_keep=head_offset,
+                force=True,
+            )
+        self.trace["rebuilt_messages"] = self.agent.messages
+        self.trace["rebuild_objects"] = {
+            "head": agent_messages[:head_offset],
+            "tail": agent_messages[-tail_offset:] if tail_offset else [],
+            "session_marker": session_marker,
+            "session_user": session_user,
+            "internal_user": internal_user,
+        }

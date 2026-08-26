@@ -159,3 +159,21 @@ Feature: Summarize context watermark enforcement
     Given the real pre-chat hook classifies HARD then HARD
     When the real summarize pre-chat hook is invoked
     Then the pre-chat hook raises a context window error
+
+
+  Scenario: A non-positive send limit classifies as HARD
+    Given a model context limit of 100 tokens and a completion budget of 100 tokens
+    And the current context contains 0 tokens
+    When the context watermark is classified
+    Then the watermark level is HARD
+
+  Scenario Outline: Invalid model-context maps disable the watermark
+    Given the model context map is <configuration>
+    When the context watermark is classified
+    Then no dynamic watermark result is produced
+
+    Examples:
+      | configuration |
+      | malformed     |
+      | non-positive  |
+      | non-integer   |

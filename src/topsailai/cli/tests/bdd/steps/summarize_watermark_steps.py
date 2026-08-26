@@ -351,6 +351,8 @@ def check_feasibility(context) -> None:
         context["feasibility_input_tokens"],
         context["feasibility_preserved_tokens"],
         context["feasibility_reserve"],
+        context["feasibility_maximum"],
+        context["feasibility_margin"],
     )
     context["feasibility_result"] = harness.trace["feasibility"]
 
@@ -360,3 +362,43 @@ def feasibility_outcome(context, outcome: str) -> None:
     """Assert the real feasibility decision."""
     allowed = context["feasibility_result"][0]
     assert allowed is (outcome == "allowed")
+
+
+@then(parsers.parse("summary feasibility is rejected with reason {reason}"))
+def feasibility_rejection_reason(context, reason: str) -> None:
+    """Assert a hard feasibility rejection and its production reason."""
+    allowed, actual_reason, _, _ = context["feasibility_result"]
+    assert allowed is False
+    assert actual_reason == reason
+
+
+@given(
+    parsers.parse(
+        "a model context limit of {maximum:d} tokens and a completion budget of {budget:d} tokens"
+    )
+)
+def model_context_and_completion_budget(context, maximum: int, budget: int) -> None:
+    """Configure model capacity and completion budget for classification."""
+    import json
+
+    harness = _ctx(context)
+    harness.monkeypatch.setenv(
+        "TOPSAILAI_MODEL_MAX_CONTEXT_MAP",
+        json.dumps({"bdd-model": maximum}),
+    )
+    harness.agent.llm_model.max_tokens = budget
+
+
+@given(parsers.parse("the model context map is {configuration}"))
+def invalid_model_context_map(context, configuration: str) -> None:
+    """Configure one invalid model-context map variant."""
+    values = {
+        "malformed": "{bad json",
+        "non-positive": '{"bdd-model": -5}',
+        "non-integer": '{"bdd-model": "invalid"}',
+    }
+    harness = _ctx(context)
+    harness.monkeypatch.setenv(
+        "TOPSAILAI_MODEL_MAX_CONTEXT_MAP", values[configuration]
+    )
+    harness.monkeypatch.setenv("TOPSAILAI_MODEL_MAX_CONTEXT_DEFAULT", "0")
