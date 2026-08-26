@@ -639,6 +639,9 @@ class LLMModel(LLMModelBase):
             completion_tokens=0, prompt_tokens=0, total_tokens=0,
             prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=0),
         )
+        usage_chunk_count = 0
+        usage_details_chunk_count = 0
+        cached_tokens_chunk_count = 0
 
         first_byte_ms = None
 
@@ -662,15 +665,27 @@ class LLMModel(LLMModelBase):
                 delta_obj = chunk.choices[0].delta
             try:
                 delta_usage = self.get_response_usage(chunk)
+                delta_prompt_tokens_details = None
+                delta_cached_tokens = None
                 if delta_usage:
-                    prompt_tokens_details = usage.prompt_tokens_details
+                    usage_chunk_count += 1
                     delta_prompt_tokens_details = delta_usage.prompt_tokens_details
+                    if delta_prompt_tokens_details:
+                        usage_details_chunk_count += 1
+                        delta_cached_tokens = delta_prompt_tokens_details.cached_tokens
+                        if delta_cached_tokens is not None:
+                            cached_tokens_chunk_count += 1
+                    prompt_tokens_details = usage.prompt_tokens_details
                     if prompt_tokens_details and delta_prompt_tokens_details:
-                        prompt_tokens_details.cached_tokens += (
-                            delta_prompt_tokens_details.cached_tokens
-                        )
-            except Exception:
-                pass
+                        prompt_tokens_details.cached_tokens += delta_cached_tokens
+                logger.debug(
+                    "stream usage chunk: has_usage=%s has_prompt_tokens_details=%s cached_tokens=%r",
+                    delta_usage is not None,
+                    delta_prompt_tokens_details is not None,
+                    delta_cached_tokens,
+                )
+            except Exception as e:
+                logger.warning("failed to merge streaming usage: %s", e, exc_info=True)
             if delta_obj is None:
                 continue
             if sampled_chunks is not None and len(sampled_chunks) < stream_chunk_sample:
@@ -766,6 +781,20 @@ class LLMModel(LLMModelBase):
             print()
 
         self.tokenStat.wait(token_stat_ticket)
+        final_prompt_tokens_details = usage.prompt_tokens_details
+        final_cached_tokens = (
+            final_prompt_tokens_details.cached_tokens
+            if final_prompt_tokens_details is not None
+            else None
+        )
+        logger.debug(
+            "final streaming usage before TokenStat: cached_tokens=%r "
+            "usage_chunks=%s prompt_details_chunks=%s cached_value_chunks=%s",
+            final_cached_tokens,
+            usage_chunk_count,
+            usage_details_chunk_count,
+            cached_tokens_chunk_count,
+        )
         self.tokenStat.output_token_stat(usage)
 
         full_content = full_content.strip()

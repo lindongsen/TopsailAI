@@ -350,7 +350,6 @@ class TokenStat(threading.Thread):
             print(flush=True)
         msg = f"[TokenStat] {info}"
         print_info(msg)      # Output to console/step display
-        logger.info(msg)     # Output to log file
         if env_tool.is_need_print():
             # print one empty line
             print(flush=True)
