@@ -12,6 +12,7 @@
 
 import time
 import threading
+from collections import deque
 from typing import Optional
 
 import tiktoken
@@ -242,8 +243,11 @@ class TokenStat(threading.Thread):
         self.current_cached_tokens = 0
 
         # Thread synchronization and data management
-        self.buffer = None          # Temporary message storage
+        self.buffer = deque()       # Pending message batches
         self.rlock = threading.RLock()  # Reentrant lock for thread safety
+        self._batch_condition = threading.Condition(self.rlock)
+        self._next_batch_ticket = 0
+        self._completed_batch_ticket = 0
 
         self.flag_running = True    # Control flag for thread execution
 
@@ -397,16 +401,19 @@ class TokenStat(threading.Thread):
                 server response.
 
         Returns:
-            None
+            int: Monotonically increasing ticket for this calculation batch.
 
         Note:
             The method updates the last message timestamp and resets locally
             calculated message counters.
         """
         # Use lock for thread-safe buffer operations
-        with self.rlock:
-            # Store messages in buffer for background processing
-            self.buffer = msgs
+        with self._batch_condition:
+            self._next_batch_ticket += 1
+            ticket = self._next_batch_ticket
+
+            # Store messages in FIFO order for background processing.
+            self.buffer.append((ticket, msgs))
 
             # Update message count and reset current counters
             self.msg_count = len(msgs)
@@ -416,6 +423,36 @@ class TokenStat(threading.Thread):
 
             # Update timestamp for last message activity
             self._last_msg_time = int(time.time())
+            self._batch_condition.notify()
+            return ticket
+
+    def wait(self, ticket: int, timeout: Optional[float] = 1.0) -> bool:
+        """Wait until the specified token-calculation batch is complete.
+
+        Args:
+            ticket (int): Batch ticket returned by :meth:`add_msgs`.
+            timeout (float|None): Maximum seconds to wait. ``None`` waits
+                indefinitely.
+
+        Returns:
+            bool: True when the batch completed, otherwise False on timeout.
+        """
+        if ticket is None:
+            return True
+
+        with self._batch_condition:
+            completed = self._batch_condition.wait_for(
+                lambda: self._completed_batch_ticket >= ticket,
+                timeout=timeout,
+            )
+
+        if not completed:
+            logger.warning(
+                "TokenStat timed out waiting for batch %s after %s seconds",
+                ticket,
+                timeout,
+            )
+        return completed
 
     def run(self):
         """
@@ -481,27 +518,26 @@ class TokenStat(threading.Thread):
             # Short sleep to prevent excessive CPU usage
             time.sleep(0.01)
 
-            # Check if there are messages in the buffer to process
-            buffer = self.buffer
-            if not buffer:
-                continue
+            # Take the next buffered batch, including empty messages.
+            with self._batch_condition:
+                if not self.buffer:
+                    continue
+                ticket, buffer = self.buffer.popleft()
 
-            # Process the buffered messages
-            with self.rlock:
-                # Clear the buffer to indicate processing has started
-                self.buffer = None
+            # Count outside the lock so waiters can honor their timeout.
+            if not isinstance(buffer, str):
+                buffer = str(buffer)
+            current_text_len = len(buffer)
+            current_count = count_tokens(buffer)
 
-                # Convert messages to string for token counting
-                if not isinstance(buffer, str):
-                    buffer = str(buffer)
-
-                # Calculate text length and token count
-                self.current_text_len = len(buffer)
-                self.current_count = count_tokens(buffer)
-
-                # Update cumulative statistics
-                self.total_count += self.current_count
-                self.total_text_len += self.current_text_len
+            # Publish the completed batch atomically before notifying waiters.
+            with self._batch_condition:
+                self.current_text_len = current_text_len
+                self.current_count = current_count
+                self.total_count += current_count
+                self.total_text_len += current_text_len
+                self._completed_batch_ticket = ticket
+                self._batch_condition.notify_all()
 
         # Thread cleanup and exit logging
         logger.info(f"TokenStat is exited: {self.name}")

@@ -8,6 +8,7 @@ Author: mm-m25
 """
 
 import time
+import threading
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -238,6 +239,106 @@ class TestTokenStat(unittest.TestCase):
         stat.add_msgs([])
         self.assertEqual(stat.msg_count, 0)
         stat.flag_running = False
+
+    @patch('topsailai.context.token.count_tokens', return_value=7)
+    def test_token_stat_wait_handles_fast_response_race(self, mock_count_tokens):
+        """Test immediate waiting observes the current batch result."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        ticket = stat.add_msgs("fast response")
+
+        self.assertTrue(stat.wait(ticket, timeout=1.0))
+        self.assertEqual(stat.current_count, 7)
+        mock_count_tokens.assert_called_once_with("fast response")
+        stat.flag_running = False
+
+    @patch('topsailai.context.token.count_tokens', return_value=11)
+    def test_token_stat_wait_for_normal_completion(self, mock_count_tokens):
+        """Test wait returns after all current batch fields are updated."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        ticket = stat.add_msgs(["normal"])
+
+        self.assertTrue(stat.wait(ticket, timeout=1.0))
+        self.assertEqual(stat.current_count, 11)
+        self.assertEqual(stat.current_text_len, len(str(["normal"])))
+        self.assertEqual(stat.total_count, 11)
+        self.assertEqual(stat.total_text_len, len(str(["normal"])))
+        stat.flag_running = False
+
+    def test_token_stat_wait_timeout_logs_and_returns_false(self):
+        """Test a slow calculation times out without blocking permanently."""
+        calculation_started = threading.Event()
+        release_calculation = threading.Event()
+
+        def slow_count(_text):
+            calculation_started.set()
+            release_calculation.wait(timeout=1.0)
+            return 3
+
+        with patch('topsailai.context.token.count_tokens', side_effect=slow_count), \
+             patch('topsailai.context.token.logger') as mock_logger:
+            stat = TokenStat(self.llm_id, lifetime=0)
+            ticket = stat.add_msgs("slow")
+            self.assertTrue(calculation_started.wait(timeout=1.0))
+
+            self.assertFalse(stat.wait(ticket, timeout=0.01))
+            mock_logger.warning.assert_called_once()
+
+            release_calculation.set()
+            self.assertTrue(stat.wait(ticket, timeout=1.0))
+            stat.flag_running = False
+
+    @patch('topsailai.context.token.count_tokens', return_value=0)
+    def test_token_stat_wait_completes_empty_messages(self, mock_count_tokens):
+        """Test an empty message collection is still a completable batch."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        ticket = stat.add_msgs([])
+
+        self.assertTrue(stat.wait(ticket, timeout=1.0))
+        self.assertEqual(stat.current_count, 0)
+        mock_count_tokens.assert_called_once_with("[]")
+        stat.flag_running = False
+
+    @patch('topsailai.context.token.count_tokens', side_effect=[2, 5])
+    def test_token_stat_wait_handles_consecutive_batches(self, mock_count_tokens):
+        """Test consecutive batches retain FIFO completion and totals."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        first_ticket = stat.add_msgs("first")
+        second_ticket = stat.add_msgs("second")
+
+        self.assertTrue(stat.wait(first_ticket, timeout=1.0))
+        self.assertTrue(stat.wait(second_ticket, timeout=1.0))
+        self.assertEqual(stat.current_count, 5)
+        self.assertEqual(stat.total_count, 7)
+        self.assertEqual(mock_count_tokens.call_count, 2)
+        stat.flag_running = False
+
+    def test_token_stat_wait_ignores_old_batch_completion(self):
+        """Test completing an old ticket cannot release a newer waiter."""
+        second_started = threading.Event()
+        release_second = threading.Event()
+        call_count = 0
+
+        def controlled_count(_text):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return 2
+            second_started.set()
+            release_second.wait(timeout=1.0)
+            return 5
+
+        with patch('topsailai.context.token.count_tokens', side_effect=controlled_count):
+            stat = TokenStat(self.llm_id, lifetime=0)
+            first_ticket = stat.add_msgs("first")
+            second_ticket = stat.add_msgs("second")
+
+            self.assertTrue(stat.wait(first_ticket, timeout=1.0))
+            self.assertTrue(second_started.wait(timeout=1.0))
+            self.assertFalse(stat.wait(second_ticket, timeout=0.01))
+
+            release_second.set()
+            self.assertTrue(stat.wait(second_ticket, timeout=1.0))
+            stat.flag_running = False
 
     @patch('topsailai.context.token.count_tokens')
     def test_token_stat_process_message(self, mock_count_tokens):

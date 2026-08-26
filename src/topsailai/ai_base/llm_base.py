@@ -489,7 +489,7 @@ class LLMModel(LLMModelBase):
             openai.APITimeoutError: If TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE is
                 enabled and the first byte exceeds the configured threshold.
         """
-        self.tokenStat.add_msgs(messages)
+        token_stat_ticket = self.tokenStat.add_msgs(messages)
 
         first_byte_timeout, raise_on_first_byte_timeout = self._get_first_byte_timeout_config()
 
@@ -501,6 +501,7 @@ class LLMModel(LLMModelBase):
             first_byte_timeout=first_byte_timeout,
             raise_on_timeout=raise_on_first_byte_timeout,
         )
+        self.tokenStat.wait(token_stat_ticket)
         self.tokenStat.output_token_stat(self.get_response_usage(response))
 
         full_content = response.choices[0].message.content
@@ -614,7 +615,7 @@ class LLMModel(LLMModelBase):
             openai.APITimeoutError: If TOPSAILAI_LLM_FIRST_BYTE_TIMEOUT_RAISE is
                 enabled and the first byte exceeds the configured threshold.
         """
-        self.tokenStat.add_msgs(messages)
+        token_stat_ticket = self.tokenStat.add_msgs(messages)
 
         first_byte_timeout, raise_on_first_byte_timeout = self._get_first_byte_timeout_config()
 
@@ -764,6 +765,7 @@ class LLMModel(LLMModelBase):
         if env_tool.is_debug_mode():
             print()
 
+        self.tokenStat.wait(token_stat_ticket)
         self.tokenStat.output_token_stat(usage)
 
         full_content = full_content.strip()
