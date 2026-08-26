@@ -675,23 +675,25 @@ class TestSummarizeMessagesForProcessing(TestContextRuntimeAgent2LLM):
             self.assertNotIn("session-msg-0", final_contents)
 
     def test_summarize_session_keep_ratio_invalid_fallback(self):
-        """Test invalid TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO falls back to 0.5."""
-        with patch.dict(os.environ, {
-            "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "100",
-            "TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO": "1.5",
-        }):
-            # fallback ratio 0.5 => threshold 50; 50 >= 50 => drop
-            session_msgs = self._make_session_messages(50)
-            self.test_instance._messages = session_msgs
-            self.test_instance._ai_agent.messages = self._make_agent_messages(30)
-            self.test_instance._first_position = 0
+        """Test invalid session maximum ratios fall back to 0.5."""
+        for invalid_ratio in ("1.5", "nan", "inf", "-inf"):
+            with self.subTest(invalid_ratio=invalid_ratio):
+                with patch.dict(os.environ, {
+                    "TOPSAILAI_AGENT2LLM_MESSAGES_QUANTITY_THRESHOLD": "100",
+                    "TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO": invalid_ratio,
+                }):
+                    # fallback ratio 0.5 => threshold 50; 50 >= 50 => drop
+                    session_msgs = self._make_session_messages(50)
+                    self.test_instance._messages = session_msgs
+                    self.test_instance._ai_agent.messages = self._make_agent_messages(30)
+                    self.test_instance._first_position = 0
 
-            with patch('topsailai.workspace.context.agent2llm.logger'):
-                with patch('topsailai.workspace.context.agent2llm.print_info'):
-                    self.test_instance.summarize_messages_for_processing()
+                    with patch('topsailai.workspace.context.agent2llm.logger'):
+                        with patch('topsailai.workspace.context.agent2llm.print_info'):
+                            self.test_instance.summarize_messages_for_processing()
 
-            final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
-            self.assertNotIn("session-msg-0", final_contents)
+                    final_contents = [m.get("content") for m in self.test_instance._ai_agent.messages]
+                    self.assertNotIn("session-msg-0", final_contents)
 
     def test_summarize_min_extra_messages_env_var(self):
         """Test TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES controls short-circuit."""

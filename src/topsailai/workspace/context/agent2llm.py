@@ -10,6 +10,7 @@ Created: 2026-03-23
 Purpose: Handle agent-to-LLM message conversion and context summarization.
 """
 
+import math
 import random
 
 from topsailai.logger import logger
@@ -281,7 +282,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 default=0.5,
                 formatter=float,
             )
-            if session_max_ratio is None or session_max_ratio <= 0 or session_max_ratio > 1:
+            if session_max_ratio is None or not math.isfinite(session_max_ratio) or session_max_ratio <= 0 or session_max_ratio > 1:
                 logger.warning("invalid TOPSAILAI_AGENT2LLM_SUMMARY_SESSION_MAX_RATIO [%s], using default 0.5", session_max_ratio)
                 session_max_ratio = 0.5
 
