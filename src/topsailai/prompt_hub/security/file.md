@@ -9,7 +9,10 @@ Define the working folder for task.
 
 ## temporary files
 
-- If the user has defined a workspace, temporary files should be saved to this folder `{workspace}/.tmp`; otherwise, they should be saved to this folder `/tmp`.
+- If the user has defined a workspace, all temporary files MUST be saved under `{workspace}/.tmp`; otherwise, they MUST be saved under `/tmp`.
+- Test-generated artifacts are temporary files and MUST follow the same rule. This includes, but is not limited to, `.out` files, `.coverage` data, coverage reports, test logs, captured command output, test reports, caches, and other files produced only for test execution or inspection.
+- Test commands and tools MUST be configured so these artifacts are written directly to the designated temporary folder rather than the workspace root, source directories, or test directories.
+- An artifact may be written elsewhere only when the user explicitly requests that location or when it is an intentional, maintained project deliverable.
 
 ## absolute path
 
