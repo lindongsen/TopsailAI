@@ -9,7 +9,7 @@ programming_language: python
 
 # LLM Mock Server
 
-`llm_mock_server.py` provides a reusable OpenAI-compatible non-streaming chat-completions service for deterministic prompt-cache tests. It uses only the Python standard library.
+`llm_mock_server.py` provides a reusable OpenAI-compatible chat-completions service for deterministic prompt-cache and opt-in streaming tests. It uses only the Python standard library.
 
 ## Cache Model
 
@@ -52,12 +52,12 @@ LLM_RESPONSE_STREAM=0
 
 ## Endpoints
 
-- `POST /v1/chat/completions` — OpenAI-compatible non-streaming completion
+- `POST /v1/chat/completions` — OpenAI-compatible non-streaming completion, plus opt-in SSE streaming for in-process test configuration
 - `GET /health` — readiness and configured model
 - `GET /debug/state` — cache capacity, retained prompt count, total request count, and bounded per-request cache results
 - `DELETE /debug/state` — clear retained prompts and counters
 
-Requests with `stream=true` return an explicit `400` error because this mock server intentionally supports only the non-streaming mode required by the cached-token BDD tests.
+Requests with `stream=true` return an explicit `400` error by default. In-process tests may opt in by constructing `MockServerConfig(stream_chunks=(...))`; each configured string is emitted as one OpenAI-compatible SSE content chunk, followed by a terminal usage chunk and `[DONE]`. The command-line interface remains non-streaming by default.
 
 ## Verify Cache Reuse
 

@@ -22,6 +22,7 @@ class MockServerConfig:
     reply: str = "Mock response"
     chars_per_token: int = 4
     cache_capacity: int = 32
+    stream_chunks: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         """Reject invalid numeric configuration."""
@@ -160,6 +161,60 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
         """Write an OpenAI-shaped error response."""
         self._write_json(status, {"error": {"message": message, "type": "invalid_request_error"}})
 
+    def _write_sse(self, payload: dict[str, Any] | str) -> None:
+        """Write one server-sent event and flush it immediately."""
+        data = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+        self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
+        self.wfile.flush()
+
+    def _write_stream(self, payload: dict[str, Any], cache_result: dict[str, int]) -> None:
+        """Write an OpenAI-compatible scripted streaming completion."""
+        completion_id = f"chatcmpl-mock-{uuid.uuid4().hex}"
+        created = int(time.time())
+        model = payload.get("model") or self.server.config.model
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        try:
+            for content in self.server.config.stream_chunks or ():
+                self._write_sse({
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"content": content},
+                        "finish_reason": None,
+                    }],
+                })
+            self._write_sse({
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop",
+                }],
+                "usage": {
+                    "prompt_tokens": cache_result["prompt_tokens"],
+                    "completion_tokens": 0,
+                    "total_tokens": cache_result["prompt_tokens"],
+                    "prompt_tokens_details": {
+                        "cached_tokens": cache_result["cached_tokens"],
+                    },
+                },
+            })
+            self._write_sse("[DONE]")
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        finally:
+            self.close_connection = True
+
     def do_GET(self) -> None:
         """Handle health and debug-state queries."""
         if self.path == "/health":
@@ -197,11 +252,15 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(messages, list) or not all(isinstance(item, dict) for item in messages):
             self._error(400, "messages must be a list of objects")
             return
-        if payload.get("stream"):
+        if payload.get("stream") and self.server.config.stream_chunks is None:
             self._error(400, "streaming is not supported")
             return
 
         cache_result = self.server.prompt_cache.record(messages)
+        if payload.get("stream"):
+            self._write_stream(payload, cache_result)
+            return
+
         completion_tokens = max(
             1,
             (len(self.server.config.reply) + self.server.config.chars_per_token - 1)

@@ -203,6 +203,27 @@ def test_openai_client_can_use_mock_endpoint():
     assert response.usage.prompt_tokens_details.cached_tokens == response.usage.prompt_tokens
 
 
+def test_openai_client_can_consume_opt_in_sse_stream():
+    """The official client must parse configured SSE chunks over real HTTP."""
+    with running_server(stream_chunks=("first", " second")) as (server, base_url):
+        client = OpenAI(api_key="mock", base_url=base_url + "/v1")
+        stream = client.chat.completions.create(
+            model="topsailai-mock",
+            messages=[_message("user", "hello")],
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+        chunks = list(stream)
+    content = "".join(
+        chunk.choices[0].delta.content or ""
+        for chunk in chunks
+        if chunk.choices
+    )
+    assert content == "first second"
+    assert chunks[-1].usage.prompt_tokens > 0
+    assert server.prompt_cache.state()["total_requests"] == 1
+
+
 @pytest.mark.parametrize(
     "payload,error_text",
     [
