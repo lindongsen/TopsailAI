@@ -32,6 +32,7 @@ import os
 import signal
 import threading
 
+from topsailai.utils import env_tool
 from topsailai.utils.file_tool import delete_file
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
 from topsailai.workspace.session_meta import get_session_meta_path
@@ -142,11 +143,14 @@ def cleanup_task_folder() -> None:
 def print_session_meta_files_on_exit() -> None:
     """Print the current process's session ``.meta`` file before cleanup.
 
-    The output is written directly to ``stdout`` so it is visible even when
-    the process is exiting abnormally.  If the current process has no meta
-    file, this function produces no output.  The operation is idempotent
-    and thread-safe.
+    The output is written directly to ``stdout`` in interactive mode so it is
+    visible even when the process is exiting abnormally.  If the current
+    process has no meta file, this function produces no output.  The operation
+    is idempotent and thread-safe.
     """
+    if not env_tool.is_interactive_mode():
+        return
+
     global _SESSION_META_PRINTED
     with _SESSION_META_PRINT_LOCK:
         if _SESSION_META_PRINTED:
