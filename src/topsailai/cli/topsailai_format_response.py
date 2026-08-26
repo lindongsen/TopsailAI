@@ -17,7 +17,7 @@ PWD = os.getenv("TOPSAILAI_PWD")
 if PWD:
     os.chdir(PWD)
 
-print(f"OPENAI_MODEL: {os.getenv("OPENAI_MODEL")}")
+print(f"OPENAI_MODEL: {os.getenv('OPENAI_MODEL')}", file=sys.stderr)
 
 def resolve_path(path: str) -> str:
     """Resolve a relative path against the original TOPSAILAI_PWD.
@@ -100,9 +100,9 @@ def format_output(data, fmt: str, indent: int, compact: bool) -> str:
 
 def format_response_text(text: str, fmt: str = "json", indent: int = 2, compact: bool = False) -> str:
     """Format a single response string and return output in the requested format."""
-    print("\n--- calling format_response ---")
+    print("\n--- calling format_response ---", file=sys.stderr)
     data = format_response(text)
-    print("\n--- outputing ---")
+    print("\n--- outputing ---", file=sys.stderr)
     return format_output(data, fmt, indent, compact)
 
 
@@ -152,7 +152,7 @@ def main(argv=None) -> int:
 
     exit_code = 0
     for path in args.files:
-        print(f"\n>>> {path}")
+        print(f"\n>>> {path}", file=sys.stderr)
         if path == "-":
             text = sys.stdin.read()
             try:
