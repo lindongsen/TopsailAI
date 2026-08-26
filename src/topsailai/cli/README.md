@@ -59,6 +59,13 @@ For example:
 
 When adding a new CLI tool, prefix its entry-point script with `topsailai` (e.g., `topsailai_<feature>.py`).
 
+### CLI-Specific Environment Variables
+
+An environment variable that is consumed only by a single CLI tool should not be added to the global
+`docs/usage/Environment_Variables.md`. Instead, document it in a co-located `{cli}.env` file next to the
+script (e.g., `topsailai_launch_agent.env` for `topsailai_launch_agent.py`). The file acts as a comment-led
+reference template listing each variable, its meaning, accepted format (e.g., comma-separated names with
+wildcards), and default/example values.
 
 ## Adding a New CLI Tool
 

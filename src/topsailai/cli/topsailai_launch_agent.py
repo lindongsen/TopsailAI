@@ -1151,6 +1151,39 @@ def _is_ignored(full_path, name, is_dir, patterns):
     return ignored
 
 
+def _parse_csv_names(value):
+    """Split a comma-separated env value into stripped non-empty names."""
+    if not value:
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _matches_any(name, patterns):
+    """Return True if ``name`` matches any fnmatch pattern."""
+    import fnmatch
+
+    return any(fnmatch.fnmatch(name, p) for p in patterns)
+
+
+def _load_scan_exclusions():
+    """Load scan-filter exclusions from environment variables.
+
+    Three comma-separated variables control which names are filtered out of
+    the scanned folder tree:
+
+    - ``TOPSAILAI_SCAN_EXCLUDE``: names excluded for both files and dirs.
+    - ``TOPSAILAI_SCAN_EXCLUDE_DIRS``: directory names excluded.
+    - ``TOPSAILAI_SCAN_EXCLUDE_FILES``: file names excluded.
+
+    Values support fnmatch wildcards (e.g. ``*.log``, ``build*``).
+    """
+    return (
+        _parse_csv_names(os.getenv("TOPSAILAI_SCAN_EXCLUDE")),
+        _parse_csv_names(os.getenv("TOPSAILAI_SCAN_EXCLUDE_DIRS")),
+        _parse_csv_names(os.getenv("TOPSAILAI_SCAN_EXCLUDE_FILES")),
+    )
+
+
 def _scan_folder(folder):
     """Scan a specific folder and print its tree structure.
 
@@ -1183,6 +1216,7 @@ def _scan_workspace_files(workspace, project_folder=None):
         """Build a tree string for a single root directory."""
         scan_root = os.path.abspath(scan_root)
         patterns = _load_gitignore_patterns(scan_root)
+        excl_all, excl_dirs, excl_files = _load_scan_exclusions()
 
         entries = []
 
@@ -1211,6 +1245,13 @@ def _scan_workspace_files(workspace, project_folder=None):
                 is_symlink = os.path.islink(full_path)
                 is_dir = os.path.isdir(full_path) and not is_symlink
                 if _is_ignored(full_path, name, is_dir, local_patterns):
+                    continue
+                # Filter out names excluded via environment variables.
+                if _matches_any(name, excl_all):
+                    continue
+                if is_dir and _matches_any(name, excl_dirs):
+                    continue
+                if not is_dir and _matches_any(name, excl_files):
                     continue
                 visible_items.append((name, full_path, is_dir))
 
