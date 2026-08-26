@@ -78,10 +78,16 @@ These variables define the agent's working environment and project access scope.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MAX_TOKENS` | `30000` | Maximum number of tokens to generate in each LLM response. |
-| `TEMPERATURE` | `0.3` | Controls randomness: `0.0` = deterministic, `1.0` = creative. |
-| `TOP_P` | `0.97` | Controls diversity via nucleus sampling. |
-| `FREQUENCY_PENALTY` | `0.0` | Penalizes repeated tokens: `0.0` = no penalty, `1.0` = maximum penalty. |
+| `TOPSAILAI_MAX_COMPLETION_TOKENS` | `30000` | Maximum number of tokens to generate in each LLM response. |
+| `TOPSAILAI_TEMPERATURE` | `0.3` | Controls randomness: `0.0` = deterministic, `1.0` = creative. |
+| `TOPSAILAI_TOP_P` | `0.97` | Controls diversity via nucleus sampling. |
+| `TOPSAILAI_FREQUENCY_PENALTY` | `0.0` | Penalizes repeated tokens: `0.0` = no penalty, `1.0` = maximum penalty. |
+| `MAX_TOKENS` | `30000` | Deprecated fallback for `TOPSAILAI_MAX_COMPLETION_TOKENS`; retained without a removal schedule. |
+| `TEMPERATURE` | `0.3` | Deprecated fallback for `TOPSAILAI_TEMPERATURE`; retained without a removal schedule. |
+| `TOP_P` | `0.97` | Deprecated fallback for `TOPSAILAI_TOP_P`; retained without a removal schedule. |
+| `FREQUENCY_PENALTY` | `0.0` | Deprecated fallback for `TOPSAILAI_FREQUENCY_PENALTY`; retained without a removal schedule. |
+
+Resolution order is the non-empty `TOPSAILAI_*` variable, then the corresponding non-empty deprecated variable, then the code default.
 
 ## LLM Interactive
 

@@ -43,7 +43,10 @@ class _AgentContextBase(object):
         if self.agent:
             _max_tokens = self.agent.llm_model.max_tokens
         if not _max_tokens:
-            _max_tokens = env_tool.EnvReaderInstance.get("MAX_TOKENS", 3000, formatter=int)
+            _max_tokens = env_tool.EnvReaderInstance.get_with_fallback(
+                "TOPSAILAI_MAX_COMPLETION_TOKENS", "MAX_TOKENS",
+                default=3000, formatter=int,
+            )
         return _max_tokens
 
 

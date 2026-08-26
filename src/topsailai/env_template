@@ -301,21 +301,25 @@ TOPSAILAI_LOG_SUMMARIZE_MESSAGE_IDENTITY_CHANGES=1
 # LLM Parameters
 # =============================================================================
 
-# Maximum Tokens
-# Maximum number of tokens to generate in each LLM response
-MAX_TOKENS=30000
+# Maximum number of tokens to generate in each LLM response.
+TOPSAILAI_MAX_COMPLETION_TOKENS=30000
+# Deprecated fallback; used only when TOPSAILAI_MAX_COMPLETION_TOKENS has no value.
+# MAX_TOKENS=30000
 
-# Temperature
-# Controls randomness: 0.0 = deterministic, 1.0 = creative
-TEMPERATURE=0.3
+# Controls randomness: 0.0 = deterministic, 1.0 = creative.
+TOPSAILAI_TEMPERATURE=0.3
+# Deprecated fallback; used only when TOPSAILAI_TEMPERATURE has no value.
+# TEMPERATURE=0.3
 
-# Top P (Commented out - available for advanced configuration)
-# Controls diversity via nucleus sampling
-TOP_P=0.97
+# Controls diversity via nucleus sampling.
+TOPSAILAI_TOP_P=0.97
+# Deprecated fallback; used only when TOPSAILAI_TOP_P has no value.
+# TOP_P=0.97
 
-# Frequency Penalty (Commented out - available for advanced configuration)
-# Penalizes repeated tokens: 0.0 = no penalty, 1.0 = maximum penalty
-FREQUENCY_PENALTY=0.0
+# Penalizes repeated tokens: 0.0 = no penalty, 1.0 = maximum penalty.
+TOPSAILAI_FREQUENCY_PENALTY=0.0
+# Deprecated fallback; used only when TOPSAILAI_FREQUENCY_PENALTY has no value.
+# FREQUENCY_PENALTY=0.0
 
 # =============================================================================
 # LLM Interactive
