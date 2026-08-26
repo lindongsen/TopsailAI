@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import ast
 import threading
 from types import MethodType, SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 from topsailai.ai_base.llm_base import LLMModel
+from topsailai.context.session_manager.__base import SessionData
+from topsailai.context.session_manager.sql import SessionSQLAlchemy
+from topsailai.context.token import TokenStat
 from topsailai.tests.mock.llm_mock_server import MockServerConfig, create_server
 from topsailai.workspace.context.agent2llm import ContextRuntimeAgent2LLM
 
@@ -31,6 +36,7 @@ class CachedTokensHarness:
 
     def __init__(self, monkeypatch):
         """Start an isolated mock endpoint and construct the real LLM client."""
+        self.monkeypatch = monkeypatch
         self.server = create_server(MockServerConfig(port=0, reply="Mock summary"))
         self.server_thread = threading.Thread(
             target=self.server.serve_forever,
@@ -52,6 +58,10 @@ class CachedTokensHarness:
         self.messages: list[dict[str, Any]] = []
         self.last_response = None
         self.last_summary_message_count: int | None = None
+        self.last_snapshot: dict[str, Any] | None = None
+        self.session_manager: SessionSQLAlchemy | None = None
+        self.session_id: str | None = None
+        self.session_stats: list[TokenStat] = []
 
     @staticmethod
     def stable_messages() -> list[dict[str, Any]]:
@@ -94,6 +104,50 @@ class CachedTokensHarness:
         self.last_summary_message_count = len(self.messages) if answer else None
         return answer
 
+    def emit_snapshot(self, token_stat: TokenStat | None = None) -> dict[str, Any]:
+        """Capture and parse the dictionary emitted by TokenStat."""
+        stat = token_stat or self.model.tokenStat
+        with patch("topsailai.context.token.print_info") as mock_print:
+            stat.output_token_stat()
+        message = mock_print.call_args.args[0]
+        prefix = "[TokenStat] "
+        assert message.startswith(prefix)
+        self.last_snapshot = ast.literal_eval(message[len(prefix):])
+        return self.last_snapshot
+
+    def feed_first_byte(self, samples: list[float]) -> None:
+        """Feed first-byte latency samples directly into the real TokenStat."""
+        for sample in samples:
+            self.model.tokenStat.add_first_byte(sample)
+
+    def enable_session(self, session_id: str) -> None:
+        """Create one real in-memory session shared by multiple TokenStat agents."""
+        self.monkeypatch.setenv("SESSION_ID", session_id)
+        self.session_id = session_id
+        self.session_manager = SessionSQLAlchemy("sqlite:///:memory:")
+        self.session_manager.create_session(
+            SessionData(session_id=session_id, task="TokenStat BDD accumulation")
+        )
+
+    def report_session_delta(self, tokens: int, cached_tokens: int) -> None:
+        """Emit one agent's token delta into the shared session totals."""
+        assert self.session_manager is not None
+        stat = TokenStat(f"bdd-session-agent-{len(self.session_stats) + 1}", lifetime=0)
+        stat.current_count = tokens
+        stat.current_cached_tokens = cached_tokens
+        self.session_stats.append(stat)
+        with patch(
+            "topsailai.context.ctx_manager.get_session_manager",
+            return_value=self.session_manager,
+        ), patch("topsailai.context.token.print_info"):
+            stat.output_token_stat()
+
+    def session_token_totals(self) -> tuple[int, int] | None:
+        """Return combined token totals for the active shared session."""
+        assert self.session_manager is not None
+        assert self.session_id is not None
+        return self.session_manager.get_session_token_totals(self.session_id)
+
     @property
     def cached_tokens(self) -> int | None:
         """Return the currently observable cached-token statistic."""
@@ -117,8 +171,12 @@ class CachedTokensHarness:
         return self.server.prompt_cache.state()["requests"][-1]
 
     def close(self) -> None:
-        """Stop the exact server and TokenStat thread created by this harness."""
+        """Stop the exact server and TokenStat threads created by this harness."""
         self.model.tokenStat.flag_running = False
+        for stat in self.session_stats:
+            stat.flag_running = False
+        if self.session_manager is not None:
+            self.session_manager.engine.dispose()
         self.server.shutdown()
         self.server.server_close()
         self.server_thread.join(timeout=2)
