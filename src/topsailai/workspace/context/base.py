@@ -552,15 +552,13 @@ class ContextRuntimeBase(object):
         return default_value if default_value > 0 else None
 
     def _get_watermark_ratios(self) -> tuple[float, float]:
-        """Read valid low/high ratios or return the documented defaults."""
+        """Read valid low/high ratios or return the documented paired defaults."""
         low_ratio = env_tool.EnvReaderInstance.get(
             "TOPSAILAI_CONTEXT_LOW_WATERMARK_RATIO",
-            default=0.73,
             formatter=float,
         )
         high_ratio = env_tool.EnvReaderInstance.get(
             "TOPSAILAI_CONTEXT_HIGH_WATERMARK_RATIO",
-            default=0.93,
             formatter=float,
         )
         if (

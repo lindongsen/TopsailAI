@@ -1315,6 +1315,23 @@ class TestDynamicContextWatermarks(unittest.TestCase):
             (0.73, 0.93),
         )
 
+    def test_get_watermark_ratios_partially_invalid_uses_paired_defaults(self):
+        """Either malformed ratio resets the LOW/HIGH pair to safe defaults."""
+        invalid_pairs = (("invalid", "0.90"), ("0.50", "invalid"))
+        for low_ratio, high_ratio in invalid_pairs:
+            with self.subTest(low_ratio=low_ratio, high_ratio=high_ratio), patch.dict(
+                os.environ,
+                {
+                    "TOPSAILAI_CONTEXT_LOW_WATERMARK_RATIO": low_ratio,
+                    "TOPSAILAI_CONTEXT_HIGH_WATERMARK_RATIO": high_ratio,
+                },
+                clear=False,
+            ):
+                self.assertEqual(
+                    self.runtime._get_watermark_ratios(),
+                    (0.73, 0.93),
+                )
+
     @patch.object(
         __import__(
             "topsailai.workspace.context.base",
