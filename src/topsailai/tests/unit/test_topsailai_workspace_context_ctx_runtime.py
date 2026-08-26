@@ -968,6 +968,125 @@ class TestSummarizeMessages(TestContextRuntimeData):
         self.assertNotIn("normal_id", deleted_ids)
         self.assertNotIn("task_id", deleted_ids)
 
+
+    def test_disabled_task_retention_matches_memory_and_raw_session_heads(self):
+        """Persistent retention uses the observation head plus last-user rule."""
+        self.runtime.session_id = "observation_session"
+        self.mock_json_tool.json_load.side_effect = lambda value: value
+        observation_one = {
+            "role": "user",
+            "content": {"step_name": "observation", "raw_text": "one"},
+        }
+        observation_two = {
+            "role": "user",
+            "content": {"step_name": "observation", "raw_text": "two"},
+        }
+        task = {
+            "role": "user",
+            "content": {"step_name": "task", "raw_text": "task"},
+        }
+        assistant = {"role": "assistant", "content": "compressible"}
+        last_user = {"role": "user", "content": "latest request"}
+        runtime_messages = [
+            observation_one,
+            observation_two,
+            task,
+            assistant,
+            last_user,
+        ]
+        self.runtime.messages = runtime_messages
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary"}
+        ]
+        raw_messages = []
+        for index, message in enumerate(runtime_messages):
+            raw_message = MagicMock()
+            raw_message.msg_id = f"id{index}"
+            raw_message.message = message
+            raw_messages.append(raw_message)
+        self.mock_ctx_manager.get_messages_by_session.return_value = raw_messages
+
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE": "0",
+        }):
+            with patch.object(
+                self.runtime,
+                "_summarize_messages",
+                return_value=(mock_llm_chat, "Summary"),
+            ):
+                with patch.object(
+                    self.runtime,
+                    "_get_head_offset_to_keep_in_summary",
+                    return_value=0,
+                ):
+                    with patch.object(
+                        self.runtime,
+                        "_get_tail_offset_to_keep_in_summary",
+                        return_value=0,
+                    ):
+                        with patch.object(self.runtime, "reset_messages"):
+                            self.runtime.summarize_messages_for_processed(
+                                messages=runtime_messages,
+                                force=True,
+                            )
+
+        deleted_ids = []
+        for call_args in self.mock_ctx_manager.del_session_messages.call_args_list:
+            deleted_ids.extend(call_args[0][1])
+        self.assertNotIn("id0", deleted_ids)
+        self.assertNotIn("id1", deleted_ids)
+        self.assertIn("id2", deleted_ids)
+        self.assertIn("id3", deleted_ids)
+        self.assertNotIn("id4", deleted_ids)
+
+    def test_disabled_task_retention_allows_offsets_to_keep_task(self):
+        """Head offsets independently retain a task excluded from intrinsic head."""
+        self.runtime.session_id = None
+        observation = {
+            "role": "user",
+            "content": {"step_name": "observation", "raw_text": "context"},
+        }
+        task = {
+            "role": "user",
+            "content": {"step_name": "task", "raw_text": "task"},
+        }
+        self.runtime.messages = [
+            observation,
+            task,
+            {"role": "assistant", "content": "compressible"},
+        ]
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary"}
+        ]
+
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE": "0",
+        }):
+            with patch.object(
+                self.runtime,
+                "_summarize_messages",
+                return_value=(mock_llm_chat, "Summary"),
+            ):
+                with patch.object(
+                    self.runtime,
+                    "_get_head_offset_to_keep_in_summary",
+                    return_value=2,
+                ):
+                    with patch.object(self.runtime, "set_messages") as mock_set:
+                        with patch.object(
+                            type(self.runtime),
+                            "last_user_message",
+                            new_callable=PropertyMock,
+                            return_value=None,
+                        ):
+                            self.runtime.summarize_messages_for_processed()
+
+        rebuilt_messages = mock_set.call_args[0][0]
+        self.assertIn(task, rebuilt_messages)
+
     def test_summarize_task_messages_preserve_chronological_order_without_session(self):
         """Test that only head-portion task messages survive summarization.
 

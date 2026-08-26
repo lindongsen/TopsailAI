@@ -178,6 +178,7 @@ These variables control when the agent archives or summarizes message history to
 | `TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD` | `3` | Consecutive duplicate tool call threshold for triggering Agent2LLM context summarization. When the agent's `consecutive_duplicate_count` exceeds this value, summarization is triggered. Set to `0` or negative to disable. The default `3` means summarization triggers at count `4` or higher (strictly greater than). |
 | `TOPSAILAI_REALTIME_TOKEN_CALCULATION` | `0` | When `1`, token counts for summarization thresholds are calculated from actual message content; when `0` (default), uses cached `TokenStat.current_tokens`. |
 | `TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES` | `1` | Keep session messages after summarizing. `1` = enabled (default), `0` = disabled. |
+| `TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE` | `1` | Keep the first task message in the intrinsic summary head. When `0`, the intrinsic head contains optional leading system messages followed by the contiguous opening user-observation block; head/tail offsets, session retention, and last-user retention may still preserve the task. |
 | `TOPSAILAI_NEED_SYMBOL_FOR_ANSWER` | `0` | Runtime only. If `1` and `TOPSAILAI_SYMBOL_STARTSWITH_ANSWER` is unset, default symbol is the agent name. Also gates answer-prefix output in cli/team_chat.py and cli/team_agent.py (default off). |
 | `TOPSAILAI_SAVE_RESULT_TO_FILE` | `""` | Runtime only. A file path to save the answer. |
 | `TOPSAILAI_CONTEXT_SUMMARY_MODE` | `"runtime"` | Summary mode: `runtime` or `message`. |

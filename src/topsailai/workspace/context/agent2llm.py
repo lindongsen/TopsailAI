@@ -103,13 +103,20 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             tail_offset_to_keep: int,
             need_session_messages: bool,
         ) -> tuple[list, list]:
-        """Build deduplicated preserved and compressible Agent2LLM messages."""
+        """Build deduplicated preserved and compressible Agent2LLM messages.
+
+        The intrinsic head is resolved by the same helper used during final
+        reconstruction. This keeps the feasibility estimate aligned with the
+        messages that will actually survive summarization.
+        """
         preserved_messages = []
         message_groups = [
-            self._get_messages_before_first_user_task_message(messages),
+            self._get_summary_head_messages(messages),
             messages[:head_offset_to_keep],
         ]
         if need_session_messages:
+            # Session retention is independent of intrinsic task retention, so
+            # it may intentionally preserve a task even when the switch is off.
             message_groups.append(self.messages)
         if tail_offset_to_keep > 0:
             message_groups.append(messages[-tail_offset_to_keep:])
@@ -232,9 +239,11 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         together as "head"; the same applies to ``tail_portion`` and
         ``tail_offset`` as "tail".
 
-        - head_portion: messages from the beginning up to and including the
-          first role=user, step_name=task message. It is held in the local
-          variable `keeping_messages` (formerly `task_messages`).
+        - head_portion: the intrinsic prefix selected by the shared summary-head
+          policy. It includes the first task in compatibility mode; when task
+          retention is disabled, it includes only an optional system prefix and
+          the contiguous opening user-observation block. It is held in the
+          local variable `keeping_messages` (formerly `task_messages`).
         - head_offset: the first `head_offset_to_keep` messages kept verbatim.
         - tail_offset: the last `tail_offset_to_keep` messages kept verbatim.
         - summary_answer: exactly one assistant message produced by the LLM.
@@ -314,10 +323,12 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                 print_info(f"!!! [Agent2LLM] [Summarization] no need summarize due to messages too short: [{msg_len}]")
                 return None
 
-        # Resolve the complete preserved set before invoking the summary LLM.
+        # Resolve the intrinsic head with the shared policy before invoking the
+        # summary LLM. Reconstruction repeats the same call so token feasibility
+        # and the final preserved set cannot disagree about task retention.
         original_messages = list(messages)
-        keeping_messages = self._get_messages_before_first_user_task_message(messages)
-        print_info(f"!!! [Agent2LLM] [Summarization] head_messages_before_first_user_task_message_to_keep(session_messages)={len(keeping_messages)}")
+        keeping_messages = self._get_summary_head_messages(messages)
+        print_info(f"!!! [Agent2LLM] [Summarization] intrinsic_head_messages_to_keep(session_messages)={len(keeping_messages)}")
 
         head_offset_to_keep = self._get_head_offset_to_keep_in_summary(head_offset_to_keep)
         tail_offset_to_keep = self._get_tail_offset_to_keep_in_summary()

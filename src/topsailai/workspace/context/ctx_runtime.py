@@ -214,11 +214,17 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             head_offset_to_keep: int,
             tail_offset_to_keep: int,
         ) -> tuple[list, list]:
-        """Build deduplicated preserved and compressible User2Agent messages."""
+        """Build deduplicated preserved and compressible User2Agent messages.
+
+        The shared intrinsic-head policy is used here and during reconstruction
+        so feasibility checks budget exactly the messages that will survive.
+        Indexes are retained because this layer later maps the same prefix back
+        to persistent raw-message identifiers.
+        """
         preserved_messages = []
         preserved_indexes = set()
 
-        head_portion = self._get_messages_before_first_user_task_message(messages)
+        head_portion = self._get_summary_head_messages(messages)
         preserved_indexes.update(range(min(len(head_portion), len(messages))))
         preserved_indexes.update(range(min(head_offset_to_keep, len(messages))))
         if tail_offset_to_keep > 0:
@@ -343,9 +349,11 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         together as "head"; the same applies to ``tail_portion`` and
         ``tail_offset`` as "tail".
 
-        - head_portion: messages from the beginning up to and including the
-          first role=user, step_name=task message. It is held in the local
-          variable `keeping_messages` (formerly `task_messages`).
+        - head_portion: the intrinsic prefix selected by the shared summary-head
+          policy. It includes the first task in compatibility mode; when task
+          retention is disabled, it includes only an optional system prefix and
+          the contiguous opening user-observation block. It is held in the
+          local variable `keeping_messages` (formerly `task_messages`).
         - head_offset: the first `head_offset_to_keep` messages kept verbatim.
         - tail_offset: the last `tail_offset_to_keep` messages kept verbatim.
         - summary_answer: exactly one assistant message produced by the LLM.
@@ -389,11 +397,13 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         if not messages:
             return None
 
-        # Resolve all messages that will survive summarization before invoking
-        # the LLM so an incompressible prefix cannot make the session grow.
+        # Resolve the intrinsic head through the shared policy before invoking
+        # the LLM. Using the same policy for feasibility, in-memory rebuilding,
+        # and persistent deletion prevents one path from retaining messages that
+        # another path counted as compressible.
         original_messages = list(messages)
-        keeping_messages = self._get_messages_before_first_user_task_message(messages)
-        print_info(f"!!! [User2Agent] [Summarization] head_messages_before_first_user_task_message_to_keep(session_messages)={len(keeping_messages)}")
+        keeping_messages = self._get_summary_head_messages(messages)
+        print_info(f"!!! [User2Agent] [Summarization] intrinsic_head_messages_to_keep(session_messages)={len(keeping_messages)}")
 
         head_offset_to_keep = self._get_head_offset_to_keep_in_summary(head_offset_to_keep)
         if head_offset_to_keep and len(messages) <= head_offset_to_keep:
@@ -445,15 +455,17 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             summary_answer = llm_chat.prompt_ctl.messages[-1]
             ctx_manager.add_session_message(self.session_id, summary_answer)
 
-            # keep messages before first user task message
-            raw_msg_ids_to_keep = []
-            for i, raw_msg in enumerate(raw_messages_from_session):
-                raw_msg_ids_to_keep.append(raw_msg.msg_id)
-                if self._is_task_message(raw_msg.message):
-                    break
-                if i > 7:
-                    break
-            print_info(f"!!! [User2Agent] [Summarization] head_messages_before_first_user_task_message_to_keep(session_raw_messages)={len(raw_msg_ids_to_keep)}")
+            # Reuse the in-memory intrinsic-head policy instead of duplicating
+            # task/observation rules in the persistence branch. The helper
+            # always returns a prefix, so its length maps directly to the same
+            # ordered raw records and preserves their storage identifiers.
+            raw_message_values = [raw_msg.message for raw_msg in raw_messages_from_session]
+            raw_head_messages = self._get_summary_head_messages(raw_message_values)
+            raw_msg_ids_to_keep = [
+                raw_msg.msg_id
+                for raw_msg in raw_messages_from_session[:len(raw_head_messages)]
+            ]
+            print_info(f"!!! [User2Agent] [Summarization] intrinsic_head_messages_to_keep(session_raw_messages)={len(raw_msg_ids_to_keep)}")
 
             # keep last user message
             last_user_raw_msg = None

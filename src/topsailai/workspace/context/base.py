@@ -11,7 +11,9 @@ import random
 
 from topsailai.logger import logger
 from topsailai.ai_base.constants import (
+    ROLE_SYSTEM,
     ROLE_USER,
+    STEP_NAME_OBSERVATION,
     STEP_NAME_TASK,
 )
 from topsailai.ai_base.agent_base import (
@@ -240,10 +242,12 @@ class ContextRuntimeBase(object):
     #
     #   final new_messages = head_portion + [summary_answer] + [last_user_message]
     #
-    # - head_portion: messages from the beginning of the list up to and
-    #   including the first message whose role == "user" and step_name == "task".
-    #   The variable `keeping_messages` (formerly `task_messages`) represents
-    #   this head_portion, NOT the set of all task messages.
+    # - head_portion: the intrinsic prefix selected by the shared summary-head
+    #   policy. By default it ends at the first user task; when task retention
+    #   is disabled it contains only any leading system messages and the
+    #   contiguous opening user-observation block. The variable
+    #   `keeping_messages` (formerly `task_messages`) represents this prefix,
+    #   NOT the set of all task messages.
     # - summary_answer: exactly one assistant message produced by _summarize_messages.
     # - last_user_message: exactly one final user message kept at the tail.
     #
@@ -394,32 +398,106 @@ class ContextRuntimeBase(object):
                 non_task_messages.append(msg)
         return task_messages, non_task_messages
 
-    def _get_messages_before_first_user_task_message(self, messages: list, max_count:int=7) -> list:
-        """
-        Build the head_portion used by context summarization.
+    @staticmethod
+    def _is_observation_message(message) -> bool:
+        """Return whether a message belongs to the opening user-observation block.
 
-        The head_portion contains messages from the beginning of `messages`
-        up to and including the first message whose role == "user" and
-        step_name == "task". It is stored in the `keeping_messages` variable
-        in the summarizers. Messages after this head_portion (except the
-        last user message) are summarized.
+        Both task inputs and contextual observations use the user role, so the
+        role alone cannot distinguish them. Requiring ``step_name=observation``
+        prevents ordinary user messages and tasks from becoming stable summary
+        anchors.
+        """
+        message_dict = json_tool.safe_json_load(message)
+        if not isinstance(message_dict, dict) or message_dict.get("role") != ROLE_USER:
+            return False
+        content = json_tool.safe_json_load(message_dict.get("content"))
+        return (
+            isinstance(content, dict)
+            and content.get("step_name") == STEP_NAME_OBSERVATION
+        )
+
+    def _get_summary_head_messages(
+        self,
+        messages: list,
+        max_count: int = 7,
+        keep_first_task: bool | None = None,
+    ) -> list:
+        """Build the intrinsic head retained during context summarization.
+
+        With task retention enabled, this preserves the legacy task-inclusive
+        prefix and its bounded fallback. With retention disabled, it preserves
+        only leading system messages followed by the contiguous opening
+        user-observation block. Contiguity is essential: observations appearing
+        later may be tool results or runtime events rather than startup context.
 
         Args:
-            messages (list): The message list to scan.
-            max_count (int): Safety cap on how far to scan when no task
-                message is found. Defaults to 7.
+            messages (list): Messages in chronological order.
+            max_count (int): Legacy fallback bound used only when task retention
+                is enabled and no task has been encountered.
+            keep_first_task (bool | None): Explicit behavior override. ``None``
+                reads ``TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE`` so a
+                caller-provided value always takes precedence over process
+                configuration.
 
         Returns:
-            list: The head_portion messages in original order.
+            list: The intrinsic, chronological summary-head prefix.
         """
+        if keep_first_task is None:
+            # Centralize environment resolution here so feasibility checks,
+            # in-memory reconstruction, and persistent deletion cannot drift.
+            keep_first_task = env_tool.EnvReaderInstance.check_bool(
+                "TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE", True
+            )
+
+        if keep_first_task:
+            # Preserve the historical contract, including its bounded no-task
+            # fallback, when the new switch is unset or explicitly enabled.
+            head_messages = []
+            for i, msg in enumerate(messages):
+                head_messages.append(msg)
+                if self._is_task_message(msg):
+                    break
+                if i > max_count:
+                    break
+            return head_messages
+
         head_messages = []
-        for i, msg in enumerate(messages):
-            head_messages.append(msg)
-            if self._is_task_message(msg):
+        index = 0
+        # A caller may pass the full list instead of the work-memory slice, so
+        # retain any system prefix before locating the opening context block.
+        while index < len(messages):
+            message_dict = json_tool.safe_json_load(messages[index])
+            if not isinstance(message_dict, dict) or message_dict.get("role") != ROLE_SYSTEM:
                 break
-            if i > max_count:
-                break
+            head_messages.append(messages[index])
+            index += 1
+
+        # Stop at the first non-observation. Scanning farther would incorrectly
+        # promote later runtime observations into a cross-summary stable head.
+        while index < len(messages) and self._is_observation_message(messages[index]):
+            head_messages.append(messages[index])
+            index += 1
+
+        # Deliberately do not apply max_count here. After the first summary the
+        # task may be absent, and a positional fallback would absorb the prior
+        # summary and make the retained head drift on every subsequent round.
         return head_messages
+
+    def _get_messages_before_first_user_task_message(
+        self,
+        messages: list,
+        max_count: int = 7,
+    ) -> list:
+        """Return the legacy task-inclusive summary head.
+
+        This compatibility wrapper pins ``keep_first_task`` to ``True`` so old
+        callers retain their historical behavior regardless of the new switch.
+        """
+        return self._get_summary_head_messages(
+            messages,
+            max_count=max_count,
+            keep_first_task=True,
+        )
 
     def _get_first_and_last_task_messages(self, messages: list) -> list:
         task_messages, _ = self._split_task_messages(messages)

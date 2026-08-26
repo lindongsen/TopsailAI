@@ -1471,5 +1471,72 @@ class TestDynamicContextGuardExpansion(TestContextRuntimeAgent2LLM):
 
         self.assertEqual(result, "Summarized content")
         mock_summary.assert_called_once()
+
+    def test_disabled_task_retention_preserves_system_prefix_and_observations(self):
+        """System prompts and opening observations survive without the task anchor."""
+        system_messages = [
+            {"role": "system", "content": "system one"},
+            {"role": "system", "content": "system two"},
+        ]
+        observation = {
+            "role": "user",
+            "content": {"step_name": "observation", "raw_text": "context"},
+        }
+        task = {
+            "role": "user",
+            "content": {"step_name": "task", "raw_text": "task"},
+        }
+        self.test_instance._ai_agent.messages = system_messages + [
+            observation,
+            task,
+            {"role": "assistant", "content": "compressible"},
+        ]
+        self.test_instance._first_position = len(system_messages)
+
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE": "0",
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
+        }):
+            result = self.test_instance.summarize_messages_for_processing(
+                head_offset_to_keep=0,
+                force=True,
+            )
+
+        self.assertEqual(result, "Summarized content")
+        self.assertEqual(
+            self.test_instance._ai_agent.messages[:3],
+            system_messages + [observation],
+        )
+        self.assertNotIn(task, self.test_instance._ai_agent.messages)
+
+    def test_disabled_task_retention_keeps_task_via_session_retention(self):
+        """Session retention remains independent from intrinsic task retention."""
+        observation = {
+            "role": "user",
+            "content": {"step_name": "observation", "raw_text": "context"},
+        }
+        task = {
+            "role": "user",
+            "content": {"step_name": "task", "raw_text": "task"},
+        }
+        self.test_instance._messages = [task]
+        self.test_instance._ai_agent.messages = [
+            observation,
+            task,
+            {"role": "assistant", "content": "compressible"},
+        ]
+
+        with patch.dict(os.environ, {
+            "TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE": "0",
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "1",
+        }):
+            result = self.test_instance.summarize_messages_for_processing(
+                head_offset_to_keep=0,
+                force=True,
+            )
+
+        self.assertEqual(result, "Summarized content")
+        self.assertIn(task, self.test_instance._ai_agent.messages)
+
 if __name__ == '__main__':
     unittest.main()

@@ -473,6 +473,11 @@ TOPSAILAI_REALTIME_TOKEN_CALCULATION=0
 # Keep session messages after summarizing, 1 is enabled(default), 0 is disabled
 TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES=1
 
+# Keep the first task message in the intrinsic summary head. When 0, the
+# intrinsic head contains optional leading system messages followed by the
+# contiguous opening user-observation block; other rules may still keep task.
+TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE=1
+
 # ONLY RUNTIME: default is 0 to disable;
 # if set it to 1, but not set TOPSAILAI_SYMBOL_STARTSWITH_ANSWER, default symbol is agent name
 # Exmaple: `From 'AI.Dawson': {answer}`

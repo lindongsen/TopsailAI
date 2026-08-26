@@ -2189,5 +2189,103 @@ class TestCachedTokensRuntimeSummarySource(unittest.TestCase):
         self.assertEqual(mock_llm_chat.prompt_ctl.messages[0]["content"], "huge-0")
         self.assertEqual(mock_llm_chat.prompt_ctl.messages[-1]["content"], "huge-199")
 
+
+class TestSummaryHeadMessages(unittest.TestCase):
+    """Test intrinsic summary-head selection modes."""
+
+    def setUp(self):
+        """Create an isolated runtime and representative messages."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        self.runtime = ContextRuntimeBase()
+        self.system = {"role": "system", "content": "system"}
+        self.obs1 = {
+            "role": "user",
+            "content": {"step_name": "observation", "raw_text": "one"},
+        }
+        self.obs2 = {
+            "role": "user",
+            "content": json.dumps(
+                {"step_name": "observation", "raw_text": "two"}
+            ),
+        }
+        self.task = {
+            "role": "user",
+            "content": {"step_name": "task", "raw_text": "task"},
+        }
+        self.assistant = {"role": "assistant", "content": "answer"}
+
+    def test_disabled_keeps_system_and_contiguous_opening_observations(self):
+        """All contiguous opening observations survive after a system prefix."""
+        messages = [self.system, self.obs1, self.obs2, self.task, self.assistant]
+
+        result = self.runtime._get_summary_head_messages(
+            messages, keep_first_task=False
+        )
+
+        self.assertEqual(result, [self.system, self.obs1, self.obs2])
+
+    def test_disabled_stops_at_first_non_observation(self):
+        """A later observation is not absorbed after the opening block ends."""
+        messages = [self.obs1, self.assistant, self.obs2, self.task]
+
+        result = self.runtime._get_summary_head_messages(
+            messages, keep_first_task=False
+        )
+
+        self.assertEqual(result, [self.obs1])
+
+    def test_disabled_without_task_never_uses_max_count_fallback(self):
+        """No-task input keeps only the opening observations."""
+        messages = [self.obs1, self.obs2] + [
+            {"role": "assistant", "content": str(index)} for index in range(12)
+        ]
+
+        result = self.runtime._get_summary_head_messages(
+            messages, max_count=1, keep_first_task=False
+        )
+
+        self.assertEqual(result, [self.obs1, self.obs2])
+
+    def test_disabled_head_is_stable_across_summary_rounds(self):
+        """A previous summary terminates the next round's opening block."""
+        first_round = [self.obs1, self.obs2, self.task, self.assistant]
+        first_head = self.runtime._get_summary_head_messages(
+            first_round, keep_first_task=False
+        )
+        previous_summary = {"role": "assistant", "content": "summary one"}
+        second_round = first_head + [previous_summary, self.task, self.assistant]
+
+        second_head = self.runtime._get_summary_head_messages(
+            second_round, keep_first_task=False
+        )
+
+        self.assertEqual(second_head, [self.obs1, self.obs2])
+        self.assertNotIn(previous_summary, second_head)
+
+    def test_default_environment_keeps_legacy_task_inclusive_head(self):
+        """Unset configuration remains backward compatible."""
+        messages = [self.obs1, self.task, self.assistant]
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE", None)
+            result = self.runtime._get_summary_head_messages(messages)
+
+        self.assertEqual(result, [self.obs1, self.task])
+
+    def test_explicit_parameter_overrides_disabled_environment(self):
+        """The explicit option takes precedence over process configuration."""
+        messages = [self.obs1, self.task, self.assistant]
+
+        with patch.dict(
+            os.environ,
+            {"TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE": "0"},
+        ):
+            result = self.runtime._get_summary_head_messages(
+                messages, keep_first_task=True
+            )
+
+        self.assertEqual(result, [self.obs1, self.task])
+
 if __name__ == '__main__':
     unittest.main()
