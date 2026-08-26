@@ -185,6 +185,7 @@ topsailai_launch_agent --scan ./src/topsailai/cli
 ## Notes
 
 - A temporary context message file is written under `{workspace}/.tmp/` and cleaned up on exit, uncaught exceptions, and `SIGINT`/`SIGTERM`.
+- On launch, the launcher clears stale files in `{workspace}/.tmp/`. Only files older than one day are removed; fresher files are preserved so ongoing work is not lost on relaunch. Empty subdirectories left behind are pruned and the `.tmp/` directory is recreated if missing. The age threshold (in days) is configurable via `TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS` (default `1`).
 - The launcher changes to the configured `workspace` before running the driver.
 - In `--dry-run` mode, command context sources are listed but not executed.
 

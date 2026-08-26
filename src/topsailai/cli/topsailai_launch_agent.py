@@ -42,20 +42,63 @@ _CONTEXT_MESSAGE_FILE = None
 # Names treated as the shared base configuration (基础配置). "_" is the preferred alias;
 # "_default" is kept for backward compatibility.
 BASE_ITEM_NAMES = ("_", "_default")
+# Default age threshold (days) for cleaning stale files in the workspace .tmp/ directory.
+# Files older than this many days are removed on launch; fresher files are kept.
+# Configurable via TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS (default: 1 day).
+_TMP_CLEANUP_DEFAULT_MAX_AGE_DAYS = 1.0
+
+
+def _resolve_tmp_cleanup_max_age_days():
+    """Resolve the .tmp/ cleanup age threshold (days) from the environment.
+
+    Reads TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS at call time so values supplied
+    at runtime (e.g. via self_environs) take effect. Falls back to the default
+    of 1 day when the variable is unset, non-numeric, or not greater than zero.
+    """
+    raw = os.getenv("TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS", "")
+    if raw:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            print(
+                f"[TopsailAI-Launcher] Warning: Invalid TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS "
+                f"({raw!r}); using default {_TMP_CLEANUP_DEFAULT_MAX_AGE_DAYS}.",
+                file=sys.stderr,
+            )
+            return _TMP_CLEANUP_DEFAULT_MAX_AGE_DAYS
+        if value > 0:
+            return value
+        print(
+            f"[TopsailAI-Launcher] Warning: TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS ({value}) "
+            f"must be positive; using default {_TMP_CLEANUP_DEFAULT_MAX_AGE_DAYS}.",
+            file=sys.stderr,
+        )
+    return _TMP_CLEANUP_DEFAULT_MAX_AGE_DAYS
 
 
 def _reset_tmp_dir(workspace):
-    """Remove and recreate the workspace .tmp/ directory if it exists."""
+    """Remove stale files (older than one day) from the workspace .tmp/ directory.
+
+    Fresh files are preserved so ongoing work is not lost on relaunch. Empty
+    subdirectories left behind after removing stale files are pruned, and the
+    .tmp/ directory itself is recreated if missing.
+    """
     tmp_dir = os.path.join(workspace, ".tmp")
+    max_age_days = _resolve_tmp_cleanup_max_age_days()
+    cutoff = time.time() - (max_age_days * 86400)
     if os.path.isdir(tmp_dir):
         print(
-            f"[TopsailAI-Launcher] Clearing temporary directory: {tmp_dir}"
+            f"[TopsailAI-Launcher] Cleaning stale files in temporary directory: {tmp_dir}"
         )
         for root, dirs, files in os.walk(tmp_dir, topdown=False):
             for name in files:
                 file_path = os.path.join(root, name)
                 try:
-                    os.remove(file_path)
+                    if os.path.getmtime(file_path) < cutoff:
+                        os.remove(file_path)
+                        print(
+                            f"[TopsailAI-Launcher] Removed stale temporary file: {file_path}"
+                        )
                 except OSError as exc:
                     print(
                         f"[TopsailAI-Launcher] Warning: Failed to remove temporary file '{file_path}': {exc}",
@@ -65,18 +108,9 @@ def _reset_tmp_dir(workspace):
                 dir_path = os.path.join(root, name)
                 try:
                     os.rmdir(dir_path)
-                except OSError as exc:
-                    print(
-                        f"[TopsailAI-Launcher] Warning: Failed to remove temporary directory '{dir_path}': {exc}",
-                        file=sys.stderr,
-                    )
-        try:
-            os.rmdir(tmp_dir)
-        except OSError as exc:
-            print(
-                f"[TopsailAI-Launcher] Warning: Failed to remove temporary directory '{tmp_dir}': {exc}",
-                file=sys.stderr,
-            )
+                except OSError:
+                    # Directory is not empty; keep it.
+                    pass
     try:
         os.makedirs(tmp_dir, exist_ok=True)
     except OSError as exc:
