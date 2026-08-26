@@ -241,6 +241,7 @@ class TestContextRuntimeInstructions(unittest.TestCase):
         self.mock_ctx_runtime_data.summarize_messages_for_processed.assert_called_once_with(
             head_offset_to_keep=2,
             need_interactive=False,
+            force=False,
         )
 
     def test_ctx_summarize_default_params(self):
@@ -252,6 +253,7 @@ class TestContextRuntimeInstructions(unittest.TestCase):
         self.mock_ctx_runtime_data.summarize_messages_for_processed.assert_called_once_with(
             head_offset_to_keep=1,
             need_interactive=True,
+            force=False,
         )
 
     def test_ctx_summarize_interactive_mode(self):
@@ -263,6 +265,19 @@ class TestContextRuntimeInstructions(unittest.TestCase):
         self.mock_ctx_runtime_data.summarize_messages_for_processed.assert_called_once_with(
             head_offset_to_keep=3,
             need_interactive=True,
+            force=False,
+        )
+
+    def test_ctx_summarize_forwards_force(self):
+        """Test ctx_summarize forwards the active force flag."""
+        self.mock_ctx_runtime_data.session_id = "test_session"
+
+        self.instruction.ctx_summarize(to_force=1)
+
+        self.mock_ctx_runtime_data.summarize_messages_for_processed.assert_called_once_with(
+            head_offset_to_keep=1,
+            need_interactive=True,
+            force=True,
         )
 
 

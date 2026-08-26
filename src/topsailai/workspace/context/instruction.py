@@ -307,6 +307,7 @@ class ContextRuntimeInstructions(ContextRuntimeUtils):
         self.ctx_runtime_data.summarize_messages_for_processed(
             head_offset_to_keep=head_offset_to_keep,
             need_interactive=need_interactive,
+            force=to_force,
         )
         self.ctx_history()
         return
