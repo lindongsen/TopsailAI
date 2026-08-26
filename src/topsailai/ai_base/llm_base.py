@@ -1034,6 +1034,9 @@ class LLMModel(LLMModelBase):
                 time.sleep(sec)
                 continue
 
+            # Hard interrupts are control-flow signals, never retryable LLM errors.
+            except HardInterruptError:
+                raise
             # internal error or bug
             except (
                 KeyError,

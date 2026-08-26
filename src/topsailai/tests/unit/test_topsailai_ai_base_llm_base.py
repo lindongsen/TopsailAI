@@ -1258,6 +1258,84 @@ class TestLLMModelErrorHandling(unittest.TestCase):
         
         self.assertEqual(result, ["success"])
 
+
+    @patch("topsailai.ai_base.llm_base.input_yes_or_no", return_value=True)
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_stream_hard_interrupt_propagates_without_prompt_when_user_would_accept(
+        self,
+        mock_base_init,
+        mock_is_main_thread,
+        mock_input_yes_or_no,
+    ):
+        """A stream hard interrupt bypasses retry even if the user would accept."""
+        from topsailai.ai_base.exception import HardInterruptError
+
+        chunk = MagicMock()
+        chunk.choices = [MagicMock()]
+        chunk.choices[0].delta.content = "interrupted"
+        chunk.choices[0].delta.tool_calls = None
+
+        agent = MagicMock()
+        agent._check_hard_interrupt.side_effect = [
+            None,
+            HardInterruptError("stream interrupted"),
+        ]
+        model = self._create_mock_model()
+        model.model.create.return_value = iter([chunk])
+
+        with patch(
+            "topsailai.ai_base.llm_base.get_agent_object",
+            return_value=agent,
+        ):
+            with self.assertRaisesRegex(HardInterruptError, "stream interrupted"):
+                model.chat(self.messages, for_raw=True, for_stream=True)
+
+        model.model.create.assert_called_once()
+        mock_input_yes_or_no.assert_not_called()
+        self.assertEqual(
+            agent._check_hard_interrupt.call_args_list,
+            [call(), call(throttle_stream=True)],
+        )
+
+    @patch("topsailai.ai_base.llm_base.input_yes_or_no", return_value=False)
+    @patch("topsailai.ai_base.llm_base.thread_tool.is_main_thread", return_value=True)
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_stream_hard_interrupt_propagates_without_prompt_when_user_would_decline(
+        self,
+        mock_base_init,
+        mock_is_main_thread,
+        mock_input_yes_or_no,
+    ):
+        """A stream hard interrupt bypasses retry if the user would decline."""
+        from topsailai.ai_base.exception import HardInterruptError
+
+        chunk = MagicMock()
+        chunk.choices = [MagicMock()]
+        chunk.choices[0].delta.content = "interrupted"
+        chunk.choices[0].delta.tool_calls = None
+
+        agent = MagicMock()
+        agent._check_hard_interrupt.side_effect = [
+            None,
+            HardInterruptError("stream interrupted"),
+        ]
+        model = self._create_mock_model()
+        model.model.create.return_value = iter([chunk])
+
+        with patch(
+            "topsailai.ai_base.llm_base.get_agent_object",
+            return_value=agent,
+        ):
+            with self.assertRaisesRegex(HardInterruptError, "stream interrupted"):
+                model.chat(self.messages, for_raw=True, for_stream=True)
+
+        model.model.create.assert_called_once()
+        mock_input_yes_or_no.assert_not_called()
+        self.assertEqual(
+            agent._check_hard_interrupt.call_args_list,
+            [call(), call(throttle_stream=True)],
+        )
     @patch("topsailai.ai_base.llm_base.time.sleep")
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
