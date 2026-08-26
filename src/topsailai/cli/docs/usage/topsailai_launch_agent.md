@@ -187,3 +187,19 @@ topsailai_launch_agent --scan ./src/topsailai/cli
 - A temporary context message file is written under `{workspace}/.tmp/` and cleaned up on exit, uncaught exceptions, and `SIGINT`/`SIGTERM`.
 - The launcher changes to the configured `workspace` before running the driver.
 - In `--dry-run` mode, command context sources are listed but not executed.
+
+### Self Environs (Initial Settings)
+
+The optional top-level `self_environs` section is a flat mapping of
+environment-variable name to value. Its variables are loaded into the
+launcher's OWN process environment (`os.environ`) at startup as initial
+settings. Unlike the `environment` section, these variables are NOT merged
+into the launched driver's environment; they only seed the launcher process
+itself (for example `TOPSAILAI_HOME`, proxy settings, or `PYTHONPATH`).
+
+```yaml
+self_environs:
+  TOPSAILAI_HOME: "/custom/home"
+  HTTPS_PROXY: "http://proxy.example:3128"
+```
+

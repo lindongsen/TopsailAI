@@ -114,6 +114,25 @@ def _get_base_env(env_map):
     return merged
 
 
+def _apply_self_environs(settings):
+    """Load the top-level ``self_environs`` section into the process environment.
+
+    ``self_environs`` is a flat mapping of environment-variable name to value.
+    Its variables are applied to ``os.environ`` at startup as initial settings
+    for the launcher process itself. Unlike the ``environment`` section, these
+    variables are NOT merged into the launched driver's environment; they only
+    seed the launcher's own process environment.
+    """
+    self_environs = settings.get("self_environs", {}) or {}
+    if not isinstance(self_environs, dict):
+        print(
+            "[TopsailAI-Launcher] Warning: 'self_environs' must be a mapping; ignoring.",
+            file=sys.stderr,
+        )
+        return
+    for key, value in self_environs.items():
+        os.environ[str(key)] = str(value)
+
 @dataclasses.dataclass(frozen=True)
 class ContextSource:
     """A single context source: either a file path or a shell command."""
@@ -1359,6 +1378,10 @@ def main():
         settings, settings_from_default = _handle_missing_settings(settings_path, args)
     else:
         settings = load_yaml(settings_path)
+
+    # Load the top-level self_environs section into the launcher's own process
+    # environment as initial settings (they are not merged into the driver env).
+    _apply_self_environs(settings)
 
     workspace = settings.get("workspace", os.getcwd()) or "."
     if workspace[0] != "/":

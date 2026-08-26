@@ -235,6 +235,7 @@ Launch an AI agent driver based on a local `.topsailai/settings.yaml` configurat
 - Writes the assembled context message to a temporary file under `{workspace}/.tmp/` to avoid exceeding environment-variable size limits.
 - Launches the configured `ai_agent_driver` using `os.system` by default, or `subprocess.run` when `--subprocess` is passed.
 - Cleans up the temporary context file on exit, uncaught exceptions, and `SIGINT`/`SIGTERM`.
+- Loads the optional top-level `self_environs` section into the launcher's own process environment (`os.environ`) at startup as initial settings. These variables are NOT merged into the launched driver's environment.
 
 **Context item selection (when `--item` is omitted):**
 
