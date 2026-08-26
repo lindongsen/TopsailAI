@@ -453,6 +453,25 @@ class EnvironmentReader(object):
             v = default
         return v
 
+    def get_with_fallback(self, name, fallback_name, default=None, formatter=None):
+        """Get a preferred environment value with a legacy-key fallback.
+
+        Empty values are treated as unconfigured so resolution proceeds from
+        the preferred key to the fallback key and finally to the default.
+        """
+        value = os.getenv(name)
+        if value is None or value == "":
+            value = os.getenv(fallback_name)
+        if value is None or value == "":
+            value = default
+        if value is not None and formatter and callable(formatter):
+            try:
+                value = formatter(value)
+            except Exception as e:
+                logger.exception("key=%s, value=%s, exception=%s", name, value, e)
+                value = default
+        return value
+
 
 # init
 EnvReaderInstance = EnvironmentReader()

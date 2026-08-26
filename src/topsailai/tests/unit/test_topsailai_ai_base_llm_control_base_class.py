@@ -18,6 +18,18 @@ from topsailai.ai_base.llm_control.exception import (
 )
 
 
+@pytest.fixture(autouse=True)
+def clean_llm_parameter_environment(monkeypatch):
+    """Remove all current and legacy LLM parameter variables per test."""
+    for name in (
+        "TOPSAILAI_MAX_COMPLETION_TOKENS", "MAX_TOKENS",
+        "TOPSAILAI_TEMPERATURE", "TEMPERATURE",
+        "TOPSAILAI_TOP_P", "TOP_P",
+        "TOPSAILAI_FREQUENCY_PENALTY", "FREQUENCY_PENALTY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 class TestParseModelSettings:
     """Tests for parse_model_settings function."""
 
@@ -176,6 +188,69 @@ class TestLLMModelBase:
 
         model = TestModel(frequency_penalty=0.5)
         assert model.frequency_penalty == 0.5
+
+
+    @staticmethod
+    def _make_environment_model():
+        """Create a minimal model for environment-resolution tests."""
+        class TestModel(LLMModelBase):
+            def get_model_name(self, default=""):
+                return "test-model"
+            def get_llm_model(self, api_key=None, api_base=None):
+                return MagicMock()
+            def get_response_message(self, response):
+                return MagicMock()
+            def chat(self, *args, **kwargs):
+                pass
+
+        return TestModel()
+
+    def test_init_falls_back_to_legacy_llm_parameter_variables(self, monkeypatch):
+        """Legacy variables remain effective when preferred variables are unset."""
+        monkeypatch.setenv("MAX_TOKENS", "4100")
+        monkeypatch.setenv("TEMPERATURE", "0.4")
+        monkeypatch.setenv("TOP_P", "0.8")
+        monkeypatch.setenv("FREQUENCY_PENALTY", "0.2")
+
+        model = self._make_environment_model()
+
+        assert model.max_tokens == 4100
+        assert model.temperature == 0.4
+        assert model.top_p == 0.8
+        assert model.frequency_penalty == 0.2
+
+    def test_init_prefers_prefixed_llm_parameter_variables(self, monkeypatch):
+        """Preferred variables override legacy variables when both have values."""
+        legacy_values = {
+            "MAX_TOKENS": "4100",
+            "TEMPERATURE": "0.4",
+            "TOP_P": "0.8",
+            "FREQUENCY_PENALTY": "0.2",
+        }
+        preferred_values = {
+            "TOPSAILAI_MAX_COMPLETION_TOKENS": "5100",
+            "TOPSAILAI_TEMPERATURE": "0.5",
+            "TOPSAILAI_TOP_P": "0.9",
+            "TOPSAILAI_FREQUENCY_PENALTY": "0.3",
+        }
+        for name, value in {**legacy_values, **preferred_values}.items():
+            monkeypatch.setenv(name, value)
+
+        model = self._make_environment_model()
+
+        assert model.max_tokens == 5100
+        assert model.temperature == 0.5
+        assert model.top_p == 0.9
+        assert model.frequency_penalty == 0.3
+
+    def test_init_empty_preferred_variable_falls_back_to_legacy(self, monkeypatch):
+        """An empty preferred variable is treated as having no value."""
+        monkeypatch.setenv("TOPSAILAI_MAX_COMPLETION_TOKENS", "")
+        monkeypatch.setenv("MAX_TOKENS", "6100")
+
+        model = self._make_environment_model()
+
+        assert model.max_tokens == 6100
 
     def test_build_parameters_for_chat(self, monkeypatch):
         """Test build_parameters_for_chat method."""

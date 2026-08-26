@@ -63,5 +63,31 @@ class TestGetCountOfActionForCurrentAgent(unittest.TestCase):
                 self.assertEqual(result, 1)
 
 
+class TestAgentContextMaxTokens(unittest.TestCase):
+    """Test environment resolution for the context token limit."""
+
+    def test_legacy_variable_is_used_as_fallback(self):
+        """Use MAX_TOKENS when the preferred variable has no value."""
+        from topsailai.ai_base.agent_types.context import AgentContextInstance
+
+        environment = {
+            "TOPSAILAI_MAX_COMPLETION_TOKENS": "",
+            "MAX_TOKENS": "4100",
+        }
+        with patch.dict("os.environ", environment, clear=True):
+            self.assertEqual(AgentContextInstance.max_tokens, 4100)
+
+    def test_prefixed_variable_takes_precedence(self):
+        """Use the preferred variable when both names have values."""
+        from topsailai.ai_base.agent_types.context import AgentContextInstance
+
+        environment = {
+            "TOPSAILAI_MAX_COMPLETION_TOKENS": "5100",
+            "MAX_TOKENS": "4100",
+        }
+        with patch.dict("os.environ", environment, clear=True):
+            self.assertEqual(AgentContextInstance.max_tokens, 5100)
+
+
 if __name__ == "__main__":
     unittest.main()

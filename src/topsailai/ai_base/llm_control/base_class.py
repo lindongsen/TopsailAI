@@ -110,10 +110,21 @@ class LLMModelBase(object):
             frequency_penalty (float, optional): Frequency penalty. Defaults to 0.0.
             model_name (str, optional): Model name. Defaults to environment variable or DeepSeek-V3.1-Terminus.
         """
-        self.max_tokens = int(os.getenv("MAX_TOKENS", max_tokens))
-        self.temperature = float(os.getenv("TEMPERATURE", temperature))
-        self.top_p = float(os.getenv("TOP_P", top_p))
-        self.frequency_penalty = float(os.getenv("FREQUENCY_PENALTY", frequency_penalty))
+        self.max_tokens = EnvReaderInstance.get_with_fallback(
+            "TOPSAILAI_MAX_COMPLETION_TOKENS", "MAX_TOKENS",
+            default=max_tokens, formatter=int,
+        )
+        self.temperature = EnvReaderInstance.get_with_fallback(
+            "TOPSAILAI_TEMPERATURE", "TEMPERATURE",
+            default=temperature, formatter=float,
+        )
+        self.top_p = EnvReaderInstance.get_with_fallback(
+            "TOPSAILAI_TOP_P", "TOP_P", default=top_p, formatter=float,
+        )
+        self.frequency_penalty = EnvReaderInstance.get_with_fallback(
+            "TOPSAILAI_FREQUENCY_PENALTY", "FREQUENCY_PENALTY",
+            default=frequency_penalty, formatter=float,
+        )
 
         self.model_name = model_name or self.get_model_name()
         self.model_config = {"api_key": "", "api_base": ""} # in using
