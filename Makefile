@@ -43,8 +43,8 @@ build-deb:
 build-docker: build-deb
 	@echo "==> Building Docker image $(DOCKER_TAG)..."
 	@mkdir -p docker/deb-output
-	@cp -f $(OUTPUT_DIR)/topsailai-1.0.deb docker/deb-output/
-	@cp -f $(OUTPUT_DIR)/topsailai-data-1.0.deb docker/deb-output/
+	@cp -f $$(ls -t $(OUTPUT_DIR)/topsailai-[0-9]*.deb | head -1) docker/deb-output/topsailai-1.0.deb
+	@cp -f $$(ls -t $(OUTPUT_DIR)/topsailai-data-[0-9]*.deb | head -1) docker/deb-output/topsailai-data-1.0.deb
 	@docker build -f docker/Dockerfile.binary -t $(DOCKER_TAG) .
 	@echo "==> Done. Docker image $(DOCKER_TAG) built."
 
