@@ -13,6 +13,9 @@ from unittest.mock import MagicMock, patch
 import json
 
 
+TASK_MESSAGE = '{"role": "user", "content": {"step_name": "task", "raw_text": "task"}}'
+
+
 # =============================================================================
 # Group A: Import Tests
 # =============================================================================
@@ -244,6 +247,7 @@ class TestSummarizeMessagesForProcessing:
         """Test successful summarization flow with mocked _summarize_messages."""
         mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
         mock_agent2llm.ai_agent.messages = [
+            TASK_MESSAGE,
             '{"role": "user", "content": "msg1"}',
             '{"role": "assistant", "content": "msg2"}',
             '{"role": "user", "content": "msg3"}',
@@ -258,6 +262,10 @@ class TestSummarizeMessagesForProcessing:
             with patch.object(mock_agent2llm, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
                 result = mock_agent2llm.summarize_messages_for_processing()
                 assert result == "summarized answer"
+                mock_agent2llm.ai_agent.llm_model.tokenStat.add_msgs.assert_called_once_with(
+                    mock_agent2llm.ai_agent.messages,
+                    reset_cached_tokens=False,
+                )
 
     @patch('topsailai.workspace.context.agent2llm.env_tool.EnvReaderInstance')
     def test_need_session_messages_true(self, mock_env_reader, mock_agent2llm):
@@ -317,6 +325,7 @@ class TestSummarizeMessagesForProcessing:
         """Test with need_session_messages=False."""
         mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
         mock_agent2llm.ai_agent.messages = [
+            TASK_MESSAGE,
             '{"role": "user", "content": "msg1"}',
             '{"role": "assistant", "content": "msg2"}',
             '{"role": "user", "content": "msg3"}',
@@ -338,6 +347,7 @@ class TestSummarizeMessagesForProcessing:
         """Test that session messages too long disables session messages."""
         mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
         mock_agent2llm.ai_agent.messages = [
+            TASK_MESSAGE,
             '{"role": "user", "content": "msg1"}',
             '{"role": "assistant", "content": "msg2"}',
             '{"role": "user", "content": "msg3"}',
@@ -362,6 +372,7 @@ class TestSummarizeMessagesForProcessing:
         """Test head_offset_to_keep parameter handling."""
         mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
         mock_agent2llm.ai_agent.messages = [
+            TASK_MESSAGE,
             '{"role": "user", "content": "msg1"}',
             '{"role": "assistant", "content": "msg2"}',
             '{"role": "user", "content": "msg3"}',
@@ -384,6 +395,7 @@ class TestSummarizeMessagesForProcessing:
         """Test that last_user_message is preserved in final message list."""
         mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
         mock_agent2llm.ai_agent.messages = [
+            TASK_MESSAGE,
             '{"role": "user", "content": "msg1"}',
             '{"role": "assistant", "content": "msg2"}',
             '{"role": "user", "content": "msg3"}',
@@ -422,6 +434,7 @@ class TestSummarizeMessagesForProcessing:
         """Test critical log is emitted when token count does not decrease."""
         mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
         mock_agent2llm.ai_agent.messages = [
+            TASK_MESSAGE,
             '{"role": "user", "content": "msg1"}',
             '{"role": "assistant", "content": "msg2"}',
             '{"role": "user", "content": "msg3"}',
@@ -435,7 +448,7 @@ class TestSummarizeMessagesForProcessing:
             mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
             mock_llm_chat.prompt_ctl = mock_prompt_ctl
             with patch.object(mock_agent2llm, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
-                with patch.object(mock_agent2llm, '_get_current_tokens', side_effect=[100, 100]):
+                with patch.object(mock_agent2llm, '_get_current_tokens', side_effect=[100, 10, 100]):
                     result = mock_agent2llm.summarize_messages_for_processing()
                     assert result == "summarized answer"
                     mock_logger.critical.assert_called_once()
@@ -451,6 +464,7 @@ class TestSummarizeMessagesForProcessing:
         """Test critical log is not emitted when token count decreases."""
         mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
         mock_agent2llm.ai_agent.messages = [
+            TASK_MESSAGE,
             '{"role": "user", "content": "msg1"}',
             '{"role": "assistant", "content": "msg2"}',
             '{"role": "user", "content": "msg3"}',
@@ -463,7 +477,7 @@ class TestSummarizeMessagesForProcessing:
             mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
             mock_llm_chat.prompt_ctl = mock_prompt_ctl
             with patch.object(mock_agent2llm, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
-                with patch.object(mock_agent2llm, '_get_current_tokens', side_effect=[100, 50]):
+                with patch.object(mock_agent2llm, '_get_current_tokens', side_effect=[100, 10, 50]):
                     result = mock_agent2llm.summarize_messages_for_processing()
                     assert result == "summarized answer"
                     mock_logger.critical.assert_not_called()
@@ -474,6 +488,7 @@ class TestSummarizeMessagesForProcessing:
         """Test critical log is emitted when token count increases."""
         mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
         mock_agent2llm.ai_agent.messages = [
+            TASK_MESSAGE,
             '{"role": "user", "content": "msg1"}',
             '{"role": "assistant", "content": "msg2"}',
             '{"role": "user", "content": "msg3"}',
@@ -486,7 +501,7 @@ class TestSummarizeMessagesForProcessing:
             mock_prompt_ctl.messages = ['{"role": "assistant", "content": "summarized"}']
             mock_llm_chat.prompt_ctl = mock_prompt_ctl
             with patch.object(mock_agent2llm, '_summarize_messages', return_value=(mock_llm_chat, "summarized answer")):
-                with patch.object(mock_agent2llm, '_get_current_tokens', side_effect=[100, 150]):
+                with patch.object(mock_agent2llm, '_get_current_tokens', side_effect=[100, 10, 150]):
                     result = mock_agent2llm.summarize_messages_for_processing()
                     assert result == "summarized answer"
                     mock_logger.critical.assert_called_once()
@@ -512,6 +527,7 @@ class TestEdgeCases:
         """Test handling of unicode content in messages."""
         mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
         mock_agent2llm.ai_agent.messages = [
+            TASK_MESSAGE,
             '{"role": "user", "content": "你好世界 🌍"}',
             '{"role": "assistant", "content": "Hello 世界"}',
             '{"role": "user", "content": "🎉 🎊"}',
@@ -532,6 +548,7 @@ class TestEdgeCases:
         """Test handling of special characters in content."""
         mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
         mock_agent2llm.ai_agent.messages = [
+            TASK_MESSAGE,
             '{"role": "user", "content": "{\"key\": \"value\"}"}',
             '{"role": "assistant", "content": "line1\\nline2\\ttab"}',
             '{"role": "user", "content": "emoji: 🎯 <script>"}',
@@ -600,6 +617,7 @@ class TestExceptionHandling:
         """
         mock_agent2llm.ai_agent.get_work_memory_first_position.return_value = 0
         mock_agent2llm.ai_agent.messages = [
+            TASK_MESSAGE,
             '{"role": "user", "content": "msg1"}',
             '{"role": "assistant", "content": "msg2"}',
             '{"role": "user", "content": "msg3"}',

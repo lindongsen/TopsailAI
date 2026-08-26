@@ -127,6 +127,18 @@ class TestTokenStat(unittest.TestCase):
         self.assertTrue(stat.flag_running)
         stat.flag_running = False  # Stop the thread
 
+    def test_token_stat_token_properties(self):
+        """Test current, total, and uncached token property calculations."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        stat.current_count = 100
+        stat.total_count = 250
+        stat.current_cached_tokens = 40
+
+        self.assertEqual(stat.current_tokens, 100)
+        self.assertEqual(stat.total_tokens, 250)
+        self.assertEqual(stat.uncached_tokens, 60)
+        stat.flag_running = False
+
     def test_token_stat_init_with_lifetime(self):
         """Test TokenStat initialization with lifetime."""
         lifetime = 3600  # 1 hour
@@ -156,6 +168,61 @@ class TestTokenStat(unittest.TestCase):
         stat = TokenStat(self.llm_id, lifetime=0)
         stat.add_msgs(["msg1", "msg2", "msg3"])
         self.assertEqual(stat.msg_count, 3)
+        stat.flag_running = False
+
+    def test_token_stat_add_msgs_marks_cached_tokens_unknown_when_requested(self):
+        """Test a locally rebuilt context has no measured server cache usage."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        stat.current_cached_tokens = 42
+
+        stat.add_msgs(["summarized message"], reset_cached_tokens=False)
+
+        self.assertIsNone(stat.current_cached_tokens)
+        self.assertIsNone(stat.uncached_tokens)
+        stat.flag_running = False
+
+    def test_token_stat_add_msgs_resets_cached_tokens_by_default(self):
+        """Test preparing a normal LLM request retains the reset behavior."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        stat.current_cached_tokens = 42
+
+        stat.add_msgs(["new request"])
+
+        self.assertEqual(stat.current_cached_tokens, 0)
+        stat.flag_running = False
+
+    def test_token_stat_cache_measurement_lifecycle_across_summarization(self):
+        """Test cache usage remains consistent across summarize and requests."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        first_usage = MagicMock()
+        first_usage.prompt_tokens_details.cached_tokens = 80
+        stat.current_count = 100
+
+        with patch('topsailai.context.token.print_info'), \
+             patch('topsailai.context.token.logger'):
+            stat.output_token_stat(first_usage)
+
+        self.assertEqual(stat.current_cached_tokens, 80)
+        self.assertEqual(stat.uncached_tokens, 20)
+
+        stat.add_msgs(["short summary"], reset_cached_tokens=False)
+        stat.current_count = 10
+        self.assertIsNone(stat.current_cached_tokens)
+        self.assertIsNone(stat.uncached_tokens)
+
+        stat.add_msgs(["next request"])
+        stat.current_count = 20
+        self.assertEqual(stat.current_cached_tokens, 0)
+        self.assertEqual(stat.uncached_tokens, 20)
+
+        next_usage = MagicMock()
+        next_usage.prompt_tokens_details.cached_tokens = 0
+        with patch('topsailai.context.token.print_info'), \
+             patch('topsailai.context.token.logger'):
+            stat.output_token_stat(next_usage)
+
+        self.assertEqual(stat.current_cached_tokens, 0)
+        self.assertEqual(stat.uncached_tokens, 20)
         stat.flag_running = False
 
     def test_token_stat_add_msgs_dict(self):

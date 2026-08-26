@@ -396,7 +396,10 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         )
         self.ai_agent.messages = self.ai_agent.messages[:index] + new_messages
 
-        self.ai_agent.llm_model.tokenStat.add_msgs(self.ai_agent.messages)
+        self.ai_agent.llm_model.tokenStat.add_msgs(
+            self.ai_agent.messages,
+            reset_cached_tokens=False,
+        )
         # Log message count and token usage after summarization
         _token_count_after = self._get_current_tokens(realtime=True)
         logger.info("[summarize_processing] after: messages=%s, tokens=%s", len(self.ai_agent.messages), _token_count_after)

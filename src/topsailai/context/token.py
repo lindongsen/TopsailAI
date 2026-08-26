@@ -268,7 +268,10 @@ class TokenStat(threading.Thread):
 
     @property
     def uncached_tokens(self):
-        return self.current_tokens - self.current_cached_tokens
+        """Return uncached tokens, or None until server cache usage is measured."""
+        if self.current_cached_tokens is None:
+            return None
+        return max(0, self.current_tokens - self.current_cached_tokens)
 
     def output_token_stat(self, usage:CompletionUsage=None):
         """
@@ -288,9 +291,17 @@ class TokenStat(threading.Thread):
         """
         # Use lock to ensure thread-safe access to statistics
         with self.rlock:
+            if usage:
+                self.current_cached_tokens = 0
+                if usage.prompt_tokens_details:
+                    cached_tokens = usage.prompt_tokens_details.cached_tokens
+                    if cached_tokens is not None:
+                        self.current_cached_tokens = cached_tokens
+                if self.current_cached_tokens:
+                    self.total_cached_tokens += self.current_cached_tokens
             info = dict(
                 current_tokens=self.current_count,
-                cached_tokens=-1,
+                cached_tokens=self.current_cached_tokens,
                 msg_count=self.msg_count,
                 current_text_len=self.current_text_len,
                 total_cached_tokens=self.total_cached_tokens,
@@ -309,18 +320,6 @@ class TokenStat(threading.Thread):
                     if self.first_byte_min_ms is not None else None
                 ),
             )
-            if usage:
-                if usage.prompt_tokens_details:
-                    self.current_cached_tokens = (
-                        usage.prompt_tokens_details.cached_tokens
-                    )
-                info.update(
-                    dict(
-                        cached_tokens=self.current_cached_tokens,
-                    )
-                )
-                if self.current_cached_tokens:
-                    self.total_cached_tokens += self.current_cached_tokens
 
         # A single session may be processed by multiple agents, each owning its
         # own TokenStat instance. We must accumulate the current agent's deltas
@@ -331,7 +330,7 @@ class TokenStat(threading.Thread):
             # Lazy import to avoid circular imports between context modules.
             from topsailai.context import ctx_manager
             session_id = env_tool.get_session_id()
-            if session_id:
+            if session_id and self.current_cached_tokens is not None:
                 session_mgr = ctx_manager.get_session_manager()
                 if session_mgr:
                     session_mgr.accumulate_session_tokens(
@@ -380,7 +379,7 @@ class TokenStat(threading.Thread):
             if self.first_byte_min_ms is None or first_byte_ms < self.first_byte_min_ms:
                 self.first_byte_min_ms = first_byte_ms
 
-    def add_msgs(self, msgs):
+    def add_msgs(self, msgs, reset_cached_tokens: bool = True):
         """
         Add messages to the buffer for token calculation.
 
@@ -392,13 +391,17 @@ class TokenStat(threading.Thread):
                  - A list of messages (for multi-message interactions)
                  - A single string message
                  - Any object that can be converted to string
+            reset_cached_tokens (bool): Reset the cache metric to zero while
+                preparing a normal LLM request. Set to False after rebuilding
+                context locally to mark cache usage as unknown until the next
+                server response.
 
         Returns:
             None
 
         Note:
-            The method updates the last message timestamp and resets current
-            counters to prepare for new message processing.
+            The method updates the last message timestamp and resets locally
+            calculated message counters.
         """
         # Use lock for thread-safe buffer operations
         with self.rlock:
@@ -409,7 +412,7 @@ class TokenStat(threading.Thread):
             self.msg_count = len(msgs)
             self.current_count = 0
             self.current_text_len = 0
-            self.current_cached_tokens = 0
+            self.current_cached_tokens = 0 if reset_cached_tokens else None
 
             # Update timestamp for last message activity
             self._last_msg_time = int(time.time())
