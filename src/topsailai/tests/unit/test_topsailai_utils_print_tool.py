@@ -239,8 +239,8 @@ class TestPrintTool(unittest.TestCase):
     def test_get_print_step_mode(self):
         """Step mode defaults, normalizes, and accepts supported values."""
         cases = [
-            (None, "simple"),
-            ("", "simple"),
+            (None, "normal"),
+            ("", "normal"),
             ("simple", "simple"),
             ("normal", "normal"),
             ("  NoRmAl  ", "normal"),
@@ -258,8 +258,8 @@ class TestPrintTool(unittest.TestCase):
         """Invalid step modes safely fall back and warn once per process."""
         os.environ['TOPSAILAI_PRINT_STEP_MODE'] = 'verbose'
 
-        self.assertEqual(print_tool.get_print_step_mode(), 'simple')
-        self.assertEqual(print_tool.get_print_step_mode(), 'simple')
+        self.assertEqual(print_tool.get_print_step_mode(), 'normal')
+        self.assertEqual(print_tool.get_print_step_mode(), 'normal')
 
         mock_warning.assert_called_once()
 
@@ -348,19 +348,19 @@ class TestPrintTool(unittest.TestCase):
         )
 
     @patch('topsailai.utils.print_tool.print_with_time')
-    def test_print_step_simple_default(self, mock_print_with_time):
-        """The default mode keeps thought steps complete on the console."""
+    def test_print_step_normal_default(self, mock_print_with_time):
+        """The default mode passes messages through unchanged."""
         print_tool.enable_flag_print_step()
+        msg = {'step_name': 'thought', 'raw_text': 'first\nsecond'}
 
-        print_tool.print_step({'step_name': 'thought', 'raw_text': 'first\nsecond'})
+        print_tool.print_step(msg)
 
-        mock_print_with_time.assert_called_once_with(
-            '[thought] first\nsecond', need_format=False
-        )
+        mock_print_with_time.assert_called_once_with(msg, need_format=True)
 
     @patch('topsailai.utils.print_tool.print_with_time')
     def test_print_step_simple_empty_skips_output(self, mock_print_with_time):
         """Simple mode does not print empty content."""
+        os.environ['TOPSAILAI_PRINT_STEP_MODE'] = 'simple'
         print_tool.enable_flag_print_step()
 
         print_tool.print_step('   ')
@@ -386,6 +386,7 @@ class TestPrintTool(unittest.TestCase):
     @patch('topsailai.utils.print_tool.print_with_time')
     def test_print_step_simple_logs_full_message(self, mock_print_with_time, mock_info):
         """Simple mode retains complete console and log content for thought steps."""
+        os.environ['TOPSAILAI_PRINT_STEP_MODE'] = 'simple'
         print_tool.enable_flag_print_step()
         msg = {'step_name': 'thought', 'raw_text': 'first\nsecond'}
 

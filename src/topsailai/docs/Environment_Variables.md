@@ -56,7 +56,7 @@ These variables define the agent's working environment and project access scope.
 | `TOPSAILAI_AUTO_SESSION_NAME_ENABLED` | `1` | When `1`, creating a new session without an explicit `session_name` triggers an asynchronous LLM summarization that generates a session name from the initial task/message. Failures are silently ignored. Set to `0` to disable. |
 | `TOPSAILAI_AUTO_SESSION_NAME_MAX_LENGTH` | `30` | Maximum length in characters for auto-generated session names. |
 | `TOPSAILAI_PRINT_COLOR_ENABLED` | (unset) | Enable ANSI colors for `utils/print_tool.py` output methods. Boolean flag; when unset falls back to `NO_COLOR` / TTY detection. Valid values: `1`, `true`, `yes`, `on`. |
-| `TOPSAILAI_PRINT_STEP_MODE` | `"simple"` | Controls Agent2LLM step console detail. `simple` prints bounded one-line summaries and tool names without arguments, but fully prints steps whose names start with `task`, `thought`, `final`, or `inquiry`; `normal` preserves legacy full output. Empty or invalid values fall back to `simple`. |
+| `TOPSAILAI_PRINT_STEP_MODE` | `"normal"` | Controls Agent2LLM step console detail. `normal` preserves legacy full output; `simple` prints bounded one-line summaries and tool names without arguments, but fully prints steps whose names start with `task`, `thought`, `final`, or `inquiry`. Empty or invalid values fall back to `normal`. |
 
 ## OpenAI Configuration
 | Variable | Default | Description |

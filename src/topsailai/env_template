@@ -239,8 +239,8 @@ TOPSAILAI_PRINT_COLOR_ENABLED=
 # Agent2LLM step console detail. "simple" prints bounded summaries and tool
 # names without arguments, while steps starting with task, thought, final, or
 # inquiry remain complete. "normal" preserves legacy full output. Invalid or
-# empty values fall back to "simple".
-TOPSAILAI_PRINT_STEP_MODE=simple
+# empty values fall back to "normal".
+TOPSAILAI_PRINT_STEP_MODE=normal
 
 # Agent Type, default is react
 # Input Messages

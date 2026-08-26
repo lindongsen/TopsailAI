@@ -22,17 +22,17 @@ def get_print_step_mode() -> str:
     """Return the configured console detail mode for step messages."""
     global _print_step_invalid_mode_warned
 
-    mode = os.getenv(PRINT_STEP_MODE_ENV, "").strip().lower() or "simple"
+    mode = os.getenv(PRINT_STEP_MODE_ENV, "").strip().lower() or "normal"
     if mode in PRINT_STEP_MODES:
         return mode
     if not _print_step_invalid_mode_warned:
         logger.warning(
-            "Invalid %s value %r; falling back to 'simple'",
+            "Invalid %s value %r; falling back to 'normal'",
             PRINT_STEP_MODE_ENV,
             mode,
         )
         _print_step_invalid_mode_warned = True
-    return "simple"
+    return "normal"
 
 
 def _safe_step_text(value) -> str:
