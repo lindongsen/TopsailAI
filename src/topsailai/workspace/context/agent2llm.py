@@ -21,6 +21,7 @@ from topsailai.utils.print_tool import (
     print_info,
     print_error,
     print_critical,
+    print_warning,
 )
 from topsailai.utils import (
     json_tool,
@@ -201,22 +202,15 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         if not reason:
             return True, current_tokens
 
-        logger.warning(
+        print_warning(
             "[summarize_messages_for_processing] skip Agent2LLM summarization: "
-            "reason=%s, force=%s, current_tokens=%s, preserved_tokens=%s, "
-            "summary_token_reserve=%s, estimated_after_tokens=%s, "
-            "summary_input_tokens=%s, summary_safe_limit=%s, "
-            "token_threshold=%s, session_id=%s",
-            reason,
-            force,
-            current_tokens,
-            preserved_tokens,
-            summary_token_reserve,
-            estimated_after_tokens,
-            summary_input_tokens,
-            summary_safe_limit,
-            token_threshold,
-            self.session_id or "",
+            f"reason={reason}, force={force}, current_tokens={current_tokens}, "
+            f"preserved_tokens={preserved_tokens}, "
+            f"summary_token_reserve={summary_token_reserve}, "
+            f"estimated_after_tokens={estimated_after_tokens}, "
+            f"summary_input_tokens={summary_input_tokens}, "
+            f"summary_safe_limit={summary_safe_limit}, "
+            f"token_threshold={token_threshold}, session_id={self.session_id or ''}"
         )
         return False, current_tokens
 
