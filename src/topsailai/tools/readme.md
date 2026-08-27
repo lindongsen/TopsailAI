@@ -13,7 +13,7 @@ These tools will be called by the AI agent.
 ## Variables & Functions
 
 - TOOLS: required, dict, func_name=func_call
-- TOOLS_INFO: optional, dict, func_name={openai_tool_spec}; -> Do not set it unless necessary!
+- TOOLS_INFO: optional, dict, func_name={openai_tool_spec}; -> Do not set it unless necessary! (Currently no tool module sets it; runtime string-first tolerance is mandatory.)
 - PROMPT: optional, str, tool prompt; -> The usage of the tool should be included in the corresponding function comments, not here!
 - OBSERVATION: optional, str, content appended once to the first user observation message for enabled tools.
 - FLAG_TOOL_ENABLED: optional, bool, default True
@@ -63,9 +63,9 @@ Design tool parameters **string-first**. When a parameter is declared as `int`/`
 
 ### Reference implementation
 
-`tools/human_tool.py` - `TOOLS_INFO`, `_validate_request()`, `_resolve_allow_free_text()`.
+`tools/human_tool.py` - `_resolve_options()`, `_validate_request()`, `_resolve_allow_free_text()`, `_resolve_timeout_seconds()`.
 See `issues/done/issue-human-decision-input-source-detection-false-negative.md` for the full decision history.
 
 ### Known deviation
 
-`ask_decision` still rejects `options` when it is passed as a JSON string, which contradicts this principle and has not been converged yet (open item).
+None. `ask_decision` accepts `options` as a JSON-array string (`_resolve_options()` parses it at runtime), so the tool now fully follows this principle.
