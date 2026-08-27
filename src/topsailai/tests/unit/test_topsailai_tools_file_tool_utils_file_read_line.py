@@ -5,6 +5,9 @@ from topsailai.tools.file_tool_utils.file_read_line import (
     read_file_around_line,
     read_file_lines,
     TOOLS,
+    _DEFAULT_CASE_SENSITIVE,
+    _INVALID_CASE_SENSITIVE_REASON,
+    _resolve_case_sensitive,
 )
 
 
@@ -148,21 +151,88 @@ class TestReadFileWithContext:
         assert "1:abc123" in lines[0]
         assert "3:abc456" in lines[1]
 
-    def test_case_sensitive_true_string(self, tmp_path):
-        """Test case_sensitive with string 'true' input handling."""
+    def test_case_sensitive_one_string_is_sensitive(self, tmp_path):
+        """Regression: string '1' must mean sensitive, not silently insensitive."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("LINE1\nLine2\nline3\n")
 
-        result = read_file_with_context(str(test_file), "line1", context_num=0, case_sensitive="true")
+        result = read_file_with_context(str(test_file), "line1", context_num=0, case_sensitive="1")
         assert result == ""  # No match because case doesn't match
 
-    def test_case_sensitive_false_string(self, tmp_path):
-        """Test case_sensitive with string 'false' input handling."""
+    def test_case_sensitive_zero_string_is_insensitive(self, tmp_path):
+        """Test string '0' resolves to insensitive matching."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("LINE1\nLine2\nline3\n")
 
-        result = read_file_with_context(str(test_file), "line1", context_num=0, case_sensitive="false")
+        result = read_file_with_context(str(test_file), "line1", context_num=0, case_sensitive="0")
         assert "1:LINE1" in result  # Match found because case insensitive
+
+    def test_case_sensitive_padded_strings(self, tmp_path):
+        """Test surrounding whitespace does not change the integer meaning."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("LINE1\nLine2\nline3\n")
+
+        assert read_file_with_context(
+            str(test_file), "line1", context_num=0, case_sensitive=" 1 "
+        ) == ""
+        assert "1:LINE1" in read_file_with_context(
+            str(test_file), "line1", context_num=0, case_sensitive=" 0 "
+        )
+
+    def test_case_sensitive_real_bool_backcompat(self, tmp_path):
+        """Test real booleans stay accepted for internal callers."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("LINE1\nLine2\nline3\n")
+
+        assert read_file_with_context(
+            str(test_file), "line1", context_num=0, case_sensitive=True
+        ) == ""
+        assert "1:LINE1" in read_file_with_context(
+            str(test_file), "line1", context_num=0, case_sensitive=False
+        )
+
+    def test_case_sensitive_none_and_blank_fall_back_to_default(self, tmp_path):
+        """Test None and blank strings fall back to the insensitive default."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("LINE1\nLine2\nline3\n")
+
+        for value in (None, "", "   "):
+            result = read_file_with_context(
+                str(test_file), "line1", context_num=0, case_sensitive=value
+            )
+            assert "1:LINE1" in result, f"value={value!r} should be insensitive"
+
+    def test_case_sensitive_default_matches_zero(self, tmp_path):
+        """Test omitting the argument behaves exactly like passing 0."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("LINE1\nLine2\nline3\n")
+
+        default_result = read_file_with_context(str(test_file), "line1", context_num=0)
+        assert default_result == read_file_with_context(
+            str(test_file), "line1", context_num=0, case_sensitive=0
+        )
+        assert "1:LINE1" in default_result
+
+    def test_case_sensitive_invalid_values_return_machine_readable_error(self, tmp_path):
+        """Test non 1/0 values return an invalid_request error instead of guessing."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("LINE1\nLine2\nline3\n")
+
+        for value in ("true", "false", "True", "yes", "maybe", "1.3", "2", "-1",
+                      1.0, 1.5, 2, -1, [], {}, [1], {"a": 1}):
+            result = read_file_with_context(
+                str(test_file), "line1", context_num=0, case_sensitive=value
+            )
+            assert result.startswith("Error: invalid_request"), f"value={value!r} got {result!r}"
+            assert "reason=invalid_case_sensitive" in result
+
+    def test_case_sensitive_source_has_no_truthy_string_comparison(self):
+        """Guard against reintroducing the human-language '== \"true\"' convention."""
+        import inspect
+
+        source = inspect.getsource(read_file_with_context)
+        assert '== "true"' not in source
+        assert "case_sensitive.lower()" not in source
 
     def test_context_num_zero(self, tmp_path):
         """Test context_num=0 returns only matching lines."""
@@ -702,6 +772,35 @@ class TestDocumentedStreamingHelpers:
         with _open_text_stream(str(target)) as stream:
             assert list(stream) == ["caf\xe9\n", "second\n"]
         assert stream.closed is True
+
+
+class TestResolveCaseSensitive:
+    """Test the _resolve_case_sensitive normalization helper directly."""
+
+    def test_valid_values(self):
+        """Test every accepted form resolves to the expected boolean."""
+        for value, expected in (
+            (1, True), (0, False), ("1", True), ("0", False),
+            (" 1 ", True), (" 0 ", False), (True, True), (False, False),
+        ):
+            resolved, reason = _resolve_case_sensitive(value)
+            assert resolved is expected, f"value={value!r}"
+            assert reason is None, f"value={value!r}"
+
+    def test_blank_values_use_module_default(self):
+        """Test None and blank strings return the module default flag."""
+        for value in (None, "", "   ", "\t"):
+            resolved, reason = _resolve_case_sensitive(value)
+            assert resolved is _DEFAULT_CASE_SENSITIVE
+            assert reason is None
+
+    def test_invalid_values_return_reason(self):
+        """Test rejected values report the machine-readable reason."""
+        for value in ("true", "false", "yes", "1.0", "1.3", "2", "-1",
+                      2, -1, 1.0, 1.5, [], {}, [1], {"a": 1}, object()):
+            resolved, reason = _resolve_case_sensitive(value)
+            assert resolved is False, f"value={value!r}"
+            assert reason == _INVALID_CASE_SENSITIVE_REASON, f"value={value!r}"
 
 
 if __name__ == "__main__":

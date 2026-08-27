@@ -67,11 +67,43 @@ def _strip_line_ending(line: str) -> str:
     return line
 
 
+_DEFAULT_CASE_SENSITIVE = False
+_INVALID_CASE_SENSITIVE_REASON = "invalid_case_sensitive"
+
+
+def _resolve_case_sensitive(value) -> tuple[bool, str | None]:
+    """Resolve a case-sensitive flag accepting integer 1/0 and their string forms.
+
+    Args:
+        value: Raw argument value.
+
+    Returns:
+        tuple[bool, str | None]: Resolved flag with ``None`` when valid, or
+            ``False`` with a machine-readable reason when invalid.
+    """
+    if value is None:
+        return _DEFAULT_CASE_SENSITIVE, None
+    if isinstance(value, bool):
+        return value, None
+    if isinstance(value, int):
+        if value in (0, 1):
+            return bool(value), None
+        return False, _INVALID_CASE_SENSITIVE_REASON
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return _DEFAULT_CASE_SENSITIVE, None
+        if text in ("0", "1"):
+            return text == "1", None
+        return False, _INVALID_CASE_SENSITIVE_REASON
+    return False, _INVALID_CASE_SENSITIVE_REASON
+
+
 def read_file_with_context(
     file_path: str,
     pattern: str,
     context_num: int = 10,
-    case_sensitive: bool = False
+    case_sensitive: int = 0
 ) -> str:
     """Read a file and return lines matching a pattern with context.
 
@@ -89,7 +121,7 @@ def read_file_with_context(
         file_path (str): Path to the file to read
         pattern (str): Regular expression pattern to search for
         context_num (int, optional): Number of context lines to show before and after each match. Defaults to 10.
-        case_sensitive (bool, optional): Whether the search should be case sensitive. Defaults to False.
+        case_sensitive (int, optional): 1 for case-sensitive matching, 0 for case-insensitive. Defaults to 0.
 
     Returns:
         str: Formatted output with line numbers.
@@ -114,8 +146,9 @@ def read_file_with_context(
         - Uses streaming decoding to avoid loading the entire file into memory
     """
     context_num = int(context_num)
-    if isinstance(case_sensitive, str):
-        case_sensitive = case_sensitive.lower() == "true"
+    case_sensitive, invalid_reason = _resolve_case_sensitive(case_sensitive)
+    if invalid_reason is not None:
+        return f"Error: invalid_request reason={invalid_reason}, case_sensitive must be integer 1 or 0"
 
     try:
         flags = 0 if case_sensitive else re.IGNORECASE
