@@ -65,6 +65,7 @@ Many scripts share the following options:
 - All scripts are implemented as Python files in `/TopsailAI/src/topsailai/cli/`.
 - Shared helpers live in the `cli_topsailai/` package.
 - Unit tests are organized under `tests/unit/<cli-name>/`.
+- Environment variables and configuration details consumed by only one script are documented in that script's usage document (see its "Environment Variables" section), not in `Environment_Variables.md`.
 - For the full workspace guide, see `../README.md` in this directory.
 
 ## Historical documents

@@ -81,6 +81,57 @@ topsailai_launch_agent --scan ./src/topsailai/cli
 
 The output uses the same ignore rules and tree formatting as the workspace scan appended to `TOPSAILAI_CONTEXT_USER_MESSAGE`. Hidden files and directories are excluded, and `.gitignore` patterns are respected.
 
+## Environment Variables
+
+The variables below are consumed only by `topsailai_launch_agent`. They are intentionally kept out of the global
+`docs/usage/Environment_Variables.md`; this section is their single source of truth.
+
+| Variable | Applies to | Accepted format | Default | Example |
+|----------|------------|-----------------|---------|---------|
+| `TOPSAILAI_SCAN_EXCLUDE` | both files and directories | comma-separated names, fnmatch wildcards | unset (filter disabled) | `node_modules,.cache,tmp` |
+| `TOPSAILAI_SCAN_EXCLUDE_DIRS` | directory names only | comma-separated names, fnmatch wildcards | unset (filter disabled) | `vendor,build,dist` |
+| `TOPSAILAI_SCAN_EXCLUDE_FILES` | file names only | comma-separated names, fnmatch wildcards | unset (filter disabled) | `*.log,*.tmp,Makefile` |
+| `TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS` | stale-file cleanup in `{workspace}/.tmp/` on launch | float greater than zero | `1` | `0.5` |
+
+### Scan Exclusion Filters
+
+`TOPSAILAI_SCAN_EXCLUDE`, `TOPSAILAI_SCAN_EXCLUDE_DIRS`, and `TOPSAILAI_SCAN_EXCLUDE_FILES` filter specific names out of
+the scanned workspace folder tree — the tree appended to `TOPSAILAI_CONTEXT_USER_MESSAGE` and the tree printed by `--scan`.
+
+- All three accept comma-separated names and support fnmatch wildcards (for example `*.log`, `build*`).
+- Unset or empty values disable the corresponding filter.
+- Names starting with `.` are already excluded by default and do not need to be listed here.
+
+```bash
+# Exclude names whether they are files or directories
+export TOPSAILAI_SCAN_EXCLUDE="node_modules,.cache,tmp"
+
+# Exclude only directories
+export TOPSAILAI_SCAN_EXCLUDE_DIRS="vendor,build,dist"
+
+# Exclude only files
+export TOPSAILAI_SCAN_EXCLUDE_FILES="*.log,*.tmp,Makefile"
+```
+
+They can also be seeded from `.topsailai/settings.yaml`, because the launcher loads `self_environs` into its own process
+environment before scanning:
+
+```yaml
+self_environs:
+  TOPSAILAI_SCAN_EXCLUDE_DIRS: "vendor,dist"
+```
+
+### Stale `.tmp/` Cleanup Threshold
+
+`TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS` sets the age threshold (in days) used when the launcher clears stale files from
+`{workspace}/.tmp/` on launch. Files older than this many days are removed; fresher files are kept. The value accepts a
+float (for example `1` or `0.5`) and must be greater than zero. When it is unset, non-numeric, or not greater than zero,
+the launcher prints a warning to stderr and falls back to the default of `1` day.
+
+```bash
+TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS=0.5 topsailai_launch_agent
+```
+
 ## Context Item Selection
 
 When `--item` is omitted:
@@ -185,7 +236,7 @@ topsailai_launch_agent --scan ./src/topsailai/cli
 ## Notes
 
 - A temporary context message file is written under `{workspace}/.tmp/` and cleaned up on exit, uncaught exceptions, and `SIGINT`/`SIGTERM`.
-- On launch, the launcher clears stale files in `{workspace}/.tmp/`. Only files older than one day are removed; fresher files are preserved so ongoing work is not lost on relaunch. Empty subdirectories left behind are pruned and the `.tmp/` directory is recreated if missing. The age threshold (in days) is configurable via `TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS` (default `1`).
+- On launch, the launcher clears stale files in `{workspace}/.tmp/`. Only files older than the configured age threshold are removed; fresher files are preserved so ongoing work is not lost on relaunch. Empty subdirectories left behind are pruned and the `.tmp/` directory is recreated if missing. See `TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS` under "Environment Variables".
 - The launcher changes to the configured `workspace` before running the driver.
 - In `--dry-run` mode, command context sources are listed but not executed.
 
