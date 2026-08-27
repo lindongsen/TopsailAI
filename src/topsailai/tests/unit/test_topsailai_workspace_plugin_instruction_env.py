@@ -113,12 +113,13 @@ class TestInstructions(unittest.TestCase):
         
         self.assertIn('set', INSTRUCTIONS)
         self.assertIn('get', INSTRUCTIONS)
+        self.assertIn('print_step_mode', INSTRUCTIONS)
 
     def test_instructions_correct_count(self):
-        """Test INSTRUCTIONS has exactly 2 entries"""
+        """Test INSTRUCTIONS has exactly 3 entries"""
         from topsailai.workspace.plugin_instruction.env import INSTRUCTIONS
         
-        self.assertEqual(len(INSTRUCTIONS), 2)
+        self.assertEqual(len(INSTRUCTIONS), 3)
 
     def test_instructions_callable_values(self):
         """Test INSTRUCTIONS values are callable"""
@@ -126,6 +127,7 @@ class TestInstructions(unittest.TestCase):
         
         self.assertTrue(callable(INSTRUCTIONS['set']))
         self.assertTrue(callable(INSTRUCTIONS['get']))
+        self.assertTrue(callable(INSTRUCTIONS['print_step_mode']))
 
     def test_instructions_set_is_set_env(self):
         """Test INSTRUCTIONS['set'] is set_env function"""
@@ -138,6 +140,128 @@ class TestInstructions(unittest.TestCase):
         from topsailai.workspace.plugin_instruction.env import INSTRUCTIONS, get_env
         
         self.assertEqual(INSTRUCTIONS['get'], get_env)
+
+
+class TestPrintStepMode(unittest.TestCase):
+    """Test print_step_mode() instruction"""
+
+    ENV_KEY = 'TOPSAILAI_PRINT_STEP_MODE'
+
+    def setUp(self):
+        """Save and clear the step-mode environment variable"""
+        self.original_mode = os.environ.pop(self.ENV_KEY, None)
+
+    def tearDown(self):
+        """Restore the step-mode environment variable"""
+        os.environ.pop(self.ENV_KEY, None)
+        if self.original_mode is not None:
+            os.environ[self.ENV_KEY] = self.original_mode
+
+    def test_list_marks_current_with_asterisk(self):
+        """Listing modes marks the current mode with '*' and numbers every choice"""
+        from topsailai.workspace.plugin_instruction.env import print_step_mode
+
+        os.environ[self.ENV_KEY] = 'simple'
+        output = print_step_mode()
+
+        self.assertIn('TOPSAILAI_PRINT_STEP_MODE', output)
+        self.assertIn('current: simple', output)
+        self.assertIn('1.', output)
+        self.assertIn('2.', output)
+        self.assertIn('* simple', output)
+        self.assertNotIn('* normal', output)
+
+    def test_list_marks_default_when_unset(self):
+        """Listing modes marks 'normal' when the variable is unset"""
+        from topsailai.workspace.plugin_instruction.env import print_step_mode
+
+        output = print_step_mode()
+
+        self.assertIn('current: normal', output)
+        self.assertIn('* normal', output)
+
+    def test_select_by_index(self):
+        """Selecting by 1-based index sets the environment variable"""
+        from topsailai.workspace.plugin_instruction.env import print_step_mode
+
+        os.environ[self.ENV_KEY] = 'normal'
+        result = print_step_mode('2')
+
+        self.assertIn('set environment ok', result)
+        self.assertIn('new=simple', result)
+        self.assertEqual(os.environ[self.ENV_KEY], 'simple')
+
+    def test_select_by_name(self):
+        """Selecting by mode name sets the environment variable"""
+        from topsailai.workspace.plugin_instruction.env import print_step_mode
+
+        result = print_step_mode('simple')
+
+        self.assertIn('new=simple', result)
+        self.assertEqual(os.environ[self.ENV_KEY], 'simple')
+
+    def test_select_by_name_is_case_insensitive(self):
+        """Mode names are matched case-insensitively and stored lowercased"""
+        from topsailai.workspace.plugin_instruction.env import print_step_mode
+
+        result = print_step_mode('SIMPLE')
+
+        self.assertIn('new=simple', result)
+        self.assertEqual(os.environ[self.ENV_KEY], 'simple')
+
+    def test_invalid_index_is_rejected(self):
+        """An out-of-range index reports the valid range and keeps the value"""
+        from topsailai.workspace.plugin_instruction.env import print_step_mode
+
+        os.environ[self.ENV_KEY] = 'normal'
+        result = print_step_mode('9')
+
+        self.assertIn('Invalid index: 9', result)
+        self.assertIn('Valid range: 1-2', result)
+        self.assertEqual(os.environ[self.ENV_KEY], 'normal')
+
+    def test_invalid_mode_is_rejected(self):
+        """An unknown mode name reports valid values and keeps the value"""
+        from topsailai.workspace.plugin_instruction.env import print_step_mode
+
+        os.environ[self.ENV_KEY] = 'normal'
+        result = print_step_mode('bogus')
+
+        self.assertIn('Invalid mode: bogus', result)
+        self.assertIn('normal', result)
+        self.assertIn('simple', result)
+        self.assertEqual(os.environ[self.ENV_KEY], 'normal')
+
+    def test_empty_argument_returns_usage(self):
+        """A blank argument returns usage without changing the value"""
+        from topsailai.workspace.plugin_instruction.env import print_step_mode
+
+        os.environ[self.ENV_KEY] = 'simple'
+        result = print_step_mode('   ')
+
+        self.assertIn('Usage: /print_step_mode', result)
+        self.assertEqual(os.environ[self.ENV_KEY], 'simple')
+
+    def test_invalid_current_value_falls_back_to_default_marker(self):
+        """An invalid current value shows the effective fallback mode as current"""
+        from topsailai.workspace.plugin_instruction.env import print_step_mode
+
+        os.environ[self.ENV_KEY] = 'verbose'
+        output = print_step_mode()
+
+        self.assertIn('current: normal', output)
+        self.assertIn('* normal', output)
+        self.assertNotIn('verbose', output)
+
+    def test_index_beyond_supported_values_is_rejected(self):
+        """Only supported values are selectable, so extra indexes are invalid"""
+        from topsailai.workspace.plugin_instruction.env import print_step_mode
+
+        os.environ[self.ENV_KEY] = 'verbose'
+        result = print_step_mode('3')
+
+        self.assertIn('Invalid index: 3', result)
+        self.assertEqual(os.environ[self.ENV_KEY], 'verbose')
 
 
 if __name__ == '__main__':

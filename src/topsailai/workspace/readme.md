@@ -153,7 +153,7 @@ Modular `/` commands registered via `INSTRUCTIONS` dict.
 
 | Module | Commands | Purpose |
 |--------|----------|---------|
-| `env.py` | `/set`, `/get` | Environment variable management |
+| `env.py` | `/set`, `/get`, `/print_step_mode` | Environment variable management; `/print_step_mode` lists supported step modes with `*` marking the current one and selects by index or name |
 | `agent.py` | `/system_prompt`, `/tool_prompt`, `/tools`, `/set_llm`, `/llm` | Agent introspection & LLM switching |
 | `skill.py` | `/show`, `/load`, `/unload`, `/hooks` | Skill hub management |
 | `skill_repo.py` | `/list`, `/install`, `/uninstall` | Skill repository operations |

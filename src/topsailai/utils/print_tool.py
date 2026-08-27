@@ -13,7 +13,14 @@ g_flag_print_step = None
 TAIL_PREVIEW_LENGTH = 300
 PRINT_STEP_SIMPLE_PREVIEW_LENGTH = 160
 PRINT_STEP_MODE_ENV = "TOPSAILAI_PRINT_STEP_MODE"
-PRINT_STEP_MODES = {"simple", "normal"}
+# Ordered so callers (e.g. instructions) can present a stable numbered list.
+PRINT_STEP_MODE_LIST = ("normal", "simple")
+PRINT_STEP_MODE_DEFAULT = "normal"
+PRINT_STEP_MODES = set(PRINT_STEP_MODE_LIST)
+PRINT_STEP_MODE_DESCRIPTIONS = {
+    "normal": "legacy full step output",
+    "simple": "bounded one-line summaries; task/thought/final/inquiry fully printed",
+}
 PRINT_STEP_FULL_PREFIXES = ("task", "thought", "final", "inquiry")
 _print_step_invalid_mode_warned = False
 
@@ -22,17 +29,18 @@ def get_print_step_mode() -> str:
     """Return the configured console detail mode for step messages."""
     global _print_step_invalid_mode_warned
 
-    mode = os.getenv(PRINT_STEP_MODE_ENV, "").strip().lower() or "normal"
+    mode = os.getenv(PRINT_STEP_MODE_ENV, "").strip().lower() or PRINT_STEP_MODE_DEFAULT
     if mode in PRINT_STEP_MODES:
         return mode
     if not _print_step_invalid_mode_warned:
         logger.warning(
-            "Invalid %s value %r; falling back to 'normal'",
+            "Invalid %s value %r; falling back to '%s'",
             PRINT_STEP_MODE_ENV,
             mode,
+            PRINT_STEP_MODE_DEFAULT,
         )
         _print_step_invalid_mode_warned = True
-    return "normal"
+    return PRINT_STEP_MODE_DEFAULT
 
 
 def _safe_step_text(value) -> str:
