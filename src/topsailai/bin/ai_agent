@@ -58,4 +58,9 @@ run_cli() {
 
 [ "${ENABLED_TOOLS}" == "" ] && export ENABLED_TOOLS="${TOPSAILAI_ENABLED_TOOLS:-*}" # default to enable all tools
 [ "${DISABLED_TOOLS}" == "" ] && export DISABLED_TOOLS="${TOPSAILAI_DISABLED_TOOLS:-sandbox_tool,hook_tool,subagent_tool}"
-DEBUG=${DEBUG} run_cli AgentReAct -t "${task} ${task_ex}" ${ext_options}
+task_options=""
+[ -n "${task}" ] && task_options="${task_options} ${task}"
+[ -n "${task_ex}" ] && task_options="${task_options} ${task_ex}"
+[ -n "${task_options}" ] && task_options="-t ${task_options}"
+DEBUG=${DEBUG} run_cli AgentReAct ${task_options} ${ext_options}
+
