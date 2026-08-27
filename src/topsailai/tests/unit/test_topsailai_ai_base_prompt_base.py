@@ -1,5 +1,4 @@
 import os
-import sys
 import json
 import unittest
 from unittest.mock import patch, MagicMock, mock_open
@@ -35,10 +34,10 @@ class TestPromptBase(unittest.TestCase):
 
     def tearDown(self):
         """Restore original environment variables."""
-        # Clear module cache to ensure fresh imports
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
+        # No sys.modules purging on purpose: the classes under test read their
+        # environment variables during construction, so a fresh import is not
+        # needed, and clearing topsailai modules here leaks into sibling test
+        # modules that bind topsailai symbols at import time in the same process.
 
         for var, original_value in self.original_env.items():
             if original_value is None:

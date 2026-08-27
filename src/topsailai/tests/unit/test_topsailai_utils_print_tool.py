@@ -14,6 +14,9 @@ class TestPrintTool(unittest.TestCase):
         self.original_debug = os.environ.get('DEBUG')
         self.original_truncate_len = os.environ.get('DEBUG_PRINT_TRUNCATE_LENGTH')
         self.original_print_step_mode = os.environ.get('TOPSAILAI_PRINT_STEP_MODE')
+        # Snapshot the module level step print flag so tests that enable it
+        # cannot leak stdout output into sibling test modules.
+        self.original_flag_print_step = print_tool.g_flag_print_step
 
         # Set default test environment
         if 'DEBUG' in os.environ:
@@ -40,6 +43,7 @@ class TestPrintTool(unittest.TestCase):
         else:
             os.environ.pop('TOPSAILAI_PRINT_STEP_MODE', None)
         print_tool._print_step_invalid_mode_warned = False
+        print_tool.g_flag_print_step = self.original_flag_print_step
 
     def test_get_truncation_len_default(self):
         """Test get_truncation_len with no environment variable."""
