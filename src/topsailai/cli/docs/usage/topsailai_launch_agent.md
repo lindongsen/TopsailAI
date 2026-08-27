@@ -69,6 +69,7 @@ topsailai_launch_agent
 | `--subprocess` | Use `subprocess.run()` instead of `os.system()` (default). |
 | `--setup` | Force the guided interactive setup to create `.topsailai/settings.yaml` when it is missing. |
 | `--scan <folder>` | Scan the specified folder and print its tree structure, then exit. Reuses the same ignore rules and formatting as the workspace scan. |
+| `--exclude <names>` | Ignore these file or folder names while scanning. Accepts comma-separated names with fnmatch wildcards (for example `build,dist,*.log`). May be repeated. Merged with `TOPSAILAI_SCAN_EXCLUDE`. |
 
 ## Scanning a Folder
 
@@ -79,7 +80,7 @@ Use `--scan <folder>` to preview the folder tree that would be generated for a g
 topsailai_launch_agent --scan ./src/topsailai/cli
 ```
 
-The output uses the same ignore rules and tree formatting as the workspace scan appended to `TOPSAILAI_CONTEXT_USER_MESSAGE`. Hidden files and directories are excluded, and `.gitignore` patterns are respected.
+The output uses the same ignore rules and tree formatting as the workspace scan appended to `TOPSAILAI_CONTEXT_USER_MESSAGE`. Hidden files and directories are excluded, and `.gitignore` patterns are respected. Add `--exclude <names>` to ignore extra file or folder names for a single run (see "Command-Line Exclusions").
 
 ## Environment Variables
 
@@ -119,6 +120,28 @@ environment before scanning:
 ```yaml
 self_environs:
   TOPSAILAI_SCAN_EXCLUDE_DIRS: "vendor,dist"
+```
+
+### Command-Line Exclusions
+
+`--exclude <names>` is the command-line counterpart of `TOPSAILAI_SCAN_EXCLUDE`. It applies to both the workspace folder
+tree appended to `TOPSAILAI_CONTEXT_USER_MESSAGE` and the tree printed by `--scan`.
+
+- It accepts comma-separated names and supports the same fnmatch wildcards (for example `*.log`, `build*`).
+- It can be repeated; every occurrence is merged.
+- It is merged with (not replacing) `TOPSAILAI_SCAN_EXCLUDE`, so environment-based defaults stay in effect.
+- Use `TOPSAILAI_SCAN_EXCLUDE_DIRS` / `TOPSAILAI_SCAN_EXCLUDE_FILES` when a name must be filtered only as a directory or
+  only as a file; `--exclude` matches either kind.
+
+```bash
+# Ignore these names in addition to the environment-based filters
+topsailai_launch_agent --exclude "build,dist,*.log"
+
+# Repeat the option for readability
+topsailai_launch_agent --exclude node_modules --exclude "*.tmp"
+
+# Preview the resulting tree before launching
+topsailai_launch_agent --scan ./src/topsailai/cli --exclude "tests,*.md"
 ```
 
 ### Stale `.tmp/` Cleanup Threshold

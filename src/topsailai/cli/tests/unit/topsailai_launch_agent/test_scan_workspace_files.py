@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from io import StringIO
 
 # Ensure the CLI source is importable.
 CLI_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -435,3 +436,168 @@ class TestScanSelfEnvirons(unittest.TestCase):
 
             self.assertIn("vendor", tree)
             self.assertIn("x.js", tree)
+
+
+class TestExcludeOption(unittest.TestCase):
+    """Verify the --exclude option filters names from the scanned tree."""
+
+    EXCLUDE_ENV = [
+        "TOPSAILAI_SCAN_EXCLUDE",
+        "TOPSAILAI_SCAN_EXCLUDE_DIRS",
+        "TOPSAILAI_SCAN_EXCLUDE_FILES",
+    ]
+
+    def setUp(self):
+        self._saved = {}
+        for key in self.EXCLUDE_ENV:
+            self._saved[key] = os.environ.pop(key, None)
+        self._original_dir = os.getcwd()
+        self._original_argv = sys.argv
+
+    def tearDown(self):
+        for key in self.EXCLUDE_ENV:
+            if self._saved.get(key) is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = self._saved[key]
+        os.chdir(self._original_dir)
+        sys.argv = self._original_argv
+
+    def _make_tree(self, tmpdir):
+        """Create a sample tree with a mix of files and directories."""
+        for name in ("keep_dir", "build", "dist"):
+            os.makedirs(os.path.join(tmpdir, name), exist_ok=True)
+        with open(os.path.join(tmpdir, "build", "out.o"), "w", encoding="utf-8") as f:
+            f.write("obj\n")
+        with open(os.path.join(tmpdir, "notes.txt"), "w", encoding="utf-8") as f:
+            f.write("notes\n")
+        with open(os.path.join(tmpdir, "report.log"), "w", encoding="utf-8") as f:
+            f.write("log\n")
+        return tmpdir
+
+    def test_exclude_names_list_filters_files_and_dirs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_tree(tmpdir)
+            tree = launcher._scan_workspace_files(
+                tmpdir, exclude_names=["build", "report.log"]
+            )
+            self.assertNotIn("build", tree)
+            self.assertNotIn("out.o", tree)
+            self.assertNotIn("report.log", tree)
+            self.assertIn("keep_dir", tree)
+            self.assertIn("notes.txt", tree)
+            self.assertIn("dist", tree)
+
+    def test_exclude_names_single_string_is_csv_parsed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_tree(tmpdir)
+            tree = launcher._scan_workspace_files(
+                tmpdir, exclude_names="build, dist"
+            )
+            self.assertNotIn("build", tree)
+            self.assertNotIn("dist", tree)
+            self.assertIn("keep_dir", tree)
+            self.assertIn("report.log", tree)
+
+    def test_exclude_names_support_wildcards(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_tree(tmpdir)
+            tree = launcher._scan_workspace_files(tmpdir, exclude_names=["*.log"])
+            self.assertNotIn("report.log", tree)
+            self.assertIn("notes.txt", tree)
+            self.assertIn("build", tree)
+
+    def test_exclude_names_merge_with_env_exclusions(self):
+        """CLI names extend (not replace) TOPSAILAI_SCAN_EXCLUDE."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_tree(tmpdir)
+            os.environ["TOPSAILAI_SCAN_EXCLUDE"] = "dist"
+            tree = launcher._scan_workspace_files(tmpdir, exclude_names=["build"])
+            self.assertNotIn("build", tree)
+            self.assertNotIn("dist", tree)
+            self.assertIn("keep_dir", tree)
+            self.assertIn("report.log", tree)
+
+    def test_exclude_names_none_keeps_env_behavior(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_tree(tmpdir)
+            os.environ["TOPSAILAI_SCAN_EXCLUDE_DIRS"] = "build"
+            tree = launcher._scan_workspace_files(tmpdir)
+            self.assertNotIn("build", tree)
+            self.assertIn("dist", tree)
+
+    def test_helper_merge_exclusions(self):
+        self.assertEqual(launcher._merge_exclusions(["a"], None), ["a"])
+        self.assertEqual(launcher._merge_exclusions([], "b,c"), ["b", "c"])
+        self.assertEqual(launcher._merge_exclusions(["a"], ["a", "b"]), ["a", "b"])
+        self.assertEqual(launcher._merge_exclusions(None, [" a ", ""]), ["a"])
+        self.assertEqual(launcher._merge_exclusions(["x"], ["y", "x", "z"]), ["x", "y", "z"])
+
+    def test_scan_folder_passes_exclude_names(self):
+        """_scan_folder forwards exclude_names to the shared scanner."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_tree(tmpdir)
+            captured = {}
+
+            def fake_scan(workspace, project_folder=None, exclude_names=None):
+                captured["exclude_names"] = exclude_names
+                return "tree"
+
+            original = launcher._scan_workspace_files
+            launcher._scan_workspace_files = fake_scan
+            try:
+                launcher._scan_folder(tmpdir, exclude_names=["build"])
+            finally:
+                launcher._scan_workspace_files = original
+            self.assertEqual(captured["exclude_names"], ["build"])
+
+    def test_main_scan_applies_exclude_option(self):
+        """`--scan FOLDER --exclude NAMES` prints a filtered tree and exits."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_tree(tmpdir)
+            os.chdir(tmpdir)
+            sys.argv = [
+                "topsailai_launch_agent.py",
+                "--scan",
+                tmpdir,
+                "--exclude",
+                "build,*.log",
+            ]
+            stdout = StringIO()
+            original_stdout = sys.stdout
+            sys.stdout = stdout
+            try:
+                launcher.main()
+            finally:
+                sys.stdout = original_stdout
+            tree = stdout.getvalue()
+            self.assertNotIn("build", tree)
+            self.assertNotIn("report.log", tree)
+            self.assertIn("keep_dir", tree)
+            self.assertIn("notes.txt", tree)
+
+    def test_main_scan_repeated_exclude_options_are_merged(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_tree(tmpdir)
+            os.chdir(tmpdir)
+            sys.argv = [
+                "topsailai_launch_agent.py",
+                "--exclude",
+                "build",
+                "--exclude",
+                "dist,notes.txt",
+                "--scan",
+                tmpdir,
+            ]
+            stdout = StringIO()
+            original_stdout = sys.stdout
+            sys.stdout = stdout
+            try:
+                launcher.main()
+            finally:
+                sys.stdout = original_stdout
+            tree = stdout.getvalue()
+            self.assertNotIn("build", tree)
+            self.assertNotIn("dist", tree)
+            self.assertNotIn("notes.txt", tree)
+            self.assertIn("report.log", tree)

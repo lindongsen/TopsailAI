@@ -25,3 +25,7 @@ The CLI now provides `/control` in session and runtime scopes to send validated 
 ## Self Environs Initial Settings for `topsailai_launch_agent`
 
 `topsailai_launch_agent` now reads the optional top-level `self_environs` section from `.topsailai/settings.yaml` at startup and loads its flat name-to-value mapping into the launcher's own process environment (`os.environ`) as initial settings. Unlike the per-item `environment` section, these variables are not merged into the launched driver's environment; they only seed the launcher process itself (for example `TOPSAILAI_HOME`, proxy settings, or `PYTHONPATH`). A non-mapping value triggers a warning and is ignored.
+
+## Scan Exclusion Option for `topsailai_launch_agent`
+
+`topsailai_launch_agent` now accepts a repeatable `--exclude <names>` option that ignores the given file or folder names while scanning the workspace. It accepts comma-separated names with fnmatch wildcards (for example `build,dist,*.log`), matches either files or directories, and is merged with the `TOPSAILAI_SCAN_EXCLUDE` environment filter instead of replacing it. The option applies both to the folder tree appended to `TOPSAILAI_CONTEXT_USER_MESSAGE` and to the tree printed by `--scan`, so operators can drop noisy directories from agent context for a single run without changing environment configuration.

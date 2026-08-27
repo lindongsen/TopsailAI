@@ -1227,7 +1227,7 @@ def _matches_any(name, patterns):
     return any(fnmatch.fnmatch(name, p) for p in patterns)
 
 
-def _load_scan_exclusions():
+def _load_scan_exclusions(extra_all=None):
     """Load scan-filter exclusions from environment variables.
 
     Three comma-separated variables control which names are filtered out of
@@ -1238,28 +1238,53 @@ def _load_scan_exclusions():
     - ``TOPSAILAI_SCAN_EXCLUDE_FILES``: file names excluded.
 
     Values support fnmatch wildcards (e.g. ``*.log``, ``build*``).
+
+    ``extra_all`` optionally adds more names for both files and dirs (used by
+    the ``--exclude`` command-line option). CLI-provided names are merged with
+    the environment-based list so both sources stay effective; duplicates and
+    empty entries are dropped while the original order is preserved.
     """
-    return (
-        _parse_csv_names(os.getenv("TOPSAILAI_SCAN_EXCLUDE")),
-        _parse_csv_names(os.getenv("TOPSAILAI_SCAN_EXCLUDE_DIRS")),
-        _parse_csv_names(os.getenv("TOPSAILAI_SCAN_EXCLUDE_FILES")),
-    )
+    excl_all = _parse_csv_names(os.getenv("TOPSAILAI_SCAN_EXCLUDE"))
+    excl_dirs = _parse_csv_names(os.getenv("TOPSAILAI_SCAN_EXCLUDE_DIRS"))
+    excl_files = _parse_csv_names(os.getenv("TOPSAILAI_SCAN_EXCLUDE_FILES"))
+    return (_merge_exclusions(excl_all, extra_all), excl_dirs, excl_files)
 
 
-def _scan_folder(folder):
+def _merge_exclusions(patterns, extra):
+    """Return ``patterns`` extended with ``extra`` entries, order-preserving.
+
+    ``extra`` may be a single comma-separated string or a list of such strings
+    (as produced by an argparse ``append`` option).
+    """
+    if isinstance(extra, (list, tuple)):
+        extra_names = [n for item in extra for n in _parse_csv_names(item)]
+    else:
+        extra_names = _parse_csv_names(extra)
+
+    merged = list(patterns or [])
+    for name in extra_names:
+        if name not in merged:
+            merged.append(name)
+    return merged
+
+
+def _scan_folder(folder, exclude_names=None):
     """Scan a specific folder and print its tree structure.
 
     This reuses the same scanning logic used for agent context so that the
     output is consistent with the workspace folder tree shown to the agent.
+
+    ``exclude_names`` is an optional list of comma-separated name patterns
+    (fnmatch wildcards) that are skipped for both files and directories.
     """
     folder = os.path.abspath(folder)
     if not os.path.isdir(folder):
         print(f"Error: --scan target is not a directory: {folder}", file=sys.stderr)
         sys.exit(1)
-    print(_scan_workspace_files(folder, folder))
+    print(_scan_workspace_files(folder, folder, exclude_names=exclude_names))
 
 
-def _scan_workspace_files(workspace, project_folder=None):
+def _scan_workspace_files(workspace, project_folder=None, exclude_names=None):
     """Scan workspace and return folder structure as a tree string.
 
     If ``project_folder`` is provided and is a child of ``workspace`` (or
@@ -1270,6 +1295,10 @@ def _scan_workspace_files(workspace, project_folder=None):
     ``workspace`` and ``project_folder`` are scanned so the agent still sees
     the full workspace context alongside the external project folder.
 
+    ``exclude_names`` optionally adds name patterns (comma-separated strings
+    or a list of them, fnmatch wildcards supported) that are skipped for both
+    files and directories, on top of the ``TOPSAILAI_SCAN_EXCLUDE*`` filters.
+
     Symbolic links are not followed: symlinked files are listed as leaf
     entries and symlinked directories are not recursed into.
     """
@@ -1278,7 +1307,7 @@ def _scan_workspace_files(workspace, project_folder=None):
         """Build a tree string for a single root directory."""
         scan_root = os.path.abspath(scan_root)
         patterns = _load_gitignore_patterns(scan_root)
-        excl_all, excl_dirs, excl_files = _load_scan_exclusions()
+        excl_all, excl_dirs, excl_files = _load_scan_exclusions(exclude_names)
 
         entries = []
 
@@ -1409,6 +1438,18 @@ def main():
         metavar="FOLDER",
         help="Scan the specified folder and print its tree structure, then exit",
     )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=None,
+        metavar="NAMES",
+        dest="exclude",
+        help=(
+            "Ignore these file or folder names when scanning the workspace tree. "
+            "Accepts comma-separated names with fnmatch wildcards (e.g. 'build,dist,*.log'). "
+            "May be repeated. Merged with TOPSAILAI_SCAN_EXCLUDE."
+        ),
+    )
     args = parser.parse_args()
     if args.scan is not None:
         # Honor the top-level self_environs section so scan exclusions
@@ -1418,7 +1459,7 @@ def main():
             os.path.join(os.getcwd(), ".topsailai", "settings.yaml")
         )
         _apply_self_environs(scan_settings)
-        _scan_folder(args.scan)
+        _scan_folder(args.scan, exclude_names=args.exclude)
         return
 
     # 1. Locate and parse .topsailai/settings.yaml in the current working directory
@@ -1565,7 +1606,9 @@ def main():
     if project_folder:
         merged_env["TOPSAILAI_PROJECT_FOLDER"] = project_folder
         os.environ["TOPSAILAI_PROJECT_FOLDER"] = project_folder
-    folder_structure = _scan_workspace_files(workspace, project_folder)
+    folder_structure = _scan_workspace_files(
+        workspace, project_folder, exclude_names=args.exclude
+    )
     message_parts = []
     if context_content:
         message_parts.append(context_content)
