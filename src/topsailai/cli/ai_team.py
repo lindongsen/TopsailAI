@@ -56,6 +56,9 @@ from topsailai.human.role import (
 from topsailai.workspace.input_tool import (
     SPLIT_LINE,
 )
+from topsailai.ai_base.constants import (
+    AGENT_ROLE_MANAGER,
+)
 from topsailai.workspace.agent_shell import get_agent_chat
 from topsailai.ai_team.common import (
     get_session_id,
@@ -129,6 +132,7 @@ def main():
         disabled_tools=[
             "agent_tool",
         ],
+        agent_role=AGENT_ROLE_MANAGER,
 
         agent_name=manager_name,
         session_id=get_session_id(),
