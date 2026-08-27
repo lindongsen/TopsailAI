@@ -1,10 +1,12 @@
 """Unit tests for logger.base_logger."""
 
+import importlib.util
 import logging
 import os
 import subprocess
 import sys
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -230,16 +232,47 @@ def test_multiple_handlers_with_different_levels(mock_log_folder_exists):
     assert len(stream_handlers) >= 2
 
 
+# Project folder derived from this file so no absolute path is hardcoded.
+PROJECT_FOLDER = Path(__file__).resolve().parents[2]
+RUNNER_PATH = Path(__file__).resolve().parents[1] / "run_tests.py"
+_RUNNER_MODULE_NAME = "topsailai_logger_test_run_tests_helper"
+
+
+def _load_run_tests_helper():
+    """Load tests/run_tests.py to reuse its source-root and env helpers.
+
+    ``run_tests.py`` lives outside the importable package, so it is loaded from
+    its file path without executing ``main()``. Reusing it keeps exactly one
+    implementation of the child PYTHONPATH construction.
+
+    Returns:
+        module: The loaded runner module exposing ``build_child_env``.
+    """
+    cached = sys.modules.get(_RUNNER_MODULE_NAME)
+    if cached is not None:
+        return cached
+    spec = importlib.util.spec_from_file_location(_RUNNER_MODULE_NAME, RUNNER_PATH)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[_RUNNER_MODULE_NAME] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _run_in_subprocess(code: str, env: dict = None) -> subprocess.CompletedProcess:
-    """Run Python code in a subprocess to isolate root logger state from pytest."""
-    environment = os.environ.copy()
+    """Run Python code in a subprocess to isolate root logger state from pytest.
+
+    The child environment comes from the shared runner helper so the package
+    root is always on ``PYTHONPATH``; without it a bare ``python -m pytest``
+    run cannot import the package inside the child process.
+    """
+    environment = _load_run_tests_helper().build_child_env()
     if env:
         environment.update(env)
     return subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        cwd="/TopsailAI/src/topsailai",
+        cwd=str(PROJECT_FOLDER),
         env=environment,
     )
 
