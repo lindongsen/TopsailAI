@@ -10,8 +10,11 @@ import pytest
 
 from topsailai.ai_base.tool_approval.matcher import (
     ApprovalRule,
+    ConditionMatch,
+    RuleMatch,
     _evaluate_condition,
     _evaluate_params,
+    _evaluate_params_detail,
     _match_pattern,
     _parse_rule,
     _disable_approval_due_to_config_error,
@@ -20,6 +23,7 @@ from topsailai.ai_base.tool_approval.matcher import (
     is_tool_approval_enabled,
     load_approval_rules,
     match_approval_rule,
+    match_approval_rule_detail,
 )
 
 
@@ -679,3 +683,175 @@ class TestLoadMultipleApprovalRuleFiles:
         assert rules == []
         assert "Invalid JSON" in caplog.text
         assert "must be a JSON array" in caplog.text
+
+
+class TestEvaluateParamsDetail:
+    """Tests for the condition-detail evaluator used by approval rendering."""
+
+    def test_empty_params_match_with_no_conditions(self):
+        matched, conditions = _evaluate_params_detail({"cmd": "ls"}, [], "and")
+        assert matched is True
+        assert conditions == []
+
+    def test_all_conditions_reported_without_short_circuit(self):
+        params = [
+            {"param": "cmd", "op": "contains", "value": "git reset"},
+            {"param": "cmd", "op": "contains", "value": "sudo"},
+        ]
+        matched, conditions = _evaluate_params_detail({"cmd": "git reset"}, params, "and")
+        assert matched is False
+        assert len(conditions) == 2
+        assert conditions[0].matched is True
+        assert conditions[1].matched is False
+        assert conditions[0].param == "cmd"
+        assert conditions[0].op == "contains"
+        assert conditions[0].expected == "git reset"
+        assert conditions[0].actual == "git reset"
+
+    def test_boolean_parity_with_evaluate_params(self):
+        """The detail variant must never change the matching decision."""
+        cases = [
+            ({"cmd": "git reset"}, [{"param": "cmd", "op": "contains", "value": "git"}], "and"),
+            ({"cmd": "git reset"}, [{"param": "cmd", "op": "contains", "value": "sudo"}], "and"),
+            ({"cmd": "git reset"}, [{"param": "cmd", "op": "contains", "value": "sudo"}], "or"),
+            ({"cmd": "git reset"}, [
+                {"param": "cmd", "op": "contains", "value": "sudo"},
+                {"param": "cmd", "op": "contains", "value": "git"},
+            ], "or"),
+            ({"cmd": "git reset"}, [{"param": "missing", "op": "exists"}], "and"),
+            ({"cmd": "git reset"}, [{"param": "cmd", "op": "exists"}], "and"),
+            ({"cmd": "git reset"}, [{"op": "contains", "value": "git"}], "and"),
+            ({"cmd": "git reset"}, [{"param": "cmd", "op": "contains", "value": "git"}], "weird"),
+        ]
+        for tool_args, params, logic in cases:
+            simple = _evaluate_params(tool_args, params, logic)
+            detail, _ = _evaluate_params_detail(tool_args, params, logic)
+            assert detail == simple, (tool_args, params, logic)
+
+    def test_invalid_condition_is_reported_as_error(self):
+        matched, conditions = _evaluate_params_detail({"cmd": "ls"}, ["nope"], "and")
+        assert matched is False
+        assert len(conditions) == 1
+        assert conditions[0].op == "invalid"
+        assert conditions[0].error
+        assert conditions[0].matched is False
+
+    def test_condition_without_param_is_skipped(self):
+        matched, conditions = _evaluate_params_detail(
+            {"cmd": "ls"}, [{"op": "contains", "value": "ls"}], "and"
+        )
+        assert matched is True
+        assert conditions == []
+
+    def test_multiline_actual_value_is_preserved(self):
+        matched, conditions = _evaluate_params_detail(
+            {"content": "a\nsecret\nb"},
+            [{"param": "content", "op": "contains", "value": "secret"}],
+            "and",
+        )
+        assert matched is True
+        assert conditions[0].actual == "a\nsecret\nb"
+
+
+class TestMatchApprovalRuleDetail:
+    """Tests for the rule matcher variant that also returns condition details."""
+
+    def test_returns_rule_and_conditions(self):
+        rules = [
+            ApprovalRule(
+                "cmd_*",
+                "require",
+                params=[{"param": "cmd", "op": "contains", "value": "git reset"}],
+                name="require git reset",
+            )
+        ]
+        with patch(
+            "topsailai.ai_base.tool_approval.matcher.get_approval_rules", return_value=rules
+        ):
+            result = match_approval_rule_detail(
+                "cmd_tool-exec_cmd", {"cmd": "git reset --hard"}
+            )
+        assert result is not None
+        assert result.rule.name == "require git reset"
+        assert result.tool_name_matched is True
+        assert result.matched is True
+        assert len(result.conditions) == 1
+        assert result.conditions[0].param == "cmd"
+
+    def test_no_match_returns_none(self):
+        rules = [ApprovalRule("file_*", "require", name="only")]
+        with patch(
+            "topsailai.ai_base.tool_approval.matcher.get_approval_rules", return_value=rules
+        ):
+            assert match_approval_rule_detail("cmd_tool-exec_cmd", {}) is None
+
+    def test_selection_matches_simple_matcher(self):
+        """Both entry points must select the same winning rule."""
+        rule_sets = [
+            [
+                ApprovalRule("cmd_*", "bypass", name="low", priority=10),
+                ApprovalRule("cmd_*", "require", name="high", priority=1),
+            ],
+            [
+                ApprovalRule("file_*", "require", name="file"),
+                ApprovalRule("*", "require", name="catch-all"),
+            ],
+        ]
+        for rules in rule_sets:
+            with patch(
+                "topsailai.ai_base.tool_approval.matcher.get_approval_rules",
+                return_value=rules,
+            ):
+                simple = match_approval_rule("cmd_tool-exec_cmd", {"cmd": "ls"})
+                detail = match_approval_rule_detail("cmd_tool-exec_cmd", {"cmd": "ls"})
+            if simple is None:
+                assert detail is None
+            else:
+                assert detail is not None
+                assert detail.rule is simple
+
+    def test_matched_property_mirrors_rule_logic(self):
+        rule_and = ApprovalRule(
+            "cmd_*",
+            "require",
+            params=[
+                {"param": "cmd", "op": "contains", "value": "git"},
+                {"param": "cmd", "op": "contains", "value": "sudo"},
+            ],
+            logic="and",
+            name="and-rule",
+        )
+        rule_or = ApprovalRule(
+            "cmd_*",
+            "require",
+            params=[
+                {"param": "cmd", "op": "contains", "value": "git"},
+                {"param": "cmd", "op": "contains", "value": "sudo"},
+            ],
+            logic="or",
+            name="or-rule",
+        )
+        with patch(
+            "topsailai.ai_base.tool_approval.matcher.get_approval_rules",
+            return_value=[rule_or],
+        ):
+            result = match_approval_rule_detail("cmd_tool-exec_cmd", {"cmd": "git reset"})
+        assert result is not None
+        assert result.matched is True
+        assert [condition.matched for condition in result.conditions] == [True, False]
+
+        with patch(
+            "topsailai.ai_base.tool_approval.matcher.get_approval_rules",
+            return_value=[rule_and],
+        ):
+            assert match_approval_rule_detail("cmd_tool-exec_cmd", {"cmd": "git reset"}) is None
+
+    def test_no_params_yields_empty_conditions(self):
+        rules = [ApprovalRule("cmd_*", "require", name="name-only")]
+        with patch(
+            "topsailai.ai_base.tool_approval.matcher.get_approval_rules", return_value=rules
+        ):
+            result = match_approval_rule_detail("cmd_tool-exec_cmd", {"cmd": "ls"})
+        assert result is not None
+        assert result.conditions == []
+        assert result.matched is True

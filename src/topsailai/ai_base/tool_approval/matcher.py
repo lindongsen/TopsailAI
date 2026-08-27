@@ -54,6 +54,50 @@ class ApprovalRule:
             self.policy = None
 
 
+@dataclass
+class ConditionMatch:
+    """
+    Result of evaluating one parameter condition of a matched rule.
+
+    Used to show the approver which concrete condition made a tool call require
+    approval, together with the actual argument value that was inspected.
+    """
+
+    param: str | None
+    op: str
+    expected: Any
+    actual: Any
+    matched: bool
+    error: str | None = None
+
+
+@dataclass
+class RuleMatch:
+    """
+    A matched rule together with the evaluated parameter conditions.
+
+    Returned by :func:`match_approval_rule_detail` so callers can render both
+    the rule identity and the decisive conditions.
+    """
+
+    rule: ApprovalRule
+    tool_name_matched: bool
+    conditions: list[ConditionMatch] = field(default_factory=list)
+
+    @property
+    def matched(self) -> bool:
+        """Return True when the rule applies to the tool call."""
+        if not self.tool_name_matched:
+            return False
+        if not self.conditions:
+            return True
+        # Mirror the rule's condition logic so the reported decision matches
+        # the boolean semantics of _evaluate_params().
+        if getattr(self.rule, "logic", "and") == "or":
+            return any(condition.matched for condition in self.conditions)
+        return all(condition.matched for condition in self.conditions)
+
+
 _RULES_CACHE: list[ApprovalRule] | None = None
 _CONFIG_ERROR_LOGGED = False
 
@@ -180,6 +224,69 @@ def _evaluate_params(tool_args: dict[str, Any], params: list[dict[str, Any]], lo
             return True
 
     return logic == "and"
+
+
+def _evaluate_params_detail(
+    tool_args: dict[str, Any],
+    params: list[dict[str, Any]],
+    logic: str,
+) -> tuple[bool, list[ConditionMatch]]:
+    """
+    Evaluate parameter conditions and report every evaluated condition.
+
+    Unlike :func:`_evaluate_params`, this variant never short-circuits so the
+    caller can show which concrete condition decided the match. The boolean
+    result is identical to :func:`_evaluate_params`.
+
+    Returns:
+        A tuple ``(matched, conditions)`` where *conditions* contains one
+        :class:`ConditionMatch` per evaluated condition (conditions without a
+        ``param`` key are skipped and therefore not reported).
+    """
+    if not params:
+        return True, []
+
+    logic = logic.lower()
+    if logic not in ("and", "or"):
+        logic = "and"
+
+    results: list[bool] = []
+    conditions: list[ConditionMatch] = []
+
+    for condition in params:
+        if not isinstance(condition, dict):
+            logger.warning("Skipping invalid approval rule condition: %r", condition)
+            results.append(False)
+            conditions.append(ConditionMatch(
+                param=None,
+                op="invalid",
+                expected=None,
+                actual=None,
+                matched=False,
+                error=f"not an object: {condition!r}",
+            ))
+            continue
+
+        param = condition.get("param")
+        op = condition.get("op", "exists")
+        expected = condition.get("value")
+
+        if param is None:
+            continue
+
+        actual = tool_args.get(param)
+        result = _evaluate_condition(actual, op, expected)
+        results.append(result)
+        conditions.append(ConditionMatch(
+            param=param,
+            op=op,
+            expected=expected,
+            actual=actual,
+            matched=result,
+        ))
+
+    matched = all(results) if logic == "and" else any(results)
+    return matched, conditions
 
 
 def _rule_matches(rule: ApprovalRule, tool_name: str, tool_args: dict[str, Any]) -> bool:
@@ -405,6 +512,33 @@ def match_approval_rule(tool_name: str | None, tool_args: dict[str, Any] | None)
     for rule in rules:
         if _rule_matches(rule, tool_name, tool_args):
             return rule
+    return None
+
+
+def match_approval_rule_detail(
+    tool_name: str | None,
+    tool_args: dict[str, Any] | None,
+) -> RuleMatch | None:
+    """
+    Return the smallest-priority matching rule together with condition details.
+
+    The selection semantics are identical to :func:`match_approval_rule`: rules
+    are ordered by ascending priority and the first rule whose tool-name pattern
+    and parameter conditions match wins. The returned :class:`RuleMatch` also
+    carries one :class:`ConditionMatch` per evaluated condition so consumers can
+    inspect which concrete value triggered approval.
+    """
+    tool_name = tool_name or ""
+    tool_args = tool_args or {}
+    rules = sorted(get_approval_rules(), key=lambda r: r.priority)
+
+    for rule in rules:
+        tool_name_matched = _match_pattern(rule.match, tool_name)
+        if not tool_name_matched:
+            continue
+        matched, conditions = _evaluate_params_detail(tool_args, rule.params, rule.logic)
+        if matched:
+            return RuleMatch(rule=rule, tool_name_matched=True, conditions=conditions)
     return None
 
 

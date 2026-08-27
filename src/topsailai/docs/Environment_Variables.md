@@ -304,6 +304,8 @@ These variables configure the optional tool-call approval gate. When enabled, ea
 | `TOPSAILAI_TOOL_APPROVAL_RULES` | `${TOPSAILAI_WORK_FOLDER}/tool_approval.json` | JSON approval rules. Either a JSON array literal or one or more paths to files containing a JSON array, separated by `;`. Rules from all files are aggregated in order. |
 | `TOPSAILAI_TOOL_APPROVAL_DEFAULT_TIMEOUT` | `60` | Default timeout in seconds when a rule does not specify one. |
 | `TOPSAILAI_TOOL_APPROVAL_DEFAULT_POLICY` | `deny` | Default timeout policy when a rule does not specify one. Must be one of `deny`, `allow`, `ask_again`. |
+| `TOPSAILAI_TOOL_APPROVAL_DISPLAY_MAX_LINES` | `40` | Maximum rendered lines for one multi-line argument value in the approval request prompt. Longer values are truncated with a `(+N lines)` marker. Positive integer; invalid or non-positive values fall back to `40`. |
+| `TOPSAILAI_TOOL_APPROVAL_DISPLAY_MAX_VALUE_CHARS` | `2000` | Maximum rendered characters for one scalar argument value in the approval request prompt. Longer values are truncated with a `(+N chars)` marker. Positive integer; invalid or non-positive values fall back to `2000`. |
 
 ### Details
 
@@ -312,6 +314,9 @@ These variables configure the optional tool-call approval gate. When enabled, ea
 - On JSON parsing failure or unreadable file path, a critical log is emitted, the offending file is skipped, and the remaining files are still evaluated (fail-open behavior). If all configured files fail, approval is disabled for the current process and tool calls execute normally.
 - Rule `mode` values: `require` (approval needed), `bypass` (skip approval), `skip` (alias for `bypass`). Unknown modes are treated as `require`.
 - Rule `policy` values: `deny` (reject on timeout), `allow` (auto-approve on timeout), `ask_again` (reset and wait one extra cycle, then deny). Unknown policies are treated as `deny`.
+- The approval request prompt renders arguments in an indented, multi-line form (implemented in `ai_base/tool_approval/formatting.py`): strings that contain line breaks are printed literally behind a `| ` marker instead of being escaped, containers are printed one entry per line, and an empty argument mapping renders as `(none)`.
+- The prompt shows a minimal focus block right below the request id with exactly two lines: `Rule:` (matched rule name) and `Pattern:` (its tool-name pattern). Parameter conditions are not rendered because the full arguments are already displayed. When no rule matched, the block is omitted.
+- `TOPSAILAI_TOOL_APPROVAL_DISPLAY_MAX_LINES` and `TOPSAILAI_TOOL_APPROVAL_DISPLAY_MAX_VALUE_CHARS` only bound the displayed text; the tool always receives the original untruncated arguments.
 
 ## Skill Configuration
 

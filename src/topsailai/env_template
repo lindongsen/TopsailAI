@@ -672,6 +672,16 @@ TOPSAILAI_TOOL_APPROVAL_DEFAULT_TIMEOUT=60
 # Default timeout policy when a rule does not specify one.
 # Must be one of: deny, allow, ask_again.
 TOPSAILAI_TOOL_APPROVAL_DEFAULT_POLICY=deny
+
+# Maximum rendered lines for a single multi-line argument value in the
+# approval request prompt. Longer values are truncated with a "(+N lines)"
+# marker. Positive integer; invalid or non-positive values fall back to 40.
+TOPSAILAI_TOOL_APPROVAL_DISPLAY_MAX_LINES=40
+
+# Maximum characters rendered for a single scalar argument value in the
+# approval request prompt. Longer values are truncated with a "(+N chars)"
+# marker. Positive integer; invalid or non-positive values fall back to 2000.
+TOPSAILAI_TOOL_APPROVAL_DISPLAY_MAX_VALUE_CHARS=2000
 # =============================================================================
 # Skill Configuration
 # =============================================================================

@@ -273,3 +273,73 @@ class TestDefaultConfig:
     def test_default_policy_unknown(self, monkeypatch):
         monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_DEFAULT_POLICY", "unknown")
         assert get_default_policy() == "deny"
+
+
+class TestToolApprovalInstanceMatchedDetails:
+    """decide() must expose the matched rule and decisive conditions."""
+
+    def test_matched_rule_and_conditions_are_recorded(self, monkeypatch):
+        monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")
+        monkeypatch.setenv(
+            "TOPSAILAI_TOOL_APPROVAL_RULES",
+            '[{"name": "needs approval", "match": "cmd_tool-exec_cmd", "mode": "require",'
+            ' "params": [{"param": "cmd", "op": "contains", "value": "make clean"}]}]',
+        )
+        from topsailai.ai_base.tool_approval import matcher
+
+        matcher.clear_approval_rules_cache()
+        instance = ToolApprovalInstance("cmd_tool-exec_cmd", {"cmd": "make clean"})
+        decision = instance.decide()
+
+        assert decision.action == ApprovalDecision.ASK
+        assert decision.rule is instance.matched_rule
+        assert decision.rule.name == "needs approval"
+        assert decision.conditions == instance.matched_conditions
+        assert len(instance.matched_conditions) == 1
+        condition = instance.matched_conditions[0]
+        assert condition.param == "cmd"
+        assert condition.op == "contains"
+        assert condition.expected == "make clean"
+        assert condition.actual == "make clean"
+        assert condition.matched is True
+
+    def test_matched_details_empty_when_approval_disabled(self):
+        instance = ToolApprovalInstance("cmd_tool-exec_cmd", {"cmd": "ls"})
+        decision = instance.decide()
+
+        assert decision.action == ApprovalDecision.NO_APPROVAL
+        assert decision.rule is None
+        assert decision.conditions is None
+        assert instance.matched_rule is None
+        assert instance.matched_conditions is None
+
+    def test_matched_details_empty_when_no_rule_matches(self, monkeypatch):
+        monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")
+        monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_RULES", "[]")
+        from topsailai.ai_base.tool_approval import matcher
+
+        matcher.clear_approval_rules_cache()
+        instance = ToolApprovalInstance("cmd_tool-exec_cmd", {"cmd": "ls"})
+        decision = instance.decide()
+
+        assert decision.action == ApprovalDecision.NO_APPROVAL
+        assert instance.matched_rule is None
+        assert instance.matched_conditions is None
+
+    def test_matched_conditions_recorded_for_bypass_rule(self, monkeypatch):
+        """Bypass decisions also carry conditions so the reason stays inspectable."""
+        monkeypatch.setenv("TOPSAILAI_TOOL_APPROVAL_ENABLED", "1")
+        monkeypatch.setenv(
+            "TOPSAILAI_TOOL_APPROVAL_RULES",
+            '[{"match": "cmd_tool-exec_cmd", "mode": "bypass",'
+            ' "params": [{"param": "cmd", "op": "contains", "value": "ls"}]}]',
+        )
+        from topsailai.ai_base.tool_approval import matcher
+
+        matcher.clear_approval_rules_cache()
+        instance = ToolApprovalInstance("cmd_tool-exec_cmd", {"cmd": "ls"})
+        decision = instance.decide()
+
+        assert decision.action == ApprovalDecision.ALLOW
+        assert len(instance.matched_conditions) == 1
+        assert instance.matched_conditions[0].matched is True

@@ -38,6 +38,9 @@ No `.py` extension or `python` interpreter is required.
 | `--rules PATH` | Path to the JSON rule file to test. Defaults to the value of `TOPSAILAI_TOOL_APPROVAL_RULES`, or `~/.topsailai/tool_approval.json` if unset. |
 | `--tool TOOL_NAME` | Tool name to use for all test commands. Defaults to `cmd_tool-exec_cmd`. |
 | `--json` | Output results as JSON instead of human-readable text. |
+| `-i`, `--interactive` | Drive the real approval flow: calls that resolve to `ask` show the same interactive approve/deny prompt a running agent shows, and report the resulting status. Still does not execute the tool. |
+| `--timeout SECONDS` | Override the approval wait timeout in interactive mode. Defaults to the rule timeout, then to `TOPSAILAI_TOOL_APPROVAL_DEFAULT_TIMEOUT`. |
+| `--policy deny\|allow\|ask_again` | Override the timeout policy in interactive mode. Defaults to the rule policy, then to `TOPSAILAI_TOOL_APPROVAL_DEFAULT_POLICY`. |
 | `-h`, `--help` | Show help message and exit. |
 
 ## Basic Usage

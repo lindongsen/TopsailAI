@@ -24,28 +24,44 @@ Usage:
 
     # Machine-readable JSON output.
     python topsailai_test_tool_approval_rules.py --json "rm -rf /" "echo hello"
+
+    # Drive the real approval flow: every call that resolves to ASK pops up the
+    # interactive approve/deny prompt exactly like a running agent does.
+    python topsailai_test_tool_approval_rules.py --interactive "sudo ls"
+    python topsailai_test_tool_approval_rules.py --interactive --rules /path/to/tool_approval.json
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import Any
 
 import _import_topsailai  # noqa: F401
 
 from topsailai.ai_base.tool_approval import instance as approval_instance
+from topsailai.ai_base.tool_approval.instance import ToolApprovalInstance
 from topsailai.ai_base.tool_approval.matcher import (
     clear_approval_rules_cache,
     load_approval_rules,
 )
+from topsailai.ai_base.tool_approval.registry import (
+    register_pending_approval,
+    unregister_pending_approval,
+)
+from topsailai.ai_base.tool_approval.transport import LocalApprovalTransport
 
 
 # Tool name used for positional arguments that do not specify one explicitly.
 DEFAULT_TOOL_NAME = "cmd_tool-exec_cmd"
+
+# Timeout policies accepted by ToolApprovalInstance.apply_timeout_policy().
+TIMEOUT_POLICIES = ("deny", "allow", "ask_again")
 
 
 @dataclass(frozen=True)
@@ -177,8 +193,8 @@ def _parse_arg(arg: str, default_tool_name: str) -> tuple[str, str]:
     return default_tool_name, arg
 
 
-def _format_text(result: dict[str, Any], index: int) -> str:
-    """Render a single result in human-readable form."""
+def _format_header(result: dict[str, Any], index: int) -> str:
+    """Render the static part of one case, shown before any approval prompt."""
     lines = [f"--- Case {index} ---"]
     lines.append(f"Tool    : {result['tool_name']}")
 
@@ -200,8 +216,97 @@ def _format_text(result: dict[str, Any], index: int) -> str:
     if result["decision"] == approval_instance.ApprovalDecision.NO_APPROVAL:
         lines.append("Note    : allowed without approval")
 
+    return "\n".join(lines)
+
+
+def _format_text(result: dict[str, Any], index: int) -> str:
+    """Render a single result in human-readable form."""
+    return f"{_format_header(result, index)}\n"
+
+
+def _format_interactive_outcome(result: dict[str, Any]) -> str:
+    """Render the human decision produced by the interactive approval flow."""
+    status = result.get("approval_status")
+    if status is None:
+        return ""
+
+    lines = [f"Outcome : {status.upper()}"]
+    if result.get("decision_by"):
+        lines.append(f"By      : {result['decision_by']}")
+    if status == ToolApprovalInstance.STATUS_APPROVED:
+        lines.append("Note    : tool call would be executed")
+    elif status in (ToolApprovalInstance.STATUS_DENIED, ToolApprovalInstance.STATUS_TIMEOUT):
+        lines.append("Note    : tool call would be blocked")
     lines.append("")
     return "\n".join(lines)
+
+
+def _evaluate_interactive(
+    tool_name: str,
+    tool_args: dict[str, Any],
+    transport: LocalApprovalTransport,
+    *,
+    timeout: float | None = None,
+    policy: str | None = None,
+) -> dict[str, Any]:
+    """Evaluate one tool call through the real approval flow.
+
+    When the matcher resolves the call to ``ask``, the request is pushed through
+    the shared approval transport, which renders the same interactive
+    approve/deny prompt that a running agent shows and blocks until a human
+    answers (or the timeout policy kicks in).  The resulting status is reported
+    next to the static decision.
+
+    Args:
+        tool_name: Name of the tool being simulated.
+        tool_args: Arguments of the simulated tool call.
+        transport: Transport used to deliver the approval request.
+        timeout: Optional seconds override for the interactive wait.
+        policy: Optional timeout policy override (``deny``, ``allow``, ``ask_again``).
+
+    Returns:
+        The normalized result dictionary, extended with ``approval_status`` and
+        ``decision_by`` when an interactive decision was requested.
+    """
+    instance = ToolApprovalInstance(
+        tool_name=tool_name,
+        tool_args=tool_args,
+        transport=transport,
+    )
+    decision = instance.decide()
+    matched_rule = getattr(decision, "rule", None)
+    effective_timeout = timeout if timeout is not None else getattr(decision, "timeout", None)
+    effective_policy = policy or getattr(decision, "policy", None)
+    result = {
+        "tool_name": tool_name,
+        "tool_args": tool_args,
+        "decision": decision.action,
+        "rule_name": getattr(matched_rule, "name", None) if matched_rule else None,
+        "timeout": effective_timeout,
+        "policy": effective_policy,
+        "approval_status": None,
+        "decision_by": None,
+    }
+
+    if decision.action != approval_instance.ApprovalDecision.ASK:
+        return result
+
+    # Mirror the production decorator: register the instance so an external
+    # decision maker can resolve it by ID, then block on the human decision.
+    instance.rule_name = result["rule_name"] or "<unnamed>"
+    register_pending_approval(instance)
+    try:
+        transport.send_request(instance)
+        status = instance.wait_for_decision(
+            timeout=effective_timeout,
+            policy=effective_policy,
+        )
+    finally:
+        unregister_pending_approval(instance.id)
+
+    result["approval_status"] = status
+    result["decision_by"] = instance.decision_by
+    return result
 
 
 def _collect_cases(args: argparse.Namespace) -> list[tuple[str, str, dict[str, Any] | None, str | None]]:
@@ -215,6 +320,13 @@ def _collect_cases(args: argparse.Namespace) -> list[tuple[str, str, dict[str, A
         (case.tool_name, case.raw_value, case.extra_args, case.description)
         for case in DEFAULT_TEST_CASES
     ]
+
+
+def _runtime_input_available() -> bool:
+    """Return True when an agent-runtime input function is registered."""
+    from topsailai.utils.thread_local_tool import get_agent_runtime_input_with_timeout
+
+    return get_agent_runtime_input_with_timeout() is not None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -245,6 +357,28 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Output raw JSON instead of human-readable text.",
     )
+    parser.add_argument(
+        "-i",
+        "--interactive",
+        action="store_true",
+        help=(
+            "Drive the real approval flow: every call that resolves to 'ask' pops up "
+            "the interactive approve/deny prompt exactly like a running agent does."
+        ),
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Override the approval wait timeout for interactive mode.",
+    )
+    parser.add_argument(
+        "--policy",
+        choices=sorted(TIMEOUT_POLICIES),
+        default=None,
+        help="Override the timeout policy for interactive mode.",
+    )
     args = parser.parse_args(argv)
 
     # Make sure the matcher reads from the requested source on this run.
@@ -264,17 +398,60 @@ def main(argv: list[str] | None = None) -> int:
         for rule in rules:
             print(f"  - {rule.name or rule.match}: mode={rule.mode}, priority={rule.priority}")
 
+    transport: LocalApprovalTransport | None = None
+    if args.interactive:
+        # Use a fresh singleton so leftover queued requests from a previous run
+        # in the same process cannot leak into this session.
+        LocalApprovalTransport.reset_instance()
+        transport = LocalApprovalTransport.get_instance()
+        if not sys.stdin.isatty() and not _runtime_input_available():
+            print(
+                "[WARN] stdin is not a TTY and no agent runtime input function is registered; "
+                "the approval prompt cannot be answered, the timeout policy will decide.",
+                file=sys.stderr,
+            )
+
+    # In interactive JSON mode the prompts must not pollute stdout, so all
+    # human-readable text is routed to stderr and only the final JSON is printed.
+    human_stream = sys.stderr if (args.json and transport is not None) else sys.stdout
+
     results: list[dict[str, Any]] = []
-    for tool_name, raw_value, extra_args, description in _collect_cases(args):
-        tool_args = _build_tool_args(tool_name, raw_value, extra_args)
-        result = _evaluate(tool_name, tool_args)
-        if description:
-            result["description"] = description
-        results.append(result)
+    with ExitStack() as stack:
+        if args.json and transport is not None:
+            # The transport renders the approval prompt and echoes the typed
+            # answer through ``sys.stdout``; redirect it so stdout keeps
+            # carrying nothing but the final JSON document.
+            stack.enter_context(contextlib.redirect_stdout(sys.stderr))
+        for idx, (tool_name, raw_value, extra_args, description) in enumerate(_collect_cases(args), start=1):
+            tool_args = _build_tool_args(tool_name, raw_value, extra_args)
+            result = _evaluate(tool_name, tool_args)
+            if transport is not None:
+                # Print the static case block first so the operator knows which tool
+                # call the approval prompt refers to, then run the real approval flow.
+                header_result = dict(result)
+                if args.timeout is not None:
+                    header_result["timeout"] = args.timeout
+                if args.policy is not None:
+                    header_result["policy"] = args.policy
+                print(_format_header(header_result, idx), file=human_stream)
+                human_stream.flush()
+                result = _evaluate_interactive(
+                    tool_name,
+                    tool_args,
+                    transport,
+                    timeout=args.timeout,
+                    policy=args.policy,
+                )
+            if description:
+                result["description"] = description
+            results.append(result)
+            if transport is not None:
+                print(_format_interactive_outcome(result), file=human_stream, end="")
+                human_stream.flush()
 
     if args.json:
         print(json.dumps(results, indent=2, ensure_ascii=False))
-    else:
+    elif transport is None:
         for idx, result in enumerate(results, start=1):
             print(_format_text(result, idx), end="")
 

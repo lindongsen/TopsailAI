@@ -44,6 +44,9 @@ topsailai_test_tool_approval_rules --rules /path/to/tool_approval.json
 | `--rules <value>` | Path to a `tool_approval.json` file, multiple paths separated by `;`, or an inline JSON array. If omitted, reads from `TOPSAILAI_TOOL_APPROVAL_RULES`. |
 | `--tool <name>` | Default tool name for positional arguments (default: `cmd_tool-exec_cmd`). |
 | `--json` | Output evaluation results as JSON. |
+| `-i`, `--interactive` | Drive the real approval flow: every call that resolves to `ask` shows the same interactive approve/deny prompt a running agent shows, and reports the resulting status. |
+| `--timeout <seconds>` | Override the approval wait timeout in interactive mode. Defaults to the rule timeout, then to `TOPSAILAI_TOOL_APPROVAL_DEFAULT_TIMEOUT`. |
+| `--policy <deny\|allow\|ask_again>` | Override the timeout policy in interactive mode. Defaults to the rule policy, then to `TOPSAILAI_TOOL_APPROVAL_DEFAULT_POLICY`. |
 | `calls` | Positional tool calls to evaluate. Supports an optional `tool_name:value` prefix. |
 
 ## Examples

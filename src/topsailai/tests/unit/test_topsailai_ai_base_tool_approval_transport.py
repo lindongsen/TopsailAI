@@ -397,3 +397,83 @@ class TestLocalApprovalTransportTimeoutWrapper:
         status = transport.wait_response(instance, timeout=0.1)
 
         assert status == instance.STATUS_TIMEOUT
+
+
+class TestApprovalRequestPromptRendering:
+    """The local transport must present a readable, focused approval request."""
+
+    def _capture_prompt(self, monkeypatch, instance):
+        """Return the prompt string passed to the runtime input wrapper."""
+        from topsailai.utils.thread_local_tool import (
+            set_agent_runtime_input_with_timeout,
+        )
+
+        mock_wrapper = MagicMock(return_value="approve")
+        set_agent_runtime_input_with_timeout(mock_wrapper)
+
+        transport = LocalApprovalTransport()
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+        transport.send_request(instance)
+        transport.wait_response(instance, timeout=1.0)
+
+        mock_wrapper.assert_called_once()
+        return mock_wrapper.call_args
+
+    def test_prompt_contains_readable_multiline_args(self, monkeypatch):
+        """Multi-line argument values are shown literally instead of escaped."""
+        transport = LocalApprovalTransport()
+        instance = ToolApprovalInstance(
+            "cmd_tool-exec_cmd",
+            {
+                "cmd": "git reset --hard HEAD~1",
+                "content": "line one\nline two stays literal\nline three",
+            },
+            transport=transport,
+        )
+        instance.timeout = 0.5
+
+        call_args = self._capture_prompt(monkeypatch, instance)
+        prompt = call_args.args[0]
+
+        assert "APPROVAL REQUEST" in prompt
+        assert "Args:" in prompt
+        # Real line breaks are preserved with the block marker.
+        assert "| line two stays literal" in prompt
+        assert "\\nline two" not in prompt
+        # Timeout is still forwarded positionally.
+        assert call_args.args[1] == 0.5
+
+    def test_prompt_shows_minimal_matched_rule_block(self, monkeypatch):
+        """Only the matched rule name and pattern are highlighted."""
+        transport = LocalApprovalTransport()
+        instance = ToolApprovalInstance(
+            "cmd_tool-exec_cmd",
+            {"cmd": "echo dangerous flag"},
+            transport=transport,
+        )
+        instance.timeout = 0.5
+        instance.matched_rule = {
+            "name": "require dangerous cmd",
+            "match": "cmd_*",
+            "mode": "require",
+        }
+
+        prompt = self._capture_prompt(monkeypatch, instance).args[0]
+
+        # The focus block is the two minimal lines, indented once.
+        assert "  Rule: require dangerous cmd\n  Pattern: cmd_*" in prompt
+        # Verbose sections are gone.
+        assert "Why approval is needed" not in prompt
+        assert "Trigger" not in prompt
+
+    def test_prompt_without_matched_rule_still_renders(self, monkeypatch):
+        """A rule-less instance (manual construction) must not break rendering."""
+        transport = LocalApprovalTransport()
+        instance = ToolApprovalInstance("file_tool-write_file", {}, transport=transport)
+        instance.timeout = 0.5
+
+        prompt = self._capture_prompt(monkeypatch, instance).args[0]
+
+        assert "APPROVAL REQUEST" in prompt
+        assert "Args:" in prompt
+        assert "(none)" in prompt

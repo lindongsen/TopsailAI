@@ -17,7 +17,7 @@ from topsailai.ai_base.tool_approval.matcher import (
     _ENV_DEFAULT_POLICY,
     _ENV_DEFAULT_TIMEOUT,
     is_tool_approval_enabled,
-    match_approval_rule,
+    match_approval_rule_detail,
 )
 from topsailai.utils import env_tool
 
@@ -85,11 +85,15 @@ class ApprovalDecision:
         rule: Any = None,
         timeout: float | None = None,
         policy: str | None = None,
+        conditions: list[Any] | None = None,
     ):
         self.action = action
         self.rule = rule
         self.timeout = timeout
         self.policy = policy
+        # Parameter condition details of the matched rule (None when the
+        # matcher did not report details).
+        self.conditions = conditions
 
 
 class ToolApprovalInstance:
@@ -125,22 +129,37 @@ class ToolApprovalInstance:
         self.created_at = time.time()
         self.timeout = get_default_timeout()
         self.policy = get_default_policy()
+        # Set by decide() when a rule matched, for readable approval display.
+        self.matched_rule: Any = None
+        self.matched_conditions: list[Any] | None = None
 
     def decide(self) -> ApprovalDecision:
         """
         Evaluate configured rules against this tool call.
 
         Returns an ``ApprovalDecision`` describing what the caller should do.
+        When a rule matches, the matched rule and its evaluated parameter
+        conditions are also stored on the instance so consumers (approval
+        prompt, rule-testing CLI, audit logging) can inspect what triggered
+        approval.
         """
         if not is_tool_approval_enabled():
             return ApprovalDecision(action=ApprovalDecision.NO_APPROVAL)
 
-        rule = match_approval_rule(tool_name=self.tool_name, tool_args=self.tool_args)
-        if not rule:
+        rule_match = match_approval_rule_detail(
+            tool_name=self.tool_name, tool_args=self.tool_args
+        )
+        if not rule_match:
             return ApprovalDecision(action=ApprovalDecision.NO_APPROVAL)
 
+        rule = rule_match.rule
+        self.matched_rule = rule
+        self.matched_conditions = rule_match.conditions
+
         if rule.mode in ("bypass", "skip"):
-            return ApprovalDecision(action=ApprovalDecision.ALLOW, rule=rule)
+            return ApprovalDecision(
+                action=ApprovalDecision.ALLOW, rule=rule, conditions=rule_match.conditions
+            )
         if rule.mode == "require":
             self.timeout = rule.timeout if rule.timeout is not None else self.timeout
             self.policy = rule.policy if rule.policy is not None else self.policy
@@ -149,6 +168,7 @@ class ToolApprovalInstance:
                 rule=rule,
                 timeout=self.timeout,
                 policy=self.policy,
+                conditions=rule_match.conditions,
             )
 
         # Unknown modes default to require (safe default) per the feature spec.
@@ -158,6 +178,7 @@ class ToolApprovalInstance:
             rule=rule,
             timeout=self.timeout,
             policy=self.policy,
+            conditions=rule_match.conditions,
         )
 
     def approve(self, by: str = "user") -> None:

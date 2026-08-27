@@ -64,3 +64,64 @@ Lessons:
 2. **A per-turn function must not teardown a per-conversation resource.** `AgentBase.run()` runs once per User2Agent turn; its `finally` block is the wrong place to clean up state that outlives a single turn.
 3. **If teardown is missing in the owning layer, add it there instead of borrowing another layer's cleanup.** The correct place to unset the message source is the User2Agent conversation loop's exit path, not `AgentBase.run()`.
 4. **Always verify multi-turn behavior for features that inject or mutate Agent2LLM context,** because single-turn tests will not catch lifecycle mismatches.
+
+## A value containing embedded line breaks is not a scalar for display purposes
+
+When adding pretty-printed rendering for tool-approval arguments, the first implementation
+classified only containers (dict/list/tuple/set) as "block" values and inlined everything
+else. Multi-line strings therefore still rendered as a single line with literal `\n`
+escapes, which was exactly the complaint the change was meant to fix.
+
+Lessons:
+(1) "Is this value block-formatted?" must be decided by how it will read on screen, not by
+its Python type — a `str` containing `\n` or `\r` must be emitted as an indented block;
+(2) introduce one predicate for that decision and use it at every value call site,
+otherwise sibling code paths (dict values, list items, top-level keys) disagree;
+(3) a rendering feature needs at least one test whose fixture actually contains an
+embedded newline, otherwise the tests pass while the reported symptom survives.
+
+## Configuration that originates as JSON may arrive as a mapping, not a dataclass
+
+Approval rules are parsed from JSON, so a renderer that displays "which rule matched"
+cannot assume attribute access. Reading `rule.name` alone silently produces empty output
+for dict-shaped rules.
+
+Lessons:
+(1) when formatting data that crossed a JSON/deserialization boundary, read fields through
+a helper that handles both mappings and objects;
+(2) add a test that passes a plain dict rule, because that is the real production shape;
+(3) prefer returning structured match results (which condition matched, its operator,
+expected and actual value) over a bare boolean, so downstream layers can explain the
+decision instead of re-deriving it.
+
+## An autouse timeout fixture equal to a test's sleep turns the test into a coin flip
+
+`tests/unit/conftest.py` sets `TOPSAILAI_TOOL_APPROVAL_DEFAULT_TIMEOUT=0.05` for speed,
+while the approval integration test sleeps `0.05` before approving. The wait budget and the
+approval delay are identical, so the result depends only on thread scheduling.
+
+Lessons:
+(1) when a test fails intermittently, compare its own timing constants against global
+autouse fixtures before suspecting the new code;
+(2) before reporting a failure as a regression, reproduce it at pristine `HEAD` in an
+isolated `git worktree` — that converts a suspicion into evidence;
+(3) never express a wait budget and the event that must arrive inside it as the same
+constant; drive the event with a `threading.Event` instead of a fixed sleep.
+
+## A human-facing "explain the decision" block should start minimal, not grow
+
+The approval-prompt focus block was implemented with a heading plus a per-condition
+breakdown, then had to be simplified twice on user feedback: first the labels, then the
+heading and the whole condition list were removed, leaving only `Rule:` and `Pattern:`.
+The verbose version was rejected as noise because the full arguments are already shown
+right below it.
+
+Lessons:
+(1) for a prompt a human reads under time pressure, default to the minimum that answers
+"why am I being asked this?" and let the existing detail sections carry the rest; do not
+restate data the reader can already see;
+(2) when a rendering layer is simplified, delete the now-unreachable helpers and branches
+instead of leaving dead code, but keep the underlying data pipeline (structured match
+results) so other consumers such as CLI tooling and audit logs can still use it;
+(3) encode rejected verbosity as negative assertions (`"Trigger" not in text`) so a future
+"improvement" cannot silently reintroduce it.

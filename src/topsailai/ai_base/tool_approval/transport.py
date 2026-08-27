@@ -119,18 +119,13 @@ class LocalApprovalTransport(ApprovalTransport):
                 thread-local ``agent_runtime_input_with_timeout`` function is
                 used if available, otherwise ``input_with_timeout`` is used.
         """
+        from topsailai.ai_base.tool_approval.formatting import format_approval_request
         from topsailai.utils.input_tool import input_with_timeout
         from topsailai.utils.thread_local_tool import get_agent_runtime_input_with_timeout
 
-        rule_name = getattr(instance, "rule_name", None) or "<unnamed>"
-        prompt = (
-            f"\n[APPROVAL REQUEST] {instance.id}\n"
-            f"  Rule: {rule_name}\n"
-            f"  Tool: {instance.tool_name}\n"
-            f"  Args: {instance.tool_args}\n"
-            f"  Timeout: {instance.timeout}s\n"
-            "  Type 'approve'(yes) or 'deny'(no): "
-        )
+        # Rendered through the formatting module so multi-line arguments stay
+        # readable and the matched rule is shown up front.
+        prompt = f"\n{format_approval_request(instance)}"
 
         if input_func is None:
             input_func = get_agent_runtime_input_with_timeout()
