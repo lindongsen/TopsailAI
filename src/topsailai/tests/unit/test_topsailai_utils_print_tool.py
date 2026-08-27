@@ -319,19 +319,163 @@ class TestPrintTool(unittest.TestCase):
         )
 
     def test_format_print_step_simple_tool_calls(self):
-        """Tool-call summaries expose names and count but no arguments or IDs."""
+        """Tool-call summaries expose names, count and the first argument, never IDs."""
         tool_calls = [
-            {'id': 'call-1', 'function': {'name': 'read_file', 'arguments': '{"secret": 1}'}},
+            {'id': 'call-1', 'function': {'name': 'read_file', 'arguments': '{"file_path": "/tmp/a.md"}'}},
             {'id': 'call-2', 'function': {'name': 'read_file', 'arguments': '{}'}},
             {'id': 'call-3', 'function': {'name': 'exec_cmd', 'arguments': 'danger'}},
         ]
 
         result = print_tool.format_print_step_simple(tool_calls)
 
-        self.assertEqual(result, '[tool_calls] count=3 names=read_file,exec_cmd')
+        self.assertEqual(
+            result,
+            '[tool_calls] count=3 names=read_file,exec_cmd\n'
+            '  read_file(file_path=/tmp/a.md)\n'
+            '  exec_cmd(danger)',
+        )
         self.assertNotIn('call-1', result)
-        self.assertNotIn('secret', result)
-        self.assertNotIn('danger', result)
+
+    def test_format_print_step_simple_tool_calls_masks_sensitive_values(self):
+        """Sensitive first-argument names keep their key but mask the value."""
+        sensitive_values = ['sk-secret-value', 'p@ssw0rd-plain', 'ghp_token_plain']
+        tool_calls = [
+            {'function': {'name': 'llm_chat', 'arguments': '{"api_key": "%s"}' % sensitive_values[0]}},
+            {'function': {'name': 'auth', 'arguments': '{"Password": "%s"}' % sensitive_values[1]}},
+            {'function': {'name': 'ssh', 'arguments': '{"ACCESS_TOKEN": "%s"}' % sensitive_values[2]}},
+        ]
+
+        result = print_tool.format_print_step_simple(tool_calls)
+
+        self.assertIn('llm_chat(api_key=***)', result)
+        self.assertIn('auth(Password=***)', result)
+        self.assertIn('ssh(ACCESS_TOKEN=***)', result)
+        for value in sensitive_values:
+            self.assertNotIn(value, result)
+
+    def test_format_print_step_simple_tool_calls_collapses_and_truncates(self):
+        """First-argument values stay on one line and are bounded with a size marker."""
+        long_value = 'y' * 200
+        tool_calls = [
+            {'function': {'name': 'exec_cmd', 'arguments': '{"cmd": "first   line\\nsecond line"}'}},
+            {'function': {'name': 'write_file', 'arguments': '{"content": "%s"}' % long_value}},
+        ]
+
+        result = print_tool.format_print_step_simple(tool_calls)
+
+        lines = result.splitlines()
+        self.assertEqual(lines[1], '  exec_cmd(cmd=first line second line)')
+        self.assertEqual(
+            lines[2],
+            '  write_file(content=%s [truncated, 200 chars total])' % ('y' * 80),
+        )
+        # Exactly one summary line plus one line per tool call: no leaked line breaks.
+        self.assertEqual(len(lines), 3)
+
+    def test_format_print_step_simple_tool_calls_nested_values(self):
+        """Nested dict and list values render as compact single-line JSON."""
+        tool_calls = [
+            {'function': {'name': 't', 'arguments': '{"args": [1, 2, {"k": "v"}]}'}},
+            {'function': {'name': 'u', 'arguments': '{"options": {"deep": {"a": 1}}}'}},
+        ]
+
+        result = print_tool.format_print_step_simple(tool_calls)
+
+        self.assertIn('  t(args=[1,2,{"k":"v"}])', result)
+        self.assertIn('  u(options={"deep":{"a":1}})', result)
+
+    def test_format_print_step_simple_tool_calls_pre_parsed_arguments(self):
+        """Already parsed dict/list arguments and unserializable values are handled."""
+        # Event-style payloads may carry arguments as real containers.
+        result = print_tool.format_print_step_simple(
+            [{'function': {'name': 't', 'arguments': {'file_path': '/tmp/a.md'}}}]
+        )
+        self.assertIn('  t(file_path=/tmp/a.md)', result)
+
+        # An empty parsed dict keeps the legacy summary.
+        result = print_tool.format_print_step_simple(
+            [{'function': {'name': 't', 'arguments': {}}}]
+        )
+        self.assertEqual(result, '[tool_calls] count=1 names=t')
+
+        # A list payload is shown as an unnamed compact JSON value.
+        result = print_tool.format_print_step_simple(
+            [{'function': {'name': 't', 'arguments': [1, 2]}}]
+        )
+        self.assertIn('  t([1,2])', result)
+
+        # A nested value that cannot be JSON-serialized falls back to plain text.
+        result = print_tool.format_print_step_simple(
+            [{'function': {'name': 't', 'arguments': {'items': [{1}]}}}]
+        )
+        self.assertIn('  t(items=', result)
+        self.assertEqual(len(result.splitlines()), 2)
+
+    def test_format_print_step_simple_tool_calls_fail_open(self):
+        """Missing, empty or unparsable arguments keep the legacy name-only summary."""
+        cases = [
+            [{'function': {'name': 't', 'arguments': ''}}],
+            [{'function': {'name': 't', 'arguments': '   '}}],
+            [{'function': {'name': 't', 'arguments': '{}'}}],
+            [{'function': {'name': 't', 'arguments': None}}],
+            [{'function': {'name': 't'}}],
+            [{'name': 't', 'function': {}}],
+            [{'function': {'name': 't', 'arguments': 12345}}],
+            [{'name': 't'}],
+        ]
+
+        for tool_calls in cases:
+            with self.subTest(tool_calls=tool_calls):
+                result = print_tool.format_print_step_simple(tool_calls)
+                self.assertEqual(result, '[tool_calls] count=1 names=t')
+
+    def test_format_print_step_simple_tool_calls_scalar_and_empty_values(self):
+        """Scalar, empty-string and null first values render explicitly."""
+        tool_calls = [
+            {'function': {'name': 't', 'arguments': '{"seek": 0}'}},
+            {'function': {'name': 'u', 'arguments': '{"content": ""}'}},
+            {'function': {'name': 'v', 'arguments': '{"flag": null}'}},
+            {'function': {'name': 'w', 'arguments': '[1, 2]'}},
+        ]
+
+        result = print_tool.format_print_step_simple(tool_calls)
+
+        self.assertIn('  t(seek=0)', result)
+        self.assertIn('  u(content="")', result)
+        self.assertIn('  v(flag=None)', result)
+        self.assertIn('  w([1,2])', result)
+
+    def test_format_print_step_simple_tool_calls_supports_attribute_objects(self):
+        """SDK-style attribute tool calls expose the first argument like dicts."""
+        function = MagicMock()
+        function.name = 'read_file'
+        function.arguments = '{"file_path": "/tmp/a.md", "seek": 0}'
+        tool_call = MagicMock()
+        tool_call.id = 'call-1'
+        tool_call.function = function
+
+        result = print_tool.format_print_step_simple([tool_call])
+
+        self.assertEqual(
+            result,
+            '[tool_calls] count=1 names=read_file\n  read_file(file_path=/tmp/a.md)',
+        )
+        self.assertNotIn('call-1', result)
+
+    def test_format_print_step_simple_tool_calls_dedups_name_and_first_arg(self):
+        """Identical name plus argument collapses; differing arguments each print."""
+        tool_calls = [
+            {'function': {'name': 't', 'arguments': '{"a": 1}'}},
+            {'function': {'name': 't', 'arguments': '{"a": 1}'}},
+            {'function': {'name': 't', 'arguments': '{"a": 2}'}},
+        ]
+
+        result = print_tool.format_print_step_simple(tool_calls)
+
+        self.assertEqual(
+            result,
+            '[tool_calls] count=3 names=t\n  t(a=1)\n  t(a=2)',
+        )
 
     def test_format_print_step_simple_empty_and_unknown(self):
         """Empty messages disappear and unknown objects are summarized safely."""
@@ -395,6 +539,22 @@ class TestPrintTool(unittest.TestCase):
         mock_info.assert_called_once_with(msg)
         mock_print_with_time.assert_called_once_with(
             '[thought] first\nsecond', need_format=False
+        )
+
+    @patch('topsailai.utils.print_tool.print_with_time')
+    def test_print_step_simple_prints_first_tool_arg(self, mock_print_with_time):
+        """Simple mode prints the first tool-call argument through print_step."""
+        os.environ['TOPSAILAI_PRINT_STEP_MODE'] = 'simple'
+        print_tool.enable_flag_print_step()
+        tool_calls = [
+            {'id': 'call-1', 'function': {'name': 'read_file', 'arguments': '{"file_path": "/tmp/a.md"}'}},
+        ]
+
+        print_tool.print_step(tool_calls, need_format=False)
+
+        mock_print_with_time.assert_called_once_with(
+            '[tool_calls] count=1 names=read_file\n  read_file(file_path=/tmp/a.md)',
+            need_format=False,
         )
 
     @patch('topsailai.utils.print_tool.format_print_step_simple')

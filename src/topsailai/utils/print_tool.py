@@ -12,6 +12,22 @@ from topsailai.utils.ansi_color import Colors, colored
 g_flag_print_step = None
 TAIL_PREVIEW_LENGTH = 300
 PRINT_STEP_SIMPLE_PREVIEW_LENGTH = 160
+# First tool-call argument preview stays short to keep simple-mode output on one line.
+PRINT_STEP_TOOL_ARG_PREVIEW_LENGTH = 80
+# Substrings (case-insensitive) marking argument names whose values must be masked.
+PRINT_STEP_SENSITIVE_ARG_KEYS = (
+    "password",
+    "passwd",
+    "pwd",
+    "token",
+    "secret",
+    "api_key",
+    "apikey",
+    "access_key",
+    "accesskey",
+    "private_key",
+    "credential",
+)
 PRINT_STEP_MODE_ENV = "TOPSAILAI_PRINT_STEP_MODE"
 # Ordered so callers (e.g. instructions) can present a stable numbered list.
 PRINT_STEP_MODE_LIST = ("normal", "simple")
@@ -19,7 +35,7 @@ PRINT_STEP_MODE_DEFAULT = "normal"
 PRINT_STEP_MODES = set(PRINT_STEP_MODE_LIST)
 PRINT_STEP_MODE_DESCRIPTIONS = {
     "normal": "legacy full step output",
-    "simple": "bounded one-line summaries; task/thought/final/inquiry fully printed",
+    "simple": "bounded one-line summaries with first tool-call argument; task/thought/final/inquiry fully printed",
 }
 PRINT_STEP_FULL_PREFIXES = ("task", "thought", "final", "inquiry")
 _print_step_invalid_mode_warned = False
@@ -104,14 +120,136 @@ def _as_tool_calls(msg):
     return msg
 
 
+def _tool_call_arguments(tool_call):
+    """Return raw tool-call arguments from dict or SDK attribute shapes.
+
+    Only plain payload types are accepted so unexpected objects (for example
+    mocks) never leak their repr into console output.
+    """
+    function = None
+    if isinstance(tool_call, dict):
+        function = tool_call.get("function")
+        arguments = tool_call.get("arguments")
+    else:
+        function = getattr(tool_call, "function", None)
+        arguments = getattr(tool_call, "arguments", None)
+
+    if isinstance(function, dict):
+        arguments = function.get("arguments", arguments)
+    elif function is not None:
+        arguments = getattr(function, "arguments", arguments)
+
+    if isinstance(arguments, (dict, list, str)):
+        return arguments
+    return None
+
+
+def _is_sensitive_arg_key(key) -> bool:
+    """Return True when an argument name looks like it carries credentials."""
+    lowered = _safe_step_text(key).lower()
+    return any(word in lowered for word in PRINT_STEP_SENSITIVE_ARG_KEYS)
+
+
+def _format_simple_arg_value(key, value) -> str:
+    """Render one first-argument preview as ``key=value`` on a single line.
+
+    Args:
+        key: Argument name; empty for an unnamed value.
+        value: Parsed argument value.
+
+    Returns:
+        Bounded single-line text. Sensitive keys always render ``***``.
+    """
+    if isinstance(value, (dict, list)):
+        try:
+            text = simplejson.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        except Exception:
+            text = _safe_step_text(value)
+    elif value is None:
+        text = "None"
+    elif isinstance(value, str):
+        text = value if value != "" else '""'
+    else:
+        text = _safe_step_text(value)
+
+    if _is_sensitive_arg_key(key):
+        return f"{key}=***" if key else "***"
+
+    text = " ".join(text.split())
+    if len(text) > PRINT_STEP_TOOL_ARG_PREVIEW_LENGTH:
+        text = (
+            f"{text[:PRINT_STEP_TOOL_ARG_PREVIEW_LENGTH]}"
+            f" [truncated, {len(text)} chars total]"
+        )
+    return f"{key}={text}" if key else text
+
+
+def _format_simple_tool_arg(tool_call) -> str:
+    """Return a preview of the first tool-call argument, or "" when absent.
+
+    Rules: a JSON object exposes its first key/value pair (generation order);
+    any other payload is shown as an unnamed value. Missing, empty or unparsable
+    arguments yield "" so callers keep the legacy name-only summary and console
+    printing never raises.
+    """
+    arguments = _tool_call_arguments(tool_call)
+    if arguments is None:
+        return ""
+
+    if isinstance(arguments, dict):
+        if not arguments:
+            return ""
+        key, value = next(iter(arguments.items()))
+        return _format_simple_arg_value(key, value)
+
+    if isinstance(arguments, list):
+        return _format_simple_arg_value("", arguments) if arguments else ""
+
+    text = arguments.strip()
+    if not text:
+        return ""
+    try:
+        parsed = simplejson.loads(text)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, dict):
+        if not parsed:
+            return ""
+        key, value = next(iter(parsed.items()))
+        return _format_simple_arg_value(key, value)
+    if parsed is None and text not in ("null", "None"):
+        # Not a JSON payload: show the raw string as an unnamed value.
+        return _format_simple_arg_value("", text)
+    return _format_simple_arg_value("", parsed)
+
+
 def _format_simple_tool_calls(tool_calls: list) -> str:
-    """Return a tool-call summary that excludes IDs and arguments."""
+    """Return a tool-call summary with names and the first argument preview.
+
+    Tool-call IDs are never included. Each distinct ``(name, first argument)``
+    pair is rendered on its own indented line; calls without usable arguments
+    keep the legacy name-only summary line unchanged.
+    """
     names = []
+    details = []
+    seen = set()
     for tool_call in tool_calls:
         name = _tool_call_name(tool_call)
         if name not in names:
             names.append(name)
-    return f"[tool_calls] count={len(tool_calls)} names={','.join(names)}"
+        first_arg = _format_simple_tool_arg(tool_call)
+        if not first_arg:
+            continue
+        dedup_key = (name, first_arg)
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        details.append(f"  {name}({first_arg})")
+
+    summary = f"[tool_calls] count={len(tool_calls)} names={','.join(names)}"
+    if not details:
+        return summary
+    return "\n".join([summary, *details])
 
 
 def _parse_step_message(msg):

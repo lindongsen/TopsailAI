@@ -236,10 +236,12 @@ TOPSAILAI_PRINT_TOOL_PROMPT=0
 # Boolean flag. When unset, falls back to NO_COLOR / TTY detection.
 TOPSAILAI_PRINT_COLOR_ENABLED=
 
-# Agent2LLM step console detail. "simple" prints bounded summaries and tool
-# names without arguments, while steps starting with task, thought, final, or
-# inquiry remain complete. "normal" preserves legacy full output. Invalid or
-# empty values fall back to "normal".
+# Agent2LLM step console detail. "simple" prints bounded summaries and each
+# tool call with its first argument as name=value (single-line 80-char preview;
+# values of sensitive argument names such as password/token/secret/api_key are
+# masked), while steps starting with task, thought, final, or inquiry remain
+# complete. "normal" preserves legacy full output. Invalid or empty values fall
+# back to "normal".
 TOPSAILAI_PRINT_STEP_MODE=normal
 
 # Agent Type, default is react
