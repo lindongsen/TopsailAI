@@ -246,10 +246,12 @@ class TestScanWorkspaceFilesTokenBudget(ScanMaxTokensEnvMixin):
             handle.write("x\n")
         return tmpdir
 
-    def _scan(self, workspace, project_folder=None, counter=_line_counter):
+    def _scan(self, workspace, project_folder=None, counter=_line_counter, include_files=True):
         """Run the scan with a deterministic token counter."""
         with patch.object(launcher, "_scan_token_counter", return_value=counter):
-            return launcher._scan_workspace_files(workspace, project_folder)
+            return launcher._scan_workspace_files(
+                workspace, project_folder, include_files=include_files
+            )
 
     def test_default_budget_keeps_small_tree_intact(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -369,7 +371,7 @@ class TestScanWorkspaceFilesTokenBudget(ScanMaxTokensEnvMixin):
             stderr = StringIO()
             with patch.object(launcher, "_scan_token_counter", return_value=_line_counter):
                 with patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", stderr):
-                    launcher._scan_folder(tmpdir)
+                    launcher._scan_folder(tmpdir, include_files=True)
             output = stdout.getvalue()
             self.assertIn("alpha", output)
             self.assertNotIn("aaa.txt", output)
@@ -390,7 +392,7 @@ class TestScanWorkspaceFilesTokenBudget(ScanMaxTokensEnvMixin):
             stderr = StringIO()
             with patch.object(launcher, "_scan_token_counter", return_value=_line_counter):
                 with patch.object(sys, "stderr", stderr):
-                    output = launcher._scan_workspace_files(root_a, root_b)
+                    output = launcher._scan_workspace_files(root_a, root_b, include_files=True)
         lines = output.splitlines()
         self.assertIn("> " + root_a, lines)
         self.assertIn("> " + root_b, lines)
@@ -414,9 +416,74 @@ class TestScanWorkspaceFilesTokenBudget(ScanMaxTokensEnvMixin):
                 return real_listdir(path)
 
             with patch.object(launcher.os, "listdir", side_effect=fake_listdir):
-                output = launcher._scan_workspace_files(tmpdir)
+                output = launcher._scan_workspace_files(tmpdir, include_files=True)
         self.assertIn("visible.txt", output)
         self.assertIn("locked", output)
+
+
+class TestScanFoldersOnlyTokenBudget(ScanMaxTokensEnvMixin):
+    """Verify the token budget behaves sensibly in folders-only mode."""
+
+    def _make_deep_tree(self, tmpdir):
+        """Create nested folders plus files that folders-only must hide."""
+        for folder in ("alpha", os.path.join("alpha", "nested"), "beta"):
+            os.makedirs(os.path.join(tmpdir, folder))
+        for path in (
+            os.path.join(tmpdir, "alpha", "aaa.txt"),
+            os.path.join(tmpdir, "alpha", "nested", "deep.txt"),
+            os.path.join(tmpdir, "beta", "beta.txt"),
+        ):
+            open(path, "w").close()
+        return tmpdir
+
+    def _scan(self, workspace, include_files, counter=_line_counter):
+        """Run the scan with a deterministic counter in the requested mode."""
+        with patch.object(launcher, "_scan_token_counter", return_value=counter):
+            return launcher._scan_workspace_files(workspace, include_files=include_files)
+
+    def test_folders_only_lists_more_entries_for_the_same_budget(self):
+        """Dropping file lines lets the same budget reach deeper folders."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_deep_tree(tmpdir)
+            # header + "." + alpha + nested + beta needs 5 lines.
+            os.environ[self.ENV_KEY] = "5"
+            folders_only = self._scan(tmpdir, False)
+            self.assertIn("alpha", folders_only)
+            self.assertIn("nested", folders_only)
+            self.assertIn("beta", folders_only)
+            self.assertNotIn("truncated", folders_only)
+            self.assertNotIn("aaa.txt", folders_only)
+
+            with_files = self._scan(tmpdir, True)
+            self.assertIn("aaa.txt", with_files)
+            self.assertIn("truncated", with_files)
+
+    def test_folders_only_budget_never_emits_a_file(self):
+        """A generous folders-only budget still hides every file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_deep_tree(tmpdir)
+            tree = self._scan(tmpdir, False)
+            self.assertNotIn("aaa.txt", tree)
+            self.assertNotIn("deep.txt", tree)
+            self.assertNotIn("beta.txt", tree)
+            self.assertIn("nested", tree)
+
+    def test_scan_folder_folders_only_respects_budget(self):
+        """``--scan`` in its default mode is still bounded by the budget."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_deep_tree(tmpdir)
+            # header + "." + alpha leaves nothing for the nested folders.
+            os.environ[self.ENV_KEY] = "3"
+            stdout = StringIO()
+            stderr = StringIO()
+            with patch.object(launcher, "_scan_token_counter", return_value=_line_counter):
+                with patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", stderr):
+                    launcher._scan_folder(tmpdir)
+            output = stdout.getvalue()
+            self.assertIn("alpha", output)
+            self.assertNotIn("nested", output)
+            self.assertNotIn("aaa.txt", output)
+            self.assertIn("truncated", output)
 
 
 if __name__ == "__main__":

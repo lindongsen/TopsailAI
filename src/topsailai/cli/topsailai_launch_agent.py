@@ -1305,6 +1305,49 @@ def _resolve_scan_max_tokens():
     return value
 
 
+# Accepted truthy/falsy spellings for TOPSAILAI_SCAN_INCLUDE_FILES. Any other
+# value warns and falls back to the folders-only default.
+_SCAN_INCLUDE_FILES_TRUE = ("1", "true", "yes", "y", "on")
+_SCAN_INCLUDE_FILES_FALSE = ("", "0", "false", "no", "n", "off")
+
+
+def _resolve_scan_include_files(cli_flag=None, environ=None):
+    """Return True when the scanned tree should list files as well as folders.
+
+    Listing every file makes the tree far larger, so folders-only is the
+    default and files must be requested explicitly.
+
+    Priority: an explicit ``--include-files`` / ``--folders-only`` flag wins,
+    then ``TOPSAILAI_SCAN_INCLUDE_FILES`` read from ``environ`` (falling back to
+    the process environment), then the folders-only default.
+
+    Args:
+        cli_flag (bool|None): Value resolved from the CLI flags, or ``None``
+            when neither flag was given.
+        environ (dict|None): Environment mapping to read the variable from.
+
+    Returns:
+        bool: True to list files, False to list folders only.
+    """
+    if cli_flag is not None:
+        return bool(cli_flag)
+    source = environ if environ is not None else os.environ
+    raw = source.get("TOPSAILAI_SCAN_INCLUDE_FILES")
+    if raw is None:
+        return False
+    value = str(raw).strip().lower()
+    if value in _SCAN_INCLUDE_FILES_TRUE:
+        return True
+    if value in _SCAN_INCLUDE_FILES_FALSE:
+        return False
+    print(
+        f"[TopsailAI-Launcher] Warning: Invalid TOPSAILAI_SCAN_INCLUDE_FILES "
+        f"({raw!r}); using the default folders-only scan.",
+        file=sys.stderr,
+    )
+    return False
+
+
 def _scan_token_counter():
     """Return a callable that counts tokens for a string.
 
@@ -1412,7 +1455,7 @@ class _ScanTokenBudget:
         )
 
 
-def _scan_folder(folder, exclude_names=None):
+def _scan_folder(folder, exclude_names=None, include_files=False):
     """Scan a specific folder and print its tree structure.
 
     This reuses the same scanning logic used for agent context so that the
@@ -1420,15 +1463,22 @@ def _scan_folder(folder, exclude_names=None):
 
     ``exclude_names`` is an optional list of comma-separated name patterns
     (fnmatch wildcards) that are skipped for both files and directories.
+
+    ``include_files`` defaults to False, which lists folders only; pass True to
+    list files as well.
     """
     folder = os.path.abspath(folder)
     if not os.path.isdir(folder):
         print(f"Error: --scan target is not a directory: {folder}", file=sys.stderr)
         sys.exit(1)
-    print(_scan_workspace_files(folder, folder, exclude_names=exclude_names))
+    print(
+        _scan_workspace_files(
+            folder, folder, exclude_names=exclude_names, include_files=include_files
+        )
+    )
 
 
-def _scan_workspace_files(workspace, project_folder=None, exclude_names=None):
+def _scan_workspace_files(workspace, project_folder=None, exclude_names=None, include_files=False):
     """Scan workspace and return folder structure as a tree string.
 
     If ``project_folder`` is provided and is a child of ``workspace`` (or
@@ -1442,6 +1492,10 @@ def _scan_workspace_files(workspace, project_folder=None, exclude_names=None):
     ``exclude_names`` optionally adds name patterns (comma-separated strings
     or a list of them, fnmatch wildcards supported) that are skipped for both
     files and directories, on top of the ``TOPSAILAI_SCAN_EXCLUDE*`` filters.
+
+    ``include_files`` controls which entries the tree lists. It defaults to
+    False (folders only), which keeps the tree compact; pass True to list files
+    as well as folders.
 
     Symbolic links are not followed: symlinked files are listed as leaf
     entries and symlinked directories are not recursed into.
@@ -1495,6 +1549,11 @@ def _scan_workspace_files(workspace, project_folder=None, exclude_names=None):
                 full_path = os.path.join(current_dir, name)
                 is_symlink = os.path.islink(full_path)
                 is_dir = os.path.isdir(full_path) and not is_symlink
+                # Folders-only mode (the default) drops every non-directory
+                # entry. os.path.isdir follows symlinks, so a symlinked folder
+                # stays visible as a leaf entry while a symlinked file is hidden.
+                if not include_files and not os.path.isdir(full_path):
+                    continue
                 if _is_ignored(full_path, name, is_dir, local_patterns):
                     continue
                 # Filter out names excluded via environment variables.
@@ -1612,7 +1671,30 @@ def main():
         "--scan",
         default=None,
         metavar="FOLDER",
-        help="Scan the specified folder and print its tree structure, then exit",
+        help=(
+            "Scan the specified folder and print its folder tree, then exit. "
+            "Only folders are listed unless files are explicitly included."
+        ),
+    )
+    scan_content = parser.add_mutually_exclusive_group()
+    scan_content.add_argument(
+        "--include-files",
+        action="store_true",
+        default=None,
+        dest="include_files",
+        help=(
+            "List files as well as folders in the scanned tree. "
+            "Overrides TOPSAILAI_SCAN_INCLUDE_FILES."
+        ),
+    )
+    scan_content.add_argument(
+        "--folders-only",
+        action="store_false",
+        dest="include_files",
+        help=(
+            "List only folders in the scanned tree (the default). "
+            "Overrides TOPSAILAI_SCAN_INCLUDE_FILES."
+        ),
     )
     parser.add_argument(
         "--exclude",
@@ -1627,6 +1709,8 @@ def main():
         ),
     )
     args = parser.parse_args()
+    # Resolve the scan content mode after self_environs are applied, so a value
+    # seeded from settings.yaml is honored by both --scan and the context tree.
     if args.scan is not None:
         # Honor the top-level self_environs section so scan exclusions
         # (e.g. TOPSAILAI_SCAN_EXCLUDE_DIRS) take effect without requiring
@@ -1635,7 +1719,11 @@ def main():
             os.path.join(os.getcwd(), ".topsailai", "settings.yaml")
         )
         _apply_self_environs(scan_settings)
-        _scan_folder(args.scan, exclude_names=args.exclude)
+        _scan_folder(
+            args.scan,
+            exclude_names=args.exclude,
+            include_files=_resolve_scan_include_files(args.include_files),
+        )
         return
 
     # 1. Locate and parse .topsailai/settings.yaml in the current working directory
@@ -1782,8 +1870,15 @@ def main():
     if project_folder:
         merged_env["TOPSAILAI_PROJECT_FOLDER"] = project_folder
         os.environ["TOPSAILAI_PROJECT_FOLDER"] = project_folder
+    # Resolve whether the scanned tree lists files as well as folders. The CLI
+    # flag wins, then TOPSAILAI_SCAN_INCLUDE_FILES from the merged environment;
+    # the default lists folders only.
+    include_files = _resolve_scan_include_files(args.include_files, merged_env)
     folder_structure = _scan_workspace_files(
-        workspace, project_folder, exclude_names=args.exclude
+        workspace,
+        project_folder,
+        exclude_names=args.exclude,
+        include_files=include_files,
     )
     message_parts = []
     if context_content:
