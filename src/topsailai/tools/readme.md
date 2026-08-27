@@ -37,3 +37,35 @@ Do not duplicate the same catalog or overview in both places.
 ## Utility Placement
 
 Public/common methods closely related to tools in general belong in `base/`; public methods related to a specific tool belong in `{tool}_utils/`.
+
+## Tool Parameter Types Must Assume String-Typed LLM Output
+
+LLM response content is non-deterministic, so a tool must never assume that an argument arrives with the type it was declared with.
+
+### Rule
+
+Design tool parameters **string-first**. When a parameter is declared as `int`/`float`, convert it at runtime; when it is declared as `list`/`dict`, try `json.loads` first, because the LLM may well have serialized the container into a string.
+
+### Why
+
+- When `TOOLS_INFO` omits type information, the provider stringifies every argument before the call reaches us.
+- Even with complete type information, the LLM still returns quoted numbers, values with surrounding whitespace, or JSON text for containers.
+- Pushing type discrimination onto the caller means a malformed argument gets disguised as a business status, which makes the real failure invisible.
+
+### Required practice
+
+- Prefer `string` for parameter design; if a string can express the intent, do not use a container or numeric type.
+- Numeric parameters: parse actively (strip whitespace, accept scientific notation), and always apply a **finite-value check** (reject `NaN` and `±inf`); preserve existing boundary semantics such as the meaning of `<= 0`.
+- Boolean-semantics parameters: this project uses **integer (`1` = true, `0` = false)**, with `int()` applied to string input. Do not reintroduce a truthy/falsy string set (explicitly rejected by the human).
+- Container parameters: attempt `json.loads` first; only treat the argument as invalid when parsing fails.
+- On conversion failure, return a **machine-readable parameter-error status** (in this project: `invalid_request` plus a `reason` field). Never reuse a business/environment status such as `unavailable` for a bad argument.
+- Keep the parameter-parsing path deliberately separate from the environment-variable path: env values may keep using `utils/env_tool.py::is_true()`, while parameters must not reuse that truthy set.
+
+### Reference implementation
+
+`tools/human_tool.py` - `TOOLS_INFO`, `_validate_request()`, `_resolve_allow_free_text()`.
+See `issues/done/issue-human-decision-input-source-detection-false-negative.md` for the full decision history.
+
+### Known deviation
+
+`ask_decision` still rejects `options` when it is passed as a JSON string, which contradicts this principle and has not been converged yet (open item).

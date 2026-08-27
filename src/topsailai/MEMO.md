@@ -60,3 +60,11 @@ Only **important** features are recorded in `features/90ai-added.md`. A small or
 ### Note for maintainers
 
 When unsure whether a change qualifies as "important", prefer not writing to `features/90ai-added.md` and mention the omission in the final answer; the human can request an entry explicitly. This supersedes the blanket "record every autonomously implemented feature" instruction for low-significance changes.
+
+## MEMO: Tool Parameter Types Must Assume String-Typed LLM Output
+
+**Date:** 2026-08-27
+
+The full rule lives in [tools/readme.md](./tools/readme.md) — section "Tool Parameter Types Must Assume String-Typed LLM Output".
+
+Summary: LLM response content is non-deterministic, so tool parameters are designed **string-first**; declared `int`/`float` parameters must be converted at runtime and declared `list`/`dict` parameters must attempt `json.loads`, because an argument may arrive as a string. Conversion failures return a machine-readable parameter-error status instead of being disguised as a business status.
