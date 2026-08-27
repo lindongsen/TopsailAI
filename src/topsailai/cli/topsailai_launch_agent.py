@@ -1268,6 +1268,150 @@ def _merge_exclusions(patterns, extra):
     return merged
 
 
+# Default token budget for the scanned workspace folder tree. The tree is the
+# largest single contributor to the agent's first-turn context, so it must not
+# grow without bound on large repositories.
+# Configurable via TOPSAILAI_SCAN_MAX_TOKENS (0 or negative disables the limit).
+_SCAN_DEFAULT_MAX_TOKENS = 20000
+# Approximate characters per token used when tiktoken is unavailable.
+_SCAN_FALLBACK_CHARS_PER_TOKEN = 4
+
+
+def _resolve_scan_max_tokens():
+    """Resolve the folder-tree token budget from TOPSAILAI_SCAN_MAX_TOKENS.
+
+    Reads the variable at call time so values supplied at runtime (e.g. via
+    ``self_environs``) take effect. Returns the default of 20000 when the
+    variable is unset or non-numeric; a valid value of zero or less disables
+    the limit and is returned as ``0``.
+
+    Returns:
+        int: Maximum tokens for the scanned tree, or 0 when unlimited.
+    """
+    raw = os.getenv("TOPSAILAI_SCAN_MAX_TOKENS", "")
+    if not raw:
+        return _SCAN_DEFAULT_MAX_TOKENS
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        print(
+            f"[TopsailAI-Launcher] Warning: Invalid TOPSAILAI_SCAN_MAX_TOKENS "
+            f"({raw!r}); using default {_SCAN_DEFAULT_MAX_TOKENS}.",
+            file=sys.stderr,
+        )
+        return _SCAN_DEFAULT_MAX_TOKENS
+    if value < 0:
+        return 0
+    return value
+
+
+def _scan_token_counter():
+    """Return a callable that counts tokens for a string.
+
+    Prefers tiktoken through the project's ``topsailai.context.token`` helper
+    so the budget matches the counting used elsewhere. The import is lazy and
+    failures are tolerated: when tiktoken is unavailable, a character-based
+    estimate is used instead so scanning never breaks.
+
+    Returns:
+        callable: Function mapping a string to its token count.
+    """
+    def _fallback(text):
+        """Estimate tokens from character count when tiktoken is unusable."""
+        return max(1, -(-len(text) // _SCAN_FALLBACK_CHARS_PER_TOKEN))
+
+    try:
+        # Importing the parent package may change the process working
+        # directory, so the current directory is restored afterwards to keep
+        # relative scan paths resolving against the caller's cwd.
+        original_cwd = os.getcwd()
+        try:
+            import _import_topsailai  # noqa: F401  (adds the source tree to sys.path)
+            from topsailai.context.token import count_tokens
+        finally:
+            if os.getcwd() != original_cwd:
+                os.chdir(original_cwd)
+    except Exception:
+        return _fallback
+
+    def _count(text):
+        """Count tokens with tiktoken, falling back to an estimate on failure."""
+        try:
+            tokens = count_tokens(text)
+        except Exception:
+            return _fallback(text)
+        if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens <= 0:
+            return _fallback(text)
+        return tokens
+
+    return _count
+
+
+class _ScanTokenBudget:
+    """Token budget that bounds the scanned folder tree.
+
+    The budget is charged one complete line at a time, which guarantees that
+    emitted folder and file names are always whole. Once a line does not fit,
+    ``allows`` returns False and ``stop`` becomes True so the walker abandons
+    the remaining folders instead of continuing to traverse the tree.
+    """
+
+    def __init__(self, max_tokens, counter):
+        """Store the budget limit and the token counting function.
+
+        Args:
+            max_tokens (int): Token ceiling; 0 or None means unlimited.
+            counter (callable|None): Token counting function for one string.
+        """
+        self.max_tokens = max_tokens or 0
+        self._counter = counter
+        self.used = 0
+        self.emitted = 0
+        self.stop = False
+        self.truncated = False
+
+    def _tokens(self, line):
+        """Return the token cost of a single tree line including its newline."""
+        if not self.max_tokens:
+            return 0
+        return self._counter(line + "\n")
+
+    def allows(self, line):
+        """Return True when ``line`` fits the budget, charging it if so.
+
+        When the line does not fit, the budget is marked as stopped so callers
+        abandon the rest of the scan rather than skipping only that entry.
+        """
+        if not self.max_tokens:
+            self.emitted += 1
+            return True
+        cost = self._tokens(line)
+        if self.used + cost > self.max_tokens:
+            self.truncated = True
+            self.stop = True
+            return False
+        self.used += cost
+        self.emitted += 1
+        return True
+
+    def charge(self, line):
+        """Charge ``line`` unconditionally so essential headers are preserved."""
+        if not self.max_tokens:
+            return
+        self.used += self._tokens(line)
+        self.emitted += 1
+
+    def truncation_notice(self):
+        """Return a one-line notice when the tree was truncated, else ''."""
+        if not self.truncated:
+            return ""
+        return (
+            f"[... folder tree truncated at {self.max_tokens} tokens "
+            f"({self.used} used, {self.emitted} entries listed); "
+            f"raise TOPSAILAI_SCAN_MAX_TOKENS or exclude folders to see more]"
+        )
+
+
 def _scan_folder(folder, exclude_names=None):
     """Scan a specific folder and print its tree structure.
 
@@ -1301,7 +1445,21 @@ def _scan_workspace_files(workspace, project_folder=None, exclude_names=None):
 
     Symbolic links are not followed: symlinked files are listed as leaf
     entries and symlinked directories are not recursed into.
+
+    The tree is bounded by ``TOPSAILAI_SCAN_MAX_TOKENS`` (default 20000,
+    shared by every scanned root). As soon as the next entry would exceed the
+    budget, scanning stops there: no deeper folder is visited and no sibling is
+    listed. Only complete lines are emitted, so folder and file names are never
+    cut in half. A trailing notice records the truncation.
     """
+    # Resolve paths before any lazy import so relative paths keep resolving
+    # against the caller's working directory.
+    workspace = os.path.abspath(workspace)
+    if project_folder:
+        project_folder = os.path.abspath(project_folder)
+
+    max_tokens = _resolve_scan_max_tokens()
+    budget = _ScanTokenBudget(max_tokens, _scan_token_counter() if max_tokens else None)
 
     def _build_tree(scan_root):
         """Build a tree string for a single root directory."""
@@ -1312,6 +1470,8 @@ def _scan_workspace_files(workspace, project_folder=None, exclude_names=None):
         entries = []
 
         def walk(current_dir, prefix="", inherited_patterns=None):
+            if budget.stop:
+                return
             if inherited_patterns is None:
                 inherited_patterns = []
             try:
@@ -1350,28 +1510,44 @@ def _scan_workspace_files(workspace, project_folder=None, exclude_names=None):
             for idx, (name, full_path, is_dir) in enumerate(visible_items):
                 is_last = idx == count - 1
                 connector = "└── " if is_last else "├── "
-                entries.append(f"{prefix}{connector}{name}")
+                line = f"{prefix}{connector}{name}"
+                # Stop scanning entirely when the complete line no longer fits;
+                # the budget covers whole lines only, never partial names.
+                if not budget.allows(line):
+                    return
+                entries.append(line)
                 if is_dir:
                     extension = "    " if is_last else "│   "
                     walk(full_path, prefix + extension, local_patterns)
 
+        header = "> " + scan_root
+        # The header and the root marker are always kept so the tree stays
+        # attributable, and they are charged to the shared budget like any
+        # other line.
+        budget.charge(header)
+        entries.append(header)
+        budget.charge(".")
         entries.append(".")
         walk(scan_root, inherited_patterns=patterns)
-        return "> " + scan_root + "\n" + "\n".join(entries)
+        return "\n".join(entries)
 
-    workspace = os.path.abspath(workspace)
     if not project_folder:
-        return _build_tree(workspace)
+        tree = _build_tree(workspace)
+    else:
+        if project_folder == workspace or project_folder.startswith(workspace + os.sep):
+            tree = _build_tree(project_folder)
+        else:
+            # Project folder is outside the workspace: include both trees.
+            parts = [_build_tree(workspace)]
+            if os.path.isdir(project_folder):
+                parts.append(_build_tree(project_folder))
+            tree = "\n\n".join(parts)
 
-    project_folder = os.path.abspath(project_folder)
-    if project_folder == workspace or project_folder.startswith(workspace + os.sep):
-        return _build_tree(project_folder)
-
-    # Project folder is outside the workspace: include both trees.
-    parts = [_build_tree(workspace)]
-    if os.path.isdir(project_folder):
-        parts.append(_build_tree(project_folder))
-    return "\n\n".join(parts)
+    notice = budget.truncation_notice()
+    if notice:
+        print(f"[TopsailAI-Launcher] Warning: {notice}", file=sys.stderr)
+        tree = f"{tree}\n{notice}"
+    return tree
 
 
 def _driver_exists(driver):
