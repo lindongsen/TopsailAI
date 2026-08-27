@@ -22,6 +22,19 @@ class TestModuleConstants(unittest.TestCase):
         self.assertIn('ask_decision', human_tool.TOOLS)
         self.assertEqual(human_tool.TOOLS['ask_decision'], human_tool.ask_decision)
 
+    def test_tools_info_defines_native_argument_types(self):
+        """TOOLS_INFO must constrain native ask_decision arguments."""
+        parameters = human_tool.TOOLS_INFO['ask_decision']['function']['parameters']
+        properties = parameters['properties']
+        self.assertEqual(parameters['required'], ['question'])
+        self.assertEqual(properties['question']['type'], 'string')
+        self.assertEqual(properties['options']['type'], ['array', 'null'])
+        self.assertEqual(properties['options']['items']['type'], 'string')
+        self.assertEqual(properties['allow_free_text']['type'], ['integer', 'null'])
+        self.assertNotIn('boolean', properties['allow_free_text']['type'])
+        self.assertNotIn('string', properties['allow_free_text']['type'])
+        self.assertEqual(properties['timeout_seconds']['type'], ['number', 'null'])
+
     def test_flag_tool_enabled_is_true(self):
         """FLAG_TOOL_ENABLED must be boolean True."""
         self.assertIsInstance(human_tool.FLAG_TOOL_ENABLED, bool)
@@ -31,8 +44,7 @@ class TestModuleConstants(unittest.TestCase):
         """PROMPT must describe blocked-task decision usage."""
         self.assertIsInstance(human_tool.PROMPT, str)
         self.assertIn('blocked', human_tool.PROMPT.lower())
-        self.assertIn('status', human_tool.PROMPT)
-
+        self.assertIn('invalid_request', human_tool.PROMPT)
 
 class TestConfigHelpers(unittest.TestCase):
     """Test environment-variable-driven configuration helpers."""
@@ -320,17 +332,107 @@ class TestOptionValidationLoop(unittest.TestCase):
         self.assertNotEqual(result['answer'], 'a very long answer here')
         self.assertIn('truncate', result['answer'].lower())
 
-    def test_invalid_question_returns_unavailable(self):
-        """Empty/non-string question returns unavailable immediately."""
+    def test_invalid_question_returns_invalid_request(self):
+        """Empty question returns invalid_request with a reason."""
         result = human_tool.ask_decision('   ', default='dflt')
-        self.assertEqual(result['status'], 'unavailable')
+        self.assertEqual(result['status'], 'invalid_request')
+        self.assertEqual(result['reason'], 'invalid_question')
+        self.assertEqual(result['answer'], 'dflt')
+        self.assertEqual(result['option_index'], -1)
+
+    def test_non_list_options_returns_invalid_request(self):
+        """Non-list options return invalid_request with a reason."""
+        result = human_tool.ask_decision('q', options='not-a-list', default='dflt')
+        self.assertEqual(result['status'], 'invalid_request')
+        self.assertEqual(result['reason'], 'invalid_options')
         self.assertEqual(result['answer'], 'dflt')
 
-    def test_non_list_options_returns_unavailable(self):
-        """Non-list options argument returns unavailable."""
-        result = human_tool.ask_decision('q', options='not-a-list', default='dflt')
-        self.assertEqual(result['status'], 'unavailable')
-        self.assertEqual(result['answer'], 'dflt')
+    def test_non_string_option_returns_invalid_request(self):
+        """Every option must be a string."""
+        result = human_tool.ask_decision('q', options=['valid', 2])
+        self.assertEqual(result['status'], 'invalid_request')
+        self.assertEqual(result['reason'], 'invalid_options')
+
+    def test_integer_allow_free_text_values_are_normalized(self):
+        """Integer flags resolve using Python truthiness."""
+        for value in (1, 2, '1', '0', ' 1 ', '00'):
+            expected = int(str(value).strip()) != 0
+            self.assertEqual(human_tool._resolve_allow_free_text(value), (expected, None))
+        self.assertEqual(human_tool._resolve_allow_free_text(0), (False, None))
+        self.assertEqual(human_tool._resolve_allow_free_text('1'), (True, None))
+        self.assertEqual(human_tool._resolve_allow_free_text('0'), (False, None))
+        self.assertEqual(human_tool._resolve_allow_free_text(' 1 '), (True, None))
+
+    @patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT': '0'}, clear=False)
+    def test_empty_allow_free_text_uses_environment_default(self):
+        """Empty, whitespace, and omitted values use the environment default."""
+        for value in ('', '   ', None):
+            self.assertEqual(human_tool._resolve_allow_free_text(value), (False, None))
+
+    def test_python_boolean_allow_free_text_remains_supported(self):
+        """Python booleans remain accepted for existing callers."""
+        self.assertEqual(human_tool._resolve_allow_free_text(True), (True, None))
+        self.assertEqual(human_tool._resolve_allow_free_text(False), (False, None))
+
+    def test_non_integer_allow_free_text_returns_invalid_request(self):
+        """Non-integer strings and floats return a structured validation failure."""
+        for value in ('maybe', 'true', 'yes', '1.3', 1.0, 0.0, []):
+            result = human_tool.ask_decision('q', allow_free_text=value)
+            self.assertEqual(result['status'], 'invalid_request')
+            self.assertEqual(result['reason'], 'invalid_allow_free_text')
+
+    @patch('topsailai.tools.human_tool._resolve_input_funcs')
+    def test_string_allow_free_text_reaches_prompt_as_bool(self, mock_resolve):
+        """A numeric string flag is applied to prompt rendering as a bool."""
+        observed = []
+        mock_resolve.return_value = (lambda p, t: observed.append(p) or 'yes', None)
+        result = human_tool.ask_decision(
+            'q', options=['a', 'b'], allow_free_text='1', default='dflt'
+        )
+        self.assertEqual(result['status'], 'answered')
+        self.assertIn('or your own opinion', observed[0])
+
+    def test_numeric_timeout_strings_are_normalized(self):
+        """Finite numeric timeout strings are parsed to floats."""
+        for value, expected in (('1.3', 1.3), ('300', 300.0), (' 42 ', 42.0), ('1e2', 100.0)):
+            self.assertEqual(human_tool._resolve_timeout_seconds(value), (expected, None))
+
+    def test_non_positive_timeout_values_mean_infinite_wait(self):
+        """Zero and negative numeric values normalize to an infinite wait."""
+        for value in (0, -1, '0', '-1.5'):
+            self.assertEqual(human_tool._resolve_timeout_seconds(value), (None, None))
+
+    def test_invalid_timeout_values_return_invalid_request(self):
+        """Empty, nonnumeric, non-finite, and boolean timeouts are rejected."""
+        for value in ('abc', '', 'NaN', 'inf', '-inf', True, False):
+            result = human_tool.ask_decision('q', timeout_seconds=value)
+            self.assertEqual(result['status'], 'invalid_request')
+            self.assertEqual(result['reason'], 'invalid_timeout_seconds')
+
+    @patch('topsailai.tools.human_tool._resolve_input_funcs')
+    def test_string_timeout_reaches_input_as_parsed_float(self, mock_resolve):
+        """ask_decision passes a parsed numeric string to the runtime callback."""
+        observed = []
+        mock_resolve.return_value = (lambda _prompt, timeout: observed.append(timeout) or 'yes', None)
+        result = human_tool.ask_decision('q', timeout_seconds='1.3')
+        self.assertEqual(result['status'], 'answered')
+        self.assertEqual(observed, [1.3])
+
+    @patch('topsailai.tools.human_tool.sys.stdin')
+    @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(lambda p, t: 'yes', None))
+    def test_runtime_input_is_used_without_tty(self, _mock_resolve, mock_stdin):
+        """A runtime input callback remains usable when stdin is not a TTY."""
+        mock_stdin.isatty.return_value = False
+        result = human_tool.ask_decision('q')
+        self.assertEqual(result['status'], 'answered')
+        self.assertEqual(result['answer'], 'yes')
+
+    def test_non_string_default_returns_invalid_request(self):
+        """Default fallback must be a string when provided."""
+        result = human_tool.ask_decision('q', default=3)
+        self.assertEqual(result['status'], 'invalid_request')
+        self.assertEqual(result['reason'], 'invalid_default')
+        self.assertEqual(result['answer'], 3)
 
 
 class TestTimeoutEnforcement(unittest.TestCase):
