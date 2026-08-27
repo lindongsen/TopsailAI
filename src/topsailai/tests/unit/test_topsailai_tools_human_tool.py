@@ -22,18 +22,9 @@ class TestModuleConstants(unittest.TestCase):
         self.assertIn('ask_decision', human_tool.TOOLS)
         self.assertEqual(human_tool.TOOLS['ask_decision'], human_tool.ask_decision)
 
-    def test_tools_info_defines_native_argument_types(self):
-        """TOOLS_INFO must constrain native ask_decision arguments."""
-        parameters = human_tool.TOOLS_INFO['ask_decision']['function']['parameters']
-        properties = parameters['properties']
-        self.assertEqual(parameters['required'], ['question'])
-        self.assertEqual(properties['question']['type'], 'string')
-        self.assertEqual(properties['options']['type'], ['array', 'null'])
-        self.assertEqual(properties['options']['items']['type'], 'string')
-        self.assertEqual(properties['allow_free_text']['type'], ['integer', 'null'])
-        self.assertNotIn('boolean', properties['allow_free_text']['type'])
-        self.assertNotIn('string', properties['allow_free_text']['type'])
-        self.assertEqual(properties['timeout_seconds']['type'], ['number', 'null'])
+    def test_no_hand_written_tools_info(self):
+        """ask_decision must not declare a hand-written TOOLS_INFO schema."""
+        self.assertFalse(hasattr(human_tool, 'TOOLS_INFO'))
 
     def test_flag_tool_enabled_is_true(self):
         """FLAG_TOOL_ENABLED must be boolean True."""
@@ -352,6 +343,73 @@ class TestOptionValidationLoop(unittest.TestCase):
         result = human_tool.ask_decision('q', options=['valid', 2])
         self.assertEqual(result['status'], 'invalid_request')
         self.assertEqual(result['reason'], 'invalid_options')
+
+    def test_json_array_string_options_are_parsed(self):
+        """A stringified options array is parsed instead of rejected."""
+        self.assertEqual(human_tool._resolve_options('["a", "b"]'), (['a', 'b'], None))
+
+    def test_json_array_string_options_drive_option_selection(self):
+        """Stringified options still allow index selection without unavailable."""
+        with patch('topsailai.tools.human_tool._build_prompt', return_value='prompt'), \
+             patch('topsailai.tools.human_tool._resolve_input_funcs',
+                   return_value=(lambda p, t: '1', None)):
+            result = human_tool.ask_decision(
+                'q', options='["a", "b"]', allow_free_text='1', timeout_seconds='60'
+            )
+        self.assertEqual(result['status'], 'answered')
+        self.assertEqual(result['answer'], 'b')
+        self.assertEqual(result['option_index'], 1)
+
+    def test_json_array_string_options_are_rendered_in_prompt(self):
+        """Parsed stringified options are rendered into the prompt."""
+        observed = []
+        with patch('topsailai.tools.human_tool._resolve_input_funcs',
+                   return_value=(lambda p, t: observed.append(p) or 'a', None)):
+            result = human_tool.ask_decision('q', options='["Alpha", "Beta"]')
+        self.assertEqual(result['status'], 'answered')
+        self.assertIn('Alpha', observed[0])
+        self.assertIn('Beta', observed[0])
+
+    def test_malformed_options_string_returns_invalid_request(self):
+        """A non-JSON options string yields invalid_request, never unavailable."""
+        for value in ('not-a-list', '["a"', '{"a":1}', '[1, 2]'):
+            result = human_tool.ask_decision('q', options=value, default='dflt')
+            self.assertEqual(result['status'], 'invalid_request')
+            self.assertEqual(result['reason'], 'invalid_options')
+            self.assertEqual(result['answer'], 'dflt')
+
+    def test_empty_options_string_means_not_provided(self):
+        """Empty or blank options string means no options were provided."""
+        for value in (None, '', '   '):
+            self.assertEqual(human_tool._resolve_options(value), (None, None))
+
+    def test_non_string_container_options_returns_invalid_request(self):
+        """Non-list containers are rejected with a machine-readable reason."""
+        for value in ({'a': 1}, ('a', 'b'), 3):
+            self.assertEqual(human_tool._resolve_options(value), (None, 'invalid_options'))
+
+    def test_string_flag_and_timeout_reach_prompt_and_input(self):
+        """Stringified 1/0 and numeric timeout keep integer/float semantics."""
+        observed = []
+        with patch('topsailai.tools.human_tool._resolve_input_funcs',
+                   return_value=(lambda p, t: observed.append((p, t)) or 'free text', None)):
+            result = human_tool.ask_decision(
+                'q', options=['a', 'b'], allow_free_text='1', timeout_seconds='60'
+            )
+        self.assertEqual(result['status'], 'answered')
+        self.assertIn('or your own opinion', observed[0][0])
+        self.assertEqual(observed[0][1], 60.0)
+
+    def test_string_zero_disables_free_text(self):
+        """allow_free_text '0' keeps strict option validation."""
+        answers = iter(['free text', '0'])
+        with patch('topsailai.tools.human_tool._build_prompt', return_value='prompt'), \
+             patch('topsailai.tools.human_tool._resolve_input_funcs',
+                   return_value=(lambda p, t: next(answers), None)):
+            result = human_tool.ask_decision('q', options=['a', 'b'], allow_free_text='0')
+        self.assertEqual(result['status'], 'answered')
+        self.assertEqual(result['answer'], 'a')
+        self.assertEqual(result['option_index'], 0)
 
     def test_integer_allow_free_text_values_are_normalized(self):
         """Integer flags resolve using Python truthiness."""

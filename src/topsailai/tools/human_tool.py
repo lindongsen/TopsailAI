@@ -5,6 +5,7 @@
   Purpose: Ask user for decision when task is blocked.
 """
 
+import json
 import math
 import os
 import sys
@@ -224,12 +225,7 @@ def _validate_and_resolve(
 # Core ask function
 # ---------------------------------------------------------------------------
 def _resolve_allow_free_text(value: int | str | None) -> tuple[bool | None, str | None]:
-    """Resolve an integer free-text flag (1=true, 0=false) or its failure reason.
-
-    Numeric strings are converted with ``int()``. Python booleans stay accepted
-    because ``bool`` is an ``int`` subclass. ``None`` and blank strings fall back
-    to the environment default.
-    """
+    """Resolve an integer free-text flag (1=true, 0=false), also accepting a numeric string."""
     if value is None or (isinstance(value, str) and not value.strip()):
         return _get_allow_free_text_default(), None
     if isinstance(value, bool):
@@ -262,28 +258,46 @@ def _resolve_timeout_seconds(value: float | str | None) -> tuple[float | None, s
     return (timeout if timeout > 0 else None), None
 
 
+def _resolve_options(value: list[str] | str | None) -> tuple[list[str] | None, str | None]:
+    """Resolve an option list, also accepting a JSON-array string, or its failure reason.
+
+    Returns:
+        tuple[list[str] | None, str | None]: (options, reason); ``None`` options mean not provided.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None, None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return None, "invalid_options"
+    if not isinstance(value, list) or not all(isinstance(option, str) for option in value):
+        return None, "invalid_options"
+    return value, None
+
+
 def _validate_request(
     question: str,
-    options: list[str] | None,
+    options: list[str] | str | None,
     allow_free_text: int | str | None,
     timeout_seconds: float | str | None,
     default: str | None,
-) -> tuple[str | None, bool | None, float | None]:
+) -> tuple[str | None, list[str] | None, bool | None, float | None]:
     """Validate arguments and return reason plus normalized runtime values."""
     if not isinstance(question, str) or not question.strip():
-        return "invalid_question", None, None
-    if options is not None:
-        if not isinstance(options, list) or not all(isinstance(option, str) for option in options):
-            return "invalid_options", None, None
+        return "invalid_question", None, None, None
+    effective_options, reason = _resolve_options(options)
+    if reason is not None:
+        return reason, None, None, None
     if default is not None and not isinstance(default, str):
-        return "invalid_default", None, None
+        return "invalid_default", None, None, None
     effective_allow_free_text, reason = _resolve_allow_free_text(allow_free_text)
     if reason is not None:
-        return reason, None, None
+        return reason, None, None, None
     effective_timeout, reason = _resolve_timeout_seconds(timeout_seconds)
     if reason is not None:
-        return reason, None, None
-    return None, effective_allow_free_text, effective_timeout
+        return reason, None, None, None
+    return None, effective_options, effective_allow_free_text, effective_timeout
 
 
 def ask_decision(
@@ -297,22 +311,13 @@ def ask_decision(
 
     Args:
         question: Required. The blocking question presented to the user.
-        options: Optional predefined choices. When provided, the user may pick
-            one option index or matching text.
-        allow_free_text: Integer flag, ``1`` enables custom free-text answers and
-            ``0`` restricts input to the supplied options. Numeric strings are
-            converted with ``int()``; Python booleans remain accepted for
-            compatibility. Empty, whitespace, or ``None`` uses the configured
-            environment default.
-        timeout_seconds: Max seconds to wait. Finite numeric strings are parsed
-            automatically. ``None`` uses TOPSAILAI_HUMAN_DECISION_TIMEOUT;
-            values less than or equal to 0 resolve to an infinite wait.
+        options: Optional predefined choices, as a list or a JSON-array string; the user may pick an index or matching text.
+        allow_free_text (int): 1 accepts custom free-text answers, 0 restricts input to the options. Unset uses the environment default.
+        timeout_seconds: Max seconds to wait; a value <= 0 waits indefinitely; unset uses TOPSAILAI_HUMAN_DECISION_TIMEOUT.
         default: Fallback answer used on timeout/no-input/cancellation.
 
     Returns:
-        A structured status-bearing dict. Invalid arguments return
-        ``invalid_request`` with a machine-readable ``reason`` and normal
-        degradation never raises.
+        dict: status (answered|timeout|cancelled|unavailable|invalid_request), answer, option_index, elapsed, asked_at.
     """
     start = time.time()
     asked_at = datetime.fromtimestamp(start).isoformat(timespec="seconds")
@@ -330,7 +335,7 @@ def ask_decision(
             result["reason"] = reason
         return result
 
-    invalid_reason, eff_allow_free_text, timeout_seconds = _validate_request(
+    invalid_reason, options, eff_allow_free_text, timeout_seconds = _validate_request(
         question, options, allow_free_text, timeout_seconds, default
     )
     if invalid_reason is not None:
@@ -443,19 +448,16 @@ structured human decision to continue. Typical situations:
 - Provide a clear, concise `question` describing exactly what blocks progress.
 - Use `options` to present discrete choices whenever possible. The user can
   select by index number or matching text.
-- Pass `allow_free_text` as an integer: `1` accepts custom input; `0` restricts
-  input to options. Numeric strings such as `"1"` are converted with `int()`.
-  Empty or omitted values use the environment default.
+- Pass `allow_free_text` as an integer: `1` accepts custom input, `0` restricts
+  input to the listed options.
 - Enter `/cancel` to cancel and use the configured `default` fallback.
 - Pass `default` as a safe fallback when the user does not respond or cancels.
-- `timeout_seconds` accepts a number; numeric strings are parsed automatically.
-  Values less than or equal to zero wait indefinitely, while omitted values use
-  the global configuration.
+- Set `timeout_seconds` explicitly when the task cannot afford to block
+  indefinitely; a value less than or equal to zero waits indefinitely.
 
 ### Return Value
 
-The tool ALWAYS returns a structured dictionary for normal operation and
-request validation:
+The tool ALWAYS returns a structured dictionary (never raises):
 
 ```json
 {
@@ -467,53 +469,19 @@ request validation:
 }
 ```
 
-`elapsed` is the integer duration in seconds. `asked_at` is the local,
-timezone-naive ISO-8601 start timestamp with second precision.
-
 Interpretation:
 
 - `answered`: User provided a valid response (`answer` holds it).
 - `timeout`: No response within the allowed window; `answer` holds `default`.
 - `cancelled`: User aborted (Ctrl+C/EOF/`/cancel`); `answer` holds `default`.
-- `unavailable`: No usable input channel or a nested sub-agent cannot prompt;
-  `answer` holds `default`. Changing input channels or retrying the same call
-  from that context will not resolve it.
-- `invalid_request`: One or more arguments have invalid types or values;
-  `answer` holds `default` and `reason` identifies the invalid argument.
-
-After receiving the result, incorporate the human's decision into your next
-reasoning step. If `status` is `timeout`, `cancelled`, or `unavailable`,
-proceed using `default` (if set) or explain why you cannot continue. For
-`invalid_request`, correct the arguments before retrying.
+- `unavailable`: No usable input channel, or a nested sub-agent cannot prompt;
+  `answer` holds `default`.
+- `invalid_request`: An argument is invalid; `answer` holds `default` and
+  `reason` identifies the invalid argument. Correct the arguments before retrying.
 """
 
 TOOLS = dict(
     ask_decision=ask_decision,
 )
-
-TOOLS_INFO = {
-    "ask_decision": {
-        "type": "function",
-        "function": {
-            "name": "ask_decision",
-            "description": ask_decision.__doc__,
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "question": {"type": "string"},
-                    "options": {
-                        "type": ["array", "null"],
-                        "items": {"type": "string"},
-                    },
-                    "allow_free_text": {"type": ["integer", "null"]},
-                    "timeout_seconds": {"type": ["number", "null"]},
-                    "default": {"type": ["string", "null"]},
-                },
-                "required": ["question"],
-                "additionalProperties": False,
-            },
-        },
-    },
-}
 
 FLAG_TOOL_ENABLED = True
