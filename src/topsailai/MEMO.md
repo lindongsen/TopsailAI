@@ -68,3 +68,15 @@ When unsure whether a change qualifies as "important", prefer not writing to `fe
 The full rule lives in [tools/readme.md](./tools/readme.md) — section "Tool Parameter Types Must Assume String-Typed LLM Output".
 
 Summary: LLM response content is non-deterministic, so tool parameters are designed **string-first**; declared `int`/`float` parameters must be converted at runtime and declared `list`/`dict` parameters must attempt `json.loads`, because an argument may arrive as a string. Conversion failures return a machine-readable parameter-error status instead of being disguised as a business status.
+
+## MEMO: BDD Tests for LLM-Related Capabilities Must Drive `llm_mock_server`
+
+**Date:** 2026-08-27
+
+The full rule lives in [tests/bdd.md](./tests/bdd.md) — section "BDD Tests for LLM-Related Capabilities Must Drive `llm_mock_server`".
+
+Summary: any BDD scenario that involves a real LLM interaction must drive `tests/mock/llm_mock_server.py` over the real HTTP/SSE protocol instead of stubbing internal functions, so the client, transport, and parsing layers stay inside the assertion boundary; assert server-side request counts and request bodies, never contact a real external endpoint, and close the scenario's own server and thread in teardown.
+
+## MEMO: `MEMO.md` Is Index Only
+
+`MEMO.md` is injected into the agent context, so it holds only index entries: a heading, a relative link to the owning document, and at most one summary sentence. Details go to the owning doc (`MEMO.<Component>.md`, module `readme.md`, `tests/*.md`, `docs/Environment_Variables.md`, `docs/API.md`); write there first, then link here. Sweep relative links after any move or rename.
