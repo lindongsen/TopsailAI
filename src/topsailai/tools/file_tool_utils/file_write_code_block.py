@@ -41,7 +41,7 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int, content: 
     Example:
         Replace lines 5-10 with new code block
         ```
-        overwrite_code_block("example.py", 5, 10, "def new_function():\\n    pass\\n")
+        args=("example.py", 5, 10, "def new_function():\\n    pass\\n")
         ```
     """
     with _file_tool.ctxm_temp_file("") as (tmp_file, fp):
