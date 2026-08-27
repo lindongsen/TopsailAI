@@ -16,6 +16,67 @@ TEST_DIR = SCRIPT_DIR / "unit"
 OUTPUT_FILE = (SCRIPT_DIR.parent / ".tmp" / "test_results.txt").resolve()
 print(f"Results will save to {OUTPUT_FILE}")
 
+
+def resolve_src_root(start_dir=None, package_name=None):
+    """Return the folder that the project package can be imported from.
+
+    The folder is discovered by walking up from this script instead of being
+    hardcoded, so the runner keeps working for any checkout layout.
+
+    Args:
+        start_dir: Directory to start the search from; defaults to this script's folder.
+        package_name: Package folder name to look for; defaults to the name of the
+            parent of ``start_dir`` (the package that owns ``tests``).
+
+    Returns:
+        Path: The first ancestor containing ``package_name/__init__.py``, or the
+        parent of ``start_dir`` as a fallback.
+    """
+    start = Path(start_dir) if start_dir is not None else SCRIPT_DIR
+    name = package_name or start.parent.name
+    for candidate in start.parents:
+        if (candidate / name / "__init__.py").is_file():
+            return candidate
+    return start.parent
+
+
+# Source root prepended to PYTHONPATH so child pytest processes can import the package.
+SRC_ROOT = resolve_src_root()
+
+
+def build_child_env(base_env=None, src_root=None):
+    """Return a child-process environment whose PYTHONPATH can import the package.
+
+    Each test file runs in its own subprocess with ``cwd`` set to the unit-test
+    directory, so the source root is not on the default import path and tests
+    that spawn ``python -c "import topsailai..."`` fail with ModuleNotFoundError.
+    The source root is prepended to any inherited ``PYTHONPATH`` and duplicated
+    entries are removed. The mapping passed in is never modified in place.
+
+    Args:
+        base_env: Base environment mapping; defaults to ``os.environ``.
+        src_root: Source root to prepend; defaults to the resolved ``SRC_ROOT``.
+
+    Returns:
+        dict: Copy of ``base_env`` with ``PYTHONPATH`` rebuilt.
+    """
+    env = dict(os.environ if base_env is None else base_env)
+    raw_root = SRC_ROOT if src_root is None else src_root
+    root = os.path.normpath(str(raw_root)) if str(raw_root) else ""
+    if not root:
+        return env
+
+    inherited = env.get("PYTHONPATH", "")
+    norm_root = os.path.normcase(root)
+    kept = [
+        entry
+        for entry in inherited.split(os.pathsep)
+        if entry and os.path.normcase(os.path.normpath(entry)) != norm_root
+    ]
+    env["PYTHONPATH"] = os.pathsep.join([root] + kept)
+    return env
+
+
 # Default configuration values.
 DEFAULT_TIMEOUT = 120
 DEFAULT_SLOW_THRESHOLD = 10.0
@@ -67,6 +128,7 @@ def run_test(test_file, timeout, retries=0):
                 text=True,
                 timeout=timeout,
                 cwd=TEST_DIR,
+                env=build_child_env(),
             )
             elapsed = time.perf_counter() - start
 
