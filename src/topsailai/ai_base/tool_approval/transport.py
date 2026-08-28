@@ -125,7 +125,7 @@ class LocalApprovalTransport(ApprovalTransport):
 
         # Rendered through the formatting module so multi-line arguments stay
         # readable and the matched rule is shown up front.
-        prompt = f"\n{format_approval_request(instance)}"
+        prompt = f"\n\n{format_approval_request(instance)}"
 
         if input_func is None:
             input_func = get_agent_runtime_input_with_timeout()
