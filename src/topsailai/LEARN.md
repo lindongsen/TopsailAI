@@ -125,3 +125,8 @@ instead of leaving dead code, but keep the underlying data pipeline (structured 
 results) so other consumers such as CLI tooling and audit logs can still use it;
 (3) encode rejected verbosity as negative assertions (`"Trigger" not in text`) so a future
 "improvement" cannot silently reintroduce it.
+
+## Features tightly coupled to the LLM must be covered by BDD tests
+
+Any capability whose behavior depends closely on the LLM (prompt construction, message injection, tool-call/ReAct loop, streaming, approval decisions driven by model output, session/context handling) MUST have BDD (Gherkin) tests under `tests/bdd/` that express the user-visible behavior, in addition to unit tests.
+
