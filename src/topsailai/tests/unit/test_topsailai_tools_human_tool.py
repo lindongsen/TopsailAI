@@ -37,6 +37,14 @@ class TestModuleConstants(unittest.TestCase):
         self.assertIn('blocked', human_tool.PROMPT.lower())
         self.assertIn('invalid_request', human_tool.PROMPT)
 
+    def test_registered_contract_documents_always_free_text(self):
+        """The tool contract documents always-accepted free-text answers."""
+        self.assertIn('always accepted', human_tool.ask_decision.__doc__)
+        self.assertIn('always accepted', human_tool.PROMPT)
+        self.assertNotIn('invalid_answer', human_tool.ask_decision.__doc__)
+        self.assertNotIn('invalid_answer', human_tool.PROMPT)
+
+
 class TestConfigHelpers(unittest.TestCase):
     """Test environment-variable-driven configuration helpers."""
 
@@ -55,15 +63,6 @@ class TestConfigHelpers(unittest.TestCase):
         """Missing variable yields None (infinite)."""
         self.assertIsNone(human_tool._get_default_timeout())
 
-    @patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT': '0'}, clear=False)
-    def test_allow_free_text_disabled_by_env(self):
-        """Env flag 0 disables free text by default."""
-        self.assertFalse(human_tool._get_allow_free_text_default())
-
-    @patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT': '1'}, clear=False)
-    def test_allow_free_text_enabled_by_env(self):
-        """Env flag 1 enables free text by default."""
-        self.assertTrue(human_tool._get_allow_free_text_default())
 
     @patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_MAX_ANSWER_LENGTH': '12345'}, clear=False)
     def test_max_answer_length_from_env(self):
@@ -106,24 +105,26 @@ class TestAnswerNormalization(unittest.TestCase):
 
     def test_validate_and_resolve_default_fallback_on_empty(self):
         """Empty answer falls back to default when provided."""
-        ans, idx = human_tool._validate_and_resolve('   ', ['a'], True, 'fallback')
+        ans, idx = human_tool._validate_and_resolve('   ', ['a'], 'fallback')
         self.assertEqual(ans, 'fallback')
         self.assertEqual(idx, -1)
 
     def test_validate_and_resolve_valid_option(self):
         """Valid option selection resolves to its text and index."""
-        ans, idx = human_tool._validate_and_resolve('2', ['x', 'y', 'z'], False, None)
+        ans, idx = human_tool._validate_and_resolve('2', ['x', 'y', 'z'], None)
         self.assertEqual(ans, 'z')
         self.assertEqual(idx, 2)
 
-    def test_validate_and_resolve_invalid_when_free_text_disabled_raises(self):
-        """Invalid option with free-text disabled raises ValueError."""
-        with self.assertRaises(ValueError):
-            human_tool._validate_and_resolve('bogus', ['x', 'y'], False, None)
+    def test_validate_and_resolve_unlisted_text_is_accepted(self):
+        """Unlisted text is always accepted as a custom answer."""
+        ans, idx = human_tool._validate_and_resolve('bogus', ['x', 'y'], None)
+        self.assertEqual(ans, 'bogus')
+        self.assertEqual(idx, -1)
+
 
     def test_validate_and_resolve_free_text_allowed(self):
         """Free-text answer accepted even when options exist."""
-        ans, idx = human_tool._validate_and_resolve('custom', ['x', 'y'], True, None)
+        ans, idx = human_tool._validate_and_resolve('custom', ['x', 'y'], None)
         self.assertEqual(ans, 'custom')
         self.assertEqual(idx, -1)
 
@@ -132,29 +133,23 @@ class TestPromptRendering(unittest.TestCase):
     """Test option-menu rendering."""
 
     @patch('topsailai.tools.human_tool._get_prompt_template', return_value='')
-    def test_free_text_prompt_accepts_direct_opinion(self, _mock_template):
-        """Free-text mode advertises direct opinion input without an extra option."""
-        prompt = human_tool._build_prompt('q', ['a', 'b'], True, None)
-        self.assertNotIn('Other (enter your own opinion)', prompt)
-        self.assertIn('[0..1] or your own opinion', prompt)
-        self.assertIn("'/cancel'", prompt)
-
-    @patch('topsailai.tools.human_tool._get_prompt_template', return_value='')
-    def test_strict_option_prompt_omits_own_opinion_hint(self, _mock_template):
-        """Strict option mode only advertises predefined choices."""
-        prompt = human_tool._build_prompt('q', ['a', 'b'], False, None)
-        self.assertNotIn('own opinion', prompt)
+    def test_options_prompt_always_offers_own_opinion(self, _mock_template):
+        """An options prompt always advertises free-text input."""
+        prompt = human_tool._build_prompt('q', ['a', 'b'], None)
+        self.assertIn('own opinion', prompt)
         self.assertIn('[0..1]', prompt)
         self.assertIn("'/cancel'", prompt)
 
-    @patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT': '0'}, clear=False)
-    @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(lambda p, t: '0', None))
-    def test_omitted_free_text_parameter_uses_environment(self, _mock_resolve):
-        """Omitted free-text setting honors the environment configuration."""
-        with patch('topsailai.tools.human_tool._build_prompt', wraps=human_tool._build_prompt) as mock_build:
+
+    @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(lambda p, t: 'custom', None))
+    def test_removed_environment_setting_has_no_effect(self, _mock_resolve):
+        """The removed environment setting cannot disable free-text answers."""
+        with patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT': '0'}, clear=False):
             result = human_tool.ask_decision('q', options=['Alpha'])
-        self.assertEqual(result['answer'], 'Alpha')
-        self.assertFalse(mock_build.call_args.args[2])
+        self.assertEqual(result['status'], 'answered')
+        self.assertEqual(result['answer'], 'custom')
+        self.assertEqual(result['option_index'], -1)
+
 
 
 class TestAskDecisionDegradation(unittest.TestCase):
@@ -225,6 +220,15 @@ class TestAskDecisionAnswered(unittest.TestCase):
         self.assertNotIn('asked_at_ms', result)
         self.assertNotIn('elapsed_ms', result)
 
+    @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
+    @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(lambda p, t: '   ', None))
+    def test_blank_answer_without_default_is_answered_empty(self, _mock_resolve, _mock_build):
+        """A blank reply without a default remains an answered empty string."""
+        result = human_tool.ask_decision('q')
+        self.assertEqual(result['status'], 'answered')
+        self.assertEqual(result['answer'], '')
+        self.assertEqual(result['option_index'], -1)
+
     @patch('topsailai.tools.human_tool.datetime')
     @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
     @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(lambda p, t: 'answer', None))
@@ -290,28 +294,22 @@ class TestAskDecisionAnswered(unittest.TestCase):
 
 
 class TestOptionValidationLoop(unittest.TestCase):
-    """Test strict reprompt loop when free-text is disabled."""
+    """Test option shortcuts and the removed compatibility input."""
 
-    @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
-    def test_reprompts_until_valid_option(self, mock_build):
-        """Invalid option with allow_free_text=0 reprompts until valid or cancel."""
-        answers = iter(['bogus', '1'])
-        fake_input = lambda p, t: next(answers)
-        with patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(fake_input, None)):
-            result = human_tool.ask_decision('q', options=['x', 'y'], allow_free_text=0)
-        self.assertEqual(result['status'], 'answered')
-        self.assertEqual(result['answer'], 'y')
-        self.assertEqual(result['option_index'], 1)
+    def test_removed_integer_zero_argument_raises_type_error(self):
+        """The removed parameter is not accepted for an integer zero value."""
+        with self.assertRaisesRegex(TypeError, "allow_free_text"):
+            human_tool.ask_decision('q', options=['x', 'y'], allow_free_text=0)
 
-    @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
-    def test_cancel_during_reprompt_is_cancelled(self, mock_build):
-        """The '/cancel' command during strict reprompt yields cancelled status."""
-        answers = iter(['bad', '/cancel'])
-        fake_input = lambda p, t: next(answers)
-        with patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(fake_input, None)):
-            result = human_tool.ask_decision('q', options=['x', 'y'], allow_free_text=0, default='dflt')
-        self.assertEqual(result['status'], 'cancelled')
-        self.assertEqual(result['answer'], 'dflt')
+    def test_removed_string_zero_argument_raises_type_error(self):
+        """The removed parameter is not accepted for a string zero value."""
+        with self.assertRaisesRegex(TypeError, "allow_free_text"):
+            human_tool.ask_decision('q', options=['x', 'y'], allow_free_text='0')
+
+    def test_removed_arbitrary_argument_raises_type_error(self):
+        """The removed parameter is not accepted for an arbitrary legacy value."""
+        with self.assertRaisesRegex(TypeError, "allow_free_text"):
+            human_tool.ask_decision('q', options=['x'], allow_free_text={'old': True})
 
     @patch('topsailai.tools.human_tool._get_max_answer_length', return_value=5)
     @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
@@ -354,7 +352,7 @@ class TestOptionValidationLoop(unittest.TestCase):
              patch('topsailai.tools.human_tool._resolve_input_funcs',
                    return_value=(lambda p, t: '1', None)):
             result = human_tool.ask_decision(
-                'q', options='["a", "b"]', allow_free_text='1', timeout_seconds='60'
+                'q', options='["a", "b"]', timeout_seconds='60'
             )
         self.assertEqual(result['status'], 'answered')
         self.assertEqual(result['answer'], 'b')
@@ -388,81 +386,19 @@ class TestOptionValidationLoop(unittest.TestCase):
         for value in ({'a': 1}, ('a', 'b'), 3):
             self.assertEqual(human_tool._resolve_options(value), (None, 'invalid_options'))
 
-    def test_string_flag_and_timeout_reach_prompt_and_input(self):
-        """Stringified 1/0 and numeric timeout keep integer/float semantics."""
+    def test_timeout_reaches_input_safely(self):
+        """Timeout coercion remains active while custom free text is accepted."""
         observed = []
         with patch('topsailai.tools.human_tool._resolve_input_funcs',
                    return_value=(lambda p, t: observed.append((p, t)) or 'free text', None)):
             result = human_tool.ask_decision(
-                'q', options=['a', 'b'], allow_free_text='1', timeout_seconds='60'
+                'q', options=['a', 'b'], timeout_seconds='60'
             )
         self.assertEqual(result['status'], 'answered')
+        self.assertEqual(result['answer'], 'free text')
         self.assertIn('or your own opinion', observed[0][0])
         self.assertEqual(observed[0][1], 60.0)
 
-    def test_string_zero_disables_free_text(self):
-        """allow_free_text '0' keeps strict option validation."""
-        answers = iter(['free text', '0'])
-        with patch('topsailai.tools.human_tool._build_prompt', return_value='prompt'), \
-             patch('topsailai.tools.human_tool._resolve_input_funcs',
-                   return_value=(lambda p, t: next(answers), None)):
-            result = human_tool.ask_decision('q', options=['a', 'b'], allow_free_text='0')
-        self.assertEqual(result['status'], 'answered')
-        self.assertEqual(result['answer'], 'a')
-        self.assertEqual(result['option_index'], 0)
-
-    def test_integer_allow_free_text_values_are_normalized(self):
-        """Only integer flags 1 and 0 or their string forms are accepted."""
-        for value, expected in ((1, True), (0, False), ('1', True), ('0', False), (' 1 ', True), ('00', False)):
-            self.assertEqual(human_tool._resolve_allow_free_text(value), (expected, None))
-        for value in (2, -1, '2', '-1'):
-            self.assertEqual(
-                human_tool._resolve_allow_free_text(value),
-                (None, "invalid_allow_free_text"),
-            )
-
-    def test_explicit_empty_allow_free_text_is_rejected(self):
-        """Explicit empty and null values are not valid integer flags."""
-        for value in ('', '   ', None):
-            self.assertEqual(
-                human_tool._resolve_allow_free_text(value),
-                (None, "invalid_allow_free_text"),
-            )
-
-    @patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT': '0'}, clear=False)
-    def test_omitted_allow_free_text_uses_environment_default(self):
-        """An omitted flag continues to use the environment default."""
-        result = human_tool.ask_decision('q')
-        self.assertNotEqual(result['status'], 'invalid_request')
-
-    def test_python_boolean_allow_free_text_is_rejected(self):
-        """Python booleans are not accepted as integer flags."""
-        self.assertEqual(
-            human_tool._resolve_allow_free_text(True),
-            (None, "invalid_allow_free_text"),
-        )
-        self.assertEqual(
-            human_tool._resolve_allow_free_text(False),
-            (None, "invalid_allow_free_text"),
-        )
-
-    def test_non_integer_allow_free_text_returns_invalid_request(self):
-        """Non-integer strings and floats return a structured validation failure."""
-        for value in ('maybe', 'true', 'yes', '1.3', 1.0, 0.0, []):
-            result = human_tool.ask_decision('q', allow_free_text=value)
-            self.assertEqual(result['status'], 'invalid_request')
-            self.assertEqual(result['reason'], 'invalid_allow_free_text')
-
-    @patch('topsailai.tools.human_tool._resolve_input_funcs')
-    def test_string_allow_free_text_reaches_prompt_as_bool(self, mock_resolve):
-        """A numeric string flag is applied to prompt rendering as a bool."""
-        observed = []
-        mock_resolve.return_value = (lambda p, t: observed.append(p) or 'yes', None)
-        result = human_tool.ask_decision(
-            'q', options=['a', 'b'], allow_free_text='1', default='dflt'
-        )
-        self.assertEqual(result['status'], 'answered')
-        self.assertIn('or your own opinion', observed[0])
 
     def test_numeric_timeout_strings_are_normalized(self):
         """Finite numeric timeout strings are parsed to floats."""
@@ -547,63 +483,6 @@ class TestTimeoutEnforcement(unittest.TestCase):
         self.assertEqual(result['answer'], 'dflt')
 
 
-class TestRepromptRobustness(unittest.TestCase):
-    """Cover retry budget exhaustion and consistent timeout mapping."""
-
-    @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
-    def test_reprompt_exhaustion_degrades_to_current_input(self, mock_build):
-        """After max_retries invalid inputs, accept current input instead of looping forever."""
-        answers = iter(['bad'] * 80)
-
-        def fake_input(_p, _t):
-            return next(answers)
-
-        with patch('topsailai.tools.human_tool._resolve_input_funcs',
-                   return_value=(fake_input, None)):
-            result = human_tool.ask_decision(
-                'q', options=['x', 'y'], allow_free_text=0
-            )
-        self.assertEqual(result['status'], 'answered')
-        self.assertEqual(result['answer'], 'bad')
-        self.assertEqual(result['option_index'], -1)
-
-    @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
-    def test_reprompt_timeouterror_maps_to_timeout(self, mock_build):
-        """A TimeoutError raised during reprompt yields status 'timeout' (consistent)."""
-        state = {'count': 0}
-
-        def flaky(_p, _t):
-            state['count'] += 1
-            if state['count'] == 1:
-                return 'bad'
-            raise TimeoutError()
-
-        with patch('topsailai.tools.human_tool._resolve_input_funcs',
-                   return_value=(flaky, None)):
-            result = human_tool.ask_decision(
-                'q', options=['x', 'y'], allow_free_text=0, default='dflt'
-            )
-        self.assertEqual(result['status'], 'timeout')
-        self.assertEqual(result['answer'], 'dflt')
-
-    @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
-    def test_reprompt_keyboard_interrupt_maps_to_cancelled(self, mock_build):
-        """A KeyboardInterrupt raised during reprompt yields status 'cancelled'."""
-        state = {'count': 0}
-
-        def flaky(_p, _t):
-            state['count'] += 1
-            if state['count'] == 1:
-                return 'bad'
-            raise KeyboardInterrupt()
-
-        with patch('topsailai.tools.human_tool._resolve_input_funcs',
-                   return_value=(flaky, None)):
-            result = human_tool.ask_decision(
-                'q', options=['x', 'y'], allow_free_text=0, default='dflt'
-            )
-        self.assertEqual(result['status'], 'cancelled')
-        self.assertEqual(result['answer'], 'dflt')
 
 
 if __name__ == '__main__':

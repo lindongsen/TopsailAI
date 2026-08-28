@@ -19,7 +19,6 @@ from topsailai.utils import env_tool, thread_local_tool
 from topsailai.context.ctx_safe import truncate_text
 
 
-_UNSET = object()
 
 
 # ---------------------------------------------------------------------------
@@ -37,12 +36,6 @@ def _get_default_timeout() -> float | None:
         return t if t > 0 else None
     except (TypeError, ValueError):
         return None
-
-
-def _get_allow_free_text_default() -> bool:
-    """Return default allow_free_text from TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT."""
-    return env_tool.is_true(os.getenv("TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT", "1"))
-
 
 def _get_max_answer_length() -> int:
     """Return max answer length from TOPSAILAI_HUMAN_DECISION_MAX_ANSWER_LENGTH."""
@@ -135,7 +128,6 @@ def _render_options(options: list[str]) -> str:
 def _build_prompt(
     question: str,
     options: list[str] | None,
-    allow_free_text: bool,
     default: str | None,
 ) -> str:
     """Build the full prompt string shown to the user."""
@@ -160,9 +152,7 @@ def _build_prompt(
     if default:
         suffix = f" (default: {default})"
     if display_options:
-        choice_hint = f"Enter your choice [0..{len(display_options)-1}]"
-        if allow_free_text:
-            choice_hint += " or your own opinion"
+        choice_hint = f"Enter your choice [0..{len(display_options)-1}] or your own opinion"
         parts.append(f"{choice_hint}, or type '/cancel' to abort{suffix}: ")
     else:
         parts.append(f"Your answer (type '/cancel' to abort){suffix}: ")
@@ -204,10 +194,9 @@ def _match_option(answer: str, options: list[str]) -> int:
 def _validate_and_resolve(
     raw: str,
     options: list[str] | None,
-    allow_free_text: bool,
     default: str | None,
 ) -> tuple[str, int]:
-    """Validate raw input against constraints.
+    """Resolve an answer while preserving optional option matching.
 
     Returns:
         tuple[str, int]: (answer, option_index)
@@ -219,33 +208,12 @@ def _validate_and_resolve(
         idx = _match_option(answer, options)
         if idx >= 0:
             return options[idx], idx
-        if not allow_free_text:
-            raise ValueError("Invalid option selected.")
     return answer, -1
 
 
 # ---------------------------------------------------------------------------
 # Core ask function
 # ---------------------------------------------------------------------------
-def _resolve_allow_free_text(value: int | str | None | object) -> tuple[bool | None, str | None]:
-    """Resolve an integer free-text flag or the private omitted-value sentinel."""
-    if value is _UNSET:
-        return _get_allow_free_text_default(), None
-    if value is None or isinstance(value, bool):
-        return None, "invalid_allow_free_text"
-    if isinstance(value, int):
-        if value not in (0, 1):
-            return None, "invalid_allow_free_text"
-        return value == 1, None
-    if not isinstance(value, str) or not value.strip():
-        return None, "invalid_allow_free_text"
-    try:
-        numeric = int(value.strip())
-    except (TypeError, ValueError):
-        return None, "invalid_allow_free_text"
-    if numeric not in (0, 1):
-        return None, "invalid_allow_free_text"
-    return numeric == 1, None
 
 
 def _resolve_timeout_seconds(value: float | str | None) -> tuple[float | None, str | None]:
@@ -286,31 +254,26 @@ def _resolve_options(value: list[str] | str | None) -> tuple[list[str] | None, s
 def _validate_request(
     question: str,
     options: list[str] | str | None,
-    allow_free_text: int | str | None,
     timeout_seconds: float | str | None,
     default: str | None,
-) -> tuple[str | None, list[str] | None, bool | None, float | None]:
+) -> tuple[str | None, list[str] | None, float | None]:
     """Validate arguments and return reason plus normalized runtime values."""
     if not isinstance(question, str) or not question.strip():
-        return "invalid_question", None, None, None
+        return "invalid_question", None, None
     effective_options, reason = _resolve_options(options)
     if reason is not None:
-        return reason, None, None, None
+        return reason, None, None
     if default is not None and not isinstance(default, str):
-        return "invalid_default", None, None, None
-    effective_allow_free_text, reason = _resolve_allow_free_text(allow_free_text)
-    if reason is not None:
-        return reason, None, None, None
+        return "invalid_default", None, None
     effective_timeout, reason = _resolve_timeout_seconds(timeout_seconds)
     if reason is not None:
-        return reason, None, None, None
-    return None, effective_options, effective_allow_free_text, effective_timeout
+        return reason, None, None
+    return None, effective_options, effective_timeout
 
 
 def ask_decision(
     question: str,
     options: list[str] | None = None,
-    allow_free_text: int | str | None = _UNSET,
     timeout_seconds: float | str | None = None,
     default: str | None = None,
 ) -> dict:
@@ -318,10 +281,9 @@ def ask_decision(
 
     Args:
         question: Required. The blocking question presented to the user.
-        options: Optional predefined choices, as a list or a JSON-array string; the user may pick an index or matching text.
-        allow_free_text (int): 1 accepts custom free-text answers, 0 restricts input to the options. Unset uses the environment default.
-        timeout_seconds: Max seconds to wait; a value <= 0 waits indefinitely; unset uses TOPSAILAI_HUMAN_DECISION_TIMEOUT.
-        default: Fallback answer used on timeout/no-input/cancellation.
+        options: Optional predefined choices, as a list or a JSON-array string; the user may pick an index or matching text, and custom free-text answers are always accepted.
+        timeout_seconds: Max seconds to wait; a value <= 0 waits indefinitely.
+        default: Fallback answer used on timeout/no-input/cancellation and for an empty answer.
 
     Returns:
         dict: status (answered|timeout|cancelled|unavailable|invalid_request), answer, option_index, elapsed, asked_at.
@@ -342,8 +304,8 @@ def ask_decision(
             result["reason"] = reason
         return result
 
-    invalid_reason, options, eff_allow_free_text, timeout_seconds = _validate_request(
-        question, options, allow_free_text, timeout_seconds, default
+    invalid_reason, options, timeout_seconds = _validate_request(
+        question, options, timeout_seconds, default
     )
     if invalid_reason is not None:
         return build_result("invalid_request", default, -1, invalid_reason)
@@ -358,7 +320,7 @@ def ask_decision(
         logger.info("[human_tool] No usable input source; returning unavailable.")
         return build_result("unavailable", default, -1)
 
-    prompt = _build_prompt(question, options, eff_allow_free_text, default)
+    prompt = _build_prompt(question, options, default)
 
     # Try reading input through available channels.
     raw_answer = None
@@ -387,45 +349,7 @@ def ask_decision(
     if ans_raw.lower() in _CANCEL_WORDS:
         return build_result("cancelled", default, -1)
 
-    # Option validation loop (strict reprompt when free text disabled).
-    max_retries = 5
-    attempts = 0
-    while True:
-        try:
-            final_answer, opt_idx = _validate_and_resolve(
-                ans_raw, options, eff_allow_free_text, default
-            )
-            break
-        except ValueError:
-            if not options:
-                break
-            if attempts >= max_retries:
-                # Retry budget exhausted; degrade to accepting current input.
-                final_answer, opt_idx = ans_raw, -1
-                break
-            attempts += 1
-            hint = (
-                f"Please enter a valid option [0..{len(options)-1}] "
-                f"(or '/cancel'): "
-            )
-            try:
-                if with_timeout:
-                    retry = with_timeout(hint, timeout_seconds)
-                elif plain:
-                    retry = _read_with_timeout(plain, timeout_seconds, hint)
-                else:
-                    retry = _read_with_timeout(input, timeout_seconds, hint)
-            except (KeyboardInterrupt, EOFError):
-                return build_result("cancelled", default, -1)
-            except TimeoutError:
-                return build_result("timeout", default, -1)
-            if retry is None:
-                # Deadline expired during reprompt; degrade to current input.
-                final_answer, opt_idx = ans_raw, -1
-                break
-            ans_raw = _normalize_answer(str(retry))
-            if ans_raw.lower() in _CANCEL_WORDS:
-                return build_result("cancelled", default, -1)
+    final_answer, opt_idx = _validate_and_resolve(ans_raw, options, default)
 
     # Truncate long answers.
     max_len = _get_max_answer_length()
@@ -454,9 +378,8 @@ structured human decision to continue. Typical situations:
 
 - Provide a clear, concise `question` describing exactly what blocks progress.
 - Use `options` to present discrete choices whenever possible. The user can
-  select by index number or matching text.
-- Pass `allow_free_text` as an integer: `1` accepts custom input, `0` restricts
-  input to the listed options.
+  select by index number, matching text, or provide a custom free-text answer.
+- Custom free-text answers are always accepted.
 - Enter `/cancel` to cancel and use the configured `default` fallback.
 - Pass `default` as a safe fallback when the user does not respond or cancels.
 - Set `timeout_seconds` explicitly when the task cannot afford to block
@@ -478,7 +401,7 @@ The tool ALWAYS returns a structured dictionary (never raises):
 
 Interpretation:
 
-- `answered`: User provided a valid response (`answer` holds it).
+- `answered`: User provided a response (`answer` holds it).
 - `timeout`: No response within the allowed window; `answer` holds `default`.
 - `cancelled`: User aborted (Ctrl+C/EOF/`/cancel`); `answer` holds `default`.
 - `unavailable`: No usable input channel, or a nested sub-agent cannot prompt;

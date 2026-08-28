@@ -194,6 +194,8 @@ def ask_human_with_scripted_answer_and_two_parameters(ctx, answer, first_param, 
 
 
 
+
+
 @when(parsers.parse('the guard tool {tool} is called with parameter {param} set to {value}'))
 def call_guard_with_parameter(ctx, tool, param, value):
     """One str-only tool receives one argument, possibly badly typed."""
@@ -270,6 +272,15 @@ def human_parameter_error(ctx, param):
     assert "unavailable" not in _answer_text(response), f"environment status leaked: {response}"
 
 
+@then(parsers.parse('the human decision call raises TypeError naming {param}'))
+def human_removed_parameter_type_error(ctx, param):
+    """A removed keyword is rejected explicitly without a compatibility layer."""
+    response = ctx["response"]
+    assert response["kind"] == "raised", f"expected a raise, got {response}"
+    assert response["exception"] == "TypeError", f"unexpected exception: {response}"
+    assert param.strip() in response["text"], f"parameter missing from exception: {response}"
+
+
 @then(parsers.parse('the human decision answer is the status {status}'))
 def human_status(ctx, status):
     """The whole status vocabulary is pinned, one literal at a time."""
@@ -329,27 +340,13 @@ def human_no_raw_exception(ctx):
         assert marker not in text, f"raw exception leaked: {text[:200]!r}"
 
 
-@then('the human decision answer is not answered from an unlisted reply')
-def human_not_answered_from_unlisted_reply(ctx):
-    """Desired contract: a reply outside the option list is not an answer.
-
-    With free text disabled the caller explicitly restricted the answer space, so
-    echoing the unlisted text back as ``answered`` would tell the model the
-    restriction was satisfied.
-    """
-    response = ctx["response"]
-    assert response["kind"] != "hang", f"call blocked: {response}"
-    echoed = response["kind"] == "dict" and response.get("status") == "answered" and (
-        response.get("answer") == "zzz"
-    )
-    assert not echoed, f"unlisted reply accepted as an answer: {response}"
-
 
 @then('the human decision answer reports no timeout')
 def human_no_timeout(ctx):
     """A converted timeout must never surface as a timeout status."""
     response = ctx["response"]
     assert response.get("status") != "timeout", f"unexpected timeout: {response}"
+
 
 
 # --------------------------------------------------------------------------- then: guard tools

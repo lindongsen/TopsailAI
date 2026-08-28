@@ -64,7 +64,7 @@ Design tool parameters **string-first**. When a parameter is declared as `int`/`
 
 ### Reference implementation
 
-`tools/human_tool.py` - `_resolve_options()`, `_validate_request()`, `_resolve_allow_free_text()`, `_resolve_timeout_seconds()`.
+`tools/human_tool.py` - `_resolve_options()`, `_validate_request()`, `_resolve_timeout_seconds()`.
 See `issues/done/issue-human-decision-input-source-detection-false-negative.md` for the full decision history.
 
 ### Known deviation

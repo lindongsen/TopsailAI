@@ -499,7 +499,6 @@ Older records that were written before the `pid` field was introduced may omit i
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOPSAILAI_HUMAN_DECISION_TIMEOUT` | `0` | Default max seconds to wait for a decision from the `ask_decision` tool. `0` = infinite, but only honored when an interactive TTY is present; otherwise returns `unavailable` immediately. Positive values cap the wait. |
-| `TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT` | `1` | Default value for `allow_free_text` when the argument is omitted. `1` = enabled. |
 | `TOPSAILAI_HUMAN_DECISION_PROMPT_TEMPLATE` | `""` | Optional custom prompt template with placeholders `{question}`, `{options}`, and `{default}`. Empty uses built-in rendering. |
 | `TOPSAILAI_HUMAN_DECISION_MAX_ANSWER_LENGTH` | `30000` | Maximum length of a free-text answer before truncation. |
 

@@ -1,10 +1,9 @@
 Feature: ask_decision keeps its string-first parameter contract
   ``human_tool.ask_decision`` is this project's reference implementation of the rule
   "tool parameters must assume string-typed LLM output": it decodes a JSON-array
-  string into options, accepts only the integer flags 1 and 0 for free text, and
-  requires a finite number for the wait budget. These scenarios lock that contract so
-  a later refactor cannot quietly reintroduce a truthy-string set, drop the finite
-  check, or disguise a bad argument as an environment problem.
+  string into options, always accepts free-text answers, and requires a finite number
+  for the wait budget. The removed ``allow_free_text`` argument is not accepted;
+  callers must use the always-enabled free-text behavior.
 
   Every call runs in a non-interactive process with no input channel, inside a worker
   thread with a hard ceiling, so no scenario can block waiting for a human.
@@ -49,62 +48,27 @@ Feature: ask_decision keeps its string-first parameter contract
       | empty   |
       | null    |
 
-  # ------------------------------------------------------- allow_free_text
+  # --------------------------------------------- removed allow_free_text
 
-  Scenario Outline: ask_decision accepts the integer free-text flag in any spelling
-    When the human decision tool is asked with parameters options set to ["yes","no"] and allow_free_text set to <flag>
-    Then the human decision answer is unavailable without rendering any prompt
-    And the human decision answer carries no raw exception text
+  Scenario Outline: ask_decision rejects every removed free-text flag spelling
+    The removed argument is not part of the tool contract and is not retained as a
+    backward-compatibility keyword.
 
-    Examples: integer flag spellings
-      | flag      |
-      | 1         |
-      | 0         |
-      | int:1     |
-      | int:0     |
-      | <sp>1<sp> |
-      | <sp>0<sp> |
+    When the human decision tool is asked with parameter allow_free_text set to <flag>
+    Then the human decision call raises TypeError naming allow_free_text
 
-  Scenario Outline: ask_decision refuses a truthy word instead of a free-text flag
-    This is the regression lock for the explicitly rejected truthy-string set: only
-    the integers 1 and 0 mean true and false, never a prose word.
-
-    When the human decision tool is asked with parameters options set to ["yes","no"] and allow_free_text set to <flag>
-    Then the human decision answer is a parameter error naming allow_free_text
-    And the human decision answer carries no raw exception text
-
-    Examples: prose and container values are not flags
+    Examples: removed legacy values
       | flag           |
+      | 1              |
+      | 0              |
+      | int:0          |
       | yes            |
       | true           |
-      | on             |
-      | 1.0            |
+      | 2              |
+      | empty          |
+      | null           |
       | raw:[1]        |
-
-  Scenario Outline: ask_decision rejects an explicit empty free-text flag
-    When the human decision tool is asked with parameters options set to ["yes","no"] and allow_free_text set to <flag>
-    Then the human decision answer is a parameter error naming allow_free_text
-    And the human decision answer carries no raw exception text
-
-    Examples: explicit empty values are not integer flags
-      | flag  |
-      | empty |
-      | null  |
-
-  Scenario Outline: ask_decision must reject a free-text flag outside 1 and 0
-    An out-of-range integer is a bad argument, not a flag, and must be reported the
-    same way a prose word is.
-
-    When the human decision tool is asked with parameters options set to ["yes","no"] and allow_free_text set to <flag>
-    Then the human decision answer is a parameter error naming allow_free_text
-    And the human decision answer carries no raw exception text
-
-    Examples: integers outside the accepted pair
-      | flag   |
-      | 2      |
-      | -1     |
-      | int:2  |
-      | int:-1 |
+      | raw:{"old":1}  |
 
   # ------------------------------------------------------- timeout_seconds
 
@@ -214,10 +178,11 @@ Feature: ask_decision keeps its string-first parameter contract
     Then the human decision answer is the status cancelled
     And the human decision answer keeps the default fallback
 
-  Scenario: ask_decision accepts free text when the caller allows it
-    When the human decision tool is asked with a scripted answer anything goes and parameters options set to ["yes","no"] and allow_free_text set to 1
+  Scenario: ask_decision always accepts free text alongside options
+    When the human decision tool is asked with a scripted answer anything goes and parameter options set to ["yes","no"]
     Then the human decision answer is answered from the scripted reply
     And the human decision answer equals anything goes
+    And the human decision answer selected option index -1
 
   Scenario: ask_decision accepts a plain reply when no options were offered
     When the human decision tool is asked with a scripted answer hello there and parameter options set to empty
@@ -229,10 +194,11 @@ Feature: ask_decision keeps its string-first parameter contract
     Then the human decision answer is answered from the scripted reply
     And the human decision answer equals fallback
 
-  @wip
-  Scenario: ask_decision must not report an unlisted reply as an answer
-    With free text disabled, a reply that matches no option is not an answer; reporting
-    it as ``answered`` teaches the model that the restriction was satisfied.
+  Scenario: ask_decision accepts an unlisted reply
+    Free-text input is always enabled, so the human's own answer remains authoritative.
 
-    When the human decision tool is asked with a scripted answer zzz and parameters options set to ["yes","no"] and allow_free_text set to 0
-    Then the human decision answer is not answered from an unlisted reply
+    When the human decision tool is asked with a scripted answer zzz and parameter options set to ["yes","no"]
+    Then the human decision answer is answered from the scripted reply
+    And the human decision answer equals zzz
+    And the human decision answer selected option index -1
+    And the human decision answer carries no raw exception text

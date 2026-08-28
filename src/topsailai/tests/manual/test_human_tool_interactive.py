@@ -38,7 +38,6 @@ def main():
         r = ask_decision(
             'Which deployment strategy should we use?',
             options=['blue-green', 'canary', 'rolling'],
-            allow_free_text=False,
             default='rolling',
         )
         print()

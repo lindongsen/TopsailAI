@@ -976,8 +976,6 @@ TOPSAILAI_LLM_MISTAKE_OUTPUT_MAX=1048576
 # present; otherwise the tool returns 'unavailable' immediately.
 TOPSAILAI_HUMAN_DECISION_TIMEOUT=0
 
-# Default value for allow_free_text when the argument is omitted. 1=enabled.
-TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT=1
 
 # Optional custom prompt template with placeholders {question}, {options},
 # and {default}. Empty uses built-in rendering.
