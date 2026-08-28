@@ -301,6 +301,31 @@ class TestLLMModelBase:
 
         return TestModel()
 
+    def test_parallel_tool_calls_enabled_preserves_sanitized_messages(
+            self, monkeypatch, request_model):
+        """Parallel-call configuration does not bypass request sanitization."""
+        monkeypatch.setenv("TOPSAILAI_USE_TOOL_CALLS", "1")
+        monkeypatch.setenv("TOPSAILAI_ENABLE_PARALLEL_TOOL_CALLS", "1")
+        owner = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "call_A", "function": {"name": "tool_a"}},
+                {"id": "call_B", "function": {"name": "tool_b"}},
+            ],
+        }
+        messages = [
+            {"role": "system", "content": "system"},
+            owner,
+            {"role": "tool", "content": "a", "tool_call_id": "call_A"},
+            {"role": "tool", "content": "b", "tool_call_id": "call_B"},
+        ]
+
+        params = request_model.build_parameters_for_chat(messages)
+
+        assert params["parallel_tool_calls"] is True
+        assert params["messages"] == messages
+
     def test_extra_body_unset_or_empty_leaves_params_unchanged(
             self, monkeypatch, request_model):
         """Unset or empty extra-body configuration should not alter parameters."""

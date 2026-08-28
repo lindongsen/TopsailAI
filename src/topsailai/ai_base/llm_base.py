@@ -21,13 +21,15 @@ _LLM_SERVICE_SPECIAL_RESPONSE_SLEEP_SECONDS = (
     5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97
 )
 
-# Case-insensitive markers of deterministic request-shape 400 errors, for example
-# an orphaned tool message whose assistant tool_calls message was removed. Such a
-# request fails identically on every retry, so retrying only wastes the retry budget.
-_LLM_NON_RETRYABLE_BAD_REQUEST_MARKERS = (
-    "no tool call found",
-    "function_call_output",
-    "tool_call_id",
+# Case-insensitive contextual rules for deterministic request-shape 400 errors.
+# Every phrase in one rule must match; generic protocol field names alone remain
+# retryable because a gateway may echo them while reporting a transient failure.
+_LLM_NON_RETRYABLE_BAD_REQUEST_RULES = (
+    ("no tool call found",),
+    ("function_call_output", "no matching function_call"),
+    ("function_call_output", "no function call found"),
+    ("tool_call_id", "not found"),
+    ("tool_call_id", "preceding message"),
 )
 
 from openai.types.chat import (
@@ -81,25 +83,27 @@ from .llm_control.base_class import (
 from .llm_hooks.executor import hook_execute
 
 def _match_non_retryable_bad_request(e_str: str) -> str:
-    """Return the first non-retryable request-shape marker found in the error text.
+    """Return the first non-retryable request-shape rule matching the error text.
 
-    ``TOPSAILAI_LLM_NON_RETRYABLE_BAD_REQUEST_MARKERS`` (``;``-separated) extends
-    the built-in markers so operators can adapt to other provider wordings without
-    a release; the built-in markers are always active.
+    Built-in contextual rules are always active. The semicolon-separated
+    ``TOPSAILAI_LLM_NON_RETRYABLE_BAD_REQUEST_MARKERS`` value adds optional
+    provider-specific substring markers without disabling the built-ins.
 
     Args:
-        e_str (str): Lowercased error text.
+        e_str (str): Provider error text.
 
     Returns:
-        str: The matched marker, or empty string when nothing matched.
+        str: The matched rule description or marker, or an empty string.
     """
-    markers = list(_LLM_NON_RETRYABLE_BAD_REQUEST_MARKERS)
+    e_str = str(e_str).lower()
+    for phrases in _LLM_NON_RETRYABLE_BAD_REQUEST_RULES:
+        if all(phrase in e_str for phrase in phrases):
+            return " + ".join(phrases)
+
     extra = env_tool.EnvReaderInstance.get_list_str(
         "TOPSAILAI_LLM_NON_RETRYABLE_BAD_REQUEST_MARKERS", separator=";"
     )
-    if extra:
-        markers.extend(extra)
-    for marker in markers:
+    for marker in extra or []:
         marker = str(marker).lower()
         if marker and marker in e_str:
             return marker

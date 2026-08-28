@@ -648,6 +648,37 @@ class TestCutMessages(unittest.TestCase):
         mock_logger.info.assert_called()
 
     @patch('topsailai.context.ctx_manager.logger')
+    def test_cut_messages_expands_tail_to_keep_tool_call_owner(self, mock_logger):
+        """A tail starting on a tool output pulls in its assistant owner."""
+        from topsailai.context.ctx_manager import cut_messages
+
+        owner = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "call_A", "function": {"name": "tool_a"}}],
+        }
+        output = {
+            "role": "tool",
+            "content": "result",
+            "tool_call_id": "call_A",
+        }
+        messages = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "old"},
+            owner,
+            output,
+            {"role": "user", "content": "tail"},
+        ]
+
+        result = cut_messages(messages, head_tail_offset=2)
+
+        self.assertEqual(result, messages[:2] + messages[3:])
+        self.assertIn(owner, result)
+        self.assertIn(output, result)
+        mock_logger.info.assert_called_once()
+
+    @patch('topsailai.context.ctx_manager.logger')
     def test_cut_messages_with_short_list(self, mock_logger):
         """Test cut_messages returns original list when short."""
         from topsailai.context.ctx_manager import cut_messages

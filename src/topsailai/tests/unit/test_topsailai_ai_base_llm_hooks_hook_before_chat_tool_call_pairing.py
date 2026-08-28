@@ -63,6 +63,40 @@ class TestToolCallPairingHook(unittest.TestCase):
         self.assertEqual(result[1]["tool_call_id"], "call_1")
 
     @patch.dict(os.environ, {"TOPSAILAI_USE_TOOL_CALLS": "1"}, clear=True)
+    def test_multiple_tool_calls_with_both_outputs_are_preserved(self):
+        """A complete parallel call group reaches the request unchanged."""
+        owner = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "call_A", "function": {"name": "tool_a"}},
+                {"id": "call_B", "function": {"name": "tool_b"}},
+            ],
+        }
+        messages = [
+            owner,
+            {"role": "tool", "content": "a", "tool_call_id": "call_A"},
+            {"role": "tool", "content": "b", "tool_call_id": "call_B"},
+        ]
+
+        self.assertEqual(hook_execute(messages), messages)
+
+    @patch.dict(os.environ, {"TOPSAILAI_USE_TOOL_CALLS": "1"}, clear=True)
+    def test_multiple_tool_calls_with_one_output_preserve_present_output(self):
+        """An unresolved sibling call does not make the present output an orphan."""
+        owner = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "call_A", "function": {"name": "tool_a"}},
+                {"id": "call_B", "function": {"name": "tool_b"}},
+            ],
+        }
+        present = {"role": "tool", "content": "a", "tool_call_id": "call_A"}
+
+        self.assertEqual(hook_execute([owner, present]), [owner, present])
+
+    @patch.dict(os.environ, {"TOPSAILAI_USE_TOOL_CALLS": "1"}, clear=True)
     def test_pydantic_object_tool_calls_are_recognized(self):
         """OpenAI SDK pydantic tool-call objects provide the valid ids."""
         messages = [
@@ -160,13 +194,26 @@ class TestToolCallPairingHook(unittest.TestCase):
         from topsailai.ai_base.llm_hooks.hook_before_chat import tool_call_pairing
 
         messages = [
-            {"role": "tool", "content": "orphan", "tool_call_id": "call_log_me"},
+            {
+                "role": "tool",
+                "content": "sensitive-result-must-not-be-logged",
+                "tool_call_id": "call_log_me",
+                "name": "safe_tool_name",
+            },
         ]
         mock_logger = MagicMock()
         with patch.object(tool_call_pairing, "logger", mock_logger):
             hook_execute(messages)
-        mock_logger.warning.assert_called_once()
-        self.assertIn("call_log_me", mock_logger.warning.call_args[0])
+        mock_logger.warning.assert_called_once_with(
+            "drop orphaned tool message: index=%s tool_call_id=%s name=%s",
+            0,
+            "call_log_me",
+            "safe_tool_name",
+        )
+        self.assertNotIn(
+            "sensitive-result-must-not-be-logged",
+            str(mock_logger.warning.call_args),
+        )
 
 
 class TestToolCallPairingHookRegistration(unittest.TestCase):

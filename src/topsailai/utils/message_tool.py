@@ -227,7 +227,7 @@ def drop_orphaned_tool_messages(messages: list, logger=None) -> list:
 
     valid_tool_call_ids = set()
     cleaned = []
-    for msg in messages:
+    for index, msg in enumerate(messages):
         role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
         if role == ROLE_ASSISTANT:
             valid_tool_call_ids.update(extract_tool_call_ids(msg))
@@ -238,9 +238,15 @@ def drop_orphaned_tool_messages(messages: list, logger=None) -> list:
             )
             if tool_call_id and tool_call_id not in valid_tool_call_ids:
                 if logger:
+                    tool_name = (
+                        msg.get("name") if isinstance(msg, dict)
+                        else getattr(msg, "name", None)
+                    )
                     logger.warning(
-                        "drop orphaned tool message: tool_call_id=%s",
+                        "drop orphaned tool message: index=%s tool_call_id=%s name=%s",
+                        index,
                         tool_call_id,
+                        tool_name or "",
                     )
                 continue
         cleaned.append(msg)

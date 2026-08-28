@@ -2119,6 +2119,59 @@ class TestLLMModelNonRetryableBadRequestError(unittest.TestCase):
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_generic_function_call_output_bad_request_still_retries(
+        self, mock_base_init, mock_logger, mock_format, mock_sleep
+    ):
+        """A generic function_call_output mention must not disable retries."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Recovered"
+        mock_format.return_value = ["recovered"]
+        model = self._create_mock_model()
+        model.model.create.side_effect = [
+            self._bad_request(
+                "Error code: 400 - transient gateway failure while parsing "
+                "function_call_output"
+            ),
+            mock_response,
+        ]
+
+        result = model.chat(self.messages)
+
+        self.assertEqual(result, ["recovered"])
+        self.assertEqual(model.model.create.call_count, 2)
+        self.assertTrue(mock_sleep)
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_generic_tool_call_id_bad_request_still_retries(
+        self, mock_base_init, mock_logger, mock_format, mock_sleep
+    ):
+        """A generic tool_call_id mention must not disable retries."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Recovered"
+        mock_format.return_value = ["recovered"]
+        model = self._create_mock_model()
+        model.model.create.side_effect = [
+            self._bad_request(
+                "Error code: 400 - transient gateway failure while validating tool_call_id"
+            ),
+            mock_response,
+        ]
+
+        result = model.chat(self.messages)
+
+        self.assertEqual(result, ["recovered"])
+        self.assertEqual(model.model.create.call_count, 2)
+        self.assertTrue(mock_sleep)
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_chat_generic_bad_request_still_retries(
         self, mock_base_init, mock_logger, mock_format, mock_sleep
     ):
@@ -2152,12 +2205,24 @@ class TestLLMModelNonRetryableBadRequestError(unittest.TestCase):
             "no tool call found",
         )
         self.assertEqual(
-            _match_non_retryable_bad_request("invalid function_call_output item"),
-            "function_call_output",
+            _match_non_retryable_bad_request(
+                "function_call_output has no matching function_call"
+            ),
+            "function_call_output + no matching function_call",
         )
         self.assertEqual(
-            _match_non_retryable_bad_request("missing tool_call_id here"),
-            "tool_call_id",
+            _match_non_retryable_bad_request(
+                "tool response must have a preceding message with tool_call_id"
+            ),
+            "tool_call_id + preceding message",
+        )
+        self.assertEqual(
+            _match_non_retryable_bad_request("invalid function_call_output item"),
+            "",
+        )
+        self.assertEqual(
+            _match_non_retryable_bad_request("invalid tool_call_id item"),
+            "",
         )
         self.assertEqual(_match_non_retryable_bad_request("totally unrelated"), "")
 

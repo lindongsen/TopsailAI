@@ -18,151 +18,77 @@ references:
 
 ## Status
 
-Open. These items came out of the third independent review (reviewer `gpt56sol-programmer`) of
-the orphan-tool-message 400 fix program. The reviewer's verdict was **GO-WITH-FOLLOW-UPS**: the
-program was committed as-is and the residual items are recorded here instead of delaying it.
+Open pending Human review and commit. Independent verification classified three items as real and one as partly real. Items 1–3 are fixed in the current unstaged working tree; Item 4 is partially fixed and retains a deferred representation-migration task.
 
-None of the items below blocks the committed fix. They are ordered by priority.
+The completed root-cause record remains [issue-agent2llm-summary-orphan-tool-message-400.md](./done/issue-agent2llm-summary-orphan-tool-message-400.md); its incident narrative is not duplicated here.
 
-## Background
+## Verification Verdicts
 
-The completed defect record lives in
-[issues/done/issue-agent2llm-summary-orphan-tool-message-400.md](./done/issue-agent2llm-summary-orphan-tool-message-400.md).
-Its symptom, root cause, evidence chain, fixes A-D, operational mitigation, and verification are
-not repeated here; read that file first for context.
+| Follow-up | Verdict | Current-code evidence | Status |
+|-----------|---------|-----------------------|--------|
+| Non-retryable 400 markers were too broad | REAL | The previous `_match_non_retryable_bad_request()` lowercased the whole `BadRequestError` string and applied `marker in message`; built-ins included the generic field names `function_call_output` and `tool_call_id`, so messages such as `Malformed function_call_output item` or `Temporary gateway validation failure for tool_call_id` fast-failed instead of retrying. | Fixed |
+| Direct multi-tool and end-to-end tests were missing | REAL | Test collection and source search found no request-boundary cases for two declared calls with both/one output, no pairing assertion under `TOPSAILAI_ENABLE_PARALLEL_TOOL_CALLS=1`, and no real summarization-to-request-builder regression. | Fixed |
+| Orphan-drop warning lacked bounded context | REAL | `drop_orphaned_tool_messages()` previously logged only `tool_call_id`; it omitted message index and tool name. | Fixed |
+| Residual session producers were not pair-aware | PARTLY-REAL | `cut_messages()` used a count-only tail slice and was safely fixable. Arbitrary `del_session_messages()` cannot reliably infer pairing because persisted `tool_calls` is a Python-stringified value. | Partially fixed; migration deferred |
 
-## Follow-Up: Non-Retryable 400 Markers Are Broader Than the Proven Provider Phrase
+## Fixed: Contextual Non-Retryable 400 Classification
 
-**Severity:** major (non-blocking)
+Built-in classification now uses contextual conjunction rules rather than treating generic protocol field names as sufficient by themselves:
 
-### Evidence
+- The proven incident phrase `no tool call found` still fails immediately.
+- `function_call_output` requires either `no matching function_call` or `no function call found`.
+- `tool_call_id` requires either `not found` or `preceding message`.
+- `TOPSAILAI_LLM_NON_RETRYABLE_BAD_REQUEST_MARKERS` remains a case-insensitive, semicolon-separated provider-extension mechanism. Configured substring rules extend and cannot disable the built-ins.
+- The extension default is now empty so the environment template does not re-enable the former broad field-name behavior.
 
-The built-in markers in `ai_base/llm_base.py:27-31` are:
+Positive tests retain first-attempt failure for `No tool call found for function call output with call_id fc_...` and contextual variants. Negative tests prove unrelated HTTP 400 text that merely mentions `function_call_output` or `tool_call_id` still follows the configured retry policy and can recover.
 
-| Marker | Specificity |
-|--------|-------------|
-| `no tool call found` | Specific — this is the exact proven provider wording |
-| `function_call_output` | Generic — a provider protocol item type |
-| `tool_call_id` | Generic — a provider protocol field name |
+## Fixed: Multi-Tool and End-to-End Regression Coverage
 
-`_match_non_retryable_bad_request()` at `ai_base/llm_base.py:83-106` performs case-insensitive
-**substring** matching over the whole `BadRequestError` string, so any 400 whose text merely
-mentions one of these names now raises on the first attempt.
+Permanent tests now cover:
 
-### Impact
+- one assistant declaration containing `call_A` and `call_B` with both outputs present;
+- the same declaration with only one output present, preserving the deliberate policy that unresolved trailing declarations are not dropped;
+- request construction with `TOPSAILAI_ENABLE_PARALLEL_TOOL_CALLS=1`, proving the API parameter does not bypass message sanitization;
+- real `summarize_messages_for_processing()` followed by real `build_parameters_for_chat()` and `format_messages()`, proving no orphaned tool result reaches the outgoing request.
 
-Deterministic request-shape errors such as `Invalid type for tool_call_id` or
-`Malformed function_call_output item` would fast-fail. That is arguably still correct, because the
-old retry loop re-sent a byte-identical payload and could not recover. The genuine risk is a
-gateway that mis-reports a transient provider-side failure as HTTP 400 while echoing one of these
-field names in the message: that case used to recover on retry and now would not.
+## Fixed: Bounded Orphan-Drop Warning Context
 
-Rate limiting normally returns HTTP 429 rather than 400, so a rate-limit message matching these
-markers is unlikely.
+The deletion warning now records message `index`, `tool_call_id`, and tool `name` when present. It deliberately excludes tool-result content because results can be large or sensitive. Tests assert the bounded fields and confirm result content is absent from logs.
 
-### Recommended Action
+## Partially Fixed: Session Producer Pairing
 
-- Replace the generic markers with complete known provider phrases, or require contextual
-  combinations, for example:
-  - `function_call_output` together with `no matching function_call`
-  - `tool_call_id` together with `not found` or `preceding message`
-- Add **negative** tests proving that unrelated or transient 400 text which merely contains a
-  generic field name still follows the normal retry policy. Today the positive cases are covered;
-  the negative boundary is not.
+`context/ctx_manager.py::cut_messages()` now expands the retained tail start through `expand_tail_start_for_tool_pairing()`, bounded by the retained head. Session load truncation therefore no longer starts with a tool result whose declaring assistant was cut away.
 
-## Follow-Up: Missing Direct Multi-Tool-Call Sanitizer Tests
+### Deferred: Arbitrary Persisted-Session Deletion
 
-**Severity:** minor
+`ContextRuntimeData.del_session_messages()`, `/ctx.del_msg`, and `tool_delete_messages_for_processed()` still delete the requested persisted-session indexes exactly. Pair-aware deletion is deferred because `context/chat_history_manager/__base.py` stores `tool_calls` with Python `str(...)`, not normalized JSON. Reusing the shared pairing helpers directly would silently provide incomplete behavior for historical and current persisted rows.
 
-### Evidence
+A complete follow-up must:
 
-The shared helpers handle multiple declarations correctly by construction — every ID declared by an
-assistant message is added to the declared set before later tool messages are evaluated
-(`utils/message_tool.py`) — and the existing tests cover the pieces separately:
+- persist `tool_calls` as normalized JSON;
+- load both normalized JSON and legacy Python-stringified rows safely;
+- define migration and malformed-row behavior;
+- add pair-aware deletion only after the representation is reliably parseable;
+- test deletion through both human instruction and agent-tool entry points.
 
-| Existing coverage | Test |
-|-------------------|------|
-| Multiple declared IDs | `test_multiple_ids_keep_declaration_order` |
-| Pruning a multi-call group | `test_tool_index_pulls_owner_and_sibling_replies`, `test_delete_tool_removes_owner_and_siblings` |
-| Hook removes an orphan | hook test module for `ai_base/llm_hooks/hook_before_chat/tool_call_pairing.py` |
+This is a representation migration rather than a small sanitizer fix and is deliberately not half-implemented here. Outgoing requests remain protected by pair-aware session-tail truncation, Agent2LLM session-import sanitization, and the default request-boundary sanitizer.
 
-What is missing at the **request boundary**:
+### Deferred: Configured Hook Merge Semantics
 
-1. One assistant declaring `call_A` and `call_B` with **both** outputs present — assert nothing is
-   dropped.
-2. One assistant declaring `call_A` and `call_B` with **only one** output present — assert the
-   present output is kept. This locks in the deliberate policy of not dropping trailing unresolved
-   tool calls.
-3. The `TOPSAILAI_ENABLE_PARALLEL_TOOL_CALLS=1` path. Note `parallel_tool_calls` only changes the
-   API request parameter (`ai_base/llm_control/base_class.py:301-305`) and does not affect message
-   sanitization, so this test is a guard against a future change coupling the two.
+Changing `TOPSAILAI_HOOK_BEFORE_LLM_CHAT` from replacement to append/merge semantics would alter a public configuration contract beyond this issue’s bounded fixes. It remains a separate design decision; operators who replace the default list must explicitly include the pairing hook.
 
-Also valuable: one permanent end-to-end regression test chaining the real
-`summarize_messages_for_processing()` into `build_parameters_for_chat()` / `format_messages()`. The
-third reviewer had to write that probe ad hoc to prove the incident path is closed end to end; a
-committed test would keep that proof alive.
+## Verification
 
-## Follow-Up: Orphan-Drop Warning Lacks Bounded Context
+Affected test files pass individually:
 
-**Severity:** minor
+| Test file | Result |
+|-----------|--------|
+| `tests/unit/test_topsailai_ai_base_llm_base.py` | 69 passed |
+| `tests/unit/test_topsailai_ai_base_llm_hooks_hook_before_chat_tool_call_pairing.py` | 18 passed |
+| `tests/unit/test_topsailai_utils_message_tool_pairing.py` | 35 passed |
+| `tests/unit/test_topsailai_ai_base_llm_control_base_class.py` | 42 passed |
+| `tests/unit/test_topsailai_context_ctx_manager.py` | 58 passed |
+| `tests/unit/test_topsailai_workspace_context_agent2llm.py` | 89 passed |
 
-### Evidence
-
-`utils/message_tool.py:239-244` logs only:
-
-```
-drop orphaned tool message: tool_call_id=<id>
-```
-
-This satisfies the project rule that every deletion is logged, and it would have surfaced the
-incident call id directly. It does not include the message index, the tool name, or which layer
-produced the orphan.
-
-### Recommended Action
-
-Add the message index and, when the field is present, the tool `name`. Do **not** log the tool
-result content: it can be arbitrarily large and may carry sensitive data. Keep any preview bounded
-and off by default if it is added at all.
-
-## Follow-Up: Residual Non-Pair-Aware Producers Rely on the Request-Boundary Safety Net
-
-**Severity:** minor
-
-### Evidence
-
-Two producers can still split a tool-call pair:
-
-| Producer | Location | Why it is not pair-aware |
-|----------|----------|--------------------------|
-| Session head/tail truncation on load | `context/ctx_manager.py:449-458` (`cut_messages()`), used by `workspace/agent/agent_chat_base.py:194-209`, team offset via `cli/team_agent.py:117-126` | Still a pure count-based `messages[:offset] + messages[-offset:]` |
-| `/ctx.del_msg` and `tool_delete_messages_for_processed()` | `workspace/context/instruction.py`, `workspace/context/agent_tool.py:43-59`, `workspace/context/ctx_runtime.py:160-209` | Routes to `ContextRuntimeData.del_session_messages()`, which deletes exactly the requested indexes |
-
-The session layer cannot currently detect pairing because it stores `tool_calls` stringified
-(`context/chat_history_manager/__base.py:299-303`).
-
-Both paths are covered by two safety nets: the sanitizer applied when session messages are copied
-into Agent2LLM (`workspace/context/agent.py:135-159`) and the default pre-chat hook applied to every
-outgoing request.
-
-### Impact
-
-The safety net disappears if an operator sets `TOPSAILAI_HOOK_BEFORE_LLM_CHAT`, because setting
-that variable **replaces** the default hook list and therefore removes the pairing sanitizer. This
-footgun is documented in `docs/Environment_Variables.md` and `env_template`, but it remains a
-configuration-reachable regression. Until the producers themselves are fixed, a persisted session
-can also stay internally inconsistent between rebuilds even though outgoing requests stay valid.
-
-### Recommended Action
-
-- Make `cut_messages()` pair-aware by reusing the shared helpers in `utils/message_tool.py`.
-- And/or normalize the persisted session `tool_calls` representation so session-layer pruning can
-  become pair-aware, which would also let `del_session_messages()` be fixed.
-- Consider appending the pairing sanitizer to a configured hook list instead of replacing the
-  defaults, so the safety net cannot be disabled by configuration.
-
-## Scope Note
-
-Deliberately not addressed in the committed change: each item above either changes behaviour beyond
-the defect's single logical change (marker strictness, hook-list merge semantics) or adds tests and
-log fields that were not required to close the incident. Recording them here keeps the committed
-diff minimal and the follow-ups traceable.
+The official runner `python tests/run_tests.py -w 4 --timeout 180` completed with `Total=206, Passed=206, Failed=0` in 161.981 seconds. Its log is `.tmp/fix_followups/run_tests.log`. No change in this issue is committed or staged.

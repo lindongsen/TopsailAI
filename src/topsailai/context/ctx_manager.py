@@ -14,6 +14,7 @@ from topsailai.logger import logger
 from topsailai.utils.format_tool import to_list
 from topsailai.utils import (
     env_tool,
+    message_tool,
     thread_local_tool,
 )
 
@@ -455,6 +456,11 @@ def cut_messages(messages:list, head_tail_offset:int=7) -> list:
     if head_tail_offset > 0:
         if len(messages) > (head_tail_offset*2):
             logger.info("cut messages: msg_len=[%s], head_tail_offset=[%s]", len(messages), head_tail_offset)
-            return messages[:head_tail_offset] + messages[-head_tail_offset:]
+            tail_start = message_tool.expand_tail_start_for_tool_pairing(
+                messages,
+                len(messages) - head_tail_offset,
+                min_start=head_tail_offset,
+            )
+            return messages[:head_tail_offset] + messages[tail_start:]
 
     return messages

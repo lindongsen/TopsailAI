@@ -1636,6 +1636,60 @@ class TestSummarizeTailWindowPairAtomic(TestContextRuntimeAgent2LLM):
         # Core invariant: no orphan tool message reaches the provider payload.
         self.assertEqual(self._orphan_tool_messages(final_messages), [])
 
+    def test_summarize_then_request_builder_sends_no_orphan(self):
+        """Real summary reconstruction and request formatting preserve pairing."""
+        from topsailai.ai_base.llm_control.base_class import LLMModelBase
+
+        class _RequestModel(LLMModelBase):
+            """Minimal concrete model exposing the real request builder."""
+
+            def get_model_name(self, default=""):
+                return "test-model"
+
+            def get_llm_model(self, api_key=None, api_base=None):
+                return MagicMock()
+
+            def get_response_message(self, response):
+                return MagicMock()
+
+            def chat(self, *args, **kwargs):
+                return None
+
+        messages = self._pair_fixture()
+        self.test_instance._ai_agent.messages = messages
+        self.test_instance._messages = [{"role": "user", "content": "human last"}]
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary pair"}
+        ]
+
+        with patch.dict(os.environ, {
+            "TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES": "0",
+            "TOPSAILAI_USE_TOOL_CALLS": "1",
+        }):
+            with patch.object(
+                self.test_instance,
+                "_summarize_messages",
+                return_value=(mock_llm_chat, "Summary pair"),
+            ), patch.object(
+                self.test_instance,
+                "_get_head_offset_to_keep_in_summary",
+                return_value=0,
+            ), patch.object(
+                self.test_instance,
+                "_get_tail_offset_to_keep_in_summary",
+                return_value=4,
+            ):
+                self.test_instance.summarize_messages_for_processing()
+            wire_messages = _RequestModel().build_parameters_for_chat(
+                self.test_instance._ai_agent.messages
+            )["messages"]
+
+        self.assertEqual(self._orphan_tool_messages(wire_messages), [])
+        contents = [m.get("content") for m in wire_messages]
+        self.assertIn("owner of the split pair", contents)
+        self.assertIn("tool result of the split pair", contents)
+
     def test_summarize_tail_window_expansion_is_bounded(self):
         """An expansion that would preserve everything skips summarization."""
         messages = self._pair_fixture()
