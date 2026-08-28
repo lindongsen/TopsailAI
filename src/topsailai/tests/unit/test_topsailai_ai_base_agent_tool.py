@@ -11,7 +11,6 @@ Author: mm-m25
 """
 
 import os
-import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -38,9 +37,10 @@ class TestAgentToolInit(unittest.TestCase):
         self.original_env = os.environ.get("TOPSAILAI_CHAT_INTERACTIVE_MODE")
         os.environ.pop("TOPSAILAI_CHAT_INTERACTIVE_MODE", None)
         
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
+    # No sys.modules purging on purpose: the classes under test read their
+    # environment variables during construction, so a fresh import is not
+    # needed, and clearing topsailai modules here leaks into sibling test
+    # modules that bind topsailai symbols at import time in the same process.
 
     def tearDown(self):
         """Restore environment after tests."""
@@ -106,9 +106,6 @@ class TestAgentToolAttributes(unittest.TestCase):
         self.original_env = os.environ.get("TOPSAILAI_CHAT_INTERACTIVE_MODE")
         os.environ.pop("TOPSAILAI_CHAT_INTERACTIVE_MODE", None)
         
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
 
     def tearDown(self):
         """Restore environment after tests."""
@@ -151,9 +148,6 @@ class TestAgentToolAllTools(unittest.TestCase):
         self.original_env = os.environ.get("TOPSAILAI_CHAT_INTERACTIVE_MODE")
         os.environ.pop("TOPSAILAI_CHAT_INTERACTIVE_MODE", None)
         
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
 
     def tearDown(self):
         """Restore environment after tests."""
@@ -185,9 +179,6 @@ class TestAgentToolRemoveTools(unittest.TestCase):
         self.original_env = os.environ.get("TOPSAILAI_CHAT_INTERACTIVE_MODE")
         os.environ.pop("TOPSAILAI_CHAT_INTERACTIVE_MODE", None)
         
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
 
     def tearDown(self):
         """Restore environment after tests."""
@@ -221,9 +212,6 @@ class TestAgentToolAddTool(unittest.TestCase):
         self.original_env = os.environ.get("TOPSAILAI_CHAT_INTERACTIVE_MODE")
         os.environ.pop("TOPSAILAI_CHAT_INTERACTIVE_MODE", None)
         
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
 
     def tearDown(self):
         """Restore environment after tests."""
@@ -267,9 +255,6 @@ class TestAgentToolAddTools(unittest.TestCase):
         self.original_env = os.environ.get("TOPSAILAI_CHAT_INTERACTIVE_MODE")
         os.environ.pop("TOPSAILAI_CHAT_INTERACTIVE_MODE", None)
         
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
 
     def tearDown(self):
         """Restore environment after tests."""
@@ -304,9 +289,6 @@ class TestAgentToolGenerateToolPrompt(unittest.TestCase):
         self.original_env = os.environ.get("TOPSAILAI_CHAT_INTERACTIVE_MODE")
         os.environ.pop("TOPSAILAI_CHAT_INTERACTIVE_MODE", None)
         
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
 
     def tearDown(self):
         """Restore environment after tests."""
@@ -340,9 +322,6 @@ class TestAgentToolReloadToolPrompt(unittest.TestCase):
         self.original_env = os.environ.get("TOPSAILAI_CHAT_INTERACTIVE_MODE")
         os.environ.pop("TOPSAILAI_CHAT_INTERACTIVE_MODE", None)
         
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
 
     def tearDown(self):
         """Restore environment after tests."""

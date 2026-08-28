@@ -29,6 +29,9 @@ import sys
 import _import_topsailai
 
 os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
+from topsailai.ai_base.constants import (
+    AGENT_ROLE_MANAGER,
+)
 from topsailai.workspace.agent_shell import get_agent_chat
 
 
@@ -55,7 +58,7 @@ def main():
         - User can exit by typing 'exit', 'quit', or Ctrl+C
     """
     """ main entry """
-    get_agent_chat(disabled_tools=["agent_tool"]).run()
+    get_agent_chat(disabled_tools=["agent_tool"], agent_role=AGENT_ROLE_MANAGER).run()
 
 if __name__ == "__main__":
     main()

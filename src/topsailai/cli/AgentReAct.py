@@ -221,6 +221,9 @@ def get_params():
     if params["flag_dump_messages"]:
         PromptBase.flag_dump_messages = True
 
+    if params["task"]:
+        params["task"] = params["task"].strip()
+
     return params
 
 

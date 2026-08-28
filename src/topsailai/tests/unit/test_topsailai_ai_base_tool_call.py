@@ -11,7 +11,6 @@ Author: mm-m25
 """
 
 import os
-import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -73,10 +72,10 @@ class TestStepCallBaseInit(unittest.TestCase):
         self.original_env = os.environ.get("TOPSAILAI_CHAT_INTERACTIVE_MODE")
         os.environ.pop("TOPSAILAI_CHAT_INTERACTIVE_MODE", None)
         
-        # Clear module cache
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
+    # No sys.modules purging on purpose: the classes under test read their
+    # environment variables during construction, so a fresh import is not
+    # needed, and clearing topsailai modules here leaks into sibling test
+    # modules that bind topsailai symbols at import time in the same process.
 
     def tearDown(self):
         """Restore environment after tests."""
@@ -99,10 +98,6 @@ class TestStepCallBaseInit(unittest.TestCase):
         # Set env var to enable interactive mode
         os.environ["TOPSAILAI_CHAT_INTERACTIVE_MODE"] = "true"
         
-        # Clear module cache to force re-import with new env
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
         
         step_call = StepCallBase()
         self.assertTrue(step_call.flag_interactive)
@@ -126,9 +121,6 @@ class TestStepCallBaseReset(unittest.TestCase):
         self.original_env = os.environ.get("TOPSAILAI_CHAT_INTERACTIVE_MODE")
         os.environ.pop("TOPSAILAI_CHAT_INTERACTIVE_MODE", None)
         
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
 
     def tearDown(self):
         """Restore environment after tests."""
@@ -166,9 +158,6 @@ class TestGetToolCallInfo(unittest.TestCase):
         self.original_env = os.environ.get("TOPSAILAI_CHAT_INTERACTIVE_MODE")
         os.environ.pop("TOPSAILAI_CHAT_INTERACTIVE_MODE", None)
         
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
 
     def tearDown(self):
         """Restore environment after tests."""
@@ -259,9 +248,6 @@ class TestStepCallBaseExecute(unittest.TestCase):
         self.original_env = os.environ.get("TOPSAILAI_CHAT_INTERACTIVE_MODE")
         os.environ.pop("TOPSAILAI_CHAT_INTERACTIVE_MODE", None)
         
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
 
     def tearDown(self):
         """Restore environment after tests."""

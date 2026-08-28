@@ -153,3 +153,7 @@ Added `TOPSAILAI_ARCHIVE_MESSAGE_ENABLED` (default `1`) to let operators disable
 ## Dynamic Model Context Window Guard
 
 Added a dynamic model context window guard that anticipates request overflow from each model's configured maximum context before ordinary LLM calls: it derives `send_limit` and `summary_safe_limit`, dynamically recalculates model and output-token budgets, and classifies usage in `HARD -> HIGH -> LOW -> NORMAL` order so LOW summarizes normally at the current checkpoint, HIGH forces summarization, and HARD blocks the request with `ContextWindowLimitError` when compression cannot restore safety. The guard is configured through `TOPSAILAI_MODEL_MAX_CONTEXT_*` and `TOPSAILAI_CONTEXT_*` environment variables, while the existing fixed-threshold behavior remains unchanged when no dynamic model limit is configured.
+
+## Manager Agent Role for Interactive Entry Points
+
+The `topsailai_agent_chats` (`cli/agent_chats.py`) and `topsailai_team` (`cli/ai_team.py`) entry points now pass `agent_role=AGENT_ROLE_MANAGER` explicitly to `get_agent_chat`, so the interactive agent and the team manager are recorded as role `manager` in session metadata and receive manager-scoped role-gated context rules instead of depending on `TOPSAILAI_AGENT_ROLE`. Member entry points (`topsailai_team_agent`, `topsailai_team_chat`) keep the previous `worker` default, and both entry points still disable `agent_tool`.

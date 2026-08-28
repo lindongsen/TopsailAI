@@ -10,7 +10,6 @@ Author: mm-m25
 """
 
 import os
-import sys
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -37,10 +36,10 @@ class TestThresholdContextHistory(unittest.TestCase):
 
     def tearDown(self):
         """Restore original environment variables after each test."""
-        # Clear module cache FIRST to ensure fresh imports
-        modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
+        # No sys.modules purging on purpose: the classes under test read their
+        # environment variables during construction, so a fresh import is not
+        # needed, and clearing topsailai modules here leaks into sibling test
+        # modules that bind topsailai symbols at import time in the same process.
         
         # Restore original env vars
         for var, original_value in self.original_env.items():
@@ -57,10 +56,6 @@ class TestThresholdContextHistory(unittest.TestCase):
         original_len = os.environ.pop("CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH", None)
         original_uncached = os.environ.pop("CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS", None)
         try:
-            # Clear module cache to force re-import
-            modules_to_clear = [k for k in sys.modules.keys() if k.startswith("topsailai")]
-            for mod in modules_to_clear:
-                del sys.modules[mod]
             
             # Re-import after clearing env vars
             from topsailai.ai_base.prompt_base import ThresholdContextHistory
@@ -81,8 +76,6 @@ class TestThresholdContextHistory(unittest.TestCase):
     def test_init_env_override_uncached_token_max(self):
         """Test that CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS env var overrides uncached_token_max."""
         os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_UNCACHED_TOKENS"] = "50000"
-        if "topsailai.ai_base.prompt_base" in sys.modules:
-            del sys.modules["topsailai.ai_base.prompt_base"]
 
         from topsailai.ai_base.prompt_base import ThresholdContextHistory
         instance = ThresholdContextHistory()
@@ -92,8 +85,6 @@ class TestThresholdContextHistory(unittest.TestCase):
     def test_init_env_override_token_max(self):
         """Test that CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS env var overrides token_max."""
         os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_TOKENS"] = "640000"
-        if "topsailai.ai_base.prompt_base" in sys.modules:
-            del sys.modules["topsailai.ai_base.prompt_base"]
 
         from topsailai.ai_base.prompt_base import ThresholdContextHistory
         instance = ThresholdContextHistory()
@@ -103,8 +94,6 @@ class TestThresholdContextHistory(unittest.TestCase):
     def test_init_env_override_slim_len(self):
         """Test that CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH env var overrides slim_len."""
         os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH"] = "50"
-        if "topsailai.ai_base.prompt_base" in sys.modules:
-            del sys.modules["topsailai.ai_base.prompt_base"]
 
         from topsailai.ai_base.prompt_base import ThresholdContextHistory
         instance = ThresholdContextHistory()
@@ -190,8 +179,6 @@ class TestThresholdContextHistory(unittest.TestCase):
     def test_exceed_msg_len_with_small_slim_len(self):
         """Test exceed_msg_len uses SLIM_MIN_LEN when slim_len is smaller."""
         os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH"] = "10"
-        if "topsailai.ai_base.prompt_base" in sys.modules:
-            del sys.modules["topsailai.ai_base.prompt_base"]
 
         from topsailai.ai_base.prompt_base import ThresholdContextHistory
         instance = ThresholdContextHistory()
@@ -204,8 +191,6 @@ class TestThresholdContextHistory(unittest.TestCase):
     def test_exceed_msg_len_with_small_slim_len_false(self):
         """Test exceed_msg_len returns False when msg_len is below max threshold."""
         os.environ["CONTEXT_MESSAGES_SLIM_THRESHOLD_LENGTH"] = "10"
-        if "topsailai.ai_base.prompt_base" in sys.modules:
-            del sys.modules["topsailai.ai_base.prompt_base"]
 
         from topsailai.ai_base.prompt_base import ThresholdContextHistory
         instance = ThresholdContextHistory()

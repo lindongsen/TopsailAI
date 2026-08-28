@@ -68,8 +68,40 @@ topsailai_launch_agent
 | `--dry-run` | Print the resolved command, working directory, and merged environment variables without executing. |
 | `--subprocess` | Use `subprocess.run()` instead of `os.system()` (default). |
 | `--setup` | Force the guided interactive setup to create `.topsailai/settings.yaml` when it is missing. |
-| `--scan <folder>` | Scan the specified folder and print its tree structure, then exit. Reuses the same ignore rules and formatting as the workspace scan. |
+| `--scan <folder>` | Scan the specified folder and print its tree structure, then exit. Reuses the same ignore rules and formatting as the workspace scan. Only folders are listed unless files are explicitly requested. |
+| `--include-files` | Also list files in the scanned tree (both `--scan` output and the folder tree appended to `TOPSAILAI_CONTEXT_USER_MESSAGE`). Overrides `TOPSAILAI_SCAN_INCLUDE_FILES`. |
+| `--folders-only` | List folders only, suppressing files. This is the default behavior; the flag is provided to override `TOPSAILAI_SCAN_INCLUDE_FILES`. Mutually exclusive with `--include-files`. |
 | `--exclude <names>` | Ignore these file or folder names while scanning. Accepts comma-separated names with fnmatch wildcards (for example `build,dist,*.log`). May be repeated. Merged with `TOPSAILAI_SCAN_EXCLUDE`. |
+
+## Scan Mode (Folders Only vs. Files)
+
+The scan lists folders only by default, for both the `--scan` output and the workspace folder tree appended to
+`TOPSAILAI_CONTEXT_USER_MESSAGE`. Files are omitted from the tree, which keeps the first-turn context small on large
+repositories while still showing the directory layout the agent can navigate.
+
+Pass `--include-files` to list files as well:
+
+```bash
+# Folders only (default)
+topsailai_launch_agent --scan ./src/topsailai/cli
+
+# Folders and files
+topsailai_launch_agent --scan ./src/topsailai/cli --include-files
+topsailai_launch_agent --include-files
+```
+
+`--folders-only` forces the folders-only mode and takes precedence over an enabling environment variable. The two flags
+are mutually exclusive.
+
+Precedence:
+
+1. `--include-files` or `--folders-only` on the command line.
+2. `TOPSAILAI_SCAN_INCLUDE_FILES` from the merged environment (selected item, then base `_`, then the OS environment).
+3. Folders only.
+
+A symlinked folder stays visible as a leaf entry in folders-only mode (it is not descended into); a symlinked file is
+hidden like any other file. Hidden names, `.gitignore` rules, and the exclusion filters described below apply unchanged
+in both modes.
 
 ## Scanning a Folder
 
@@ -80,7 +112,7 @@ Use `--scan <folder>` to preview the folder tree that would be generated for a g
 topsailai_launch_agent --scan ./src/topsailai/cli
 ```
 
-The output uses the same ignore rules and tree formatting as the workspace scan appended to `TOPSAILAI_CONTEXT_USER_MESSAGE`. Hidden files and directories are excluded, and `.gitignore` patterns are respected. Add `--exclude <names>` to ignore extra file or folder names for a single run (see "Command-Line Exclusions").
+The output uses the same ignore rules and tree formatting as the workspace scan appended to `TOPSAILAI_CONTEXT_USER_MESSAGE`, including the folders-only default (see "Scan Mode (Folders Only vs. Files)"). Hidden files and directories are excluded, and `.gitignore` patterns are respected. Add `--include-files` to list files as well, and `--exclude <names>` to ignore extra file or folder names for a single run (see "Command-Line Exclusions"). The tree is also bounded by the same `TOPSAILAI_SCAN_MAX_TOKENS` budget (see "Folder Tree Token Budget").
 
 ## Environment Variables
 
@@ -92,6 +124,8 @@ The variables below are consumed only by `topsailai_launch_agent`. They are inte
 | `TOPSAILAI_SCAN_EXCLUDE` | both files and directories | comma-separated names, fnmatch wildcards | unset (filter disabled) | `node_modules,.cache,tmp` |
 | `TOPSAILAI_SCAN_EXCLUDE_DIRS` | directory names only | comma-separated names, fnmatch wildcards | unset (filter disabled) | `vendor,build,dist` |
 | `TOPSAILAI_SCAN_EXCLUDE_FILES` | file names only | comma-separated names, fnmatch wildcards | unset (filter disabled) | `*.log,*.tmp,Makefile` |
+| `TOPSAILAI_SCAN_MAX_TOKENS` | size of the scanned folder tree | integer | `20000` | `5000` |
+| `TOPSAILAI_SCAN_INCLUDE_FILES` | whether the scanned folder tree lists files | boolean-like string (`1`/`true`/`yes`/`on`, `0`/`false`/`no`/`off`) | unset (folders only) | `true` |
 | `TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS` | stale-file cleanup in `{workspace}/.tmp/` on launch | float greater than zero | `1` | `0.5` |
 
 ### Scan Exclusion Filters
@@ -122,6 +156,28 @@ self_environs:
   TOPSAILAI_SCAN_EXCLUDE_DIRS: "vendor,dist"
 ```
 
+### Scan File Inclusion
+
+`TOPSAILAI_SCAN_INCLUDE_FILES` controls whether the scanned folder tree lists files or only folders. It applies to the
+tree appended to `TOPSAILAI_CONTEXT_USER_MESSAGE` and to the tree printed by `--scan`.
+
+- Unset, empty, or any falsy value (`0`, `false`, `no`, `n`, `off`) keeps the default folders-only tree.
+- `1`, `true`, `yes`, `y`, `on` (case-insensitive) list files together with folders.
+- Any other value prints a warning to stderr and falls back to the folders-only default.
+- `--include-files` / `--folders-only` on the command line always take precedence over this variable.
+
+```bash
+# List files as well as folders
+export TOPSAILAI_SCAN_INCLUDE_FILES=true
+```
+
+It can also be seeded from `.topsailai/settings.yaml` through `self_environs`:
+
+```yaml
+self_environs:
+  TOPSAILAI_SCAN_INCLUDE_FILES: "true"
+```
+
 ### Command-Line Exclusions
 
 `--exclude <names>` is the command-line counterpart of `TOPSAILAI_SCAN_EXCLUDE`. It applies to both the workspace folder
@@ -143,6 +199,42 @@ topsailai_launch_agent --exclude node_modules --exclude "*.tmp"
 # Preview the resulting tree before launching
 topsailai_launch_agent --scan ./src/topsailai/cli --exclude "tests,*.md"
 ```
+
+### Folder Tree Token Budget
+
+`TOPSAILAI_SCAN_MAX_TOKENS` bounds the size of the scanned workspace folder tree, which is the largest single contributor
+to the agent's first-turn context. It applies to the tree appended to `TOPSAILAI_CONTEXT_USER_MESSAGE` and to the tree
+printed by `--scan`.
+
+- Default is `20000` tokens. Set it to `0` or a negative value to scan without any limit.
+- When the value is unset, empty, or not an integer, the launcher prints a warning to stderr and uses the default.
+- Tokens are counted with the project tokenizer (`cl100k_base`). If that tokenizer is unavailable, a character-based
+  estimate of about four characters per token is used instead, so scanning never fails.
+- The budget is charged one complete line at a time, so every listed folder and file name is always whole; a name is
+  never cut in half.
+- As soon as the next entry would exceed the budget, scanning stops there. No deeper folder is visited and no further
+  sibling is listed, so the tree is a prefix of the full scan rather than a sparse sample.
+- In the default folders-only mode, fewer lines are emitted, so the same budget reaches deeper into the tree. Raise the
+  budget or use `--include-files` deliberately when the agent needs file names.
+- When both the workspace and an external project folder are scanned, the two trees share one budget.
+- The `> <root>` header and the `.` root marker are always kept so the tree stays attributable, even if they alone
+  exceed a very small budget.
+- Truncation is reported twice: a `[TopsailAI-Launcher] Warning: ...` line on stderr and a trailing
+  `[... folder tree truncated at N tokens ...]` line inside the tree itself.
+
+```bash
+# Keep the folder tree small on a large repository
+TOPSAILAI_SCAN_MAX_TOKENS=5000 topsailai_launch_agent
+
+# Restore the previous unlimited behavior
+TOPSAILAI_SCAN_MAX_TOKENS=0 topsailai_launch_agent
+
+# Preview how much of the tree survives a budget
+TOPSAILAI_SCAN_MAX_TOKENS=5000 topsailai_launch_agent --scan ./src/topsailai/cli
+```
+
+Prefer narrowing the scan with `TOPSAILAI_SCAN_EXCLUDE*`, `--exclude`, or `TOPSAILAI_PROJECT_FOLDER` over raising the
+budget, so the retained entries stay the most relevant part of the tree.
 
 ### Stale `.tmp/` Cleanup Threshold
 
@@ -262,6 +354,7 @@ topsailai_launch_agent --scan ./src/topsailai/cli
 - On launch, the launcher clears stale files in `{workspace}/.tmp/`. Only files older than the configured age threshold are removed; fresher files are preserved so ongoing work is not lost on relaunch. Empty subdirectories left behind are pruned and the `.tmp/` directory is recreated if missing. See `TOPSAILAI_TMP_CLEANUP_MAX_AGE_DAYS` under "Environment Variables".
 - The launcher changes to the configured `workspace` before running the driver.
 - In `--dry-run` mode, command context sources are listed but not executed.
+- In `--dry-run` mode, the launcher prints `[TopsailAI-Launcher] Context token count: N` for the assembled context message. The count is informational only; when it cannot be computed the launcher prints a warning and continues. Use it to check how much of the first-turn context the folder tree consumes before raising `TOPSAILAI_SCAN_MAX_TOKENS`.
 
 ### Self Environs (Initial Settings)
 

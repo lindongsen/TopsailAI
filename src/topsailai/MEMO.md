@@ -45,21 +45,9 @@ For implementation details, environment variables, and coding conventions, refer
 
 ## MEMO: `features/90ai-added.md` Is Only for Important Features
 
-**Date:** 2026-08-27
+The full rule lives in [docs/Documentation_Conventions.md](./docs/Documentation_Conventions.md) — section "`features/90ai-added.md` Is Only for Important Features".
 
-### Rule
-
-Only **important** features are recorded in `features/90ai-added.md`. A small or incremental addition (for example a single `/` instruction, a new environment variable, or a minor display/option tweak) must NOT be appended there, even though the general project convention says to document autonomously implemented capabilities.
-
-### Required documentation for a minor change
-
-- Source code plus unit tests.
-- `docs/Environment_Variables.md` when an environment variable is added or its semantics change (factual document, always synced).
-- The relevant `readme.md` / `MEMO.*.md` table or section when the change alters module behavior or the instruction list.
-
-### Note for maintainers
-
-When unsure whether a change qualifies as "important", prefer not writing to `features/90ai-added.md` and mention the omission in the final answer; the human can request an entry explicitly. This supersedes the blanket "record every autonomously implemented feature" instruction for low-significance changes.
+Summary: only important features are recorded there; minor changes go to source plus unit tests, `docs/Environment_Variables.md`, and the relevant `readme.md` / `MEMO.*.md` section instead.
 
 ## MEMO: Tool Parameter Types Must Assume String-Typed LLM Output
 
@@ -68,3 +56,17 @@ When unsure whether a change qualifies as "important", prefer not writing to `fe
 The full rule lives in [tools/readme.md](./tools/readme.md) — section "Tool Parameter Types Must Assume String-Typed LLM Output".
 
 Summary: LLM response content is non-deterministic, so tool parameters are designed **string-first**; declared `int`/`float` parameters must be converted at runtime and declared `list`/`dict` parameters must attempt `json.loads`, because an argument may arrive as a string. Conversion failures return a machine-readable parameter-error status instead of being disguised as a business status.
+
+## MEMO: BDD Tests for LLM-Related Capabilities Must Drive `llm_mock_server`
+
+**Date:** 2026-08-27
+
+The full rule lives in [tests/bdd.md](./tests/bdd.md) — section "BDD Tests for LLM-Related Capabilities Must Drive `llm_mock_server`".
+
+Summary: any BDD scenario that involves a real LLM interaction must drive `tests/mock/llm_mock_server.py` over the real HTTP/SSE protocol instead of stubbing internal functions, so the client, transport, and parsing layers stay inside the assertion boundary; assert server-side request counts and request bodies, never contact a real external endpoint, and close the scenario's own server and thread in teardown.
+
+## MEMO: `MEMO.md` Is Index Only
+
+The full rule lives in [docs/Documentation_Conventions.md](./docs/Documentation_Conventions.md) — section "`MEMO.md` Is Index Only".
+
+Summary: `MEMO.md` is injected into the agent context, so each entry is only a heading, a relative link to the owning document, and one summary sentence; write the detail in the owning document first, then link here.

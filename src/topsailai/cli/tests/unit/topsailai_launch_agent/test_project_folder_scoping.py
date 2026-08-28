@@ -70,7 +70,7 @@ class TestProjectFolderScoping(unittest.TestCase):
 
             captured = {}
 
-            def fake_scan(workspace, project_folder=None, exclude_names=None):
+            def fake_scan(workspace, project_folder=None, exclude_names=None, include_files=None):
                 captured["workspace"] = workspace
                 captured["project_folder"] = project_folder
                 return "fake-tree"
@@ -90,7 +90,7 @@ class TestProjectFolderScoping(unittest.TestCase):
 
             captured = {}
 
-            def fake_scan(workspace, project_folder=None, exclude_names=None):
+            def fake_scan(workspace, project_folder=None, exclude_names=None, include_files=None):
                 captured["workspace"] = workspace
                 captured["project_folder"] = project_folder
                 return "fake-tree"
@@ -111,7 +111,7 @@ class TestProjectFolderScoping(unittest.TestCase):
 
             captured = {}
 
-            def fake_scan(workspace, project_folder=None, exclude_names=None):
+            def fake_scan(workspace, project_folder=None, exclude_names=None, include_files=None):
                 captured["workspace"] = workspace
                 captured["project_folder"] = project_folder
                 return "fake-tree"
