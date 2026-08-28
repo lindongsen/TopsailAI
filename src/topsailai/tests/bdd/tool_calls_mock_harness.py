@@ -20,6 +20,7 @@ from topsailai.context.chat_history_manager.__base import ChatHistoryMessageData
 from topsailai.context.chat_history_manager.sql import ChatHistorySQLAlchemy
 from topsailai.tools.base import init as tool_registry
 from topsailai.workspace.llm_shell import LLMChat
+from topsailai.workspace.context.agent2llm import ContextRuntimeAgent2LLM
 from tests.mock.llm_mock_server import MockServerConfig, create_server
 
 LOGGER = logging.getLogger("tests.bdd.tool_calls_normalization")
@@ -43,6 +44,21 @@ class SDKToolCallFixture:
         """Return the SDK-compatible plain mapping."""
         return dict(self.payload)
 
+
+
+class SummaryAgentFixture:
+    """Provide the minimal real Agent2LLM summarization contract."""
+
+    def __init__(self, model: LLMModel, messages: list[dict[str, Any]]):
+        """Attach a real model and mutable runtime messages."""
+        self.llm_model = model
+        self.messages = list(messages)
+        self.agent_type = "react"
+
+    @staticmethod
+    def get_work_memory_first_position() -> int:
+        """Treat the complete fixture message list as working memory."""
+        return 0
 
 @dataclass
 class ServerOwner:
@@ -106,6 +122,10 @@ class ToolCallsScenario:
         self.result: Any = None
         self.error: Exception | None = None
         self.agent: AgentRun | None = None
+        self.summary_agent: SummaryAgentFixture | None = None
+        self.summary_before_count: int | None = None
+        self.summary_after_count: int | None = None
+        self.summary_answer: str | None = None
         self._registered_tools: dict[str, Any] = {}
         self._configure_environment()
 
@@ -121,6 +141,11 @@ class ToolCallsScenario:
             "TOPSAILAI_AUTO_SESSION_NAME_ENABLED": "0",
             "TOPSAILAI_PRINT_TOOL_STAT": "0",
             "TOPSAILAI_ENABLE_PARALLEL_TOOL_CALLS": "0",
+            "TOPSAILAI_CONTEXT_SUMMARY_MODE": "runtime",
+            "TOPSAILAI_CTX_SUMMARY_KEEP_SESSION_MESSAGES": "0",
+            "TOPSAILAI_CTX_SUMMARY_KEEP_FIRST_TASK_MESSAGE": "0",
+            "TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP": "0",
+            "TOPSAILAI_CONTEXT_MESSAGES_TAIL_OFFSET_TO_KEEP": "0",
             "DEBUG": "0",
             "CONTEXT_HISTORY_MANAGERS": "",
         }
@@ -239,6 +264,30 @@ class ToolCallsScenario:
         chat = LLMChat(prompt, model)
         self.result = chat.chat(message="", need_print=False, need_env_message=False)
 
+
+    def summarize_and_continue(self, session_id: str) -> None:
+        """Force real Agent2LLM summarization, then send the rebuilt context."""
+        messages = self._loaded_history(session_id)
+        messages.append({"role": "user", "content": "continue after summarization"})
+        model = LLMModel()
+        self.summary_agent = SummaryAgentFixture(model, messages)
+        runtime = ContextRuntimeAgent2LLM()
+        runtime.ai_agent = self.summary_agent
+        runtime.messages = []
+        self.summary_before_count = len(self.summary_agent.messages)
+        try:
+            self.summary_answer = runtime.summarize_messages_for_processing(force=True)
+            self.summary_after_count = len(self.summary_agent.messages)
+            assert self.summary_answer, "real summarization returned no answer"
+            assert self.summary_after_count < self.summary_before_count
+
+            prompt = PromptBase("You are a BDD continuation assistant.")
+            prompt.messages.extend(self.summary_agent.messages)
+            prompt.add_user_message("continue with the rebuilt context", need_print=False)
+            chat = LLMChat(prompt, model)
+            self.result = chat.chat(message="", need_print=False, need_env_message=False)
+        except Exception as error:  # noqa: BLE001 - scenario asserts exact outcome
+            self.error = error
     @staticmethod
     def _safe_tool(value: Any = "") -> str:
         """Return one harmless deterministic tool result."""
@@ -300,6 +349,8 @@ class ToolCallsScenario:
         """Release model state, temporary registrations, imports, DB, and server."""
         if self.agent is not None:
             self.agent.llm_model.tokenStat.flag_running = False
+        if self.summary_agent is not None:
+            self.summary_agent.llm_model.tokenStat.flag_running = False
         for name, previous in self._registered_tools.items():
             if previous is None:
                 tool_registry.TOOLS.pop(name, None)

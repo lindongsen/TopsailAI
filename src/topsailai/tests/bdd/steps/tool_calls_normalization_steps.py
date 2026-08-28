@@ -68,6 +68,35 @@ def when_tc_norm_continue(tc_norm_ctx, caplog, session_id: str, message: str):
     tc_norm_ctx.continue_conversation(session_id, message)
 
 
+
+@when("the tool-calls normalization Agent2LLM context is forced through real summarization before the conversation continues")
+def when_tc_norm_summarize_and_continue(tc_norm_ctx):
+    """Drive a real summary request followed by a rebuilt-context request."""
+    tc_norm_ctx.summarize_and_continue("bdd_tc_summarize")
+
+
+@then("the tool-calls normalization summarization and continuation requests are both observed")
+def then_tc_norm_summary_and_continuation_observed(tc_norm_ctx):
+    """Assert real summarization rebuilt context before the second request."""
+    assert tc_norm_ctx.error is None, repr(tc_norm_ctx.error)
+    assert tc_norm_ctx.summary_answer
+    assert tc_norm_ctx.summary_before_count == 3
+    assert tc_norm_ctx.summary_after_count == 1
+    assert tc_norm_ctx.summary_agent.messages[0]["content"] == tc_norm_ctx.summary_answer
+    state = tc_norm_ctx.state()
+    assert state["total_requests"] == 2, state
+    assert len(state["request_bodies"]) == 2, state
+    assert state["dropped_request_body_count"] == 0, state
+    first_messages = state["request_bodies"][0]["body"]["messages"]
+    second_messages = state["request_bodies"][1]["body"]["messages"]
+    assert "Conversation Analyst and Summarization Specialist" in str(first_messages)
+    assert any(
+        message.get("content") == "continue after summarization"
+        for message in first_messages
+    )
+    assert any(message.get("role") == "assistant" for message in second_messages)
+    assert "continue with the rebuilt context" in str(second_messages)
+
 @then(parsers.parse("the tool-calls normalization mock server received exactly {count:d} completion requests"))
 def then_tc_norm_request_count(tc_norm_ctx, count: int):
     """Assert the provider-side request count, including tool-loop follow-ups."""

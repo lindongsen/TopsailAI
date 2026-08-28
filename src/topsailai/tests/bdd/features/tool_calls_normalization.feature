@@ -57,3 +57,12 @@ Feature: Tool calls remain valid across persistence and request boundaries
     When the tool-calls normalization session "bdd_tc_logs" continues the conversation with "continue the task"
     Then the tool-calls normalization logs contain the degradation warning with only index and type
     And the tool-calls normalization logs contain no tool arguments or tool result sentinel
+
+  Scenario: Summarization keeps the provider payload free of malformed tool calls
+    Given a tool-calls normalization environment with a private mock LLM server
+    And the tool-calls normalization session "bdd_tc_summarize" is seeded with legacy malformed repr tool calls and its tool result
+    When the tool-calls normalization Agent2LLM context is forced through real summarization before the conversation continues
+    Then the tool-calls normalization summarization and continuation requests are both observed
+    And the tool-calls normalization mock server received exactly 2 completion requests
+    And the tool-calls normalization mock server received no malformed tool calls value
+    And the tool-calls normalization mock server received no ownerless tool result message
