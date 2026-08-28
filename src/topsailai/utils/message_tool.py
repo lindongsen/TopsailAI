@@ -5,6 +5,10 @@ Created: 2026-07-16
 Purpose: Semantic message comparison helpers used across layers.
 """
 
+from topsailai.ai_base.constants import (
+    ROLE_ASSISTANT,
+    ROLE_TOOL,
+)
 from topsailai.utils import json_tool
 
 
@@ -152,3 +156,344 @@ def message_index_in_list(msg, msg_list: list) -> int:
         if message_equal(m, msg):
             return i
     return -1
+
+
+def extract_tool_call_ids(msg) -> list:
+    """
+    Collect ``tool_calls`` ids carried by a message.
+
+    Supports both message shapes produced at runtime:
+
+    - ``dict`` messages built by ``PromptBase.add_assistant_message``.
+    - Objects exposing a ``tool_calls`` attribute.
+
+    Each ``tool_calls`` entry may itself be a plain ``dict`` or an OpenAI SDK
+    pydantic object, so ids are read defensively.
+
+    Args:
+        msg: A message dict or object.
+
+    Returns:
+        list: Non-empty ids in declaration order. Empty list when absent.
+    """
+    tool_calls = None
+    if isinstance(msg, dict):
+        tool_calls = msg.get("tool_calls")
+    else:
+        tool_calls = getattr(msg, "tool_calls", None)
+
+    if not tool_calls:
+        return []
+
+    ids = []
+    for tc in tool_calls:
+        tc_id = None
+        if isinstance(tc, dict):
+            tc_id = tc.get("id")
+        else:
+            tc_id = getattr(tc, "id", None)
+            if tc_id is None and callable(getattr(tc, "model_dump", None)):
+                tc_id = tc.model_dump().get("id")
+        if tc_id:
+            ids.append(tc_id)
+    return ids
+
+
+def drop_orphaned_tool_messages(messages: list, logger=None) -> list:
+    """
+    Drop ``role="tool"`` messages without a preceding assistant ``tool_calls`` id.
+
+    Native tool calls require an intact ``tool_calls`` / ``tool_call_id``
+    pairing. Context summarization, session truncation and index-based message
+    pruning can all keep a tool observation while its owning assistant message
+    is removed, which makes providers reject the whole request with errors such
+    as ``No tool call found for function call output with call_id ...``. Such a
+    broken list is sticky: every retry and every later turn keeps failing.
+
+    This helper is intentionally pure: it never reads environment variables and
+    never mutates the input list, so callers own the enable switch and tests
+    stay isolated.
+
+    Args:
+        messages (list): Messages to sanitize.
+        logger: Optional logger used to record every dropped message.
+
+    Returns:
+        list: New list with orphaned tool messages removed. The original list
+        object is never returned nor modified.
+    """
+    if not messages:
+        return []
+
+    valid_tool_call_ids = set()
+    cleaned = []
+    for msg in messages:
+        role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+        if role == ROLE_ASSISTANT:
+            valid_tool_call_ids.update(extract_tool_call_ids(msg))
+        elif role == ROLE_TOOL:
+            tool_call_id = (
+                msg.get("tool_call_id") if isinstance(msg, dict)
+                else getattr(msg, "tool_call_id", None)
+            )
+            if tool_call_id and tool_call_id not in valid_tool_call_ids:
+                if logger:
+                    logger.warning(
+                        "drop orphaned tool message: tool_call_id=%s",
+                        tool_call_id,
+                    )
+                continue
+        cleaned.append(msg)
+    return cleaned
+
+
+def _message_view(msg):
+    """Return a dict-like view of a message stored as dict, object or JSON string.
+
+    Context layers may hold messages either as ``dict`` instances, as objects
+    exposing ``role``/``tool_calls``/``tool_call_id`` attributes, or as JSON
+    strings persisted by the session layer. Pairing checks need one accessor
+    that tolerates all three shapes.
+
+    Args:
+        msg: A message dict, object, or JSON string.
+
+    Returns:
+        dict | None: Mapping with the pairing fields when they can be read,
+        otherwise ``None``.
+    """
+    if isinstance(msg, dict):
+        return msg
+    if isinstance(msg, str):
+        parsed = json_tool.safe_json_load(msg)
+        return parsed if isinstance(parsed, dict) else None
+
+    view = {}
+    for field in ("role", "tool_calls", "tool_call_id"):
+        value = getattr(msg, field, None)
+        if value is not None:
+            view[field] = value
+    return view
+
+
+def _tool_call_owner_index(messages: list, tool_call_id, end_index: int, floor: int):
+    """Find the latest assistant message before ``end_index`` declaring ``tool_call_id``.
+
+    Args:
+        messages (list): Messages in chronological order.
+        tool_call_id: The id whose owning assistant message is searched.
+        end_index (int): Exclusive upper bound of the search.
+        floor (int): Inclusive lower bound of the search.
+
+    Returns:
+        int | None: The owner index, or ``None`` when it is absent or below
+        ``floor`` (i.e. outside the region the caller allows to preserve).
+    """
+    for index in range(end_index - 1, floor - 1, -1):
+        msg = _message_view(messages[index])
+        if not msg or msg.get("role") != ROLE_ASSISTANT:
+            continue
+        if tool_call_id in extract_tool_call_ids(msg):
+            return index
+    return None
+
+
+def _earliest_missing_owner_index(messages: list, start: int, floor: int):
+    """Find the earliest owner that a tool message inside ``[start, len)`` needs.
+
+    Only owners located in ``[floor, start)`` are considered: an owner already
+    inside the window needs no action, and an owner below ``floor`` cannot be
+    preserved without crossing into the summarized region.
+
+    Args:
+        messages (list): Messages in chronological order.
+        start (int): First index of the preserved window.
+        floor (int): Earliest index the window is allowed to reach.
+
+    Returns:
+        int | None: The earliest owner index, or ``None`` when every tool
+        message in the window is already paired inside it.
+    """
+    earliest = None
+    for index in range(start, len(messages)):
+        msg = _message_view(messages[index])
+        if not msg or msg.get("role") != ROLE_TOOL:
+            continue
+        tool_call_id = msg.get("tool_call_id")
+        if not tool_call_id:
+            continue
+        owner = _tool_call_owner_index(messages, tool_call_id, start, floor)
+        if owner is None:
+            continue
+        if earliest is None or owner < earliest:
+            earliest = owner
+    return earliest
+
+
+def expand_tail_start_for_tool_pairing(
+    messages: list,
+    start_index: int,
+    min_start: int = 0,
+) -> int:
+    """Expand a count-based tail window so it never starts with an orphan tool.
+
+    Summarization selects the preserved tail by message count, so the window
+    can begin on a ``role="tool"`` observation while the assistant message
+    carrying its ``tool_calls`` id falls into the summarized middle. Providers
+    then reject the rebuilt context with ``No tool call found for function call
+    output with call_id ...``, and the failure is sticky because the broken
+    list is resent on every retry and every later turn.
+
+    This helper moves the window start back to the earliest owning assistant
+    message so the preserved window is pair-atomic. It is bounded by
+    ``min_start`` so the window can never cross into the summarized region or
+    swallow the whole list, and it leaves the start untouched when the owner
+    lies below that bound (the request-boundary sanitizer drops such an
+    orphan). Extending to the earliest owner also covers every owner located
+    between it and the original start, so a single pass is sufficient.
+
+    Args:
+        messages (list): Messages in chronological order.
+        start_index (int): Original count-based window start.
+        min_start (int): Earliest index the window may reach.
+
+    Returns:
+        int: The adjusted window start, always within ``[0, len(messages)]``.
+    """
+    total = len(messages) if messages else 0
+    if total == 0:
+        return max(start_index, 0)
+
+    start = min(max(start_index, 0), total)
+    floor = min(max(min_start, 0), total)
+    if start <= floor:
+        return start
+
+    owner = _earliest_missing_owner_index(messages, start, floor)
+    return start if owner is None else owner
+
+
+def _sort_indexes(indexes) -> list:
+    """Sort indexes without failing on mixed or non-numeric values.
+
+    Delete indexes can originate from LLM tool arguments, so a non-integer
+    value must not turn pruning into a ``TypeError``.
+
+    Args:
+        indexes: Iterable of requested message indexes.
+
+    Returns:
+        list: Numeric indexes sorted ascending, followed by the remaining
+        values sorted by their string representation.
+    """
+    numeric = []
+    others = []
+    for index in indexes:
+        if isinstance(index, int) or isinstance(index, float):
+            numeric.append(index)
+        else:
+            others.append(index)
+    return sorted(numeric) + sorted(others, key=str)
+
+
+def _tool_reply_indexes(views: list, owner_index: int, tool_call_ids: list) -> list:
+    """Collect indexes of ``role="tool"`` replies after ``owner_index``.
+
+    Only replies whose ``tool_call_id`` is declared by the assistant message at
+    ``owner_index`` are collected, so a tool group is never partially kept.
+
+    Args:
+        views (list): Normalized message views in chronological order.
+        owner_index (int): Index of the assistant message carrying ``tool_calls``.
+        tool_call_ids (list): Ids declared by that assistant message.
+
+    Returns:
+        list: Indexes of the matching tool messages, in ascending order.
+    """
+    replies = []
+    for index in range(owner_index + 1, len(views)):
+        msg = views[index]
+        if not msg or msg.get("role") != ROLE_TOOL:
+            continue
+        tool_call_id = msg.get("tool_call_id")
+        if tool_call_id and tool_call_id in tool_call_ids:
+            replies.append(index)
+    return replies
+
+
+def expand_indexes_for_tool_pairing(messages: list, indexes: list, logger=None) -> list:
+    """Expand requested delete indexes into complete tool-call groups.
+
+    Index-based pruning is used by ``/ctx.del_msg`` and by the agent-facing
+    context-cut tool. Deleting only the assistant message carrying
+    ``tool_calls`` leaves its ``role="tool"`` observations orphaned, and
+    deleting only one tool observation leaves a dangling ``tool_calls``; either
+    shape makes providers reject the whole request with errors such as
+    ``No tool call found for function call output with call_id ...``.
+
+    For every requested index this helper adds the messages required to keep
+    the tool-call group intact: the tool replies of a selected assistant
+    message, and the owning assistant message plus all of its sibling replies
+    for a selected tool message. Requested indexes are always kept in the
+    result (including out-of-range ones) so callers keep their existing
+    filtering behaviour.
+
+    Args:
+        messages (list): Messages in chronological order, the same list the
+        caller is about to prune. Indexes are relative to this list.
+        indexes (list): Requested message indexes.
+        logger: Optional logger used to record every extra index pulled in.
+
+    Returns:
+        list: Sorted unique indexes covering every affected tool-call group.
+    """
+    if not indexes:
+        return []
+    if not messages:
+        return _sort_indexes(set(indexes))
+
+    views = [_message_view(msg) for msg in messages]
+    total = len(views)
+
+    expanded = set()
+    extra = set()
+    for index in indexes:
+        expanded.add(index)
+        if not isinstance(index, int) or index < 0 or index >= total:
+            continue
+        msg = views[index]
+        if not msg:
+            continue
+
+        role = msg.get("role")
+        if role == ROLE_ASSISTANT:
+            tool_call_ids = extract_tool_call_ids(msg)
+            if not tool_call_ids:
+                continue
+            group = _tool_reply_indexes(views, index, tool_call_ids)
+        elif role == ROLE_TOOL:
+            tool_call_id = msg.get("tool_call_id")
+            if not tool_call_id:
+                continue
+            owner = _tool_call_owner_index(views, tool_call_id, index, 0)
+            if owner is None:
+                continue
+            group = [owner] + _tool_reply_indexes(
+                views, owner, extract_tool_call_ids(views[owner]),
+            )
+        else:
+            continue
+
+        for group_index in group:
+            if group_index in expanded:
+                continue
+            expanded.add(group_index)
+            extra.add(group_index)
+
+    if extra and logger:
+        logger.warning(
+            "expand delete indexes for tool-call pairing: extra=%s reason=%s",
+            _sort_indexes(extra),
+            "keep tool_calls/tool_call_id group intact",
+        )
+    return _sort_indexes(expanded)

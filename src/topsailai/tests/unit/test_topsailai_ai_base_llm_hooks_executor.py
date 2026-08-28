@@ -34,7 +34,7 @@ class TestGetHooksRuntime(unittest.TestCase):
         rid_all_thread_vars()
 
         result = get_hooks_runtime("TOPSAILAI_HOOK_BEFORE_LLM_CHAT", "test content")
-        self.assertEqual(result, ["topsailai.ai_base.llm_hooks.hook_before_chat.only_one_system_message"])
+        self.assertEqual(result, ["topsailai.ai_base.llm_hooks.hook_before_chat.only_one_system_message", "topsailai.ai_base.llm_hooks.hook_before_chat.tool_call_pairing"])
 
     @patch.dict(os.environ, {"AI_MODEL": "gpt-4"}, clear=True)
     def test_with_content_containing_minimax(self):
@@ -88,7 +88,7 @@ class TestGetHooksRuntime(unittest.TestCase):
         rid_all_thread_vars()
 
         result = get_hooks_runtime("TOPSAILAI_HOOK_BEFORE_LLM_CHAT", "minimax")
-        self.assertEqual(result, ["topsailai.ai_base.llm_hooks.hook_before_chat.only_one_system_message"])
+        self.assertEqual(result, ["topsailai.ai_base.llm_hooks.hook_before_chat.only_one_system_message", "topsailai.ai_base.llm_hooks.hook_before_chat.tool_call_pairing"])
 
     @patch.dict(os.environ, {"AI_MODEL": "gpt-4"}, clear=True)
     def test_content_check_only_for_after_llm_chat(self):

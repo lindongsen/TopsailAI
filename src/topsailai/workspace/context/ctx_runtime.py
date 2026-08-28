@@ -24,6 +24,7 @@ from topsailai.context import ctx_manager
 from topsailai.utils import (
     json_tool,
     env_tool,
+    message_tool,
 )
 from topsailai.utils.print_tool import (
     print_info,
@@ -229,9 +230,16 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
         preserved_indexes.update(range(min(len(head_portion), len(messages))))
         preserved_indexes.update(range(min(head_offset_to_keep, len(messages))))
         if tail_offset_to_keep > 0:
-            preserved_indexes.update(
-                range(max(len(messages) - tail_offset_to_keep, 0), len(messages))
+            # Expand the count-based tail window backwards so it never starts
+            # on a tool observation whose owning assistant message would be
+            # summarized away. Bounded by the head region.
+            tail_floor = max(len(head_portion), head_offset_to_keep)
+            tail_start = message_tool.expand_tail_start_for_tool_pairing(
+                messages,
+                len(messages) - tail_offset_to_keep,
+                min_start=tail_floor,
             )
+            preserved_indexes.update(range(max(tail_start, 0), len(messages)))
 
         for index in range(len(messages) - 1, -1, -1):
             msg_dict = json_tool.json_load(messages[index])
@@ -469,9 +477,20 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
                     last_user_raw_msg = raw_msg
                     break
 
-            # delete history messages
+            # delete history messages. The preserved tail window is expanded
+            # backwards so a tool observation is never deleted together with
+            # nothing else while its owning assistant message survives (and the
+            # other way round), which would produce an orphan tool message.
+            raw_tail_start = len(raw_messages_from_session)
+            if tail_offset_to_keep > 0:
+                raw_tail_floor = max(len(raw_head_messages), head_offset_to_keep)
+                raw_tail_start = message_tool.expand_tail_start_for_tool_pairing(
+                    raw_message_values,
+                    len(raw_messages_from_session) - tail_offset_to_keep,
+                    min_start=raw_tail_floor,
+                )
             if raw_messages_from_session:
-                for raw_msg in raw_messages_from_session[head_offset_to_keep:max(len(raw_messages_from_session)-tail_offset_to_keep, head_offset_to_keep)]:
+                for raw_msg in raw_messages_from_session[head_offset_to_keep:max(raw_tail_start, head_offset_to_keep)]:
                     if last_user_raw_msg and raw_msg.msg_id == last_user_raw_msg.msg_id:
                         continue
                     if raw_msg_ids_to_keep and raw_msg.msg_id in raw_msg_ids_to_keep:
@@ -490,9 +509,18 @@ class ContextRuntimeData(ContextRuntimeAgent2LLM):
             # merging keeping_messages (head_portion) back in below and then
             # appending last_user_message.
             new_messages = messages[:head_offset_to_keep]
-
-            # add tail_offset messages
-            tail_messages = messages[-tail_offset_to_keep:] if tail_offset_to_keep > 0 else []
+            # add tail_offset messages. The window is expanded backwards so it
+            # never starts on a tool observation whose owning assistant message
+            # would be summarized away. Bounded by the head region.
+            tail_messages = []
+            if tail_offset_to_keep > 0:
+                tail_floor = max(len(keeping_messages), head_offset_to_keep)
+                tail_start = message_tool.expand_tail_start_for_tool_pairing(
+                    messages,
+                    len(messages) - tail_offset_to_keep,
+                    min_start=tail_floor,
+                )
+                tail_messages = messages[tail_start:]
             for msg in tail_messages:
                 if not self._message_in_list(msg, new_messages):
                     new_messages.append(msg)

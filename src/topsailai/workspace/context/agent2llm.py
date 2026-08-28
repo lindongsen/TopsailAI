@@ -26,6 +26,7 @@ from topsailai.utils.print_tool import (
 from topsailai.utils import (
     json_tool,
     env_tool,
+    message_tool,
 )
 from topsailai.context.tool_stat import (
     get_agent_tool_stat,
@@ -47,6 +48,10 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         """
         Delete specific messages from the agent's message list.
 
+        Requested indexes are expanded to complete tool-call groups first, so
+        pruning can never leave an orphaned tool observation or a dangling
+        ``tool_calls`` message behind.
+
         Args:
             indexes (list[int]): Sequence numbers of messages to delete, starting from 0.
 
@@ -60,22 +65,29 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         if first_position is None:
             return []
 
+        # Indexes are relative to the non-system region, so pairing must be
+        # resolved against the same slice the loop below iterates over.
+        work_messages = self.ai_agent.messages[first_position:]
+        delete_indexes = set(message_tool.expand_indexes_for_tool_pairing(
+            work_messages, indexes, logger,
+        ))
+
         new_messages = []
         deleted_list = []
         last_index = None
-        for i, msg in enumerate(self.ai_agent.messages[first_position:]):
+        for i, msg in enumerate(work_messages):
             last_index = i
             new_messages.append(msg)
             msg_dict = json_tool.json_load(msg)
             if msg_dict["role"] == ROLE_SYSTEM:
                 continue
-            if i not in indexes:
+            if i not in delete_indexes:
                 continue
             deleted_list.append(i)
             new_messages.pop()
 
         if to_del_last:
-            if last_index is not None and last_index not in indexes:
+            if last_index is not None and last_index not in delete_indexes:
                 new_messages.pop()
 
         if not deleted_list:
@@ -111,8 +123,9 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         messages that will actually survive summarization.
         """
         preserved_messages = []
+        head_portion = self._get_summary_head_messages(messages)
         message_groups = [
-            self._get_summary_head_messages(messages),
+            head_portion,
             messages[:head_offset_to_keep],
         ]
         if need_session_messages:
@@ -120,7 +133,17 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
             # it may intentionally preserve a task even when the switch is off.
             message_groups.append(self.messages)
         if tail_offset_to_keep > 0:
-            message_groups.append(messages[-tail_offset_to_keep:])
+            # The tail window is selected by message count, so it can start on
+            # a tool observation whose owning assistant message falls into the
+            # summarized middle. Providers reject such an orphan, so expand the
+            # window backwards to the owner, bounded by the head region.
+            tail_floor = max(len(head_portion), head_offset_to_keep)
+            tail_start = message_tool.expand_tail_start_for_tool_pairing(
+                messages,
+                len(messages) - tail_offset_to_keep,
+                min_start=tail_floor,
+            )
+            message_groups.append(messages[tail_start:])
 
         last_user_msg = self.last_user_message
         if last_user_msg:
@@ -376,7 +399,19 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
                     new_messages.append(msg)
 
         # add tail_offset messages
-        tail_messages = messages[-tail_offset_to_keep:] if tail_offset_to_keep > 0 else []
+        # The tail window is selected by message count, so it can start on a
+        # tool observation whose owning assistant message is summarized away.
+        # Expand the window backwards to that owner so the preserved tail stays
+        # pair-atomic; the head region bounds the expansion.
+        tail_messages = []
+        if tail_offset_to_keep > 0:
+            tail_floor = max(len(keeping_messages), head_offset_to_keep)
+            tail_start = message_tool.expand_tail_start_for_tool_pairing(
+                messages,
+                len(messages) - tail_offset_to_keep,
+                min_start=tail_floor,
+            )
+            tail_messages = messages[tail_start:]
         for msg in tail_messages:
             if not self._message_in_list(msg, new_messages):
                 new_messages.append(msg)

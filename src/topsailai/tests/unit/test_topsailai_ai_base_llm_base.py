@@ -12,6 +12,38 @@ from unittest.mock import MagicMock, call, patch, PropertyMock
 import openai
 
 
+def patch_llm_time(func):
+    """Patch ``time`` inside ``llm_base`` only, never the global ``time`` module.
+
+    ``llm_base`` uses ``import time``, so patching ``llm_base.time.sleep``
+    replaces ``sleep`` on the shared global module: background worker loops of
+    other modules then busy-spin and append to the mock call log without bound,
+    which exhausted memory during a full-file run. The stand-in records sleep
+    arguments into a list injected as the ``mock_sleep`` keyword and keeps the
+    real ``monotonic`` so elapsed-time math still works.
+    """
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        import time as real_time
+        slept = []
+
+        class _FakeTime:
+            """Minimal ``time`` stand-in that records sleep calls only."""
+
+            monotonic = staticmethod(real_time.monotonic)
+
+            @staticmethod
+            def sleep(seconds):
+                slept.append(seconds)
+
+        with patch("topsailai.ai_base.llm_base.time", new=_FakeTime):
+            return func(*args, mock_sleep=slept, **kwargs)
+
+    return wrapper
+
+
 class TestLLMModelGetModelName(unittest.TestCase):
 
     def setUp(self):
@@ -944,7 +976,7 @@ class TestLLMModelChat(unittest.TestCase):
         self.assertIsInstance(result, tuple)
         self.assertEqual(len(result), 2)
 
-    @patch("topsailai.ai_base.llm_base.time.sleep")
+    @patch_llm_time
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -990,7 +1022,7 @@ class TestLLMModelChat(unittest.TestCase):
         
         self.assertEqual(result, ["streamed"])
 
-    @patch("topsailai.ai_base.llm_base.time.sleep")
+    @patch_llm_time
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -1185,7 +1217,7 @@ class TestLLMModelErrorHandling(unittest.TestCase):
         model.hooks = {}
         return model
 
-    @patch("topsailai.ai_base.llm_base.time.sleep")
+    @patch_llm_time
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -1208,7 +1240,7 @@ class TestLLMModelErrorHandling(unittest.TestCase):
         
         self.assertEqual(result, ["success"])
 
-    @patch("topsailai.ai_base.llm_base.time.sleep")
+    @patch_llm_time
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -1233,7 +1265,7 @@ class TestLLMModelErrorHandling(unittest.TestCase):
         
         self.assertEqual(result, ["success"])
 
-    @patch("topsailai.ai_base.llm_base.time.sleep")
+    @patch_llm_time
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -1336,7 +1368,7 @@ class TestLLMModelErrorHandling(unittest.TestCase):
             agent._check_hard_interrupt.call_args_list,
             [call(), call(throttle_stream=True)],
         )
-    @patch("topsailai.ai_base.llm_base.time.sleep")
+    @patch_llm_time
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -1379,7 +1411,7 @@ class TestLLMModelErrorHandling(unittest.TestCase):
         # The interrupt check must have been invoked.
         agent._check_hard_interrupt.assert_called()
 
-    @patch("topsailai.ai_base.llm_base.time.sleep")
+    @patch_llm_time
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -1418,7 +1450,7 @@ class TestLLMModelErrorHandling(unittest.TestCase):
         self.assertEqual(result, ["success"])
         agent._check_hard_interrupt.assert_called()
 
-    @patch("topsailai.ai_base.llm_base.time.sleep")
+    @patch_llm_time
     @patch("topsailai.ai_base.llm_base.format_response")
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
@@ -1956,6 +1988,203 @@ class TestLLMModelAfterResponseHook(unittest.TestCase):
         get_agent_object.assert_not_called()
         hook_execute.assert_not_called()
         format_response.assert_not_called()
+
+
+class TestLLMModelNonRetryableBadRequestError(unittest.TestCase):
+    """Test cases for deterministic request-shape 400 fast-fail behaviour."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.messages = [{"role": "user", "content": "Bad request test"}]
+
+    def _create_mock_model(self):
+        """Create a mock LLMModel with all required attributes."""
+        from topsailai.ai_base.llm_base import LLMModel
+        model = LLMModel()
+        model.models = []
+        model.model = MagicMock()
+        model.tokenStat = MagicMock()
+        model.model_config = {"api_key": "test-key"}
+        model.model_name = "test-model"
+        model.temperature = 0.7
+        model.max_tokens = 4096
+        model.top_p = 1.0
+        model.frequency_penalty = 0.0
+        model.content_senders = []
+        model.hooks = {}
+        return model
+
+    @staticmethod
+    def _bad_request(message):
+        """Build a real openai.BadRequestError carrying a 400 response."""
+        import httpx
+        response = httpx.Response(
+            status_code=400,
+            request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
+        )
+        return openai.BadRequestError(message, response=response, body=None)
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_non_retryable_no_tool_call_found_raises_immediately(
+        self, mock_base_init, mock_logger, mock_format, mock_sleep
+    ):
+        """The incident error must fail on the first attempt without sleeping."""
+        model = self._create_mock_model()
+        model.model.create.side_effect = self._bad_request(
+            "Error code: 400 - No tool call found for function call output "
+            "with call_id fc_sJRQx5pXlYGYW7c6yqkUeUeB."
+        )
+
+        with self.assertRaises(openai.BadRequestError) as ctx:
+            model.chat(self.messages)
+
+        model.model.create.assert_called_once()
+        # No backoff sleep at all proves the fast-fail path was taken.
+        self.assertEqual(mock_sleep, [])
+        text = str(ctx.exception)
+        self.assertIn("Non-retryable request-shape 400", text)
+        self.assertIn("no tool call found", text)
+        self.assertIn("orphaned tool message", text)
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_non_retryable_function_call_output_raises_immediately(
+        self, mock_base_init, mock_logger, mock_format, mock_sleep
+    ):
+        """The function_call_output marker must also fail on the first attempt."""
+        model = self._create_mock_model()
+        model.model.create.side_effect = self._bad_request(
+            "Error code: 400 - Invalid item in input: function_call_output has no "
+            "matching function_call."
+        )
+
+        with self.assertRaises(openai.BadRequestError) as ctx:
+            model.chat(self.messages)
+
+        model.model.create.assert_called_once()
+        self.assertEqual(mock_sleep, [])
+        self.assertIn("function_call_output", str(ctx.exception))
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_non_retryable_tool_call_id_raises_immediately(
+        self, mock_base_init, mock_logger, mock_format, mock_sleep
+    ):
+        """The tool_call_id marker must also fail on the first attempt."""
+        model = self._create_mock_model()
+        model.model.create.side_effect = self._bad_request(
+            "Error code: 400 - messages with role tool must be a response to a "
+            "preceding message with tool_call_id."
+        )
+
+        with self.assertRaises(openai.BadRequestError) as ctx:
+            model.chat(self.messages)
+
+        model.model.create.assert_called_once()
+        self.assertEqual(mock_sleep, [])
+        self.assertIn("tool_call_id", str(ctx.exception))
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_exceed_bad_request_still_raises_original_error(
+        self, mock_base_init, mock_logger, mock_format, mock_sleep
+    ):
+        """Context-length 400s keep raising the original error unchanged."""
+        model = self._create_mock_model()
+        original = (
+            "Error code: 400 - This model's maximum context length is 8192 tokens, "
+            "requested 9000 tokens, please reduce the length of the messages."
+        )
+        model.model.create.side_effect = self._bad_request(original)
+
+        with self.assertRaises(openai.BadRequestError) as ctx:
+            model.chat(self.messages)
+
+        model.model.create.assert_called_once()
+        self.assertEqual(mock_sleep, [])
+        # The pre-existing branch re-raises the original exception untouched.
+        self.assertNotIn("Non-retryable request-shape 400", str(ctx.exception))
+        self.assertIn("maximum context length", str(ctx.exception))
+
+    @patch_llm_time
+    @patch("topsailai.ai_base.llm_base.format_response")
+    @patch("topsailai.ai_base.llm_base.logger")
+    @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
+    def test_chat_generic_bad_request_still_retries(
+        self, mock_base_init, mock_logger, mock_format, mock_sleep
+    ):
+        """An unrecognized 400 must keep the legacy retry behaviour."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Recovered"
+        mock_format.return_value = ["recovered"]
+
+        model = self._create_mock_model()
+        model.model.create.side_effect = [
+            self._bad_request("Error code: 400 - something unexpected happened"),
+            self._bad_request("Error code: 400 - something unexpected happened"),
+            mock_response,
+        ]
+
+        result = model.chat(self.messages)
+
+        self.assertEqual(result, ["recovered"])
+        self.assertGreaterEqual(model.model.create.call_count, 3)
+        # Retry backoffs are at least one second; a non-empty sleep list proves a retry.
+        self.assertTrue([s for s in mock_sleep if s >= 1])
+
+    def test_match_non_retryable_bad_request_defaults_and_env_extension(self):
+        """Built-in markers always match; the env var only extends them."""
+        from topsailai.ai_base.llm_base import _match_non_retryable_bad_request
+
+        # Built-in markers match, unrelated text does not.
+        self.assertEqual(
+            _match_non_retryable_bad_request("no tool call found for ..."),
+            "no tool call found",
+        )
+        self.assertEqual(
+            _match_non_retryable_bad_request("invalid function_call_output item"),
+            "function_call_output",
+        )
+        self.assertEqual(
+            _match_non_retryable_bad_request("missing tool_call_id here"),
+            "tool_call_id",
+        )
+        self.assertEqual(_match_non_retryable_bad_request("totally unrelated"), "")
+
+        # A configured value extends (never replaces) the built-in markers.
+        with patch.dict(
+            "os.environ",
+            {"TOPSAILAI_LLM_NON_RETRYABLE_BAD_REQUEST_MARKERS": "Custom Marker;Another One"},
+        ):
+            self.assertEqual(
+                _match_non_retryable_bad_request("boom custom marker here"),
+                "custom marker",
+            )
+            self.assertEqual(
+                _match_non_retryable_bad_request("no tool call found"),
+                "no tool call found",
+            )
+
+        # An explicitly empty value keeps only the built-in markers.
+        with patch.dict(
+            "os.environ",
+            {"TOPSAILAI_LLM_NON_RETRYABLE_BAD_REQUEST_MARKERS": ""},
+        ):
+            self.assertEqual(
+                _match_non_retryable_bad_request("no tool call found"),
+                "no tool call found",
+            )
+            self.assertEqual(_match_non_retryable_bad_request("custom marker"), "")
 
 
 if __name__ == "__main__":

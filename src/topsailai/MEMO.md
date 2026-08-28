@@ -65,6 +65,14 @@ The full rule lives in [tests/bdd.md](./tests/bdd.md) — section "BDD Tests for
 
 Summary: any BDD scenario that involves a real LLM interaction must drive `tests/mock/llm_mock_server.py` over the real HTTP/SSE protocol instead of stubbing internal functions, so the client, transport, and parsing layers stay inside the assertion boundary; assert server-side request counts and request bodies, never contact a real external endpoint, and close the scenario's own server and thread in teardown.
 
+## MEMO: Tool-Call Pairing Invariant
+
+**Date:** 2026-08-28
+
+The full rule lives in [MEMO.AgentCore.md](./MEMO.AgentCore.md) — section "MEMO: Tool-Call Pairing Invariant".
+
+Summary: every `role="tool"` message must have a preceding assistant message whose `tool_calls` declares its `tool_call_id`; the invariant is enforced at the request boundary by the default `TOPSAILAI_HOOK_BEFORE_LLM_CHAT` hooks and must not be violated by producers, which must reuse the shared helpers in `utils/message_tool.py` instead of writing their own pairing logic.
+
 ## MEMO: `MEMO.md` Is Index Only
 
 The full rule lives in [docs/Documentation_Conventions.md](./docs/Documentation_Conventions.md) — section "`MEMO.md` Is Index Only".

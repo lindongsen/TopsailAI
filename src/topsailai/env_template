@@ -128,6 +128,12 @@ TOPSAILAI_LLM_RESPONSE_EVENTS_STREAM_CHUNK_SAMPLE=0
 # TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY='["服务器繁忙，请稍后再试。", "服务繁忙"]'
 TOPSAILAI_LLM_SPECIAL_RESPONSES_FOR_RETRY=["服务器繁忙，请稍后再试。"]
 
+# Case-insensitive markers separated by semicolons (';') that extend the built-in
+# list. A BadRequestError containing any marker is treated as a deterministic
+# request-shape error and raised immediately instead of consuming the retry budget.
+# The built-in markers are always active and cannot be disabled.
+TOPSAILAI_LLM_NON_RETRYABLE_BAD_REQUEST_MARKERS="no tool call found;function_call_output;tool_call_id"
+
 # JSON object containing provider-specific fields passed through the OpenAI SDK
 # extra_body parameter. Example to disable server-side thinking:
 # TOPSAILAI_LLM_EXTRA_BODY='{"chat_template_kwargs":{"thinking":false}}'
@@ -446,6 +452,8 @@ TOPSAILAI_CONTEXT_MESSAGES_QUANTITY_THRESHOLD=97
 TOPSAILAI_CONTEXT_MESSAGES_HEAD_OFFSET_TO_KEEP=0
 # Number of tail messages to retain after summarization. The most recent
 # messages are preserved in addition to the head offset and the last user message.
+# The window is tool-call-pair atomic: it is expanded backwards so it never
+# starts with an orphaned tool result, which may keep one extra assistant message.
 TOPSAILAI_CONTEXT_MESSAGES_TAIL_OFFSET_TO_KEEP=0
 
 # Layer-specific message-count thresholds (optional).
@@ -749,6 +757,9 @@ TOPSAILAI_HOOK_AFTER_LLM_RESPONSE="topsailai.tools.memory_tool_utils.memory_ref_
 
 # Format: Module paths separated by semicolons (';')
 # hook_func(content:list[dict]) -> list[dict]
+# When empty, the built-in default hooks run: only_one_system_message, then
+# tool_call_pairing (drops orphaned tool messages before the request is sent).
+# Setting this variable replaces the defaults, which also disables the sanitizer.
 TOPSAILAI_HOOK_BEFORE_LLM_CHAT=""
 
 # Format: "{script_file} {cmd_options};"

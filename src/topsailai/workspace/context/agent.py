@@ -90,6 +90,9 @@ class ContextRuntimeAIAgent(ContextRuntimeUtils):
         with call_id". This helper removes them before the messages are sent
         to the LLM.
 
+        The pairing logic itself lives in ``message_tool`` so the request
+        boundary and this producer share one implementation.
+
         Args:
             messages: List of message dictionaries to clean.
 
@@ -100,30 +103,7 @@ class ContextRuntimeAIAgent(ContextRuntimeUtils):
         if not is_use_tool_calls():
             return messages
 
-        valid_tool_call_ids = set()
-        cleaned = []
-        for msg in messages:
-            role = msg.get("role")
-            if role == "assistant":
-                tool_calls = msg.get("tool_calls") or []
-                for tc in tool_calls:
-                    tc_id = getattr(tc, "id", None)
-                    if tc_id:
-                        valid_tool_call_ids.add(tc_id)
-                    elif isinstance(tc, dict):
-                        tc_id = tc.get("id")
-                        if tc_id:
-                            valid_tool_call_ids.add(tc_id)
-            elif role == "tool":
-                tool_call_id = msg.get("tool_call_id")
-                if tool_call_id and tool_call_id not in valid_tool_call_ids:
-                    logger.warning(
-                        "drop orphaned tool message: tool_call_id=%s",
-                        tool_call_id,
-                    )
-                    continue
-            cleaned.append(msg)
-        return cleaned
+        return message_tool.drop_orphaned_tool_messages(messages, logger)
 
     def add_session_message(self, message: dict = None):
         """

@@ -623,6 +623,33 @@ Both summarization paths must follow this convention:
 
 ### Note for maintainers
 When modifying summarization logic, keep this ordering invariant intact. If a future use case needs a different ordering, add a new method or configuration path rather than silently changing the shared convention.
+
+## MEMO: Tool-Call Pairing Invariant
+
+**Date:** 2026-08-28
+**Files:**
+- `utils/message_tool.py`
+- `ai_base/llm_hooks/hook_before_chat/tool_call_pairing.py`
+- `ai_base/llm_hooks/executor.py`
+- `workspace/context/agent2llm.py`
+- `workspace/context/ctx_runtime.py`
+
+### Invariant
+
+Every `role="tool"` message must have a preceding assistant message whose `tool_calls` declares its `tool_call_id`. A violation makes the provider reject the whole request with `400 No tool call found for function call output with call_id ...`, and because the offending message stays in the context, the failure repeats on every retry and every later turn.
+
+### Enforcement
+
+- **Request boundary (last resort):** the default `TOPSAILAI_HOOK_BEFORE_LLM_CHAT` hook list includes `tool_call_pairing`, which drops orphaned tool messages before the request is sent. Setting that variable replaces the defaults and therefore disables this guard.
+- **Producers must not create the violation:** summarization windows are expanded to be tool-call-pair atomic (`expand_tail_start_for_tool_pairing`) and index-based pruning expands each selected index to the whole call group (`expand_indexes_for_tool_pairing`).
+
+### Rule for new code
+
+Any new code that removes, reorders, or slices context messages MUST reuse the shared helpers in `utils/message_tool.py` (`extract_tool_call_ids`, `drop_orphaned_tool_messages`, `expand_tail_start_for_tool_pairing`, `expand_indexes_for_tool_pairing`) instead of writing its own pairing logic. Pairing must be resolved against the same message slice the mutation operates on.
+
+### Note for maintainers
+
+`del_session_messages()` (User2Agent) is intentionally not pair-aware: the session layer stores `tool_calls` as a stringified value, so pairing is undetectable there; session integrity is instead guaranteed by the pair-atomic persisted delete range and by the request-boundary sanitizer.
 ## MEMO: Agent2LLM Message Persistence Across Turns
 
 **Date:** 2026-07-16

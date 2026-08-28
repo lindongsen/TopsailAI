@@ -40,6 +40,7 @@ def get_hooks_runtime(key:str, content) -> list[str]:
     if key == "TOPSAILAI_HOOK_BEFORE_LLM_CHAT":
         return [
             "topsailai.ai_base.llm_hooks.hook_before_chat.only_one_system_message",
+            "topsailai.ai_base.llm_hooks.hook_before_chat.tool_call_pairing",
         ]
 
     if isinstance(content, str):

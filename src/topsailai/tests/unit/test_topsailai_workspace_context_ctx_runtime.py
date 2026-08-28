@@ -1597,5 +1597,213 @@ class TestSummarizeRuntimeMessagesForProcessed(TestContextRuntimeData):
             self.assertEqual(mock_b.prompt_ctl.messages[0]["content"], "session-msg-0")
 
 
+class TestSummarizeTailWindowPairAtomic(TestContextRuntimeData):
+    """User2Agent tail windows must stay tool-call pair atomic after summarization.
+
+    Regression coverage for the sticky provider error
+    ``No tool call found for function call output with call_id ...``: the
+    count-based tail window could start on a tool observation whose owning
+    assistant message had been summarized away (and the persisted delete range
+    could delete an owner while keeping its tool observation).
+    """
+
+    @staticmethod
+    def _assistant_with_call(call_id: str, content: str) -> dict:
+        return {
+            "role": "assistant",
+            "content": content,
+            "tool_calls": [{
+                "id": call_id,
+                "type": "function",
+                "function": {"name": "some_tool", "arguments": "{}"},
+            }],
+        }
+
+    @staticmethod
+    def _tool_message(call_id: str, content: str) -> dict:
+        return {"role": "tool", "content": content, "tool_call_id": call_id}
+
+    @staticmethod
+    def _orphan_tool_messages(messages: list) -> list:
+        """Return tool messages whose call id has no preceding assistant owner."""
+        from topsailai.utils import message_tool
+
+        declared = set()
+        orphans = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("role") == "assistant":
+                declared.update(message_tool.extract_tool_call_ids(msg))
+            elif msg.get("role") == "tool":
+                call_id = msg.get("tool_call_id")
+                if call_id and call_id not in declared:
+                    orphans.append(call_id)
+        return orphans
+
+    def _pair_fixture(self) -> list:
+        """Incident shape: owner at -5 and its tool observation at -4."""
+        return [
+            {"role": "user", "content": {"step_name": "task", "raw_text": "Task pair"}},
+            {"role": "user", "content": "mid1"},
+            {"role": "assistant", "content": "mid2"},
+            {"role": "user", "content": "mid3"},
+            self._assistant_with_call("call_owner", "owner of the split pair"),
+            self._tool_message("call_owner", "tool result of the split pair"),
+            {"role": "user", "content": "mid6"},
+            self._assistant_with_call("call_two", "second call"),
+            self._tool_message("call_two", "second tool result"),
+        ]
+
+    def test_summarize_tail_window_expanded_to_keep_tool_call_owner(self):
+        """A tail window starting on a tool result must pull in its owner."""
+        self.runtime.session_id = None
+        self.mock_json_tool.json_load.side_effect = lambda x: x
+        self.runtime.messages = self._pair_fixture()
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary pair"}
+        ]
+
+        with patch.object(self.runtime, 'is_need_summarize_for_processed', return_value=True):
+            with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "Summary pair")):
+                with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+                    with patch.object(self.runtime, '_get_tail_offset_to_keep_in_summary', return_value=4):
+                        with patch.object(self.runtime, 'set_messages') as mock_set:
+                            self.runtime.summarize_messages_for_processed()
+
+        call_args = mock_set.call_args[0][0]
+        contents = [m.get("content") for m in call_args]
+
+        # The owning assistant message survived instead of being summarized away.
+        self.assertIn("owner of the split pair", contents)
+        self.assertIn("tool result of the split pair", contents)
+        # Middle messages are still summarized away, so the window stayed bounded.
+        self.assertNotIn("mid1", contents)
+        self.assertNotIn("mid2", contents)
+        self.assertNotIn("mid3", contents)
+        self.assertIn({"step_name": "task", "raw_text": "Task pair"}, contents)
+        self.assertIn("Summary pair", contents)
+        # Core invariant: no orphan tool message reaches the provider payload.
+        self.assertEqual(self._orphan_tool_messages(call_args), [])
+
+        # Chronological order is preserved: head + tail window + summary.
+        idx_task = contents.index({"step_name": "task", "raw_text": "Task pair"})
+        idx_owner = contents.index("owner of the split pair")
+        idx_tool = contents.index("tool result of the split pair")
+        idx_summary = contents.index("Summary pair")
+        self.assertLess(idx_task, idx_owner)
+        self.assertLess(idx_owner, idx_tool)
+        self.assertLess(idx_tool, idx_summary)
+
+    def test_summarize_tail_window_expansion_is_bounded(self):
+        """An expansion that would preserve everything skips summarization."""
+        self.runtime.session_id = None
+        self.mock_json_tool.json_load.side_effect = lambda x: x
+        messages = self._pair_fixture()
+        self.runtime.messages = messages
+        original_messages = list(messages)
+
+        with patch.object(self.runtime, 'is_need_summarize_for_processed', return_value=True):
+            with patch.object(self.runtime, '_summarize_messages') as mock_summarize:
+                with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+                    with patch.object(self.runtime, '_get_tail_offset_to_keep_in_summary', return_value=8):
+                        with patch.object(self.runtime, 'set_messages') as mock_set:
+                            result = self.runtime.summarize_messages_for_processed(force=True)
+
+        self.assertIsNone(result)
+        mock_summarize.assert_not_called()
+        mock_set.assert_not_called()
+        self.assertEqual(self.runtime.messages, original_messages)
+
+    def test_summarize_tail_window_not_expanded_when_already_paired(self):
+        """A window that already starts on the owner must not grow backwards."""
+        self.runtime.session_id = None
+        self.mock_json_tool.json_load.side_effect = lambda x: x
+        self.runtime.messages = self._pair_fixture()
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary paired"}
+        ]
+
+        with patch.object(self.runtime, 'is_need_summarize_for_processed', return_value=True):
+            with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "Summary paired")):
+                with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+                    with patch.object(self.runtime, '_get_tail_offset_to_keep_in_summary', return_value=2):
+                        with patch.object(self.runtime, 'set_messages') as mock_set:
+                            self.runtime.summarize_messages_for_processed()
+
+        call_args = mock_set.call_args[0][0]
+        contents = [m.get("content") for m in call_args]
+        # tail_offset=2 starts on the second owner, so nothing is missing: the
+        # split pair stays inside the summarized region.
+        self.assertNotIn("owner of the split pair", contents)
+        self.assertNotIn("tool result of the split pair", contents)
+        self.assertIn("second call", contents)
+        self.assertIn("second tool result", contents)
+        self.assertEqual(self._orphan_tool_messages(call_args), [])
+
+    def test_summarize_tail_window_with_session_keeps_owner_out_of_delete_range(self):
+        """The persisted delete range must not split an assistant/tool pair."""
+        self.runtime.session_id = "pair_session"
+        self.mock_json_tool.json_load.side_effect = lambda x: x
+        messages = self._pair_fixture()
+        self.runtime.messages = messages
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary"}
+        ]
+
+        mock_raw_msgs = []
+        for index, message in enumerate(messages):
+            raw = MagicMock()
+            raw.msg_id = "task_id" if index == 0 else f"id{index}"
+            raw.message = message
+            mock_raw_msgs.append(raw)
+        self.mock_ctx_manager.get_messages_by_session.return_value = mock_raw_msgs
+
+        with patch.object(self.runtime, 'is_need_summarize_for_processed', return_value=True):
+            with patch.object(self.runtime, '_summarize_messages', return_value=(mock_llm_chat, "Summary")):
+                with patch.object(self.runtime, '_get_head_offset_to_keep_in_summary', return_value=0):
+                    with patch.object(self.runtime, '_get_tail_offset_to_keep_in_summary', return_value=4):
+                        with patch.object(self.runtime, 'reset_messages'):
+                            self.runtime.summarize_messages_for_processed()
+
+        deleted_ids = []
+        for call_args in self.mock_ctx_manager.del_session_messages.call_args_list:
+            deleted_ids.extend(call_args[0][1])
+
+        # The owning assistant record and its tool record both survive deletion.
+        self.assertNotIn("id4", deleted_ids)
+        self.assertNotIn("id5", deleted_ids)
+        # Head and last-user records survive as before.
+        self.assertNotIn("task_id", deleted_ids)
+        self.assertNotIn("id6", deleted_ids)
+        # Only the truly summarized middle records are deleted.
+        self.assertIn("id1", deleted_ids)
+        self.assertIn("id2", deleted_ids)
+        self.assertIn("id3", deleted_ids)
+
+    def test_summary_partitions_agree_with_rebuilt_tail_window(self):
+        """Feasibility partitions must preserve exactly what the rebuild keeps."""
+        self.mock_json_tool.json_load.side_effect = lambda x: x
+        messages = self._pair_fixture()
+
+        preserved, compressible = self.runtime._build_user2agent_summary_partitions(
+            messages, 0, 4
+        )
+
+        self.assertIn(messages[4], preserved)
+        self.assertIn(messages[5], preserved)
+        self.assertEqual(self._orphan_tool_messages(preserved), [])
+        self.assertEqual(
+            [m.get("content") for m in compressible], ["mid1", "mid2", "mid3"]
+        )
+
+
+
 if __name__ == '__main__':
     unittest.main()

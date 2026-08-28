@@ -1538,5 +1538,338 @@ class TestDynamicContextGuardExpansion(TestContextRuntimeAgent2LLM):
         self.assertEqual(result, "Summarized content")
         self.assertIn(task, self.test_instance._ai_agent.messages)
 
+
+class TestSummarizeTailWindowPairAtomic(TestContextRuntimeAgent2LLM):
+    """Tail windows must stay tool-call pair atomic after summarization.
+
+    Regression coverage for the sticky provider error
+    ``No tool call found for function call output with call_id ...``: the
+    count-based tail window used to start on a tool observation whose owning
+    assistant message had been summarized away.
+    """
+
+    @staticmethod
+    def _assistant_with_call(call_id: str, content: str) -> dict:
+        return {
+            "role": "assistant",
+            "content": content,
+            "tool_calls": [{
+                "id": call_id,
+                "type": "function",
+                "function": {"name": "some_tool", "arguments": "{}"},
+            }],
+        }
+
+    @staticmethod
+    def _tool_message(call_id: str, content: str) -> dict:
+        return {"role": "tool", "content": content, "tool_call_id": call_id}
+
+    @staticmethod
+    def _orphan_tool_messages(messages: list) -> list:
+        """Return tool messages whose call id has no preceding assistant owner."""
+        from topsailai.utils import message_tool
+
+        declared = set()
+        orphans = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("role") == "assistant":
+                declared.update(message_tool.extract_tool_call_ids(msg))
+            elif msg.get("role") == "tool":
+                call_id = msg.get("tool_call_id")
+                if call_id and call_id not in declared:
+                    orphans.append(call_id)
+        return orphans
+
+    def _pair_fixture(self) -> list:
+        """Incident shape: owner at -5 and its tool observation at -4."""
+        return [
+            {"role": "user", "content": {"step_name": "task", "raw_text": "Task pair"}},
+            {"role": "user", "content": "mid1"},
+            {"role": "assistant", "content": "mid2"},
+            {"role": "user", "content": "mid3"},
+            self._assistant_with_call("call_owner", "owner of the split pair"),
+            self._tool_message("call_owner", "tool result of the split pair"),
+            {"role": "user", "content": "mid6"},
+            self._assistant_with_call("call_two", "second call"),
+            self._tool_message("call_two", "second tool result"),
+        ]
+
+    def test_summarize_tail_window_expanded_to_keep_tool_call_owner(self):
+        """A tail window starting on a tool result must pull in its owner."""
+        messages = self._pair_fixture()
+        self.test_instance._ai_agent.messages = messages
+        self.test_instance._messages = [{"role": "user", "content": "human last"}]
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary pair"}
+        ]
+
+        with patch.dict(os.environ, {"TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES": "0"}):
+            with patch.object(
+                self.test_instance, "_summarize_messages",
+                return_value=(mock_llm_chat, "Summary pair"),
+            ):
+                with patch.object(
+                    self.test_instance, "_get_head_offset_to_keep_in_summary", return_value=0
+                ):
+                    with patch.object(
+                        self.test_instance, "_get_tail_offset_to_keep_in_summary", return_value=4
+                    ):
+                        result = self.test_instance.summarize_messages_for_processing()
+
+        self.assertEqual(result, "Summary pair")
+        final_messages = self.test_instance._ai_agent.messages
+        final_contents = [m.get("content") for m in final_messages if isinstance(m, dict)]
+
+        # The owning assistant message survived instead of being summarized away.
+        self.assertIn("owner of the split pair", final_contents)
+        self.assertIn("tool result of the split pair", final_contents)
+        # Middle messages are still summarized away, so the window stayed bounded.
+        self.assertNotIn("mid1", final_contents)
+        self.assertNotIn("mid2", final_contents)
+        self.assertNotIn("mid3", final_contents)
+        self.assertIn({"step_name": "task", "raw_text": "Task pair"}, final_contents)
+        self.assertIn("Summary pair", final_contents)
+        # Core invariant: no orphan tool message reaches the provider payload.
+        self.assertEqual(self._orphan_tool_messages(final_messages), [])
+
+    def test_summarize_tail_window_expansion_is_bounded(self):
+        """An expansion that would preserve everything skips summarization."""
+        messages = self._pair_fixture()
+        self.test_instance._ai_agent.messages = messages
+        self.test_instance._messages = [{"role": "user", "content": "human last"}]
+        original_messages = list(messages)
+
+        with patch.dict(os.environ, {"TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES": "0"}):
+            with patch.object(self.test_instance, "_summarize_messages") as mock_summarize:
+                with patch.object(
+                    self.test_instance, "_get_head_offset_to_keep_in_summary", return_value=0
+                ):
+                    with patch.object(
+                        self.test_instance, "_get_tail_offset_to_keep_in_summary", return_value=8
+                    ):
+                        result = self.test_instance.summarize_messages_for_processing(force=True)
+
+        self.assertIsNone(result)
+        mock_summarize.assert_not_called()
+        self.assertEqual(self.test_instance._ai_agent.messages, original_messages)
+
+    def test_summarize_tail_window_not_expanded_below_head_region(self):
+        """An owner outside the allowed window region must not drag it down."""
+        messages = [
+            {"role": "user", "content": "start"},
+            self._assistant_with_call("call_bound", "owner inside head region"),
+            {"role": "user", "content": {"step_name": "task", "raw_text": "Task bound"}},
+            {"role": "user", "content": "mid"},
+            self._tool_message("call_bound", "tool result of the head owner"),
+            {"role": "user", "content": "tail last"},
+        ]
+        self.test_instance._ai_agent.messages = messages
+        self.test_instance._messages = [{"role": "user", "content": "human last"}]
+
+        mock_llm_chat = MagicMock()
+        mock_llm_chat.prompt_ctl.messages = [
+            {"role": "assistant", "content": "Summary bound"}
+        ]
+
+        with patch.dict(os.environ, {"TOPSAILAI_AGENT2LLM_SUMMARY_MIN_EXTRA_MESSAGES": "0"}):
+            with patch.object(
+                self.test_instance, "_summarize_messages",
+                return_value=(mock_llm_chat, "Summary bound"),
+            ):
+                with patch.object(
+                    self.test_instance, "_get_head_offset_to_keep_in_summary", return_value=0
+                ):
+                    with patch.object(
+                        self.test_instance, "_get_tail_offset_to_keep_in_summary", return_value=2
+                    ):
+                        result = self.test_instance.summarize_messages_for_processing()
+
+        self.assertEqual(result, "Summary bound")
+        final_contents = [
+            m.get("content") for m in self.test_instance._ai_agent.messages if isinstance(m, dict)
+        ]
+        # The owner is preserved through the intrinsic head region, so the tail
+        # window stays at its count-based start and the middle is compressed.
+        self.assertIn("owner inside head region", final_contents)
+        self.assertIn("tool result of the head owner", final_contents)
+        self.assertNotIn("mid", final_contents)
+
+    def test_summary_partitions_agree_with_rebuilt_tail_window(self):
+        """Feasibility partitions must preserve the same tail window as rebuild."""
+        messages = self._pair_fixture()
+        preserved, compressible = (
+            self.test_instance._build_agent2llm_summary_partitions(
+                messages,
+                head_offset_to_keep=0,
+                tail_offset_to_keep=4,
+                need_session_messages=False,
+            )
+        )
+        preserved_contents = [m.get("content") for m in preserved]
+        compressible_contents = [m.get("content") for m in compressible]
+
+        # The owner is preserved together with its tool observation.
+        self.assertIn("owner of the split pair", preserved_contents)
+        self.assertIn("tool result of the split pair", preserved_contents)
+        self.assertIn("second tool result", preserved_contents)
+        # The summarized middle stays identical to the rebuild expectation.
+        self.assertIn("mid1", compressible_contents)
+        self.assertIn("mid2", compressible_contents)
+        self.assertIn("mid3", compressible_contents)
+        self.assertEqual(self._orphan_tool_messages(preserved), [])
+
+
+class TestDelAgentMessagesPairAware(TestContextRuntimeAgent2LLM):
+    """Test suite for tool-call pairing during index-based pruning."""
+
+    @staticmethod
+    def _assistant(tool_call_ids):
+        """Build an assistant message declaring the given tool call ids."""
+        return {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": tool_call_id, "function": {"name": "fn"}}
+                for tool_call_id in tool_call_ids
+            ],
+        }
+
+    @staticmethod
+    def _tool(tool_call_id):
+        """Build a tool observation for the given call id."""
+        return {
+            "role": "tool",
+            "content": f"result-{tool_call_id}",
+            "tool_call_id": tool_call_id,
+        }
+
+    @staticmethod
+    def _orphans(messages):
+        """Return tool_call_ids without a preceding assistant declaration."""
+        declared = set()
+        orphans = []
+        for msg in messages:
+            if msg.get("role") == "assistant":
+                for tool_call in msg.get("tool_calls") or []:
+                    declared.add(tool_call["id"])
+            elif msg.get("role") == "tool":
+                if msg.get("tool_call_id") not in declared:
+                    orphans.append(msg.get("tool_call_id"))
+        return orphans
+
+    def test_delete_assistant_removes_its_tool_replies(self):
+        """Pruning the owning assistant must prune its observations too."""
+        self.test_instance._first_position = 0
+        self.test_instance._ai_agent.messages = [
+            {"role": "user", "content": "task"},
+            self._assistant(["call_A"]),
+            self._tool("call_A"),
+            {"role": "user", "content": "next"},
+        ]
+
+        result = self.test_instance.del_agent_messages([1])
+
+        self.assertEqual(result, [1, 2])
+        remaining = self.test_instance._ai_agent.messages
+        self.assertEqual([m["role"] for m in remaining], ["user", "user"])
+        self.assertEqual(self._orphans(remaining), [])
+
+    def test_delete_tool_removes_owner_and_siblings(self):
+        """Pruning one observation must prune the whole call group."""
+        self.test_instance._first_position = 0
+        self.test_instance._ai_agent.messages = [
+            {"role": "user", "content": "task"},
+            self._assistant(["call_A", "call_B"]),
+            self._tool("call_A"),
+            self._tool("call_B"),
+            {"role": "user", "content": "next"},
+        ]
+
+        result = self.test_instance.del_agent_messages([3])
+
+        self.assertEqual(result, [1, 2, 3])
+        remaining = self.test_instance._ai_agent.messages
+        self.assertEqual([m["role"] for m in remaining], ["user", "user"])
+        self.assertEqual(self._orphans(remaining), [])
+
+    def test_delete_plain_message_does_not_over_delete(self):
+        """A message without tool pairing deletes exactly itself."""
+        self.test_instance._first_position = 0
+        self.test_instance._ai_agent.messages = [
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "answer", "tool_calls": None},
+            {"role": "user", "content": "next"},
+        ]
+
+        result = self.test_instance.del_agent_messages([1])
+
+        self.assertEqual(result, [1])
+        remaining = self.test_instance._ai_agent.messages
+        self.assertEqual([m["content"] for m in remaining], ["task", "next"])
+
+    def test_mixed_indexes_are_deduplicated_and_ordered(self):
+        """Several selections delete one deduplicated set in ascending order."""
+        self.test_instance._first_position = 0
+        self.test_instance._ai_agent.messages = [
+            self._assistant(["call_A"]),
+            self._tool("call_A"),
+            {"role": "user", "content": "middle"},
+            self._assistant(["call_B"]),
+            self._tool("call_B"),
+        ]
+
+        result = self.test_instance.del_agent_messages([4, 0, 2, 0])
+
+        self.assertEqual(result, [0, 1, 2, 3, 4])
+        self.assertEqual(self.test_instance._ai_agent.messages, [])
+
+    def test_out_of_range_indexes_do_not_crash(self):
+        """Invalid indexes keep their previous no-effect behaviour."""
+        self.test_instance._first_position = 0
+        self.test_instance._ai_agent.messages = [
+            self._assistant(["call_A"]),
+            self._tool("call_A"),
+        ]
+
+        result = self.test_instance.del_agent_messages([99, -1])
+
+        self.assertEqual(result, [])
+        self.assertEqual(len(self.test_instance._ai_agent.messages), 2)
+
+    def test_to_del_last_does_not_pop_an_expanded_group_twice(self):
+        """The trailing guard must respect the expanded delete set."""
+        self.test_instance._first_position = 0
+        self.test_instance._ai_agent.messages = [
+            self._assistant(["call_A"]),
+            self._tool("call_A"),
+        ]
+
+        result = self.test_instance.del_agent_messages([0], to_del_last=True)
+
+        self.assertEqual(result, [0, 1])
+        self.assertEqual(self.test_instance._ai_agent.messages, [])
+
+    def test_pairing_resolved_relative_to_work_memory(self):
+        """Indexes are relative to the non-system region, pairing too."""
+        self.test_instance._first_position = 1
+        self.test_instance._ai_agent.messages = [
+            {"role": "system", "content": "prompt"},
+            self._assistant(["call_A"]),
+            self._tool("call_A"),
+            {"role": "user", "content": "next"},
+        ]
+
+        result = self.test_instance.del_agent_messages([0])
+
+        self.assertEqual(result, [0, 1])
+        remaining = self.test_instance._ai_agent.messages
+        self.assertEqual([m["role"] for m in remaining], ["system", "user"])
+        self.assertEqual(self._orphans(remaining), [])
+
+
 if __name__ == '__main__':
     unittest.main()
