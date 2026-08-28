@@ -34,18 +34,18 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         prog="topsailai_count_tokens",
-        description="Count tokens for the provided text or file content.",
+        description="Count tokens for the provided text, file content, or stdin.",
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--text",
         type=str,
-        help="Raw text to count tokens for.",
+        help="Raw text to count tokens for. Use '-' to read the text from stdin.",
     )
     group.add_argument(
         "--file",
         type=str,
-        help="Path to a file whose content will be counted.",
+        help="Path to a file whose content will be counted. Use '-' to read from stdin.",
     )
     parser.add_argument(
         "files",
@@ -91,7 +91,8 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
-        print(count_tokens(args.text, encoding_name=args.encoding))
+        text = sys.stdin.read() if args.text == "-" else args.text
+        print(count_tokens(text, encoding_name=args.encoding))
         return 0
 
     if args.file is not None:
@@ -101,6 +102,9 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
+        if args.file == "-":
+            print(count_tokens(sys.stdin.read(), encoding_name=args.encoding))
+            return 0
         file_path = resolve_path(args.file)
         if not os.path.isfile(file_path):
             print(f"Error: file not found: {args.file}", file=sys.stderr)
@@ -109,11 +113,16 @@ def main() -> int:
         return 0
 
     if not args.files:
-        print(
-            "Error: provide --text, --file, or one or more file paths.",
-            file=sys.stderr,
-        )
-        return 2
+        # No input source was given: fall back to stdin so the command can be
+        # used in a pipeline. Refuse to block when stdin is an interactive TTY.
+        if sys.stdin.isatty():
+            print(
+                "Error: provide --text, --file, one or more file paths, or pipe text to stdin.",
+                file=sys.stderr,
+            )
+            return 2
+        print(count_tokens(sys.stdin.read(), encoding_name=args.encoding))
+        return 0
 
     exit_code = 0
     for path in args.files:

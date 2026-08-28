@@ -6,7 +6,7 @@ import io
 import os
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -159,15 +159,140 @@ class TestCountTokensCLI:
         assert "file not found" in captured.err
         assert str(missing) in captured.err
 
-    def test_no_arguments(self, capsys):
-        """Running without any arguments reports a usage error."""
-        with patch.object(sys, "argv", ["topsailai_count_tokens"]):
-            code = topsailai_count_tokens.main()
+    def test_no_arguments_reads_stdin(self, capsys):
+        """Running without any input argument reads the text from stdin."""
+        stdin = io.StringIO("hello world")
+        with patch.object(sys, "stdin", stdin):
+            with patch.object(sys, "argv", ["topsailai_count_tokens"]):
+                code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        assert captured.out.strip() == "2"
+        assert captured.err == ""
+
+    def test_no_arguments_with_empty_stdin(self, capsys):
+        """Piping empty stdin without arguments produces a token count of zero."""
+        stdin = io.StringIO("")
+        with patch.object(sys, "stdin", stdin):
+            with patch.object(sys, "argv", ["topsailai_count_tokens"]):
+                code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        assert captured.out.strip() == "0"
+        assert captured.err == ""
+
+    def test_no_arguments_with_tty_stdin_reports_usage_error(self, capsys):
+        """An interactive stdin without input arguments reports a usage error."""
+        stdin = Mock()
+        stdin.isatty.return_value = True
+        with patch.object(sys, "stdin", stdin):
+            with patch.object(sys, "argv", ["topsailai_count_tokens"]):
+                code = topsailai_count_tokens.main()
 
         captured = capsys.readouterr()
         assert code == 2
-        assert "provide --text, --file, or one or more file paths" in captured.err
+        assert "provide --text, --file, one or more file paths" in captured.err
         assert captured.out == ""
+        stdin.read.assert_not_called()
+
+    def test_count_text_dash_reads_stdin(self, capsys):
+        """`--text -` reads the text to count from stdin."""
+        stdin = io.StringIO("hello world")
+        with patch.object(sys, "stdin", stdin):
+            with patch.object(
+                sys, "argv", ["topsailai_count_tokens", "--text", "-"]
+            ):
+                code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        assert captured.out.strip() == "2"
+        assert captured.err == ""
+
+    def test_count_file_dash_reads_stdin(self, capsys):
+        """`--file -` reads the content to count from stdin."""
+        stdin = io.StringIO("hello world")
+        with patch.object(sys, "stdin", stdin):
+            with patch.object(
+                sys, "argv", ["topsailai_count_tokens", "--file", "-"]
+            ):
+                code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 0
+        assert captured.out.strip() == "2"
+        assert captured.err == ""
+
+    def test_text_dash_forwards_encoding(self, capsys):
+        """`--text -` forwards the selected encoding to count_tokens."""
+        stdin = io.StringIO("hello world")
+        with patch.object(sys, "stdin", stdin):
+            with patch(
+                "topsailai_count_tokens.count_tokens", return_value=42
+            ) as mock_count:
+                with patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "topsailai_count_tokens",
+                        "--text",
+                        "-",
+                        "--encoding",
+                        "p50k_base",
+                    ],
+                ):
+                    code = topsailai_count_tokens.main()
+
+        assert code == 0
+        mock_count.assert_called_once_with("hello world", encoding_name="p50k_base")
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "42"
+
+    def test_text_dash_with_positional_files(self, capsys):
+        """`--text -` combined with positional files is rejected before reading stdin."""
+        stdin = Mock()
+        with patch.object(sys, "stdin", stdin):
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "topsailai_count_tokens",
+                    "--text",
+                    "-",
+                    "/tmp/sample.txt",
+                ],
+            ):
+                code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 2
+        assert "--text cannot be used with positional file arguments" in captured.err
+        assert captured.out == ""
+        stdin.read.assert_not_called()
+
+    def test_file_dash_with_positional_files(self, capsys):
+        """`--file -` combined with positional files is rejected before reading stdin."""
+        stdin = Mock()
+        with patch.object(sys, "stdin", stdin):
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "topsailai_count_tokens",
+                    "--file",
+                    "-",
+                    "/tmp/sample.txt",
+                ],
+            ):
+                code = topsailai_count_tokens.main()
+
+        captured = capsys.readouterr()
+        assert code == 2
+        assert "--file cannot be used with positional file arguments" in captured.err
+        assert captured.out == ""
+        stdin.read.assert_not_called()
 
     def test_text_with_positional_files(self, capsys):
         """--text combined with positional files is rejected."""
