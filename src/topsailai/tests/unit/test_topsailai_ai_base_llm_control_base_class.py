@@ -310,8 +310,16 @@ class TestLLMModelBase:
             "role": "assistant",
             "content": None,
             "tool_calls": [
-                {"id": "call_A", "function": {"name": "tool_a"}},
-                {"id": "call_B", "function": {"name": "tool_b"}},
+                {
+                    "id": "call_A",
+                    "type": "function",
+                    "function": {"name": "tool_a", "arguments": "{}"},
+                },
+                {
+                    "id": "call_B",
+                    "type": "function",
+                    "function": {"name": "tool_b", "arguments": "{}"},
+                },
             ],
         }
         messages = [
@@ -325,6 +333,84 @@ class TestLLMModelBase:
 
         assert params["parallel_tool_calls"] is True
         assert params["messages"] == messages
+
+    @pytest.mark.parametrize(
+        "malformed_tool_calls",
+        [
+            ["ChatCompletionMessageFunctionToolCall(arguments='secret-sentinel')"],
+            "ChatCompletionMessageFunctionToolCall(arguments='secret-sentinel')",
+        ],
+    )
+    def test_malformed_persisted_tool_calls_are_stripped_with_results(
+            self, caplog, malformed_tool_calls, request_model):
+        """Malformed persisted owners and their tool results never reach params."""
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": malformed_tool_calls,
+            },
+            {
+                "role": "tool",
+                "content": "result-body-sentinel",
+                "tool_call_id": "call_legacy",
+            },
+        ]
+
+        with caplog.at_level("WARNING"):
+            params = request_model.build_parameters_for_chat(messages)
+
+        assert "tool_calls" not in params["messages"][1]
+        assert not any(msg.get("role") == "tool" for msg in params["messages"])
+        assert "strip malformed assistant tool_calls" in caplog.text
+        assert "secret-sentinel" not in caplog.text
+        assert "result-body-sentinel" not in caplog.text
+
+    def test_json_string_tool_calls_are_normalized(self, request_model):
+        """A valid JSON-string representation is accepted at the request boundary."""
+        tool_calls = (
+            '[{"id":"call_json","type":"function","function":'
+            '{"name":"safe_tool","arguments":"{}"}}]'
+        )
+
+        params = request_model.build_parameters_for_chat([
+            {"role": "system", "content": "system"},
+            {"role": "assistant", "content": None, "tool_calls": tool_calls},
+            {
+                "role": "tool",
+                "content": "ok",
+                "tool_call_id": "call_json",
+            },
+        ])
+
+        assert params["messages"][1]["tool_calls"] == [{
+            "id": "call_json",
+            "type": "function",
+            "function": {"name": "safe_tool", "arguments": "{}"},
+        }]
+        assert params["messages"][2]["tool_call_id"] == "call_json"
+
+    def test_hook_replacement_cannot_bypass_tool_call_normalization(
+            self, monkeypatch, request_model):
+        """Post-hook request normalization cannot be replaced by configuration."""
+        monkeypatch.setenv(
+            "TOPSAILAI_HOOK_BEFORE_LLM_CHAT",
+            "topsailai.tests.unit.fake_replacement_hook",
+        )
+        malformed = ["ChatCompletionMessageFunctionToolCall(id='call_legacy')"]
+        with patch(
+            "topsailai.ai_base.llm_control.message.hook_execute",
+            return_value=[
+                {"role": "system", "content": "system"},
+                {"role": "assistant", "content": None, "tool_calls": malformed},
+            ],
+        ):
+            params = request_model.build_parameters_for_chat([
+                {"role": "system", "content": "system"},
+            ])
+
+        assert "tool_calls" not in params["messages"][1]
 
     def test_extra_body_unset_or_empty_leaves_params_unchanged(
             self, monkeypatch, request_model):

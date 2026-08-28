@@ -12,6 +12,89 @@ from topsailai.ai_base.constants import (
 from topsailai.utils import json_tool
 
 
+def _tool_call_mapping(value):
+    """Return a plain mapping for one tool call without stringifying it."""
+    if isinstance(value, dict):
+        return value
+    for method_name in ("model_dump", "dict"):
+        method = getattr(value, method_name, None)
+        if not callable(method):
+            continue
+        try:
+            dumped = method()
+        except Exception:
+            continue
+        if isinstance(dumped, dict):
+            return dumped
+    return None
+
+
+def normalize_tool_calls(value):
+    """Normalize valid tool calls to JSON-compatible mappings.
+
+    JSON strings are accepted only when they decode to a valid tool-call list.
+    SDK repr strings and other malformed values are rejected rather than
+    reconstructed heuristically.
+
+    Args:
+        value: A tool_calls value from a runtime or persisted message.
+
+    Returns:
+        tuple: ``(normalized_value, malformed_type)``. ``malformed_type`` is
+        empty when the value is valid. Valid plain dictionaries are preserved.
+    """
+    original_type = type(value).__name__
+    if isinstance(value, str):
+        try:
+            value = json_tool.json_load(value)
+        except Exception:
+            return None, original_type
+    if not isinstance(value, list):
+        return None, original_type
+
+    normalized = []
+    for item in value:
+        item_type = type(item).__name__
+        mapping = _tool_call_mapping(item)
+        if not mapping:
+            return None, item_type
+        function = _tool_call_mapping(mapping.get("function"))
+        if not mapping.get("id") or not mapping.get("type") or function is None:
+            return None, item_type
+        if function is not mapping.get("function"):
+            mapping = dict(mapping)
+            mapping["function"] = function
+        normalized.append(mapping)
+    return normalized, ""
+
+
+def normalize_message_tool_calls(messages: list, logger=None) -> list:
+    """Normalize assistant tool calls and strip malformed persisted values.
+
+    The input list is mutated intentionally at serialization/request boundaries.
+    Warnings include only the message index and malformed type.
+    """
+    if not messages:
+        return messages
+    for index, msg in enumerate(messages):
+        if not isinstance(msg, dict) or msg.get("role") != ROLE_ASSISTANT:
+            continue
+        if "tool_calls" not in msg or msg.get("tool_calls") is None:
+            continue
+        normalized, malformed_type = normalize_tool_calls(msg.get("tool_calls"))
+        if malformed_type:
+            msg.pop("tool_calls", None)
+            if logger:
+                logger.warning(
+                    "strip malformed assistant tool_calls: index=%s type=%s",
+                    index,
+                    malformed_type,
+                )
+            continue
+        msg["tool_calls"] = normalized
+    return messages
+
+
 def _normalize_message_value(value):
     """
     Recursively normalize a message value so JSON-string payloads are parsed

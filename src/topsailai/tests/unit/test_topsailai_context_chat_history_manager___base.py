@@ -517,6 +517,57 @@ class TestContextManager(unittest.TestCase):
         mock_get_session_id.assert_not_called()
 
 
+    def test_add_session_message_round_trips_sdk_tool_calls_as_dicts(self):
+        """SDK tool calls are persisted and reloaded as plain mappings."""
+        class Dumpable:
+            """Minimal Pydantic-compatible test object."""
+
+            def __init__(self, value):
+                self.value = value
+
+            def model_dump(self):
+                """Return the configured mapping."""
+                return self.value
+
+        function = Dumpable({"name": "safe_tool", "arguments": "{}"})
+        tool_call = Dumpable({
+            "id": "call_sdk",
+            "type": "function",
+            "function": function,
+        })
+        self.manager.add_message = MagicMock()
+
+        self.manager.add_session_message(
+            {"role": "assistant", "content": None, "tool_calls": [tool_call]},
+            session_id="test_session",
+        )
+
+        stored = self.manager.add_message.call_args[0][0]
+        loaded = json.loads(stored.message)
+        self.assertEqual(loaded["tool_calls"], [{
+            "id": "call_sdk",
+            "type": "function",
+            "function": {"name": "safe_tool", "arguments": "{}"},
+        }])
+
+    def test_add_session_message_round_trips_plain_tool_call_dicts(self):
+        """Plain tool-call mappings retain their structure after persistence."""
+        tool_calls = [{
+            "id": "call_dict",
+            "type": "function",
+            "function": {"name": "safe_tool", "arguments": "{}"},
+        }]
+        self.manager.add_message = MagicMock()
+
+        self.manager.add_session_message(
+            {"role": "assistant", "content": None, "tool_calls": tool_calls},
+            session_id="test_session",
+        )
+
+        stored = self.manager.add_message.call_args[0][0]
+        self.assertEqual(json.loads(stored.message)["tool_calls"], tool_calls)
+
+
 class TestChatHistoryBase(unittest.TestCase):
     """Test cases for ChatHistoryBase class."""
 

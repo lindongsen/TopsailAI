@@ -624,34 +624,39 @@ Both summarization paths must follow this convention:
 ### Note for maintainers
 When modifying summarization logic, keep this ordering invariant intact. If a future use case needs a different ordering, add a new method or configuration path rather than silently changing the shared convention.
 
-## MEMO: Tool-Call Pairing Invariant
+## MEMO: Tool-Call Pairing and Representation Invariants
 
 **Date:** 2026-08-28
 **Files:**
 - `utils/message_tool.py`
+- `ai_base/llm_control/base_class.py`
 - `ai_base/llm_hooks/hook_before_chat/tool_call_pairing.py`
 - `ai_base/llm_hooks/executor.py`
+- `context/chat_history_manager/__base.py`
 - `context/ctx_manager.py`
 - `workspace/context/agent2llm.py`
 - `workspace/context/ctx_runtime.py`
 
-### Invariant
+### Invariants
 
 Every `role="tool"` message must have a preceding assistant message whose `tool_calls` declares its `tool_call_id`. A violation makes the provider reject the whole request with `400 No tool call found for function call output with call_id ...`, and because the offending message stays in the context, the failure repeats on every retry and every later turn.
 
+Structured message fields such as `tool_calls` must be persisted as plain JSON-compatible dict/list values. They must not rely on a generic `default=str` fallback, because SDK object representations are not a reversible storage protocol.
+
 ### Enforcement
 
-- **Request boundary (last resort):** the default `TOPSAILAI_HOOK_BEFORE_LLM_CHAT` hook list includes `tool_call_pairing`, which drops orphaned tool messages before the request is sent. Setting that variable replaces the defaults and therefore disables this guard.
-- **Producers must not create the violation:** summarization and session-tail truncation windows are expanded to be tool-call-pair atomic (`expand_tail_start_for_tool_pairing`), and index-based Agent2LLM pruning expands each selected index to the whole call group (`expand_indexes_for_tool_pairing`).
+- **Request boundary (last resort):** `build_parameters_for_chat()` normalizes `tool_calls` both before and after configurable formatting hooks, then drops orphaned tool messages. This guard cannot be disabled by replacing `TOPSAILAI_HOOK_BEFORE_LLM_CHAT`.
+- **Session persistence:** `ContextManager.add_session_message()` uses the shared tool-call normalizer before generic JSON serialization. SDK/Pydantic objects become plain mappings; malformed representations are stripped with a bounded warning instead of being stringified.
+- **Producers must not create pairing violations:** summarization and session-tail truncation windows are expanded to be tool-call-pair atomic (`expand_tail_start_for_tool_pairing`), and index-based Agent2LLM pruning expands each selected index to the whole call group (`expand_indexes_for_tool_pairing`).
 - **Deterministic 400 classification:** built-in non-retryable rules require known orphan-tool phrases or contextual field-and-qualifier combinations. Generic `function_call_output` or `tool_call_id` mentions remain retryable; `TOPSAILAI_LLM_NON_RETRYABLE_BAD_REQUEST_MARKERS` can add provider-specific substring rules but cannot disable built-ins.
 
 ### Rule for new code
 
-Any new code that removes, reorders, or slices context messages MUST reuse the shared helpers in `utils/message_tool.py` (`extract_tool_call_ids`, `drop_orphaned_tool_messages`, `expand_tail_start_for_tool_pairing`, `expand_indexes_for_tool_pairing`) instead of writing its own pairing logic. Pairing must be resolved against the same message slice the mutation operates on.
+Any new code that persists structured message fields must normalize them explicitly before generic JSON serialization. Any code that removes, reorders, or slices context messages must reuse the shared helpers in `utils/message_tool.py` instead of writing its own normalization or pairing logic. Pairing must be resolved against the same message slice the mutation operates on.
 
 ### Note for maintainers
 
-`del_session_messages()` (User2Agent) is intentionally not pair-aware: the session layer stores `tool_calls` as a Python-stringified value, so pairing is not reliably detectable there. Making arbitrary persisted-session deletion pair-aware requires normalized JSON storage plus backward-compatible loading/migration; outgoing requests remain protected by pair-aware session-tail truncation, Agent2LLM session import sanitization, and the default request-boundary sanitizer.
+Historical SDK repr values are intentionally not reconstructed with regex, `eval`, or `ast.literal_eval`; malformed values are safely stripped at the request boundary. Database backfill and pair-aware User2Agent deletion remain deferred. Fresh structured in-memory messages can support pair-aware deletion later without requiring a database backfill.
 ## MEMO: Agent2LLM Message Persistence Across Turns
 
 **Date:** 2026-07-16

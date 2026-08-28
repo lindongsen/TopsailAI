@@ -16,6 +16,7 @@ from topsailai.logger import logger
 from topsailai.utils.hash_tool import md5sum
 from topsailai.utils import json_tool
 from topsailai.utils import format_tool
+from topsailai.utils import message_tool
 from topsailai.utils.thread_local_tool import get_session_id
 from topsailai.utils.env_tool import is_archive_message_enabled, is_use_tool_calls
 from topsailai.utils.time_tool import get_current_date
@@ -454,7 +455,8 @@ class ContextManager(MessageStorageBase):
             new_last_message.update(last_message)
             last_message = new_last_message
 
-        # Convert message to JSON and create message data
+        # Normalize structured fields before the generic JSON fallback runs.
+        message_tool.normalize_message_tool_calls([last_message], logger=logger)
         last_message = json_tool.json_dump(last_message)
         msg_data = ChatHistoryMessageData(
             message=last_message,

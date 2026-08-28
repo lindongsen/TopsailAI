@@ -14,6 +14,7 @@ from topsailai.logger import logger
 from topsailai.utils import (
     env_tool,
     format_tool,
+    message_tool,
     text_tool,
 )
 from topsailai.utils.env_tool import EnvReaderInstance  # For test compatibility
@@ -274,7 +275,10 @@ class LLMModelBase(object):
             dict: Parameters dictionary for the chat completion API
         """
         messages = copy.deepcopy(messages)
+        message_tool.normalize_message_tool_calls(messages, logger=logger)
         messages = format_messages(messages, key_name="step_name", value_name="raw_text")
+        message_tool.normalize_message_tool_calls(messages, logger=logger)
+        messages = message_tool.drop_orphaned_tool_messages(messages, logger=logger)
         params = dict(
             model=self.model_name,
             messages=messages,

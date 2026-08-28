@@ -148,15 +148,26 @@ class TestBuildParametersForChat:
             assert params["messages"] == []
 
     def test_preserves_tool_call_id(self, model):
-        """Test that tool_call_id is preserved in messages."""
-        messages = [{"role": "tool", "content": "Result", "tool_call_id": "call_123"}]
+        """Test that a paired tool_call_id is preserved in messages."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {"name": "safe_tool", "arguments": "{}"},
+                }],
+            },
+            {"role": "tool", "content": "Result", "tool_call_id": "call_123"},
+        ]
 
         with patch("topsailai.ai_base.llm_control.base_class.format_messages") as mock_format:
             mock_format.return_value = messages
 
             params = model.build_parameters_for_chat(messages)
 
-            assert params["messages"][0]["tool_call_id"] == "call_123"
+            assert params["messages"][1]["tool_call_id"] == "call_123"
 
     def test_multiple_list_contents(self, model):
         """Test multiple messages with list content are all preserved."""
