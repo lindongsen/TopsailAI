@@ -1,4 +1,4 @@
-# Learn
+# Learn & Memory Of Project
 
 ## When user provides negative or corrective feedback, treat it as high-signal design constraints rather than just a code-location fix
 
