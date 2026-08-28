@@ -9,6 +9,7 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -154,3 +155,86 @@ class TestRunTestPassesEnv:
         env = captured["env"]
         assert env["PYTHONPATH"].startswith(os.path.normpath(str(runner.SRC_ROOT)))
         assert captured["cwd"] == runner.TEST_DIR
+
+
+class TestMainExitCode:
+    """Tests for main() result aggregation and process exit semantics."""
+
+    @staticmethod
+    def _run_main(runner, monkeypatch, tmp_path, results):
+        """Run main() with controlled execution results and a temporary report."""
+        args = SimpleNamespace(
+            files=[],
+            threshold=10.0,
+            timeout=120,
+            workers=1,
+            retries=0,
+            sequential=False,
+            sequential_yes_do_it=False,
+        )
+        test_files = [result["file"] for result in results]
+        monkeypatch.setattr(runner, "OUTPUT_FILE", tmp_path / "test_results.txt")
+        monkeypatch.setattr(runner, "parse_args", lambda: args)
+        monkeypatch.setattr(runner, "get_test_files", lambda selected=None: test_files)
+        monkeypatch.setattr(
+            runner,
+            "execute_concurrently",
+            lambda *unused_args, **unused_kwargs: results,
+        )
+        return runner.main()
+
+    @staticmethod
+    def _result(status, name="test_example.py"):
+        """Build one controlled runner result."""
+        return {
+            "file": name,
+            "status": status,
+            "details": f"{status} details",
+            "elapsed": 0.1,
+        }
+
+    def test_all_pass_returns_zero(self, runner, monkeypatch, tmp_path):
+        """An all-PASS result set must return success."""
+        result = self._run_main(
+            runner, monkeypatch, tmp_path, [self._result("PASS")]
+        )
+        assert result == 0
+
+    @pytest.mark.parametrize("status", ["FAIL", "TIMEOUT", "ERROR"])
+    def test_non_pass_status_returns_nonzero(
+        self, runner, monkeypatch, tmp_path, status
+    ):
+        """FAIL, TIMEOUT, and ERROR classifications must return failure."""
+        result = self._run_main(
+            runner, monkeypatch, tmp_path, [self._result(status)]
+        )
+        assert result == 1
+
+    def test_zero_collected_files_returns_nonzero(
+        self, runner, monkeypatch, tmp_path
+    ):
+        """An empty collection must not be reported as a successful run."""
+        result = self._run_main(runner, monkeypatch, tmp_path, [])
+        assert result == 1
+
+    def test_complete_line_format_is_stable(
+        self, runner, monkeypatch, tmp_path, capsys
+    ):
+        """The machine-consumed COMPLETE line must retain its exact format."""
+        result = self._run_main(
+            runner, monkeypatch, tmp_path, [self._result("PASS")]
+        )
+        assert result == 0
+        assert "COMPLETE: Total=1, Passed=1, Failed=0" in capsys.readouterr().out.splitlines()
+
+    def test_mixed_results_report_counts_and_return_nonzero(
+        self, runner, monkeypatch, tmp_path, capsys
+    ):
+        """Mixed PASS and FAIL results must report exact counts and fail."""
+        results = [
+            self._result("PASS", "test_pass.py"),
+            self._result("FAIL", "test_fail.py"),
+        ]
+        result = self._run_main(runner, monkeypatch, tmp_path, results)
+        assert result == 1
+        assert "COMPLETE: Total=2, Passed=1, Failed=1" in capsys.readouterr().out.splitlines()

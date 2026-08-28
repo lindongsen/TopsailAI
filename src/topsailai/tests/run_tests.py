@@ -379,8 +379,8 @@ def main():
     print(f"Total elapsed: {total_elapsed:.3f}s")
     print(f"Results saved to: {OUTPUT_FILE}")
 
-    return results
+    return 0 if total > 0 and not errors else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
