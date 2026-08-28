@@ -50,8 +50,8 @@ class TestConfigHelpers(unittest.TestCase):
 
     @patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_TIMEOUT': '15'}, clear=False)
     def test_default_timeout_from_env(self):
-        """Positive env timeout is returned as float."""
-        self.assertEqual(human_tool._get_default_timeout(), 15.0)
+        """Positive env timeout is returned as an integer."""
+        self.assertEqual(human_tool._get_default_timeout(), 15)
 
     @patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_TIMEOUT': '0'}, clear=False)
     def test_default_timeout_zero_means_infinite(self):
@@ -62,6 +62,18 @@ class TestConfigHelpers(unittest.TestCase):
     def test_default_timeout_unset_returns_none(self):
         """Missing variable yields None (infinite)."""
         self.assertIsNone(human_tool._get_default_timeout())
+
+    def test_default_timeout_accepts_integer_valued_text(self):
+        """Integer-valued decimal text is normalized to integer seconds."""
+        with patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_TIMEOUT': '5.0'}, clear=False):
+            self.assertEqual(human_tool._get_default_timeout(), 5)
+
+    def test_default_timeout_invalid_values_fall_back_to_infinite(self):
+        """Fractional, nonnumeric, and non-finite env values fall back to zero semantics."""
+        for value in ('0.5', 'abc', 'NaN', '+inf', 'inf', '-inf'):
+            with self.subTest(value=value):
+                with patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_TIMEOUT': value}, clear=False):
+                    self.assertIsNone(human_tool._get_default_timeout())
 
 
     @patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_MAX_ANSWER_LENGTH': '12345'}, clear=False)
@@ -397,34 +409,34 @@ class TestOptionValidationLoop(unittest.TestCase):
         self.assertEqual(result['status'], 'answered')
         self.assertEqual(result['answer'], 'free text')
         self.assertIn('or your own opinion', observed[0][0])
-        self.assertEqual(observed[0][1], 60.0)
+        self.assertEqual(observed[0][1], 60)
 
 
-    def test_numeric_timeout_strings_are_normalized(self):
-        """Finite numeric timeout strings are parsed to floats."""
-        for value, expected in (('1.3', 1.3), ('300', 300.0), (' 42 ', 42.0), ('1e2', 100.0)):
+    def test_integer_timeout_values_are_normalized(self):
+        """Native integers and integer-valued text or floats become integers."""
+        for value, expected in ((5, 5), ('5', 5), (' 5 ', 5), (5.0, 5), ('5.0', 5), ('1e2', 100)):
             self.assertEqual(human_tool._resolve_timeout_seconds(value), (expected, None))
 
     def test_non_positive_timeout_values_mean_infinite_wait(self):
-        """Zero and negative numeric values normalize to an infinite wait."""
-        for value in (0, -1, '0', '-1.5'):
+        """Zero and negative integer values normalize to an infinite wait."""
+        for value in (0, -1, '0', '-1', -1.0):
             self.assertEqual(human_tool._resolve_timeout_seconds(value), (None, None))
 
     def test_invalid_timeout_values_return_invalid_request(self):
-        """Empty, nonnumeric, non-finite, and boolean timeouts are rejected."""
-        for value in ('abc', '', 'NaN', 'inf', '-inf', True, False):
+        """Fractional, empty, nonnumeric, non-finite, and boolean timeouts are rejected."""
+        for value in (0.5, '0.5', 'abc', '', 'NaN', '+inf', 'inf', '-inf', True, False):
             result = human_tool.ask_decision('q', timeout_seconds=value)
             self.assertEqual(result['status'], 'invalid_request')
             self.assertEqual(result['reason'], 'invalid_timeout_seconds')
 
     @patch('topsailai.tools.human_tool._resolve_input_funcs')
-    def test_string_timeout_reaches_input_as_parsed_float(self, mock_resolve):
-        """ask_decision passes a parsed numeric string to the runtime callback."""
+    def test_string_timeout_reaches_input_as_parsed_integer(self, mock_resolve):
+        """ask_decision passes parsed integer text to the runtime callback."""
         observed = []
         mock_resolve.return_value = (lambda _prompt, timeout: observed.append(timeout) or 'yes', None)
-        result = human_tool.ask_decision('q', timeout_seconds='1.3')
+        result = human_tool.ask_decision('q', timeout_seconds='5.0')
         self.assertEqual(result['status'], 'answered')
-        self.assertEqual(observed, [1.3])
+        self.assertEqual(observed, [5])
 
     @patch('topsailai.tools.human_tool.sys.stdin')
     @patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(lambda p, t: 'yes', None))
@@ -446,39 +458,26 @@ class TestOptionValidationLoop(unittest.TestCase):
 class TestTimeoutEnforcement(unittest.TestCase):
     """Verify positive effective_timeout is enforced on non-with_timeout branches."""
 
+    @patch('topsailai.tools.human_tool._read_with_timeout', return_value=None)
     @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
-    def test_plain_branch_enforces_positive_timeout(self, mock_build):
-        """Plain thread-local input must honor a positive effective timeout."""
-        import time
-
-        def slow_reader(_prompt):
-            time.sleep(30)
-            return 'too late'
-
+    def test_plain_branch_passes_positive_integer_timeout(self, mock_build, mock_read):
+        """Plain thread-local input passes the integer deadline to the wait helper."""
+        reader = MagicMock()
         with patch('topsailai.tools.human_tool._resolve_input_funcs',
-                   return_value=(None, slow_reader)):
-            result = human_tool.ask_decision(
-                'q', default='dflt', timeout_seconds=0.002
-            )
+                   return_value=(None, reader)):
+            result = human_tool.ask_decision('q', default='dflt', timeout_seconds=1)
+        mock_read.assert_called_once_with(reader, 1, 'prompt')
         self.assertEqual(result['status'], 'timeout')
         self.assertEqual(result['answer'], 'dflt')
 
+    @patch('topsailai.tools.human_tool._read_with_timeout', return_value=None)
     @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
     @patch('topsailai.tools.human_tool._has_usable_input_source', return_value=True)
-    def test_input_fallback_enforces_positive_timeout(self, mock_src, mock_build):
-        """Builtin input() fallback must honor a positive effective timeout."""
-        import time
-
-        def blocking_input(*_args):
-            time.sleep(60)
-            return 'late'
-
-        with patch('builtins.input', blocking_input):
-            with patch('topsailai.tools.human_tool._resolve_input_funcs',
-                       return_value=(None, None)):
-                result = human_tool.ask_decision(
-                    'q', default='dflt', timeout_seconds=0.004
-                )
+    def test_input_fallback_passes_positive_integer_timeout(self, mock_src, mock_build, mock_read):
+        """Builtin input fallback passes the integer deadline to the wait helper."""
+        with patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(None, None)):
+            result = human_tool.ask_decision('q', default='dflt', timeout_seconds=1)
+        mock_read.assert_called_once_with(input, 1, 'prompt')
         self.assertEqual(result['status'], 'timeout')
         self.assertEqual(result['answer'], 'dflt')
 

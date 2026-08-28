@@ -1,8 +1,8 @@
 Feature: ask_decision keeps its string-first parameter contract
   ``human_tool.ask_decision`` is this project's reference implementation of the rule
   "tool parameters must assume string-typed LLM output": it decodes a JSON-array
-  string into options, always accepts free-text answers, and requires a finite number
-  for the wait budget. The removed ``allow_free_text`` argument is not accepted;
+  string into options, always accepts free-text answers, and requires finite integer
+  seconds for the wait budget. The removed ``allow_free_text`` argument is not accepted;
   callers must use the always-enabled free-text behavior.
 
   Every call runs in a non-interactive process with no input channel, inside a worker
@@ -78,14 +78,14 @@ Feature: ask_decision keeps its string-first parameter contract
     And the human decision answer reports no timeout
     And the human decision answer carries no raw exception text
 
-    Examples: numeric text and native numbers
+    Examples: integer text and native integer-valued numbers
       | timeout    |
       | 30         |
       | <sp>30<sp> |
-      | 1.5        |
+      | 5.0        |
       | 1e2        |
       | int:30     |
-      | float:1.5  |
+      | float:5.0  |
 
   Scenario Outline: ask_decision keeps a non-positive wait budget as wait indefinitely
     Zero and negative budgets are existing business semantics, not bad arguments.
@@ -100,9 +100,9 @@ Feature: ask_decision keeps its string-first parameter contract
       | -5      |
       | int:0   |
 
-  Scenario Outline: ask_decision rejects a wait budget that is not a finite number
-    This is the finite-value regression lock: NaN and both infinities convert cleanly
-    in Python yet must never reach the wait call.
+  Scenario Outline: ask_decision rejects a wait budget that is not finite integer seconds
+    Fractions must not be truncated to zero because zero means an indefinite wait; NaN and
+    both infinities also convert in Python but must never reach the wait call.
 
     When the human decision tool is asked with parameter timeout_seconds set to <timeout>
     Then the human decision answer is a parameter error naming timeout_seconds
@@ -110,6 +110,7 @@ Feature: ask_decision keeps its string-first parameter contract
 
     Examples: unusable budget text
       | timeout |
+      | 0.5     |
       | abc     |
       | NaN     |
       | inf     |

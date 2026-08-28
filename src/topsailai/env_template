@@ -971,9 +971,10 @@ TOPSAILAI_LLM_MISTAKE_OUTPUT_MAX=1048576
 # Human Decision Tool
 # =============================================================================
 
-# Default max seconds to wait for a decision from the ask_decision tool.
+# Default integer seconds to wait for a decision from the ask_decision tool.
 # 0 (default) means infinite, but only honored when an interactive TTY is
-# present; otherwise the tool returns 'unavailable' immediately.
+# present; otherwise the tool returns 'unavailable' immediately. Invalid or
+# fractional values fall back to 0.
 TOPSAILAI_HUMAN_DECISION_TIMEOUT=0
 
 

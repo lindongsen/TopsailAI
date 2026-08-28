@@ -25,16 +25,26 @@ from topsailai.context.ctx_safe import truncate_text
 # Configuration helpers
 # ---------------------------------------------------------------------------
 
-def _get_default_timeout() -> float | None:
+def _parse_integer_seconds(value) -> int:
+    """Parse a finite integer-second value without truncating fractions."""
+    if isinstance(value, bool):
+        raise ValueError("boolean is not an integer timeout")
+    timeout = float(value)
+    if not math.isfinite(timeout) or not timeout.is_integer():
+        raise ValueError("timeout must be a finite integer number of seconds")
+    return int(timeout)
+
+
+def _get_default_timeout() -> int | None:
     """Return default timeout from TOPSAILAI_HUMAN_DECISION_TIMEOUT.
 
     0 or unset means infinite (only honored with interactive TTY).
     """
     value = os.getenv("TOPSAILAI_HUMAN_DECISION_TIMEOUT", "0")
     try:
-        t = float(value)
-        return t if t > 0 else None
-    except (TypeError, ValueError):
+        timeout = _parse_integer_seconds(value)
+        return timeout if timeout > 0 else None
+    except (TypeError, ValueError, OverflowError):
         return None
 
 def _get_max_answer_length() -> int:
@@ -216,19 +226,15 @@ def _validate_and_resolve(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_timeout_seconds(value: float | str | None) -> tuple[float | None, str | None]:
-    """Resolve a finite numeric timeout or return its validation reason."""
+def _resolve_timeout_seconds(value: int | str | None) -> tuple[int | None, str | None]:
+    """Resolve finite integer seconds or return its validation reason."""
     if value is None:
         return _get_default_timeout(), None
-    if isinstance(value, bool):
-        return None, "invalid_timeout_seconds"
     if isinstance(value, str) and not value.strip():
         return None, "invalid_timeout_seconds"
     try:
-        timeout = float(value)
-    except (TypeError, ValueError):
-        return None, "invalid_timeout_seconds"
-    if not math.isfinite(timeout):
+        timeout = _parse_integer_seconds(value)
+    except (TypeError, ValueError, OverflowError):
         return None, "invalid_timeout_seconds"
     return (timeout if timeout > 0 else None), None
 
@@ -254,9 +260,9 @@ def _resolve_options(value: list[str] | str | None) -> tuple[list[str] | None, s
 def _validate_request(
     question: str,
     options: list[str] | str | None,
-    timeout_seconds: float | str | None,
+    timeout_seconds: int | str | None,
     default: str | None,
-) -> tuple[str | None, list[str] | None, float | None]:
+) -> tuple[str | None, list[str] | None, int | None]:
     """Validate arguments and return reason plus normalized runtime values."""
     if not isinstance(question, str) or not question.strip():
         return "invalid_question", None, None
@@ -274,7 +280,7 @@ def _validate_request(
 def ask_decision(
     question: str,
     options: list[str] | None = None,
-    timeout_seconds: float | str | None = None,
+    timeout_seconds: int | str | None = None,
     default: str | None = None,
 ) -> dict:
     """Ask the user for a decision when the current task is blocked.
@@ -282,7 +288,7 @@ def ask_decision(
     Args:
         question: Required. The blocking question presented to the user.
         options: Optional predefined choices, as a list or a JSON-array string; the user may pick an index or matching text, and custom free-text answers are always accepted.
-        timeout_seconds: Max seconds to wait; a value <= 0 waits indefinitely.
+        timeout_seconds: Integer seconds to wait; a value <= 0 waits indefinitely.
         default: Fallback answer used on timeout/no-input/cancellation and for an empty answer.
 
     Returns:
@@ -382,7 +388,7 @@ structured human decision to continue. Typical situations:
 - Custom free-text answers are always accepted.
 - Enter `/cancel` to cancel and use the configured `default` fallback.
 - Pass `default` as a safe fallback when the user does not respond or cancels.
-- Set `timeout_seconds` explicitly when the task cannot afford to block
+- Set `timeout_seconds` to integer seconds when the task cannot afford to block
   indefinitely; a value less than or equal to zero waits indefinitely.
 
 ### Return Value
