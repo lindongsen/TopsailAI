@@ -22,7 +22,9 @@ class MockServerConfig:
     reply: str = "Mock response"
     chars_per_token: int = 4
     cache_capacity: int = 32
+    request_body_capacity: int = 32
     stream_chunks: tuple[str, ...] | None = None
+    tool_call_responses: tuple[tuple[dict[str, Any], ...], ...] | None = None
 
     def __post_init__(self) -> None:
         """Reject invalid numeric configuration."""
@@ -32,6 +34,8 @@ class MockServerConfig:
             raise ValueError("chars_per_token must be positive")
         if self.cache_capacity <= 0:
             raise ValueError("cache_capacity must be positive")
+        if self.request_body_capacity <= 0:
+            raise ValueError("request_body_capacity must be positive")
 
 
 def _canonical_message(message: dict[str, Any]) -> str:
@@ -127,6 +131,50 @@ class PromptCache:
             self._total_requests = 0
 
 
+class RequestBodyCapture:
+    """Thread-safe bounded storage for HTTP request bodies."""
+
+    def __init__(self, capacity: int):
+        """Initialize bounded request-body storage."""
+        self.capacity = capacity
+        self._records: deque[dict[str, Any]] = deque(maxlen=capacity)
+        self._total_records = 0
+        self._dropped_records = 0
+        self._lock = threading.Lock()
+
+    def record(self, raw_body: bytes, parsed_body: Any = None, parse_error: str | None = None) -> None:
+        """Record one parsed or malformed request body without raising."""
+        with self._lock:
+            self._total_records += 1
+            if len(self._records) == self.capacity:
+                self._dropped_records += 1
+            record = {
+                "request_number": self._total_records,
+                "parsed": parse_error is None,
+                "body": parsed_body if parse_error is None else None,
+            }
+            if parse_error is not None:
+                record["raw_body"] = raw_body.decode("utf-8", errors="replace")
+                record["parse_error"] = parse_error
+            self._records.append(record)
+
+    def state(self) -> dict[str, Any]:
+        """Return a JSON-serializable request-body snapshot."""
+        with self._lock:
+            return {
+                "request_body_capacity": self.capacity,
+                "request_bodies": list(self._records),
+                "dropped_request_body_count": self._dropped_records,
+            }
+
+    def clear(self) -> None:
+        """Clear captured bodies and counters."""
+        with self._lock:
+            self._records.clear()
+            self._total_records = 0
+            self._dropped_records = 0
+
+
 class LLMMockServer(ThreadingHTTPServer):
     """HTTP server carrying mock configuration and prompt-cache state."""
 
@@ -137,6 +185,7 @@ class LLMMockServer(ThreadingHTTPServer):
         super().__init__((config.host, config.port), LLMMockRequestHandler)
         self.config = config
         self.prompt_cache = PromptCache(config.cache_capacity, config.chars_per_token)
+        self.request_body_capture = RequestBodyCapture(config.request_body_capacity)
 
 
 class LLMMockRequestHandler(BaseHTTPRequestHandler):
@@ -221,7 +270,9 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
             self._write_json(200, {"status": "ok", "model": self.server.config.model})
             return
         if self.path == "/debug/state":
-            self._write_json(200, self.server.prompt_cache.state())
+            state = self.server.prompt_cache.state()
+            state.update(self.server.request_body_capture.state())
+            self._write_json(200, state)
             return
         self._error(404, "not found")
 
@@ -231,6 +282,7 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
             self._error(404, "not found")
             return
         self.server.prompt_cache.clear()
+        self.server.request_body_capture.clear()
         self._write_json(200, {"status": "cleared"})
 
     def do_POST(self) -> None:
@@ -240,10 +292,21 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
             return
         try:
             content_length = int(self.headers.get("Content-Length", "0"))
-            payload = json.loads(self.rfile.read(content_length))
-        except (ValueError, json.JSONDecodeError):
+        except ValueError:
+            self.server.request_body_capture.record(b"", parse_error="invalid Content-Length")
             self._error(400, "request body must be valid JSON")
             return
+        raw_body = self.rfile.read(content_length)
+        try:
+            payload = json.loads(raw_body)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            self.server.request_body_capture.record(
+                raw_body,
+                parse_error=type(error).__name__,
+            )
+            self._error(400, "request body must be valid JSON")
+            return
+        self.server.request_body_capture.record(raw_body, parsed_body=payload)
         if not isinstance(payload, dict):
             self._error(400, "request body must be a JSON object")
             return
@@ -261,9 +324,22 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
             self._write_stream(payload, cache_result)
             return
 
+        scripted_responses = self.server.config.tool_call_responses or ()
+        response_index = cache_result["request_number"] - 1
+        tool_calls = scripted_responses[response_index] if response_index < len(scripted_responses) else None
+        assistant_message: dict[str, Any] = {
+            "role": "assistant",
+            "content": None if tool_calls is not None else self.server.config.reply,
+        }
+        finish_reason = "stop"
+        completion_text = self.server.config.reply
+        if tool_calls is not None:
+            assistant_message["tool_calls"] = list(tool_calls)
+            finish_reason = "tool_calls"
+            completion_text = json.dumps(assistant_message, ensure_ascii=False)
         completion_tokens = max(
             1,
-            (len(self.server.config.reply) + self.server.config.chars_per_token - 1)
+            (len(completion_text) + self.server.config.chars_per_token - 1)
             // self.server.config.chars_per_token,
         )
         prompt_tokens = cache_result["prompt_tokens"]
@@ -274,8 +350,8 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
             "model": payload.get("model") or self.server.config.model,
             "choices": [{
                 "index": 0,
-                "message": {"role": "assistant", "content": self.server.config.reply},
-                "finish_reason": "stop",
+                "message": assistant_message,
+                "finish_reason": finish_reason,
             }],
             "usage": {
                 "prompt_tokens": prompt_tokens,
@@ -303,6 +379,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--reply", default="Mock response")
     parser.add_argument("--chars-per-token", type=int, default=4)
     parser.add_argument("--cache-capacity", type=int, default=32)
+    parser.add_argument("--request-body-capacity", type=int, default=32)
     return parser.parse_args(argv)
 
 
@@ -316,6 +393,7 @@ def main(argv: list[str] | None = None) -> None:
         reply=args.reply,
         chars_per_token=args.chars_per_token,
         cache_capacity=args.cache_capacity,
+        request_body_capacity=args.request_body_capacity,
     )
     server = create_server(config)
     host, port = server.server_address

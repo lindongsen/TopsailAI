@@ -66,6 +66,7 @@ def _completion(base_url, messages, **extra):
         ({"port": -1}, "port"),
         ({"chars_per_token": 0}, "chars_per_token"),
         ({"cache_capacity": 0}, "cache_capacity"),
+        ({"request_body_capacity": 0}, "request_body_capacity"),
     ],
 )
 def test_config_rejects_invalid_values(kwargs, error):
@@ -192,6 +193,111 @@ def test_debug_state_and_delete_are_observable():
         assert _request(base_url, "/debug/state")[1]["total_requests"] == 0
 
 
+def test_debug_state_captures_request_bodies_and_reset_clears_them():
+    """Debug state must expose parsed request bodies and reset their counters."""
+    messages = [_message("user", "captured")]
+    with running_server() as (_, base_url):
+        _completion(base_url, messages, temperature=0.25)
+        state = _request(base_url, "/debug/state")[1]
+        assert state["request_body_capacity"] == 32
+        assert state["dropped_request_body_count"] == 0
+        assert state["request_bodies"][0]["parsed"] is True
+        assert state["request_bodies"][0]["body"]["messages"] == messages
+        assert state["request_bodies"][0]["body"]["temperature"] == 0.25
+        _request(base_url, "/debug/state", "DELETE")
+        reset = _request(base_url, "/debug/state")[1]
+    assert reset["request_bodies"] == []
+    assert reset["dropped_request_body_count"] == 0
+
+
+def test_request_body_capture_is_bounded_and_reports_drops():
+    """Body capture must retain only its newest configured number of requests."""
+    with running_server(request_body_capacity=2) as (_, base_url):
+        for number in range(3):
+            _completion(base_url, [_message("user", f"request-{number}")])
+        state = _request(base_url, "/debug/state")[1]
+    assert state["request_body_capacity"] == 2
+    assert state["dropped_request_body_count"] == 1
+    assert [record["request_number"] for record in state["request_bodies"]] == [2, 3]
+    assert state["request_bodies"][-1]["body"]["messages"][0]["content"] == "request-2"
+
+
+def test_malformed_request_body_is_captured_without_crashing_handler():
+    """Malformed JSON must remain inspectable after the server returns HTTP 400."""
+    with running_server() as (_, base_url):
+        request = Request(
+            base_url + "/v1/chat/completions",
+            data=b"{invalid",
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with pytest.raises(HTTPError) as error:
+            urlopen(request, timeout=3)
+        state = _request(base_url, "/debug/state")[1]
+    assert error.value.code == 400
+    assert state["total_requests"] == 0
+    assert state["request_bodies"] == [{
+        "request_number": 1,
+        "parsed": False,
+        "body": None,
+        "raw_body": "{invalid",
+        "parse_error": "JSONDecodeError",
+    }]
+
+
+def test_native_tool_calls_response_is_openai_compatible_and_scripted():
+    """Opt-in scripted tool calls must parse through the official OpenAI client."""
+    tool_calls = (({
+        "id": "call_mock_1",
+        "type": "function",
+        "function": {"name": "safe_tool", "arguments": "{\"value\":1}"},
+    },),)
+    with running_server(tool_call_responses=tool_calls, reply="finished") as (_, base_url):
+        client = OpenAI(api_key="mock", base_url=base_url + "/v1")
+        first = client.chat.completions.create(
+            model="topsailai-mock",
+            messages=[_message("user", "use tool")],
+        )
+        second = client.chat.completions.create(
+            model="topsailai-mock",
+            messages=[_message("user", "finish")],
+        )
+    call = first.choices[0].message.tool_calls[0]
+    assert first.choices[0].finish_reason == "tool_calls"
+    assert first.choices[0].message.content is None
+    assert (call.id, call.type, call.function.name) == ("call_mock_1", "function", "safe_tool")
+    assert json.loads(call.function.arguments) == {"value": 1}
+    assert second.choices[0].message.content == "finished"
+    assert second.choices[0].message.tool_calls is None
+    assert second.choices[0].finish_reason == "stop"
+
+
+def test_native_multi_tool_calls_response_preserves_parallel_shape():
+    """One scripted response must preserve multiple independent tool calls."""
+    calls = tuple({
+        "id": f"call_mock_{number}",
+        "type": "function",
+        "function": {"name": f"tool_{number}", "arguments": "{}"},
+    } for number in (1, 2))
+    with running_server(tool_call_responses=(calls,)) as (_, base_url):
+        response = _completion(base_url, [_message("user", "use both")])
+    message = response["choices"][0]["message"]
+    assert response["choices"][0]["finish_reason"] == "tool_calls"
+    assert message["content"] is None
+    assert [call["id"] for call in message["tool_calls"]] == ["call_mock_1", "call_mock_2"]
+
+
+def test_default_non_streaming_response_shape_is_unchanged():
+    """Unset tool-call scripting must preserve the legacy plain-content response."""
+    with running_server(reply="unchanged") as (_, base_url):
+        response = _completion(base_url, [_message("user", "hello")])
+    assert response["choices"] == [{
+        "index": 0,
+        "message": {"role": "assistant", "content": "unchanged"},
+        "finish_reason": "stop",
+    }]
+
+
 def test_openai_client_can_use_mock_endpoint():
     """The official client must parse cache usage from the mock response."""
     with running_server(reply="compatible") as (_, base_url):
@@ -275,6 +381,7 @@ def test_parse_args_supports_explicit_configuration():
         "reply": "r",
         "chars_per_token": 2,
         "cache_capacity": 7,
+        "request_body_capacity": 32,
     }
 
 
@@ -309,6 +416,7 @@ def test_main_builds_config_serves_and_closes():
             "--reply", "reply",
             "--chars-per-token", "3",
             "--cache-capacity", "5",
+            "--request-body-capacity", "6",
         ])
     config = create.call_args.args[0]
     assert config == MockServerConfig(
@@ -318,6 +426,7 @@ def test_main_builds_config_serves_and_closes():
         reply="reply",
         chars_per_token=3,
         cache_capacity=5,
+        request_body_capacity=6,
     )
     server.serve_forever.assert_called_once_with()
     server.server_close.assert_called_once_with()

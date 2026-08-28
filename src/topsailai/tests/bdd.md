@@ -44,3 +44,6 @@ Function-level stubs bypass the OpenAI client's response parsing, SSE chunk asse
 ### Note for maintainers
 
 The summarize BDD suite (`cli/tests/bdd/features/summarize_feasibility.feature`, `summarize_head_retention.feature`, `summarize_session_retention.feature`, `summarize_thresholds.feature`, `summarize_watermark.feature`) is still in-process: its harnesses monkeypatch `_summarize_messages` and `count_tokens`, so no summarize scenario currently crosses the HTTP boundary. Treat it as a pending migration item — whenever summarize behavior is added or changed, the new/changed coverage must land on the mock-server path instead of extending the in-process stubs.
+## Tool Calls Normalization Suite
+
+Run the real-HTTP regression scenarios with `python -m pytest tests/bdd/test_tool_calls_normalization.py -q --color=no`. The suite uses a private mock server and temporary SQLite database per scenario.
