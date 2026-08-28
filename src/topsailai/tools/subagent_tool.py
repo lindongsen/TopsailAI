@@ -16,6 +16,7 @@ from topsailai.prompt_hub import prompt_tool
 from topsailai.context.common import get_session_id
 from topsailai.workspace.task import task_tool
 from topsailai.workspace.folder_constants import FOLDER_ROOT
+from .tool_utils.parameter import invalid_request, resolve_str_param
 
 
 DEFAULT_SUBAGENT_ROLE_FOLDER = os.path.join(FOLDER_ROOT, "subagents")
@@ -193,12 +194,25 @@ def call_assistant(task:str, role:str=None, llm:str=None) -> str:
     Returns:
         str: final_answer
     """
-    assert task, "missing task content"
+    task, error = resolve_str_param(task, "task")
+    if error:
+        return error
+    if role is not None:
+        role, error = resolve_str_param(role, "role")
+        if error:
+            return error
+    if llm is not None:
+        llm, error = resolve_str_param(llm, "llm")
+        if error:
+            return error
+    if not task.strip():
+        return invalid_request("task", task, "must be a non-empty string")
 
     if role:
         if role.endswith(".member"):
             role = role[:-len(".member")]
-        assert role in _SUBAGENT_ROLES, f"invalid role: [{role}]"
+        if role not in _SUBAGENT_ROLES:
+            return invalid_request("role", role, "unknown role")
 
     role_name = role
     agent_name = role_name or os.getenv("TOPSAILAI_AGENT_NAME") or "Agent"
@@ -218,7 +232,11 @@ I am a sub-agent, and my name is ({role_name or agent_name})
     message = task
     if role:
         role_content = _SUBAGENT_ROLES.get(role)
-        assert role_content, f"role content missing: [{role}]"
+        if not role_content:
+            return {
+                "status": "unavailable",
+                "reason": f"role content missing: [{role}]",
+            }
         system_prompt += "\n\n" + role_content
         message = f"@{role}:\n{task}"
 

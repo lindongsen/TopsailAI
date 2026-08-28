@@ -12,6 +12,7 @@ from topsailai.context.token import count_tokens
 from topsailai.utils import env_tool, time_tool
 from topsailai.workspace.folder_constants import FOLDER_MEMORY
 from .memory_tool_utils import memory_evict, memory_hooks, memory_reconcile, memory_stat
+from .tool_utils.parameter import resolve_str_param
 from .story_tool import (
     StoryFileInstance,
     build_story_id,
@@ -56,6 +57,12 @@ def write_memory(title:str, content:str, **_) -> str:
         title (str): A title contains core information and keywords.
         content (str):
     """
+    title, error = resolve_str_param(title, "title")
+    if error:
+        return error
+    content, error = resolve_str_param(content, "content")
+    if error:
+        return error
     original_title = title
     # PROMPT injects memories into the system prompt, so filenames must expose their timeline.
     # Day-level folders are too coarse, while this prefix preserves second-level ordering.
@@ -127,6 +134,9 @@ def _read_memory(title: str, count_read: bool) -> str | None:
 
 def read_memory(title:str) -> str|None:
     """Read a memory and record one successful read."""
+    title, error = resolve_str_param(title, "title")
+    if error:
+        return error
     return _read_memory(title, count_read=True)
 
 
@@ -152,6 +162,9 @@ def delete_memory(title:str) -> bool:
     Args:
         title (str): one title from `list_memories`
     """
+    title, error = resolve_str_param(title, "title")
+    if error:
+        return error
     return StoryFileInstance.delete_story(
         workspace=WORKSPACE,
         story_id=title,

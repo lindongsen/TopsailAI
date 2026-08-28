@@ -14,6 +14,7 @@ from topsailai.utils.cmd_tool import (
 from topsailai.utils import (
     env_tool,
 )
+from topsailai.tools.tool_utils.parameter import invalid_request, resolve_finite_int
 
 
 class Sandbox(object):
@@ -72,6 +73,9 @@ def call_sandbox(sandbox:str, cmd:str, timeout:int=30):
         cmd (str): command
         timeout (int): default 30 seconds
     """
+    timeout, error = resolve_finite_int(timeout, "timeout")
+    if error:
+        return error
     sandbox_obj = _parse_sandbox_config(sandbox)
 
     result = None
@@ -100,6 +104,9 @@ def copy2sandbox(sandbox:str, local_fpath:str, sandbox_fpath:str, timeout:int=60
     Returns:
         bool: True for ok, False for failed.
     """
+    timeout, error = resolve_finite_int(timeout, "timeout")
+    if error:
+        return error
     sandbox_obj = _parse_sandbox_config(sandbox)
 
     if sandbox_obj.protocol == "ssh":
@@ -114,21 +121,29 @@ def copy2sandbox(sandbox:str, local_fpath:str, sandbox_fpath:str, timeout:int=60
         return ret[0] == 0
     return False
 
-def list_sandbox(tag:str) -> str:
+def list_sandbox(tag:str) -> str | dict:
     """ list all of sandbox by tag
 
     Args:
       tag (str): a tag name.
 
     Return:
-      str, One sandbox configuration per line
+      str, One sandbox configuration per line; unavailable status when unconfigured.
     """
+    if not isinstance(tag, str):
+        return invalid_request("tag", tag, "must be a string")
+
     # split sandbox by ';', split key=value by ','.
     # example: tag=ai,protocol=ssh,node={hostname};tag=ai,protocol=docker,node={hostname},name={container_name}
-
-    result = ""
     env_sandbox_settings = env_tool.EnvReaderInstance.get_list_str("TOPSAILAI_SANDBOX_SETTINGS", separator=';') or \
         env_tool.EnvReaderInstance.get_list_str("SANDBOX_SETTINGS", separator=';')
+    if not env_sandbox_settings:
+        return {
+            "status": "unavailable",
+            "reason": "sandbox settings are not configured",
+        }
+
+    result = ""
     for sandbox_conf in env_sandbox_settings:
         sandbox_conf = sandbox_conf.strip()
         if not sandbox_conf:

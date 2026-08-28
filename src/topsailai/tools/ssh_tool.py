@@ -11,6 +11,12 @@ import socket
 
 from topsailai.utils.cmd_tool import exec_cmd
 from topsailai.tools.cmd_tool import format_return
+from topsailai.tools.tool_utils.parameter import (
+    invalid_request,
+    resolve_finite_int,
+    resolve_int_flag,
+    resolve_json_container,
+)
 
 
 DEFAULT_SSH_PORT = 22
@@ -310,7 +316,7 @@ def operate_ssh(action: str, host: str, **kwargs) -> tuple:
             target (str): Local or remote target path.
             direction (str): "to_remote" (default) or "from_remote".
         rsync:
-            delete (bool): Whether to add --delete, default False.
+            delete (int): Whether to add --delete; 1 enables and 0 disables it.
 
     Copy semantics for scp/rsync (Dockerfile-style):
         - target ends with '/': copy the source directory itself into the target
@@ -332,17 +338,50 @@ def operate_ssh(action: str, host: str, **kwargs) -> tuple:
     if not operator_cls:
         return (1, "", f"unsupported action: {action}")
 
+    port_value = kwargs.get("port")
+    if "port" not in kwargs:
+        port = DEFAULT_SSH_PORT
+    else:
+        port, error = resolve_finite_int(port_value, "port")
+        if error:
+            return error
+        if not 1 <= port <= 65535:
+            return invalid_request("port", port_value, "must be between 1 and 65535")
+
+    timeout_value = kwargs.get("timeout")
+    if "timeout" not in kwargs:
+        timeout = DEFAULT_SSH_TIMEOUT
+    else:
+        timeout, error = resolve_finite_int(timeout_value, "timeout")
+        if error:
+            return error
+
+    options = kwargs.get("options")
+    if isinstance(options, str) and options.lstrip().startswith(("[", "{")):
+        expected_type = dict if options.lstrip().startswith("{") else list
+        options, error = resolve_json_container(options, "options", expected_type)
+        if error:
+            return error
+    elif options is not None and not isinstance(options, (str, list, dict)):
+        return invalid_request("options", options, "must be a string, list, or dict")
+
+    delete, error = resolve_int_flag(kwargs.get("delete", 0), "delete")
+    if error:
+        return error
+
     ctx = SSHContext(
         host=host,
-        port=kwargs.get("port"),
+        port=port,
         username=kwargs.get("username"),
         private_key=kwargs.get("private_key"),
-        options=kwargs.get("options"),
-        timeout=kwargs.get("timeout"),
+        options=options,
+        timeout=timeout,
     )
 
     operator = operator_cls()
-    return operator.run(ctx, **kwargs)
+    operator_kwargs = dict(kwargs)
+    operator_kwargs["delete"] = delete
+    return operator.run(ctx, **operator_kwargs)
 
 
 # Dictionary mapping tool names to their corresponding functions

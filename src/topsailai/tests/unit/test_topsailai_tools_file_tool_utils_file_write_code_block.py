@@ -686,5 +686,57 @@ class TestOverwriteCodeBlock:
             overwrite_code_block(str(test_file), 0, 1, "x\n")
 
 
+class TestStringFirstLineParameters:
+    """Verify overwrite line numbers accept finite LLM-style values."""
+
+    @pytest.mark.parametrize(("start_num", "end_num"), [
+        (" 2 ", " 2 "), ("2e0", "2e0"), (2.0, 2.0),
+    ])
+    def test_accepts_finite_numeric_forms(self, tmp_path, start_num, end_num):
+        """Finite numeric forms preserve existing replacement behavior."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        result = overwrite_code_block(
+            str(target), start_num, end_num, "changed\n"
+        )
+        assert "changed" in result
+        assert target.read_text(encoding="utf-8") == "one\nchanged\nthree\n"
+
+    @pytest.mark.parametrize(("parameter", "value"), [
+        ("start_num", "NaN"), ("start_num", "+inf"),
+        ("start_num", "-inf"), ("start_num", ""),
+        ("start_num", None), ("start_num", "abc"),
+        ("end_num", "NaN"), ("end_num", "+inf"),
+        ("end_num", "-inf"), ("end_num", ""),
+        ("end_num", None), ("end_num", "abc"),
+    ])
+    def test_rejects_invalid_numeric_values_without_writing(
+            self, tmp_path, parameter, value):
+        """Invalid line values return invalid_request before file mutation."""
+        target = tmp_path / "lines.txt"
+        original = "one\ntwo\nthree\n"
+        target.write_text(original, encoding="utf-8")
+        kwargs = {"start_num": 2, "end_num": 2}
+        kwargs[parameter] = value
+        result = overwrite_code_block(str(target), content="changed\n", **kwargs)
+        assert result["status"] == "invalid_request"
+        assert parameter in result["reason"]
+        assert target.read_text(encoding="utf-8") == original
+
+    @pytest.mark.parametrize(("start_num", "end_num", "message"), [
+        (-1, 1, "Invalid start_num"),
+        (9999, 0, "exceeds file length"),
+        (3, 2, "Invalid range"),
+    ])
+    def test_finite_out_of_range_values_keep_business_errors(
+            self, tmp_path, start_num, end_num, message):
+        """Finite range violations retain established business exceptions."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        with pytest.raises(Exception, match=message):
+            overwrite_code_block(
+                str(target), start_num, end_num, "changed\n"
+            )
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

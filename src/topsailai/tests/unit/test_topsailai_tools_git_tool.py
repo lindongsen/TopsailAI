@@ -152,6 +152,33 @@ class TestExecReadonly:
             assert "timed out" in result
             assert "5 seconds" in result
 
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [(10, 10), (10.9, 10), ("30", 30), (" 15 ", 15), ("1e2", 100), (0, 0), (-1, -1)],
+    )
+    def test_timeout_accepts_finite_numeric_values(self, value, expected):
+        """Finite timeout values preserve integer and boundary semantics."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
+            result = git_tool.exec_readonly("git status", timeout=value)
+
+        assert result == (0, "", "")
+        assert mock_run.call_args.kwargs["timeout"] == expected
+
+    @pytest.mark.parametrize(
+        "value",
+        ["NaN", "+inf", "-inf", "1e10000", "", None, "abc", object()],
+    )
+    def test_timeout_rejects_invalid_values(self, value):
+        """Invalid timeout values return invalid_request without execution."""
+        with patch("subprocess.run") as mock_run:
+            result = git_tool.exec_readonly("git status", timeout=value)
+
+        assert result["status"] == "invalid_request"
+        assert "timeout" in result["reason"]
+        assert result["status"] != "unavailable"
+        mock_run.assert_not_called()
+
     def test_custom_cwd(self):
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(

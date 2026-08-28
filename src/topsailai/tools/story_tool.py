@@ -14,6 +14,7 @@ from topsailai.utils import (
     env_tool,
 )
 from topsailai.prompt_hub import prompt_tool
+from .tool_utils.parameter import resolve_str_param
 from topsailai.workspace import (
     lock_tool,
 )
@@ -132,6 +133,14 @@ class StoryFile(StoryBase):
             story_id (str): story id.
             story_content (str): story content.
         """
+        for parameter, value in (
+            ("workspace", workspace),
+            ("story_id", story_id),
+            ("story_content", story_content),
+        ):
+            _, error = resolve_str_param(value, parameter)
+            if error:
+                return error
         # max length of file name
         story_id = story_id[:230]
         with lock_tool.FileLock(self.name, delete_on_release=False):
@@ -155,6 +164,10 @@ class StoryFile(StoryBase):
         str, story content.
         none, no found story.
         """
+        for parameter, value in (("workspace", workspace), ("story_id", story_id)):
+            _, error = resolve_str_param(value, parameter)
+            if error:
+                return error
         with lock_tool.FileLock(self.name, delete_on_release=False):
             story_file = self.get_story_file(workspace, story_id)
             if not story_file:
@@ -192,6 +205,10 @@ class StoryFile(StoryBase):
             workspace (str): folder path.
             keywords (str): split by '|', example: 'A|B' is A or B
         """
+        for parameter, value in (("workspace", workspace), ("keywords", keywords)):
+            _, error = resolve_str_param(value, parameter)
+            if error:
+                return error
         with lock_tool.FileLock(self.name, delete_on_release=False):
             file_set = file_tool.list_files(
                 workspace,
@@ -219,6 +236,10 @@ class StoryFile(StoryBase):
             workspace (str): folder path
             story_id (str):
         """
+        for parameter, value in (("workspace", workspace), ("story_id", story_id)):
+            _, error = resolve_str_param(value, parameter)
+            if error:
+                return error
         with lock_tool.FileLock(self.name, delete_on_release=False):
             _filepath = self.get_story_file(workspace, story_id, must_only_one=True)
             if _filepath:

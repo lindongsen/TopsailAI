@@ -6,6 +6,7 @@
 '''
 
 from topsailai.logger import logger
+from .tool_utils.parameter import resolve_str_param
 from topsailai.utils.env_tool import is_archive_message_enabled, is_use_tool_calls
 from topsailai.utils.thread_local_tool import (
     get_agent_object,
@@ -19,6 +20,10 @@ def retrieve_msg(msg_id:str):
     Args:
         msg_id (str):
     """
+    msg_id, error = resolve_str_param(msg_id, "msg_id")
+    if error:
+        return error
+
     # When native tool calls are enabled, context archiving is disabled, so
     # there is never any archived message to retrieve. Short-circuit here to
     # avoid a pointless lookup and a misleading error log.

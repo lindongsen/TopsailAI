@@ -12,6 +12,8 @@ from contextlib import contextmanager
 
 import chardet
 
+from topsailai.tools.tool_utils.parameter import resolve_finite_int
+
 
 _ENCODING_SAMPLE_SIZE = 32768
 
@@ -145,7 +147,9 @@ def read_file_with_context(
         - Context lines are deduplicated when matches are close together
         - Uses streaming decoding to avoid loading the entire file into memory
     """
-    context_num = int(context_num)
+    context_num, error = resolve_finite_int(context_num, "context_num")
+    if error:
+        return f"Error: invalid_request reason={error['reason']}"
     case_sensitive, invalid_reason = _resolve_case_sensitive(case_sensitive)
     if invalid_reason is not None:
         return f"Error: invalid_request reason={invalid_reason}, case_sensitive must be integer 1 or 0"
@@ -243,8 +247,12 @@ def read_file_around_line(
         - Automatically handles edge cases (beginning/end of file)
         - Uses streaming decoding to avoid loading the entire file into memory
     """
-    line_number = int(line_number)
-    context_num = int(context_num)
+    line_number, error = resolve_finite_int(line_number, "line_number")
+    if error:
+        return error
+    context_num, error = resolve_finite_int(context_num, "context_num")
+    if error:
+        return error
     target_idx = line_number - 1
 
     try:
@@ -320,9 +328,13 @@ def read_file_lines(file_path: str, start_num: int=1, end_num: int=0, **_) -> st
         # Read all of content from a file
         content = read_file_lines("example.txt", 1, 0)
     """
+    start_num, error = resolve_finite_int(start_num, "start_num")
+    if error:
+        return error
+    end_num, error = resolve_finite_int(end_num, "end_num")
+    if error:
+        return error
     try:
-        start_num = int(start_num)
-        end_num = int(end_num)
         if not start_num:
             start_num = 1
 

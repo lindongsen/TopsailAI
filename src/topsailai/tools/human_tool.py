@@ -19,6 +19,9 @@ from topsailai.utils import env_tool, thread_local_tool
 from topsailai.context.ctx_safe import truncate_text
 
 
+_UNSET = object()
+
+
 # ---------------------------------------------------------------------------
 # Configuration helpers
 # ---------------------------------------------------------------------------
@@ -224,21 +227,25 @@ def _validate_and_resolve(
 # ---------------------------------------------------------------------------
 # Core ask function
 # ---------------------------------------------------------------------------
-def _resolve_allow_free_text(value: int | str | None) -> tuple[bool | None, str | None]:
-    """Resolve an integer free-text flag (1=true, 0=false), also accepting a numeric string."""
-    if value is None or (isinstance(value, str) and not value.strip()):
+def _resolve_allow_free_text(value: int | str | None | object) -> tuple[bool | None, str | None]:
+    """Resolve an integer free-text flag or the private omitted-value sentinel."""
+    if value is _UNSET:
         return _get_allow_free_text_default(), None
-    if isinstance(value, bool):
-        return value, None
+    if value is None or isinstance(value, bool):
+        return None, "invalid_allow_free_text"
     if isinstance(value, int):
-        return value != 0, None
-    if not isinstance(value, str):
+        if value not in (0, 1):
+            return None, "invalid_allow_free_text"
+        return value == 1, None
+    if not isinstance(value, str) or not value.strip():
         return None, "invalid_allow_free_text"
     try:
         numeric = int(value.strip())
     except (TypeError, ValueError):
         return None, "invalid_allow_free_text"
-    return numeric != 0, None
+    if numeric not in (0, 1):
+        return None, "invalid_allow_free_text"
+    return numeric == 1, None
 
 
 def _resolve_timeout_seconds(value: float | str | None) -> tuple[float | None, str | None]:
@@ -303,7 +310,7 @@ def _validate_request(
 def ask_decision(
     question: str,
     options: list[str] | None = None,
-    allow_free_text: int | str | None = None,
+    allow_free_text: int | str | None = _UNSET,
     timeout_seconds: float | str | None = None,
     default: str | None = None,
 ) -> dict:

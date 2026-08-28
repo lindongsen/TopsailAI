@@ -49,7 +49,8 @@ class TestExecCmd:
         """Test exec_cmd with illegal command type"""
         from topsailai.tools.cmd_tool import exec_cmd
         result = exec_cmd(123)
-        assert result == "illegal cmd"
+        assert result["status"] == "invalid_request"
+        assert "cmd" in result["reason"]
     
     def test_exec_cmd_with_timeout(self):
         """Test exec_cmd with custom timeout"""
@@ -74,6 +75,102 @@ class TestExecCmd:
                 mock_exec.assert_called_once()
                 call_kwargs = mock_exec.call_args[1]
                 assert call_kwargs['cwd'] == "/home"
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [(10, 10), (10.9, 10), ("30", 30), (" 15 ", 15), ("1e2", 100), (0, 0), (-1, -1)],
+    )
+    def test_timeout_accepts_finite_numeric_values(self, value, expected):
+        """Finite timeout values preserve integer and boundary semantics."""
+        with patch('topsailai.tools.cmd_tool.exec_command') as mock_exec:
+            mock_exec.return_value = (0, "", "")
+            from topsailai.tools.cmd_tool import exec_cmd
+            exec_cmd(["echo"], timeout=value)
+
+        assert mock_exec.call_args.kwargs["timeout"] == expected
+
+    @pytest.mark.parametrize(
+        "value",
+        ["NaN", "+inf", "-inf", "1e10000", "", None, "abc", object()],
+    )
+    def test_timeout_rejects_invalid_values(self, value):
+        """Invalid timeout values return invalid_request without execution."""
+        with patch('topsailai.tools.cmd_tool.exec_command') as mock_exec:
+            from topsailai.tools.cmd_tool import exec_cmd
+            result = exec_cmd(["echo"], timeout=value)
+
+        assert result["status"] == "invalid_request"
+        assert "timeout" in result["reason"]
+        assert result["status"] != "unavailable"
+        mock_exec.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [("1", True), ("0", False), (1, True), (0, False), (" 1 ", True)],
+    )
+    def test_no_need_stderr_accepts_integer_flags(self, value, expected):
+        """Integer boolean flags accept only 1 and 0 forms."""
+        with patch('topsailai.tools.cmd_tool.exec_command') as mock_exec:
+            mock_exec.return_value = (0, "", "")
+            from topsailai.tools.cmd_tool import exec_cmd
+            exec_cmd(["echo"], no_need_stderr=value)
+
+        assert mock_exec.call_args.kwargs["no_need_stderr"] is expected
+
+    @pytest.mark.parametrize("value", ["2", "-1", "yes", "true", "", None])
+    def test_no_need_stderr_rejects_non_boolean_flags(self, value):
+        """Non-1/0 flags return invalid_request without truthy string parsing."""
+        with patch('topsailai.tools.cmd_tool.exec_command') as mock_exec:
+            from topsailai.tools.cmd_tool import exec_cmd
+            result = exec_cmd(["echo"], no_need_stderr=value)
+
+        assert result["status"] == "invalid_request"
+        assert "no_need_stderr" in result["reason"]
+        mock_exec.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("env", "expected"),
+        [({"A": "1"}, {"A": "1"}), ('{"A": "1"}', {"A": "1"}), (None, None)],
+    )
+    def test_env_accepts_dict_and_json_object(self, env, expected):
+        """Environment accepts native dictionaries and JSON objects."""
+        with patch('topsailai.tools.cmd_tool.exec_command') as mock_exec:
+            mock_exec.return_value = (0, "", "")
+            from topsailai.tools.cmd_tool import exec_cmd
+            exec_cmd(["echo"], env=env)
+
+        assert mock_exec.call_args.kwargs["env_info"] == expected
+
+    @pytest.mark.parametrize("env", ["{", "[]", "", 1])
+    def test_env_rejects_invalid_json_or_type(self, env):
+        """Invalid environment containers return invalid_request."""
+        with patch('topsailai.tools.cmd_tool.exec_command') as mock_exec:
+            from topsailai.tools.cmd_tool import exec_cmd
+            result = exec_cmd(["echo"], env=env)
+
+        assert result["status"] == "invalid_request"
+        assert "env" in result["reason"]
+        mock_exec.assert_not_called()
+
+    def test_cmd_accepts_json_list(self):
+        """JSON command arrays are decoded before execution."""
+        with patch('topsailai.tools.cmd_tool.exec_command') as mock_exec:
+            mock_exec.return_value = (0, "", "")
+            from topsailai.tools.cmd_tool import exec_cmd
+            exec_cmd('["echo", "hello"]')
+
+        assert mock_exec.call_args.args[0] == ["echo", "hello"]
+
+    @pytest.mark.parametrize("cmd", ["[", '["echo"', 123, None])
+    def test_cmd_rejects_invalid_container_or_type(self, cmd):
+        """Invalid command containers return invalid_request."""
+        with patch('topsailai.tools.cmd_tool.exec_command') as mock_exec:
+            from topsailai.tools.cmd_tool import exec_cmd
+            result = exec_cmd(cmd)
+
+        assert result["status"] == "invalid_request"
+        assert "cmd" in result["reason"]
+        mock_exec.assert_not_called()
 
 
 class TestFormatReturn:

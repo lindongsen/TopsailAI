@@ -252,12 +252,22 @@ class TestListSandbox:
 
     @patch('topsailai.tools.sandbox_tool.env_tool.EnvReaderInstance.get_list_str')
     def test_list_sandbox_empty_settings(self, mock_get_list):
-        """Test listing sandbox when no settings configured."""
+        """Missing sandbox settings return a machine-readable environment status."""
         mock_get_list.return_value = []
-        
+
         result = list_sandbox("ai")
-        
-        assert result == ""
+
+        assert result["status"] == "unavailable"
+        assert "sandbox" in result["reason"]
+
+    @patch('topsailai.tools.sandbox_tool.env_tool.EnvReaderInstance.get_list_str')
+    def test_list_sandbox_rejects_non_string_tag(self, mock_get_list):
+        """Invalid tag types are rejected before sandbox settings are read."""
+        result = list_sandbox(["ai"])
+
+        assert result["status"] == "invalid_request"
+        assert "tag" in result["reason"]
+        mock_get_list.assert_not_called()
 
     @patch('topsailai.tools.sandbox_tool.env_tool.EnvReaderInstance.get_list_str')
     def test_list_sandbox_with_spaces(self, mock_get_list):
@@ -314,3 +324,39 @@ class TestEdgeCases:
         
         call_kwargs = mock_exec.call_args[1]
         assert call_kwargs["timeout"] == 30
+
+@pytest.mark.parametrize("value, expected", [(" 45 ", 45), ("1e2", 100), (0, 30), (-1, -1)])
+def test_call_sandbox_coerces_finite_timeout_before_execution(value, expected):
+    """Finite timeout forms retain sandbox timeout boundary semantics."""
+    with patch("topsailai.tools.sandbox_tool.exec_cmd_in_remote", return_value=None) as execute:
+        call_sandbox("protocol=ssh,node=192.0.2.10", "echo ok", timeout=value)
+    assert execute.call_args.kwargs["timeout"] == expected
+
+
+@pytest.mark.parametrize("value", ["NaN", "+inf", "-inf", "", None, "bad"])
+def test_call_sandbox_rejects_invalid_timeout_before_execution(value):
+    """Invalid timeout forms return invalid_request without remote execution."""
+    with patch("topsailai.tools.sandbox_tool.exec_cmd_in_remote") as execute:
+        result = call_sandbox("protocol=ssh,node=192.0.2.10", "echo ok", timeout=value)
+    assert result["status"] == "invalid_request"
+    assert "timeout" in result["reason"]
+    execute.assert_not_called()
+
+
+@pytest.mark.parametrize("value, expected", [(" 45 ", 45), ("1e2", 100), (0, 0), (-1, -1)])
+def test_copy2sandbox_coerces_finite_timeout_before_execution(value, expected):
+    """Finite timeout forms are normalized before a sandbox copy."""
+    with patch("topsailai.tools.sandbox_tool.os.path.isdir", return_value=False), patch(
+        "topsailai.tools.sandbox_tool.exec_cmd", return_value=(0, "", "")
+    ) as execute:
+        assert copy2sandbox("protocol=ssh,node=192.0.2.10", "/tmp/a", "/tmp/b", value) is True
+    assert execute.call_args.kwargs["timeout"] == expected
+
+
+@pytest.mark.parametrize("value", ["NaN", "+inf", "-inf", "", None, "bad"])
+def test_copy2sandbox_rejects_invalid_timeout_before_execution(value):
+    """Invalid copy timeout forms do not start a subprocess."""
+    with patch("topsailai.tools.sandbox_tool.exec_cmd") as execute:
+        result = copy2sandbox("protocol=ssh,node=192.0.2.10", "/tmp/a", "/tmp/b", value)
+    assert result["status"] == "invalid_request"
+    execute.assert_not_called()

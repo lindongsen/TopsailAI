@@ -23,8 +23,13 @@ from topsailai.skill_hub.skill_tool import (
     parse_skill_folder,
 )
 from topsailai.tools.cmd_tool import format_return
+from topsailai.tools.tool_utils.parameter import (
+    invalid_request,
+    resolve_finite_int,
+    resolve_int_flag,
+    resolve_json_container,
+)
 from topsailai.utils import (
-    json_tool,
     env_tool,
     format_tool,
     file_tool,
@@ -136,25 +141,39 @@ def call_skill(
         tuple: (return_code, stdout, stderr) where stdout and stderr are strings.
                If no_need_stderr is True, stderr will be empty string.
     """
+    timeout, error = resolve_finite_int(timeout, "timeout")
+    if error:
+        return error
+    no_need_stderr, error = resolve_int_flag(no_need_stderr, "no_need_stderr")
+    if error:
+        return error
+    environ_d, error = resolve_json_container(
+        environ, "environ", dict, allow_none=True,
+    )
+    if error:
+        return error
+    if stdin_text is not None and not isinstance(stdin_text, str):
+        return invalid_request("stdin_text", stdin_text, "must be a string")
+
+    if isinstance(script_parameters, str):
+        stripped_parameters = script_parameters.strip()
+        if stripped_parameters.startswith(("[", "{")):
+            script_parameters, error = resolve_json_container(
+                script_parameters, "script_parameters", list,
+            )
+            if error:
+                return error
+    elif not isinstance(script_parameters, list):
+        return invalid_request(
+            "script_parameters", script_parameters, "must be a string or list",
+        )
+
     # validate skill_folder first
     if not skill_folder or not os.path.isdir(skill_folder):
         raise SkillToolError(
             "Skill folder does not exist or is not a directory. "
             f"Provided: {skill_folder!r}. "
             "Check the folder path and ensure the skill is loaded."
-        )
-
-    # environ
-    environ_d = environ
-    if isinstance(environ, str):
-        environ_d = json_tool.safe_json_load(environ)
-    if not isinstance(environ_d, dict):
-        environ_d = None
-    if environ is not None and environ_d is None:
-        raise SkillToolError(
-            "A skill accepts environment variables only as a JSON object. "
-            f"The provided environ {environ!r} is not a valid object. "
-            "Pass a dict or a JSON object string such as '{\"KEY\": \"value\"}'."
         )
 
     # check parameter: output_file
@@ -232,13 +251,8 @@ def call_skill(
     if isinstance(cmd, list):
         cmd_exe_file = cmd[0]
     elif isinstance(cmd, str):
-        if cmd[0] == "[":
-            # json str
-            cmd = json_tool.safe_json_load(cmd)
-            cmd_exe_file = cmd[0] if isinstance(cmd, list) and cmd else ""
-        else:
-            # For string commands, extract just the executable path (first word)
-            cmd_exe_file = cmd.split()[0] if cmd else cmd
+        # For string commands, extract just the executable path (first word).
+        cmd_exe_file = cmd.split()[0] if cmd else cmd
     else:
         cmd_exe_file = ""
 
@@ -271,7 +285,7 @@ def call_skill(
 
     # timeout
     timeout = max(
-        int(timeout),
+        timeout,
         get_call_skill_timeout(skill_folder),
     )
 
@@ -281,11 +295,6 @@ def call_skill(
     result = None
     exec_kwargs = {}
     if stdin_text is not None:
-        if not isinstance(stdin_text, str):
-            raise SkillToolError(
-                f"stdin_text must be a string, got {type(stdin_text).__name__}. "
-                "Pass a UTF-8 text string or omit the argument."
-            )
         exec_kwargs["input"] = stdin_text.encode("utf-8")
 
     with ctxm_tool() as data:
@@ -304,8 +313,8 @@ def call_skill(
         try:
             result = exec_cmd(
                 cmd,
-                no_need_stderr=True if int(no_need_stderr) else False,
-                timeout=int(timeout),
+                no_need_stderr=no_need_stderr,
+                timeout=timeout,
                 cwd=skill_folder,
                 env_info=environ_d,
                 **exec_kwargs,

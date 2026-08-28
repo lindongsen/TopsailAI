@@ -7,6 +7,8 @@ Purpose:
 
 import os
 
+from ..tool_utils.parameter import resolve_str_param
+
 def get_file_size(file_path:str) -> int:
     """
     Get file size in bytes
@@ -14,6 +16,9 @@ def get_file_size(file_path:str) -> int:
     Args:
         file_path (str)
     """
+    file_path, error = resolve_str_param(file_path, "file_path")
+    if error:
+        return error
     return os.path.getsize(file_path)
 
 

@@ -394,13 +394,10 @@ class TestCallSkill(unittest.TestCase):
         mock_get_skills.return_value = [SimpleNamespace(folder=self.test_folder)]
 
 
-        with self.assertRaises(ValueError) as context:
-            call_skill(self.test_folder, self.test_script, '', environ='not-json')
+        result = call_skill(self.test_folder, self.test_script, '', environ='not-json')
 
-        msg = str(context.exception)
-        self.assertIn('A skill accepts environment variables only as a JSON object', msg)
-        self.assertIn("'not-json'", msg)
-        self.assertIn('not a valid object', msg)
+        self.assertEqual(result["status"], "invalid_request")
+        self.assertIn("environ", result["reason"])
 
     @patch('topsailai.tools.skill_tool.get_skills_from_cache')
     def test_call_skill_rejects_non_object_environ(self, mock_get_skills):
@@ -409,13 +406,10 @@ class TestCallSkill(unittest.TestCase):
 
         mock_get_skills.return_value = [SimpleNamespace(folder=self.test_folder)]
 
-        with self.assertRaises(ValueError) as context:
-            call_skill(self.test_folder, self.test_script, '', environ='[1,2,3]')
+        result = call_skill(self.test_folder, self.test_script, '', environ='[1,2,3]')
 
-        msg = str(context.exception)
-        self.assertIn('A skill accepts environment variables only as a JSON object', msg)
-        self.assertIn("'[1,2,3]'", msg)
-        self.assertIn('not a valid object', msg)
+        self.assertEqual(result["status"], "invalid_request")
+        self.assertIn("environ", result["reason"])
 
     @patch('topsailai.tools.skill_tool.os.path.isfile')
     @patch('topsailai.tools.skill_tool.os.path.realpath')
@@ -1084,11 +1078,10 @@ class TestErrorHandlingImprovements(unittest.TestCase):
         mock_access.return_value = True
         self._mock_realpath_for_test_folder(mock_realpath, mock_isfile)
 
-        with self.assertRaises(SkillToolError) as context:
-            call_skill(self.test_folder, self.test_script, '', stdin_text=12345)
+        result = call_skill(self.test_folder, self.test_script, '', stdin_text=12345)
 
-        self.assertIn('stdin_text', str(context.exception))
-        self.assertIn('string', str(context.exception))
+        self.assertEqual(result["status"], "invalid_request")
+        self.assertIn("stdin_text", result["reason"])
 
 class TestSymlinkPathHandling(unittest.TestCase):
     """Test symlink-aware path validation in skill_tool."""
@@ -1261,3 +1254,124 @@ class TestDocumentedSkillValidationHelpers(unittest.TestCase):
                 with self.subTest(file_name=file_name):
                     with self.assertRaises(SkillToolError):
                         _validate_skill_file_name(skill_folder, file_name)
+
+class TestCallSkillParameterCoercion(unittest.TestCase):
+    """Test string-first public parameters before skill side effects."""
+
+    @staticmethod
+    def _call(**kwargs):
+        from topsailai.tools.skill_tool import call_skill
+        return call_skill("/missing/skill", "run.sh", "", **kwargs)
+
+    def test_invalid_timeout_forms_return_invalid_request(self):
+        """Non-finite, empty, missing, and non-numeric timeouts are parameter errors."""
+        for value in ("NaN", "+inf", "-inf", "", None, "bad"):
+            with self.subTest(value=value):
+                result = self._call(timeout=value)
+                self.assertEqual(result["status"], "invalid_request")
+                self.assertIn("timeout", result["reason"])
+
+    def test_invalid_no_need_stderr_forms_return_invalid_request(self):
+        """Only integer 1 and 0 forms are accepted for no_need_stderr."""
+        for value in ("2", "-1", "yes", "true", "", None):
+            with self.subTest(value=value):
+                result = self._call(no_need_stderr=value)
+                self.assertEqual(result["status"], "invalid_request")
+                self.assertIn("no_need_stderr", result["reason"])
+
+    def test_invalid_environ_forms_return_invalid_request(self):
+        """Malformed JSON and non-object environments are parameter errors."""
+        for value in ("not-json", "[1,2]", "", [], 3):
+            with self.subTest(value=value):
+                result = self._call(environ=value)
+                self.assertEqual(result["status"], "invalid_request")
+                self.assertIn("environ", result["reason"])
+
+    def test_non_string_stdin_returns_invalid_request(self):
+        """stdin_text type errors use the common machine-readable contract."""
+        result = self._call(stdin_text=123)
+        self.assertEqual(result["status"], "invalid_request")
+        self.assertIn("stdin_text", result["reason"])
+
+    def test_valid_forms_are_forwarded_after_coercion(self):
+        """Whitespace, scientific notation, flags, and JSON objects reach exec_cmd normalized."""
+        from topsailai.tools.skill_tool import call_skill
+
+        hook = MagicMock()
+        hook.need_lock_session = False
+        hook.need_refresh_session = False
+        with tempfile.TemporaryDirectory() as folder:
+            script = os.path.join(folder, "run.sh")
+            with open(script, "w", encoding="utf-8") as stream:
+                stream.write("#!/bin/sh\n")
+            os.chmod(script, 0o755)
+            with patch("topsailai.tools.skill_tool.get_script_path", return_value=script), patch(
+                "topsailai.tools.skill_tool.get_call_skill_timeout", return_value=1
+            ), patch("topsailai.tools.skill_tool.skill_hook.SkillHookHandler", return_value=hook), patch(
+                "topsailai.tools.skill_tool.exec_cmd", return_value=(0, "ok", "")
+            ) as execute:
+                result = call_skill(
+                    folder,
+                    script,
+                    "",
+                    timeout=" 1e2 ",
+                    no_need_stderr="1",
+                    environ='{"KEY":"value"}',
+                )
+        self.assertEqual(result[0], 0)
+        self.assertEqual(execute.call_args.kwargs["timeout"], 100)
+        self.assertIs(execute.call_args.kwargs["no_need_stderr"], True)
+        self.assertEqual(execute.call_args.kwargs["env_info"], {"KEY": "value"})
+
+
+    def test_script_parameters_preserve_plain_and_list_forms_and_decode_json_list(self):
+        """Plain strings, native lists, and JSON list strings produce compatible argv."""
+        from topsailai.tools.skill_tool import call_skill
+
+        cases = (
+            ("--flag x", ["--flag", "x"]),
+            ("--flag", ["--flag"]),
+            (["--flag", "x"], ["--flag", "x"]),
+            ('["--flag", "x"]', ["--flag", "x"]),
+        )
+        for parameters, expected_parameters in cases:
+            with self.subTest(parameters=parameters):
+                hook = MagicMock()
+                hook.need_lock_session = False
+                hook.need_refresh_session = False
+                with tempfile.TemporaryDirectory() as folder:
+                    script = os.path.join(folder, "run.sh")
+                    with open(script, "w", encoding="utf-8") as stream:
+                        stream.write("#!/bin/sh\n")
+                    os.chmod(script, 0o755)
+                    with patch(
+                        "topsailai.tools.skill_tool.get_script_path", return_value=script
+                    ), patch(
+                        "topsailai.tools.skill_tool.get_call_skill_timeout", return_value=1
+                    ), patch(
+                        "topsailai.tools.skill_tool.skill_hook.SkillHookHandler",
+                        return_value=hook,
+                    ), patch(
+                        "topsailai.tools.skill_tool.exec_cmd", return_value=(0, "ok", "")
+                    ) as execute:
+                        result = call_skill(folder, script, parameters)
+
+                self.assertEqual(result[0], 0)
+                self.assertEqual(execute.call_args.args[0], [script] + expected_parameters)
+
+    def test_invalid_json_script_parameters_are_rejected_before_side_effects(self):
+        """Malformed and wrong-shaped JSON parameters fail before skill execution."""
+        from topsailai.tools.skill_tool import call_skill
+
+        for parameters in ("[bad", '{"flag": "x"}'):
+            with self.subTest(parameters=parameters), patch(
+                "topsailai.tools.skill_tool.exec_cmd"
+            ) as execute, patch(
+                "topsailai.tools.skill_tool.skill_hook.SkillHookHandler"
+            ) as hook:
+                result = call_skill("/missing/skill", "run.sh", parameters)
+
+            self.assertEqual(result["status"], "invalid_request")
+            self.assertIn("script_parameters", result["reason"])
+            execute.assert_not_called()
+            hook.assert_not_called()

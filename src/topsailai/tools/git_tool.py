@@ -12,6 +12,7 @@ import subprocess
 from topsailai.context import ctx_safe
 from topsailai.utils import text_tool
 from topsailai.utils.env_tool import EnvReaderInstance
+from topsailai.tools.tool_utils.parameter import resolve_finite_int
 
 
 # Disabled by default. Enable explicitly when read-only git tooling is needed.
@@ -193,7 +194,9 @@ def exec_readonly(
     if cwd is None:
         cwd = _get_project_workspace() or os.getcwd()
 
-    timeout = int(timeout)
+    timeout, error = resolve_finite_int(timeout, "timeout")
+    if error:
+        return error
 
     try:
         result = subprocess.run(

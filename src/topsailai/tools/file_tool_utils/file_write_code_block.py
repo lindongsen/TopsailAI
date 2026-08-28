@@ -7,6 +7,7 @@ Purpose:
 
 import os
 
+from topsailai.tools.tool_utils.parameter import resolve_finite_int
 from topsailai.utils import (
     file_tool as _file_tool,
     json_tool,
@@ -44,16 +45,19 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int, content: 
         args=("example.py", 5, 10, "def new_function():\\n    pass\\n")
         ```
     """
+    start_num, error = resolve_finite_int(start_num, "start_num")
+    if error:
+        return error
+    end_num, error = resolve_finite_int(end_num, "end_num")
+    if error:
+        return error
+
     with _file_tool.ctxm_temp_file("") as (tmp_file, fp):
         # Check if file exists
         if not os.path.exists(file_path):
             raise Exception(f"File not found: {file_path}")
 
-        # Parse parameters if they come as JSON strings
-        if isinstance(start_num, str):
-            start_num = int(start_num)
-        if isinstance(end_num, str):
-            end_num = int(end_num)
+        # Parse content if it comes as a JSON string
         if isinstance(content, str):
             try:
                 parsed = json_tool.json_load(content)

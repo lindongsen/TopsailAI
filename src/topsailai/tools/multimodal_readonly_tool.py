@@ -14,6 +14,7 @@ from topsailai.ai_base.multimodal import (
     build_video_content,
 )
 from topsailai.utils import env_tool
+from .tool_utils.parameter import invalid_request, resolve_str_param
 
 
 def _get_extra_prompt() -> str:
@@ -53,10 +54,13 @@ def recognize_image(image_source: str, prompt: str = "", model_name: str = "") -
         >>> recognize_image("/path/to/chart.png", "What are the key trends in this chart?")
         'The chart shows an upward trend in...'
     """
-    if not image_source or not isinstance(image_source, str):
-        raise ValueError("image_source must be a non-empty string")
-
+    for parameter, value in (("image_source", image_source), ("prompt", prompt), ("model_name", model_name)):
+        _, error = resolve_str_param(value, parameter)
+        if error:
+            return error
     image_source = image_source.strip()
+    if not image_source:
+        return invalid_request("image_source", image_source, "must be a non-empty string")
 
     # Handle relative paths
     if image_source[0] not in ["/", "h"]:
@@ -115,10 +119,13 @@ def recognize_voice(audio_source: str, prompt: str = "", model_name: str = "") -
         >>> recognize_voice("/path/to/recording.mp3")
         'The audio contains a conversation about...'
     """
-    if not audio_source or not isinstance(audio_source, str):
-        raise ValueError("audio_source must be a non-empty string")
-
+    for parameter, value in (("audio_source", audio_source), ("prompt", prompt), ("model_name", model_name)):
+        _, error = resolve_str_param(value, parameter)
+        if error:
+            return error
     audio_source = audio_source.strip()
+    if not audio_source:
+        return invalid_request("audio_source", audio_source, "must be a non-empty string")
 
     # Handle relative paths
     if audio_source[0] not in ["/", "h"]:
@@ -176,10 +183,13 @@ def recognize_video(video_source: str, prompt: str = "", model_name: str = "") -
         >>> recognize_video("/path/to/clip.mp4")
         'The video shows a person walking through...'
     """
-    if not video_source or not isinstance(video_source, str):
-        raise ValueError("video_source must be a non-empty string")
-
+    for parameter, value in (("video_source", video_source), ("prompt", prompt), ("model_name", model_name)):
+        _, error = resolve_str_param(value, parameter)
+        if error:
+            return error
     video_source = video_source.strip()
+    if not video_source:
+        return invalid_request("video_source", video_source, "must be a non-empty string")
 
     # Handle relative paths
     if video_source[0] not in ["/", "h"]:

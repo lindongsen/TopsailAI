@@ -4,6 +4,12 @@ from topsailai.utils.json_tool import safe_json_load
 from topsailai.utils.env_tool import EnvReaderInstance
 from topsailai.context import ctx_safe
 from topsailai.prompt_hub import prompt_tool
+from topsailai.tools.tool_utils.parameter import (
+    invalid_request,
+    resolve_finite_int,
+    resolve_int_flag,
+    resolve_json_container,
+)
 
 
 def format_text(s, need_truncate=True):
@@ -128,21 +134,28 @@ def exec_cmd(
     Returns:
         tuple: (code, stdout, stderr)
     """
-    if isinstance(cmd, str):
-        if cmd[0] == '[' and cmd[-1] == ']':
-            fixed_cmd = safe_json_load(cmd)
-            if fixed_cmd:
-                cmd = fixed_cmd
+    if isinstance(cmd, str) and cmd.strip().startswith("["):
+        cmd, error = resolve_json_container(cmd, "cmd", list)
+        if error:
+            return error
+    if not isinstance(cmd, (str, list)):
+        return invalid_request("cmd", cmd, "must be a string or list")
 
-    if not isinstance(cmd, str) and not isinstance(cmd, list):
-        return "illegal cmd"
+    if env is not None:
+        env, error = resolve_json_container(env, "env", dict)
+        if error:
+            return error
 
-    if env:
-        env = safe_json_load(env)
+    timeout, error = resolve_finite_int(timeout, "timeout")
+    if error:
+        return error
+    no_need_stderr, error = resolve_int_flag(no_need_stderr, "no_need_stderr")
+    if error:
+        return error
 
     result = exec_command(
         cmd,
-        no_need_stderr=True if int(no_need_stderr) else False,
+        no_need_stderr=no_need_stderr,
         timeout=get_cmd_timeout(cmd, timeout),
         cwd=cwd,
         env_info=env,

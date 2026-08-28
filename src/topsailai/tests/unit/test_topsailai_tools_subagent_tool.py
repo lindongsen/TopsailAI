@@ -92,16 +92,24 @@ class TestCallAssistant:
         subagent_tool.g_subagents.clear()
 
     def test_call_assistant_requires_task(self):
-        """Verify call_assistant raises assertion error for empty task."""
+        """Verify call_assistant rejects an empty task before agent creation."""
         from topsailai.tools.subagent_tool import call_assistant
-        with pytest.raises(AssertionError, match="missing task content"):
-            call_assistant("")
 
-    def test_call_assistant_requires_task_none(self):
-        """Verify call_assistant raises assertion error for None task."""
+        with patch("topsailai.workspace.agent_shell.get_agent_chat") as mock_get_agent_chat:
+            result = call_assistant("")
+
+        assert result["status"] == "invalid_request"
+        assert "task" in result["reason"]
+        mock_get_agent_chat.assert_not_called()
+
+    def test_call_assistant_rejects_none_task(self):
+        """Verify call_assistant returns a parameter error for a None task."""
         from topsailai.tools.subagent_tool import call_assistant
-        with pytest.raises(AssertionError):
-            call_assistant(None)
+
+        result = call_assistant(None)
+
+        assert result["status"] == "invalid_request"
+        assert "task" in result["reason"]
 
     @patch("topsailai.workspace.agent_shell.get_agent_chat")
     @patch("topsailai.tools.subagent_tool.get_task_id")
@@ -416,7 +424,7 @@ class TestSubagentRoles:
             )
 
     def test_no_mention_when_role_unknown(self):
-        """Verify error raised when role does not match any file."""
+        """Verify an unknown role is rejected before agent creation."""
         from topsailai.tools import subagent_tool
 
         with patch("topsailai.workspace.agent_shell.get_agent_chat") as mock_get_agent_chat, \
@@ -428,8 +436,11 @@ class TestSubagentRoles:
             mock_get_agent_chat.return_value = mock_agent
             mock_get_task_id.return_value = "task_123"
 
-            with pytest.raises(AssertionError, match="invalid role"):
-                subagent_tool.call_assistant("plain task", role="unknown")
+            result = subagent_tool.call_assistant("plain task", role="unknown")
+
+            assert result["status"] == "invalid_request"
+            assert "role" in result["reason"]
+            mock_get_agent_chat.assert_not_called()
 
     def test_role_folder_override_via_env_var(self, tmp_path):
         """Verify custom role folder is discovered via env var."""
@@ -521,14 +532,20 @@ class TestEdgeCases:
     def test_empty_task_string(self):
         """Verify call_assistant handles empty string task."""
         from topsailai.tools.subagent_tool import call_assistant
-        with pytest.raises(AssertionError):
-            call_assistant("")
+
+        result = call_assistant("")
+
+        assert result["status"] == "invalid_request"
+        assert "task" in result["reason"]
 
     def test_whitespace_only_task(self):
-        """Verify whitespace-only task passes assertion (truthy check)."""
-        # Whitespace-only is truthy, so it passes the assertion check
-        # The actual processing happens in the agent, not in call_assistant
-        assert "   "  # Whitespace is truthy
+        """Verify whitespace-only task is rejected as empty."""
+        from topsailai.tools.subagent_tool import call_assistant
+
+        result = call_assistant("   ")
+
+        assert result["status"] == "invalid_request"
+        assert "task" in result["reason"]
 
     def test_long_task_content(self):
         """Verify call_assistant handles long task content."""

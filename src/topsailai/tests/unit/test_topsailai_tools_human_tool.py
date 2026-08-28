@@ -294,11 +294,11 @@ class TestOptionValidationLoop(unittest.TestCase):
 
     @patch('topsailai.tools.human_tool._build_prompt', return_value='prompt')
     def test_reprompts_until_valid_option(self, mock_build):
-        """Invalid option with allow_free_text=False reprompts until valid or cancel."""
+        """Invalid option with allow_free_text=0 reprompts until valid or cancel."""
         answers = iter(['bogus', '1'])
         fake_input = lambda p, t: next(answers)
         with patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(fake_input, None)):
-            result = human_tool.ask_decision('q', options=['x', 'y'], allow_free_text=False)
+            result = human_tool.ask_decision('q', options=['x', 'y'], allow_free_text=0)
         self.assertEqual(result['status'], 'answered')
         self.assertEqual(result['answer'], 'y')
         self.assertEqual(result['option_index'], 1)
@@ -309,7 +309,7 @@ class TestOptionValidationLoop(unittest.TestCase):
         answers = iter(['bad', '/cancel'])
         fake_input = lambda p, t: next(answers)
         with patch('topsailai.tools.human_tool._resolve_input_funcs', return_value=(fake_input, None)):
-            result = human_tool.ask_decision('q', options=['x', 'y'], allow_free_text=False, default='dflt')
+            result = human_tool.ask_decision('q', options=['x', 'y'], allow_free_text=0, default='dflt')
         self.assertEqual(result['status'], 'cancelled')
         self.assertEqual(result['answer'], 'dflt')
 
@@ -412,25 +412,39 @@ class TestOptionValidationLoop(unittest.TestCase):
         self.assertEqual(result['option_index'], 0)
 
     def test_integer_allow_free_text_values_are_normalized(self):
-        """Integer flags resolve using Python truthiness."""
-        for value in (1, 2, '1', '0', ' 1 ', '00'):
-            expected = int(str(value).strip()) != 0
+        """Only integer flags 1 and 0 or their string forms are accepted."""
+        for value, expected in ((1, True), (0, False), ('1', True), ('0', False), (' 1 ', True), ('00', False)):
             self.assertEqual(human_tool._resolve_allow_free_text(value), (expected, None))
-        self.assertEqual(human_tool._resolve_allow_free_text(0), (False, None))
-        self.assertEqual(human_tool._resolve_allow_free_text('1'), (True, None))
-        self.assertEqual(human_tool._resolve_allow_free_text('0'), (False, None))
-        self.assertEqual(human_tool._resolve_allow_free_text(' 1 '), (True, None))
+        for value in (2, -1, '2', '-1'):
+            self.assertEqual(
+                human_tool._resolve_allow_free_text(value),
+                (None, "invalid_allow_free_text"),
+            )
+
+    def test_explicit_empty_allow_free_text_is_rejected(self):
+        """Explicit empty and null values are not valid integer flags."""
+        for value in ('', '   ', None):
+            self.assertEqual(
+                human_tool._resolve_allow_free_text(value),
+                (None, "invalid_allow_free_text"),
+            )
 
     @patch.dict(os.environ, {'TOPSAILAI_HUMAN_DECISION_ALLOW_FREE_TEXT': '0'}, clear=False)
-    def test_empty_allow_free_text_uses_environment_default(self):
-        """Empty, whitespace, and omitted values use the environment default."""
-        for value in ('', '   ', None):
-            self.assertEqual(human_tool._resolve_allow_free_text(value), (False, None))
+    def test_omitted_allow_free_text_uses_environment_default(self):
+        """An omitted flag continues to use the environment default."""
+        result = human_tool.ask_decision('q')
+        self.assertNotEqual(result['status'], 'invalid_request')
 
-    def test_python_boolean_allow_free_text_remains_supported(self):
-        """Python booleans remain accepted for existing callers."""
-        self.assertEqual(human_tool._resolve_allow_free_text(True), (True, None))
-        self.assertEqual(human_tool._resolve_allow_free_text(False), (False, None))
+    def test_python_boolean_allow_free_text_is_rejected(self):
+        """Python booleans are not accepted as integer flags."""
+        self.assertEqual(
+            human_tool._resolve_allow_free_text(True),
+            (None, "invalid_allow_free_text"),
+        )
+        self.assertEqual(
+            human_tool._resolve_allow_free_text(False),
+            (None, "invalid_allow_free_text"),
+        )
 
     def test_non_integer_allow_free_text_returns_invalid_request(self):
         """Non-integer strings and floats return a structured validation failure."""
@@ -547,7 +561,7 @@ class TestRepromptRobustness(unittest.TestCase):
         with patch('topsailai.tools.human_tool._resolve_input_funcs',
                    return_value=(fake_input, None)):
             result = human_tool.ask_decision(
-                'q', options=['x', 'y'], allow_free_text=False
+                'q', options=['x', 'y'], allow_free_text=0
             )
         self.assertEqual(result['status'], 'answered')
         self.assertEqual(result['answer'], 'bad')
@@ -567,7 +581,7 @@ class TestRepromptRobustness(unittest.TestCase):
         with patch('topsailai.tools.human_tool._resolve_input_funcs',
                    return_value=(flaky, None)):
             result = human_tool.ask_decision(
-                'q', options=['x', 'y'], allow_free_text=False, default='dflt'
+                'q', options=['x', 'y'], allow_free_text=0, default='dflt'
             )
         self.assertEqual(result['status'], 'timeout')
         self.assertEqual(result['answer'], 'dflt')
@@ -586,7 +600,7 @@ class TestRepromptRobustness(unittest.TestCase):
         with patch('topsailai.tools.human_tool._resolve_input_funcs',
                    return_value=(flaky, None)):
             result = human_tool.ask_decision(
-                'q', options=['x', 'y'], allow_free_text=False, default='dflt'
+                'q', options=['x', 'y'], allow_free_text=0, default='dflt'
             )
         self.assertEqual(result['status'], 'cancelled')
         self.assertEqual(result['answer'], 'dflt')

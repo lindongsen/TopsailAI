@@ -238,7 +238,7 @@ class TestWriteFile:
             with open(temp_path, 'w') as f:
                 f.write("Hello World")
             
-            result = write_file(temp_path, " Beautiful", seek=5, to_insert=True)
+            result = write_file(temp_path, " Beautiful", seek=5, to_insert=1)
             assert result == "OK"
             with open(temp_path, 'r') as f:
                 assert f.read() == "Hello Beautiful World"
@@ -254,7 +254,7 @@ class TestWriteFile:
             with open(temp_path, 'w') as f:
                 f.write("Hello")
             
-            result = write_file(temp_path, " World", seek=-1, to_insert=True)
+            result = write_file(temp_path, " World", seek=-1, to_insert=1)
             assert result is True
             with open(temp_path, 'r') as f:
                 assert f.read() == "Hello World"
@@ -270,7 +270,7 @@ class TestWriteFile:
             with open(temp_path, 'w') as f:
                 f.write("Hello World")
             
-            result = write_file(temp_path, "Python", seek=6, to_insert=False)
+            result = write_file(temp_path, "Python", seek=6, to_insert=0)
             assert result == "OK"
             with open(temp_path, 'r') as f:
                 assert f.read() == "Hello Python"
@@ -286,7 +286,7 @@ class TestWriteFile:
             with open(temp_path, 'w') as f:
                 f.write("abcdef")
             
-            result = write_file(temp_path, "XX", seek=-2, to_insert=False)
+            result = write_file(temp_path, "XX", seek=-2, to_insert=0)
             assert result == "OK"
             with open(temp_path, 'r') as f:
                 assert f.read() == "abcdXX"
@@ -465,9 +465,10 @@ class TestMkdirs:
             shutil.rmtree(temp_dir)
 
     def test_mkdirs_requires_absolute_path(self):
-        """Verify mkdirs requires absolute paths."""
-        with pytest.raises(AssertionError):
-            mkdirs(["relative/path"])
+        """Verify mkdirs reports relative paths as invalid requests."""
+        result = mkdirs(["relative/path"])
+        assert result["status"] == "invalid_request"
+        assert "absolute path" in result["reason"]
 
 
 class TestReplaceLinesInFile:
@@ -858,6 +859,118 @@ class TestIntegration:
         assert hasattr(file_tool, 'read_file')
         assert hasattr(file_tool, 'write_file')
         assert hasattr(file_tool, 'TOOLS')
+
+
+class TestStringFirstFileToolParameters:
+    """Verify registered file tools coerce LLM-style string parameters."""
+
+    @pytest.mark.parametrize("seek,size", [
+        (" 1 ", " 3 "), ("1e0", "3e0"), (1.0, 3.0),
+    ])
+    def test_read_file_accepts_finite_numeric_forms(self, tmp_path, seek, size):
+        """Finite numeric values retain existing integer read semantics."""
+        target = tmp_path / "values.txt"
+        target.write_text("abcdef", encoding="utf-8")
+        assert read_file(str(target), seek=seek, size=size) == "bcd"
+
+    @pytest.mark.parametrize("parameter,value", [
+        ("seek", "NaN"), ("seek", "+inf"), ("seek", "-inf"),
+        ("seek", ""), ("seek", None), ("seek", "abc"),
+        ("size", "NaN"), ("size", "+inf"), ("size", "-inf"),
+        ("size", ""), ("size", None), ("size", "abc"),
+    ])
+    def test_read_file_rejects_invalid_numeric_values(self, tmp_path, parameter, value):
+        """Invalid numeric values return invalid_request instead of exceptions."""
+        target = tmp_path / "values.txt"
+        target.write_text("abcdef", encoding="utf-8")
+        result = read_file(str(target), **{parameter: value})
+        assert result["status"] == "invalid_request"
+        assert parameter in result["reason"]
+
+    @pytest.mark.parametrize("flag,expected", [
+        ("1", "aXbc"), (1, "aXbc"), ("0", "aXc"), (0, "aXc"),
+    ])
+    def test_write_file_accepts_integer_insert_flags(self, tmp_path, flag, expected):
+        """Only integer 1 and 0 control insertion versus overwrite."""
+        target = tmp_path / "write.txt"
+        target.write_text("abc", encoding="utf-8")
+        assert write_file(str(target), "X", seek="1e0", to_insert=flag) == "OK"
+        assert target.read_text(encoding="utf-8") == expected
+
+    @pytest.mark.parametrize("value", ["2", "-1", "yes", "true", "", None, True, False])
+    def test_write_file_rejects_invalid_insert_flags_without_writing(self, tmp_path, value):
+        """Rejected flags neither use truthiness nor mutate the target file."""
+        target = tmp_path / "write.txt"
+        target.write_text("abc", encoding="utf-8")
+        result = write_file(str(target), "X", to_insert=value)
+        assert result["status"] == "invalid_request"
+        assert "to_insert" in result["reason"]
+        assert target.read_text(encoding="utf-8") == "abc"
+
+    @pytest.mark.parametrize("value", ["NaN", "+inf", "-inf", "", None, "abc"])
+    def test_write_file_rejects_invalid_seek_without_writing(self, tmp_path, value):
+        """Invalid seek values are rejected before file mutation."""
+        target = tmp_path / "write.txt"
+        target.write_text("abc", encoding="utf-8")
+        result = write_file(str(target), "X", seek=value)
+        assert result["status"] == "invalid_request"
+        assert target.read_text(encoding="utf-8") == "abc"
+
+    def test_insert_content_accepts_scientific_line_number(self, tmp_path):
+        """A scientific-notation line number preserves insertion behavior."""
+        target = tmp_path / "insert.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        insert_content_to_file(str(target), "middle", "1e0", "after")
+        assert target.read_text(encoding="utf-8") == "one\nmiddle\ntwo\n"
+
+    @pytest.mark.parametrize("value", ["NaN", "+inf", "-inf", "", None, "abc"])
+    def test_insert_content_rejects_invalid_line_number_without_writing(self, tmp_path, value):
+        """Invalid line numbers return invalid_request before file mutation."""
+        target = tmp_path / "insert.txt"
+        target.write_text("one\n", encoding="utf-8")
+        result = insert_content_to_file(str(target), "x", value)
+        assert result["status"] == "invalid_request"
+        assert target.read_text(encoding="utf-8") == "one\n"
+
+    def test_list_parameters_accept_json_lists(self, tmp_path):
+        """JSON list strings are decoded for all list-valued file tools."""
+        target = tmp_path / "read.txt"
+        target.write_text("data", encoding="utf-8")
+        folder = tmp_path / "folder"
+        folder.mkdir()
+        child = tmp_path / "created"
+        assert read_files(f'["{target}"]') == {str(target): "data"}
+        assert list_dirs(f'["{folder}"]') == {str(folder): []}
+        assert mkdirs(f'["{child}"]') is True
+        assert child.is_dir()
+
+    def test_list_parameters_accept_bare_strings(self, tmp_path):
+        """Bare path strings are treated as one-element lists by file tools."""
+        target = tmp_path / "read.txt"
+        target.write_text("data", encoding="utf-8")
+        folder = tmp_path / "folder"
+        folder.mkdir()
+        child = tmp_path / "created"
+        assert read_files(str(target)) == {str(target): "data"}
+        assert list_dirs(str(folder)) == {str(folder): []}
+        assert mkdirs(str(child)) is True
+        assert child.is_dir()
+
+    @pytest.mark.parametrize("function,parameter", [
+        (read_files, "files"), (list_dirs, "dirs"), (mkdirs, "dirs"),
+    ])
+    @pytest.mark.parametrize("value", ["[bad", "{}", None])
+    def test_list_parameters_reject_invalid_containers(self, function, parameter, value):
+        """Malformed JSON-shaped or wrong-shaped container values return invalid_request."""
+        result = function(value)
+        assert result["status"] == "invalid_request"
+        assert parameter in result["reason"]
+
+    def test_mkdirs_rejects_relative_path_without_assertion(self):
+        """A relative path is a machine-readable parameter error."""
+        result = mkdirs('["relative/path"]')
+        assert result["status"] == "invalid_request"
+        assert "absolute path" in result["reason"]
 
 
 if __name__ == "__main__":

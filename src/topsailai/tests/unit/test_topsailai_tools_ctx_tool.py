@@ -199,9 +199,9 @@ class TestRetrieveMsgInvalidInputs(unittest.TestCase):
 
         with patch('topsailai.tools.ctx_tool.get_agent_object', return_value=mock_agent):
             with patch('topsailai.tools.ctx_tool.logger') as mock_logger:
-                # Should handle None gracefully
                 result = retrieve_msg(None)
-                self.assertEqual(result, "")
+                self.assertEqual(result["status"], "invalid_request")
+                self.assertIn("msg_id", result["reason"])
 
     def test_retrieve_msg_with_integer_msg_id(self):
         """Test retrieve_msg with integer msg_id."""
@@ -212,9 +212,9 @@ class TestRetrieveMsgInvalidInputs(unittest.TestCase):
 
         with patch('topsailai.tools.ctx_tool.get_agent_object', return_value=mock_agent):
             with patch('topsailai.tools.ctx_tool.logger') as mock_logger:
-                # Should handle integer gracefully
                 result = retrieve_msg(12345)
-                self.assertEqual(result, "")
+                self.assertEqual(result["status"], "invalid_request")
+                self.assertIn("msg_id", result["reason"])
 
 
 if __name__ == '__main__':

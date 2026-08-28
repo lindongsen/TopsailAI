@@ -83,20 +83,28 @@ class TestRecognizeImage:
         )
         assert result == "Description"
 
-    def test_recognize_image_empty_source_raises(self):
-        """Test recognize_image raises ValueError for empty image_source."""
-        with pytest.raises(ValueError, match="image_source must be a non-empty string"):
-            recognize_image(image_source="", prompt="test")
+    def test_recognize_image_empty_source_returns_invalid_request(self):
+        """Test recognize_image rejects an empty image_source before LLM use."""
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat") as mock_chat:
+            result = recognize_image(image_source="", prompt="test")
 
-    def test_recognize_image_none_source_raises(self):
-        """Test recognize_image raises ValueError for None image_source."""
-        with pytest.raises(ValueError, match="image_source must be a non-empty string"):
-            recognize_image(image_source=None, prompt="test")
+        assert result["status"] == "invalid_request"
+        assert "image_source" in result["reason"]
+        mock_chat.assert_not_called()
 
-    def test_recognize_image_invalid_source_type_raises(self):
-        """Test recognize_image raises ValueError for non-string image_source."""
-        with pytest.raises(ValueError, match="image_source must be a non-empty string"):
-            recognize_image(image_source=123, prompt="test")
+    def test_recognize_image_none_source_returns_invalid_request(self):
+        """Test recognize_image rejects a non-string image_source."""
+        result = recognize_image(image_source=None, prompt="test")
+
+        assert result["status"] == "invalid_request"
+        assert "image_source" in result["reason"]
+
+    def test_recognize_image_invalid_source_type_returns_invalid_request(self):
+        """Test recognize_image rejects a non-string image_source."""
+        result = recognize_image(image_source=123, prompt="test")
+
+        assert result["status"] == "invalid_request"
+        assert "image_source" in result["reason"]
 
     def test_recognize_image_strips_source(self):
         """Test recognize_image strips whitespace from image_source."""
@@ -267,20 +275,28 @@ class TestRecognizeVoice:
         assert call_args[1]["message"] == "Transcribe this"
         assert result == "Transcription"
 
-    def test_recognize_voice_empty_source_raises(self):
-        """Test recognize_voice raises ValueError for empty audio_source."""
-        with pytest.raises(ValueError, match="audio_source must be a non-empty string"):
-            recognize_voice(audio_source="", prompt="test")
+    def test_recognize_voice_empty_source_returns_invalid_request(self):
+        """Test recognize_voice rejects an empty audio_source before LLM use."""
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat") as mock_chat:
+            result = recognize_voice(audio_source="", prompt="test")
 
-    def test_recognize_voice_none_source_raises(self):
-        """Test recognize_voice raises ValueError for None audio_source."""
-        with pytest.raises(ValueError, match="audio_source must be a non-empty string"):
-            recognize_voice(audio_source=None, prompt="test")
+        assert result["status"] == "invalid_request"
+        assert "audio_source" in result["reason"]
+        mock_chat.assert_not_called()
 
-    def test_recognize_voice_invalid_source_type_raises(self):
-        """Test recognize_voice raises ValueError for non-string audio_source."""
-        with pytest.raises(ValueError, match="audio_source must be a non-empty string"):
-            recognize_voice(audio_source=123, prompt="test")
+    def test_recognize_voice_none_source_returns_invalid_request(self):
+        """Test recognize_voice rejects a non-string audio_source."""
+        result = recognize_voice(audio_source=None, prompt="test")
+
+        assert result["status"] == "invalid_request"
+        assert "audio_source" in result["reason"]
+
+    def test_recognize_voice_invalid_source_type_returns_invalid_request(self):
+        """Test recognize_voice rejects a non-string audio_source."""
+        result = recognize_voice(audio_source=123, prompt="test")
+
+        assert result["status"] == "invalid_request"
+        assert "audio_source" in result["reason"]
 
     def test_recognize_voice_strips_source(self):
         """Test recognize_voice strips whitespace from audio_source."""
@@ -434,20 +450,28 @@ class TestRecognizeVideo:
         assert call_args[1]["message"] == "Describe this"
         assert result == "Description"
 
-    def test_recognize_video_empty_source_raises(self):
-        """Test recognize_video raises ValueError for empty video_source."""
-        with pytest.raises(ValueError, match="video_source must be a non-empty string"):
-            recognize_video(video_source="", prompt="test")
+    def test_recognize_video_empty_source_returns_invalid_request(self):
+        """Test recognize_video rejects an empty video_source before LLM use."""
+        with patch("topsailai.tools.multimodal_readonly_tool.get_multimodal_llm_chat") as mock_chat:
+            result = recognize_video(video_source="", prompt="test")
 
-    def test_recognize_video_none_source_raises(self):
-        """Test recognize_video raises ValueError for None video_source."""
-        with pytest.raises(ValueError, match="video_source must be a non-empty string"):
-            recognize_video(video_source=None, prompt="test")
+        assert result["status"] == "invalid_request"
+        assert "video_source" in result["reason"]
+        mock_chat.assert_not_called()
 
-    def test_recognize_video_invalid_source_type_raises(self):
-        """Test recognize_video raises ValueError for non-string video_source."""
-        with pytest.raises(ValueError, match="video_source must be a non-empty string"):
-            recognize_video(video_source=123, prompt="test")
+    def test_recognize_video_none_source_returns_invalid_request(self):
+        """Test recognize_video rejects a non-string video_source."""
+        result = recognize_video(video_source=None, prompt="test")
+
+        assert result["status"] == "invalid_request"
+        assert "video_source" in result["reason"]
+
+    def test_recognize_video_invalid_source_type_returns_invalid_request(self):
+        """Test recognize_video rejects a non-string video_source."""
+        result = recognize_video(video_source=123, prompt="test")
+
+        assert result["status"] == "invalid_request"
+        assert "video_source" in result["reason"]
 
     def test_recognize_video_strips_source(self):
         """Test recognize_video strips whitespace from video_source."""

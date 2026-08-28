@@ -19,6 +19,7 @@ from topsailai.utils import (
 )
 from topsailai.prompt_hub import prompt_tool
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE
+from .tool_utils.parameter import resolve_str_param
 
 DEFAULT_WORKSPACE = FOLDER_WORKSPACE
 
@@ -119,6 +120,16 @@ def agent_writer(msg_or_file:str, model_name:str=None, workspace:str=DEFAULT_WOR
 
     Return final answer.
     """
+    msg_or_file, error = resolve_str_param(msg_or_file, "msg_or_file")
+    if error:
+        return error
+    if model_name is not None:
+        model_name, error = resolve_str_param(model_name, "model_name")
+        if error:
+            return error
+    workspace, error = resolve_str_param(workspace, "workspace")
+    if error:
+        return error
     return _agent_writer(
         msg_or_file=msg_or_file,
         model_name=model_name,
@@ -142,9 +153,23 @@ def agent_programmer(
 
     Return final answer.
     """
+    msg_or_file, error = resolve_str_param(msg_or_file, "msg_or_file")
+    if error:
+        return error
+    if model_name is not None:
+        model_name, error = resolve_str_param(model_name, "model_name")
+        if error:
+            return error
+    workspace, error = resolve_str_param(workspace, "workspace")
+    if error:
+        return error
+    system_prompt, error = resolve_str_param(system_prompt, "system_prompt")
+    if error:
+        return error
+
     message = msg_or_file
     # read message from file if msg_or_file is a file path
-    if msg_or_file[0] in ["/", "."]:
+    if msg_or_file and msg_or_file[0] in ["/", "."]:
         if os.path.isfile(msg_or_file) and not is_code_file(msg_or_file):
             with open(msg_or_file, "r", encoding="utf-8") as f:
                 message = f.read()
@@ -309,6 +334,21 @@ def async_multitasks_agent_writer2(
 
     Return final answer.
     """
+    for parameter, value in (
+        ("goal", goal),
+        ("goal_report_file", goal_report_file),
+        ("task_prompt_file", task_prompt_file),
+        ("tasks_file_or_json", tasks_file_or_json),
+        ("workspace", workspace),
+    ):
+        _, error = resolve_str_param(value, parameter)
+        if error:
+            return error
+    if model_name is not None:
+        model_name, error = resolve_str_param(model_name, "model_name")
+        if error:
+            return error
+
     tasks_content = tasks_file_or_json
     if tasks_file_or_json and tasks_file_or_json[0] in ["/", "."]:
         with open(tasks_file_or_json, encoding="utf-8") as fd:

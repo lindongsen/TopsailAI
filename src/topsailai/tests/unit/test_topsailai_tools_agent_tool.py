@@ -193,14 +193,12 @@ class TestAgentProgrammer:
         assert "excluded_tool_kits" in call_kwargs
 
     def test_agent_programmer_empty_message(self):
-        """Test agent_programmer with empty message - reveals IndexError bug in source."""
+        """Test agent_programmer with empty message returns null."""
         from topsailai.tools.agent_tool import agent_programmer
-        
-        # Note: The source code has a bug - it tries to access msg_or_file[0]
-        # which causes IndexError for empty string
-        # This test documents the actual behavior (IndexError)
-        with pytest.raises(IndexError):
-            agent_programmer("")
+
+        result = agent_programmer("")
+
+        assert result == "null of message content"
 
     def test_agent_programmer_whitespace_message(self):
         """Test agent_programmer with whitespace-only message returns null."""

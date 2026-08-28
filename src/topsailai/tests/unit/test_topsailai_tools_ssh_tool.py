@@ -636,3 +636,71 @@ class TestDocumentedSSHHelpers:
         exec_cmd.assert_called_once_with(
             command, input=b"printf 'hello'", timeout=17
         )
+
+@pytest.mark.parametrize("value, expected", [(" 2222 ", 2222), ("2.2e1", 22), (22, 22)])
+def test_operate_ssh_coerces_finite_port_before_dispatch(value, expected):
+    """Finite port forms are normalized before operator dispatch."""
+    with patch.object(SSHExecOperator, "run", return_value=(0, "", "")) as run:
+        result = operate_ssh("exec", "192.0.2.10", port=value, command="echo ok")
+    assert result[0] == 0
+    assert run.call_args.args[0].port == expected
+
+
+@pytest.mark.parametrize("value", ["NaN", "+inf", "-inf", "", None, "bad", 0, -1, 70000])
+def test_operate_ssh_rejects_invalid_port_before_dispatch(value):
+    """Invalid and out-of-range ports return invalid_request before dispatch."""
+    with patch.object(SSHExecOperator, "run") as run:
+        result = operate_ssh("exec", "192.0.2.10", port=value, command="echo ok")
+    assert result["status"] == "invalid_request"
+    assert "port" in result["reason"]
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("value, expected", [(" 60 ", 60), ("1e2", 100), (0, 0), (-1, -1)])
+def test_operate_ssh_coerces_finite_timeout_before_dispatch(value, expected):
+    """Finite timeout forms retain existing SSH timeout boundary semantics."""
+    with patch.object(SSHExecOperator, "run", return_value=(0, "", "")) as run:
+        operate_ssh("exec", "192.0.2.10", timeout=value, command="echo ok")
+    assert run.call_args.args[0].timeout == expected
+
+
+@pytest.mark.parametrize("value", ["NaN", "+inf", "-inf", "", None, "bad"])
+def test_operate_ssh_rejects_invalid_timeout_before_dispatch(value):
+    """Invalid timeout forms return invalid_request before dispatch."""
+    with patch.object(SSHExecOperator, "run") as run:
+        result = operate_ssh("exec", "192.0.2.10", timeout=value, command="echo ok")
+    assert result["status"] == "invalid_request"
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("value, expected", [("1", True), (1, True), ("0", False), (0, False)])
+def test_operate_ssh_coerces_delete_integer_flag(value, expected):
+    """Rsync delete accepts only integer boolean forms."""
+    with patch.object(SSHRsyncOperator, "run", return_value=(0, "", "")) as run:
+        operate_ssh("rsync", "192.0.2.10", source="/a", target="/b", delete=value)
+    assert run.call_args.kwargs["delete"] is expected
+
+
+@pytest.mark.parametrize("value", ["2", "-1", "yes", "true", "", None])
+def test_operate_ssh_rejects_invalid_delete_before_dispatch(value):
+    """Non-binary delete values never enable destructive rsync behavior."""
+    with patch.object(SSHRsyncOperator, "run") as run:
+        result = operate_ssh("rsync", "192.0.2.10", source="/a", target="/b", delete=value)
+    assert result["status"] == "invalid_request"
+    run.assert_not_called()
+
+
+def test_operate_ssh_decodes_json_options_before_dispatch():
+    """JSON option containers are decoded while plain option strings remain compatible."""
+    with patch.object(SSHExecOperator, "run", return_value=(0, "", "")) as run:
+        operate_ssh("exec", "192.0.2.10", options='{"Compression":"yes"}', command="echo ok")
+    assert run.call_args.args[0].options["Compression"] == "yes"
+
+
+@pytest.mark.parametrize("value", ['{"bad"', '["bad"', 3])
+def test_operate_ssh_rejects_invalid_options_before_dispatch(value):
+    """Malformed JSON-like or unsupported option values return invalid_request."""
+    with patch.object(SSHExecOperator, "run") as run:
+        result = operate_ssh("exec", "192.0.2.10", options=value, command="echo ok")
+    assert result["status"] == "invalid_request"
+    run.assert_not_called()

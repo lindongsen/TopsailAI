@@ -802,6 +802,102 @@ class TestResolveCaseSensitive:
             assert resolved is False, f"value={value!r}"
             assert reason == _INVALID_CASE_SENSITIVE_REASON, f"value={value!r}"
 
+class TestStringFirstLineParameters:
+    """Verify line-reading tools coerce finite LLM-style numeric values."""
+
+    @pytest.mark.parametrize("line_number,context_num", [
+        (" 2 ", " 1 "), ("2e0", "1e0"), (2.0, 1.0),
+    ])
+    def test_around_line_accepts_finite_numeric_forms(
+            self, tmp_path, line_number, context_num):
+        """Finite numeric forms preserve existing around-line output."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        assert read_file_around_line(str(target), line_number, context_num) == (
+            "1-one\n2:two\n3-three"
+        )
+
+    @pytest.mark.parametrize("parameter,value", [
+        ("line_number", "NaN"), ("line_number", "+inf"),
+        ("line_number", "-inf"), ("line_number", ""),
+        ("line_number", None), ("line_number", "abc"),
+        ("context_num", "NaN"), ("context_num", "+inf"),
+        ("context_num", "-inf"), ("context_num", ""),
+        ("context_num", None), ("context_num", "abc"),
+    ])
+    def test_around_line_rejects_invalid_numeric_values(
+            self, tmp_path, parameter, value):
+        """Invalid around-line values return invalid_request."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        kwargs = {"line_number": 1, "context_num": 1}
+        kwargs[parameter] = value
+        result = read_file_around_line(str(target), **kwargs)
+        assert result["status"] == "invalid_request"
+        assert parameter in result["reason"]
+
+    @pytest.mark.parametrize("start_num,end_num", [
+        (" 2 ", " 3 "), ("2e0", "3e0"), (2.0, 3.0),
+    ])
+    def test_read_lines_accepts_finite_numeric_forms(
+            self, tmp_path, start_num, end_num):
+        """Finite numeric forms preserve existing inclusive ranges."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        assert read_file_lines(str(target), start_num, end_num) == "2-two\n3-three"
+
+    @pytest.mark.parametrize("parameter,value", [
+        ("start_num", "NaN"), ("start_num", "+inf"),
+        ("start_num", "-inf"), ("start_num", ""),
+        ("start_num", None), ("start_num", "abc"),
+        ("end_num", "NaN"), ("end_num", "+inf"),
+        ("end_num", "-inf"), ("end_num", ""),
+        ("end_num", None), ("end_num", "abc"),
+    ])
+    def test_read_lines_rejects_invalid_numeric_values(
+            self, tmp_path, parameter, value):
+        """Invalid range values return invalid_request rather than error strings."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        kwargs = {"start_num": 1, "end_num": 0}
+        kwargs[parameter] = value
+        result = read_file_lines(str(target), **kwargs)
+        assert result["status"] == "invalid_request"
+        assert parameter in result["reason"]
+
+    @pytest.mark.parametrize("line_number", [-1, 0, 9999, "-1", "0", "9999"])
+    def test_around_line_preserves_out_of_range_status(self, tmp_path, line_number):
+        """Finite but out-of-range lines retain the established business error."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        result = read_file_around_line(str(target), line_number)
+        assert isinstance(result, str)
+        assert "out of range" in result
+
+    @pytest.mark.parametrize("context_num", [" 1 ", "1e0", 1.0])
+    def test_with_context_accepts_finite_numeric_forms(self, tmp_path, context_num):
+        """Finite context sizes preserve text search output."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        assert read_file_with_context(
+            str(target), "two", context_num=context_num
+        ) == "1-one\n2:two\n3-three"
+
+    @pytest.mark.parametrize("context_num", [
+        "NaN", "+inf", "-inf", "", None, "abc",
+    ])
+    def test_with_context_rejects_invalid_numeric_values(
+            self, tmp_path, context_num):
+        """Invalid context sizes retain the established text error shape."""
+        target = tmp_path / "lines.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        result = read_file_with_context(
+            str(target), "two", context_num=context_num
+        )
+        assert result.startswith("Error: invalid_request")
+        assert "context_num" in result
+        assert "invalid literal for int()" not in result
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

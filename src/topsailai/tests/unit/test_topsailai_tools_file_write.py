@@ -53,7 +53,7 @@ class TestFileToolWriteFile:
         """Test insert mode with negative seek (append to end)"""
         with open(test_file, 'w') as f:
             f.write("Hello")
-        result = write_file(test_file, " World!", seek=-1, to_insert=True)
+        result = write_file(test_file, " World!", seek=-1, to_insert=1)
         assert result in ("", True)
         with open(test_file, 'r') as f:
             content = f.read()
@@ -63,7 +63,7 @@ class TestFileToolWriteFile:
         """Test insert mode in the middle of content"""
         with open(test_file, 'w') as f:
             f.write("Hello World!")
-        result = write_file(test_file, "Beautiful ", seek=6, to_insert=True)
+        result = write_file(test_file, "Beautiful ", seek=6, to_insert=1)
         assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
@@ -73,7 +73,7 @@ class TestFileToolWriteFile:
         """Test insert mode at the beginning"""
         with open(test_file, 'w') as f:
             f.write("World!")
-        result = write_file(test_file, "Hello ", seek=0, to_insert=True)
+        result = write_file(test_file, "Hello ", seek=0, to_insert=1)
         assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
@@ -83,7 +83,7 @@ class TestFileToolWriteFile:
         """Test overwrite mode with positive seek"""
         with open(test_file, 'w') as f:
             f.write("Hello World!")
-        result = write_file(test_file, "Universe", seek=6, to_insert=False)
+        result = write_file(test_file, "Universe", seek=6, to_insert=0)
         assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
@@ -93,7 +93,7 @@ class TestFileToolWriteFile:
         """Test overwrite mode with negative seek"""
         with open(test_file, 'w') as f:
             f.write("Hello World!")
-        result = write_file(test_file, "Universe", seek=-6, to_insert=False)
+        result = write_file(test_file, "Universe", seek=-6, to_insert=0)
         assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
@@ -103,7 +103,7 @@ class TestFileToolWriteFile:
         """Test overwrite mode with seek=0"""
         with open(test_file, 'w') as f:
             f.write("Hello World!")
-        result = write_file(test_file, "New", seek=0, to_insert=False)
+        result = write_file(test_file, "New", seek=0, to_insert=0)
         assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
@@ -111,7 +111,7 @@ class TestFileToolWriteFile:
 
     def test_write_file_insert_mode_nonexistent_file(self, test_file):
         """Test insert mode on non-existent file (should create file)"""
-        result = write_file(test_file, "Content", seek=5, to_insert=True)
+        result = write_file(test_file, "Content", seek=5, to_insert=1)
         assert result == "OK"
         assert os.path.exists(test_file)
         with open(test_file, 'r') as f:
@@ -129,7 +129,7 @@ class TestFileToolWriteFile:
         """Test insert mode with seek beyond file length"""
         with open(test_file, 'w') as f:
             f.write("Short")
-        result = write_file(test_file, " text", seek=100, to_insert=True)
+        result = write_file(test_file, " text", seek=100, to_insert=1)
         assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
@@ -139,7 +139,7 @@ class TestFileToolWriteFile:
         """Test overwrite mode with seek beyond file length"""
         with open(test_file, 'w') as f:
             f.write("Short")
-        result = write_file(test_file, "Longer content", seek=100, to_insert=False)
+        result = write_file(test_file, "Longer content", seek=100, to_insert=0)
         assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
@@ -193,14 +193,14 @@ class TestFileToolWriteFile:
         """Test complex seek patterns with multiple operations"""
         result = write_file(test_file, "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
         assert result == "OK"
-        result = write_file(test_file, "INSERT", seek=10, to_insert=True)
+        result = write_file(test_file, "INSERT", seek=10, to_insert=1)
         assert result == "OK"
         with open(test_file, 'r') as f:
             assert f.read() == "ABCDEFGHIJINSERTKLMNOPQRSTUVWXYZ"
-        result = write_file(test_file, "OVERWRITE", seek=5, to_insert=False)
+        result = write_file(test_file, "OVERWRITE", seek=5, to_insert=0)
         assert result == "OK"
         # append_file returns True, not ""
-        result = write_file(test_file, "APPEND", seek=-1, to_insert=True)
+        result = write_file(test_file, "APPEND", seek=-1, to_insert=1)
         assert result in ("", True)
         with open(test_file, 'r') as f:
             final_content = f.read()
@@ -209,12 +209,12 @@ class TestFileToolWriteFile:
 
     def test_write_file_edge_case_seek_values(self, test_file):
         """Test edge case seek values"""
-        result = write_file(test_file, "Content", seek=-1000, to_insert=True)
+        result = write_file(test_file, "Content", seek=-1000, to_insert=1)
         assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
         assert content == "Content"
-        result = write_file(test_file, "Content", seek=1000, to_insert=False)
+        result = write_file(test_file, "Content", seek=1000, to_insert=0)
         assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()
@@ -225,7 +225,7 @@ class TestFileToolWriteFile:
         content = "你好世界Hello世界你好"
         result = write_file(test_file, content)
         assert result == "OK"
-        result = write_file(test_file, "INSERT", seek=6, to_insert=True)
+        result = write_file(test_file, "INSERT", seek=6, to_insert=1)
         assert result == "OK"
         with open(test_file, 'r', encoding='utf-8') as f:
             final_content = f.read()
@@ -237,7 +237,7 @@ class TestFileToolWriteFile:
         result = write_file(test_file, large_content)
         assert result == "OK"
         for i in range(10):
-            result = write_file(test_file, f"INSERT{i}", seek=100 * i, to_insert=True)
+            result = write_file(test_file, f"INSERT{i}", seek=100 * i, to_insert=1)
             assert result == "OK"
         with open(test_file, 'r') as f:
             content = f.read()

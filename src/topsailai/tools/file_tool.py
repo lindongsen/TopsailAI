@@ -11,6 +11,12 @@ import os
 import traceback
 
 from topsailai.context import ctx_safe
+from topsailai.tools.tool_utils.parameter import (
+    invalid_request,
+    resolve_finite_int,
+    resolve_int_flag,
+    resolve_str_list,
+)
 from topsailai.utils import (
     text_tool,
     print_tool,
@@ -122,12 +128,12 @@ def is_need_truncate(file_ext:str) -> bool:
     return True
 
 
-def write_file(file_path:str, content:str, seek:int=0, to_insert:bool=False):
+def write_file(file_path:str, content:str, seek:int=0, to_insert:int=0):
     """Write content to a file with flexible positioning options.
 
     This function allows writing content to a file with various positioning modes:
-    - Standard overwrite mode (to_insert=False)
-    - Insert mode (to_insert=True) where content is inserted at the specified position
+    - Standard overwrite mode (to_insert=0)
+    - Insert mode (to_insert=1) where content is inserted at the specified position
     - Support for positive and negative seek positions
 
     Args:
@@ -138,9 +144,9 @@ def write_file(file_path:str, content:str, seek:int=0, to_insert:bool=False):
             - Negative values: seek from end of file
             - 0: start of file
             if file no exists, `seek` still is 0, just write content at position 0.
-        to_insert (bool, optional): If True, insert content at seek position without
-                                   overwriting existing content. If False, overwrite
-                                   content starting at seek position. Defaults to False.
+        to_insert (int, optional): If 1, insert content at seek position without
+                                  overwriting existing content. If 0, overwrite
+                                  content starting at seek position. Defaults to 0.
 
     Returns:
         str: error message on failure
@@ -153,15 +159,20 @@ def write_file(file_path:str, content:str, seek:int=0, to_insert:bool=False):
         write_file("test.txt", "new content")
 
         # Append to end of file
-        write_file("test.txt", "appended", seek=-1, to_insert=True)
+        write_file("test.txt", "appended", seek=-1, to_insert=1)
 
         # Insert at position 10
-        write_file("test.txt", "inserted", seek=10, to_insert=True)
+        write_file("test.txt", "inserted", seek=10, to_insert=1)
 
         # Overwrite from position 5
-        write_file("test.txt", "overwrite", seek=5, to_insert=False)
+        write_file("test.txt", "overwrite", seek=5, to_insert=0)
     """
-    seek = int(seek)
+    seek, error = resolve_finite_int(seek, "seek")
+    if error:
+        return error
+    to_insert, error = resolve_int_flag(to_insert, "to_insert")
+    if error:
+        return error
     try:
         if to_insert:
             # Insert mode: read existing content, insert at position, then write back
@@ -283,8 +294,12 @@ def read_file(file_path:str="", seek:int=0, size:int=-1, files=None):
     - When the file extension is not in white list, the file reading process may be (force to truncate).
       - white list: {WHITE_LIST_NO_TRUNCATE_EXT}
     """
-    seek = int(seek)
-    size = int(size)
+    seek, error = resolve_finite_int(seek, "seek")
+    if error:
+        return error
+    size, error = resolve_finite_int(size, "size")
+    if error:
+        return error
 
     # compatibility on LLM mistake
     if not file_path and files and seek == 0 and size == -1:
@@ -371,8 +386,12 @@ def mkdirs(dirs):
     Returns:
         raise an Error if error, else return true.
     """
-    for d in format_tool.to_list(dirs):
-        assert d[0] == "/", f"require absolute path: {d}"
+    dirs, error = resolve_str_list(dirs, "dirs")
+    if error:
+        return error
+    for d in dirs:
+        if not isinstance(d, str) or not os.path.isabs(d):
+            return invalid_request("dirs", dirs, f"require absolute path: {d!r}")
         os.makedirs(d, exist_ok=True)
     return True
 
@@ -440,6 +459,9 @@ def insert_content_to_file(file_path: str, content: str, line_num: int, before_o
     Returns:
         str: diff content on success, error message on failure
     """
+    line_num, error = resolve_finite_int(line_num, "line_num")
+    if error:
+        return error
     with _file_tool.ctxm_temp_file("") as (tmp_file, fp):
         with open(file_path, encoding='utf-8') as f1:
             raw_content = f1.read()
@@ -479,8 +501,11 @@ def read_files(files:list[str]) -> dict:
     Returns:
         dict: key is file_path, value is file_content
     """
+    files, error = resolve_str_list(files, "files")
+    if error:
+        return error
     result = {}
-    for file_path in format_tool.to_list(files):
+    for file_path in files:
         result[file_path] = read_file(file_path)
     return result
 
@@ -494,8 +519,11 @@ def list_dirs(dirs:list[str]) -> dict:
     Returns:
         dict: key is folder_path, value is files
     """
+    dirs, error = resolve_str_list(dirs, "dirs")
+    if error:
+        return error
     result = {}
-    for dir_path in format_tool.to_list(dirs):
+    for dir_path in dirs:
         result[dir_path] = list_dir(dir_path)
     return result
 
