@@ -153,7 +153,7 @@ def _build_prompt(
         )
         return rendered.strip()
 
-    header = f"[Blocked Task] {question}"
+    header = f"\n[Blocked Task] {question}"
     parts = [header]
     if opts_text:
         parts.append("Options:")
