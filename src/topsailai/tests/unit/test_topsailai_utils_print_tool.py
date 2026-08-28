@@ -268,18 +268,21 @@ class TestPrintTool(unittest.TestCase):
         mock_warning.assert_called_once()
 
     def test_format_print_step_simple_structured_messages(self):
-        """Ordinary structured steps use bounded first-line summaries."""
+        """Action raw text stays complete while ordinary steps remain summarized."""
+        action_raw_text = '\n  first   line  \nsecond line'
         result = print_tool.format_print_step_simple([
-            {'step_name': 'action', 'raw_text': '\n  first   line  \nsecond line'},
+            {'step_name': 'action', 'raw_text': action_raw_text},
             {'step_name': 'observation', 'raw_text': 'short'},
         ])
 
-        lines = result.splitlines()
-        self.assertEqual(lines[0], '[action] first line [truncated, 29 chars total]')
-        self.assertEqual(lines[1], '[observation] short')
+        self.assertEqual(
+            result,
+            f'[action] {action_raw_text}\n[observation] short',
+        )
+        self.assertNotIn('[truncated,', result)
 
     def test_format_print_step_simple_long_content(self):
-        """Long ordinary structured and plain content is capped with a size marker."""
+        """Long action content stays complete while plain content remains capped."""
         long_text = 'x' * 200
 
         structured = print_tool.format_print_step_simple(
@@ -288,15 +291,17 @@ class TestPrintTool(unittest.TestCase):
         plain = print_tool.format_print_step_simple(long_text)
 
         expected = f"{'x' * 160} [truncated, 200 chars total]"
-        self.assertEqual(structured, f'[action] {expected}')
+        self.assertEqual(structured, f'[action] {long_text}')
+        self.assertNotIn('[truncated,', structured)
         self.assertEqual(plain, expected)
 
     def test_format_print_step_simple_full_prefixes_keep_complete_content(self):
-        """Task, thought, final, and inquiry prefixes remain complete in simple mode."""
+        """Task, thought, action, final, and inquiry prefixes stay complete."""
         raw_text = 'first line\n' + ('details ' * 40)
         step_names = (
             'task', 'task_input',
             'thought', 'thought_process',
+            'action', 'action_input',
             'final', 'final_answer',
             'inquiry', 'inquiry_user',
         )
@@ -310,7 +315,7 @@ class TestPrintTool(unittest.TestCase):
                 self.assertNotIn('[truncated,', result)
 
     def test_format_print_step_simple_formatted_string_honors_full_prefixes(self):
-        """Canonical formatted strings apply full-prefix and summary rules per step."""
+        """Canonical formatted strings keep full-prefix content complete."""
         result = print_tool.format_print_step_simple(
             'topsailai.thought\nfirst line\nsecond line\n'
             'topsailai.action\naction line\naction detail'
@@ -319,7 +324,7 @@ class TestPrintTool(unittest.TestCase):
         self.assertEqual(
             result,
             '[thought] first line\nsecond line\n'
-            '[action] action line [truncated, 25 chars total]',
+            '[action] action line\naction detail',
         )
 
     def test_format_print_step_simple_tool_calls(self):

@@ -35,9 +35,9 @@ PRINT_STEP_MODE_DEFAULT = "normal"
 PRINT_STEP_MODES = set(PRINT_STEP_MODE_LIST)
 PRINT_STEP_MODE_DESCRIPTIONS = {
     "normal": "legacy full step output",
-    "simple": "bounded one-line summaries with first tool-call argument; task/thought/final/inquiry fully printed",
+    "simple": "bounded one-line summaries with first tool-call argument; task/thought/action/final/inquiry fully printed",
 }
-PRINT_STEP_FULL_PREFIXES = ("task", "thought", "final", "inquiry")
+PRINT_STEP_FULL_PREFIXES = ("task", "thought", "action", "final", "inquiry")
 _print_step_invalid_mode_warned = False
 
 
