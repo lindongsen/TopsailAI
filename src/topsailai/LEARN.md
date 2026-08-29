@@ -130,3 +130,14 @@ results) so other consumers such as CLI tooling and audit logs can still use it;
 
 Any capability whose behavior depends closely on the LLM (prompt construction, message injection, tool-call/ReAct loop, streaming, approval decisions driven by model output, session/context handling) MUST have BDD (Gherkin) tests under `tests/bdd/` that express the user-visible behavior, in addition to unit tests.
 
+
+## Verify feature enablement and reachable execution paths before implementation, testing, or optimization
+
+The native tool-call incident review initially treated tool-shaped messages appearing in a non-native request as evidence that non-native execution could produce them, but source tracing showed that only native mode creates new `tool_calls` and `tool_call_id` values; non-native mode can only replay structures inherited from earlier native history after persistence, restart, or a mode transition. This distinction also exposed that BDD scenarios running with native mode disabled were valid cross-mode compatibility tests but were not faithful reproductions of the original native incident.
+
+Lessons:
+1. Before developing a feature, write down its complete enablement predicate: configuration flags, model/provider capabilities, startup-time auto-detection, runtime overrides, and lifecycle transitions.
+2. Separate producers from carriers and consumers. A structure observed on a path may have been inherited from an earlier enabled path rather than created under the current configuration.
+3. Build a reachability matrix covering enabled, disabled, transition, persisted-history, and restart cases before selecting implementation points or test configurations.
+4. Match at least one regression test to the exact production enablement state that caused the incident; label transition and compatibility scenarios separately instead of presenting them as faithful reproductions.
+5. Before optimizing disabled-mode work, verify whether the boundary also protects data created while the feature was previously enabled; this prevents a locally reasonable gate from removing the final compatibility safeguard.
