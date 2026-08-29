@@ -249,6 +249,20 @@ class TestSharedHelper(unittest.TestCase):
         self.assertEqual(len(messages), 1)
         self.assertEqual(result, [])
 
+    def test_helper_drops_tool_messages_without_a_non_empty_id(self):
+        """Tool messages with absent or blank ids cannot have valid owners."""
+        messages = [
+            {"role": "user", "content": "before"},
+            {"role": "tool", "content": "missing"},
+            {"role": "tool", "content": "blank", "tool_call_id": ""},
+            {"role": "assistant", "content": "after"},
+        ]
+
+        result = message_tool.drop_orphaned_tool_messages(messages)
+
+        self.assertEqual(result, [messages[0], messages[3]])
+
+
     def test_helper_with_empty_input(self):
         """Empty input yields an empty list."""
         self.assertEqual(message_tool.drop_orphaned_tool_messages([]), [])

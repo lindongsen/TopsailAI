@@ -319,7 +319,7 @@ def drop_orphaned_tool_messages(messages: list, logger=None) -> list:
                 msg.get("tool_call_id") if isinstance(msg, dict)
                 else getattr(msg, "tool_call_id", None)
             )
-            if tool_call_id and tool_call_id not in valid_tool_call_ids:
+            if not tool_call_id or tool_call_id not in valid_tool_call_ids:
                 if logger:
                     tool_name = (
                         msg.get("name") if isinstance(msg, dict)
@@ -328,7 +328,7 @@ def drop_orphaned_tool_messages(messages: list, logger=None) -> list:
                     logger.warning(
                         "drop orphaned tool message: index=%s tool_call_id=%s name=%s",
                         index,
-                        tool_call_id,
+                        tool_call_id or "",
                         tool_name or "",
                     )
                 continue
