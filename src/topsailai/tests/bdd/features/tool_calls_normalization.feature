@@ -75,3 +75,37 @@ Feature: Tool calls remain valid across persistence and request boundaries
     And the tool-calls normalization mock server received exactly 3 completion requests
     And the tool-calls normalization mock server received no malformed tool calls value
     And the native incident mock server received no ownerless tool result message
+
+
+  Scenario: Tool result messages without usable call ids are removed at the request boundary
+    Given a tool-calls normalization environment with a private mock LLM server
+    And the tool-calls normalization session "bdd_tc_missing_ids" is seeded with tool result messages whose call ids are absent or blank
+    When the tool-calls normalization session "bdd_tc_missing_ids" continues the conversation with "continue the task"
+    Then the tool-calls normalization conversation completes without a bad request error
+    And the tool-calls normalization mock server received exactly 1 completion requests
+    And the tool-calls normalization mock server received no tool result message with an absent or blank call id
+
+  Scenario: Non-native mode still sanitizes inherited native tool data at the request boundary
+    Given a tool-calls normalization environment with a private mock LLM server
+    And the non-native tool-calls mode skips both mode-gated earlier cleanup sites
+    And the tool-calls normalization session "bdd_tc_nonnative_inherited" is seeded with one paired native tool result and two unowned tool results
+    When the tool-calls normalization session "bdd_tc_nonnative_inherited" continues the conversation with "continue the task"
+    Then the tool-calls normalization conversation completes without a bad request error
+    And the tool-calls normalization mock server received exactly 1 completion requests
+    And the non-native request boundary drops the unowned tool results and keeps the paired result
+    And the tool-calls normalization mock server received no tool result message with an absent or blank call id
+
+  Scenario: Pure non-native conversation passes the request boundary without any tool construct
+    Given a tool-calls normalization environment with a private mock LLM server
+    And the tool-calls normalization session "bdd_tc_nonnative_plain" is seeded with ordinary non-native conversation messages
+    When the tool-calls normalization session "bdd_tc_nonnative_plain" continues the conversation with "continue the task"
+    Then the tool-calls normalization mock server received exactly 1 completion requests
+    And the non-native wire request carries no tool calls array and no tool result message
+    And the non-native ordinary conversation reaches the provider unchanged and in order
+
+  Scenario: Non-native textual ReAct observation survives the request boundary as an ordinary message
+    Given a tool-calls normalization environment with a private mock LLM server
+    And the tool-calls normalization session "bdd_tc_nonnative_observation" is seeded with ordinary non-native conversation messages
+    When the tool-calls normalization session "bdd_tc_nonnative_observation" continues the conversation with "continue the task"
+    Then the non-native textual observation reaches the provider as a user message with its observation step
+    And the non-native wire request carries no tool calls array and no tool result message

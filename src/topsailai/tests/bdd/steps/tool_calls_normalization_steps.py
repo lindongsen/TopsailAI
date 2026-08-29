@@ -43,6 +43,30 @@ def given_tc_norm_seed_legacy(tc_norm_ctx, session_id: str):
     tc_norm_ctx.seed_legacy(session_id)
 
 
+@given(parsers.parse('the tool-calls normalization session "{session_id}" is seeded with tool result messages whose call ids are absent or blank'))
+def given_tc_norm_seed_results_without_ids(tc_norm_ctx, session_id: str):
+    """Persist invalid tool results whose owners cannot be identified."""
+    tc_norm_ctx.seed_tool_results_without_ids(session_id)
+
+
+@given(parsers.parse('the tool-calls normalization session "{session_id}" is seeded with one paired native tool result and two unowned tool results'))
+def given_tc_norm_seed_paired_and_unowned(tc_norm_ctx, session_id: str):
+    """Persist one valid native pair alongside two unowned tool results."""
+    tc_norm_ctx.seed_paired_and_unowned_results(session_id)
+
+
+@given(parsers.parse('the tool-calls normalization session "{session_id}" is seeded with ordinary non-native conversation messages'))
+def given_tc_norm_seed_ordinary(tc_norm_ctx, session_id: str):
+    """Persist tool-free traffic whose observation is a textual user message."""
+    tc_norm_ctx.seed_ordinary_non_native(session_id)
+
+
+@given("the non-native tool-calls mode skips both mode-gated earlier cleanup sites")
+def given_tc_norm_earlier_sites_skipped(tc_norm_ctx):
+    """Assert the gated producer helper and pre-chat hook are inert when disabled."""
+    tc_norm_ctx.prove_earlier_sites_skipped_in_non_native_mode()
+
+
 @given(parsers.parse('the tool-calls normalization replacement hook "{hook_name}" injects malformed tool calls'))
 def given_tc_norm_replacement_hook(tc_norm_ctx, hook_name: str):
     """Install a configured replacement hook that records its own execution."""
@@ -198,6 +222,17 @@ def then_tc_norm_no_ownerless_result(tc_norm_ctx):
     )
 
 
+@then("the tool-calls normalization mock server received no tool result message with an absent or blank call id")
+def then_tc_norm_no_result_without_id(tc_norm_ctx):
+    """Assert the final request boundary removed unidentifiable tool results."""
+    tool_messages = [
+        message
+        for message in tc_norm_ctx.received_messages()
+        if message.get("role") == "tool"
+    ]
+    assert not any(not message.get("tool_call_id") for message in tool_messages)
+
+
 @then("the native incident mock server received no ownerless tool result message")
 def then_tc_norm_native_no_ownerless_result(tc_norm_ctx):
     """Assert S7 never sends the degraded native result without its owner."""
@@ -213,6 +248,22 @@ def then_tc_norm_native_no_ownerless_result(tc_norm_ctx):
     )
 
 
+@then("the non-native textual observation reaches the provider as a user message with its observation step")
+def then_tc_norm_textual_observation_preserved(tc_norm_ctx):
+    """Assert a textual ReAct observation is never mistaken for a tool result."""
+    from tests.bdd.tool_calls_mock_harness import OBSERVATION_TEXT
+
+    assert tc_norm_ctx.error is None, repr(tc_norm_ctx.error)
+    observations = [
+        message
+        for message in tc_norm_ctx.received_messages()
+        if message.get("content") == OBSERVATION_TEXT
+    ]
+    assert len(observations) == 1, observations
+    assert observations[0].get("role") == "user", observations[0]
+    assert observations[0].get("step_name") == "observation", observations[0]
+
+
 @then("the tool-calls normalization logs contain the degradation warning with only index and type")
 def then_tc_norm_warning_bounded(caplog):
     """Assert one bounded warning exposes only structural diagnostic fields."""
@@ -226,6 +277,52 @@ def then_tc_norm_warning_bounded(caplog):
         r"strip malformed assistant tool_calls: index=\d+ type=str",
         warnings[0],
     ), warnings[0]
+
+
+@then("the non-native request boundary drops the unowned tool results and keeps the paired result")
+def then_tc_norm_non_native_boundary_selective(tc_norm_ctx):
+    """Assert the mode-independent boundary is selective rather than blanket-dropping."""
+    from tests.bdd.tool_calls_mock_harness import (
+        PAIRED_RESULT,
+        UNOWNED_BLANK_ID_RESULT,
+        UNOWNED_MISSING_ID_RESULT,
+    )
+
+    assert tc_norm_ctx.error is None, repr(tc_norm_ctx.error)
+    tool_contents = [
+        message.get("content")
+        for message in tc_norm_ctx.received_messages()
+        if message.get("role") == "tool"
+    ]
+    assert PAIRED_RESULT in tool_contents, tool_contents
+    assert UNOWNED_MISSING_ID_RESULT not in tool_contents, tool_contents
+    assert UNOWNED_BLANK_ID_RESULT not in tool_contents, tool_contents
+
+
+@then("the non-native wire request carries no tool calls array and no tool result message")
+def then_tc_norm_non_native_wire_has_no_tool_data(tc_norm_ctx):
+    """Assert the sanitizer neither injects nor leaves any tool construct."""
+    messages = tc_norm_ctx.received_messages()
+    assert messages, "no server-received messages"
+    assert not any("tool_calls" in message for message in messages), messages
+    assert not any(
+        message.get("role") == "tool" for message in messages
+    ), messages
+
+
+@then("the non-native ordinary conversation reaches the provider unchanged and in order")
+def then_tc_norm_non_native_ordinary_untouched(tc_norm_ctx):
+    """Assert every seeded non-tool message survives the sanitizer byte-for-byte."""
+    assert tc_norm_ctx.error is None, repr(tc_norm_ctx.error)
+    assert tc_norm_ctx.ordinary_expected
+    body = tc_norm_ctx.state()["request_bodies"][-1]["body"]
+    persisted = [
+        (message.get("role"), message.get("content"))
+        for message in body["messages"]
+        if message.get("role") != "system"
+        and message.get("content") not in (None, "", "continue the task")
+    ]
+    assert persisted == tc_norm_ctx.ordinary_expected, persisted
 
 
 @then("the tool-calls normalization logs contain no tool arguments or tool result sentinel")

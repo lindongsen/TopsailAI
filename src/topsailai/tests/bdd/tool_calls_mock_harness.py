@@ -14,6 +14,7 @@ from typing import Any
 
 from topsailai.ai_base.agent_base import AgentRun
 from topsailai.ai_base.agent_types.react import Step4ReAct
+from topsailai.ai_base.llm_hooks.hook_before_chat import tool_call_pairing
 from topsailai.ai_base.llm_base import LLMModel
 from topsailai.ai_base.prompt_base import PromptBase
 from topsailai.context.chat_history_manager.__base import ChatHistoryMessageData
@@ -21,6 +22,7 @@ from topsailai.context.chat_history_manager.sql import ChatHistorySQLAlchemy
 from topsailai.tools.base import init as tool_registry
 from topsailai.workspace.llm_shell import LLMChat
 from topsailai.workspace.context.agent2llm import ContextRuntimeAgent2LLM
+from topsailai.workspace.context.agent import ContextRuntimeAIAgent
 from tests.mock.llm_mock_server import MockServerConfig, create_server
 
 LOGGER = logging.getLogger("tests.bdd.tool_calls_normalization")
@@ -31,6 +33,10 @@ LEGACY_REPR = (
     "type='function')"
 )
 RESULT_SENTINEL = "RESULT-SENTINEL-XYZ"
+UNOWNED_MISSING_ID_RESULT = "UNOWNED-MISSING-ID-XYZ"
+UNOWNED_BLANK_ID_RESULT = "UNOWNED-BLANK-ID-XYZ"
+PAIRED_RESULT = "PAIRED-RESULT-XYZ"
+OBSERVATION_TEXT = "OBSERVATION-TEXT-XYZ"
 
 
 class SDKToolCallFixture:
@@ -121,6 +127,7 @@ class ToolCallsScenario:
         self.native_legacy_repr: str | None = None
         self.native_call_id: str | None = None
         self.hook_marker: Path | None = None
+        self.ordinary_expected: list[tuple[str, str]] = []
         self.hook_module_name: str | None = None
         self.result: Any = None
         self.error: Exception | None = None
@@ -189,6 +196,21 @@ class ToolCallsScenario:
         )
         manager.engine.dispose()
 
+    def seed_tool_results_without_ids(self, session_id: str) -> None:
+        """Persist malformed tool results with absent and blank owner ids."""
+        manager = self.manager()
+        raw_messages = [
+            {"role": "tool", "content": "missing-id-result"},
+            {"role": "tool", "content": "blank-id-result", "tool_call_id": ""},
+        ]
+        for message in raw_messages:
+            manager.add_message(
+                ChatHistoryMessageData(json.dumps(message), None, session_id)
+            )
+        reloaded = manager.retrieve_messages(session_id)
+        manager.engine.dispose()
+        assert len(reloaded) == 2, "malformed tool-result fixtures were not persisted"
+
     def seed_legacy(self, session_id: str) -> None:
         """Persist the exact pre-fix malformed shape without direct SQL writes."""
         manager = self.manager()
@@ -210,6 +232,100 @@ class ToolCallsScenario:
         )
         manager.engine.dispose()
         assert self.seeded_malformed, "legacy fixture was not present before the request"
+
+    def seed_paired_and_unowned_results(self, session_id: str) -> None:
+        """Persist one valid native pair plus two unowned tool results.
+
+        The valid pair proves the request boundary does not over-drop when
+        native tool calls are disabled, while the unowned results prove the
+        stricter orphan predicate is mode-independent rather than native-only.
+        """
+        manager = self.manager()
+        manager.add_session_message(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [SDKToolCallFixture(self.structured_call())],
+            },
+            session_id=session_id,
+        )
+        raw_messages = [
+            {
+                "role": "tool",
+                "content": PAIRED_RESULT,
+                "tool_call_id": "call_bdd_seed",
+            },
+            {"role": "tool", "content": UNOWNED_MISSING_ID_RESULT},
+            {"role": "tool", "content": UNOWNED_BLANK_ID_RESULT, "tool_call_id": ""},
+        ]
+        for message in raw_messages:
+            manager.add_message(
+                ChatHistoryMessageData(json.dumps(message), None, session_id)
+            )
+        reloaded = manager.retrieve_messages(session_id)
+        manager.engine.dispose()
+        self.seeded_malformed = any(
+            not message.get("tool_call_id") for message in reloaded
+            if message.get("role") == "tool"
+        )
+        assert self.seeded_malformed, "unowned tool-result fixtures were not persisted"
+
+    def prove_earlier_sites_skipped_in_non_native_mode(self) -> None:
+        """Prove both mode-gated earlier sites are inert while native mode is off.
+
+        This expresses the true half of the Human's premise as an observable
+        assertion: the producer helper and the pre-chat hook both return the
+        input untouched when ``TOPSAILAI_USE_TOOL_CALLS=0``, and the producer
+        helper starts dropping once native mode is enabled.
+        """
+        orphans = [
+            {"role": "tool", "content": UNOWNED_MISSING_ID_RESULT},
+            {"role": "tool", "content": UNOWNED_BLANK_ID_RESULT, "tool_call_id": ""},
+        ]
+        self.monkeypatch.setenv("TOPSAILAI_USE_TOOL_CALLS", "0")
+        producer_kept = ContextRuntimeAIAgent._drop_orphaned_tool_messages(
+            list(orphans)
+        )
+        hook_kept = tool_call_pairing.hook_execute(list(orphans))
+        assert producer_kept == orphans, producer_kept
+        assert hook_kept == orphans, hook_kept
+
+        self.monkeypatch.setenv("TOPSAILAI_USE_TOOL_CALLS", "1")
+        producer_dropped = ContextRuntimeAIAgent._drop_orphaned_tool_messages(
+            list(orphans)
+        )
+        assert producer_dropped == [], producer_dropped
+        self.monkeypatch.setenv("TOPSAILAI_USE_TOOL_CALLS", "0")
+
+    def seed_ordinary_non_native(self, session_id: str) -> None:
+        """Persist tool-free non-native traffic including a textual observation.
+
+        ``OBSERVATION_TEXT`` mirrors how non-native ReAct carries a tool result:
+        an ordinary user message rather than a ``role="tool"`` message, so the
+        sanitizer must leave it untouched.
+        """
+        manager = self.manager()
+        raw_messages = [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+            {
+                "role": "user",
+                "content": OBSERVATION_TEXT,
+                "step_name": "observation",
+                "raw_text": OBSERVATION_TEXT,
+            },
+            {"role": "assistant", "content": "second answer"},
+        ]
+        self.ordinary_expected = [
+            (message["role"], message["content"]) for message in raw_messages
+        ]
+        for message in raw_messages:
+            manager.add_message(
+                ChatHistoryMessageData(json.dumps(message), None, session_id)
+            )
+        reloaded = manager.retrieve_messages(session_id)
+        manager.engine.dispose()
+        assert len(reloaded) == len(raw_messages), "ordinary fixtures were not persisted"
 
     def install_replacement_hook(self, module_name: str) -> None:
         """Install a real importable replacement hook with an execution marker."""
