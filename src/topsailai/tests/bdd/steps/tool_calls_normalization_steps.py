@@ -68,6 +68,11 @@ def when_tc_norm_continue(tc_norm_ctx, caplog, session_id: str, message: str):
     tc_norm_ctx.continue_conversation(session_id, message)
 
 
+@when("the native tool-calls incident is produced by the framework, degraded during persistence, and replayed")
+def when_tc_norm_reproduce_native_incident(tc_norm_ctx):
+    """Drive native production, historical degradation, and native replay."""
+    tc_norm_ctx.reproduce_native_incident()
+
 
 @when("the tool-calls normalization Agent2LLM context is forced through real summarization before the conversation continues")
 def when_tc_norm_summarize_and_continue(tc_norm_ctx):
@@ -96,6 +101,27 @@ def then_tc_norm_summary_and_continuation_observed(tc_norm_ctx):
     )
     assert any(message.get("role") == "assistant" for message in second_messages)
     assert "continue with the rebuilt context" in str(second_messages)
+
+
+@then("the native incident assistant call and tool result were produced by the framework")
+def then_tc_norm_native_messages_were_framework_produced(tc_norm_ctx):
+    """Prove S7 obtained its native pair from AgentRun rather than a seed."""
+    assert tc_norm_ctx.error is None, repr(tc_norm_ctx.error)
+    assert tc_norm_ctx.native_framework_produced
+    assert tc_norm_ctx.native_legacy_repr
+    assert tc_norm_ctx.result
+
+
+@then("the native incident requests all include native tool definitions")
+def then_tc_norm_native_requests_include_tools(tc_norm_ctx):
+    """Assert every provider request ran with explicit native tool schemas."""
+    state = tc_norm_ctx.state()
+    assert state["request_bodies"], state
+    for record in state["request_bodies"]:
+        tools = record["body"].get("tools")
+        assert isinstance(tools, list) and tools, record
+        assert any(tool.get("function", {}).get("name") == "safe_tool" for tool in tools)
+
 
 @then(parsers.parse("the tool-calls normalization mock server received exactly {count:d} completion requests"))
 def then_tc_norm_request_count(tc_norm_ctx, count: int):
@@ -157,6 +183,8 @@ def then_tc_norm_no_malformed(tc_norm_ctx):
         if isinstance(tool_calls, list):
             assert not any(isinstance(item, str) for item in tool_calls), message
         assert LEGACY_REPR not in str(tool_calls)
+        if tc_norm_ctx.native_legacy_repr:
+            assert tc_norm_ctx.native_legacy_repr not in str(tool_calls)
 
 
 @then("the tool-calls normalization mock server received no ownerless tool result message")
@@ -167,6 +195,21 @@ def then_tc_norm_no_ownerless_result(tc_norm_ctx):
         message.get("role") == "tool"
         and message.get("tool_call_id") == LEGACY_CALL_ID
         for message in tc_norm_ctx.received_messages()
+    )
+
+
+@then("the native incident mock server received no ownerless tool result message")
+def then_tc_norm_native_no_ownerless_result(tc_norm_ctx):
+    """Assert S7 never sends the degraded native result without its owner."""
+    assert tc_norm_ctx.seeded_malformed
+    assert tc_norm_ctx.native_legacy_repr
+    assert tc_norm_ctx.native_call_id
+    state = tc_norm_ctx.state()
+    replay_messages = state["request_bodies"][-1]["body"]["messages"]
+    assert not any(
+        message.get("role") == "tool"
+        and message.get("tool_call_id") == tc_norm_ctx.native_call_id
+        for message in replay_messages
     )
 
 

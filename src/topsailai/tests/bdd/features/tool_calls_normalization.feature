@@ -7,7 +7,7 @@ Feature: Tool calls remain valid across persistence and request boundaries
     Then the tool-calls normalization mock server received exactly 1 completion requests
     And every tool calls array the tool-calls normalization mock server received is a JSON array of objects with id, type and function
 
-  Scenario: Legacy repr tool calls history no longer breaks the provider
+  Scenario: Legacy native repr history replayed under non-native mode no longer breaks the provider
     Given a tool-calls normalization environment with a private mock LLM server
     And the tool-calls normalization session "bdd_tc_legacy" is seeded with legacy malformed repr tool calls and its tool result
     When the tool-calls normalization session "bdd_tc_legacy" continues the conversation with "continue the task"
@@ -58,7 +58,7 @@ Feature: Tool calls remain valid across persistence and request boundaries
     Then the tool-calls normalization logs contain the degradation warning with only index and type
     And the tool-calls normalization logs contain no tool arguments or tool result sentinel
 
-  Scenario: Summarization keeps the provider payload free of malformed tool calls
+  Scenario: Legacy native history remains safe after summarization under non-native mode
     Given a tool-calls normalization environment with a private mock LLM server
     And the tool-calls normalization session "bdd_tc_summarize" is seeded with legacy malformed repr tool calls and its tool result
     When the tool-calls normalization Agent2LLM context is forced through real summarization before the conversation continues
@@ -66,3 +66,12 @@ Feature: Tool calls remain valid across persistence and request boundaries
     And the tool-calls normalization mock server received exactly 2 completion requests
     And the tool-calls normalization mock server received no malformed tool calls value
     And the tool-calls normalization mock server received no ownerless tool result message
+
+  Scenario: Native framework-produced tool call remains safe after legacy persistence degradation
+    Given a tool-calls normalization environment with a private mock LLM server
+    When the native tool-calls incident is produced by the framework, degraded during persistence, and replayed
+    Then the native incident assistant call and tool result were produced by the framework
+    And the native incident requests all include native tool definitions
+    And the tool-calls normalization mock server received exactly 3 completion requests
+    And the tool-calls normalization mock server received no malformed tool calls value
+    And the native incident mock server received no ownerless tool result message

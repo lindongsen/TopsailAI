@@ -117,11 +117,15 @@ class ToolCallsScenario:
         self.server_owner = ServerOwner.start()
         self.scripted_tool_names: list[str] = []
         self.seeded_malformed = False
+        self.native_framework_produced = False
+        self.native_legacy_repr: str | None = None
+        self.native_call_id: str | None = None
         self.hook_marker: Path | None = None
         self.hook_module_name: str | None = None
         self.result: Any = None
         self.error: Exception | None = None
         self.agent: AgentRun | None = None
+        self.agents: list[AgentRun] = []
         self.summary_agent: SummaryAgentFixture | None = None
         self.summary_before_count: int | None = None
         self.summary_after_count: int | None = None
@@ -302,24 +306,74 @@ class ToolCallsScenario:
         """Register temporary tools and remember every displaced registry entry."""
         tools = {"safe_tool": self._safe_tool, "other_tool": self._other_tool}
         for name, function in tools.items():
-            self._registered_tools[name] = tool_registry.TOOLS.get(name)
+            if name not in self._registered_tools:
+                self._registered_tools[name] = tool_registry.TOOLS.get(name)
             tool_registry.TOOLS[name] = function
         return tools
 
-    def _run_agent(self, session_id: str, message: str) -> None:
+    def _run_agent(self, session_id: str, message: str) -> AgentRun:
         """Complete a real native tool-call loop against the private HTTP server."""
         tools = self._register_tools()
         history = self._loaded_history(session_id)
         self.monkeypatch.setenv("TOPSAILAI_USE_TOOL_CALLS", "1")
-        self.agent = AgentRun(
+        self.monkeypatch.setenv("TOPSAILAI_USE_TOOL_CALLS_MODEL_PREFIXES", "")
+        agent = AgentRun(
             system_prompt="You are a BDD tool agent.",
             tools=tools,
             agent_name="BDDToolCalls",
         )
-        self.agent.hooks_after_init_prompt.append(
-            lambda agent: agent.messages.extend(history)
+        agent.hooks_after_init_prompt.append(
+            lambda current_agent: current_agent.messages.extend(history)
         )
-        self.result = self.agent.run(Step4ReAct(), message)
+        self.agent = agent
+        self.agents.append(agent)
+        self.result = agent.run(Step4ReAct(), message)
+        return agent
+
+    def reproduce_native_incident(self) -> None:
+        """Produce a native pair, persist its legacy degradation, then replay it."""
+        self.script_tool_calls("safe_tool")
+        self._restart_scripted_server()
+        try:
+            producer = self._run_agent("bdd_tc_native_producer", "call the safe tool")
+            assistant = next(
+                message for message in producer.messages if message.get("tool_calls")
+            )
+            tool_result = next(
+                message
+                for message in producer.messages
+                if message.get("role") == "tool"
+            )
+            native_call = assistant["tool_calls"][0]
+            self.native_call_id = native_call.id
+            assert tool_result.get("tool_call_id") == self.native_call_id
+            self.native_framework_produced = True
+            self.native_legacy_repr = str(native_call)
+
+            manager = self.manager()
+            degraded_assistant = dict(assistant)
+            degraded_assistant["tool_calls"] = [self.native_legacy_repr]
+            for message in (degraded_assistant, dict(tool_result)):
+                manager.add_message(
+                    ChatHistoryMessageData(
+                        json.dumps(message), None, "bdd_tc_native_replay"
+                    )
+                )
+            reloaded = manager.retrieve_messages("bdd_tc_native_replay")
+            manager.engine.dispose()
+            self.seeded_malformed = any(
+                message.get("tool_calls") == [self.native_legacy_repr]
+                for message in reloaded
+            )
+            assert self.seeded_malformed, "native degradation was not persisted"
+            assert any(
+                message.get("role") == "tool"
+                and message.get("tool_call_id") == self.native_call_id
+                for message in reloaded
+            ), "native tool result was not persisted"
+            self._run_agent("bdd_tc_native_replay", "continue after persistence")
+        except Exception as error:  # noqa: BLE001 - scenario asserts exact outcome
+            self.error = error
 
     def continue_conversation(self, session_id: str, message: str) -> None:
         """Drive either a normal chat or a native tool loop and retain failures."""
@@ -347,8 +401,8 @@ class ToolCallsScenario:
 
     def close(self) -> None:
         """Release model state, temporary registrations, imports, DB, and server."""
-        if self.agent is not None:
-            self.agent.llm_model.tokenStat.flag_running = False
+        for agent in self.agents:
+            agent.llm_model.tokenStat.flag_running = False
         if self.summary_agent is not None:
             self.summary_agent.llm_model.tokenStat.flag_running = False
         for name, previous in self._registered_tools.items():
