@@ -14,6 +14,12 @@ Feature: TokenStat observability
     And the snapshot token and text fields are integer measurements
     And the empty first-byte fields are reported as unknown
 
+  Scenario: Response prompt usage is authoritative for a completed request
+    Given a conversation whose leading messages form a stable prefix
+    When the conversation is sent to the LLM mock server
+    Then TokenStat current tokens equal the response prompt tokens
+    And TokenStat total tokens count the request only once
+
   Scenario: First-byte samples are converted and rounded in the snapshot
     Given first-byte latency samples of 100.1234567, 200.9876543, and 50.5555555 milliseconds
     When the TokenStat snapshot is emitted

@@ -64,6 +64,18 @@ def emit_snapshot(cached_tokens_context: dict[str, Any]) -> None:
     ].emit_snapshot()
 
 
+@when("the conversation is sent to the LLM mock server")
+def send_conversation(cached_tokens_context: dict[str, Any]) -> None:
+    """Send one request and retain the total-token delta for verification."""
+    harness = cached_tokens_context["harness"]
+    total_before = harness.model.tokenStat.total_count
+    harness.request(cached_tokens_context["messages"])
+    cached_tokens_context["response_prompt_tokens"] = harness.response_prompt_tokens()
+    cached_tokens_context["total_token_delta"] = (
+        harness.model.tokenStat.total_count - total_before
+    )
+
+
 @when("one agent reports 120 tokens with 40 cached tokens")
 def first_agent_delta(cached_tokens_context: dict[str, Any]) -> None:
     """Accumulate the first agent's current-request delta."""
@@ -97,6 +109,26 @@ def empty_first_byte_unknown(cached_tokens_context: dict[str, Any]) -> None:
     assert snapshot["first_byte_avg_sec"] is None
     assert snapshot["first_byte_max_sec"] is None
     assert snapshot["first_byte_min_sec"] is None
+
+
+@then("TokenStat current tokens equal the response prompt tokens")
+def response_prompt_tokens_are_current(
+    cached_tokens_context: dict[str, Any],
+) -> None:
+    """Require provider prompt usage to replace the local request estimate."""
+    stat = cached_tokens_context["harness"].model.tokenStat
+    assert stat.current_tokens == cached_tokens_context["response_prompt_tokens"]
+    assert stat.current_count_source == "llm_response"
+
+
+@then("TokenStat total tokens count the request only once")
+def response_prompt_tokens_counted_once(
+    cached_tokens_context: dict[str, Any],
+) -> None:
+    """Require total tokens to contain one authoritative request contribution."""
+    assert cached_tokens_context["total_token_delta"] == cached_tokens_context[
+        "response_prompt_tokens"
+    ]
 
 
 @then(

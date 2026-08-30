@@ -342,8 +342,9 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
             0,
         )
         mock_logger.debug.assert_any_call(
-            "final streaming usage before TokenStat: cached_tokens=%r "
+            "final streaming usage before TokenStat: prompt_tokens=%r cached_tokens=%r "
             "usage_chunks=%s prompt_details_chunks=%s cached_value_chunks=%s",
+            2,
             0,
             1,
             1,
@@ -382,9 +383,10 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
             None,
         )
         mock_logger.debug.assert_any_call(
-            "final streaming usage before TokenStat: cached_tokens=%r "
+            "final streaming usage before TokenStat: prompt_tokens=%r cached_tokens=%r "
             "usage_chunks=%s prompt_details_chunks=%s cached_value_chunks=%s",
-            0,
+            2,
+            None,
             1,
             0,
             0,
@@ -393,10 +395,10 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
 
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
-    def test_stream_usage_logs_cached_token_merge_exception(
+    def test_stream_usage_preserves_none_cached_tokens(
         self, mock_base_init, mock_logger
     ):
-        """Warn when a streaming cached-token value cannot be merged."""
+        """Preserve a valid streaming usage snapshot with unknown cache details."""
         from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
         mock_chunk = MagicMock()
@@ -415,19 +417,19 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
 
         model.call_llm_model_by_stream(self.messages)
 
-        mock_logger.warning.assert_called_once()
-        warning_args = mock_logger.warning.call_args
-        self.assertEqual(warning_args.args[0], "failed to merge streaming usage: %s")
-        self.assertIsInstance(warning_args.args[1], TypeError)
-        self.assertTrue(warning_args.kwargs["exc_info"])
         mock_logger.debug.assert_any_call(
-            "final streaming usage before TokenStat: cached_tokens=%r "
+            "final streaming usage before TokenStat: prompt_tokens=%r cached_tokens=%r "
             "usage_chunks=%s prompt_details_chunks=%s cached_value_chunks=%s",
-            0,
+            2,
+            None,
             1,
             1,
             0,
         )
+        passed_usage = model.tokenStat.output_token_stat.call_args.args[0]
+        self.assertEqual(passed_usage.prompt_tokens, 2)
+        self.assertIsNone(passed_usage.prompt_tokens_details.cached_tokens)
+        mock_logger.warning.assert_not_called()
 
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)

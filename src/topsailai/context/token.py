@@ -230,8 +230,12 @@ class TokenStat(threading.Thread):
         super(TokenStat, self).__init__(name=f"TokenStat:{llm_id}", daemon=1)
 
         # Initialize statistical counters
-        self.total_count = 0        # Total tokens across all messages
-        self.current_count = 0      # Tokens in current/last message
+        self.total_count = 0        # Total prompt tokens across all requests
+        self.current_count = 0      # Prompt tokens in current/last request
+        self.current_local_count = 0  # Local estimate for current/last request
+        self.current_response_count = None  # Provider prompt tokens when available
+        self.current_count_source = "local_estimate"
+        self._current_count_finalized = False
 
         self.total_text_len = 0     # Total characters across all messages
         self.current_text_len = 0   # Characters in current/last message
@@ -277,32 +281,35 @@ class TokenStat(threading.Thread):
             return None
         return max(0, self.current_tokens - self.current_cached_tokens)
 
-    def output_token_stat(self, usage:CompletionUsage=None):
-        """
-        Output current token statistics to the log.
-
-        This method provides a snapshot of current statistics including:
-        - Total and current token counts
-        - Total and current text lengths
-        - Message count
-        - First-byte timing statistics for stream responses
-
-        The output is logged both through the print_info utility and the logger
-        for visibility in different output streams.
-
-        Returns:
-            None
-        """
-        # Use lock to ensure thread-safe access to statistics
+    def output_token_stat(self, usage: CompletionUsage = None):
+        """Finalize and output token statistics for the current request."""
+        # Use lock to ensure thread-safe access to statistics.
         with self.rlock:
-            if usage:
+            response_prompt_tokens = None
+            if usage is not None:
+                candidate = getattr(usage, "prompt_tokens", None)
+                if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate >= 0:
+                    response_prompt_tokens = candidate
+
                 self.current_cached_tokens = 0
-                if usage.prompt_tokens_details:
-                    cached_tokens = usage.prompt_tokens_details.cached_tokens
-                    if cached_tokens is not None:
+                prompt_details = getattr(usage, "prompt_tokens_details", None)
+                if prompt_details is not None:
+                    cached_tokens = getattr(prompt_details, "cached_tokens", None)
+                    if isinstance(cached_tokens, int) and not isinstance(cached_tokens, bool) and cached_tokens >= 0:
                         self.current_cached_tokens = cached_tokens
                 if self.current_cached_tokens:
                     self.total_cached_tokens += self.current_cached_tokens
+
+            if not self._current_count_finalized:
+                self.current_response_count = response_prompt_tokens
+                if response_prompt_tokens is not None:
+                    self.total_count += response_prompt_tokens - self.current_local_count
+                    self.current_count = response_prompt_tokens
+                    self.current_count_source = "llm_response"
+                else:
+                    self.current_count_source = "local_estimate"
+                self._current_count_finalized = True
+
             info = dict(
                 current_tokens=self.current_count,
                 cached_tokens=self.current_cached_tokens,
@@ -414,9 +421,13 @@ class TokenStat(threading.Thread):
             # Store messages in FIFO order for background processing.
             self.buffer.append((ticket, msgs))
 
-            # Update message count and reset current counters
+            # Update message count and reset current request counters.
             self.msg_count = len(msgs)
             self.current_count = 0
+            self.current_local_count = 0
+            self.current_response_count = None
+            self.current_count_source = "local_estimate"
+            self._current_count_finalized = False
             self.current_text_len = 0
             self.current_cached_tokens = 0 if reset_cached_tokens else None
 
@@ -532,6 +543,7 @@ class TokenStat(threading.Thread):
             # Publish the completed batch atomically before notifying waiters.
             with self._batch_condition:
                 self.current_text_len = current_text_len
+                self.current_local_count = current_count
                 self.current_count = current_count
                 self.total_count += current_count
                 self.total_text_len += current_text_len

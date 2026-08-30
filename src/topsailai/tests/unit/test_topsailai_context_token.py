@@ -374,6 +374,46 @@ class TestTokenStat(unittest.TestCase):
         self.assertGreater(stat.total_count, first_total)
         stat.flag_running = False
 
+    @patch('topsailai.context.token.count_tokens', return_value=11)
+    def test_response_prompt_tokens_replace_local_estimate_once(self, mock_count_tokens):
+        """Response prompt tokens replace the local estimate without double counting."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        ticket = stat.add_msgs("request")
+        self.assertTrue(stat.wait(ticket, timeout=1.0))
+        usage = MagicMock(prompt_tokens=17)
+        usage.prompt_tokens_details = None
+
+        with patch('topsailai.context.token.print_info'), \
+             patch('topsailai.context.token.logger'):
+            stat.output_token_stat(usage)
+            stat.output_token_stat(usage)
+
+        self.assertEqual(stat.current_tokens, 17)
+        self.assertEqual(stat.current_local_count, 11)
+        self.assertEqual(stat.current_response_count, 17)
+        self.assertEqual(stat.current_count_source, "llm_response")
+        self.assertEqual(stat.total_tokens, 17)
+        stat.flag_running = False
+
+    @patch('topsailai.context.token.count_tokens', return_value=11)
+    def test_invalid_response_prompt_tokens_keep_local_estimate(self, mock_count_tokens):
+        """Missing or invalid response prompt tokens retain the local estimate."""
+        for prompt_tokens in (None, -1, 3.5, True, "17"):
+            stat = TokenStat(self.llm_id, lifetime=0)
+            ticket = stat.add_msgs("request")
+            self.assertTrue(stat.wait(ticket, timeout=1.0))
+            usage = MagicMock(prompt_tokens=prompt_tokens)
+            usage.prompt_tokens_details = None
+
+            with patch('topsailai.context.token.print_info'), \
+                 patch('topsailai.context.token.logger'):
+                stat.output_token_stat(usage)
+
+            self.assertEqual(stat.current_tokens, 11)
+            self.assertEqual(stat.total_tokens, 11)
+            self.assertEqual(stat.current_count_source, "local_estimate")
+            stat.flag_running = False
+
     def test_token_stat_output_token_stat(self):
         """Test output_token_stat method."""
         stat = TokenStat(self.llm_id, lifetime=0)

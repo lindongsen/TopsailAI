@@ -674,10 +674,7 @@ class LLMModel(LLMModelBase):
         full_content = ""
         full_tool_calls_dict = {}
 
-        usage = CompletionUsage(
-            completion_tokens=0, prompt_tokens=0, total_tokens=0,
-            prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=0),
-        )
+        usage = None
         usage_chunk_count = 0
         usage_details_chunk_count = 0
         cached_tokens_chunk_count = 0
@@ -706,17 +703,15 @@ class LLMModel(LLMModelBase):
                 delta_usage = self.get_response_usage(chunk)
                 delta_prompt_tokens_details = None
                 delta_cached_tokens = None
-                if delta_usage:
+                if delta_usage is not None:
+                    usage = delta_usage
                     usage_chunk_count += 1
-                    delta_prompt_tokens_details = delta_usage.prompt_tokens_details
-                    if delta_prompt_tokens_details:
+                    delta_prompt_tokens_details = getattr(delta_usage, "prompt_tokens_details", None)
+                    if delta_prompt_tokens_details is not None:
                         usage_details_chunk_count += 1
-                        delta_cached_tokens = delta_prompt_tokens_details.cached_tokens
+                        delta_cached_tokens = getattr(delta_prompt_tokens_details, "cached_tokens", None)
                         if delta_cached_tokens is not None:
                             cached_tokens_chunk_count += 1
-                    prompt_tokens_details = usage.prompt_tokens_details
-                    if prompt_tokens_details and delta_prompt_tokens_details:
-                        prompt_tokens_details.cached_tokens += delta_cached_tokens
                 logger.debug(
                     "stream usage chunk: has_usage=%s has_prompt_tokens_details=%s cached_tokens=%r",
                     delta_usage is not None,
@@ -724,7 +719,7 @@ class LLMModel(LLMModelBase):
                     delta_cached_tokens,
                 )
             except Exception as e:
-                logger.warning("failed to merge streaming usage: %s", e, exc_info=True)
+                logger.warning("failed to read streaming usage: %s", e, exc_info=True)
             if delta_obj is None:
                 continue
             if sampled_chunks is not None and len(sampled_chunks) < stream_chunk_sample:
@@ -820,15 +815,20 @@ class LLMModel(LLMModelBase):
             print()
 
         self.tokenStat.wait(token_stat_ticket)
-        final_prompt_tokens_details = usage.prompt_tokens_details
+        final_prompt_tokens_details = (
+            getattr(usage, "prompt_tokens_details", None)
+            if usage is not None
+            else None
+        )
         final_cached_tokens = (
-            final_prompt_tokens_details.cached_tokens
+            getattr(final_prompt_tokens_details, "cached_tokens", None)
             if final_prompt_tokens_details is not None
             else None
         )
         logger.debug(
-            "final streaming usage before TokenStat: cached_tokens=%r "
+            "final streaming usage before TokenStat: prompt_tokens=%r cached_tokens=%r "
             "usage_chunks=%s prompt_details_chunks=%s cached_value_chunks=%s",
+            getattr(usage, "prompt_tokens", None) if usage is not None else None,
             final_cached_tokens,
             usage_chunk_count,
             usage_details_chunk_count,
