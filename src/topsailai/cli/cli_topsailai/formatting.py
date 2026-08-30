@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import List
 
 from cli_topsailai.colors import Colors
-from cli_topsailai.log_files import _display_session_id
+from cli_topsailai.log_files import _display_session_id, is_session_pipe_open
 
 
 def format_size(size_bytes: int) -> str:
@@ -51,6 +51,7 @@ def print_table(files: List[dict]) -> None:
     w_no = 4
     w_session = 18
     w_pid = 6
+    w_input = 7
     w_created = 13
     w_project = 24
     w_name = 16
@@ -60,6 +61,7 @@ def print_table(files: List[dict]) -> None:
         f" {'No':^{w_no}} |"
         f" {'Session ID':^{w_session}} |"
         f" {'PID':^{w_pid}} |"
+        f" {'Input':^{w_input}} |"
         f" {'Created':^{w_created}} |"
         f" {'Project Workspace':^{w_project}} |"
         f" {'Session Name':^{w_name}} "
@@ -70,6 +72,7 @@ def print_table(files: List[dict]) -> None:
         f"{'-' * (w_no + 1)}+"
         f"{'-' * (w_session + 2)}+"
         f"{'-' * (w_pid + 2)}+"
+        f"{'-' * (w_input + 2)}+"
         f"{'-' * (w_created + 2)}+"
         f"{'-' * (w_project + 2)}+"
         f"{'-' * (w_name + 1)}"
@@ -93,6 +96,7 @@ def print_table(files: List[dict]) -> None:
             session = session[:w_session - 3] + "..."
 
         pid_str = str(pid) if pid else "-"
+        input_str = "WAIT" if is_session_pipe_open(f) else "-"
         created_str = format_timestamp(f["ctime"])
 
         project_workspace = f.get("project_workspace") or "-"
@@ -110,6 +114,7 @@ def print_table(files: List[dict]) -> None:
             f" {idx:^{w_no}} |"
             f" {session:<{w_session}} |"
             f" {pid_str:^{w_pid}} |"
+            f" {input_str:^{w_input}} |"
             f" {created_str:^{w_created}} |"
             f" {project_workspace:<{w_project}} |"
             f" {session_name:<{w_name}} "
@@ -121,6 +126,7 @@ def print_table(files: List[dict]) -> None:
     print(
         f"{Colors.GREEN}● Running{Colors.RESET}  "
         f"{Colors.GRAY}○ Idle{Colors.RESET}  "
+        f"{Colors.YELLOW}WAIT Waiting for input{Colors.RESET}  "
         f"{Colors.DIM}(Total: {len(files)} files){Colors.RESET}"
     )
 

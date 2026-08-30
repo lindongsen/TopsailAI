@@ -268,7 +268,7 @@ def discover_log_files(
             session_id, pid = _parse_stdout_filename(entry)
 
         stat_info = os.stat(full_path)
-        # Prefer real birth time when available.  On Linux this requires the
+        # Prefer real birth time when available. On Linux this requires the
         # statx syscall; fall back to st_ctime (inode change time) otherwise.
         created = _get_birth_time(full_path)
         if created is None:
@@ -286,6 +286,17 @@ def discover_log_files(
         log_files.append(file_info)
         if on_item is not None:
             on_item(file_info)
+
+    session_pids = {
+        item["session_id"]: item["pid"]
+        for item in log_files
+        if not item["is_task"] and item["session_id"] not in (None, "(temp)")
+    }
+    for item in log_files:
+        if item["is_task"]:
+            item["session_pid"] = session_pids.get(item["session_id"])
+        else:
+            item["session_pid"] = item["pid"]
 
     log_files.sort(key=lambda x: x["ctime"])
     return log_files
@@ -359,6 +370,44 @@ def get_file_pid(filepath: str) -> Optional[int]:
         pass
 
     return None
+
+
+def is_process_holding_file(pid: int, filepath: str) -> bool:
+    """Return whether *pid* currently has *filepath* open.
+
+    Linux exposes process descriptors through ``/proc/<pid>/fd``. On systems
+    without that interface, fall back to the existing portable best-effort
+    file-use check.
+    """
+    if not pid or not filepath or not os.path.exists(filepath):
+        return False
+
+    fd_dir = os.path.join(os.sep, "proc", str(pid), "fd")
+    if os.path.isdir(fd_dir):
+        expected = os.path.realpath(filepath)
+        try:
+            for entry in os.listdir(fd_dir):
+                try:
+                    if os.path.realpath(os.path.join(fd_dir, entry)) == expected:
+                        return True
+                except OSError:
+                    continue
+        except OSError:
+            return False
+        return False
+
+    return is_file_in_use(filepath)
+
+
+def is_session_pipe_open(file_info: dict) -> bool:
+    """Return whether the session process for a log row holds its named pipe."""
+    pid = file_info.get("session_pid") or file_info.get("pid")
+    path = file_info.get("path")
+    session_id = file_info.get("session_id")
+    if not pid or not path or not session_id:
+        return False
+    pipe_path = _build_pipe_path(os.path.dirname(path), session_id, pid)
+    return is_process_holding_file(pid, pipe_path)
 
 
 def is_file_in_use(filepath: str) -> bool:

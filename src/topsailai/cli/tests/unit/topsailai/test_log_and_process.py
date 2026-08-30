@@ -22,6 +22,8 @@ from cli_topsailai.log_files import (
     _resolve_send_target_from_arg,
     discover_log_files,
     get_file_pid,
+    is_process_holding_file,
+    is_session_pipe_open,
 )
 from cli_topsailai.process import (
     is_async_command,
@@ -87,6 +89,17 @@ class TestDiscoverLogFiles(unittest.TestCase):
 
             self.assertEqual([f["session_id"] for f in files], ["s2", "s3", "s1"])
 
+    def test_task_row_records_corresponding_session_pid(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            open(os.path.join(tmpdir, "s1.1234.session.stdout"), "w").close()
+            open(os.path.join(tmpdir, "s1.5678.step.task.stdout"), "w").close()
+
+            files = discover_log_files(tmpdir)
+
+        task = next(item for item in files if item["is_task"])
+        self.assertEqual(task["pid"], 5678)
+        self.assertEqual(task["session_pid"], 1234)
+
     @patch("cli_topsailai.log_files.subprocess.Popen")
     def test_from_lsof(self, mock_popen):
         mock_proc = MagicMock()
@@ -106,6 +119,37 @@ class TestDiscoverLogFiles(unittest.TestCase):
             mock_popen.return_value = mock_proc
             pid = get_file_pid("/tmp/s1.session.stdout")
         self.assertIsNone(pid)
+
+
+class TestSessionPipeDetection(unittest.TestCase):
+    """Tests for exact process-to-pipe descriptor detection."""
+
+    def test_process_holding_file_uses_proc_descriptors(self):
+        with patch("cli_topsailai.log_files.os.path.exists", return_value=True), patch(
+            "cli_topsailai.log_files.os.path.isdir", return_value=True
+        ), patch("cli_topsailai.log_files.os.listdir", return_value=["4", "5"]), patch(
+            "cli_topsailai.log_files.os.path.realpath",
+            side_effect=lambda value: "/tmp/s1.1234.session.pipe" if value.endswith(("pipe", "/5")) else value,
+        ):
+            self.assertTrue(is_process_holding_file(1234, "/tmp/s1.1234.session.pipe"))
+
+    @patch("cli_topsailai.log_files.is_file_in_use", return_value=True)
+    def test_process_holding_file_falls_back_without_proc(self, mock_in_use):
+        with patch("cli_topsailai.log_files.os.path.exists", return_value=True), patch(
+            "cli_topsailai.log_files.os.path.isdir", return_value=False
+        ):
+            self.assertTrue(is_process_holding_file(1234, "/tmp/s1.1234.session.pipe"))
+        mock_in_use.assert_called_once_with("/tmp/s1.1234.session.pipe")
+
+    @patch("cli_topsailai.log_files.is_process_holding_file", return_value=True)
+    def test_session_pipe_path_is_derived_from_log_row(self, mock_holding):
+        file_info = {
+            "path": "/tmp/s1.1234.session.stdout",
+            "session_id": "s1",
+            "pid": 1234,
+        }
+        self.assertTrue(is_session_pipe_open(file_info))
+        mock_holding.assert_called_once_with(1234, "/tmp/s1.1234.session.pipe")
 
 
 class TestResolveLiteralSessionId(unittest.TestCase):
