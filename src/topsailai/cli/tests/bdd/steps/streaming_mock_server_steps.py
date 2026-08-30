@@ -210,3 +210,72 @@ def each_request_positive_prompt_tokens(
     state = streaming_mock_server_context["harness"].get_state()
     for request in state["requests"]:
         assert request["prompt_tokens"] > 0, request
+
+
+@then("the mock server receives exactly one usage-enabled streaming request")
+def exactly_one_usage_enabled_streaming_request(
+    streaming_mock_server_context: dict[str, Any],
+) -> None:
+    """Require one real streaming request with final usage enabled."""
+    harness = streaming_mock_server_context["harness"]
+    assert harness.request_count == 1, harness.request_count
+    request_body = harness.last_request_body
+    assert request_body["stream"] is True, request_body
+    assert request_body["stream_options"]["include_usage"] is True, request_body
+
+
+@then("the streaming request contains the scenario user message")
+def streaming_request_contains_scenario_message(
+    streaming_mock_server_context: dict[str, Any],
+) -> None:
+    """Require the captured request body to contain the scenario prompt."""
+    request_body = streaming_mock_server_context["harness"].last_request_body
+    assert any(
+        message.get("role") == "user"
+        and message.get("content") == "BDD streaming mock server"
+        for message in request_body["messages"]
+    ), request_body
+
+
+@then("the streaming token stat exposes prompt completion and combined totals")
+def streaming_explicit_usage_fields(
+    streaming_mock_server_context: dict[str, Any],
+) -> None:
+    """Require nonzero explicit prompt/completion fields and exact totals."""
+    token_stat = streaming_mock_server_context["harness"].model.tokenStat
+    assert token_stat.current_prompt_tokens > 0
+    assert token_stat.current_completion_tokens > 0
+    assert token_stat.current_total_tokens == (
+        token_stat.current_prompt_tokens + token_stat.current_completion_tokens
+    )
+    assert token_stat.total_usage_tokens == (
+        token_stat.total_prompt_tokens + token_stat.total_completion_tokens
+    )
+
+
+@then("the legacy streaming token fields remain prompt-only")
+def streaming_legacy_fields_remain_prompt_only(
+    streaming_mock_server_context: dict[str, Any],
+) -> None:
+    """Require legacy fields to retain their historical prompt-only meaning."""
+    token_stat = streaming_mock_server_context["harness"].model.tokenStat
+    assert token_stat.current_tokens == token_stat.current_prompt_tokens
+    assert token_stat.total_tokens == token_stat.total_prompt_tokens
+    assert token_stat.current_total_tokens > token_stat.current_tokens
+
+
+@then("every streamed response chunk is output before the token summary")
+def streamed_chunks_precede_token_summary(
+    streaming_mock_server_context: dict[str, Any],
+) -> None:
+    """Require one token summary after all observable response chunks."""
+    events = streaming_mock_server_context["harness"].output_events
+    event_names = [event[0] for event in events]
+    assert event_names.count("token_summary") == 1, events
+    summary_index = event_names.index("token_summary")
+    chunk_indexes = [
+        index for index, event_name in enumerate(event_names)
+        if event_name == "response_chunk"
+    ]
+    assert chunk_indexes, events
+    assert max(chunk_indexes) < summary_index, events

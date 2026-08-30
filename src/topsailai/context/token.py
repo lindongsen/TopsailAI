@@ -237,15 +237,17 @@ class TokenStat(threading.Thread):
         self.current_count_source = "local_estimate"
         self._current_count_finalized = False
 
+        self.total_completion_count = 0  # Total completion tokens across requests
+        self.current_completion_count = 0  # Completion tokens in current/last request
+
         self.total_text_len = 0     # Total characters across all messages
         self.current_text_len = 0   # Characters in current/last message
 
         self.msg_count = 0          # Number of messages processed
 
         # From LLM
-        self.total_cached_tokens = 0  # Total cached tokens across all messages
+        self.total_cached_tokens = 0  # Total cached prompt tokens across requests
         self.current_cached_tokens = 0
-
         # Thread synchronization and data management
         self.buffer = deque()       # Pending message batches
         self.rlock = threading.RLock()  # Reentrant lock for thread safety
@@ -266,58 +268,137 @@ class TokenStat(threading.Thread):
 
     @property
     def current_tokens(self):
-        """ Tokens in current messages """
+        """Return current prompt tokens for backward compatibility."""
         return self.current_count
 
     @property
+    def current_prompt_tokens(self):
+        """Return prompt tokens in the current or most recent request."""
+        return self.current_count
+
+    @property
+    def current_completion_tokens(self):
+        """Return completion tokens in the current or most recent request."""
+        return self.current_completion_count
+
+    @property
+    def current_total_tokens(self):
+        """Return prompt plus completion tokens for the current request."""
+        return self.current_prompt_tokens + self.current_completion_tokens
+
+    @property
     def total_tokens(self):
-        """ summarized, Total tokens across all messages """
+        """Return cumulative prompt tokens for backward compatibility."""
         return self.total_count
 
     @property
+    def total_prompt_tokens(self):
+        """Return cumulative prompt tokens across finalized requests."""
+        return self.total_count
+
+    @property
+    def total_completion_tokens(self):
+        """Return cumulative completion tokens across finalized requests."""
+        return self.total_completion_count
+
+    @property
+    def total_usage_tokens(self):
+        """Return cumulative prompt plus completion tokens."""
+        return self.total_prompt_tokens + self.total_completion_tokens
+
+    @property
     def uncached_tokens(self):
-        """Return uncached tokens, or None until server cache usage is measured."""
+        """Return uncached prompt tokens, or None until cache usage is measured."""
         if self.current_cached_tokens is None:
             return None
-        return max(0, self.current_tokens - self.current_cached_tokens)
+        return max(0, self.current_prompt_tokens - self.current_cached_tokens)
 
-    def output_token_stat(self, usage: CompletionUsage = None):
-        """Finalize and output token statistics for the current request."""
-        # Use lock to ensure thread-safe access to statistics.
+    @staticmethod
+    def _valid_token_count(value):
+        """Return a valid non-negative token count, otherwise None."""
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+        return None
+
+    def finalize_usage(self, usage: CompletionUsage = None):
+        """Finalize and persist usage for the current request exactly once."""
         with self.rlock:
+            if self._current_count_finalized:
+                return False
+
             response_prompt_tokens = None
+            response_completion_tokens = None
             if usage is not None:
-                candidate = getattr(usage, "prompt_tokens", None)
-                if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate >= 0:
-                    response_prompt_tokens = candidate
+                response_prompt_tokens = self._valid_token_count(
+                    getattr(usage, "prompt_tokens", None)
+                )
+                response_completion_tokens = self._valid_token_count(
+                    getattr(usage, "completion_tokens", None)
+                )
 
                 self.current_cached_tokens = 0
                 prompt_details = getattr(usage, "prompt_tokens_details", None)
                 if prompt_details is not None:
-                    cached_tokens = getattr(prompt_details, "cached_tokens", None)
-                    if isinstance(cached_tokens, int) and not isinstance(cached_tokens, bool) and cached_tokens >= 0:
+                    cached_tokens = self._valid_token_count(
+                        getattr(prompt_details, "cached_tokens", None)
+                    )
+                    if cached_tokens is not None:
                         self.current_cached_tokens = cached_tokens
-                if self.current_cached_tokens:
-                    self.total_cached_tokens += self.current_cached_tokens
 
-            if not self._current_count_finalized:
-                self.current_response_count = response_prompt_tokens
-                if response_prompt_tokens is not None:
-                    self.total_count += response_prompt_tokens - self.current_local_count
-                    self.current_count = response_prompt_tokens
-                    self.current_count_source = "llm_response"
-                else:
-                    self.current_count_source = "local_estimate"
-                self._current_count_finalized = True
+            self.current_response_count = response_prompt_tokens
+            if response_prompt_tokens is not None:
+                self.total_count += response_prompt_tokens - self.current_local_count
+                self.current_count = response_prompt_tokens
+                self.current_count_source = "llm_response"
+            else:
+                self.current_count_source = "local_estimate"
 
-            info = dict(
-                current_tokens=self.current_count,
+            self.current_completion_count = response_completion_tokens or 0
+            self.total_completion_count += self.current_completion_count
+            if self.current_cached_tokens:
+                self.total_cached_tokens += self.current_cached_tokens
+            self._current_count_finalized = True
+
+            current_prompt_tokens = self.current_prompt_tokens
+            current_completion_tokens = self.current_completion_tokens
+            current_cached_tokens = self.current_cached_tokens
+
+        # A session may be processed by multiple agents. Persist only this
+        # finalized request's deltas and keep the legacy token column prompt-only.
+        try:
+            from topsailai.context import ctx_manager
+            session_id = env_tool.get_session_id()
+            if session_id and current_cached_tokens is not None:
+                session_mgr = ctx_manager.get_session_manager()
+                if session_mgr:
+                    session_mgr.accumulate_session_tokens(
+                        session_id=session_id,
+                        current_tokens=current_prompt_tokens,
+                        current_cached_tokens=current_cached_tokens,
+                        current_completion_tokens=current_completion_tokens,
+                    )
+        except Exception as e:
+            logger.warning(f"finalize_usage: failed to accumulate session tokens: {e}")
+        return True
+
+    def get_token_stat_info(self):
+        """Return a snapshot of explicit and backward-compatible token metrics."""
+        with self.rlock:
+            return dict(
+                current_tokens=self.current_tokens,
+                current_prompt_tokens=self.current_prompt_tokens,
+                current_completion_tokens=self.current_completion_tokens,
+                current_total_tokens=self.current_total_tokens,
                 cached_tokens=self.current_cached_tokens,
+                uncached_prompt_tokens=self.uncached_tokens,
                 msg_count=self.msg_count,
                 current_text_len=self.current_text_len,
                 total_cached_tokens=self.total_cached_tokens,
                 total_text_len=self.total_text_len,
-                total_tokens=self.total_count,
+                total_tokens=self.total_tokens,
+                total_prompt_tokens=self.total_prompt_tokens,
+                total_completion_tokens=self.total_completion_tokens,
+                total_usage_tokens=self.total_usage_tokens,
                 first_byte_avg_sec=(
                     round(self.first_byte_sum_ms / self.first_byte_count / 1000, 3)
                     if self.first_byte_count > 0 else None
@@ -332,35 +413,18 @@ class TokenStat(threading.Thread):
                 ),
             )
 
-        # A single session may be processed by multiple agents, each owning its
-        # own TokenStat instance. We must accumulate the current agent's deltas
-        # (current_tokens / current_cached_tokens) into the session totals, not
-        # overwrite them with TokenStat.total_*. Overwriting would lose the
-        # contributions of other agents that share the same session.
-        try:
-            # Lazy import to avoid circular imports between context modules.
-            from topsailai.context import ctx_manager
-            session_id = env_tool.get_session_id()
-            if session_id and self.current_cached_tokens is not None:
-                session_mgr = ctx_manager.get_session_manager()
-                if session_mgr:
-                    session_mgr.accumulate_session_tokens(
-                        session_id=session_id,
-                        current_tokens=self.current_count,
-                        current_cached_tokens=self.current_cached_tokens,
-                    )
-        except Exception as e:
-            logger.warning(f"output_token_stat: failed to accumulate session tokens: {e}")
-        # Format and output the statistics
+    def print_token_stat(self):
+        """Print the latest finalized token statistics without mutating them."""
         if env_tool.is_need_print():
-            # print one empty line
             print(flush=True)
-        msg = f"[TokenStat] {info}"
-        print_info(msg)      # Output to console/step display
+        print_info(f"[TokenStat] {self.get_token_stat_info()}")
         if env_tool.is_need_print():
-            # print one empty line
             print(flush=True)
-        return
+
+    def output_token_stat(self, usage: CompletionUsage = None):
+        """Finalize and print usage as a backward-compatible convenience API."""
+        self.finalize_usage(usage)
+        self.print_token_stat()
 
     def add_first_byte(self, first_byte_ms: float):
         """
@@ -426,6 +490,7 @@ class TokenStat(threading.Thread):
             self.current_count = 0
             self.current_local_count = 0
             self.current_response_count = None
+            self.current_completion_count = 0
             self.current_count_source = "local_estimate"
             self._current_count_finalized = False
             self.current_text_len = 0

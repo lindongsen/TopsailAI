@@ -213,21 +213,27 @@ class TestLLMModelCallLLMModel(unittest.TestCase):
     @patch("topsailai.ai_base.llm_base.logger")
     @patch("topsailai.ai_base.llm_base.LLMModelBase.__init__", return_value=None)
     def test_call_llm_model_adds_tokens(self, mock_base_init, mock_logger, mock_get_msg, mock_format):
-        """Test call_llm_model adds messages to token stats."""
+        """Finalize usage before output and print statistics after the response."""
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = "Token test"
-        
+
         mock_get_msg.return_value = MagicMock(content="Token test")
         mock_format.return_value = ["formatted"]
-        
+
+        events = []
         model = self._create_mock_model()
         model.model.create.return_value = mock_response
-        
+        model.tokenStat.finalize_usage.side_effect = lambda usage: events.append("finalize")
+        model.send_content = MagicMock(side_effect=lambda content: events.append("response"))
+        model.tokenStat.print_token_stat.side_effect = lambda: events.append("print")
+
         model.call_llm_model(self.messages)
-        
+
         model.tokenStat.add_msgs.assert_called_once()
-        model.tokenStat.output_token_stat.assert_called_once()
+        model.tokenStat.finalize_usage.assert_called_once()
+        model.tokenStat.print_token_stat.assert_called_once()
+        self.assertEqual(events, ["finalize", "response", "print"])
 
 
 class TestLLMModelCallLLMModelByStream(unittest.TestCase):
@@ -342,9 +348,11 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
             0,
         )
         mock_logger.debug.assert_any_call(
-            "final streaming usage before TokenStat: prompt_tokens=%r cached_tokens=%r "
-            "usage_chunks=%s prompt_details_chunks=%s cached_value_chunks=%s",
+            "final streaming usage before TokenStat: prompt_tokens=%r completion_tokens=%r "
+            "cached_tokens=%r usage_chunks=%s prompt_details_chunks=%s "
+            "cached_value_chunks=%s",
             2,
+            1,
             0,
             1,
             1,
@@ -383,9 +391,11 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
             None,
         )
         mock_logger.debug.assert_any_call(
-            "final streaming usage before TokenStat: prompt_tokens=%r cached_tokens=%r "
-            "usage_chunks=%s prompt_details_chunks=%s cached_value_chunks=%s",
+            "final streaming usage before TokenStat: prompt_tokens=%r completion_tokens=%r "
+            "cached_tokens=%r usage_chunks=%s prompt_details_chunks=%s "
+            "cached_value_chunks=%s",
             2,
+            1,
             None,
             1,
             0,
@@ -418,15 +428,17 @@ class TestLLMModelCallLLMModelByStream(unittest.TestCase):
         model.call_llm_model_by_stream(self.messages)
 
         mock_logger.debug.assert_any_call(
-            "final streaming usage before TokenStat: prompt_tokens=%r cached_tokens=%r "
-            "usage_chunks=%s prompt_details_chunks=%s cached_value_chunks=%s",
+            "final streaming usage before TokenStat: prompt_tokens=%r completion_tokens=%r "
+            "cached_tokens=%r usage_chunks=%s prompt_details_chunks=%s "
+            "cached_value_chunks=%s",
             2,
+            1,
             None,
             1,
             1,
             0,
         )
-        passed_usage = model.tokenStat.output_token_stat.call_args.args[0]
+        passed_usage = model.tokenStat.finalize_usage.call_args.args[0]
         self.assertEqual(passed_usage.prompt_tokens, 2)
         self.assertIsNone(passed_usage.prompt_tokens_details.cached_tokens)
         mock_logger.warning.assert_not_called()

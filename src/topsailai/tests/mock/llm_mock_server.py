@@ -221,13 +221,20 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
         completion_id = f"chatcmpl-mock-{uuid.uuid4().hex}"
         created = int(time.time())
         model = payload.get("model") or self.server.config.model
+        stream_chunks = self.server.config.stream_chunks or ()
+        completion_tokens = max(
+            1,
+            (sum(len(content) for content in stream_chunks) + self.server.config.chars_per_token - 1)
+            // self.server.config.chars_per_token,
+        )
+        total_tokens = cache_result["prompt_tokens"] + completion_tokens
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "close")
         self.end_headers()
         try:
-            for content in self.server.config.stream_chunks or ():
+            for content in stream_chunks:
                 self._write_sse({
                     "id": completion_id,
                     "object": "chat.completion.chunk",
@@ -251,8 +258,8 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
                 }],
                 "usage": {
                     "prompt_tokens": cache_result["prompt_tokens"],
-                    "completion_tokens": 0,
-                    "total_tokens": cache_result["prompt_tokens"],
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
                     "prompt_tokens_details": {
                         "cached_tokens": cache_result["cached_tokens"],
                     },

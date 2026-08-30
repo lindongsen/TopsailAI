@@ -541,7 +541,7 @@ class LLMModel(LLMModelBase):
             raise_on_timeout=raise_on_first_byte_timeout,
         )
         self.tokenStat.wait(token_stat_ticket)
-        self.tokenStat.output_token_stat(self.get_response_usage(response))
+        self.tokenStat.finalize_usage(self.get_response_usage(response))
 
         full_content = response.choices[0].message.content
 
@@ -549,6 +549,7 @@ class LLMModel(LLMModelBase):
         self.check_response_content(rsp_obj=response, rsp_content=full_content)
 
         self.send_content(full_content)
+        self.tokenStat.print_token_stat()
 
         self._record_llm_response_event(response, is_stream=False)
 
@@ -826,15 +827,17 @@ class LLMModel(LLMModelBase):
             else None
         )
         logger.debug(
-            "final streaming usage before TokenStat: prompt_tokens=%r cached_tokens=%r "
-            "usage_chunks=%s prompt_details_chunks=%s cached_value_chunks=%s",
+            "final streaming usage before TokenStat: prompt_tokens=%r completion_tokens=%r "
+            "cached_tokens=%r usage_chunks=%s prompt_details_chunks=%s "
+            "cached_value_chunks=%s",
             getattr(usage, "prompt_tokens", None) if usage is not None else None,
+            getattr(usage, "completion_tokens", None) if usage is not None else None,
             final_cached_tokens,
             usage_chunk_count,
             usage_details_chunk_count,
             cached_tokens_chunk_count,
         )
-        self.tokenStat.output_token_stat(usage)
+        self.tokenStat.finalize_usage(usage)
 
         full_content = full_content.strip()
 
@@ -847,6 +850,7 @@ class LLMModel(LLMModelBase):
 
         full_content = self.fix_response_content(rsp_obj=response_ccm, rsp_content=full_content)
         self.check_response_content(rsp_obj=response_ccm, rsp_content=full_content)
+        self.tokenStat.print_token_stat()
 
         self._record_llm_response_event(response_ccm, is_stream=True, sampled_chunks=sampled_chunks)
 

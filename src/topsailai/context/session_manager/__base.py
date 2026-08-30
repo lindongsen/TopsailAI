@@ -32,6 +32,7 @@ class SessionData(object):
         topsailai_home: str = None,
         total_tokens: int = 0,
         total_cached_tokens: int = 0,
+        total_completion_tokens: int = 0,
     ):
         """
         Initialize a SessionData instance.
@@ -44,10 +45,12 @@ class SessionData(object):
             project_workspace (str, optional): Project workspace path at session creation
             pwd (str, optional): Working directory at session creation
             topsailai_home (str, optional): TopsailAI home directory at session creation
-            total_tokens (int, optional): Accumulated token usage for the session.
+            total_tokens (int, optional): Accumulated prompt tokens for backward
+                compatibility. Defaults to 0.
+            total_cached_tokens (int, optional): Accumulated cached prompt tokens.
                 Defaults to 0.
-            total_cached_tokens (int, optional): Accumulated cached token usage for
-                the session. Defaults to 0.
+            total_completion_tokens (int, optional): Accumulated completion tokens.
+                Defaults to 0.
 
         Note:
             Additional attributes like session_name and create_time are
@@ -64,6 +67,12 @@ class SessionData(object):
         self.create_time = None
         self.total_tokens = total_tokens
         self.total_cached_tokens = total_cached_tokens
+        self.total_completion_tokens = total_completion_tokens
+
+    @property
+    def total_usage_tokens(self):
+        """Return accumulated prompt plus completion tokens."""
+        return self.total_tokens + self.total_completion_tokens
 
     def __str__(self):
         """Return string representation of SessionData."""
@@ -176,51 +185,43 @@ class SessionStorageBase(object):
         session_id: str,
         current_tokens: int,
         current_cached_tokens: int,
+        current_completion_tokens: int = 0,
     ) -> bool:
-        """
-        Atomically add per-agent token deltas to the session totals.
+        """Atomically add one request's prompt, completion, and cache deltas.
 
-        A single session may be processed by multiple agents, each owning its own
-        TokenStat instance. Callers must therefore pass the *current-agent delta*
-        (``current_tokens`` / ``current_cached_tokens``) rather than an agent-level
-        total. Overwriting the session row with ``TokenStat.total_*`` would lose the
-        contributions of other agents that share the same session.
+        ``current_tokens`` remains prompt-only for backward compatibility.
+        Callers must pass current-request deltas rather than agent-level totals so
+        multiple agents can safely contribute to the same session.
 
         Args:
             session_id (str): The session identifier whose totals should be updated.
-            current_tokens (int): Number of tokens produced by the current agent
-                invocation to add to ``total_tokens``.
-            current_cached_tokens (int): Number of cached tokens produced by the
-                current agent invocation to add to ``total_cached_tokens``.
+            current_tokens (int): Prompt tokens to add to legacy ``total_tokens``.
+            current_cached_tokens (int): Cached prompt tokens to add.
+            current_completion_tokens (int): Completion tokens to add.
 
         Returns:
             bool: True if the session existed and was updated, False otherwise.
 
         Raises:
-            NotImplementedError: This is an abstract method that must be
-                implemented by concrete storage classes.
+            NotImplementedError: Concrete storage classes must implement this API.
         """
         raise NotImplementedError
 
     def get_session_token_totals(self, session_id: str) -> tuple[int, int] | None:
-        """
-        Retrieve the accumulated token totals for a session.
-
-        Returns the ``total_tokens`` and ``total_cached_tokens`` values stored in
-        session storage. These totals are accumulated from per-agent deltas via
-        ``accumulate_session_tokens()`` and therefore reflect the combined token
-        usage of all agents that have processed the session.
-
-        Args:
-            session_id (str): The session identifier whose totals should be read.
+        """Retrieve legacy prompt and cached-prompt totals for a session.
 
         Returns:
-            tuple[int, int] | None: A tuple of ``(total_tokens, total_cached_tokens)``
-                if the session exists, otherwise ``None``.
+            tuple[int, int] | None: ``(prompt_tokens, cached_prompt_tokens)`` when
+                the session exists, otherwise ``None``.
+        """
+        raise NotImplementedError
 
-        Raises:
-            NotImplementedError: This is an abstract method that must be
-                implemented by concrete storage classes.
+    def get_session_token_usage(self, session_id: str) -> dict[str, int] | None:
+        """Retrieve explicit prompt, completion, combined, and cache totals.
+
+        Returns:
+            dict[str, int] | None: Explicit token metrics when the session exists,
+                otherwise ``None``.
         """
         raise NotImplementedError
 

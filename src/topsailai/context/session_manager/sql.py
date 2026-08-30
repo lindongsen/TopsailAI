@@ -52,6 +52,7 @@ class Session(Base):
     topsailai_home = Column(Text, nullable=True)
     total_tokens = Column(Integer, default=0)
     total_cached_tokens = Column(Integer, default=0)
+    total_completion_tokens = Column(Integer, default=0)
     create_time = Column(DateTime, nullable=False, server_default=sql_func.current_timestamp())
 
 class SessionSQLAlchemy(SessionStorageBase):
@@ -96,14 +97,23 @@ class SessionSQLAlchemy(SessionStorageBase):
         with self.engine.connect() as conn:
             if conn.dialect.name != "sqlite":
                 return
-            for column_name in ("project_workspace", "pwd", "topsailai_home", "total_tokens", "total_cached_tokens"):
+            columns = (
+                "project_workspace", "pwd", "topsailai_home", "total_tokens",
+                "total_cached_tokens", "total_completion_tokens",
+            )
+            numeric_columns = {
+                "total_tokens", "total_cached_tokens", "total_completion_tokens",
+            }
+            for column_name in columns:
                 result = conn.execute(
                     text("SELECT 1 FROM pragma_table_info('session') WHERE name = :col"),
                     {"col": column_name},
                 )
                 if not result.fetchone():
-                    if column_name in ("total_tokens", "total_cached_tokens"):
-                        conn.execute(text(f"ALTER TABLE session ADD COLUMN {column_name} INTEGER DEFAULT 0"))
+                    if column_name in numeric_columns:
+                        conn.execute(text(
+                            f"ALTER TABLE session ADD COLUMN {column_name} INTEGER DEFAULT 0"
+                        ))
                     else:
                         conn.execute(text(f"ALTER TABLE session ADD COLUMN {column_name} TEXT"))
             conn.commit()
@@ -216,6 +226,7 @@ class SessionSQLAlchemy(SessionStorageBase):
                     topsailai_home=session.topsailai_home,
                     total_tokens=session.total_tokens or 0,
                     total_cached_tokens=session.total_cached_tokens or 0,
+                    total_completion_tokens=session.total_completion_tokens or 0,
                 )
                 session_data.session_name = session.session_name
                 session_data.create_time = session.create_time
@@ -290,6 +301,7 @@ class SessionSQLAlchemy(SessionStorageBase):
                 topsailai_home=session.topsailai_home,
                 total_tokens=session.total_tokens or 0,
                 total_cached_tokens=session.total_cached_tokens or 0,
+                total_completion_tokens=session.total_completion_tokens or 0,
             )
             session_data.session_name = session.session_name
             session_data.create_time = session.create_time
@@ -447,34 +459,17 @@ class SessionSQLAlchemy(SessionStorageBase):
         session_id: str,
         current_tokens: int,
         current_cached_tokens: int,
+        current_completion_tokens: int = 0,
     ) -> bool:
-        """
-        Atomically add per-agent token deltas to the session totals.
-
-        A single session may be processed by multiple agents, each owning its own
-        TokenStat instance. This method therefore accumulates the *current-agent
-        delta* (``current_tokens`` / ``current_cached_tokens``) into the session
-        row using an atomic UPDATE, rather than overwriting the row with an
-        agent-level total. Overwriting with ``TokenStat.total_*`` would lose the
-        contributions of other agents that share the same session.
-
-        Args:
-            session_id (str): The session identifier whose totals should be updated.
-            current_tokens (int): Number of tokens produced by the current agent
-                invocation to add to ``total_tokens``.
-            current_cached_tokens (int): Number of cached tokens produced by the
-                current agent invocation to add to ``total_cached_tokens``.
-
-        Returns:
-            bool: True if the session existed and was updated, False otherwise.
-        """
+        """Atomically add one request's prompt, completion, and cache deltas."""
         if not session_id:
             return False
 
-        # Normalize negative deltas to zero so a misreported value cannot subtract
-        # from the session total.
+        # Normalize negative deltas to zero so misreported values cannot subtract
+        # from the session totals.
         delta_tokens = max(0, int(current_tokens))
         delta_cached = max(0, int(current_cached_tokens))
+        delta_completion = max(0, int(current_completion_tokens))
 
         db_session = self.SessionLocal()
         try:
@@ -482,12 +477,14 @@ class SessionSQLAlchemy(SessionStorageBase):
                 text(
                     "UPDATE session SET "
                     "total_tokens = total_tokens + :tokens, "
-                    "total_cached_tokens = total_cached_tokens + :cached "
+                    "total_cached_tokens = total_cached_tokens + :cached, "
+                    "total_completion_tokens = total_completion_tokens + :completion "
                     "WHERE session_id = :session_id"
                 ),
                 {
                     "tokens": delta_tokens,
                     "cached": delta_cached,
+                    "completion": delta_completion,
                     "session_id": session_id,
                 },
             )
@@ -495,54 +492,59 @@ class SessionSQLAlchemy(SessionStorageBase):
             if result.rowcount == 1:
                 logger.info(
                     f"accumulate_session_tokens: session_id={session_id}, "
-                    f"+tokens={delta_tokens}, +cached={delta_cached}"
+                    f"+tokens={delta_tokens}, +cached={delta_cached}, "
+                    f"+completion={delta_completion}"
                 )
                 return True
-            logger.warning(f"accumulate_session_tokens: session not found: session_id={session_id}")
+            logger.warning(
+                f"accumulate_session_tokens: session not found: session_id={session_id}"
+            )
             return False
         except Exception as e:
             db_session.rollback()
             logger.error(
                 f"accumulate_session_tokens failed: session_id={session_id}, "
-                f"tokens={delta_tokens}, cached={delta_cached}, {e}"
+                f"tokens={delta_tokens}, cached={delta_cached}, "
+                f"completion={delta_completion}, {e}"
             )
             return False
         finally:
             db_session.close()
 
     def get_session_token_totals(self, session_id: str) -> tuple[int, int] | None:
-        """
-        Retrieve the accumulated token totals for a session.
+        """Return legacy prompt and cached-prompt totals for a session."""
+        usage = self.get_session_token_usage(session_id)
+        if usage is None:
+            return None
+        return usage["prompt_tokens"], usage["cached_prompt_tokens"]
 
-        Returns the ``total_tokens`` and ``total_cached_tokens`` values stored in
-        the session row. These totals are accumulated from per-agent deltas via
-        ``accumulate_session_tokens()`` and therefore reflect the combined token
-        usage of all agents that have processed the session.
-
-        Args:
-            session_id (str): The session identifier whose totals should be read.
-
-        Returns:
-            tuple[int, int] | None: A tuple of ``(total_tokens, total_cached_tokens)``
-                if the session exists, otherwise ``None``.
-        """
+    def get_session_token_usage(self, session_id: str) -> dict[str, int] | None:
+        """Return explicit prompt, completion, combined, and cache totals."""
         if not session_id:
             return None
 
         db_session = self.SessionLocal()
         try:
-            session = db_session.query(Session).filter(Session.session_id == session_id).first()
+            session = db_session.query(Session).filter(
+                Session.session_id == session_id
+            ).first()
             if not session:
-                logger.warning(f"get_session_token_totals: session not found: session_id={session_id}")
+                logger.warning(
+                    f"get_session_token_usage: session not found: session_id={session_id}"
+                )
                 return None
 
-            return (
-                session.total_tokens if session.total_tokens is not None else 0,
-                session.total_cached_tokens if session.total_cached_tokens is not None else 0,
-            )
+            prompt_tokens = session.total_tokens or 0
+            completion_tokens = session.total_completion_tokens or 0
+            return {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+                "cached_prompt_tokens": session.total_cached_tokens or 0,
+            }
         except Exception as e:
             db_session.rollback()
-            logger.error(f"get_session_token_totals failed: session_id={session_id}, {e}")
+            logger.error(f"get_session_token_usage failed: session_id={session_id}, {e}")
             return None
         finally:
             db_session.close()

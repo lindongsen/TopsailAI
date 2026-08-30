@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import urllib.request
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from topsailai.ai_base.llm_base import LLMModel
 from topsailai.tests.mock.llm_mock_server import (
@@ -68,8 +68,29 @@ class StreamingMockServerHarness:
         self.messages = [{"role": "user", "content": "BDD streaming mock server"}]
 
     def execute_streaming_chat(self) -> str:
-        """Run the production streaming chat and return its raw content."""
-        return self.model.chat(self.messages, for_raw=True, for_stream=True)
+        """Run production streaming chat and retain observable output order."""
+        output_events: list[tuple[str, str | None]] = []
+        original_send = self.model.send_content
+        original_print = self.model.tokenStat.print_token_stat
+
+        def _record_chunk(content: str) -> None:
+            """Record each streamed chunk while preserving production senders."""
+            output_events.append(("response_chunk", content))
+            original_send(content)
+
+        def _record_token_summary() -> None:
+            """Record TokenStat output while preserving production display."""
+            output_events.append(("token_summary", None))
+            original_print()
+
+        with patch.object(self.model, "send_content", side_effect=_record_chunk), patch.object(
+            self.model.tokenStat,
+            "print_token_stat",
+            side_effect=_record_token_summary,
+        ):
+            content = self.model.chat(self.messages, for_raw=True, for_stream=True)
+        self.last_output_events = output_events
+        return content
 
     def execute_streaming_chat_direct(self) -> None:
         """Call call_llm_model_by_stream directly, bypassing the chat retry loop."""
@@ -85,6 +106,19 @@ class StreamingMockServerHarness:
             timeout=5,
         ) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    @property
+    def last_request_body(self) -> dict:
+        """Return the most recent parsed HTTP request body."""
+        records = self.get_state()["request_bodies"]
+        assert records, "expected one captured request body"
+        assert records[-1]["parsed"], records[-1]
+        return records[-1]["body"]
+
+    @property
+    def output_events(self) -> list[tuple[str, str | None]]:
+        """Return observable response and token-summary output events."""
+        return list(getattr(self, "last_output_events", []))
 
     @property
     def request_count(self) -> int:

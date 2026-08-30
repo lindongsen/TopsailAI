@@ -234,16 +234,21 @@ class TestSessionStorageBase(unittest.TestCase):
                 session_id="s1",
                 current_tokens=10,
                 current_cached_tokens=5,
+                current_completion_tokens=3,
             )
 
     def test_accumulate_session_tokens_signature(self):
-        """Test that accumulate_session_tokens accepts the expected keyword arguments."""
+        """Test that accumulation adds an optional completion-token argument."""
         import inspect
 
         sig = inspect.signature(SessionStorageBase.accumulate_session_tokens)
         params = list(sig.parameters.keys())
 
-        self.assertEqual(params, ["self", "session_id", "current_tokens", "current_cached_tokens"])
+        self.assertEqual(params, [
+            "self", "session_id", "current_tokens", "current_cached_tokens",
+            "current_completion_tokens",
+        ])
+        self.assertEqual(sig.parameters["current_completion_tokens"].default, 0)
 
 
 if __name__ == "__main__":

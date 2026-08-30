@@ -482,7 +482,8 @@ class TestTokenStat(unittest.TestCase):
         with patch('topsailai.context.token.print_info'), \
              patch('topsailai.context.token.logger'):
             for cached in [10, 20, 30]:
-                usage = MagicMock()
+                stat.add_msgs("request")
+                usage = MagicMock(prompt_tokens=0, completion_tokens=0)
                 usage.prompt_tokens_details.cached_tokens = cached
                 stat.output_token_stat(usage)
 
@@ -562,6 +563,7 @@ class TestTokenStat(unittest.TestCase):
             session_id="session_abc",
             current_tokens=100,
             current_cached_tokens=40,
+            current_completion_tokens=0,
         )
         stat.flag_running = False
 
@@ -604,6 +606,51 @@ class TestTokenStat(unittest.TestCase):
             stat.output_token_stat()
 
         mock_logger.warning.assert_called_once()
+        stat.flag_running = False
+
+    @patch('topsailai.context.token.count_tokens', return_value=11)
+    def test_explicit_usage_fields_keep_legacy_fields_prompt_only(self, mock_count_tokens):
+        """Expose completion and combined totals without changing legacy semantics."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        ticket = stat.add_msgs("request")
+        self.assertTrue(stat.wait(ticket, timeout=1.0))
+        usage = MagicMock(prompt_tokens=17, completion_tokens=5)
+        usage.prompt_tokens_details = MagicMock(cached_tokens=3)
+
+        with patch('topsailai.context.token.env_tool.get_session_id', return_value=""):
+            self.assertTrue(stat.finalize_usage(usage))
+
+        self.assertEqual(stat.current_tokens, 17)
+        self.assertEqual(stat.current_prompt_tokens, 17)
+        self.assertEqual(stat.current_completion_tokens, 5)
+        self.assertEqual(stat.current_total_tokens, 22)
+        self.assertEqual(stat.total_tokens, 17)
+        self.assertEqual(stat.total_prompt_tokens, 17)
+        self.assertEqual(stat.total_completion_tokens, 5)
+        self.assertEqual(stat.total_usage_tokens, 22)
+        self.assertEqual(stat.uncached_tokens, 14)
+        stat.flag_running = False
+
+    def test_finalize_usage_is_idempotent_and_print_is_read_only(self):
+        """Finalize one request once and keep display free of accounting effects."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        usage = MagicMock(prompt_tokens=7, completion_tokens=4)
+        usage.prompt_tokens_details = MagicMock(cached_tokens=2)
+
+        with patch('topsailai.context.token.env_tool.get_session_id', return_value=""), \
+             patch('topsailai.context.token.print_info') as mock_print:
+            self.assertTrue(stat.finalize_usage(usage))
+            before = stat.get_token_stat_info()
+            self.assertFalse(stat.finalize_usage(usage))
+            stat.print_token_stat()
+            stat.print_token_stat()
+            after = stat.get_token_stat_info()
+
+        self.assertEqual(before, after)
+        self.assertEqual(stat.total_prompt_tokens, 7)
+        self.assertEqual(stat.total_completion_tokens, 4)
+        self.assertEqual(stat.total_cached_tokens, 2)
+        self.assertEqual(mock_print.call_count, 2)
         stat.flag_running = False
 
 

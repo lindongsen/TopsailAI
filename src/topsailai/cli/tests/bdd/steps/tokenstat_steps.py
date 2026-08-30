@@ -9,12 +9,19 @@ from pytest_bdd import given, then, when
 
 TOKENSTAT_FIELDS = {
     "current_tokens",
+    "current_prompt_tokens",
+    "current_completion_tokens",
+    "current_total_tokens",
     "cached_tokens",
+    "uncached_prompt_tokens",
     "msg_count",
     "current_text_len",
     "total_cached_tokens",
     "total_text_len",
     "total_tokens",
+    "total_prompt_tokens",
+    "total_completion_tokens",
+    "total_usage_tokens",
     "first_byte_avg_sec",
     "first_byte_max_sec",
     "first_byte_min_sec",
@@ -22,12 +29,19 @@ TOKENSTAT_FIELDS = {
 
 TOKENSTAT_INTEGER_FIELDS = {
     "current_tokens",
+    "current_prompt_tokens",
+    "current_completion_tokens",
+    "current_total_tokens",
     "cached_tokens",
+    "uncached_prompt_tokens",
     "msg_count",
     "current_text_len",
     "total_cached_tokens",
     "total_text_len",
     "total_tokens",
+    "total_prompt_tokens",
+    "total_completion_tokens",
+    "total_usage_tokens",
 }
 
 
@@ -111,6 +125,19 @@ def empty_first_byte_unknown(cached_tokens_context: dict[str, Any]) -> None:
     assert snapshot["first_byte_min_sec"] is None
 
 
+@then("the mock server receives exactly two non-streaming requests with the scenario message")
+def non_streaming_request_body(cached_tokens_context: dict[str, Any]) -> None:
+    """Require both real HTTP requests and their non-streaming scenario body."""
+    state = cached_tokens_context["harness"].request_state()
+    assert state["total_requests"] == 2, state
+    assert len(state["request_bodies"]) == 2, state
+    for record in state["request_bodies"]:
+        body = record["body"]
+        assert record["parsed"] is True, record
+        assert body["stream"] is False, body
+        assert body["messages"] == cached_tokens_context["messages"], body
+
+
 @then("TokenStat current tokens equal the response prompt tokens")
 def response_prompt_tokens_are_current(
     cached_tokens_context: dict[str, Any],
@@ -129,6 +156,27 @@ def response_prompt_tokens_counted_once(
     assert cached_tokens_context["total_token_delta"] == cached_tokens_context[
         "response_prompt_tokens"
     ]
+
+
+@then("TokenStat explicit current usage equals the response prompt and completion usage")
+def explicit_non_streaming_usage(cached_tokens_context: dict[str, Any]) -> None:
+    """Require explicit usage fields while legacy fields remain prompt-only."""
+    harness = cached_tokens_context["harness"]
+    stat = harness.model.tokenStat
+    prompt_tokens = harness.response_prompt_tokens()
+    completion_tokens = harness.response_completion_tokens()
+    assert stat.current_tokens == prompt_tokens
+    assert stat.current_prompt_tokens == prompt_tokens
+    assert stat.current_completion_tokens == completion_tokens
+    assert stat.current_total_tokens == prompt_tokens + completion_tokens
+    assert stat.total_tokens == stat.total_prompt_tokens
+    assert stat.total_usage_tokens == stat.total_prompt_tokens + stat.total_completion_tokens
+
+
+@then("the non-streaming response is output before the token summary")
+def non_streaming_response_before_summary(cached_tokens_context: dict[str, Any]) -> None:
+    """Require production response dispatch to precede TokenStat display."""
+    assert cached_tokens_context["harness"].response_precedes_token_summary()
 
 
 @then(

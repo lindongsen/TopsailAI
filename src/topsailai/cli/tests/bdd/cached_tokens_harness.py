@@ -77,9 +77,29 @@ class CachedTokensHarness:
         ]
 
     def request(self, messages: list[dict[str, Any]]) -> int | None:
-        """Send one non-streaming request through TopsailAI and return cache usage."""
+        """Send one non-streaming request and retain observable output order."""
         self.messages = list(messages)
-        self.last_response, _ = self.model.call_llm_model(self.messages)
+        output_events: list[tuple[str, Any]] = []
+        original_send = self.model.send_content
+        original_print = self.model.tokenStat.print_token_stat
+
+        def _record_response(content: str) -> None:
+            """Record response output while preserving the production sender path."""
+            output_events.append(("response", content))
+            original_send(content)
+
+        def _record_token_summary() -> None:
+            """Record TokenStat output while preserving the production print path."""
+            output_events.append(("token_summary", None))
+            original_print()
+
+        with patch.object(self.model, "send_content", side_effect=_record_response), patch.object(
+            self.model.tokenStat,
+            "print_token_stat",
+            side_effect=_record_token_summary,
+        ):
+            self.last_response, _ = self.model.call_llm_model(self.messages)
+        self.last_output_events = output_events
         return self.model.tokenStat.current_cached_tokens
 
     def summarize(self) -> str | None:
@@ -105,10 +125,10 @@ class CachedTokensHarness:
         return answer
 
     def emit_snapshot(self, token_stat: TokenStat | None = None) -> dict[str, Any]:
-        """Capture and parse the dictionary emitted by TokenStat."""
+        """Capture and parse the dictionary emitted by display-only TokenStat output."""
         stat = token_stat or self.model.tokenStat
         with patch("topsailai.context.token.print_info") as mock_print:
-            stat.output_token_stat()
+            stat.print_token_stat()
         message = mock_print.call_args.args[0]
         prefix = "[TokenStat] "
         assert message.startswith(prefix)
@@ -169,6 +189,21 @@ class CachedTokensHarness:
     def last_cache_result(self) -> dict[str, int]:
         """Return the mock server's cache metadata for the most recent request."""
         return self.server.prompt_cache.state()["requests"][-1]
+
+    def response_completion_tokens(self) -> int:
+        """Return completion tokens reported for the most recent request."""
+        return self.last_response.usage.completion_tokens
+
+    def request_state(self) -> dict[str, Any]:
+        """Return server-side request accounting and captured request bodies."""
+        state = self.server.prompt_cache.state()
+        state.update(self.server.request_body_capture.state())
+        return state
+
+    def response_precedes_token_summary(self) -> bool:
+        """Return whether response output preceded the user-visible token summary."""
+        names = [name for name, _value in self.last_output_events]
+        return names == ["response", "token_summary"]
 
     def close(self) -> None:
         """Stop the exact server and TokenStat threads created by this harness."""

@@ -7,11 +7,16 @@ Feature: llm_mock_server streaming support over real HTTP/SSE
   Background:
     Given a streaming LLM mock server with SSE chunks
 
-  Scenario: Streaming chunks are concatenated into the full content
+  Scenario: Streaming response exposes explicit usage after all response chunks
     Given the SSE chunks are "Hello ", "streaming ", "world"
     When the streaming mock chat is executed
     Then the streamed content equals "Hello streaming world"
     And the stream produced first-byte timing on the token stat
+    And the mock server receives exactly one usage-enabled streaming request
+    And the streaming request contains the scenario user message
+    And the streaming token stat exposes prompt completion and combined totals
+    And the legacy streaming token fields remain prompt-only
+    And every streamed response chunk is output before the token summary
 
   Scenario: Streaming usage chunk feeds cached tokens into TokenStat
     Given the SSE chunks are "alpha", "beta"

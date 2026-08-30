@@ -743,7 +743,7 @@ class TestSessionTokenAccumulation:
         session_mgr.create_session(session_data)
 
     def test_token_columns_exist_after_ensure_columns(self, session_mgr):
-        """Test that total_tokens and total_cached_tokens columns exist."""
+        """Test that prompt, cached-prompt, and completion columns exist."""
         with session_mgr.engine.connect() as conn:
             result = conn.execute(
                 text("SELECT name FROM pragma_table_info('session')")
@@ -752,6 +752,7 @@ class TestSessionTokenAccumulation:
 
         assert "total_tokens" in column_names
         assert "total_cached_tokens" in column_names
+        assert "total_completion_tokens" in column_names
 
     def test_accumulate_session_tokens_increments_totals(self, session_mgr):
         """Test accumulate_session_tokens increments totals correctly."""
@@ -914,3 +915,76 @@ class TestSessionTokenAccumulation:
         totals = session_mgr.get_session_token_totals("")
 
         assert totals is None
+
+
+    def test_explicit_session_usage_preserves_legacy_prompt_total(self, session_mgr):
+        """Accumulate completion separately while preserving the legacy tuple API."""
+        self._create_session(session_mgr)
+
+        session_mgr.accumulate_session_tokens(
+            session_id="token_session",
+            current_tokens=100,
+            current_cached_tokens=40,
+            current_completion_tokens=25,
+        )
+
+        assert session_mgr.get_session_token_totals("token_session") == (100, 40)
+        assert session_mgr.get_session_token_usage("token_session") == {
+            "prompt_tokens": 100,
+            "completion_tokens": 25,
+            "total_tokens": 125,
+            "cached_prompt_tokens": 40,
+        }
+        session_data = session_mgr.get_session("token_session")
+        assert session_data.total_tokens == 100
+        assert session_data.total_completion_tokens == 25
+        assert session_data.total_usage_tokens == 125
+
+    def test_completion_tokens_accumulate_across_requests(self, session_mgr):
+        """Accumulate completion deltas from multiple requests atomically."""
+        self._create_session(session_mgr)
+
+        session_mgr.accumulate_session_tokens(
+            "token_session", 80, 20, current_completion_tokens=12
+        )
+        session_mgr.accumulate_session_tokens(
+            "token_session", 20, 5, current_completion_tokens=8
+        )
+
+        usage = session_mgr.get_session_token_usage("token_session")
+        assert usage["prompt_tokens"] == 100
+        assert usage["completion_tokens"] == 20
+        assert usage["total_tokens"] == 120
+        assert usage["cached_prompt_tokens"] == 25
+
+    def test_existing_sqlite_schema_gains_completion_column(self, tmp_path):
+        """Add the completion column without reinterpreting historical totals."""
+        db_path = tmp_path / "legacy-session.db"
+        from sqlalchemy import create_engine
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.begin() as conn:
+            conn.execute(text(
+                "CREATE TABLE session ("
+                "id INTEGER PRIMARY KEY, session_id TEXT UNIQUE, task TEXT, "
+                "session_name TEXT, total_tokens INTEGER DEFAULT 0, "
+                "total_cached_tokens INTEGER DEFAULT 0, create_time DATETIME)"
+            ))
+            conn.execute(text(
+                "INSERT INTO session (session_id, task, total_tokens, "
+                "total_cached_tokens, create_time) "
+                "VALUES ('legacy', 'legacy task', 90, 30, CURRENT_TIMESTAMP)"
+            ))
+        engine.dispose()
+
+        migrated = SessionSQLAlchemy(f"sqlite:///{db_path}")
+        try:
+            usage = migrated.get_session_token_usage("legacy")
+            assert usage == {
+                "prompt_tokens": 90,
+                "completion_tokens": 0,
+                "total_tokens": 90,
+                "cached_prompt_tokens": 30,
+            }
+        finally:
+            migrated.engine.dispose()
