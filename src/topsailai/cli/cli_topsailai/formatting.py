@@ -42,23 +42,33 @@ def _character_display_width(character: str) -> int:
     return 2 if unicodedata.east_asian_width(character) in ("F", "W") else 1
 
 
-def _fit_table_cell(value: object, width: int, alignment: str = "left") -> str:
+def _fit_table_cell(
+    value: object,
+    width: int,
+    alignment: str = "left",
+    truncate_from: str = "tail",
+) -> str:
     """Truncate and pad a table cell to an exact terminal display width."""
     text = str(value)
     display_width = sum(_character_display_width(character) for character in text)
     if display_width > width:
-        suffix = "..." if width >= 3 else "." * width
-        available_width = width - len(suffix)
+        ellipsis = "..." if width >= 3 else "." * width
+        available_width = width - len(ellipsis)
         characters = []
         used_width = 0
-        for character in text:
+        source = reversed(text) if truncate_from == "head" else text
+        for character in source:
             character_width = _character_display_width(character)
             if used_width + character_width > available_width:
                 break
             characters.append(character)
             used_width += character_width
-        text = "".join(characters) + suffix
-        display_width = used_width + len(suffix)
+        if truncate_from == "head":
+            characters.reverse()
+            text = ellipsis + "".join(characters)
+        else:
+            text = "".join(characters) + ellipsis
+        display_width = used_width + len(ellipsis)
 
     padding = width - display_width
     if alignment == "center":
@@ -101,7 +111,7 @@ def print_table(files: List[dict]) -> None:
         )
         pid_str = str(pid) if pid else "-"
         if pid and is_session_pipe_open(file_info):
-            status_str = "WAIT"
+            status_str = "INPUT"
         elif pid:
             status_str = "RUN"
         else:
@@ -116,7 +126,7 @@ def print_table(files: List[dict]) -> None:
                 "created": format_timestamp(file_info["ctime"]),
                 "project_workspace": file_info.get("project_workspace") or "-",
                 "color": Colors.YELLOW
-                if status_str == "WAIT"
+                if status_str == "INPUT"
                 else (Colors.GREEN if pid else Colors.GRAY),
             }
         )
@@ -167,7 +177,7 @@ def print_table(files: List[dict]) -> None:
             f" {_fit_table_cell(row_info['pid'], w_pid, 'center')} |"
             f" {_fit_table_cell(row_info['status'], w_status, 'center')} |"
             f" {_fit_table_cell(row_info['created'], w_created, 'center')} |"
-            f" {_fit_table_cell(row_info['project_workspace'], w_project)} "
+            f" {_fit_table_cell(row_info['project_workspace'], w_project, truncate_from='head')} "
             f"{Colors.RESET}"
         )
         print(row)
@@ -176,7 +186,7 @@ def print_table(files: List[dict]) -> None:
     print(
         f"{Colors.GREEN}● Running{Colors.RESET}  "
         f"{Colors.GRAY}○ Idle{Colors.RESET}  "
-        f"{Colors.YELLOW}● Running (Waiting for input){Colors.RESET}  "
+        f"{Colors.YELLOW}● Inputting{Colors.RESET}  "
         f"{Colors.DIM}(Total: {len(files)} files){Colors.RESET}"
     )
 

@@ -94,9 +94,9 @@ class TestPrintTablePidDetection(unittest.TestCase):
         )
         data_line = self._data_line(output)
         self.assertIn("Status", output)
-        self.assertNotIn("Input", output)
         self.assertIn("1234", data_line)
         self.assertIn("RUN", data_line)
+        self.assertNotIn("INPUT", data_line)
         self.assertNotIn("WAIT", data_line)
         self.assertIn(Colors.GREEN, data_line)
         mock_kill.assert_called_once_with(1234, 0)
@@ -104,7 +104,7 @@ class TestPrintTablePidDetection(unittest.TestCase):
 
     @patch("cli_topsailai.formatting.is_session_pipe_open", return_value=True)
     @patch("cli_topsailai.formatting.os.kill")
-    def test_open_pipe_shows_wait_status_in_yellow(self, mock_kill, mock_pipe_open):
+    def test_open_pipe_shows_input_status_in_yellow(self, mock_kill, mock_pipe_open):
         mock_kill.return_value = None
         output = self._capture_print_table(
             [{
@@ -117,11 +117,12 @@ class TestPrintTablePidDetection(unittest.TestCase):
         )
         data_line = self._data_line(output)
         self.assertIn("Status", output)
-        self.assertNotIn("Input", output)
-        self.assertIn("WAIT", data_line)
+        self.assertIn("INPUT", data_line)
+        self.assertNotIn("WAIT", data_line)
         self.assertNotIn("RUN", data_line)
         self.assertIn(Colors.YELLOW, data_line)
-        self.assertIn("Waiting for input", output)
+        self.assertIn("Inputting", output)
+        self.assertNotIn("Waiting for input", output)
         mock_pipe_open.assert_called_once()
 
     @patch("cli_topsailai.formatting.is_session_pipe_open")
@@ -282,7 +283,7 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
         self.assertEqual(header_columns[3], "PID")
         self.assertEqual(row_columns[3], "123456789")
         self.assertEqual(header_columns[4], "Status")
-        self.assertEqual(row_columns[4], "WAIT")
+        self.assertEqual(row_columns[4], "INPUT")
         self.assertNotIn("...", row_columns[0])
         self.assertNotIn("...", row_columns[3])
         self.assertNotIn("...", row_columns[4])
@@ -331,9 +332,9 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
         self.assertIn("-", data_lines[0])
 
     @patch("cli_topsailai.formatting.os.kill")
-    def test_long_project_workspace_truncated(self, mock_kill):
+    def test_long_project_workspace_preserves_tail(self, mock_kill):
         mock_kill.return_value = None
-        long_workspace = "/work/" + "a" * 50
+        long_workspace = "/very/long/中文/workspace/path/project-tail"
         output = self._capture_print_table(
             [
                 {
@@ -348,4 +349,8 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
                 }
             ]
         )
-        self.assertIn("...", output)
+        data_line = next(line for line in output.splitlines() if "s1" in line)
+        workspace_cell = data_line.split("|")[-1]
+        self.assertIn("...", workspace_cell)
+        self.assertIn("path/project-tail", workspace_cell)
+        self.assertNotIn("/very/long", workspace_cell)
