@@ -30,3 +30,22 @@ Feature: Cached token statistics against the LLM mock server
     When a new request completes against the mock server
     Then the cached-token statistic reflects the new request's real hit or miss
     And the measured uncached-token statistic is non-negative
+
+
+  Scenario: Missing Provider cache details preserve known session usage
+    Given a shared session whose Provider omits cache usage details
+    When a request is persisted from the LLM mock server
+    Then request cache usage is unknown while known session usage is accumulated
+    And the cache persistence request crossed the real HTTP boundary
+
+  Scenario: Explicit zero cache usage remains a measured session miss
+    Given a shared session whose Provider reports cache usage details
+    When a first request is persisted from the LLM mock server
+    Then request cache usage is explicitly zero while known session usage is accumulated
+    And the cache persistence request crossed the real HTTP boundary
+
+  Scenario: Positive cache usage increments the persisted session total
+    Given a shared session whose Provider reports cache usage details
+    When the same request is persisted twice from the LLM mock server
+    Then positive request cache usage is added to the session cache total
+    And both cache persistence requests crossed the real HTTP boundary

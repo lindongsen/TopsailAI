@@ -143,6 +143,18 @@ def test_identical_request_reports_full_cache_hit():
     assert second["usage"]["prompt_tokens_details"]["cached_tokens"] == second["usage"]["prompt_tokens"]
 
 
+def test_cache_usage_details_can_be_omitted_without_hiding_known_usage():
+    """An opt-out Provider response must retain prompt and completion usage."""
+    messages = [_message("user", "usage without cache details")]
+    with running_server(report_cache_usage=False) as (_, base_url):
+        response = _completion(base_url, messages)
+    usage = response["usage"]
+    assert "prompt_tokens_details" not in usage
+    assert usage["prompt_tokens"] > 0
+    assert usage["completion_tokens"] > 0
+    assert usage["total_tokens"] == usage["prompt_tokens"] + usage["completion_tokens"]
+
+
 def test_appended_suffix_reports_partial_prefix_hit():
     """An appended suffix must reuse all previously sent leading messages."""
     prefix = [_message("system", "stable"), _message("user", "hello")]

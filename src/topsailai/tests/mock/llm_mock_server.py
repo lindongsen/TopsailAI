@@ -24,6 +24,7 @@ class MockServerConfig:
     cache_capacity: int = 32
     request_body_capacity: int = 32
     stream_chunks: tuple[str, ...] | None = None
+    report_cache_usage: bool = True
     tool_call_responses: tuple[tuple[dict[str, Any], ...], ...] | None = None
 
     def __post_init__(self) -> None:
@@ -260,9 +261,11 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
                     "prompt_tokens": cache_result["prompt_tokens"],
                     "completion_tokens": completion_tokens,
                     "total_tokens": total_tokens,
-                    "prompt_tokens_details": {
-                        "cached_tokens": cache_result["cached_tokens"],
-                    },
+                    **({
+                        "prompt_tokens_details": {
+                            "cached_tokens": cache_result["cached_tokens"],
+                        },
+                    } if self.server.config.report_cache_usage else {}),
                 },
             })
             self._write_sse("[DONE]")
@@ -364,9 +367,11 @@ class LLMMockRequestHandler(BaseHTTPRequestHandler):
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
-                "prompt_tokens_details": {
-                    "cached_tokens": cache_result["cached_tokens"],
-                },
+                **({
+                    "prompt_tokens_details": {
+                        "cached_tokens": cache_result["cached_tokens"],
+                    },
+                } if self.server.config.report_cache_usage else {}),
             },
         }
         self._write_json(200, response)

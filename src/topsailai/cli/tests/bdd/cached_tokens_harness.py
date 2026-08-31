@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import threading
+from dataclasses import replace
 from types import MethodType, SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -75,6 +76,10 @@ class CachedTokensHarness:
             {"role": "assistant", "content": "first result"},
             {"role": "user", "content": "continue"},
         ]
+
+    def set_cache_usage_reporting(self, enabled: bool) -> None:
+        """Control whether the mock Provider reports cache usage details."""
+        self.server.config = replace(self.server.config, report_cache_usage=enabled)
 
     def request(self, messages: list[dict[str, Any]]) -> int | None:
         """Send one non-streaming request and retain observable output order."""
@@ -149,6 +154,15 @@ class CachedTokensHarness:
             SessionData(session_id=session_id, task="TokenStat BDD accumulation")
         )
 
+    def request_with_session(self, messages: list[dict[str, Any]]) -> int | None:
+        """Send a real HTTP request and persist its usage to the real session store."""
+        assert self.session_manager is not None
+        with patch(
+            "topsailai.context.ctx_manager.get_session_manager",
+            return_value=self.session_manager,
+        ):
+            return self.request(messages)
+
     def report_session_delta(self, tokens: int, cached_tokens: int) -> None:
         """Emit one agent's token delta into the shared session totals."""
         assert self.session_manager is not None
@@ -167,6 +181,12 @@ class CachedTokensHarness:
         assert self.session_manager is not None
         assert self.session_id is not None
         return self.session_manager.get_session_token_totals(self.session_id)
+
+    def session_token_usage(self) -> dict[str, int] | None:
+        """Return prompt, cached, and completion totals for the active session."""
+        assert self.session_manager is not None
+        assert self.session_id is not None
+        return self.session_manager.get_session_token_usage(self.session_id)
 
     @property
     def cached_tokens(self) -> int | None:

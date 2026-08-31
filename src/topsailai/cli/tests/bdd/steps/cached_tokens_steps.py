@@ -129,3 +129,113 @@ def reflects_new_usage(cached_tokens_context: dict[str, Any]) -> None:
     harness = cached_tokens_context["harness"]
     assert harness.cached_tokens is not None
     assert harness.cached_tokens == harness.response_cached_tokens()
+
+
+@given("a shared session whose Provider omits cache usage details")
+def session_without_cache_details(cached_tokens_context: dict[str, Any]) -> None:
+    """Create a real session and configure the mock to omit cache details."""
+    harness = cached_tokens_context["harness"]
+    harness.enable_session("bdd-cache-unknown-session")
+    harness.set_cache_usage_reporting(False)
+
+
+@given("a shared session whose Provider reports cache usage details")
+def session_with_cache_details(cached_tokens_context: dict[str, Any]) -> None:
+    """Create a real session using the mock Provider's default cache reporting."""
+    cached_tokens_context["harness"].enable_session("bdd-cache-measured-session")
+
+
+@when("a request is persisted from the LLM mock server")
+def persist_unknown_cache_request(cached_tokens_context: dict[str, Any]) -> None:
+    """Persist one request whose Provider cache usage is unknown."""
+    harness = cached_tokens_context["harness"]
+    harness.request_with_session(cached_tokens_context["messages"])
+
+
+@when("a first request is persisted from the LLM mock server")
+def persist_explicit_zero_request(cached_tokens_context: dict[str, Any]) -> None:
+    """Persist a first request whose reported cache usage is explicitly zero."""
+    harness = cached_tokens_context["harness"]
+    harness.request_with_session(cached_tokens_context["messages"])
+
+
+@when("the same request is persisted twice from the LLM mock server")
+def persist_positive_cache_request(cached_tokens_context: dict[str, Any]) -> None:
+    """Persist one cache miss followed by a deterministic full-prefix hit."""
+    harness = cached_tokens_context["harness"]
+    messages = cached_tokens_context["messages"]
+    harness.request_with_session(messages)
+    harness.request_with_session(messages)
+
+
+def _assert_known_usage_matches_responses(context: dict[str, Any]) -> None:
+    """Require persisted known usage to equal all completed Provider responses."""
+    harness = context["harness"]
+    usage = harness.session_token_usage()
+    assert usage is not None
+    state = harness.request_state()
+    request_count = state["total_requests"]
+    expected_prompt_tokens = sum(
+        request["prompt_tokens"] for request in state["requests"]
+    )
+    expected_completion_tokens = request_count * harness.response_completion_tokens()
+    assert usage["prompt_tokens"] == expected_prompt_tokens
+    assert usage["completion_tokens"] == expected_completion_tokens
+    assert usage["total_tokens"] == expected_prompt_tokens + expected_completion_tokens
+
+
+@then("request cache usage is unknown while known session usage is accumulated")
+def unknown_request_persists_known_usage(cached_tokens_context: dict[str, Any]) -> None:
+    """Keep request cache unknown while persisting prompt and completion usage."""
+    harness = cached_tokens_context["harness"]
+    assert harness.cached_tokens is None
+    usage = harness.session_token_usage()
+    assert usage is not None
+    assert usage["cached_prompt_tokens"] == 0
+    _assert_known_usage_matches_responses(cached_tokens_context)
+
+
+@then("request cache usage is explicitly zero while known session usage is accumulated")
+def zero_request_persists_known_usage(cached_tokens_context: dict[str, Any]) -> None:
+    """Keep an explicit Provider cache miss distinct from unknown."""
+    harness = cached_tokens_context["harness"]
+    assert harness.cached_tokens == 0
+    usage = harness.session_token_usage()
+    assert usage is not None
+    assert usage["cached_prompt_tokens"] == 0
+    _assert_known_usage_matches_responses(cached_tokens_context)
+
+
+@then("positive request cache usage is added to the session cache total")
+def positive_request_increments_cache_total(cached_tokens_context: dict[str, Any]) -> None:
+    """Persist the positive cache hit reported for the repeated request."""
+    harness = cached_tokens_context["harness"]
+    assert harness.cached_tokens is not None
+    assert harness.cached_tokens > 0
+    usage = harness.session_token_usage()
+    assert usage is not None
+    assert usage["cached_prompt_tokens"] == harness.cached_tokens
+    _assert_known_usage_matches_responses(cached_tokens_context)
+
+
+@then("the cache persistence request crossed the real HTTP boundary")
+def one_persistence_http_request(cached_tokens_context: dict[str, Any]) -> None:
+    """Verify one captured HTTP request and its transmitted messages."""
+    harness = cached_tokens_context["harness"]
+    state = harness.request_state()
+    assert state["total_requests"] == 1
+    assert len(state["request_bodies"]) == 1
+    assert state["request_bodies"][0]["body"]["messages"] == cached_tokens_context["messages"]
+
+
+@then("both cache persistence requests crossed the real HTTP boundary")
+def two_persistence_http_requests(cached_tokens_context: dict[str, Any]) -> None:
+    """Verify both repeated requests crossed HTTP with unchanged messages."""
+    harness = cached_tokens_context["harness"]
+    state = harness.request_state()
+    assert state["total_requests"] == 2
+    assert len(state["request_bodies"]) == 2
+    assert all(
+        record["body"]["messages"] == cached_tokens_context["messages"]
+        for record in state["request_bodies"]
+    )
