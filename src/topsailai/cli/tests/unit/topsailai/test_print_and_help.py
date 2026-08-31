@@ -251,7 +251,7 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
                 if not unicodedata.combining(character)
             )
 
-        expected_widths = [4, 18, 20, 5, 8, 15, 26]
+        expected_widths = [4, 25, 20, 5, 8, 15, 26]
         for line in (header, row):
             plain_line = ansi_escape.sub("", line)
             column_widths = [display_width(column) for column in plain_line.split("|")]

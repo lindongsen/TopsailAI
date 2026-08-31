@@ -94,7 +94,7 @@ def print_table(files: List[dict]) -> None:
     w_session = 18
     w_created = 13
     w_project = 24
-    w_name = 16
+    w_name = 23
     rows = []
 
     for idx, file_info in enumerate(files, start=1):
