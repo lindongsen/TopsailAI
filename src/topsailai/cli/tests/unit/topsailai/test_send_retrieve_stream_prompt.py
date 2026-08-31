@@ -92,6 +92,88 @@ class TestSendRetrieveStreamPrompt(unittest.TestCase):
         mock_write.assert_called_once()
         mock_close.assert_called_once()
 
+    def test_multiline_send_stages_payload_and_removes_temporary_file(self):
+        """Multi-line runtime payloads are staged, sent intact, and removed."""
+        import threading
+
+        workspace = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        )
+        temporary_dir = os.path.join(workspace, ".tmp")
+        os.makedirs(temporary_dir, exist_ok=True)
+        before = set(os.listdir(temporary_dir))
+        received = []
+        with tempfile.TemporaryDirectory(dir=temporary_dir) as task_dir:
+            stdout_path = os.path.join(task_dir, "s1.1234.session.stdout")
+            pipe_path = os.path.join(task_dir, "s1.1234.session.pipe")
+            with open(stdout_path, "w", encoding="utf-8") as stdout_file:
+                stdout_file.write("running")
+            os.mkfifo(pipe_path)
+
+            def reader():
+                with open(pipe_path, "rb") as pipe_file:
+                    received.append(pipe_file.read())
+
+            thread = threading.Thread(target=reader)
+            thread.start()
+            try:
+                result = send_message_to_session(
+                    "s1",
+                    "line one\nline two",
+                    task_dir,
+                    timeout=2.0,
+                    stdout_path=stdout_path,
+                    pid=1234,
+                )
+            finally:
+                thread.join(timeout=3)
+
+        self.assertTrue(result)
+        self.assertEqual(received, [b"line one\nline two\nEOF\n"])
+        self.assertEqual(set(os.listdir(temporary_dir)), before)
+
+    def test_multiline_send_removes_temporary_file_after_write_failure(self):
+        """A failed pipe write does not leave the staged payload behind."""
+        import threading
+
+        workspace = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        )
+        temporary_dir = os.path.join(workspace, ".tmp")
+        os.makedirs(temporary_dir, exist_ok=True)
+        before = set(os.listdir(temporary_dir))
+        with tempfile.TemporaryDirectory(dir=temporary_dir) as task_dir:
+            stdout_path = os.path.join(task_dir, "s1.1234.session.stdout")
+            pipe_path = os.path.join(task_dir, "s1.1234.session.pipe")
+            with open(stdout_path, "w", encoding="utf-8") as stdout_file:
+                stdout_file.write("running")
+            os.mkfifo(pipe_path)
+
+            def reader():
+                with open(pipe_path, "rb") as pipe_file:
+                    pipe_file.read()
+
+            thread = threading.Thread(target=reader)
+            thread.start()
+            try:
+                with patch(
+                    "cli_topsailai.streaming.os.write",
+                    side_effect=OSError("write failed"),
+                ):
+                    result = send_message_to_session(
+                        "s1",
+                        "line one\nline two",
+                        task_dir,
+                        timeout=2.0,
+                        stdout_path=stdout_path,
+                        pid=1234,
+                    )
+            finally:
+                thread.join(timeout=3)
+
+        self.assertFalse(result)
+        self.assertEqual(set(os.listdir(temporary_dir)), before)
+
     @patch("os.stat")
     @patch("cli_topsailai.streaming._find_session_stdout_file")
     @patch("cli_topsailai.streaming._get_pid_from_stdout_path")

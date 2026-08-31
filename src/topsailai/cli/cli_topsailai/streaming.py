@@ -7,6 +7,7 @@ import select
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import unicodedata
 from typing import Any, Callable, Dict, List, Optional
@@ -1620,6 +1621,11 @@ def send_message_to_session(
       3. PID discovered by scanning processes that currently have the stdout
          file open (``lsof`` / ``fuser``).
 
+    Multi-line messages and payloads of at least 64 KiB are staged under the
+    CLI workspace's ``.tmp`` directory before their bytes are streamed through
+    the existing pipe protocol. The staged file is removed after every send
+    attempt.
+
     Args:
         session_id: Target session identifier.
         message: Message text to send.
@@ -1688,9 +1694,21 @@ def send_message_to_session(
         return False
 
     payload = _format_pipe_payload(message)
+    temporary_payload_path: Optional[str] = None
     fd: Optional[int] = None
     deadline = time.monotonic() + timeout
     try:
+        if "\n" in message or len(payload) >= 64 * 1024:
+            temporary_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".tmp"
+            )
+            os.makedirs(temporary_dir, exist_ok=True)
+            temporary_fd, temporary_payload_path = tempfile.mkstemp(
+                dir=temporary_dir, prefix="runtime-send-", suffix=".tmp"
+            )
+            with os.fdopen(temporary_fd, "wb") as temporary_file:
+                temporary_file.write(payload)
+
         while True:
             try:
                 fd = os.open(pipe_path, os.O_WRONLY | os.O_NONBLOCK)
@@ -1706,7 +1724,18 @@ def send_message_to_session(
                     time.sleep(0.1)
                     continue
                 raise
-        os.write(fd, payload)
+
+        if temporary_payload_path is None:
+            os.write(fd, payload)
+        else:
+            with open(temporary_payload_path, "rb") as temporary_file:
+                while chunk := temporary_file.read(64 * 1024):
+                    offset = 0
+                    while offset < len(chunk):
+                        written = os.write(fd, chunk[offset:])
+                        if written == 0:
+                            raise OSError("Pipe write returned zero bytes")
+                        offset += written
         print(
             f"{Colors.GREEN}[INFO] Message sent to session '{session_id}' via "
             f"{pipe_path} ({len(payload)} bytes).{Colors.RESET}"
@@ -1723,6 +1752,18 @@ def send_message_to_session(
                 os.close(fd)
             except OSError:
                 pass
+        if temporary_payload_path is not None:
+            try:
+                os.unlink(temporary_payload_path)
+                print(
+                    f"{Colors.CYAN}[INFO] Removed temporary send payload: "
+                    f"{temporary_payload_path}.{Colors.RESET}"
+                )
+            except OSError as exc:
+                print(
+                    f"{Colors.YELLOW}[WARNING] Failed to remove temporary send payload "
+                    f"{temporary_payload_path}: {exc}{Colors.RESET}"
+                )
 
 def handle_send_command(
     user_input: str, task_dir: str, log_files: List[dict]
