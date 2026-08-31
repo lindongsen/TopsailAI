@@ -3,6 +3,7 @@
 import io
 import os
 import sys
+import unicodedata
 from contextlib import redirect_stdout as contextlib_redirect_stdout
 from datetime import datetime
 from typing import List
@@ -34,6 +35,38 @@ def format_timestamp_full(ts: float) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _character_display_width(character: str) -> int:
+    """Return the terminal display width of one character."""
+    if unicodedata.combining(character):
+        return 0
+    return 2 if unicodedata.east_asian_width(character) in ("F", "W") else 1
+
+
+def _fit_table_cell(value: object, width: int, alignment: str = "left") -> str:
+    """Truncate and pad a table cell to an exact terminal display width."""
+    text = str(value)
+    display_width = sum(_character_display_width(character) for character in text)
+    if display_width > width:
+        suffix = "..." if width >= 3 else "." * width
+        available_width = width - len(suffix)
+        characters = []
+        used_width = 0
+        for character in text:
+            character_width = _character_display_width(character)
+            if used_width + character_width > available_width:
+                break
+            characters.append(character)
+            used_width += character_width
+        text = "".join(characters) + suffix
+        display_width = used_width + len(suffix)
+
+    padding = width - display_width
+    if alignment == "center":
+        left_padding = padding // 2
+        return " " * left_padding + text + " " * (padding - left_padding)
+    return text + " " * padding
+
+
 def print_header(title: str) -> None:
     """Print a bold cyan header with the given title."""
     width = 80
@@ -48,81 +81,93 @@ def print_table(files: List[dict]) -> None:
         print(f"{Colors.YELLOW}[WARN] No log files found.{Colors.RESET}")
         return
 
-    w_no = 4
     w_session = 18
-    w_pid = 6
-    w_status = 7
     w_created = 13
     w_project = 24
     w_name = 16
+    rows = []
 
-    header = (
-        f"{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE}"
-        f" {'No':^{w_no}} |"
-        f" {'Session ID':^{w_session}} |"
-        f" {'PID':^{w_pid}} |"
-        f" {'Status':^{w_status}} |"
-        f" {'Created':^{w_created}} |"
-        f" {'Project Workspace':^{w_project}} |"
-        f" {'Session Name':^{w_name}} "
-        f"{Colors.RESET}"
-    )
-    sep = (
-        f"{Colors.CYAN}"
-        f"{'-' * (w_no + 1)}+"
-        f"{'-' * (w_session + 2)}+"
-        f"{'-' * (w_pid + 2)}+"
-        f"{'-' * (w_status + 2)}+"
-        f"{'-' * (w_created + 2)}+"
-        f"{'-' * (w_project + 2)}+"
-        f"{'-' * (w_name + 1)}"
-        f"{Colors.RESET}"
-    )
-
-    print(header)
-    print(sep)
-
-    for idx, f in enumerate(files, start=1):
-        pid = f.get("pid")
+    for idx, file_info in enumerate(files, start=1):
+        pid = file_info.get("pid")
         if pid is not None:
             try:
                 os.kill(pid, 0)
             except (ProcessLookupError, PermissionError, OSError):
                 pid = None
-        f["pid"] = pid
+        file_info["pid"] = pid
 
-        session = _display_session_id(f["session_id"], f.get("is_task", False))
-        if len(session) > w_session:
-            session = session[:w_session - 3] + "..."
-
+        session = _display_session_id(
+            file_info["session_id"], file_info.get("is_task", False)
+        )
         pid_str = str(pid) if pid else "-"
-        if pid and is_session_pipe_open(f):
+        if pid and is_session_pipe_open(file_info):
             status_str = "WAIT"
         elif pid:
             status_str = "RUN"
         else:
             status_str = "-"
-        created_str = format_timestamp(f["ctime"])
+        rows.append(
+            {
+                "no": str(idx),
+                "session_name": file_info.get("session_name") or "-",
+                "session": session,
+                "pid": pid_str,
+                "status": status_str,
+                "created": format_timestamp(file_info["ctime"]),
+                "project_workspace": file_info.get("project_workspace") or "-",
+                "color": Colors.YELLOW
+                if status_str == "WAIT"
+                else (Colors.GREEN if pid else Colors.GRAY),
+            }
+        )
 
-        project_workspace = f.get("project_workspace") or "-"
-        if len(project_workspace) > w_project:
-            project_workspace = project_workspace[:w_project - 3] + "..."
+    def dynamic_width(header: str, key: str) -> int:
+        """Return the widest terminal display width for a rendered column."""
+        values = [header, *(str(row[key]) for row in rows)]
+        return max(
+            sum(_character_display_width(character) for character in value)
+            for value in values
+        )
 
-        session_name = f.get("session_name") or "-"
-        if len(session_name) > w_name:
-            session_name = session_name[:w_name - 3] + "..."
+    w_no = dynamic_width("No", "no")
+    w_pid = dynamic_width("PID", "pid")
+    w_status = dynamic_width("Status", "status")
 
-        color = Colors.YELLOW if status_str == "WAIT" else (Colors.GREEN if pid else Colors.GRAY)
+    header = (
+        f"{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE}"
+        f" {_fit_table_cell('No', w_no, 'center')} |"
+        f" {_fit_table_cell('Session Name', w_name, 'center')} |"
+        f" {_fit_table_cell('Session ID', w_session, 'center')} |"
+        f" {_fit_table_cell('PID', w_pid, 'center')} |"
+        f" {_fit_table_cell('Status', w_status, 'center')} |"
+        f" {_fit_table_cell('Created', w_created, 'center')} |"
+        f" {_fit_table_cell('Project Workspace', w_project, 'center')} "
+        f"{Colors.RESET}"
+    )
+    sep = (
+        f"{Colors.CYAN}"
+        f"{'-' * (w_no + 1)}+"
+        f"{'-' * (w_name + 2)}+"
+        f"{'-' * (w_session + 2)}+"
+        f"{'-' * (w_pid + 2)}+"
+        f"{'-' * (w_status + 2)}+"
+        f"{'-' * (w_created + 2)}+"
+        f"{'-' * (w_project + 1)}"
+        f"{Colors.RESET}"
+    )
 
+    print(header)
+    print(sep)
+    for row_info in rows:
         row = (
-            f"{color}"
-            f" {idx:^{w_no}} |"
-            f" {session:<{w_session}} |"
-            f" {pid_str:^{w_pid}} |"
-            f" {status_str:^{w_status}} |"
-            f" {created_str:^{w_created}} |"
-            f" {project_workspace:<{w_project}} |"
-            f" {session_name:<{w_name}} "
+            f"{row_info['color']}"
+            f" {_fit_table_cell(row_info['no'], w_no, 'center')} |"
+            f" {_fit_table_cell(row_info['session_name'], w_name)} |"
+            f" {_fit_table_cell(row_info['session'], w_session)} |"
+            f" {_fit_table_cell(row_info['pid'], w_pid, 'center')} |"
+            f" {_fit_table_cell(row_info['status'], w_status, 'center')} |"
+            f" {_fit_table_cell(row_info['created'], w_created, 'center')} |"
+            f" {_fit_table_cell(row_info['project_workspace'], w_project)} "
             f"{Colors.RESET}"
         )
         print(row)

@@ -4,7 +4,9 @@ Unit tests for print helpers and help text in cli_topsailai.
 """
 
 import os
+import re
 import sys
+import unicodedata
 import unittest
 from io import StringIO
 from unittest.mock import patch
@@ -200,6 +202,92 @@ class TestPrintTableProjectWorkspace(unittest.TestCase):
             ]
         )
         self.assertIn("Project Workspace", output)
+
+    def test_session_name_column_follows_number(self):
+        """Session Name appears immediately after No in headers and rows."""
+        output = self._capture_print_table(
+            [
+                {
+                    "filename": "session-id.1234.session.stdout",
+                    "path": "/tmp/session-id.1234.session.stdout",
+                    "session_id": "session-id",
+                    "session_name": "session-name",
+                    "ctime": 1700000000.0,
+                }
+            ]
+        )
+        header, _, row = output.splitlines()[:3]
+        header_columns = [column.strip() for column in header.split("|")]
+        row_columns = [column.strip() for column in row.split("|")]
+
+        self.assertIn("No", header_columns[0])
+        self.assertEqual(header_columns[1], "Session Name")
+        self.assertEqual(header_columns[2], "Session ID")
+        self.assertEqual(row_columns[1], "session-name")
+        self.assertEqual(row_columns[2], "session-id")
+
+    def test_table_columns_keep_fixed_display_widths(self):
+        """Only truncatable columns retain fixed display widths."""
+        output = self._capture_print_table(
+            [
+                {
+                    "filename": "session-id.1234.session.stdout",
+                    "path": "/tmp/session-id.1234.session.stdout",
+                    "session_id": "session-id-" + "x" * 30,
+                    "session_name": "会话名称" * 10,
+                    "project_workspace": "/work/" + "项目" * 20,
+                    "ctime": 1700000000.0,
+                }
+            ]
+        )
+        header, _, row = output.splitlines()[:3]
+        ansi_escape = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+        def display_width(value):
+            return sum(
+                2 if unicodedata.east_asian_width(character) in ("F", "W") else 1
+                for character in value
+                if not unicodedata.combining(character)
+            )
+
+        expected_widths = [4, 18, 20, 5, 8, 15, 26]
+        for line in (header, row):
+            plain_line = ansi_escape.sub("", line)
+            column_widths = [display_width(column) for column in plain_line.split("|")]
+            self.assertEqual(column_widths, expected_widths)
+
+        self.assertIn("...", row)
+
+    @patch("cli_topsailai.formatting.is_session_pipe_open", return_value=True)
+    @patch("cli_topsailai.formatting.os.kill")
+    def test_no_pid_and_status_expand_without_truncation(self, mock_kill, mock_pipe_open):
+        """No, PID, and Status widths grow to fit all rendered values."""
+        file_info = {
+            "filename": "session-id.123456789.session.stdout",
+            "path": "/tmp/session-id.123456789.session.stdout",
+            "session_id": "session-id",
+            "pid": 123456789,
+            "ctime": 1700000000.0,
+        }
+        with patch("builtins.enumerate", return_value=iter([(12345, file_info)])):
+            output = self._capture_print_table([file_info])
+
+        header, _, row = output.splitlines()[:3]
+        ansi_escape = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+        header_columns = [column.strip() for column in ansi_escape.sub("", header).split("|")]
+        row_columns = [column.strip() for column in ansi_escape.sub("", row).split("|")]
+
+        self.assertEqual(header_columns[0], "No")
+        self.assertEqual(row_columns[0], "12345")
+        self.assertEqual(header_columns[3], "PID")
+        self.assertEqual(row_columns[3], "123456789")
+        self.assertEqual(header_columns[4], "Status")
+        self.assertEqual(row_columns[4], "WAIT")
+        self.assertNotIn("...", row_columns[0])
+        self.assertNotIn("...", row_columns[3])
+        self.assertNotIn("...", row_columns[4])
+        mock_kill.assert_called_once_with(123456789, 0)
+        mock_pipe_open.assert_called_once_with(file_info)
 
     @patch("cli_topsailai.formatting.os.kill")
     def test_project_workspace_value_rendered(self, mock_kill):
