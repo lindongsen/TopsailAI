@@ -62,7 +62,7 @@ class TestPrintHelpers(unittest.TestCase):
 
 
 class TestPrintTablePidDetection(unittest.TestCase):
-    """Tests for print_table PID display using filename pid + os.kill."""
+    """Tests for print_table PID and status display."""
 
     def _capture_print_table(self, files):
         captured = StringIO()
@@ -70,8 +70,12 @@ class TestPrintTablePidDetection(unittest.TestCase):
             print_table(files)
         return captured.getvalue()
 
+    def _data_line(self, output, session_id="s1"):
+        return next(line for line in output.splitlines() if session_id in line)
+
+    @patch("cli_topsailai.formatting.is_session_pipe_open", return_value=False)
     @patch("cli_topsailai.formatting.os.kill")
-    def test_live_pid_shown(self, mock_kill):
+    def test_live_pid_shows_run_status(self, mock_kill, mock_pipe_open):
         mock_kill.return_value = None
         output = self._capture_print_table(
             [
@@ -86,13 +90,19 @@ class TestPrintTablePidDetection(unittest.TestCase):
                 }
             ]
         )
-        self.assertIn("1234", output)
-        self.assertIn(Colors.GREEN, output)
+        data_line = self._data_line(output)
+        self.assertIn("Status", output)
+        self.assertNotIn("Input", output)
+        self.assertIn("1234", data_line)
+        self.assertIn("RUN", data_line)
+        self.assertNotIn("WAIT", data_line)
+        self.assertIn(Colors.GREEN, data_line)
         mock_kill.assert_called_once_with(1234, 0)
+        mock_pipe_open.assert_called_once()
 
     @patch("cli_topsailai.formatting.is_session_pipe_open", return_value=True)
     @patch("cli_topsailai.formatting.os.kill")
-    def test_open_pipe_shows_wait_marker(self, mock_kill, mock_pipe_open):
+    def test_open_pipe_shows_wait_status_in_yellow(self, mock_kill, mock_pipe_open):
         mock_kill.return_value = None
         output = self._capture_print_table(
             [{
@@ -103,13 +113,18 @@ class TestPrintTablePidDetection(unittest.TestCase):
                 "ctime": 1700000000.0,
             }]
         )
-        self.assertIn("Input", output)
-        self.assertIn("WAIT", output)
+        data_line = self._data_line(output)
+        self.assertIn("Status", output)
+        self.assertNotIn("Input", output)
+        self.assertIn("WAIT", data_line)
+        self.assertNotIn("RUN", data_line)
+        self.assertIn(Colors.YELLOW, data_line)
         self.assertIn("Waiting for input", output)
         mock_pipe_open.assert_called_once()
 
+    @patch("cli_topsailai.formatting.is_session_pipe_open")
     @patch("cli_topsailai.formatting.os.kill")
-    def test_dead_pid_shows_idle(self, mock_kill):
+    def test_dead_pid_shows_idle_status(self, mock_kill, mock_pipe_open):
         mock_kill.side_effect = ProcessLookupError(1234)
         output = self._capture_print_table(
             [
@@ -124,11 +139,16 @@ class TestPrintTablePidDetection(unittest.TestCase):
                 }
             ]
         )
-        self.assertNotIn("1234", output)
-        self.assertIn("-", output)
-        self.assertIn(Colors.GRAY, output)
+        data_line = self._data_line(output)
+        self.assertNotIn("1234", data_line)
+        self.assertNotIn("RUN", data_line)
+        self.assertNotIn("WAIT", data_line)
+        self.assertIn("-", data_line)
+        self.assertIn(Colors.GRAY, data_line)
+        mock_pipe_open.assert_not_called()
 
-    def test_missing_pid_shows_idle(self):
+    @patch("cli_topsailai.formatting.is_session_pipe_open")
+    def test_missing_pid_shows_idle_status(self, mock_pipe_open):
         output = self._capture_print_table(
             [
                 {
@@ -141,8 +161,12 @@ class TestPrintTablePidDetection(unittest.TestCase):
                 }
             ]
         )
-        self.assertIn("-", output)
-        self.assertIn(Colors.GRAY, output)
+        data_line = self._data_line(output)
+        self.assertNotIn("RUN", data_line)
+        self.assertNotIn("WAIT", data_line)
+        self.assertIn("-", data_line)
+        self.assertIn(Colors.GRAY, data_line)
+        mock_pipe_open.assert_not_called()
 
 
 if __name__ == "__main__":
