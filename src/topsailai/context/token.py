@@ -344,7 +344,7 @@ class TokenStat(threading.Thread):
                     getattr(usage, "completion_tokens", None)
                 )
 
-                self.current_cached_tokens = 0
+                self.current_cached_tokens = None
                 prompt_details = getattr(usage, "prompt_tokens_details", None)
                 if prompt_details is not None:
                     cached_tokens = self._valid_token_count(
@@ -378,13 +378,13 @@ class TokenStat(threading.Thread):
         try:
             from topsailai.context import ctx_manager
             session_id = env_tool.get_session_id()
-            if session_id and current_cached_tokens is not None:
+            if session_id:
                 session_mgr = ctx_manager.get_session_manager()
                 if session_mgr:
                     session_mgr.accumulate_session_tokens(
                         session_id=session_id,
                         current_tokens=current_prompt_tokens,
-                        current_cached_tokens=current_cached_tokens,
+                        current_cached_tokens=current_cached_tokens or 0,
                         current_completion_tokens=current_completion_tokens,
                     )
         except Exception as e:

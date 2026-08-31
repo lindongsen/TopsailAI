@@ -532,18 +532,39 @@ class TestTokenStat(unittest.TestCase):
         self.assertEqual(stat.total_cached_tokens, 0)
         stat.flag_running = False
 
-    def test_output_token_stat_handles_missing_prompt_tokens_details(self):
-        """Test output_token_stat handles usage without prompt token details."""
+    def test_output_token_stat_marks_missing_cache_details_unknown(self):
+        """Keep absent Provider cache details distinct from measured zero."""
         stat = TokenStat(self.llm_id, lifetime=0)
-        usage = MagicMock()
+        usage = MagicMock(prompt_tokens=17, completion_tokens=5)
         usage.prompt_tokens_details = None
 
-        with patch('topsailai.context.token.print_info'), \
+        with patch('topsailai.context.token.env_tool.get_session_id', return_value=""), \
+             patch('topsailai.context.token.print_info'), \
              patch('topsailai.context.token.logger'):
             stat.output_token_stat(usage)
 
-        self.assertEqual(stat.current_cached_tokens, 0)
+        self.assertIsNone(stat.current_cached_tokens)
+        self.assertIsNone(stat.uncached_tokens)
         self.assertEqual(stat.total_cached_tokens, 0)
+        stat.flag_running = False
+
+    def test_unknown_cache_usage_still_accumulates_session_prompt_tokens(self):
+        """Do not drop known usage deltas when cache details are unreported."""
+        stat = TokenStat(self.llm_id, lifetime=0)
+        usage = MagicMock(prompt_tokens=17, completion_tokens=5)
+        usage.prompt_tokens_details = None
+        mock_session_mgr = MagicMock()
+
+        with patch('topsailai.context.token.env_tool.get_session_id', return_value="session_abc"), \
+             patch('topsailai.context.ctx_manager.get_session_manager', return_value=mock_session_mgr):
+            self.assertTrue(stat.finalize_usage(usage))
+
+        mock_session_mgr.accumulate_session_tokens.assert_called_once_with(
+            session_id="session_abc",
+            current_tokens=17,
+            current_cached_tokens=0,
+            current_completion_tokens=5,
+        )
         stat.flag_running = False
 
     def test_output_token_stat_includes_total_cached_tokens(self):
