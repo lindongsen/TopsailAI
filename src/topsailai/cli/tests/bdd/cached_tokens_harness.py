@@ -6,7 +6,7 @@ import ast
 import threading
 from types import MethodType, SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from topsailai.ai_base.llm_base import LLMModel
 from topsailai.context.session_manager.__base import SessionData
@@ -204,6 +204,88 @@ class CachedTokensHarness:
         """Return whether response output preceded the user-visible token summary."""
         names = [name for name, _value in self.last_output_events]
         return names == ["response", "token_summary"]
+
+    def run_one_shot_agent_chat(self) -> None:
+        """Run one AgentChat turn backed by a real mock-server LLM request."""
+        from topsailai.workspace.agent.agent_shell_base import AgentChat
+
+        output: list[str] = []
+        runtime_agent = MagicMock()
+        runtime_data = MagicMock()
+        runtime_data.session_id = ""
+        runtime_data.session_data = None
+        runtime_data.messages = []
+        runtime_agent.ctx_runtime_data = runtime_data
+
+        ai_agent = MagicMock()
+        ai_agent.agent_name = "BDD Agent"
+        ai_agent.agent_type = "react"
+        ai_agent.llm_model = self.model
+        ai_agent.messages = self.stable_messages()
+
+        def _run_agent(_step_call, message: str) -> str:
+            """Send the AgentChat message through the real LLM client."""
+            messages = list(ai_agent.messages)
+            messages.append({"role": "user", "content": message})
+            response, _ = self.model.call_llm_model(messages)
+            return response.choices[0].message.content
+
+        ai_agent.run.side_effect = _run_agent
+        runtime_agent.ai_agent = ai_agent
+        instruction = MagicMock()
+
+        with patch(
+            "topsailai.workspace.agent.hooks.base.init.get_hooks",
+            return_value=[],
+        ), patch(
+            "topsailai.workspace.agent.agent_shell_base.env_tool.is_need_print",
+            return_value=True,
+        ), patch(
+            "topsailai.workspace.agent.agent_shell_base.env_tool.is_debug_mode",
+            return_value=False,
+        ), patch(
+            "topsailai.workspace.agent.agent_shell_base.env_tool.is_interactive_mode",
+            return_value=False,
+        ), patch(
+            "topsailai.workspace.agent.agent_shell_base.tool_stat.get_agent_tool_stat"
+        ) as mock_tool_stat, patch.object(
+            self.model, "send_content"
+        ), patch.object(
+            self.model.tokenStat, "print_token_stat"
+        ), patch.object(
+            AgentChat, "_start_control_server"
+        ), patch(
+            "builtins.print", side_effect=lambda *args, **_kwargs: output.append(
+                " ".join(str(arg) for arg in args)
+            )
+        ):
+            mock_tool_stat.return_value.export_json.return_value = "{}"
+            chat = AgentChat(
+                hook_instruction=MagicMock(),
+                ctx_rt_aiagent=runtime_agent,
+                ctx_rt_instruction=instruction,
+            )
+            self.one_shot_answer = chat.run(message="one-shot request", times=1)
+
+        self.one_shot_output = output
+        self.one_shot_reset_count = runtime_data.reset_messages.call_count
+
+    def one_shot_answer_precedes_summary_once(self) -> bool:
+        """Return whether the one-shot answer precedes one final token summary."""
+        answer_indexes = [
+            index for index, value in enumerate(self.one_shot_output)
+            if value == self.one_shot_answer
+        ]
+        summary_indexes = [
+            index for index, value in enumerate(self.one_shot_output)
+            if value.startswith("total_tokens        :")
+        ]
+        return (
+            len(answer_indexes) == 1
+            and len(summary_indexes) == 1
+            and answer_indexes[0] < summary_indexes[0]
+            and self.one_shot_reset_count == 0
+        )
 
     def close(self) -> None:
         """Stop the exact server and TokenStat threads created by this harness."""

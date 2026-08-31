@@ -33,6 +33,10 @@ Feature: TokenStat observability
     And another agent reports 80 tokens with 15 cached tokens
     Then the shared session totals are 200 tokens and 55 cached tokens
 
+  Scenario: A one-shot AgentChat prints its final session summary after the answer
+    When one AgentChat turn completes against the LLM mock server
+    Then the one-shot answer is output once before one final session token summary
+
   Scenario: Cached usage cannot make uncached tokens negative
     Given a TokenStat measurement of 20 tokens with 30 cached tokens
     When the TokenStat snapshot is emitted

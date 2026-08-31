@@ -184,6 +184,30 @@ class TestIsNeedSummarizeForProcessing:
             result = mock_agent2llm.is_need_summarize_for_processing()
             assert result is False
 
+    @patch('topsailai.workspace.context.agent2llm.env_tool.EnvReaderInstance.get')
+    def test_token_threshold_counts_current_pending_messages(self, mock_env_get, mock_agent2llm):
+        """Count a pending observation instead of the previous request snapshot."""
+        pending_messages = [
+            {"role": "assistant", "content": "previous response"},
+            {"role": "user", "content": "large injected observation"},
+        ]
+        mock_agent2llm.ai_agent.messages = pending_messages
+        mock_agent2llm.ai_agent.llm_model.tokenStat.current_tokens = 1
+
+        def get_env(key, **kwargs):
+            if key == "TOPSAILAI_AGENT2LLM_TOKEN_SUMMARIZE_THRESHOLD":
+                return 100
+            if key == "TOPSAILAI_AGENT2LLM_DUP_TOOL_CALL_SUMMARIZE_THRESHOLD":
+                return 0
+            return kwargs.get("default", 0)
+
+        mock_env_get.side_effect = get_env
+        with patch.object(mock_agent2llm, '_get_quantity_threshold', return_value=0), \
+             patch.object(mock_agent2llm, '_get_current_tokens', return_value=101) as get_tokens:
+            assert mock_agent2llm.is_need_summarize_for_processing() is True
+
+        get_tokens.assert_called_once_with(pending_messages)
+
     @patch('random.choice')
     def test_exceeds_threshold_returns_true(self, mock_random_choice, mock_agent2llm):
         """Test that exceeding threshold returns True."""

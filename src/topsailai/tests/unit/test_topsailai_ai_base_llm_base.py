@@ -224,7 +224,7 @@ class TestLLMModelCallLLMModel(unittest.TestCase):
         events = []
         model = self._create_mock_model()
         model.model.create.return_value = mock_response
-        model.tokenStat.finalize_usage.side_effect = lambda usage: events.append("finalize")
+        model.tokenStat.finalize_usage.side_effect = lambda usage, ticket: events.append("finalize")
         model.send_content = MagicMock(side_effect=lambda content: events.append("response"))
         model.tokenStat.print_token_stat.side_effect = lambda: events.append("print")
 

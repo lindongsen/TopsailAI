@@ -915,10 +915,10 @@ class ContextRuntimeBase(object):
         """
         Get the current token count.
 
-        When TOPSAILAI_REALTIME_TOKEN_CALCULATION is enabled, tokens are
-        calculated from the provided messages (or the layer-appropriate
-        message source). Otherwise, the cached tokenStat.current_tokens value
-        is returned for backward compatibility.
+        Explicitly provided messages are always counted so safety checks use
+        the pending message set. Without explicit messages,
+        TOPSAILAI_REALTIME_TOKEN_CALCULATION selects between the current
+        layer message source and the cached TokenStat.current_tokens value.
 
         Args:
             messages (list | str, optional): Messages to count. If None, the
@@ -927,7 +927,7 @@ class ContextRuntimeBase(object):
         Returns:
             int | None: The current token count, or None if not available.
         """
-        if messages:
+        if messages is not None:
             realtime = True
         if not realtime:
             realtime = env_tool.EnvReaderInstance.check_bool(

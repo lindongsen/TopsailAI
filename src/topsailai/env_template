@@ -476,8 +476,8 @@ TOPSAILAI_USER2AGENT_TOKEN_SUMMARIZE_THRESHOLD=64000
 # Non-negative integer; negative or invalid values fall back to 4096, and 0 disables the reserve.
 TOPSAILAI_USER2AGENT_SUMMARY_TOKEN_RESERVE=4096
 
-# When set to 1, calculate tokens from the actual message content for summarization thresholds.
-# When set to 0 (default), use the cached TokenStat.current_tokens value.
+# Controls token calculation when no explicit messages are passed: 1 counts current runtime messages,
+# while 0 (default) uses cached TokenStat.current_tokens. Safety checks always count pending messages.
 TOPSAILAI_REALTIME_TOKEN_CALCULATION=0
 
 # Keep session messages after summarizing, 1 is enabled(default), 0 is disabled

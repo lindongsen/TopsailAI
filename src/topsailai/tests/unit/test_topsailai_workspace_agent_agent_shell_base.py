@@ -21,6 +21,12 @@ class TestAgentChatRun(unittest.TestCase):
         self.mock_ai_agent = MagicMock()
         self.ctx_rt_aiagent.ai_agent = self.mock_ai_agent
         self.ctx_rt_aiagent.ctx_runtime_data = MagicMock()
+        self.need_print_patcher = patch(
+            "topsailai.workspace.agent.agent_shell_base.env_tool.is_need_print",
+            return_value=False,
+        )
+        self.need_print_patcher.start()
+        self.addCleanup(self.need_print_patcher.stop)
 
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
     @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
@@ -154,7 +160,8 @@ class TestAgentChatRun(unittest.TestCase):
 
         self.assertEqual(mock_task.tool_call_count, 5)
         self.assertEqual(mock_task.executor, "test-agent")
-        mock_tool_stat.get_agent_tool_stat.assert_called_once_with(self.mock_ai_agent)
+        self.assertEqual(mock_tool_stat.get_agent_tool_stat.call_count, 2)
+        mock_tool_stat.get_agent_tool_stat.assert_any_call(self.mock_ai_agent)
 
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
     @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
@@ -866,6 +873,44 @@ class TestCacheHitRate(unittest.TestCase):
 
         printed = "\n".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
         self.assertIn("cache_hit_rate      : 25.000%", printed)
+
+    @patch(
+        "topsailai.workspace.agent.agent_shell_base.env_tool.is_need_print",
+        return_value=True,
+    )
+    @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")
+    @patch("topsailai.workspace.agent.agent_chat_base.set_ai_agent")
+    @patch("topsailai.workspace.agent.agent_chat_base.env_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.tool_stat")
+    @patch("topsailai.workspace.agent.agent_shell_base.lock_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.task_tool")
+    @patch("topsailai.workspace.agent.agent_shell_base.get_agent_step_call")
+    @patch("topsailai.workspace.agent.agent_shell_base._get_session_token_totals")
+    @patch("builtins.print")
+    def test_one_shot_prints_final_summary_once_after_answer(
+        self, mock_print, mock_get_totals, mock_get_agent_step_call,
+        mock_task_tool, mock_lock_tool, mock_tool_stat, mock_env_tool,
+        mock_set_ai_agent, mock_get_hooks, mock_is_need_print,
+    ):
+        """A one-shot run prints its token, cache, and tool summary after the answer."""
+        mock_get_totals.return_value = (1000, 250)
+        mock_tool_stat.get_agent_tool_stat.return_value.export_json.return_value = "{}"
+
+        agent_chat = self._make_agent_chat(mock_env_tool, mock_lock_tool, mock_get_hooks)
+        agent_chat.ai_agent.run.return_value = "Response"
+
+        result = agent_chat.run(message="Hello", times=1)
+
+        printed = [str(call.args[0]) for call in mock_print.call_args_list if call.args]
+        self.assertEqual(result, "Response")
+        self.assertEqual(printed.count("Response"), 1)
+        self.assertEqual(printed.count("total_tokens        : 1000"), 1)
+        self.assertEqual(printed.count("total_cached_tokens : 250"), 1)
+        self.assertEqual(printed.count("cache_hit_rate      : 25.000%"), 1)
+        self.assertLess(printed.index("Response"), printed.index("total_tokens        : 1000"))
+        mock_tool_stat.get_agent_tool_stat.assert_called_once_with(agent_chat.ai_agent)
+        mock_tool_stat.get_agent_tool_stat.return_value.export_json.assert_called_once_with()
+        agent_chat.ctx_runtime_data.reset_messages.assert_not_called()
 
     @patch("topsailai.workspace.agent.agent_shell_base.input_message")
     @patch("topsailai.workspace.agent.hooks.base.init.get_hooks")

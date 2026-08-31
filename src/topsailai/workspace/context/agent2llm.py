@@ -498,7 +498,7 @@ class ContextRuntimeAgent2LLM(ContextRuntimeBase):
         ) or 0
 
         if token_threshold > 0:
-            current_tokens = self._get_current_tokens() or 0
+            current_tokens = self._get_current_tokens(self.ai_agent.messages) or 0
 
             if current_tokens > token_threshold:
                 print_info(

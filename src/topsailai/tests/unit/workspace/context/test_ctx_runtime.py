@@ -243,6 +243,19 @@ class TestContextRuntimeBaseMethods:
 class TestContextRuntimeBaseEnvMethods:
     """Test ContextRuntimeBase environment methods."""
 
+    @patch('topsailai.workspace.context.base.count_tokens', return_value=0)
+    @patch('topsailai.workspace.context.base.ctx_manager')
+    def test_get_current_tokens_counts_explicit_empty_pending_set(self, mock_ctx_manager, mock_count_tokens):
+        """Treat an explicit empty pending set as current message input."""
+        from topsailai.workspace.context.base import ContextRuntimeBase
+
+        runtime = ContextRuntimeBase()
+        runtime.ai_agent = MagicMock()
+        runtime.ai_agent.llm_model.tokenStat.current_tokens = 99
+
+        assert runtime._get_current_tokens([]) == 0
+        mock_count_tokens.assert_called_once_with("[]")
+
     @patch('topsailai.workspace.context.base.env_tool')
     @patch('topsailai.workspace.context.base.ctx_manager')
     def test_get_quantity_threshold_disabled(self, mock_ctx_manager, mock_env_tool):

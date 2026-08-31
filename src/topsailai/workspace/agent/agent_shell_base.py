@@ -480,13 +480,11 @@ class AgentChat(AgentChatBase):
             if not env_tool.is_debug_mode() or not env_tool.is_interactive_mode():
                 print(answer)
 
-            # check times
-            if times > 0 and curr_count >= times:
-                break
-
-            self.ctx_runtime_data.reset_messages()
-            if env_tool.is_interactive_mode():
-                self.ctx_rt_instruction.ctx_history()
+            reached_times_limit = times > 0 and curr_count >= times
+            if not reached_times_limit:
+                self.ctx_runtime_data.reset_messages()
+                if env_tool.is_interactive_mode():
+                    self.ctx_rt_instruction.ctx_history()
 
             # end time
             end_time = int(time.time())
@@ -525,6 +523,10 @@ class AgentChat(AgentChatBase):
                 tool_call_stat = tool_stat.get_agent_tool_stat(self.ai_agent)
                 __content = tool_call_stat.export_json()
                 logger.info("ToolStat of tool_calls:\n [%s]", __content)
+
+            # check times after the completed-turn summary is emitted
+            if reached_times_limit:
+                break
 
             # next time
             try:

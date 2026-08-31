@@ -90,6 +90,22 @@ def send_conversation(cached_tokens_context: dict[str, Any]) -> None:
     )
 
 
+@when("one AgentChat turn completes against the LLM mock server")
+def run_one_shot_agent_chat(cached_tokens_context: dict[str, Any]) -> None:
+    """Run the one-shot AgentChat path with a real mock-server request."""
+    cached_tokens_context["harness"].run_one_shot_agent_chat()
+
+
+@then("the one-shot answer is output once before one final session token summary")
+def one_shot_answer_before_final_summary(
+    cached_tokens_context: dict[str, Any],
+) -> None:
+    """Require the terminating turn to emit its summary after its answer."""
+    assert cached_tokens_context[
+        "harness"
+    ].one_shot_answer_precedes_summary_once()
+
+
 @when("one agent reports 120 tokens with 40 cached tokens")
 def first_agent_delta(cached_tokens_context: dict[str, Any]) -> None:
     """Accumulate the first agent's current-request delta."""

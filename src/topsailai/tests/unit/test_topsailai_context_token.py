@@ -287,6 +287,35 @@ class TestTokenStat(unittest.TestCase):
             self.assertTrue(stat.wait(ticket, timeout=1.0))
             stat.flag_running = False
 
+    def test_late_local_estimate_does_not_replace_finalized_provider_usage(self):
+        """Keep Provider current-request usage after local counting times out."""
+        calculation_started = threading.Event()
+        release_calculation = threading.Event()
+
+        def slow_count(_text):
+            calculation_started.set()
+            release_calculation.wait(timeout=1.0)
+            return 3
+
+        with patch('topsailai.context.token.count_tokens', side_effect=slow_count), \
+             patch('topsailai.context.token.env_tool.get_session_id', return_value=""):
+            stat = TokenStat(self.llm_id, lifetime=0)
+            ticket = stat.add_msgs("slow")
+            self.assertTrue(calculation_started.wait(timeout=1.0))
+            self.assertFalse(stat.wait(ticket, timeout=0.01))
+
+            usage = MagicMock(prompt_tokens=17, completion_tokens=5)
+            usage.prompt_tokens_details = MagicMock(cached_tokens=4)
+            self.assertTrue(stat.finalize_usage(usage, ticket))
+
+            release_calculation.set()
+            self.assertTrue(stat.wait(ticket, timeout=1.0))
+            self.assertEqual(stat.current_prompt_tokens, 17)
+            self.assertEqual(stat.current_completion_tokens, 5)
+            self.assertEqual(stat.current_cached_tokens, 4)
+            self.assertEqual(stat.current_count_source, "llm_response")
+            stat.flag_running = False
+
     @patch('topsailai.context.token.count_tokens', return_value=0)
     def test_token_stat_wait_completes_empty_messages(self, mock_count_tokens):
         """Test an empty message collection is still a completable batch."""

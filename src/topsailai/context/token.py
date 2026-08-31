@@ -254,6 +254,8 @@ class TokenStat(threading.Thread):
         self._batch_condition = threading.Condition(self.rlock)
         self._next_batch_ticket = 0
         self._completed_batch_ticket = 0
+        self._current_batch_ticket = None
+        self._finalized_batch_ticket = 0
 
         self.flag_running = True    # Control flag for thread execution
 
@@ -320,10 +322,16 @@ class TokenStat(threading.Thread):
             return value
         return None
 
-    def finalize_usage(self, usage: CompletionUsage = None):
+    def finalize_usage(self, usage: CompletionUsage = None, ticket: Optional[int] = None):
         """Finalize and persist usage for the current request exactly once."""
         with self.rlock:
-            if self._current_count_finalized:
+            ticket = self._current_batch_ticket if ticket is None else ticket
+            if ticket is None:
+                if self._current_count_finalized:
+                    return False
+            elif ticket <= self._finalized_batch_ticket:
+                return False
+            if ticket != self._current_batch_ticket:
                 return False
 
             response_prompt_tokens = None
@@ -358,6 +366,8 @@ class TokenStat(threading.Thread):
             if self.current_cached_tokens:
                 self.total_cached_tokens += self.current_cached_tokens
             self._current_count_finalized = True
+            if ticket is not None:
+                self._finalized_batch_ticket = ticket
 
             current_prompt_tokens = self.current_prompt_tokens
             current_completion_tokens = self.current_completion_tokens
@@ -481,6 +491,7 @@ class TokenStat(threading.Thread):
         with self._batch_condition:
             self._next_batch_ticket += 1
             ticket = self._next_batch_ticket
+            self._current_batch_ticket = ticket
 
             # Store messages in FIFO order for background processing.
             self.buffer.append((ticket, msgs))
@@ -607,9 +618,12 @@ class TokenStat(threading.Thread):
 
             # Publish the completed batch atomically before notifying waiters.
             with self._batch_condition:
-                self.current_text_len = current_text_len
-                self.current_local_count = current_count
-                self.current_count = current_count
+                is_current = ticket == self._current_batch_ticket
+                is_finalized = ticket <= self._finalized_batch_ticket
+                if is_current and not is_finalized:
+                    self.current_text_len = current_text_len
+                    self.current_local_count = current_count
+                    self.current_count = current_count
                 self.total_count += current_count
                 self.total_text_len += current_text_len
                 self._completed_batch_ticket = ticket
