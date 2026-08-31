@@ -90,7 +90,9 @@ func (a *actualDataAdapter) Exists(ctx context.Context, ref string) (bool, error
 
 // WriteArchive replaces the actual data of an object with the contents of a
 // tar archive stream. Existing actual-data files are removed first; metadata
-// marker files are preserved. The returned ref is the absolute object path.
+// marker files and the mandatory object Markdown are preserved. After
+// extraction, the mandatory Markdown must exist as a regular file. The
+// returned ref is the absolute object path.
 func (a *actualDataAdapter) WriteArchive(ctx context.Context, ref string, r io.Reader) (string, error) {
 	if ctx.Err() != nil {
 		return "", ctx.Err()
@@ -106,6 +108,17 @@ func (a *actualDataAdapter) WriteArchive(ctx context.Context, ref string, r io.R
 	}
 	if err := a.untar(ref, r); err != nil {
 		return "", err
+	}
+	markerName := filepath.Base(ref) + ".md"
+	markerInfo, err := os.Stat(filepath.Join(ref, markerName))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("%w: archive must leave %s", errors.ErrMissingMarkdown, markerName)
+		}
+		return "", fmt.Errorf("stat mandatory Markdown %q: %w", markerName, err)
+	}
+	if !markerInfo.Mode().IsRegular() {
+		return "", fmt.Errorf("%w: archive must leave regular file %s", errors.ErrMissingMarkdown, markerName)
 	}
 	return ref, nil
 }

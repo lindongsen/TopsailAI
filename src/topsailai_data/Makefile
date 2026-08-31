@@ -33,6 +33,19 @@ build:
 test:
 	$(GO) test ./... -count=1
 
+# Run the BDD smoke scenarios.
+.PHONY: bdd-smoke
+bdd-smoke:
+	@mkdir -p .tmp/bdd/reports
+	$(GO) test ./tests/bdd -run 'TestBDDSmoke$$' -count=1 -v > .tmp/bdd/reports/smoke.out 2>&1
+	@tail -20 .tmp/bdd/reports/smoke.out
+
+# Run the complete BDD suite.
+.PHONY: bdd-test
+bdd-test:
+	@mkdir -p .tmp/bdd/reports
+	$(GO) test ./tests/bdd -run 'TestBDD$$' -count=1 -v > .tmp/bdd/reports/bdd.out 2>&1
+	@tail -40 .tmp/bdd/reports/bdd.out
 # Run go vet
 .PHONY: vet
 vet:

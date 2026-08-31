@@ -182,6 +182,49 @@ func TestActualDataAdapterWriteArchivePreservesExistingObjectMD(t *testing.T) {
 	}
 }
 
+func TestActualDataAdapterWriteArchiveRejectsMissingObjectMD(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	_ = adapter.Init(ctx)
+
+	ref := filepath.Join(root, "obj")
+	_ = os.MkdirAll(ref, 0o755)
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	content := "extra"
+	hdr := &tar.Header{Name: "extra.txt", Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}
+	_ = tw.WriteHeader(hdr)
+	_, _ = tw.Write([]byte(content))
+	_ = tw.Close()
+
+	_, err := adapter.WriteArchive(ctx, ref, bytes.NewReader(buf.Bytes()))
+	if !errors.Is(err, apperrors.ErrMissingMarkdown) {
+		t.Fatalf("expected ErrMissingMarkdown, got %v", err)
+	}
+}
+
+func TestActualDataAdapterWriteArchiveRejectsObjectMDDirectory(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter := NewActualDataAdapter(root)
+	_ = adapter.Init(ctx)
+
+	ref := filepath.Join(root, "obj")
+	_ = os.MkdirAll(ref, 0o755)
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	_ = tw.WriteHeader(&tar.Header{Name: "obj.md", Mode: 0o755, Typeflag: tar.TypeDir})
+	_ = tw.Close()
+
+	_, err := adapter.WriteArchive(ctx, ref, bytes.NewReader(buf.Bytes()))
+	if !errors.Is(err, apperrors.ErrMissingMarkdown) {
+		t.Fatalf("expected ErrMissingMarkdown, got %v", err)
+	}
+}
+
 func TestActualDataAdapterReadArchiveRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
