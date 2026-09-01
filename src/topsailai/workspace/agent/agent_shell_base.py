@@ -423,6 +423,9 @@ class AgentChat(AgentChatBase):
                 self.interrupted = True
                 answer = ""
                 print_warning(f"Hard interrupt requested: {e}")
+                if times > 0 and curr_count >= times:
+                    self.interrupted = False
+                    break
                 continue
             except agent_exception.AgentEndProcess:
                 self.last_message = self.messages[-1]
