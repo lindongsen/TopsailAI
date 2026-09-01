@@ -33,6 +33,17 @@ The agent runtime stores its generated data under `TOPSAILAI_HOME` (default
 memory under `memory/`, skills under `skill/`, and global configuration in
 `settings.yaml` plus `.env.local` / `.env`.
 
+## The `topsailai` CLI is the unified entry point
+
+The `topsailai` CLI is the **unified entry point** for the whole TopsailAI
+project. It hosts all the usage documentation and detailed capability
+introductions through its `doc` scope and the `topsailai docs list|read`
+subcommands. Use it to discover, manage, and monitor agent tasks.
+
+This skill is only a **supplementary explanation**. It does not try to
+duplicate or become the authoritative source for detailed capability docs —
+those live in the CLI's usage docs. For detailed capability documentation,
+refer to the CLI usage docs (`topsailai docs list` / `topsailai docs read`).
 ## When to use
 
 Use this skill when the user wants to:
@@ -152,6 +163,63 @@ self_environs:
 - The interactive watcher `topsailai` scans `{TOPSAILAI_HOME}/workspace/task/`
   for session/task stdout files and lets you watch logs, send messages, launch
   agents, and switch scopes (workspace / runtime / project / session / doc).
+
+## Managing agent tasks with the `topsailai` CLI
+
+`topsailai` is the interactive task watcher and session manager. It scans
+`{TOPSAILAI_HOME}/workspace/task/` for session/task stdout files and shows them
+as a numbered list, so you can see at a glance which agents are working and
+what each session is doing.
+
+```bash
+topsailai            # start the interactive watcher
+topsailai --tui      # use the two-pane curses UI when watching a log
+topsailai --tail-lines 200
+```
+
+### Workspace task list (default scope)
+
+On startup the CLI prints the workspace task list. Each row is one discovered
+log file and shows `No`, `Session` (or `(temp)` for temporary sessions), `PID`,
+`Modified`, and `Created`. From this list you can:
+
+- Type a number and press `Enter` to watch that session's live log (runtime scope).
+- `/session <number>` — retrieve the full session context.
+- `/send <number> [message]` — send a message to a running session.
+- `/resume <number>` — resume an idle session in its project workspace.
+- `/agent [<number|folder>]` — launch an agent (no argument runs the YAML-configured command).
+- `/refresh` — re-scan the task directory and refresh the list.
+- `/clean` — remove expired files from the task directory.
+- `cd doc` — enter doc scope to browse usage documentation.
+- `scopes` — show introductions and available actions for each scope.
+- `q` — quit.
+
+### Scopes
+
+The CLI has five scopes: `[workspace]` (default task list), `[runtime:<id>]`
+(live log streaming after selecting a log), `[project]` (recent sessions with
+recorded project workspaces and running status), `[session:<id>]` (focused view
+of one session), and `[doc]` (Markdown documentation browser).
+
+### Runtime scope (watching a working agent)
+
+While watching a session's live log you can interact with the running agent:
+
+- `/send [message]` — send a message to the running session through its named pipe.
+- `/ctx.btw [message]` — inject a by-the-way message into the `agent2llm` context.
+- `/meta` — print the session metadata file path.
+- `q` or `quit` — leave runtime scope and return to the file list.
+
+### Non-interactive subcommands
+
+```bash
+topsailai workspace              # show the task list and exit
+topsailai docs list              # list usage docs
+topsailai docs read topsailai.md # read a usage doc
+topsailai project list           # list managed projects
+topsailai project add <path>     # add a project
+topsailai models list            # list model registry entries
+```
 
 ## Controlling a running agent
 
