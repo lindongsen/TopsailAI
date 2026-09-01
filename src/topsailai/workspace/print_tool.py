@@ -5,6 +5,7 @@ Created: 2025-12-29
 Purpose:
 '''
 
+import logging
 import os
 import sys
 import time
@@ -25,6 +26,8 @@ from topsailai.context.chat_history_manager.__base import (
 )
 from topsailai.workspace.folder_constants import FOLDER_WORKSPACE_TASK
 from topsailai.workspace.task.cleanup import register_cleanup_func
+logger = logging.getLogger(__name__)
+
 
 class TeeOutput:
     """ A class that outputs to both the screen and a file simultaneously.
@@ -94,12 +97,18 @@ class TeeOutput:
 
     def write(self, message):
         self.terminal.write(message)
-        self.log_file.write(message)
+        try:
+            self.log_file.write(message)
+        except Exception as exc:
+            logger.exception("Failed to write to tee log file %s: %s", self.filename, exc)
         self.flush()
 
     def flush(self):
         self.terminal.flush()
-        self.log_file.flush()
+        try:
+            self.log_file.flush()
+        except Exception as exc:
+            logger.exception("Failed to flush tee log file %s: %s", self.filename, exc)
 
     def close(self):
         self.log_file.close()

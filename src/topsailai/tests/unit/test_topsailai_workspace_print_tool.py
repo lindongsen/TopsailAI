@@ -123,6 +123,71 @@ class TestTeeOutput(unittest.TestCase):
         # Should not raise any exception
         tee.close()
 
+    def test_tee_output_write_log_flush_enospc_does_not_raise(self):
+        """Test write() does not raise when log_file.flush() hits ENOSPC.
+
+        The terminal output must still be delivered even though the log-file
+        flush fails, and no exception may propagate to the caller.
+        """
+        tee = TeeOutput(self.test_file, mode='w')
+        tee.terminal = StringIO()
+        try:
+            with patch.object(tee.log_file, "flush", side_effect=OSError(28, "No space left on device")):
+                tee.write("hello")
+            # No exception should have propagated.
+            self.assertEqual(tee.terminal.getvalue(), "hello")
+        finally:
+            tee.close()
+
+    def test_tee_output_write_log_write_enospc_does_not_raise(self):
+        """Test write() does not raise when log_file.write() hits ENOSPC."""
+        tee = TeeOutput(self.test_file, mode='w')
+        tee.terminal = StringIO()
+        try:
+            with patch.object(tee.log_file, "write", side_effect=OSError(28, "No space left on device")):
+                tee.write("hello")
+            self.assertEqual(tee.terminal.getvalue(), "hello")
+        finally:
+            tee.close()
+
+    def test_tee_output_flush_log_enospc_does_not_raise(self):
+        """Test explicit flush() does not raise when log_file.flush() hits ENOSPC."""
+        tee = TeeOutput(self.test_file, mode='w')
+        try:
+            with patch.object(tee.log_file, "flush", side_effect=OSError(28, "No space left on device")):
+                tee.flush()
+            # No exception should have propagated.
+        finally:
+            tee.close()
+
+    def test_tee_output_write_log_enospc_logs_failure(self):
+        """Test that a log-file ENOSPC failure is recorded via logger.exception."""
+        tee = TeeOutput(self.test_file, mode='w')
+        tee.terminal = StringIO()
+        try:
+            with patch.object(tee.log_file, "flush", side_effect=OSError(28, "No space left on device")), \
+                    patch("topsailai.workspace.print_tool.logger") as mock_logger:
+                tee.write("hello")
+            mock_logger.exception.assert_called_once()
+            args, _ = mock_logger.exception.call_args
+            formatted = args[0] % args[1:]
+            self.assertIn(self.test_file, formatted)
+            self.assertIn("No space left on device", formatted)
+        finally:
+            tee.close()
+
+    def test_tee_output_write_success_still_writes_file(self):
+        """Regression: with a healthy log file, write() still writes to file and terminal."""
+        tee = TeeOutput(self.test_file, mode='w')
+        tee.terminal = StringIO()
+        try:
+            tee.write("hello")
+            self.assertEqual(tee.terminal.getvalue(), "hello")
+        finally:
+            tee.close()
+        with open(self.test_file, 'r') as f:
+            self.assertIn("hello", f.read())
+
     def test_tee_output_close(self):
         """Test TeeOutput close method."""
         tee = TeeOutput(self.test_file, mode='w')
