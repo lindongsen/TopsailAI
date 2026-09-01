@@ -1673,6 +1673,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                 session_id = selected_file.get("session_id")
                 stdout_path = selected_file.get("path")
                 file_pid = selected_file.get("pid")
+                session_pid = selected_file.get("session_pid")
                 if session_id == "(temp)":
                     session_id = "topsailai"
                 stream_file(
@@ -1684,6 +1685,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     default_pid=file_pid,
                     runtime_raw=not args.runtime_tui,
                     tail_lines=args.tail_lines,
+                    default_session_pid=session_pid,
                 )
                 if state.current_scope == "project":
                     _refresh_project_scope()

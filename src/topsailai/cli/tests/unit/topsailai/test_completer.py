@@ -30,6 +30,19 @@ class TestControlCompleter(unittest.TestCase):
         cli_state.current_scope = "workspace"
         cli_state.current_session_id = None
 
+    def test_runtime_meta_completion(self):
+        """Runtime completion must expose the built-in /meta command."""
+        cli_state.current_scope = "runtime"
+        matches = []
+        state = 0
+        while True:
+            candidate = tab_completer("/me", state)
+            if candidate is None:
+                break
+            matches.append(candidate)
+            state += 1
+        self.assertEqual(matches, ["/meta"])
+
     def _yaml_commands(self):
         return [
             {

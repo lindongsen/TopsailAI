@@ -504,9 +504,11 @@ class TestRuntimeModeArguments(unittest.TestCase):
         from cli_topsailai.core import main
 
         log_file = {
-            "filename": "s1.1234.session.stdout",
-            "path": "/task/s1.1234.session.stdout",
+            "filename": "s1.5678.step.task.stdout",
+            "path": "/task/s1.5678.step.task.stdout",
             "session_id": "s1",
+            "pid": 5678,
+            "session_pid": 1234,
         }
         mock_discover.return_value = [log_file]
         mock_prompt.side_effect = [("watch", 0), ("quit", None)]
@@ -516,6 +518,8 @@ class TestRuntimeModeArguments(unittest.TestCase):
         _, kwargs = mock_stream.call_args
         self.assertTrue(kwargs["runtime_raw"])
         self.assertEqual(kwargs["tail_lines"], 300)
+        self.assertEqual(kwargs["default_pid"], 5678)
+        self.assertEqual(kwargs["default_session_pid"], 1234)
 
     @patch("cli_topsailai.streaming.stream_file")
     @patch("cli_topsailai.core.prompt_selection")

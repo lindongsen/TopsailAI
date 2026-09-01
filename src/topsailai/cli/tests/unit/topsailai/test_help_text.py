@@ -121,6 +121,11 @@ class TestPrintHelp(unittest.TestCase):
         output = self._capture(print_help, [], "workspace", keyword="xyznonexistent")
         self.assertIn("No commands found matching 'xyznonexistent'", output)
 
+    def test_print_help_runtime_scope_lists_meta(self):
+        output = self._capture(print_help, [], "runtime")
+        self.assertIn("/meta", output)
+        self.assertIn("metadata file", output)
+
     def test_print_help_runtime_scope_mentions_arrow_keys(self):
         output = self._capture(print_help, [], "runtime")
         self.assertIn("Up / Down arrows", output)

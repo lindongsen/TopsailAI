@@ -25,6 +25,7 @@ from cli_topsailai.streaming import (
     _extract_session_id_from_path,
     _handle_stream_command,
     _handle_stream_ctx_btw,
+    _handle_stream_meta,
     _handle_stream_send,
     _prompt_send_as_message,
     _read_input_line,
@@ -140,7 +141,13 @@ class TestDispatchRawInput(unittest.TestCase):
         )
         self.assertTrue(result)
         mock_handle.assert_called_once_with(
-            "/send hello", "/task", [], "s1", "/task/s.log", None
+            "/send hello",
+            "/task",
+            [],
+            "s1",
+            "/task/s.log",
+            None,
+            default_session_pid=None,
         )
 
     @patch("cli_topsailai.streaming._prompt_send_as_message")
@@ -226,7 +233,13 @@ class TestStreamFileRaw(unittest.TestCase):
             _stream_file_raw(path, tmpdir, [], "s1", path, default_pid=1234, tail_lines=1)
 
             mock_handle.assert_called_once_with(
-                "/send hello", tmpdir, [], "s1", path, 1234
+                "/send hello",
+                tmpdir,
+                [],
+                "s1",
+                path,
+                1234,
+                default_session_pid=None,
             )
             prompt = mock_read.call_args[0][0]
             self.assertIn("[runtime:s1]>", prompt)
@@ -301,6 +314,47 @@ class TestStreamFileRaw(unittest.TestCase):
         self.assertTrue(
             any("File not found" in str(p) for p in printed)
         )
+
+
+class TestHandleStreamMeta(unittest.TestCase):
+    """Tests for runtime session metadata display."""
+
+    def test_prints_parent_session_meta_for_task_log(self):
+        with tempfile.TemporaryDirectory() as task_dir:
+            meta_path = os.path.join(task_dir, "s1.4321.session.meta")
+            with open(meta_path, "w", encoding="utf-8") as meta_file:
+                meta_file.write("{\"project_workspace\": \"/work/demo\"}\n")
+
+            with patch("builtins.print") as mock_print:
+                _handle_stream_command(
+                    "/meta",
+                    task_dir,
+                    [],
+                    "s1",
+                    os.path.join(task_dir, "s1.9876.step.task.stdout"),
+                    default_pid=9876,
+                    default_session_pid=4321,
+                )
+
+        mock_print.assert_called_once_with(
+            '{"project_workspace": "/work/demo"}\n', end=""
+        )
+
+    def test_missing_meta_file_prints_error(self):
+        with tempfile.TemporaryDirectory() as task_dir:
+            with patch("builtins.print") as mock_print:
+                _handle_stream_meta(task_dir, "s1", 4321)
+
+        printed = " ".join(str(call) for call in mock_print.call_args_list)
+        self.assertIn("Could not read session metadata", printed)
+        self.assertIn("s1.4321.session.meta", printed)
+
+    def test_missing_parent_session_pid_prints_error(self):
+        with patch("builtins.print") as mock_print:
+            _handle_stream_meta("/task", "s1", None)
+
+        printed = " ".join(str(call) for call in mock_print.call_args_list)
+        self.assertIn("Session metadata is unavailable", printed)
 
 
 class TestHandleStreamSendRestored(unittest.TestCase):

@@ -82,7 +82,7 @@ def print_scopes() -> None:
         (
             "runtime",
             "The live log-streaming scope entered after selecting a workspace log file. It follows output for the watched session or task while keeping session messaging available.",
-            "Send process messages with /send, inject agent2llm context with /ctx.btw, send control requests with /control, recall previous and next runtime messages with the Up/Down arrow keys, show help, or leave the stream with q or quit.",
+            "Send process messages with /send, inject agent2llm context with /ctx.btw, print session metadata with /meta, send control requests with /control, recall previous and next runtime messages with the Up/Down arrow keys, show help, or leave the stream with q or quit.",
         ),
         (
             "project",
@@ -273,6 +273,12 @@ def print_help(
             "desc": "Inject a by-the-way message into the agent2llm runtime context of the watched session. In session scope, omit the session id. If no message is provided, enter multi-line input mode (finish with EOF). While streaming a log, /ctx.btw defaults to the watched session.",
             "example": "Example: /ctx.btw remember to check the logs  or  while streaming: /ctx.btw hello",
             "scopes": ["session", "runtime"],
+        },
+        {
+            "cmd": "/meta",
+            "desc": "Print the metadata file for the watched parent session. Task logs use their parent session PID rather than the child task PID.",
+            "example": "Example: /meta",
+            "scopes": ["runtime"],
         },
         {
             "cmd": "/control <command> [args_json]  |  /control.<subcommand>",

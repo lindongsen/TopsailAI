@@ -71,7 +71,7 @@ def get_available_completions() -> List[str]:
     completions: List[str] = []
 
     # Built-in commands (always available)
-    builtins = ["/refresh", "/clean", "/help", "/session", "/send", "/ctx.btw", "q", "quit"]
+    builtins = ["/refresh", "/clean", "/help", "/session", "/send", "/ctx.btw", "/meta", "q", "quit"]
     completions.extend(builtins)
 
     # YAML commands filtered by current scope

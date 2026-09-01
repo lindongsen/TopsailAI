@@ -248,6 +248,7 @@ def stream_file(
     default_pid: Optional[int] = None,
     runtime_raw: bool = False,
     tail_lines: int = 300,
+    default_session_pid: Optional[int] = None,
 ) -> None:
     """
     Stream a log file in real-time, similar to ``tail -f``.
@@ -281,6 +282,7 @@ def stream_file(
             the session's named pipe.
         runtime_raw: Use the simple curses-free raw streaming mode.
         tail_lines: Number of recent log lines to echo on startup.
+        default_session_pid: Parent session PID used to resolve session metadata.
     """
     previous_scope = state.current_scope
     previous_session_id = state.current_session_id
@@ -298,6 +300,7 @@ def stream_file(
                 default_stdout_path,
                 default_pid,
                 tail_lines=tail_lines,
+                default_session_pid=default_session_pid,
             )
         elif _can_use_curses():
             _run_curses_ui(
@@ -307,6 +310,7 @@ def stream_file(
                 default_session_id,
                 default_stdout_path,
                 default_pid,
+                default_session_pid=default_session_pid,
             )
         else:
             _stream_file_legacy(
@@ -316,6 +320,7 @@ def stream_file(
                 default_session_id,
                 default_stdout_path,
                 default_pid,
+                default_session_pid=default_session_pid,
             )
     finally:
         state.current_scope = previous_scope
@@ -329,6 +334,7 @@ def _run_curses_ui(
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
     default_pid: Optional[int] = None,
+    default_session_pid: Optional[int] = None,
 ) -> None:
     """Run the two-pane curses UI for streaming."""
     from cli_topsailai.tui import CursesStreamUI
@@ -355,6 +361,7 @@ def _run_curses_ui(
         default_session_id,
         default_stdout_path,
         default_pid,
+        default_session_pid=default_session_pid,
     )
     ui.run()
 
@@ -404,6 +411,7 @@ def _build_stream_command_handler(
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
     default_pid: Optional[int] = None,
+    default_session_pid: Optional[int] = None,
 ) -> Any:
     """Build the command callback used by the curses UI."""
 
@@ -424,6 +432,7 @@ def _build_stream_command_handler(
                     default_stdout_path,
                     default_pid,
                     input_provider=_multi_line_input_provider,
+                    default_session_pid=default_session_pid,
                 )
             else:
                 _prompt_send_as_message(
@@ -491,12 +500,12 @@ def _prompt_send_as_message(
     if output_callback is not None:
         output_callback(
             f"[ERROR] Unknown streaming command: {raw_input}. "
-            f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', 'quit', 'exit', or 'cd'."
+            f"Use '/send [message]', '/ctx.btw [message]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'."
         )
     else:
         print(
             f"{Colors.RED}[ERROR] Unknown streaming command: {raw_input}. "
-            f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
+            f"Use '/send [message]', '/ctx.btw [message]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
         )
     return True
 
@@ -1097,6 +1106,7 @@ def _dispatch_input(
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
     default_pid: Optional[int] = None,
+    default_session_pid: Optional[int] = None,
 ) -> bool:
     """Handle a single raw-mode user command.
 
@@ -1119,6 +1129,7 @@ def _dispatch_input(
             default_session_id,
             default_stdout_path,
             default_pid,
+            default_session_pid=default_session_pid,
         )
         return True
     return _prompt_send_as_message(
@@ -1154,6 +1165,7 @@ def _stream_file_raw(
     default_stdout_path: Optional[str],
     default_pid: Optional[int] = None,
     tail_lines: int = 300,
+    default_session_pid: Optional[int] = None,
 ) -> None:
     """Raw curses-free stream implementation used when ``--runtime-raw`` is set."""
     filename = os.path.basename(filepath)
@@ -1238,6 +1250,7 @@ def _stream_file_raw(
                                         default_session_id,
                                         default_stdout_path,
                                         default_pid,
+                                        default_session_pid,
                                     )
                                 finally:
                                     if keep_running:
@@ -1282,6 +1295,7 @@ def _stream_file_legacy(
     default_session_id: Optional[str],
     default_stdout_path: Optional[str],
     default_pid: Optional[int] = None,
+    default_session_pid: Optional[int] = None,
 ) -> None:
     """Legacy single-pane stream implementation for non-TTY environments."""
 
@@ -1345,6 +1359,7 @@ def _stream_file_legacy(
                                     default_session_id,
                                     default_stdout_path,
                                     default_pid,
+                                    default_session_pid=default_session_pid,
                                 )
                             else:
                                 _prompt_send_as_message(
@@ -1387,12 +1402,13 @@ def _handle_stream_command(
     default_stdout_path: Optional[str],
     default_pid: Optional[int] = None,
     input_provider: Optional[Callable[[str], Optional[str]]] = None,
+    default_session_pid: Optional[int] = None,
 ) -> None:
     """
     Execute a command entered while streaming a log file.
 
     Supports ``/send`` (defaulting to the watched session), ``/ctx.btw``
-    (inject an agent2llm message), ``/help``, and any YAML-defined command
+    (inject an agent2llm message), ``/meta``, ``/help``, and any YAML-defined command
     that is available in the ``runtime`` scope.
 
     Args:
@@ -1425,6 +1441,9 @@ def _handle_stream_command(
             input_provider=input_provider,
         )
         return
+    if cmd == "/meta":
+        _handle_stream_meta(task_dir, default_session_id, default_session_pid)
+        return
     if cmd == "/help":
         keyword = parts[1].strip() if len(parts) > 1 else None
         help_text.print_help(state.yaml_commands, state.current_scope, keyword=keyword)
@@ -1439,8 +1458,29 @@ def _handle_stream_command(
 
     print(
         f"{Colors.RED}[ERROR] Unknown streaming command: {cmd_line}. "
-        f"Use '/send [message]', '/ctx.btw [message]', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
+        f"Use '/send [message]', '/ctx.btw [message]', '/meta', '/help', 'q', 'quit', 'exit', or 'cd'.{Colors.RESET}"
     )
+
+def _handle_stream_meta(
+    task_dir: str,
+    session_id: Optional[str],
+    session_pid: Optional[int],
+) -> None:
+    """Print the metadata file for the watched parent session."""
+    if not session_id or session_pid is None:
+        print(f"{Colors.RED}[ERROR] Session metadata is unavailable for this log.{Colors.RESET}")
+        return
+
+    meta_path = os.path.join(task_dir, f"{session_id}.{session_pid}.session.meta")
+    try:
+        with open(meta_path, "r", encoding="utf-8", errors="replace") as meta_file:
+            content = meta_file.read()
+    except OSError as exc:
+        print(f"{Colors.RED}[ERROR] Could not read session metadata {meta_path}: {exc}{Colors.RESET}")
+        return
+
+    print(content, end="" if content.endswith("\n") else "\n")
+
 
 def _handle_stream_send(
     cmd_line: str,
