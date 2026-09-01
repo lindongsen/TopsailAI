@@ -193,3 +193,68 @@ def test_safe_session_meta_decorator_returns_value():
         return "ok"
 
     assert _success_func() == "ok"
+
+def test_atomic_write_removes_partial_tmp_on_failure(monkeypatch, tmp_path):
+    """A failed atomic write must not leave a stale .tmp residue behind."""
+    path = str(tmp_path / "atomic-fail.meta")
+    tmp_path_file = path + ".tmp"
+
+    # Simulate ENOSPC: the temp file is created but the write fails.
+    def _failing_fsync(fd):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "fsync", _failing_fsync)
+
+    session_meta._atomic_write(path, {"key": "value"})
+
+    assert not os.path.exists(tmp_path_file)
+    assert not os.path.exists(path)
+
+
+def test_atomic_write_removes_partial_tmp_when_replace_fails(monkeypatch, tmp_path):
+    """A failure during os.replace must also clean up the temp file."""
+    path = str(tmp_path / "atomic-replace-fail.meta")
+    tmp_path_file = path + ".tmp"
+
+    def _failing_replace(src, dst):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "replace", _failing_replace)
+
+    session_meta._atomic_write(path, {"key": "value"})
+
+    assert not os.path.exists(tmp_path_file)
+    assert not os.path.exists(path)
+
+
+def test_cleanup_removes_orphaned_tmp_files(monkeypatch):
+    """Orphaned *.session.meta.tmp files older than retention are pruned."""
+    session_meta.create_session_meta("tmp-orphan")
+    tmp_path = session_meta.get_session_meta_path("tmp-orphan") + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as fd:
+        fd.write("{partial")
+
+    old_time = time.time() - 10 * 86400
+    os.utime(tmp_path, (old_time, old_time))
+
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "0")
+
+    session_meta.cleanup_session_meta_files()
+
+    assert not os.path.exists(tmp_path)
+
+
+def test_cleanup_keeps_recent_tmp_files(monkeypatch):
+    """Recent orphaned *.session.meta.tmp files are not pruned."""
+    session_meta.create_session_meta("tmp-recent")
+    tmp_path = session_meta.get_session_meta_path("tmp-recent") + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as fd:
+        fd.write("{partial")
+
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_RETENTION_DAYS", "7")
+    monkeypatch.setenv("TOPSAILAI_SESSION_META_MAX_COUNT", "0")
+
+    session_meta.cleanup_session_meta_files()
+
+    assert os.path.exists(tmp_path)

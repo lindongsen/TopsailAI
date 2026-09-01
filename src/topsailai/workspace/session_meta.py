@@ -73,7 +73,8 @@ def get_session_meta_path(session_id: str | None = None) -> str:
 def _atomic_write(path: str, data: dict) -> None:
     """Write JSON data atomically using a temporary file and os.replace.
 
-    Failures are logged but never raised.
+    Failures are logged but never raised. On failure, any partial temporary
+    file is removed so no stale ``.tmp`` residue remains on disk.
 
     Args:
         path: Destination file path.
@@ -89,6 +90,12 @@ def _atomic_write(path: str, data: dict) -> None:
         os.replace(tmp_path, path)
     except Exception as e:
         logger.exception("Failed to write session meta to %s: %s", path, e)
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+                logger.debug("Removed partial session meta temp file: %s", tmp_path)
+        except Exception:
+            pass
 
 
 def _read_meta(path: str) -> dict | None:
@@ -322,3 +329,20 @@ def cleanup_session_meta_files() -> None:
                 logger.debug("Removed excess session meta file: %s", path)
             except Exception:
                 pass
+
+    # Remove orphaned temporary files (e.g. *.session.meta.tmp) left behind by
+    # a failed atomic write. These are partial writes with no matching .meta
+    # file, so they are safe to prune once older than the retention period.
+    tmp_pattern = os.path.join(directory, f"*.{META_EXTENSION}.tmp")
+    for path in glob.glob(tmp_pattern):
+        try:
+            if not os.path.isfile(path):
+                continue
+            basename = os.path.basename(path)
+            if ".session.meta.tmp" not in basename:
+                continue
+            if retention_seconds > 0 and now - os.path.getmtime(path) > retention_seconds:
+                os.remove(path)
+                logger.debug("Removed orphaned session meta temp file: %s", path)
+        except Exception:
+            pass
